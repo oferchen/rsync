@@ -685,14 +685,10 @@ impl GeneratorContext {
             // configured allowed_lull), keeping the default path wire-identical.
             writer.maybe_send_keepalive()?;
 
-            // upstream: sender.c:213-463 - read NDX request from receiver
-            let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
-                Ok(ndx) => ndx,
-                Err(e) if (phase > 0 || tolerant) && is_early_close_error(&e) => {
-                    break;
-                }
-                Err(e) => return Err(e),
-            };
+            // upstream: sender.c:521 - read_ndx_and_attrs() has no EOF
+            // tolerance; a receiver that vanishes in any phase ends the run
+            // through io.c:whine_about_eof() with RERR_STREAMIO.
+            let ndx = ndx_read_codec.read_ndx(&mut *reader)?;
 
             // upstream: io.c:1774-1788, sender.c:239-261 - handle control NDX values
             if ndx < 0 {
@@ -775,14 +771,7 @@ impl GeneratorContext {
                     }
                     NDX_DEL_STATS => {
                         // Deletion statistics (upstream main.c:238-247).
-                        // During dry-run the connection may drop mid-read.
-                        let stats = match DeleteStats::read_from(&mut *reader) {
-                            Ok(s) => s,
-                            Err(e) if tolerant && is_early_close_error(&e) => {
-                                break;
-                            }
-                            Err(e) => return Err(e),
-                        };
+                        let stats = DeleteStats::read_from(&mut *reader)?;
                         self.accumulate_delete_stats(&stats);
                         debug_log!(
                             Flist,
@@ -2673,11 +2662,12 @@ mod phase2_guard_tests {
         .expect("write del stats");
         ndx.write_ndx_done(&mut wire).expect("write done");
         ndx.write_ndx_done(&mut wire).expect("write done");
+        ndx.write_ndx_done(&mut wire).expect("write done");
 
         drive(&mut ctx, wire).expect("NDX_DEL_STATS is handled above the gate");
     }
 
-    /// Runs the sender loop over one NDX_DEL_STATS frame and the two phase
+    /// Runs the sender loop over one NDX_DEL_STATS frame and the three phase
     /// NDX_DONEs, returning the frame bytes and everything the sender wrote.
     fn del_stats_round_trip(client_mode: bool) -> (Vec<u8>, Vec<u8>) {
         let (_dir, mut ctx) = generator_with_one_file();
@@ -2697,6 +2687,7 @@ mod phase2_guard_tests {
         .expect("write del stats");
         let mut wire = frame.clone();
         let mut ndx = MonotonicNdxWriter::new(32);
+        ndx.write_ndx_done(&mut wire).expect("write done");
         ndx.write_ndx_done(&mut wire).expect("write done");
         ndx.write_ndx_done(&mut wire).expect("write done");
         let mut out = Vec::new();
@@ -2766,6 +2757,38 @@ mod phase2_guard_tests {
         );
     }
 
+    /// upstream: sender.c:521 - read_ndx_and_attrs() has no EOF tolerance in
+    /// any phase or under --dry-run; io.c:whine_about_eof() ends the run.
+    #[test]
+    fn receiver_eof_after_phase_0_is_an_error() {
+        for dry_run in [false, true] {
+            let (_dir, mut ctx) = generator_with_one_file();
+            ctx.config.flags.dry_run = dry_run;
+            let mut wire = Vec::new();
+            MonotonicNdxWriter::new(32)
+                .write_ndx_done(&mut wire)
+                .expect("write done");
+            let err = drive(&mut ctx, wire).expect_err("EOF in phase 1 must fail");
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof,
+                "dry_run={dry_run}"
+            );
+        }
+    }
+    /// upstream: rsync.c:339 calls main.c:244 read_del_stats(), whose varint
+    /// reads make a frame cut short by the peer fatal under --dry-run too.
+    #[test]
+    fn receiver_eof_inside_del_stats_is_an_error_under_dry_run() {
+        let (_dir, mut ctx) = generator_with_one_file();
+        ctx.config.flags.dry_run = true;
+        let mut wire = Vec::new();
+        MonotonicNdxWriter::new(32)
+            .write_ndx(&mut wire, protocol::codec::NDX_DEL_STATS)
+            .expect("write del stats marker");
+        let err = drive(&mut ctx, wire).expect_err("truncated NDX_DEL_STATS must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
     #[test]
     fn phase_completion_ndx_done_sequence_succeeds() {
         let (_dir, mut ctx) = generator_with_one_file();
