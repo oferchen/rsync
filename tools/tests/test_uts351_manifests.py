@@ -160,7 +160,7 @@ class Uts351ManifestTests(unittest.TestCase):
         # lacks - exactly the tests a new release adds. A leg either blanks
         # each ledger under bootstrap or does not run at all.
         for job_id, job in _gate_callers().items():
-            if job.get("if") == "${{ !inputs.bootstrap }}":
+            if "!inputs.bootstrap" in job.get("if", ""):
                 continue
             ledgers = {k: v for k, v in job["with"].items()
                        if MANIFEST_PATH.search(str(v))}

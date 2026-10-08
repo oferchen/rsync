@@ -12,7 +12,7 @@ on:
         type: string
         default: '3.5.1'
       variant:
-        description: 'Which variant(s) to run: all | nonroot | root'
+        description: 'Which variant(s) to run: all | nonroot | root | none (docs-only pull requests: both legs report skipped)'
         type: string
         default: 'all'
       expect_result_nonroot:

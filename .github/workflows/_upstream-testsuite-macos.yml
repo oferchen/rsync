@@ -99,7 +99,8 @@ on:
         default: 'pipe'
       variant:
         description: >-
-          Which privilege leg(s) to run: `all` | `nonroot` | `root`. The root
+          Which privilege leg(s) to run: `all` | `nonroot` | `root` | `none`
+          (docs-only pull requests: both legs report skipped). The root
           leg re-execs the harness under sudo so the privilege-keyed cells
           (chown, devices, dir-sgid, and the symlink-race/confinement family)
           RUN instead of skipping. It is a separate job rather than a step

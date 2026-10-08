@@ -66,8 +66,16 @@ env:
   RUST_BACKTRACE: "full"
 
 jobs:
+  # Skipped on docs-only pull requests; the literal job name reports
+  # skipped, which still satisfies a required context. See _changes.yml.
+  changes:
+    name: changes (Windows case-insensitive)
+    uses: ./.github/workflows/_changes.yml
+
   windows-case-insensitive:
     name: Windows case-insensitive collision detection
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: windows-latest
     timeout-minutes: 30
 

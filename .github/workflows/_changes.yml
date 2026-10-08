@@ -1,0 +1,50 @@
+name: Classify Changes
+
+# Reports whether a pull request changes documentation only, so the calling
+# workflow can skip its build and test work while still publishing every
+# required check under its exact name.
+#
+# `docs_only` is 'true' ONLY on a pull_request whose full diff against its base
+# matches the allowlist in tools/ci/classify_changed_paths.py. Every other
+# outcome - another event, an empty diff, a failed step - leaves it empty or
+# 'false', so callers gate on `!= 'true'` and a classifier fault runs the full
+# matrix instead of skipping it.
+#
+# A workflow-level `paths-ignore` cannot do this job: a workflow skipped by a
+# path filter publishes no checks at all, so its required contexts stay
+# pending forever.
+
+on:
+  workflow_call:
+    outputs:
+      docs_only:
+        description: "'true' when every path the pull request changes is documentation"
+        value: ${{ jobs.classify.outputs.docs_only }}
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    name: classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      # The pull_request checkout is the synthetic merge commit, whose first
+      # parent is the base tip, so HEAD^1..HEAD is the pull request's whole
+      # diff against the base it would merge into - not just its last push.
+      - name: Checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Classify changed paths
+        id: classify
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git diff --no-renames --name-only HEAD^1 HEAD \
+            | python3 tools/ci/classify_changed_paths.py | tee -a "$GITHUB_OUTPUT"
