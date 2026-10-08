@@ -393,7 +393,7 @@ mod create_directory_incremental_tests {
                 None,
                 None,
             )
-                .expect("create_directory_incremental succeeds")
+            .expect("create_directory_incremental succeeds")
         };
 
         assert_eq!(

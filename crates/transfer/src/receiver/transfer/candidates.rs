@@ -2753,7 +2753,8 @@ mod itemize_order_tests {
             None,
             None,
         );
-        let plan = ctx.plan_dry_run_in_range(&mut writer, 0..ctx.file_list.len(), dest, &candidates);
+        let plan =
+            ctx.plan_dry_run_in_range(&mut writer, 0..ctx.file_list.len(), dest, &candidates);
         let rows = ctx
             .itemize_rows
             .borrow()
