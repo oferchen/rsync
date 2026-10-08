@@ -105,13 +105,13 @@ fn place_existing_backup(
                     backup_dir,
                     parent,
                     metadata_opts,
-                    |path| fs::create_dir_all(path),
+                    confined_create_dir_all,
                 )?;
             }
             // upstream: backup.c:159 - without --backup-dir the parent already
             // exists next to the destination and no copy_valid_path runs.
             None if parent.exists() => {}
-            None => fs::create_dir_all(parent)?,
+            None => confined_create_dir_all(parent)?,
         }
     }
 
@@ -122,66 +122,177 @@ fn place_existing_backup(
         return rename_or_copy_existing(existing, backup_path);
     }
 
-    match fast_io::hard_link(existing, backup_path) {
+    // upstream: backup.c:236-237 - a failed link sends a non-regular entry
+    // straight to the copy tier; only a regular file is renamed instead.
+    let is_regular = fs::symlink_metadata(existing).is_ok_and(|m| m.is_file());
+    match confined_hard_link(existing, backup_path) {
         Ok(()) => Ok(BackupPlacement::Hardlinked),
-        // upstream: backup.c:247-256 - delete a stale backup and retry the link.
+        // upstream: backup.c:301-310 - remove a stale backup and retry.
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            let _ = fs::remove_file(backup_path);
-            match fast_io::hard_link(existing, backup_path) {
+            let _ = confined_remove_backup(backup_path);
+            match confined_hard_link(existing, backup_path) {
                 Ok(()) => Ok(BackupPlacement::Hardlinked),
-                Err(_) => rename_or_copy_existing(existing, backup_path),
+                Err(_) => after_failed_link(existing, backup_path, is_regular),
             }
         }
-        // upstream: backup.c:210 - rename fallback when the item cannot be
-        // hard-linked (cross-device, or a type/fs without CAN_HARDLINK_*).
-        Err(_) => rename_or_copy_existing(existing, backup_path),
+        Err(_) => after_failed_link(existing, backup_path, is_regular),
     }
 }
 
-/// Renames `existing` to `backup_path`, falling back to recreating the node on
-/// a different filesystem when the rename fails cross-device (`EXDEV`).
+/// Continues the backup ladder after the hard-link tier failed.
 ///
-/// upstream: `backup.c:226` `make_backup()` - once `link_or_rename()` cannot
-/// move the item across the mount (a `--backup-dir` on another filesystem),
-/// rsync makes a copy: `copy_file()` for regular files, or recreates the node
-/// via `do_symlink_at`/`do_mknod_at` for symlinks and specials
+/// upstream: `backup.c:236-237` `link_or_rename()` - `if (!S_ISREG(...))
+/// return 0`, so only a regular file reaches `do_rename_at`; symlinks and
+/// specials fall through to the copy tier in `make_backup_inner()`.
+#[cfg(unix)]
+fn after_failed_link(
+    existing: &Path,
+    backup_path: &Path,
+    is_regular: bool,
+) -> io::Result<BackupPlacement> {
+    if is_regular {
+        rename_or_copy_existing(existing, backup_path)
+    } else {
+        copy_existing_cross_device(existing, backup_path)
+    }
+}
+
+/// Windows has no copy tier for non-regular entries, so the rename is the
+/// only remaining tier.
+#[cfg(windows)]
+fn after_failed_link(
+    existing: &Path,
+    backup_path: &Path,
+    _is_regular: bool,
+) -> io::Result<BackupPlacement> {
+    rename_or_copy_existing(existing, backup_path)
+}
+
+// upstream: backup.c:443-449 `make_backup()` runs the whole ladder under
+// `operator_path_resolve = 1`, so every syscall below resolves the backup
+// path with the ownership walk: a foreign-owned symlink component (or, in a
+// non-chrooted daemon, a leaf outside the module) is refused with `ELOOP`.
+
+#[cfg(unix)]
+fn confined_hard_link(existing: &Path, backup_path: &Path) -> io::Result<()> {
+    fast_io::operator_link_confined(existing, backup_path)
+}
+
+#[cfg(windows)]
+fn confined_hard_link(existing: &Path, backup_path: &Path) -> io::Result<()> {
+    fast_io::hard_link(existing, backup_path)
+}
+
+#[cfg(unix)]
+fn confined_remove_backup(backup_path: &Path) -> io::Result<()> {
+    fast_io::operator_remove_file_confined(backup_path)
+}
+
+#[cfg(windows)]
+fn confined_remove_backup(backup_path: &Path) -> io::Result<()> {
+    fs::remove_file(backup_path)
+}
+
+#[cfg(unix)]
+fn confined_create_dir_all(path: &Path) -> io::Result<()> {
+    // upstream: util1.c make_path - backup parents are created 0700 & ~umask.
+    fast_io::operator_create_dir_all_confined(path, 0o700)
+}
+
+#[cfg(windows)]
+fn confined_create_dir_all(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)
+}
+
+/// Renames `existing` to `backup_path`, falling back to recreating the node
+/// when the rename fails.
+///
+/// upstream: `backup.c:311-312` `make_backup_inner()` - once
+/// `link_or_rename()` returns 0, for any errno, rsync makes a copy:
+/// `copy_file()` for regular files, or recreates the node via
+/// `do_symlink_at`/`do_mknod_at` for symlinks and specials
 /// (`backup.c:288-300`), then `keep_backup` unlinks the source.
 #[cfg(any(unix, windows))]
 fn rename_or_copy_existing(existing: &Path, backup_path: &Path) -> io::Result<BackupPlacement> {
-    match fs::rename(existing, backup_path) {
+    match rename_existing(existing, backup_path) {
         Ok(()) => Ok(BackupPlacement::Renamed),
         #[cfg(unix)]
-        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-            copy_existing_cross_device(existing, backup_path)
-        }
+        Err(_) => copy_existing_cross_device(existing, backup_path),
+        #[cfg(windows)]
         Err(e) => Err(e),
     }
 }
 
-/// Cross-device copy tier for a non-regular entry: recreates the symlink,
-/// FIFO, socket, or device node at `backup_path`, then unlinks the original.
+#[cfg(all(unix, not(test)))]
+fn rename_existing(existing: &Path, backup_path: &Path) -> io::Result<()> {
+    fast_io::operator_rename_confined(existing, backup_path, true)
+}
+
+#[cfg(windows)]
+fn rename_existing(existing: &Path, backup_path: &Path) -> io::Result<()> {
+    fs::rename(existing, backup_path)
+}
+
+// Test-only fault injection, mirroring `disk_commit::process::commit`'s
+// `ForceExdev`: the guard makes `rename_existing` fail with a chosen errno so
+// the copy-tier fallback is reachable without a real failing filesystem.
+#[cfg(all(unix, test))]
+thread_local! {
+    static FORCE_RENAME_ERRNO: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(all(unix, test))]
+fn rename_existing(existing: &Path, backup_path: &Path) -> io::Result<()> {
+    if let Some(errno) = FORCE_RENAME_ERRNO.with(std::cell::Cell::get) {
+        return Err(io::Error::from_raw_os_error(errno));
+    }
+    fast_io::operator_rename_confined(existing, backup_path, true)
+}
+
+/// Test-only RAII guard that forces [`rename_existing`] to fail with `errno`.
+#[cfg(all(unix, test))]
+pub(super) struct ForceRenameErrno;
+
+#[cfg(all(unix, test))]
+impl ForceRenameErrno {
+    pub(super) fn new(errno: i32) -> Self {
+        FORCE_RENAME_ERRNO.with(|c| c.set(Some(errno)));
+        Self
+    }
+}
+
+#[cfg(all(unix, test))]
+impl Drop for ForceRenameErrno {
+    fn drop(&mut self) {
+        FORCE_RENAME_ERRNO.with(|c| c.set(None));
+    }
+}
+
+/// Copy tier for a non-regular entry: recreates the symlink, FIFO, socket,
+/// or device node at `backup_path`, then unlinks the original.
 ///
 /// upstream: `backup.c:288-300` `make_backup()` copy tier - `do_mknod_at` for
-/// devices/specials (SYMLINK/DEVICE traces) and `do_symlink_at` for symlinks,
-/// used when neither hard-link nor rename can cross the filesystem boundary.
+/// devices/specials (SYMLINK/DEVICE traces) and `do_symlink_at` for symlinks.
+/// Each node is created through the ownership walk, so a swapped
+/// attacker-symlink parent is refused rather than written through.
 #[cfg(unix)]
 fn copy_existing_cross_device(existing: &Path, backup_path: &Path) -> io::Result<BackupPlacement> {
-    use std::os::unix::fs::FileTypeExt;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
     let meta = fs::symlink_metadata(existing)?;
     let file_type = meta.file_type();
     let placement = if file_type.is_symlink() {
         // upstream: backup.c:296-300 - do_symlink_at recreates the link target.
         let target = fs::read_link(existing)?;
-        std::os::unix::fs::symlink(&target, backup_path)?;
+        fast_io::operator_symlink_confined(&target, backup_path)?;
         BackupPlacement::CopiedSymlink
-    } else if file_type.is_fifo() || file_type.is_socket() {
-        // upstream: backup.c:288-291 - IS_SPECIAL -> do_mknod_at.
-        metadata::create_fifo(backup_path, &meta).map_err(io::Error::other)?;
-        BackupPlacement::CopiedNode
-    } else if file_type.is_block_device() || file_type.is_char_device() {
-        // upstream: backup.c:288-291 - IS_DEVICE -> do_mknod_at (needs root).
-        metadata::create_device_node(backup_path, &meta).map_err(io::Error::other)?;
+    } else if file_type.is_fifo()
+        || file_type.is_socket()
+        || file_type.is_block_device()
+        || file_type.is_char_device()
+    {
+        // upstream: backup.c:288-291 - IS_SPECIAL/IS_DEVICE -> do_mknod_at.
+        fast_io::operator_mknod_confined(backup_path, meta.mode(), meta.rdev(), false)?;
         BackupPlacement::CopiedNode
     } else {
         return Err(io::Error::new(
@@ -190,7 +301,7 @@ fn copy_existing_cross_device(existing: &Path, backup_path: &Path) -> io::Result
         ));
     };
     // upstream: keep_backup unlinks the source once the copy tier recreates it.
-    fs::remove_file(existing)?;
+    fast_io::operator_remove_file_confined(existing)?;
     Ok(placement)
 }
 
@@ -692,6 +803,133 @@ mod tests {
         );
     }
 
+    /// With a session confinement root installed (as a non-chrooted daemon has),
+    /// a backup whose parent is a symlink pointing OUTSIDE the root must be
+    /// refused (`ELOOP`) and must NOT write through to the outside target. This
+    /// is the parent-swap `--backup-dir` leak's write-through, measured directly:
+    /// before the confined ladder the hard-link/rename/symlink tiers used plain
+    /// path syscalls and followed the swapped parent out of the module.
+    ///
+    /// upstream: `backup.c:443-449` `make_backup()` under `operator_path_resolve`
+    /// -> `syscall.c:245-294` `abspath_outside_confinement()` returns the
+    /// resolved leaf as outside the root, so every tier fails `ELOOP`.
+    #[test]
+    fn confined_backup_refuses_parent_symlink_escaping_the_root() {
+        use fast_io::confinement::{install_local_session, LocalInsecureLinks};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("module");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(root.join("sub_real")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        // The attacker parent: `root/sub` is a symlink pointing outside the
+        // module root. It is owned by the test uid (= euid, "trusted" by the
+        // ownership walk), so only the confinement-root check can refuse it -
+        // exactly the non-chrooted daemon's situation.
+        std::os::unix::fs::symlink(&outside, root.join("sub")).unwrap();
+
+        let victim = root.join("sub_real").join("f0");
+        std::os::unix::fs::symlink("the/secret/target", &victim).unwrap();
+        let backup_path = root.join("sub").join("f0");
+
+        install_local_session(LocalInsecureLinks::default(), Some(root.clone()));
+        let result = place_existing_backup(
+            &victim,
+            &backup_path,
+            false,
+            &root,
+            None,
+            &::metadata::MetadataOptions::default(),
+        );
+        // Restore the process-global session before asserting.
+        install_local_session(LocalInsecureLinks::default(), None);
+
+        let err = match result {
+            Ok(_) => panic!("a parent symlink escaping the root must be refused, not followed"),
+            Err(e) => e,
+        };
+        assert_eq!(
+            err.raw_os_error(),
+            Some(libc::ELOOP),
+            "the escape must be refused with ELOOP, got {}",
+            err
+        );
+        // The load-bearing assertion: nothing was written through the swapped
+        // parent into the out-of-module directory.
+        assert!(
+            fs::read_dir(&outside).unwrap().next().is_none(),
+            "no backup may land outside the confinement root"
+        );
+    }
+
+    /// Control for the escape test: with NO confinement root (a plain local or
+    /// remote-shell receiver), a trusted-owned parent symlink is followed, so
+    /// the backup is recreated at its target - the pre-fix behaviour, preserved.
+    /// The ownership walk only refuses a FOREIGN-owned component, which this is
+    /// not, and with no root there is no location to be outside of.
+    #[test]
+    fn unconfined_backup_follows_a_trusted_parent_symlink() {
+        use fast_io::confinement::{install_local_session, LocalInsecureLinks};
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir_all(dest.join("sub_real")).unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, dest.join("sub")).unwrap();
+
+        let victim = dest.join("sub_real").join("f0");
+        std::os::unix::fs::symlink("target", &victim).unwrap();
+        let backup_path = dest.join("sub").join("f0");
+
+        install_local_session(LocalInsecureLinks::default(), None);
+        let placement = place_existing_backup(
+            &victim,
+            &backup_path,
+            false,
+            &dest,
+            None,
+            &::metadata::MetadataOptions::default(),
+        )
+        .expect("with no confinement root the trusted parent symlink is followed");
+        let _ = &placement;
+        assert_eq!(
+            fs::read_link(elsewhere.join("f0")).unwrap(),
+            Path::new("target"),
+            "the backup is recreated at the followed-through location, as before"
+        );
+    }
+
+    /// A non-EXDEV rename failure must still recreate the victim at the backup
+    /// name through the copy tier, not abort the backup.
+    ///
+    /// upstream: `backup.c:311-312` - `make_backup_inner()` falls back to the
+    /// copy tier whenever `link_or_rename()` returns 0, whatever the errno.
+    #[test]
+    fn non_exdev_rename_failure_recreates_symlink_via_copy_tier() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        let backup = dir.path().join("victim~");
+        std::os::unix::fs::symlink("the/secret/target", &victim).unwrap();
+        // ENOENT is a plain, non-cross-device failure: with an EXDEV-only
+        // guard this returns Err and no backup node is created.
+        let _force = super::ForceRenameErrno::new(libc::ENOENT);
+        let placement = super::rename_or_copy_existing(&victim, &backup)
+            .expect("a non-EXDEV rename failure must fall back to the copy tier");
+        assert!(
+            matches!(placement, BackupPlacement::CopiedSymlink),
+            "the copy tier must recreate the victim as a symlink"
+        );
+        assert_eq!(
+            fs::read_link(&backup).unwrap(),
+            Path::new("the/secret/target"),
+            "the recreated backup symlink must carry the victim's target"
+        );
+        assert!(
+            fs::symlink_metadata(&victim).is_err(),
+            "the copy tier must unlink the original once the backup is recreated"
+        );
+    }
     /// An existing FIFO must survive in the backup location as a FIFO.
     #[test]
     fn existing_fifo_preserved_in_backup() {
