@@ -69,7 +69,7 @@ fn receiver(existing_only: bool, ignore_existing: bool, files: Vec<FileEntry>) -
     config.file_selection.existing_only = existing_only;
     config.file_selection.ignore_existing = ignore_existing;
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
-    ctx.file_list = files;
+    ctx.file_list = files.into();
     ctx
 }
 

@@ -2150,6 +2150,7 @@ mod touch_up_dirs_tests {
         ctx.create_directory_incremental(
             dir.path(),
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut crate::receiver::directory::FailedDirectories::new(),
             None,
