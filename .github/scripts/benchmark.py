@@ -59,7 +59,7 @@ def _version_output(binary, *args):
 def binary_version(binary):
     """Return the `x.y.z` release number reported by an upstream rsync build.
 
-    Upstream's banner is `rsync  version 3.5.0  protocol version 32`, so the
+    Upstream's banner is `rsync  version 3.5.1  protocol version 33`, so the
     first release-shaped number in it is the release. This is deliberately
     *not* used for oc-rsync: see `oc_rsync_versions` for why that binary needs
     its own parser.
@@ -152,7 +152,7 @@ if not BASELINES:
     sys.exit(
         "UPSTREAM_RSYNC is not set: name the upstream rsync binaries to "
         "compare against as a comma-separated list, e.g. "
-        "'3.5.0=target/interop/upstream-src/rsync-3.5.0/rsync,"
+        "'3.5.1=target/interop/upstream-src/rsync-3.5.1/rsync,"
         "3.4.4=target/interop/upstream-src/rsync-3.4.4/rsync'. "
         "The caller that builds those binaries owns the versions, so this "
         "script does not name one."
@@ -640,7 +640,7 @@ def compare(
 
     `oc_per_baseline` says whether oc-rsync has to be re-timed for each
     baseline. It must be true wherever the baseline is the *peer* -- an SSH
-    server or an rsync daemon -- because comparing oc-against-3.5.0 with
+    server or an rsync daemon -- because comparing oc-against-3.5.1 with
     upstream-3.4.4-against-3.4.4 would credit or blame the client for a
     difference in the server. Where the baseline is only the other contestant
     in a local copy, oc-rsync is timed once and shared.
@@ -863,7 +863,7 @@ def main():
         # `--rsync-path` pins the remote end of an SSH cell to the same
         # release as the local end. Without it the remote server is whatever
         # `rsync` the login PATH resolves, so a 3.4.4 client would be timed
-        # against a 3.5.0 server and the row would name a version it did not
+        # against a 3.5.1 server and the row would name a version it did not
         # measure. oc-rsync takes the same option, so its SSH cells are timed
         # against each baseline's server too and the comparison isolates the
         # client.
