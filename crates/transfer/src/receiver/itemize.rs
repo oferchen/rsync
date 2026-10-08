@@ -3,6 +3,8 @@
 //! Routes already-formatted info lines (itemize, skip notices) to the correct
 //! sink and renders per-entry itemize output.
 
+use protocol::flist::FileEntry;
+
 use super::ReceiverContext;
 
 impl ReceiverContext {
@@ -1034,9 +1036,130 @@ impl ReceiverContext {
         {
             return;
         }
+        if self.defer_dir_row(flist_idx, u32::from(wire)) {
+            return;
+        }
         self.server_no_transfer_itemize
             .borrow_mut()
             .push((flist_idx, wire));
+    }
+
+    /// Whether this receiver holds directory rows back for their own sub-list:
+    /// a server receiver (its rows are wire records the client's sender prints)
+    /// under INC_RECURSE.
+    fn defers_dir_rows(&self) -> bool {
+        !self.config.connection.client_mode
+            && self
+                .compat_flags
+                .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE))
+    }
+
+    /// Holds the row of the directory at `flist_idx` until its sub-list is
+    /// walked. Returns `false`, leaving the row to the caller, for anything
+    /// that is not a deferred directory.
+    ///
+    /// upstream: generator.c:1631-1633 / 1819-1834 - a directory is not
+    /// itemized inside its parent's list under INC_RECURSE.
+    pub(in crate::receiver) fn defer_dir_row(&self, flist_idx: usize, iflags: u32) -> bool {
+        if !self.defers_dir_rows() {
+            return false;
+        }
+        let Some(entry) = self.file_list.get(flist_idx).filter(|e| e.is_dir()) else {
+            return false;
+        };
+        let name = super::file_list::strip_leading_slashes(entry.path()).to_path_buf();
+        self.deferred_dir_rows
+            .borrow_mut()
+            .insert(name, (flist_idx, iflags, entry.clone()));
+        true
+    }
+
+    /// The directory that segment `segment_idx` expands, if it has one.
+    fn segment_head_name(&self, segment_idx: usize) -> Option<std::path::PathBuf> {
+        use super::file_list::DirSlot;
+        let dir_ndx = (*self.segment_parent_dir_ndx.get(segment_idx)?)?;
+        match self.dir_flist.resolve(dir_ndx)? {
+            DirSlot::Active { name, .. } => {
+                Some(super::file_list::strip_leading_slashes(name).to_path_buf())
+            }
+            DirSlot::Cleared => None,
+        }
+    }
+
+    /// Whether segment `segment_idx` still has its directory's row to send.
+    pub(in crate::receiver) fn segment_has_deferred_head(&self, segment_idx: usize) -> bool {
+        self.segment_head_name(segment_idx)
+            .is_some_and(|name| self.deferred_dir_rows.borrow().contains_key(&name))
+    }
+
+    /// Releases the held row of the directory that segment `segment_idx`
+    /// expands, as `(flist index, iflags)`, and records that it goes out ahead
+    /// of the segment on the segment's gap NDX.
+    ///
+    /// upstream: generator.c:2780-2787 - `ndx = cur_flist->ndx_start - 1;
+    /// recv_generator(fbuf, fp, ndx, ...)` before the sub-list's own entries.
+    pub(in crate::receiver) fn release_segment_head_row(
+        &self,
+        segment_idx: usize,
+    ) -> Option<(usize, u32)> {
+        let name = self.segment_head_name(segment_idx)?;
+        let (flist_idx, iflags, entry) = self.deferred_dir_rows.borrow_mut().remove(&name)?;
+        let (flat_start, ndx_start) = self.ndx_segments[segment_idx];
+        self.released_dir_heads
+            .borrow_mut()
+            .insert(flist_idx, (flat_start, ndx_start - 1, entry));
+        Some((flist_idx, iflags))
+    }
+
+    /// The entry an itemize row at `flist_idx` describes: the held copy for a
+    /// released sub-list head, whose own segment may already be released.
+    pub(in crate::receiver) fn itemize_row_entry(&self, flist_idx: usize) -> FileEntry {
+        self.released_dir_heads
+            .borrow()
+            .get(&flist_idx)
+            .map_or_else(
+                || self.file_list[flist_idx].clone(),
+                |(_, _, entry)| entry.clone(),
+            )
+    }
+
+    /// Wire NDX of an itemize row: the gap NDX for a released sub-list head,
+    /// the entry's own NDX otherwise.
+    pub(in crate::receiver) fn itemize_wire_ndx(&self, flist_idx: usize) -> i32 {
+        self.released_dir_heads
+            .borrow()
+            .get(&flist_idx)
+            .map_or_else(|| self.flat_to_wire_ndx(flist_idx), |&(_, gap, _)| gap)
+    }
+
+    /// Position of an itemize row in generator walk order: a released sub-list
+    /// head sorts just before its sub-list's first entry, everything else at
+    /// its own flist index.
+    pub(in crate::receiver) fn itemize_walk_key(&self, flist_idx: usize) -> (usize, bool) {
+        self.released_dir_heads
+            .borrow()
+            .get(&flist_idx)
+            .map_or((flist_idx, true), |&(start, _, _)| (start, false))
+    }
+
+    /// Puts a server receiver's dry-run plan for `segments` into generator walk
+    /// order: each directory row is held for its own sub-list and every
+    /// sub-list head of `segments` is released ahead of that sub-list.
+    pub(in crate::receiver) fn order_plan_for_walk(
+        &self,
+        plan: Vec<(usize, u32)>,
+        segments: std::ops::Range<usize>,
+    ) -> Vec<(usize, u32)> {
+        if !self.defers_dir_rows() {
+            return plan;
+        }
+        let mut ordered: Vec<_> = plan
+            .into_iter()
+            .filter(|&(idx, iflags)| !self.defer_dir_row(idx, iflags))
+            .collect();
+        ordered.extend(segments.filter_map(|k| self.release_segment_head_row(k)));
+        ordered.sort_by_key(|&(idx, _)| self.itemize_walk_key(idx));
+        ordered
     }
 
     /// Emits an itemize row immediately, or buffers it for the deferred

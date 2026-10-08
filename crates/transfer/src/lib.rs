@@ -136,7 +136,6 @@ mod reader;
 pub mod receiver;
 pub mod role;
 pub(crate) mod role_trailer;
-mod server_recv_inc_recurse;
 /// Re-export of the shared traversal clamp, which now lives in `filters`
 /// alongside `clean_fname` so the CLI and the daemon can reach the same rule.
 /// Kept as a path here because this crate's own call sites (and the daemon's)
@@ -565,102 +564,6 @@ fn requires_multiplex_output(
     }
 }
 
-/// Decides whether the local side may advertise INC_RECURSE in its compat
-/// flags response. Mirrors upstream `compat.c:161-179 set_allow_inc_recurse`
-/// with one local restriction upstream does not have: the receiver role never
-/// advertises INC_RECURSE.
-///
-/// That restriction is load-bearing, and the reason is measured rather than
-/// argued. Dropping the role term deadlocks the upstream 3.5.0 testsuite
-/// `hardlinks` cell - an `-aHivv --debug=HLINK5` push over `support/lsh.sh` -
-/// with both peers blocked on I/O at 0% CPU. Bisecting the source tree by
-/// entry count puts the boundary at exactly upstream's `MIN_FILECNT_LOOKAHEAD`
-/// of 1000:
-///
-/// | entries | role term kept | role term dropped |
-/// |---------|----------------|-------------------|
-/// |     400 | pass           | pass              |
-/// |     961 | pass           | pass              |
-/// |    1024 | pass           | deadlock          |
-/// |    1296 | pass           | deadlock          |
-///
-/// So oc-rsync's receiver cannot keep up with an upstream-shaped sender that
-/// paces sub-lists on that window. In particular `receive_extra_file_lists` is
-/// *not* the culprit: every one of its call sites is inside a `#[cfg(test)]`
-/// module, so it is unreachable on the live path and cannot drain anything in
-/// production.
-///
-/// The two blocking sites ARE now attributed, by reading both ends:
-///
-/// - Receiver: `ReceiverContext::ensure_all_segments_loaded` loops
-///   `while !self.flist_eof`, and both live drivers call it UP FRONT - before
-///   a single NDX request is written - so the batched candidate build below it
-///   sees a complete `file_list`
-///   (`receiver/transfer/pipelined.rs:76`, `pipelined_incremental.rs:73`).
-/// - Sender: `next_to_send` returns `None` once the backlog reaches
-///   `MIN_FILECNT_LOOKAHEAD` (`generator/segments.rs:174-177`), and
-///   `send_flist_eof_if_exhausted` emits `NDX_FLIST_EOF` only once the
-///   scheduler is exhausted (`generator/transfer/transfer_loop.rs:318-327`).
-///
-/// Above 1000 entries the scheduler therefore never exhausts, `NDX_FLIST_EOF`
-/// is never written, the receiver's `flist_eof` is never set, and its up-front
-/// drain cannot terminate. Both peers park on a read.
-///
-/// ⚠ That names the blocking sites; it does NOT say what makes the throttle
-/// safe. Removing this restriction is the INC_RECURSE-on-pull work: it needs an
-/// index-driven transfer walk over a growing list rather than the up-front
-/// drain. Neither is a one-line change, and sufficiency is not settled by
-/// reading source - re-run the A/B above.
-///
-/// # The backlog release is NOT missing on the sender - measured
-///
-/// An earlier revision of this block also required "whatever releases the
-/// sender's backlog per consumed sub-list". Against an upstream peer that half
-/// already works, so do not build it again.
-///
-/// MEASURED 2026-09-07 (upstream rsync 3.4.4 protocol 32 as the peer, oc as the
-/// remote server-sender, INC_RECURSE confirmed negotiated by upstream's
-/// `receiving flist for dir N` debug line): a 50000-entry tree carried entirely
-/// in sub-lists - five times `MAX_FILECNT_LOOKAHEAD` - completes in 4s on an
-/// unpatched sender. `SegmentScheduler::retire_current_flist` releases the
-/// window on the peer's per-sub-list `NDX_DONE`, which upstream's generator
-/// emits from `check_for_finished_files` (`generator.c:2698`) inside its
-/// per-file loop (`generator.c:2820`).
-///
-/// A port of `rsync.c:394-402` into oc's sender was built, mutation-proved and
-/// then reverted: it would double-release against the path above, fixing
-/// nothing measurable while weakening a working throttle. What oc lacks is the
-/// RECEIVER half - it emits its per-segment `NDX_DONE`s only after the walk, in
-/// `exchange_phase_done` - so an oc receiver opposite an *oc* sender has
-/// neither release even though the upstream-peer case is covered.
-///
-/// # Delete passes under INC_RECURSE
-///
-/// A whole-list delete pass builds its keep-set from the full `file_list`, so
-/// it is only sound once every list has arrived and none was reclaimed
-/// (`ReceiverContext::delete_pass_flist_complete`); a sweep over an incomplete
-/// list fails the transfer instead of unlinking. The streaming INC_RECURSE
-/// driver never sweeps the whole list: it deletes in each segment's parent as
-/// that segment is walked (`ReceiverContext::delete_in_segment`), the way
-/// upstream's `delete_in_dir()` runs per sub-list (generator.c:2780-2798).
-///
-/// Order: completeness predicate (done - see above), then per-segment
-/// `NDX_DONE` during the walk, then the drain conversion, then re-run the A/B.
-/// Not a flag flip.
-///
-/// upstream: compat.c:161-179 set_allow_inc_recurse,
-/// rsync.h:151-152 (`MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`),
-/// sender.c:516,550 (send loop tops the window up to the minimum).
-///
-/// The test-only `OC_RSYNC_TEST_SERVER_RECV_INC_RECURSE` switch lifts the
-/// role restriction so the server receiver's incremental path can be driven
-/// end to end before this gate opens (see `server_recv_inc_recurse`).
-pub(crate) fn compute_allow_inc_recurse(config: &ServerConfig) -> bool {
-    config.allows_inc_recurse()
-        && (config.role == ServerRole::Generator
-            || server_recv_inc_recurse::server_recv_inc_recurse_enabled())
-}
-
 /// Builds the sender-side bandwidth limiter for this server transfer.
 ///
 /// Returns `Some` only when the local role is the sender
@@ -942,9 +845,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             )
         })?;
 
-    // Compute allow_inc_recurse matching upstream compat.c:161-179 with the
-    // receiver-side restriction documented on `compute_allow_inc_recurse`.
-    let allow_inc_recurse = compute_allow_inc_recurse(&config);
+    // upstream: compat.c:161-179 set_allow_inc_recurse() - the server grants
+    // INC_RECURSE in either direction, gated only on the transfer options.
+    let allow_inc_recurse = config.allows_inc_recurse();
 
     // In SSH server mode (client_args is None), pass the compact flag string
     // so setup_protocol can extract the `-e.xxx` capability string from it.

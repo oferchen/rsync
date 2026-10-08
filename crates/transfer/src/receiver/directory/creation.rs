@@ -983,7 +983,10 @@ impl ReceiverContext {
         // (ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}) so a differing root `.` mtime
         // emits `.d..t......`. For an existing dir the stat must be read now,
         // before apply_metadata_with_pre_transfer_stat below overwrites the mtime.
-        let iflags: u32 = if is_new {
+        // upstream: generator.c:1853-1854 - the destination root the receiver
+        // pre-flight-mkdir'd carries FLAG_DIR_CREATED, so it itemizes as new.
+        let created_root = self.dest_root_created && relative_path.as_os_str() == ".";
+        let iflags: u32 = if is_new || created_root {
             crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
                 | crate::generator::ItemFlags::ITEM_IS_NEW
         } else {

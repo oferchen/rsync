@@ -392,33 +392,11 @@ fn run_rsh_push(client: &Path, server: &Path, flags: &str, workdir: &Path) -> St
     run_merged_args(client, &args, workdir)
 }
 
-/// Swaps the incremental banner for the one a push into an oc server prints.
-///
-/// oc's server receiver does not grant CF_INC_RECURSE
-/// (`compute_allow_inc_recurse` requires the sender role), so the pushing
-/// client takes `send_file_list()`'s `show_filelist_progress` arm
-/// (flist.c:2761-2762) - as an upstream client pushing into oc does. `-P`
-/// raises FLIST to 2 (options.c:2514), so the banner ends with the hundredth-
-/// entry tick and the entry count (flist.c:184-208) instead of `done`.
-fn with_push_banner(mut lines: Vec<String>) -> Vec<String> {
-    assert_eq!(
-        lines.first().map(String::as_str),
-        Some("sending incremental file list")
-    );
-    lines.splice(
-        0..1,
-        [
-            "building file list ... ".to_owned(),
-            " 0 files...\r10 files to consider".to_owned(),
-        ],
-    );
-    lines
-}
 /// upstream's `-avP` push output for the fixture: the receiver names the
 /// destination root as the client passed it.
 fn rsh_push_sequence(workdir: &Path) -> Vec<String> {
     let created = format!("created directory {}/qqq", workdir.display());
-    with_push_banner(upstream_sequence(true))
+    upstream_sequence(true)
         .into_iter()
         .map(|line| {
             if line == "created directory qqq" {
@@ -460,7 +438,7 @@ fn rsh_push_progress_sequence() -> Vec<String> {
         trailer: false,
     });
     lines.retain(|line| line != "created directory qqq");
-    with_push_banner(lines)
+    lines
 }
 
 #[test]
@@ -522,7 +500,7 @@ fn daemon_push_names_each_entry_once_with_directory_lines() {
     let output = run_merged_args(&binary, &["-avP", "zzz/", &dest], temp.path());
     assert_eq!(
         normalize(&output),
-        with_push_banner(upstream_sequence(true)),
+        upstream_sequence(true),
         "raw output:\n{output}"
     );
 }
