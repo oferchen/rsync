@@ -2,8 +2,6 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use tempfile::{NamedTempFile, TempDir};
-
 use crate::FilterAction;
 
 use super::parse::{
@@ -218,7 +216,7 @@ fn parse_error_unrecognized() {
 
 #[test]
 fn read_rules_from_file() {
-    let mut file = NamedTempFile::new().unwrap();
+    let mut file = test_support::create_named_tempfile();
     writeln!(file, "# My rules").unwrap();
     writeln!(file, "+ *.txt").unwrap();
     writeln!(file, "- *.bak").unwrap();
@@ -235,7 +233,7 @@ fn read_rules_file_not_found() {
 
 #[test]
 fn read_rules_recursive_simple() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, "+ *.txt\n- *.bak\n").unwrap();
@@ -246,7 +244,7 @@ fn read_rules_recursive_simple() {
 
 #[test]
 fn read_rules_recursive_with_merge() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let nested_path = dir.path().join("nested.rules");
     fs::write(&nested_path, "- *.tmp\n").unwrap();
@@ -267,7 +265,7 @@ fn read_rules_recursive_with_merge() {
 
 #[test]
 fn read_rules_recursive_depth_limit() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let rules_path = dir.path().join("loop.rules");
     fs::write(&rules_path, format!(". {}\n", rules_path.display())).unwrap();
@@ -279,7 +277,7 @@ fn read_rules_recursive_depth_limit() {
 
 #[test]
 fn read_rules_recursive_preserves_dir_merge() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, ": .rsync-filter\n+ *.txt\n").unwrap();
@@ -711,7 +709,7 @@ fn parse_negate_modifier_on_merge_errors() {
 
 #[test]
 fn read_rules_recursive_depth_zero_no_merge() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, "+ *.txt\n- *.bak\n").unwrap();
 
@@ -721,7 +719,7 @@ fn read_rules_recursive_depth_zero_no_merge() {
 
 #[test]
 fn read_rules_recursive_depth_zero_with_merge_fails() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let nested_path = dir.path().join("nested.rules");
     fs::write(&nested_path, "- *.tmp\n").unwrap();
@@ -738,7 +736,7 @@ fn read_rules_recursive_depth_zero_with_merge_fails() {
 
 #[test]
 fn read_rules_recursive_depth_one_single_merge() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let nested_path = dir.path().join("nested.rules");
     fs::write(&nested_path, "- *.tmp\n").unwrap();
@@ -758,7 +756,7 @@ fn read_rules_recursive_depth_one_single_merge() {
 
 #[test]
 fn read_rules_recursive_depth_one_two_levels_fails() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let deep_path = dir.path().join("deep.rules");
     fs::write(&deep_path, "- *.deep\n").unwrap();
@@ -777,7 +775,7 @@ fn read_rules_recursive_depth_one_two_levels_fails() {
 
 #[test]
 fn read_rules_recursive_exact_depth_succeeds() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let level3_path = dir.path().join("level3.rules");
     fs::write(&level3_path, "- *.level3\n").unwrap();
@@ -816,7 +814,7 @@ fn read_rules_recursive_exact_depth_succeeds() {
 
 #[test]
 fn read_rules_recursive_error_includes_path() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let self_ref_path = dir.path().join("selfref.rules");
     fs::write(&self_ref_path, format!(". {}\n", self_ref_path.display())).unwrap();
@@ -829,7 +827,7 @@ fn read_rules_recursive_error_includes_path() {
 
 #[test]
 fn read_rules_recursive_multiple_merges_same_level() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let file_a = dir.path().join("a.rules");
     fs::write(&file_a, "- *.a\n").unwrap();
@@ -852,7 +850,7 @@ fn read_rules_recursive_multiple_merges_same_level() {
 
 #[test]
 fn read_rules_recursive_diamond_pattern() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let file_d = dir.path().join("d.rules");
     fs::write(&file_d, "- *.d\n").unwrap();
@@ -876,7 +874,7 @@ fn read_rules_recursive_diamond_pattern() {
 
 #[test]
 fn read_rules_recursive_relative_path_merge() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let nested_path = dir.path().join("nested.rules");
     fs::write(&nested_path, "- *.nested\n").unwrap();
@@ -891,7 +889,7 @@ fn read_rules_recursive_relative_path_merge() {
 
 #[test]
 fn read_rules_recursive_mixed_with_dir_merge() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, ": .rsync-filter\n+ *.txt\n").unwrap();

@@ -363,7 +363,6 @@ fn anchored_wildcard_exclude_allows_included_directory_contents() {
 mod clear_scope_tests {
     use super::*;
     use std::fs;
-    use tempfile::TempDir;
 
     /// `!` inline in CLI-level arguments clears all CLI rules added before
     /// it, mirroring upstream's top-level `FILTRULE_CLEAR_LIST` handling on
@@ -390,7 +389,7 @@ mod clear_scope_tests {
     /// loaded from that file. Parent-scope CLI rules survive.
     #[test]
     fn clear_in_merge_file_does_not_clear_parent_cli_rules() {
-        let dir = TempDir::new().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let merge_path = dir.path().join("rules.merge");
         fs::write(&merge_path, "!\n+ /b\n").expect("write merge file");
 
@@ -413,7 +412,7 @@ mod clear_scope_tests {
     /// reference) and CLI parent rules both survive.
     #[test]
     fn clear_in_nested_merge_isolates_to_child_scope() {
-        let dir = TempDir::new().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let outer = dir.path().join("outer.merge");
         let inner = dir.path().join("inner.merge");
         fs::write(&inner, "!\n+ /from_inner\n").expect("write inner");
@@ -447,7 +446,7 @@ mod clear_scope_tests {
     /// when `!` truncates the local section of the rule list.
     #[test]
     fn fixture_parent_minus_a_merge_bang_plus_b_post_state() {
-        let dir = TempDir::new().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let merge_path = dir.path().join("filters");
         fs::write(&merge_path, "!\n+ /b\n").expect("write merge");
 
@@ -478,7 +477,7 @@ mod clear_scope_tests {
     /// side continue to apply.
     #[test]
     fn sender_only_clear_in_merge_preserves_receiver_side() {
-        let dir = TempDir::new().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let merge_path = dir.path().join("filters");
         fs::write(&merge_path, "+ /keep_both\n").expect("write merge");
 
