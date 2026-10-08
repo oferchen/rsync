@@ -44,12 +44,17 @@ pub const UNSUPPORTED_EXIT_CODE: i32 = ExitCode::Unsupported.as_i32();
 pub struct ClientError {
     exit_code: ExitCode,
     message: Message,
+    program_line: Option<String>,
 }
 
 impl ClientError {
     /// Creates a new [`ClientError`] from the supplied exit code and message.
     pub(crate) const fn with_code(exit_code: ExitCode, message: Message) -> Self {
-        Self { exit_code, message }
+        Self {
+            exit_code,
+            message,
+            program_line: None,
+        }
     }
 
     /// Creates a new [`ClientError`] from an i32 exit code and message.
@@ -79,6 +84,13 @@ impl ClientError {
     /// Returns the formatted diagnostic message that should be emitted.
     pub const fn message(&self) -> &Message {
         &self.message
+    }
+
+    /// Returns the line upstream prints as `RSYNC_NAME ": <text>"` before the
+    /// exit trailer, if this failure has one. The caller prefixes the program
+    /// name so the line carries the same brand as the trailer.
+    pub fn program_line(&self) -> Option<&str> {
+        self.program_line.as_deref()
     }
 }
 
@@ -470,28 +482,32 @@ pub(crate) fn connection_timed_out_error() -> ClientError {
     ClientError::with_code(code, message)
 }
 
-/// Builds the canonical "connection unexpectedly closed" diagnostic that
-/// upstream rsync emits when the protocol stream reaches EOF mid-transfer.
-///
-/// The wording mirrors `whine_about_eof()` in upstream `io.c`:
+/// Reports the peer closing the protocol stream early, as upstream's two lines:
 ///
 /// ```text
 /// rsync: connection unexpectedly closed (<N> bytes received so far) [<role>]
+/// rsync error: <rerr_name> (code <exit_code>) at ... [<role>=<version>]
 /// ```
 ///
-/// The diagnostic carries `RERR_STREAMIO` (exit code 12), matching upstream's
-/// `exit_cleanup(RERR_STREAMIO)` call at the end of the routine.
+/// The first line is [`ClientError::program_line`]; the error's message is the
+/// trailer. `exit_code` is `RERR_STREAMIO` unless a remote-shell child exited
+/// with a worse status, which then names the trailer while the whine stays.
 ///
-/// # Upstream Reference
-///
-/// - `io.c:246-250` (rsync 3.4.1) - `whine_about_eof()` prints this line and
-///   exits with `RERR_STREAMIO`.
+/// upstream: io.c:298-303 whine_about_eof() prints the first line, then
+/// `exit_cleanup(RERR_STREAMIO)` takes the worse child status (cleanup.c:150-152)
+/// and log_exit() prints the second (log.c:937-963).
 #[cold]
-pub fn connection_unexpectedly_closed_error(bytes_received: u64, role: Role) -> ClientError {
-    let code = ExitCode::StreamIo;
-    let text = format!("connection unexpectedly closed ({bytes_received} bytes received so far)");
-    let message = rsync_error!(code.as_i32(), text).with_role(role);
-    ClientError::with_code(code, message)
+pub fn connection_unexpectedly_closed_error(
+    bytes_received: u64,
+    exit_code: ExitCode,
+    role: Role,
+) -> ClientError {
+    let mut error = remote_exit_error(exit_code, role);
+    error.program_line = Some(format!(
+        "connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
+        role.as_str()
+    ));
+    error
 }
 
 /// Creates a daemon error from an i32 exit code.
@@ -978,53 +994,53 @@ mod tests {
             assert!(msg.contains("failed to connect to localhost:873"));
         }
 
-        /// Pins the canonical upstream wording from `io.c:246-250`
-        /// (`whine_about_eof()`). Backup and monitoring tools grep for the
-        /// "connection unexpectedly closed (N bytes received so far) [role]"
-        /// substring, so the rendered diagnostic must contain it verbatim.
+        /// The whine and the exit trailer are two lines: the whine names the
+        /// bytes received and the role, the trailer only the exit code's name.
+        /// Backup and monitoring tools grep for the whine verbatim.
         ///
-        /// upstream: io.c:246-250 (rsync 3.4.1):
-        ///   rprintf(FERROR, RSYNC_NAME ": connection unexpectedly closed "
-        ///       "(%s bytes received so far) [%s]\n",
-        ///       big_num(stats.total_read), who_am_i());
-        ///   exit_cleanup(RERR_STREAMIO);
+        /// upstream: io.c:298-303 whine_about_eof(), log.c:937-963 log_exit().
         #[test]
-        fn connection_unexpectedly_closed_matches_upstream_wording() {
-            let error = connection_unexpectedly_closed_error(1024, Role::Receiver);
-
-            assert_eq!(error.exit_code(), ExitCode::StreamIo.as_i32());
+        fn connection_unexpectedly_closed_splits_whine_from_trailer() {
+            let error =
+                connection_unexpectedly_closed_error(1024, ExitCode::StreamIo, Role::Sender);
             assert_eq!(error.code(), ExitCode::StreamIo);
-
-            let rendered = error.to_string();
-            assert!(
-                rendered.contains("connection unexpectedly closed (1024 bytes received so far)"),
-                "missing upstream wording: {rendered}"
+            assert_eq!(
+                error.program_line(),
+                Some("connection unexpectedly closed (1024 bytes received so far) [sender]")
             );
+            let trailer = error.to_string();
             assert!(
-                rendered.contains("[receiver="),
-                "missing role trailer: {rendered}"
+                trailer.contains("error in rsync protocol data stream (code 12)"),
+                "{trailer}"
             );
+            assert!(trailer.contains("[sender="), "{trailer}");
+            assert!(!trailer.contains("unexpectedly closed"), "{trailer}");
         }
-
+        /// A worse remote-shell status names the trailer; the whine is
+        /// printed regardless (cleanup.c:150-152 picks the code after it).
         #[test]
-        fn connection_unexpectedly_closed_zero_bytes_includes_count() {
-            let error = connection_unexpectedly_closed_error(0, Role::Generator);
-            let rendered = error.to_string();
-            assert!(
-                rendered.contains("connection unexpectedly closed (0 bytes received so far)"),
-                "missing zero-byte wording: {rendered}"
+        fn connection_unexpectedly_closed_keeps_whine_under_a_worse_code() {
+            let error =
+                connection_unexpectedly_closed_error(0, ExitCode::CommandNotFound, Role::Receiver);
+            assert_eq!(error.exit_code(), 127);
+            assert_eq!(
+                error.program_line(),
+                Some("connection unexpectedly closed (0 bytes received so far) [receiver]")
             );
-            assert!(rendered.contains("[generator="));
+            assert!(
+                error
+                    .to_string()
+                    .contains("remote command not found (code 127)"),
+                "{error}"
+            );
         }
-
         #[test]
-        fn connection_unexpectedly_closed_supports_sender_role() {
-            let error = connection_unexpectedly_closed_error(42, Role::Sender);
-            let rendered = error.to_string();
-            assert!(rendered.contains("(42 bytes received so far)"));
-            assert!(rendered.contains("[sender="));
+        fn other_errors_have_no_program_line() {
+            assert_eq!(
+                remote_exit_error(ExitCode::StreamIo, Role::Sender).program_line(),
+                None
+            );
         }
-
         /// A raw remote/child exit (`ExitCode::Other`) must render upstream's
         /// canonical `log_exit()` line: the rerr_name fallback "unexplained
         /// error" plus the raw `(code N)` suffix, tagged with the local process
