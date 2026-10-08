@@ -57,9 +57,7 @@ pub(crate) fn pin_destination(path: &Path, confine_root: Option<&Path>) -> DestP
         // upstream: rsync.c:597 - `if (held_fd < 0 && strchr(fname, '/'))
         // xattr_refuse = 1;`. A single-component name has no parent to flip,
         // so the path-based call is still safe there.
-        Err(_) if relative.parent().is_some_and(|p| !p.as_os_str().is_empty()) => {
-            DestPin::Refused
-        }
+        Err(_) if relative.parent().is_some_and(|p| !p.as_os_str().is_empty()) => DestPin::Refused,
         Err(_) => DestPin::Path,
     }
 }

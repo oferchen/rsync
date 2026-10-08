@@ -20,8 +20,8 @@
 //! - `xattrs.c:rsync_xal_set()` - apply received xattrs on the receiver.
 //! - `xattrs.c:64-68, 254-257` - permitted-namespace policy on Linux.
 
-use crate::error::MetadataError;
 use crate::dest_pin::{DestPin, pin_destination};
+use crate::error::MetadataError;
 use crate::xattr_send::XattrSendOptions;
 use crate::xattr_send::XattrSyncFilters;
 use protocol::xattr::XattrList;
@@ -2407,6 +2407,10 @@ mod tests {
     /// A path-based `lsetxattr` follows parent symlinks (it declines only the
     /// leaf), so this is exactly the redirect upstream's held-fd model
     /// closes. upstream: rsync.c:573-599 + xattrs.c:386-390.
+    ///
+    /// CVE-2026-53799 function guard: this pins the confined arm of
+    /// `apply_xattrs_from_list`. It does not drive the receiver, so it
+    /// cannot show that the receiver passes a root.
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn a_flipped_parent_does_not_carry_the_attribute_outside_the_confine_root() {
