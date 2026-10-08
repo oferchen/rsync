@@ -23,20 +23,9 @@ use tempfile::tempdir;
 
 use super::DirSandbox;
 
-/// `tempdir()` may return a path under a symlinked prefix (macOS
-/// `/tmp -> /private/tmp`, some CI runners stage `/tmp` through a
-/// symlink). `secure_open_dir` refuses such paths under
-/// `RESOLVE_NO_SYMLINKS`, so every test that opens a tempdir as the
-/// sandbox root first canonicalises.
-fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize tempdir");
-    (dir, canon)
-}
-
 #[test]
 fn open_root_yields_live_fd() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("open root");
     assert!(sandbox.current_dirfd().as_raw_fd() >= 0);
     assert_eq!(sandbox.depth(), 0);
@@ -44,7 +33,7 @@ fn open_root_yields_live_fd() {
 
 #[test]
 fn open_root_rejects_symlink_root() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let target = root.join("real");
     std::fs::create_dir(&target).expect("create real dir");
     let link = root.join("link");
@@ -63,7 +52,7 @@ fn open_root_rejects_symlink_root() {
 
 #[test]
 fn enter_and_exit_balance_the_stack() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("a")).expect("mkdir a");
     std::fs::create_dir(root.join("a/b")).expect("mkdir a/b");
 
@@ -100,7 +89,7 @@ fn enter_and_exit_balance_the_stack() {
 
 #[test]
 fn exit_on_empty_stack_is_noop() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
     sandbox.exit();
     sandbox.exit();
@@ -134,7 +123,7 @@ fn exit_on_empty_stack_is_noop() {
 /// and not a test fix.
 #[test]
 fn enter_follows_in_tree_symlink_child_where_the_kernel_can() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("real")).expect("create real dir");
     symlink("real", root.join("link")).expect("relative in-tree symlink");
 
@@ -164,7 +153,7 @@ fn enter_follows_in_tree_symlink_child_where_the_kernel_can() {
 /// mere presence of a symlink.
 #[test]
 fn enter_refuses_relative_symlink_that_escapes() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     symlink("../outside", root.join("esc")).expect("relative escaping symlink");
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
@@ -184,7 +173,7 @@ fn enter_refuses_relative_symlink_that_escapes() {
 
 #[test]
 fn enter_rejects_missing_child() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
     let err = sandbox
         .enter(std::ffi::OsStr::new("does-not-exist"))
@@ -195,7 +184,7 @@ fn enter_rejects_missing_child() {
 
 #[test]
 fn enter_rejects_file_child() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("file"), b"x").expect("write file");
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
     let err = sandbox
@@ -207,8 +196,8 @@ fn enter_rejects_file_child() {
 
 #[test]
 fn secondary_is_idempotent() {
-    let (_keep_root, root) = canonical_tempdir();
-    let (_keep_other, other) = canonical_tempdir();
+    let (_keep_root, root) = test_support::create_canonical_tempdir();
+    let (_keep_other, other) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("open root");
     assert_eq!(sandbox.secondary_count(), 0);
 
@@ -225,8 +214,8 @@ fn secondary_is_idempotent() {
 
 #[test]
 fn secondary_rejects_symlink_operand() {
-    let (_keep_root, root) = canonical_tempdir();
-    let (_keep_other, other) = canonical_tempdir();
+    let (_keep_root, root) = test_support::create_canonical_tempdir();
+    let (_keep_other, other) = test_support::create_canonical_tempdir();
     let target = other.join("real");
     std::fs::create_dir(&target).expect("create real");
     let link = other.join("link");
@@ -246,8 +235,8 @@ fn secondary_rejects_symlink_operand() {
 
 #[test]
 fn secondary_concurrent_registrations_collapse_to_one() {
-    let (_keep_root, root) = canonical_tempdir();
-    let (_keep_other, other) = canonical_tempdir();
+    let (_keep_root, root) = test_support::create_canonical_tempdir();
+    let (_keep_other, other) = test_support::create_canonical_tempdir();
     let sandbox = Arc::new(DirSandbox::open_root(&root).expect("open root"));
 
     let handles: Vec<_> = (0..8)
@@ -277,7 +266,7 @@ fn secondary_concurrent_registrations_collapse_to_one() {
 
 #[test]
 fn root_arc_clones_share_owner() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("open root");
     let arc1 = sandbox.root_arc();
     let arc2 = sandbox.root_arc();
@@ -305,12 +294,12 @@ fn root_arc_clones_share_owner() {
 /// untouched.
 #[test]
 fn enter_through_symlink_to_outside_refuses() {
-    let (_keep_root, root) = canonical_tempdir();
+    let (_keep_root, root) = test_support::create_canonical_tempdir();
     // The "outside" target lives in a sibling tempdir so the symlink
     // genuinely points outside the sandbox root. The chdir-symlink-race
     // POC drops a similar shape mid-transfer to redirect per-entry
     // syscalls to an attacker-chosen parent.
-    let (_keep_outside, outside) = canonical_tempdir();
+    let (_keep_outside, outside) = test_support::create_canonical_tempdir();
     symlink(&outside, root.join("subdir")).expect("plant trap symlink");
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
@@ -337,7 +326,7 @@ fn enter_through_symlink_to_outside_refuses() {
 /// legitimate descents through.
 #[test]
 fn enter_to_legitimate_subdir_returns_ok() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("subdir")).expect("mkdir subdir");
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
@@ -380,7 +369,7 @@ fn enter_to_legitimate_subdir_returns_ok() {
 /// - `syscall.c:3032` `ds_descend()` - follows a relative in-tree target.
 #[test]
 fn operator_trusted_policy_resolution_matches_the_available_mechanism() {
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("real")).expect("mkdir real");
     std::fs::write(root.join("real").join("marker"), b"x").expect("write marker");
     symlink("real", root.join("sub")).expect("symlink sub -> real");
@@ -460,7 +449,7 @@ fn the_symlink_hop_budget_is_shared_across_the_whole_walk() {
     // decrements through it - so this must be refused. A budget reset per
     // component, or per descend, would let it through, which is the bug this
     // test exists to catch.
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("a")).expect("mkdir a");
     std::fs::create_dir(root.join("a").join("b")).expect("mkdir a/b");
 
@@ -488,7 +477,7 @@ fn a_chain_within_the_hop_budget_still_resolves() {
     // refused every symlink chain - or every chain longer than one - would
     // satisfy the budget assertion while being wholly wrong, and the pair
     // would look like a passing suite.
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("real")).expect("mkdir real");
     std::fs::write(root.join("real").join("marker"), b"x").expect("write marker");
 
@@ -535,7 +524,7 @@ fn the_oracle_refuses_a_symlink_that_redirects_into_an_excluded_subtree() {
     //
     // upstream: rsync-3.5.1/syscall.c:3055-3060, where ds_descend() consults
     // abspath_outside_confinement() on the path it has tracked per component.
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     tree_with_redirect_into_hidden(&root);
 
     let err = DirSandbox::open_dest_anchor_confined(
@@ -558,7 +547,7 @@ fn the_same_redirect_resolves_when_nothing_is_excluded() {
     // refused this symlink for some unrelated reason - a relative target, a
     // `..` in the target, or symlinks generally - and would then be pinning
     // the wrong mechanism entirely.
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     tree_with_redirect_into_hidden(&root);
 
     let sandbox = DirSandbox::open_dest_anchor_confined(
@@ -580,7 +569,7 @@ fn dot_dot_is_a_movement_within_the_tree_not_a_refused_component() {
     // kernel resolves the path; here the walk holds the stack and must move.
     //
     // upstream: rsync-3.5.1/syscall.c:3037-3042
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("a")).expect("mkdir a");
     std::fs::create_dir(root.join("b")).expect("mkdir b");
     std::fs::write(root.join("b").join("marker"), b"x").expect("write marker");
@@ -604,7 +593,7 @@ fn dot_dot_above_the_anchor_is_refused() {
     //
     // upstream: rsync-3.5.1/syscall.c:3038-3040 reports ELOOP rather than
     // handing back the anchor's own parent.
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("a")).expect("mkdir a");
 
     let err = DirSandbox::open_dest_anchor_confined(
@@ -627,7 +616,7 @@ fn an_absolute_symlink_target_is_refused_even_when_it_points_back_inside() {
     // (rsync-3.5.1/syscall.c:3094). Pointing it back *inside* the anchor is
     // what makes this test non-vacuous: a walk that only refused escapes would
     // accept it, so this pins the rule rather than its usual consequence.
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("real")).expect("mkdir real");
     symlink(root.join("real"), root.join("abs")).expect("absolute symlink");
 
@@ -691,7 +680,7 @@ impl super::ConfinementOracle for CountingOracle {
 /// - `rsync-3.5.1/syscall.c:3078-3102` the spliced target re-enters the walk
 #[test]
 fn a_dot_dot_inside_a_symlink_target_is_walked_not_string_collapsed() {
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("real")).expect("mkdir real");
     std::fs::create_dir(root.join("present")).expect("mkdir present");
     symlink("missing/../real", root.join("collapsing")).expect("symlink via missing");
@@ -784,7 +773,7 @@ fn raise_nofile_soft_limit(wanted: libc::rlim_t) -> libc::rlim_t {
 fn the_depth_ceiling_refuses_rather_than_truncating() {
     use std::os::fd::{AsFd, OwnedFd};
 
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     let depth = super::DS_MAXDEPTH;
 
     // The fixture holds one dirfd per level and the walk opens its own set, so
@@ -870,7 +859,7 @@ fn the_depth_ceiling_refuses_rather_than_truncating() {
 /// - `rsync-3.5.1/syscall.c:3130-3132` non-daemon callers "pay nothing"
 #[test]
 fn an_operator_trusted_walk_never_consults_the_oracle() {
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
 
     let counting = CountingOracle::default();
@@ -920,7 +909,7 @@ fn an_operator_trusted_walk_never_consults_the_oracle() {
 fn the_anchor_handle_outlives_the_sandbox_that_produced_it() {
     use std::os::fd::AsFd;
 
-    let (_guard, root) = canonical_tempdir();
+    let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("leaf")).expect("mkdir leaf");
     std::fs::write(root.join("leaf/marker"), b"x").expect("write marker");
 
@@ -1095,7 +1084,7 @@ fn real_fd_exhaustion_warns_once_and_surfaces_emfile_to_the_caller() {
     use rustix::stdio::{dup2_stderr, stderr};
     use std::io::{Read, Seek, SeekFrom};
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("subdir")).expect("mkdir subdir");
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
 
@@ -1197,7 +1186,7 @@ fn confined_walk_warns_on_fd_exhaustion_and_stays_silent_on_enoent() {
     use std::io::{Read, Seek, SeekFrom};
     use std::path::Path;
 
-    let (_keep, anchor) = canonical_tempdir();
+    let (_keep, anchor) = test_support::create_canonical_tempdir();
     let peer_tail = Path::new("archive/2026/hosts");
     std::fs::create_dir_all(anchor.join(peer_tail)).expect("build peer tail");
 
@@ -1353,7 +1342,7 @@ fn the_anchor_walk_cannot_exhaust_but_the_entered_walk_can() {
     // ceiling, shallow enough to stay well inside macOS's 1024-byte PATH_MAX.
     const DEPTH: usize = 64;
 
-    let (_keep, anchor) = canonical_tempdir();
+    let (_keep, anchor) = test_support::create_canonical_tempdir();
     let deep: std::path::PathBuf = std::iter::repeat_n("a", DEPTH).collect();
     std::fs::create_dir_all(anchor.join(&deep)).expect("build the deep peer tail");
 
@@ -1462,7 +1451,7 @@ fn the_anchor_walk_cannot_exhaust_but_the_entered_walk_can() {
 /// anchors on `AT_FDCWD` with a NULL `confine_root` for a non-daemon client
 /// (`receiver.c:1081-1087`, `syscall.c:169-170`).
 mod open_subdir_confined {
-    use super::{DirSandbox, canonical_tempdir, symlink};
+    use super::{DirSandbox, symlink};
     use crate::dir_sandbox::fstatat_nofollow;
     use std::ffi::OsStr;
     use std::os::fd::AsFd;
@@ -1478,7 +1467,7 @@ mod open_subdir_confined {
     /// for an absolute `readlink` target without consulting any root.
     #[test]
     fn an_absolute_symlink_prefix_is_refused() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let dest = root.join("dest");
         std::fs::create_dir_all(dest.join("escape")).expect("escape dir");
         std::fs::create_dir(root.join("outside")).expect("outside");
@@ -1503,7 +1492,7 @@ mod open_subdir_confined {
     /// upstream: `syscall.c:3037-3040` - popping an empty stack is `ELOOP`.
     #[test]
     fn a_relative_symlink_prefix_climbing_out_is_refused() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let dest = root.join("dest");
         std::fs::create_dir_all(dest.join("escape")).expect("escape dir");
         std::fs::create_dir(root.join("outside")).expect("outside");
@@ -1523,7 +1512,7 @@ mod open_subdir_confined {
     /// back into the walk (`syscall.c:3102`) rather than refusing it.
     #[test]
     fn a_relative_in_tree_directory_symlink_is_still_followed() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let dest = root.join("dest");
         std::fs::create_dir_all(dest.join("real/inner")).expect("real dir");
         std::fs::write(dest.join("real/inner/marker"), b"in tree").expect("marker");
@@ -1545,7 +1534,7 @@ mod open_subdir_confined {
     /// error on the platforms that take it.
     #[test]
     fn a_plain_nested_path_resolves() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let dest = root.join("dest");
         std::fs::create_dir_all(dest.join("a/b")).expect("nested dirs");
         std::fs::write(dest.join("a/b/marker"), b"plain").expect("marker");

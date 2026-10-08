@@ -58,15 +58,6 @@ use rustix::stdio::{dup2_stderr, stderr};
 const FD_EXHAUSTION_HINT: &str =
     "out of file descriptors resolving a deep path; raise the open-file limit (e.g. `ulimit -n`)";
 
-/// `tempdir()` paths may include a symlink prefix (macOS `/tmp ->
-/// /private/tmp`, some CI runners). The anchor open resolves symlinks, but
-/// the tail walk does not, so canonicalise to keep the fixture honest.
-fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
-
 /// The lowest descriptor number the kernel would hand out right now.
 ///
 /// `open(2)` always returns the lowest free number, so opening and closing
@@ -110,7 +101,7 @@ fn restore(limit: &Rlimit) {
 ///    stderr half is the one carrying the non-vacuity.
 #[test]
 fn daemon_anchored_walk_warns_once_when_descriptors_run_out() {
-    let (_keep, module_root) = canonical_tempdir();
+    let (_keep, module_root) = test_support::create_canonical_tempdir();
     let peer_tail = Path::new("archive/2026/hosts");
     std::fs::create_dir_all(module_root.join(peer_tail)).expect("build peer tail");
     let tail_components = peer_tail.components().count();

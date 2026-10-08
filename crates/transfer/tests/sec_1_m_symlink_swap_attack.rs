@@ -61,7 +61,7 @@
 #![cfg(unix)]
 
 use std::os::unix::fs::symlink;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -71,7 +71,6 @@ use fast_io::{
     DirSandbox, LstatOutcome, UnlinkFlags, lstat_via_sandbox_or_fallback,
     symlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback,
 };
-use tempfile::{TempDir, tempdir};
 
 /// Returns whether `openat2(RESOLVE_BENEATH)` nested-parent anchoring is
 /// live on this host. When off (non-Linux, or Linux < 5.6), the helpers
@@ -79,15 +78,6 @@ use tempfile::{TempDir, tempdir};
 /// is not enforced; Linux CI is the runtime gate for the refusal.
 fn nested_anchor_live() -> bool {
     cfg!(target_os = "linux") && fast_io::openat2_supported()
-}
-
-/// `tempdir()` may sit under a symlink prefix on macOS / some CI
-/// runners; canonicalise so the sandbox open succeeds under
-/// `RESOLVE_NO_SYMLINKS`.
-fn canonical_tempdir() -> (TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
 }
 
 /// Two-phase channel handshake. The receiver fires `proceed_tx` when
@@ -132,7 +122,7 @@ impl RaceChannels {
 /// stated, opened, or modified.
 #[test]
 fn scenario_1_lstat_race_does_not_follow_swapped_symlink_outside_sandbox() {
-    let (_keep, parent) = canonical_tempdir();
+    let (_keep, parent) = test_support::create_canonical_tempdir();
 
     // Sensitive tree outside the destination sandbox root.
     let sensitive_dir = parent.join("sensitive");
@@ -253,7 +243,7 @@ fn scenario_1_lstat_race_does_not_follow_swapped_symlink_outside_sandbox() {
 /// symlink; this test would have caught that regression.
 #[test]
 fn scenario_2_unlinkat_race_does_not_follow_swapped_symlink_to_sibling() {
-    let (_keep, dest) = canonical_tempdir();
+    let (_keep, dest) = test_support::create_canonical_tempdir();
 
     let leader = dest.join("leader");
     let follower = dest.join("follower");
@@ -332,7 +322,7 @@ fn scenario_2_unlinkat_race_does_not_follow_swapped_symlink_to_sibling() {
 fn scenario_3_repeated_race_keeps_sensitive_tree_untouched() {
     const ITERATIONS: usize = 64;
 
-    let (_keep, parent) = canonical_tempdir();
+    let (_keep, parent) = test_support::create_canonical_tempdir();
     let sensitive_dir = parent.join("sensitive");
     std::fs::create_dir(&sensitive_dir).expect("mkdir sensitive");
     let sensitive_file = sensitive_dir.join("secret");
@@ -476,7 +466,7 @@ fn scenario_3_repeated_race_keeps_sensitive_tree_untouched() {
 /// close: the leaf is single-component, but the *parent* path is not.
 #[test]
 fn scenario_4_interior_dir_symlink_escape_is_refused() {
-    let (_keep, parent) = canonical_tempdir();
+    let (_keep, parent) = test_support::create_canonical_tempdir();
 
     // Sensitive tree outside the destination sandbox root.
     let outside = parent.join("outside");
