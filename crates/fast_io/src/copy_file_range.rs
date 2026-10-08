@@ -415,9 +415,22 @@ mod tests {
     use std::io::{Seek, SeekFrom, Write};
     use tempfile::NamedTempFile;
 
+    /// Creates an empty temp file whose name embeds this process's id.
+    ///
+    /// nextest runs each test in its own process, and `tempfile` seeds its name
+    /// generator from the clock and thread id only, so concurrent test processes
+    /// can draw the same `.tmpXXXXXX` name. On Windows, creating a file over
+    /// another process's directory or delete-pending file of that name fails with
+    /// `PermissionDenied`, which `tempfile` does not retry (it retries only
+    /// `AlreadyExists`). The pid prefix makes names from live processes disjoint.
+    fn new_temp_file() -> io::Result<NamedTempFile> {
+        tempfile::Builder::new()
+            .prefix(&format!(".tmp{}-", std::process::id()))
+            .tempfile()
+    }
     /// Helper to create a temp file with specified content
     fn create_temp_file(content: &[u8]) -> io::Result<NamedTempFile> {
-        let mut file = NamedTempFile::new()?;
+        let mut file = new_temp_file()?;
         file.write_all(content)?;
         file.flush()?;
         file.seek(SeekFrom::Start(0))?;
@@ -437,7 +450,7 @@ mod tests {
     fn test_copy_small_file_below_threshold() {
         let content = b"Hello, world! This is a small file.";
         let source = create_temp_file(content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         let copied =
             copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64).unwrap();
@@ -453,7 +466,7 @@ mod tests {
         let size = 128 * 1024; // 128KB - exceeds COPY_FILE_RANGE_THRESHOLD
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         let copied =
             copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64).unwrap();
@@ -468,7 +481,7 @@ mod tests {
     fn test_copy_empty_file() {
         let content = b"";
         let source = create_temp_file(content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         let copied = copy_file_contents(source.as_file(), dest.as_file(), 0).unwrap();
 
@@ -482,7 +495,7 @@ mod tests {
     fn test_copy_partial_eof() {
         let content = b"Short content";
         let source = create_temp_file(content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         let copied = copy_file_contents(source.as_file(), dest.as_file(), 10000).unwrap();
 
@@ -497,7 +510,7 @@ mod tests {
         let size = COPY_FILE_RANGE_THRESHOLD as usize;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         let copied =
             copy_file_contents(source.as_file(), dest.as_file(), content.len() as u64).unwrap();
@@ -512,7 +525,7 @@ mod tests {
     fn test_readwrite_fallback_direct() {
         let content = b"Testing fallback path directly";
         let source = create_temp_file(content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         let copied =
             copy_file_contents_readwrite(source.as_file(), dest.as_file(), content.len() as u64)
@@ -532,13 +545,13 @@ mod tests {
         let content: Vec<u8> = (0..size).map(|i| ((i * 7 + 13) % 256) as u8).collect();
 
         let source1 = create_temp_file(&content).unwrap();
-        let mut dest1 = NamedTempFile::new().unwrap();
+        let mut dest1 = new_temp_file().unwrap();
         let copied1 = copy_file_contents(source1.as_file(), dest1.as_file(), size as u64).unwrap();
         dest1.seek(SeekFrom::Start(0)).unwrap();
         let result1 = read_file_contents(dest1.as_file()).unwrap();
 
         let source2 = create_temp_file(&content).unwrap();
-        let mut dest2 = NamedTempFile::new().unwrap();
+        let mut dest2 = new_temp_file().unwrap();
         let copied2 =
             copy_file_contents_readwrite(source2.as_file(), dest2.as_file(), size as u64).unwrap();
         dest2.seek(SeekFrom::Start(0)).unwrap();
@@ -557,7 +570,7 @@ mod tests {
         let size = 2 * 1024 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         let copied = copy_file_contents(source.as_file(), dest.as_file(), size as u64).unwrap();
 
@@ -575,7 +588,7 @@ mod tests {
         // copy_file_range advances the source offset in place.
         let content = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let mut source = create_temp_file(content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         source.seek(SeekFrom::Start(10)).unwrap();
 
@@ -595,7 +608,7 @@ mod tests {
         // signal the production code uses to fall back to read/write.
         let content = b"Testing copy_file_range syscall directly";
         let source = create_temp_file(content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         match try_copy_file_range(source.as_file(), dest.as_file(), content.len() as u64) {
             Ok(copied) => {
@@ -615,7 +628,7 @@ mod tests {
     fn test_try_copy_file_range_non_linux() {
         let content = b"Test";
         let source = create_temp_file(content).unwrap();
-        let dest = NamedTempFile::new().unwrap();
+        let dest = new_temp_file().unwrap();
 
         let result = try_copy_file_range(source.as_file(), dest.as_file(), content.len() as u64);
         assert!(result.is_err());
@@ -630,7 +643,7 @@ mod tests {
         let size = 512 * 1024; // 512KB - above IO_URING_COPY_THRESHOLD
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
 
         match try_io_uring_copy(source.as_file(), dest.as_file(), size as u64) {
             Ok(copied) => {
@@ -650,7 +663,7 @@ mod tests {
     fn test_try_io_uring_copy_stub() {
         let content = b"Test io_uring stub";
         let source = create_temp_file(content).unwrap();
-        let dest = NamedTempFile::new().unwrap();
+        let dest = new_temp_file().unwrap();
 
         let result = try_io_uring_copy(source.as_file(), dest.as_file(), content.len() as u64);
         assert!(result.is_err());
@@ -664,7 +677,7 @@ mod tests {
         let size = 512 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = new_temp_file().unwrap();
         let mut buffer = vec![0u8; 256 * 1024];
 
         let copied =
