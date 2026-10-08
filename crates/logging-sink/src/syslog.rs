@@ -344,23 +344,23 @@ impl SyslogConfig {
     /// Returns `None` when the connection cannot be established (e.g. no syslog
     /// daemon is listening); callers treat that as a no-op sink.
     fn connect(&self) -> Option<BsdLogger> {
-        let tag = if self.tag.is_empty() {
-            DEFAULT_SYSLOG_TAG.to_string()
-        } else {
-            self.tag.clone()
-        };
-
-        let formatter = Formatter3164 {
-            facility: self.facility.to_wire(),
-            hostname: None,
-            process: tag,
-            pid: process::id(),
-        };
-
-        // upstream: log.c - openlog(tag, LOG_PID, facility)
         // The syslog crate's `unix(formatter)` connects to /dev/log on Linux
         // and falls back to /var/run/syslog on macOS, mirroring openlog(3).
-        syslog::unix(formatter).ok()
+        syslog::unix(self.formatter()).ok()
+    }
+
+    /// Builds the RFC 3164 formatter carrying this configuration's ident.
+    ///
+    /// upstream: log.c:152 `openlog(lp_syslog_tag(module_id), LOG_PID, ...)`
+    /// passes the tag as given, so an empty `syslog tag` is an empty ident.
+    /// Callers substitute [`DEFAULT_SYSLOG_TAG`] only when no tag is set.
+    fn formatter(&self) -> Formatter3164 {
+        Formatter3164 {
+            facility: self.facility.to_wire(),
+            hostname: None,
+            process: self.tag.clone(),
+            pid: process::id(),
+        }
     }
 }
 
@@ -710,6 +710,16 @@ mod tests {
     fn open_does_not_panic_with_custom_facility() {
         let config = SyslogConfig::new(SyslogFacility::Local7, "test-syslog");
         let _guard = config.open();
+    }
+
+    // upstream: log.c:152 hands lp_syslog_tag() to openlog() unchanged, so a
+    // configured `syslog tag =` logs with an empty ident, not the default.
+    #[test]
+    fn empty_tag_is_sent_as_an_empty_ident() {
+        let config = SyslogConfig::new(SyslogFacility::Daemon, "");
+        assert_eq!(config.formatter().process, "");
+        let config = SyslogConfig::default();
+        assert_eq!(config.formatter().process, DEFAULT_SYSLOG_TAG);
     }
 
     #[test]
