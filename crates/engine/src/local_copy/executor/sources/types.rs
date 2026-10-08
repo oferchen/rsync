@@ -66,4 +66,6 @@ pub(super) enum SourceMetadataResult {
     NotFoundError(io::Error),
     /// Other I/O error occurred.
     IoError(io::Error),
+    /// A non-`--relative` DOTDIR operand's directory cannot be entered.
+    ChangeDirFailed(PathBuf, io::Error),
 }

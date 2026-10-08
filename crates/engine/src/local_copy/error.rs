@@ -114,6 +114,19 @@ impl LocalCopyError {
             source,
         })
     }
+    /// Constructs an error for a non-`--relative` DOTDIR source argument whose
+    /// directory cannot be entered.
+    ///
+    /// upstream: `flist.c:686-694` `change_pathname()` - `change_dir %s failed`
+    /// sets `IOERR_GENERAL`, yielding `RERR_PARTIAL`, and the transfer
+    /// continues with the remaining sources.
+    #[must_use]
+    pub fn change_dir_failed(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::new(LocalCopyErrorKind::ChangeDirFailed {
+            path: path.into(),
+            source,
+        })
+    }
 
     /// Constructs an error representing an interrupt-signal abort (exit code
     /// 20, `RERR_SIGNAL`).
@@ -190,7 +203,8 @@ impl LocalCopyError {
                     INVALID_OPERAND_EXIT_CODE
                 }
             }
-            LocalCopyErrorKind::LinkStatFailed { .. } => INVALID_OPERAND_EXIT_CODE,
+            LocalCopyErrorKind::LinkStatFailed { .. }
+            | LocalCopyErrorKind::ChangeDirFailed { .. } => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
                 TIMEOUT_EXIT_CODE
             }
@@ -216,7 +230,8 @@ impl LocalCopyError {
                     "RERR_PARTIAL"
                 }
             }
-            LocalCopyErrorKind::LinkStatFailed { .. } => "RERR_PARTIAL",
+            LocalCopyErrorKind::LinkStatFailed { .. }
+            | LocalCopyErrorKind::ChangeDirFailed { .. } => "RERR_PARTIAL",
             LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
                 "RERR_TIMEOUT"
             }
@@ -273,6 +288,12 @@ impl LocalCopyError {
     pub const fn is_link_stat_failed(&self) -> bool {
         matches!(self.kind, LocalCopyErrorKind::LinkStatFailed { .. })
     }
+    /// Reports whether a source argument's directory could not be entered
+    /// (upstream `change_dir ... failed`). Handled like a failed `link_stat`.
+    #[must_use]
+    pub const fn is_change_dir_failed(&self) -> bool {
+        matches!(self.kind, LocalCopyErrorKind::ChangeDirFailed { .. })
+    }
 
     /// Provides access to the underlying error kind.
     #[must_use]
@@ -314,6 +335,17 @@ pub enum LocalCopyErrorKind {
     #[error("link_stat \"{}\" failed: {}", path.display(), upstream_io_error(source))]
     LinkStatFailed {
         /// The source path that could not be stat'd.
+        path: PathBuf,
+        /// Underlying error.
+        #[source]
+        source: io::Error,
+    },
+    /// A non-`--relative` DOTDIR source argument names a directory that
+    /// cannot be entered. Exits 23 (`RERR_PARTIAL`); the caller continues with
+    /// the remaining sources.
+    #[error("change_dir \"{}\" failed: {}", path.display(), upstream_io_error(source))]
+    ChangeDirFailed {
+        /// The directory, as upstream's `full_fname()` renders it.
         path: PathBuf,
         /// Underlying error.
         #[source]

@@ -265,6 +265,17 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
             ClientError::with_code(code, message)
         }
+        LocalCopyErrorKind::ChangeDirFailed { path, source } => {
+            // upstream: flist.c:686-694 change_pathname() - RERR_PARTIAL (23).
+            let code = ExitCode::PartialTransfer;
+            let text = format!(
+                "change_dir \"{}\" failed: {}",
+                path.display(),
+                upstream_io_error(&source)
+            );
+            let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
+            ClientError::with_code(code, message)
+        }
         LocalCopyErrorKind::Timeout { duration } => {
             let code = ExitCode::Timeout;
             let text = format!(
