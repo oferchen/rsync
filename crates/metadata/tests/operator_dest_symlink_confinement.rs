@@ -47,7 +47,7 @@ struct Layout {
 }
 
 fn layout() -> Layout {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let base = tmp.path().join("base");
     let real_root = base.join("real/inner");
     fs::create_dir_all(&real_root).expect("mkdir real/inner");

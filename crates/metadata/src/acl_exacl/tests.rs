@@ -13,11 +13,10 @@ use exacl::{AclEntryKind, Perm};
 use exacl::{AclOption, setfacl};
 use protocol::acl::{AclCache, RsyncAcl};
 use std::fs::File;
-use tempfile::tempdir;
 
 #[test]
 fn sync_acls_skips_when_not_following_symlinks() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let source = dir.path().join("src");
     let destination = dir.path().join("dst");
     File::create(&source).expect("create src");
@@ -29,7 +28,7 @@ fn sync_acls_skips_when_not_following_symlinks() {
 
 #[test]
 fn sync_acls_copies_between_regular_files() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let source = dir.path().join("src");
     let destination = dir.path().join("dst");
     File::create(&source).expect("create src");
@@ -41,7 +40,7 @@ fn sync_acls_copies_between_regular_files() {
 
 #[test]
 fn sync_acls_works_with_directories() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let source = dir.path().join("src_dir");
     let destination = dir.path().join("dst_dir");
     std::fs::create_dir(&source).expect("create src_dir");
@@ -53,7 +52,7 @@ fn sync_acls_works_with_directories() {
 
 #[test]
 fn sync_acls_via_fake_super_skips_when_not_following_symlinks() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let source = dir.path().join("src");
     let destination = dir.path().join("dst");
     File::create(&source).expect("create src");
@@ -73,7 +72,7 @@ fn sync_acls_via_fake_super_skips_when_not_following_symlinks() {
 fn sync_acls_via_fake_super_stashes_named_entry_instead_of_applying() {
     use crate::fake_super::load_fake_super_acl;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let source = dir.path().join("src");
     let destination = dir.path().join("dst");
     File::create(&source).expect("create src");
@@ -119,7 +118,7 @@ fn sync_acls_via_fake_super_stashes_named_entry_instead_of_applying() {
 
 #[test]
 fn reset_acl_from_mode_works() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("create file");
 
@@ -130,7 +129,7 @@ fn reset_acl_from_mode_works() {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[test]
 fn clear_default_acl_works_on_directory() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let subdir = dir.path().join("subdir");
     std::fs::create_dir(&subdir).expect("create subdir");
 
@@ -474,7 +473,7 @@ fn rsync_acl_to_entries_remap_emits_own_debug() {
 
 #[test]
 fn apply_acls_from_cache_skips_symlinks() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("create file");
 
@@ -485,7 +484,7 @@ fn apply_acls_from_cache_skips_symlinks() {
 
 #[test]
 fn apply_acls_from_cache_applies_basic_acl() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("create file");
 
@@ -499,7 +498,7 @@ fn apply_acls_from_cache_applies_basic_acl() {
 
 #[test]
 fn apply_acls_from_cache_empty_acl_resets() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("create file");
 
@@ -514,7 +513,7 @@ fn apply_acls_from_cache_empty_acl_resets() {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[test]
 fn apply_acls_from_cache_directory_with_default() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let subdir = dir.path().join("subdir");
     std::fs::create_dir(&subdir).expect("create subdir");
 
@@ -538,7 +537,7 @@ fn apply_acls_from_cache_directory_with_default() {
 
 #[test]
 fn apply_acls_from_cache_missing_index_is_noop() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("create file");
 
@@ -589,7 +588,7 @@ fn apply_acls_from_cache_preserves_setgid_and_sticky() {
     use protocol::acl::IdAccess;
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("setgid_sticky");
     File::create(&file).expect("create file");
 
@@ -627,7 +626,7 @@ fn apply_acls_from_cache_preserves_setgid_and_sticky() {
 fn default_perms_for_dir_no_acl_returns_umask_default() {
     // No default ACL: upstream returns ACCESSPERMS & ~orig_umask without
     // emitting `DEBUG_GTE(ACL, 1)`.
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let target = dir.path().join("no_default_acl");
     std::fs::create_dir(&target).expect("create dir");
 
@@ -640,7 +639,7 @@ fn default_perms_for_dir_no_acl_returns_umask_default() {
 fn default_perms_for_dir_missing_dir_returns_umask_default() {
     // getfacl error path: upstream falls back to umask-derived default
     // and never emits. Verify the same here.
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let missing = dir.path().join("nonexistent");
 
     assert_eq!(default_perms_for_dir(&missing, 0o022), 0o755);
@@ -653,7 +652,7 @@ fn default_perms_for_dir_emits_when_default_acl_present() {
     // directory's default ACL unpacked into a user_obj entry.
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let target = dir.path().join("with_default_acl");
     std::fs::create_dir(&target).expect("create dir");
 
@@ -705,7 +704,7 @@ fn default_perms_for_dir_no_emission_when_disabled() {
     // even when the default ACL unpacks successfully.
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let target = dir.path().join("with_default_acl_silent");
     std::fs::create_dir(&target).expect("create dir");
 

@@ -31,7 +31,6 @@
 use filetime::{FileTime, set_file_atime, set_file_times};
 use metadata::{MetadataOptions, apply_file_metadata_with_options};
 use std::fs;
-use tempfile::tempdir;
 
 /// Source atime used by the upstream `atimes.test` fixture
 /// (`touch -a -t 200102031717.42`).
@@ -47,7 +46,7 @@ const SOURCE_MTIME: i64 = 1_500_000_000;
 #[cfg(unix)]
 #[test]
 fn atimes_round_trip_preserves_source_atime() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("foo");
     let dest = temp.path().join("foo.dest");
     fs::write(&source, b"atimes round-trip").expect("write source");
@@ -91,7 +90,7 @@ fn atimes_round_trip_preserves_source_atime() {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn crtimes_round_trip_preserves_source_birthtime() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("foo");
     let dest = temp.path().join("foo.dest");
 

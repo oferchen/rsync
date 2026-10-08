@@ -40,7 +40,7 @@ fn try_mklink(args: &[&str]) -> bool {
 /// skip the symlink emission branch entirely.
 #[test]
 fn regular_file_returns_not_a_reparse_point_error() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let path = tmp.path().join("plain.txt");
     fs::write(&path, b"data").expect("write");
 
@@ -58,7 +58,7 @@ fn regular_file_returns_not_a_reparse_point_error() {
 /// mount-point.
 #[test]
 fn junction_classifies_as_junction() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let target = tmp.path().join("target");
     let junction = tmp.path().join("link");
     fs::create_dir(&target).expect("create target dir");
@@ -79,7 +79,7 @@ fn junction_classifies_as_junction() {
 /// common shape that round-trips through every receiver).
 #[test]
 fn directory_symlink_classifies_as_symlink() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let target = tmp.path().join("target");
     let link = tmp.path().join("link");
     fs::create_dir(&target).expect("create target dir");
@@ -102,7 +102,7 @@ fn directory_symlink_classifies_as_symlink() {
 /// retry or drop the entry from the transfer.
 #[test]
 fn missing_path_returns_not_found_error() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let missing = tmp.path().join("does-not-exist");
 
     let err = classify_path(&missing).expect_err("missing path must error");

@@ -18,7 +18,6 @@ use metadata::apply_file_metadata;
 #[cfg(unix)]
 use metadata::apply_symlink_metadata;
 use std::fs;
-use tempfile::tempdir;
 
 /// The Year 2038 overflow boundary for 32-bit signed Unix timestamps.
 /// This is 2^31 - 1 = 2,147,483,647 seconds since Unix epoch.
@@ -47,7 +46,7 @@ const YEAR_3000: i64 = 32_503_680_000;
 #[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_at_2038_boundary() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"2038 boundary test").expect("write source");
@@ -80,7 +79,7 @@ fn file_metadata_preserves_timestamp_at_2038_boundary() {
 #[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_before_2038() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"before 2038").expect("write source");
@@ -109,7 +108,7 @@ fn file_metadata_preserves_timestamp_before_2038() {
 #[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_after_2038() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"after 2038").expect("write source");
@@ -138,7 +137,7 @@ fn file_metadata_preserves_timestamp_after_2038() {
 #[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_year_2100() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"year 2100").expect("write source");
@@ -167,7 +166,7 @@ fn file_metadata_preserves_timestamp_year_2100() {
 #[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_year_3000() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"year 3000").expect("write source");
@@ -207,7 +206,7 @@ fn file_metadata_preserves_timestamp_year_3000() {
 #[cfg(unix)]
 #[test]
 fn directory_metadata_preserves_timestamp_beyond_2038() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source_dir");
     let dest = temp.path().join("dest_dir");
     fs::create_dir(&source).expect("create source dir");
@@ -236,7 +235,7 @@ fn directory_metadata_preserves_timestamp_beyond_2038() {
 #[cfg(unix)]
 #[test]
 fn symlink_metadata_preserves_timestamp_beyond_2038() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target.txt");
     let source_link = temp.path().join("source_link");
     let dest_link = temp.path().join("dest_link");
@@ -271,7 +270,7 @@ fn symlink_metadata_preserves_timestamp_beyond_2038() {
 #[cfg(unix)]
 #[test]
 fn round_trip_preserves_timestamps_across_2038_boundary() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
 
     // Test multiple round trips with timestamps spanning the 2038 boundary
     let test_cases = vec![
@@ -316,7 +315,7 @@ fn round_trip_preserves_timestamps_across_2038_boundary() {
 #[cfg(unix)]
 #[test]
 fn no_overflow_at_i32_max_boundary() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"overflow test").expect("write source");
@@ -345,7 +344,7 @@ fn no_overflow_at_i32_max_boundary() {
 
 #[test]
 fn no_overflow_just_past_i32_max() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"overflow test").expect("write source");
@@ -374,7 +373,7 @@ fn no_overflow_just_past_i32_max() {
 #[cfg(unix)]
 #[test]
 fn nanosecond_precision_preserved_beyond_2038() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"nanosecond precision").expect("write source");
@@ -439,7 +438,7 @@ fn apply_metadata_from_file_entry_handles_post_2038_timestamps() {
     use protocol::flist::FileEntry;
     use std::path::PathBuf;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("dest.txt");
     fs::write(&dest, b"file entry test").expect("write dest");
 
@@ -464,7 +463,7 @@ fn apply_metadata_from_file_entry_handles_post_2038_timestamps() {
 
 #[test]
 fn negative_timestamps_are_handled_correctly() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"negative timestamp").expect("write source");
@@ -490,7 +489,7 @@ fn negative_timestamps_are_handled_correctly() {
 #[cfg(unix)]
 #[test]
 fn extreme_range_64bit_timestamps() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"extreme range").expect("write source");
@@ -532,7 +531,7 @@ fn extreme_range_64bit_timestamps() {
 fn metadata_options_respect_times_flag_post_2038() {
     use metadata::{MetadataOptions, apply_file_metadata_with_options};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"options test").expect("write source");
