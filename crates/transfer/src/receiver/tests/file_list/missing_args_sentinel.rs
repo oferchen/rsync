@@ -20,7 +20,9 @@ use protocol::flist::{FileEntry, FileListWriter};
 use tempfile::TempDir;
 
 use super::super::super::ReceiverContext;
-use super::super::support::{test_config, test_handshake};
+#[cfg(unix)]
+use super::super::support::CapturingDeletionWriter;
+use super::super::support::{TestDeletionWriter, test_config, test_handshake};
 
 /// Builds a wire-encoded file list containing the supplied entries.
 fn encode_flist(entries: &[FileEntry]) -> Vec<u8> {
@@ -81,6 +83,7 @@ fn receiver_consumes_mode_zero_sentinel_and_deletes_destination() {
         dest,
         #[cfg(unix)]
         None,
+        &mut TestDeletionWriter,
     )
     .unwrap();
 
@@ -118,6 +121,7 @@ fn receiver_ignores_sentinel_when_delete_missing_args_off() {
         dest,
         #[cfg(unix)]
         None,
+        &mut TestDeletionWriter,
     )
     .unwrap();
 
@@ -149,6 +153,7 @@ fn receiver_sentinel_for_missing_destination_is_noop() {
         dest,
         #[cfg(unix)]
         None,
+        &mut TestDeletionWriter,
     )
     .unwrap();
 }
@@ -177,6 +182,7 @@ fn receiver_sentinel_dry_run_skips_deletion() {
         dest,
         #[cfg(unix)]
         None,
+        &mut TestDeletionWriter,
     )
     .unwrap();
 
@@ -186,10 +192,11 @@ fn receiver_sentinel_dry_run_skips_deletion() {
     );
 }
 
-/// Mode-0 sentinel naming a directory removes it recursively, mirroring
-/// upstream's `delete_item()` dispatch on the destination's `sx.st.st_mode`.
+/// Under `--delete` a mode-0 sentinel naming a populated directory removes
+/// it with its contents: `del_opts` carries `DEL_RECURSE` for `delete_mode`
+/// (generator.c:1629), so `delete_dir_contents()` empties it first.
 #[test]
-fn receiver_sentinel_removes_directory_recursively() {
+fn receiver_sentinel_removes_directory_recursively_under_delete() {
     let temp_dir = TempDir::new().unwrap();
     let dest = temp_dir.path();
 
@@ -200,6 +207,7 @@ fn receiver_sentinel_removes_directory_recursively() {
     let handshake = test_handshake();
     let mut config = test_config();
     config.file_selection.delete_missing_args = true;
+    config.flags.delete = true;
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
@@ -211,11 +219,61 @@ fn receiver_sentinel_removes_directory_recursively() {
         dest,
         #[cfg(unix)]
         None,
+        &mut TestDeletionWriter,
     )
     .unwrap();
 
     assert!(
         !dir.exists(),
         "sentinel must remove the named directory and its contents",
+    );
+}
+
+/// Without `--delete` or `--force` a populated directory survives its
+/// sentinel, and only the notice reaches the client.
+///
+/// Why this matters: `del_opts` lacks `DEL_RECURSE` here (generator.c:1629),
+/// so upstream's `delete_dir_contents()` refuses any populated directory
+/// (delete.c:115-118) and reports `cannot delete non-empty directory: %s` at
+/// FINFO (delete.c:178-181). Recursing anyway silently destroys a whole tree
+/// the user never asked to delete. An empty directory is still removed.
+#[cfg(unix)]
+#[test]
+fn receiver_sentinel_keeps_populated_directory_without_del_recurse() {
+    let temp_dir = TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    let dir = dest.join("ghost-dir");
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("sub/inner.txt"), b"inner").unwrap();
+    std::fs::create_dir(dest.join("empty-dir")).unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.file_selection.delete_missing_args = true;
+    config.connection.client_mode = false;
+    config.args = vec![OsString::from(dest.to_str().unwrap())];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list.push(sentinel_entry("empty-dir"));
+    ctx.file_list.push(sentinel_entry("ghost-dir"));
+
+    let mut writer = CapturingDeletionWriter::default();
+    ctx.process_missing_args_sentinels(dest, None, &mut writer)
+        .unwrap();
+
+    assert!(
+        dir.join("sub/inner.txt").is_file(),
+        "a populated directory must be kept without DEL_RECURSE",
+    );
+    assert!(
+        !dest.join("empty-dir").exists(),
+        "an empty directory is still removed",
+    );
+    assert_eq!(
+        writer.lines,
+        vec!["cannot delete non-empty directory: ghost-dir".to_owned()],
     );
 }
