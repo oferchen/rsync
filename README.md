@@ -436,3 +436,4 @@ Internal matching-engine optimisations adapted from [`zsync`](http://zsync.moria
 
 Thanks to **Pieter** for his heroic patience in enduring months of my rsync commentary.
 Thanks to **Elad** for his endless patience hearing rsync protocol commentary as I'm introduced to it.
+
