@@ -472,6 +472,9 @@ fn read_response_header<R: Read>(
         ));
     }
 
+    // upstream: receiver.c:995 remember_initial_stats() - a `%b` log field
+    // counts the payload read from here on: sum head, tokens and file sum.
+    let data_read_start = reader.data_read();
     // The echoed sum_head carries the existing file length used for the append mode offset.
     let echoed_sum_head = SumHead::read(reader)?;
 
@@ -512,6 +515,7 @@ fn read_response_header<R: Read>(
         use_inplace,
         append_offset,
         xattr_values: sender_attrs.xattr_values,
+        data_read_start,
     }))
 }
 
@@ -540,6 +544,8 @@ pub(crate) struct ResponseHeader {
     ///
     /// Non-empty only when the sender included `ITEM_REPORT_XATTR` in iflags.
     xattr_values: Vec<(i32, Vec<u8>)>,
+    /// `ServerReader::data_read()` just before the sum head was read.
+    data_read_start: u64,
 }
 
 #[cfg(test)]
