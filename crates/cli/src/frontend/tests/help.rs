@@ -1,6 +1,5 @@
 use super::common::*;
 use super::*;
-use crate::frontend::defaults::SUPPORTED_OPTIONS_LIST;
 use std::collections::BTreeSet;
 
 #[test]
@@ -61,19 +60,6 @@ fn archive_help_matches_upstream_parenthetical() {
         help.contains("archive mode is -rlptgoD (no -A,-X,-U,-N,-H)"),
         "rendered help missing upstream archive wording: {help}"
     );
-}
-
-#[test]
-fn supported_options_list_mentions_all_help_flags() {
-    let help = render_help(ProgramName::OcRsync);
-    let options = collect_options(&help);
-
-    for option in &options {
-        assert!(
-            SUPPORTED_OPTIONS_LIST.contains(option),
-            "supported options list missing {option}"
-        );
-    }
 }
 
 /// Every oc-rsync-specific long flag. These must all live under the dedicated
@@ -308,38 +294,4 @@ fn access_methods_block_lists_all_connection_forms_feature_gated() {
         help.contains("When multiple sources are supplied,\nDEST must name a directory."),
         "multi-source DEST-must-be-a-directory note missing"
     );
-}
-
-fn collect_options(text: &str) -> BTreeSet<String> {
-    let mut tokens = BTreeSet::new();
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '-' {
-            match chars.peek() {
-                Some('-') => {
-                    chars.next();
-                    let mut token = String::from("--");
-                    while let Some(&next) = chars.peek() {
-                        if next.is_ascii_alphanumeric() || next == '-' {
-                            token.push(next);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
-                    if token.len() > 2 {
-                        tokens.insert(token);
-                    }
-                }
-                Some(next) if next.is_ascii_alphabetic() => {
-                    let mut token = String::from("-");
-                    token.push(*next);
-                    chars.next();
-                    tokens.insert(token);
-                }
-                _ => {}
-            }
-        }
-    }
-    tokens
 }

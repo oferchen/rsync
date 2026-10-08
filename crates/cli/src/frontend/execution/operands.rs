@@ -6,14 +6,37 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 use core::{
     client::BindAddress,
-    message::{Message, Role, strings},
-    rsync_error,
+    message::{
+        Message, Role,
+        strings::{ExitCodeMessage, exit_code_message},
+    },
+    rsync_error, tracked_message_source,
 };
 
-use super::super::defaults::SUPPORTED_OPTIONS_LIST;
+/// The `syntax or usage error` trailer (upstream: errcode.h RERR_SYNTAX).
+pub(crate) const SYNTAX_ERROR: ExitCodeMessage = exit_template(1);
+
+/// Resolves an exit-code template at compile time, so a code missing from the
+/// table fails the build instead of panicking at runtime.
+const fn exit_template(code: i32) -> ExitCodeMessage {
+    match exit_code_message(code) {
+        Some(template) => template,
+        None => panic!("exit code missing from the exit-code table"),
+    }
+}
+
+/// Renders the `rsync error: <text> (code N) at <site> [<role>=...]` trailer
+/// upstream's log_exit() (log.c) prints for `template`, citing the caller.
+#[track_caller]
+pub(crate) fn exit_trailer(template: ExitCodeMessage, role: Role) -> Message {
+    template
+        .to_message()
+        .with_role(role)
+        .with_source(tracked_message_source!())
+}
 
 /// An option token this build does not recognise, captured so the caller can
-/// render a branded "unknown option" diagnostic.
+/// refuse it the way upstream's popt does.
 #[derive(Debug)]
 pub(crate) struct UnsupportedOption {
     option: OsString,
@@ -25,16 +48,24 @@ impl UnsupportedOption {
         Self { option }
     }
 
-    /// Renders the diagnostic listing the currently supported options, with
-    /// exit code 1 and the client role trailer.
+    /// Renders the refusal line naming the offending token.
+    ///
+    /// upstream: options.c:2053 formats `"%s: %s\n"` from `poptBadOption()` and
+    /// `poptStrerror()`, and option_error() (options.c:915) prints it behind
+    /// the program name.
+    pub(crate) fn refusal_line(&self, program: &str) -> String {
+        format!(
+            "{program}: {}: unknown option",
+            self.option.to_string_lossy()
+        )
+    }
+
+    /// Renders the exit trailer that follows the refusal line.
+    ///
+    /// upstream: main.c:1913 `exit_cleanup(RERR_SYNTAX)` after option_error().
+    #[track_caller]
     pub(crate) fn to_message(&self) -> Message {
-        let option = self.option.to_string_lossy();
-        let text = format!(
-            "unknown option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
-        );
-        strings::exit_code_message_with_detail(1, text.clone())
-            .unwrap_or_else(|| rsync_error!(1, text))
-            .with_role(Role::Client)
+        exit_trailer(SYNTAX_ERROR, Role::Client)
     }
 }
 
@@ -253,11 +284,17 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_option_to_message_contains_option() {
+    fn unsupported_option_renders_upstream_refusal() {
         let unsupported = UnsupportedOption::new(OsString::from("--unknown-opt"));
+        assert_eq!(
+            unsupported.refusal_line("rsync"),
+            "rsync: --unknown-opt: unknown option"
+        );
         let message = unsupported.to_message();
-        let text = format!("{message}");
-        assert!(text.contains("--unknown-opt"));
+        assert_eq!(message.code(), Some(1));
+        assert_eq!(message.text(), "syntax or usage error");
+        assert_eq!(message.role(), Some(Role::Client));
+        assert!(message.source().is_some(), "the trailer must cite its site");
     }
 
     #[test]

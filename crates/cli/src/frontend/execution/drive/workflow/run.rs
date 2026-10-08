@@ -426,7 +426,11 @@ where
 
     let remainder = match extract_operands(raw_remainder) {
         Ok(operands) => operands,
-        Err(unsupported) => return fail_with_message(unsupported.to_message(), stderr),
+        Err(unsupported) => {
+            let line = unsupported.refusal_line(stderr.brand().client_program_name());
+            let _ = writeln!(stderr.writer_mut(), "{line}");
+            return fail_with_message(unsupported.to_message(), stderr);
+        }
     };
 
     // upstream: options.c:2474-2480 - with `--files-from` the transferred file
