@@ -18,9 +18,7 @@ use super::*;
 /// - `flist.c:2691` - `S_ISDIR(st.st_mode) && !xfer_dirs` skips the directory
 #[test]
 fn trailing_slash_source_without_recursion_skips_directory() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     std::fs::create_dir(&source_dir).expect("create source");
     std::fs::write(source_dir.join("child.txt"), b"payload").expect("write child");
@@ -57,9 +55,7 @@ fn trailing_slash_source_without_recursion_skips_directory() {
 /// hits the `!xfer_dirs` guard in `flist.c:2691` and is omitted from the flist.
 #[test]
 fn non_trailing_slash_source_without_recursion_skips_directory() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     std::fs::create_dir(&source_dir).expect("create source");
     std::fs::write(source_dir.join("child.txt"), b"payload").expect("write child");
@@ -86,9 +82,7 @@ fn non_trailing_slash_source_without_recursion_skips_directory() {
 /// The source is a bare directory operand with no `-r`/`-d`, which is the only
 /// shape that reaches upstream's `!xfer_dirs` guard.
 fn skip_notice_stdout(flags: &[&str]) -> String {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("subdir");
     std::fs::create_dir(&source_dir).expect("create source");
     std::fs::write(source_dir.join("child.txt"), b"payload").expect("write child");
@@ -161,9 +155,7 @@ fn quiet_suppresses_the_notice_and_verbose_does_not_duplicate_it() {
 /// skipped. Guards against an over-broad fix that disables recursion entirely.
 #[test]
 fn trailing_slash_source_with_recursion_copies_contents() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let nested = source_dir.join("nested");
     std::fs::create_dir_all(&nested).expect("create nested");
@@ -200,9 +192,7 @@ fn trailing_slash_source_with_recursion_copies_contents() {
 /// matching upstream's `xfer_dirs && !recurse` behaviour.
 #[test]
 fn trailing_slash_source_with_dirs_only_walks_one_level() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let nested = source_dir.join("nested");
     std::fs::create_dir_all(&nested).expect("create nested");

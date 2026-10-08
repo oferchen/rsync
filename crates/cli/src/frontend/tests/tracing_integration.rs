@@ -5,7 +5,7 @@ use super::*;
 fn verbose_transfer_emits_filename_on_stdout() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("traced.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -30,7 +30,7 @@ fn verbose_transfer_emits_filename_on_stdout() {
 fn double_verbose_shows_itemize_changes() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("item.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -56,7 +56,7 @@ fn double_verbose_shows_itemize_changes() {
 fn info_flag_copy_shows_copy_messages() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("copy_info.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -81,7 +81,7 @@ fn info_flag_copy_shows_copy_messages() {
 fn info_flag_stats_with_verbose_shows_statistics() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("stats.txt");
     let dest = temp.path().join("stats.out");
     fs::write(&source, b"stats test content").expect("write source");
@@ -109,7 +109,7 @@ fn info_flag_stats_with_verbose_shows_statistics() {
 fn quiet_flag_suppresses_verbose_output() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("quiet.txt");
     let dest = temp.path().join("quiet.out");
     fs::write(&source, b"quiet test").expect("write source");
@@ -130,7 +130,7 @@ fn quiet_flag_suppresses_verbose_output() {
 fn verbose_with_recursive_lists_directory_structure() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("src");
     let dest_dir = temp.path().join("dst");
     fs::create_dir_all(source_dir.join("sub")).expect("create subdirs");
@@ -164,7 +164,7 @@ fn verbose_with_recursive_lists_directory_structure() {
 fn info_progress2_shows_overall_progress_during_transfer() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("src");
     let dest_dir = temp.path().join("dst");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -203,7 +203,7 @@ fn info_progress2_shows_overall_progress_during_transfer() {
 fn debug_del_flag_shows_deletion_debug_output() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("src");
     let dest_dir = temp.path().join("dst");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -241,7 +241,7 @@ fn debug_del_flag_shows_deletion_debug_output() {
 fn out_format_with_itemize_produces_structured_output() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("fmt.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");

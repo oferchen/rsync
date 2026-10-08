@@ -42,7 +42,7 @@ use test_support::oc_rsync_bin;
 
 /// Creates `src/sub/f.txt` plus an empty `dst/` and returns the temp root.
 fn dot_root_tree() -> TempDir {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     fs::create_dir_all(tmp.path().join("src/sub")).expect("source tree");
     fs::create_dir_all(tmp.path().join("dst")).expect("destination root");
     fs::write(tmp.path().join("src/sub/f.txt"), b"hi\n").expect("leaf file");

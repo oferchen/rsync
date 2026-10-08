@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn apply_merge_directive_resolves_relative_paths() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let outer = temp.path().join("outer.rules");
     let subdir = temp.path().join("nested");
     std::fs::create_dir(&subdir).expect("create nested dir");
@@ -36,9 +34,7 @@ fn apply_merge_directive_resolves_relative_paths() {
 
 #[test]
 fn apply_merge_directive_respects_forced_include() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let path = temp.path().join("filters.rules");
     std::fs::write(&path, b"alpha\n!\nbeta\n").expect("write filters");
 

@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_itemize_changes_renders_itemized_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -34,9 +32,7 @@ fn transfer_request_with_itemize_changes_renders_itemized_output() {
 
 #[test]
 fn transfer_request_with_no_itemize_changes_suppresses_itemized_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");

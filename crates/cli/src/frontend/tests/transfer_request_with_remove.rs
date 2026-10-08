@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_remove_source_files_deletes_source() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("destination.txt");
     std::fs::write(&source, b"move me").expect("write source");
@@ -29,9 +27,7 @@ fn transfer_request_with_remove_source_files_deletes_source() {
 
 #[test]
 fn transfer_request_with_remove_sent_files_alias_deletes_source() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("destination.txt");
     std::fs::write(&source, b"alias move").expect("write source");

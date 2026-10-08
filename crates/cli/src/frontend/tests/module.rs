@@ -26,7 +26,7 @@ fn module_list_username_prefix_is_accepted() {
 fn module_list_uses_connect_program_option() {
     let _env_lock = ENV_LOCK.lock().expect("env lock");
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let script_path = temp.path().join("connect-program.sh");
     let script = r#"#!/bin/sh
 set -eu
@@ -71,7 +71,6 @@ fn module_list_uses_password_file_for_authentication() {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD_NO_PAD;
     use checksums::strong::Sha512;
-    use tempfile::tempdir;
 
     let challenge = "pw-test";
     let secret = b"cli-secret";
@@ -90,7 +89,7 @@ fn module_list_uses_password_file_for_authentication() {
         vec!["@RSYNCD: OK\n", "secure\n", "@RSYNCD: EXIT\n"],
     );
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let password_path = temp.path().join("daemon.pw");
     std::fs::write(&password_path, b"cli-secret\n").expect("write password");
     #[cfg(unix)]
@@ -200,9 +199,7 @@ fn module_list_reads_password_from_stdin() {
 #[cfg(unix)]
 #[test]
 fn module_list_rejects_world_readable_password_file() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let password_path = temp.path().join("insecure.pw");
     std::fs::write(&password_path, b"secret\n").expect("write password");
     {

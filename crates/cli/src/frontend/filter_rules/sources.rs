@@ -342,7 +342,6 @@ pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
 mod tests {
     use super::*;
     use std::io::Cursor;
-    use tempfile::tempdir;
 
     #[test]
     fn read_filter_patterns_parses_simple_lines() {
@@ -441,7 +440,7 @@ mod tests {
 
     #[test]
     fn load_filter_file_patterns_reads_file() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("filter.txt");
         std::fs::write(&path, "pattern1\npattern2\n").expect("write");
         let result = load_filter_file_patterns(&path, false, false).expect("load");
@@ -453,7 +452,7 @@ mod tests {
     /// generic exit 1 this previously accepted.
     #[test]
     fn load_filter_file_patterns_reports_a_missing_file_like_upstream() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("nonexistent.txt");
 
         let excluded = load_filter_file_patterns(&path, false, false).expect_err("must fail");
@@ -474,7 +473,7 @@ mod tests {
 
     #[test]
     fn read_merge_file_reads_file() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("merge.txt");
         std::fs::write(&path, "content here").expect("write");
         let result = read_merge_file(&path, false, RuleSource::Argument).expect("read");
@@ -491,7 +490,7 @@ mod tests {
     /// directory (2)` and exits 11.
     #[test]
     fn read_merge_file_reports_a_missing_file_like_upstream() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("nonexistent.txt");
         let error = read_merge_file(&path, false, RuleSource::Argument).expect_err("must fail");
         assert_eq!(error.code(), Some(11));
@@ -520,7 +519,7 @@ mod tests {
     /// `failed to open exclude file <rule from FILE line 1>`, exit 11.
     #[test]
     fn read_merge_file_withholds_path_and_errno_when_the_name_came_from_a_file() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("nonexistent.txt");
         let source = RuleSource::File {
             name: "outer.rules",
@@ -571,7 +570,7 @@ mod tests {
 
     #[test]
     fn append_filter_rules_from_files_adds_include_rules() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("include.txt");
         std::fs::write(&path, "*.rs\n*.toml\n").expect("write");
         let mut rules = Vec::new();
@@ -591,7 +590,7 @@ mod tests {
 
     #[test]
     fn append_filter_rules_from_files_adds_exclude_rules() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("exclude.txt");
         std::fs::write(&path, "*.bak\n").expect("write");
         let mut rules = Vec::new();
@@ -617,7 +616,7 @@ mod tests {
 
     #[test]
     fn append_filter_rules_from_files_handles_multiple_files() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path1 = temp.path().join("file1.txt");
         let path2 = temp.path().join("file2.txt");
         std::fs::write(&path1, "pattern1\n").expect("write");
@@ -659,7 +658,7 @@ mod tests {
     fn append_filter_rules_from_files_honors_from0_nul_split() {
         // upstream: exclude.c:1501 parse_filter_file - --exclude-from with
         // --from0 reads NUL-delimited records; "a\nb" is one literal pattern.
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("exclude0.txt");
         std::fs::write(&path, b"a\nb\0*.bak\0").expect("write");
         let mut rules = Vec::new();
@@ -686,7 +685,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_self_owned_symlink_to_a_filter_file_is_still_read() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let target = dir.path().join("real.rules");
         std::fs::write(&target, "*.bak\n").expect("write");
         let link = dir.path().join("link.rules");

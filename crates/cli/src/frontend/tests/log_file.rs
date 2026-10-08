@@ -28,9 +28,7 @@ fn assert_upstream_log_prefix(line: &str) -> &str {
 
 #[test]
 fn local_transfer_appends_default_log_entries() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("payload.txt");
     let destination_dir = temp.path().join("dest");
     std::fs::write(&source, b"payload").expect("write source");
@@ -66,9 +64,7 @@ fn local_transfer_appends_default_log_entries() {
 
 #[test]
 fn local_transfer_respects_custom_log_format() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("custom.txt");
     let destination_dir = temp.path().join("dest");
     std::fs::write(&source, b"format").expect("write source");
@@ -106,9 +102,7 @@ fn local_transfer_respects_custom_log_format() {
 
 #[test]
 fn log_file_append_mode_preserves_previous_entries() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let log_path = temp.path().join("append.log");
 
     // Pre-populate the log file with existing content.
@@ -143,9 +137,7 @@ fn log_file_append_mode_preserves_previous_entries() {
 
 #[test]
 fn log_file_multiple_files_produce_multiple_entries() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("src");
     let destination_dir = temp.path().join("dest");
     std::fs::create_dir(&source_dir).expect("create source dir");
@@ -202,9 +194,7 @@ fn log_file_multiple_files_produce_multiple_entries() {
 
 #[test]
 fn log_file_with_dry_run_still_logs() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("dryrun.txt");
     let destination_dir = temp.path().join("dest");
     std::fs::write(&source, b"dry").expect("write source");
@@ -239,9 +229,7 @@ fn log_file_with_dry_run_still_logs() {
 
 #[test]
 fn log_file_equals_syntax_creates_log() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("equals.txt");
     let destination_dir = temp.path().join("dest");
     std::fs::write(&source, b"eq").expect("write source");
@@ -269,9 +257,7 @@ fn log_file_equals_syntax_creates_log() {
 
 #[test]
 fn log_file_successive_transfers_append() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let destination_dir = temp.path().join("dest");
     std::fs::create_dir(&destination_dir).expect("create destination dir");
 
@@ -322,9 +308,7 @@ fn log_file_successive_transfers_append() {
 /// `INFO_GTE(STATS, 1)` holds. FLOG lines never reach stdout (log.c:304-307).
 #[test]
 fn verbose_log_file_mirrors_info_trailer_and_keeps_flog_off_stdout() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("mirror.txt");
     let destination_dir = temp.path().join("dest");
     std::fs::write(&source, b"mirror").expect("write source");

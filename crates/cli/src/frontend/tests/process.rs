@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn process_merge_directive_applies_parent_overrides_to_nested_merges() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let nested = temp.path().join("nested.rules");
     std::fs::write(&nested, b"+ file\n").expect("write nested");
 

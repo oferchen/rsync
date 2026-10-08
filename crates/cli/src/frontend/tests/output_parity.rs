@@ -23,7 +23,7 @@ use tempfile::TempDir;
 fn create_known_summary(file_contents: &[(&str, &[u8])]) -> (ClientSummary, TempDir) {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source directory");
@@ -754,7 +754,7 @@ fn parity_verbose_lists_filenames_one_per_line() {
 
 #[test]
 fn parity_verbose_directory_names_end_with_slash() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     std::fs::create_dir_all(source_dir.join("subdir")).expect("create subdir");
@@ -1195,7 +1195,7 @@ fn parity_itemize_full_change_pattern() {
 
 #[test]
 fn parity_end_to_end_stats_output_via_run() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     std::fs::create_dir_all(&source_dir).expect("create source dir");
@@ -1233,7 +1233,7 @@ fn parity_end_to_end_stats_output_via_run() {
 
 #[test]
 fn parity_end_to_end_itemize_output_via_run() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("item.txt");
     let dest_dir = temp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -1258,7 +1258,7 @@ fn parity_end_to_end_itemize_output_via_run() {
 
 #[test]
 fn parity_end_to_end_verbose_output_via_run() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("verbose_test.txt");
     let dest_dir = temp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -1332,7 +1332,7 @@ fn parity_stats_human_readable_enabled_uses_unit_suffixes() {
 fn parity_dry_run_with_itemize_shows_changes_without_modifying_files() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1381,7 +1381,7 @@ fn parity_dry_run_with_itemize_shows_changes_without_modifying_files() {
 fn parity_dry_run_with_verbose_lists_files_line_by_line() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1424,7 +1424,7 @@ fn parity_dry_run_with_verbose_lists_files_line_by_line() {
 fn parity_dry_run_deletion_shows_deleting_prefix() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1470,7 +1470,7 @@ fn parity_dry_run_deletion_shows_deleting_prefix() {
 fn parity_list_only_format_matches_upstream_structure() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1523,7 +1523,7 @@ fn parity_list_only_format_matches_upstream_structure() {
 fn parity_list_only_directory_shows_d_prefix_without_trailing_slash() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1567,7 +1567,7 @@ fn parity_list_only_directory_shows_d_prefix_without_trailing_slash() {
 fn parity_list_only_size_field_is_right_aligned_15_chars() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1714,7 +1714,7 @@ fn parity_error_permission_denied_returns_io_error() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("perm.txt");
     let dest_dir = temp.path().join("dest_no_write");
     fs::write(&source, b"permission test").expect("write");
@@ -1754,7 +1754,7 @@ fn parity_error_version_returns_zero() {
 fn parity_error_dry_run_returns_zero_on_success() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("dry.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -1774,7 +1774,7 @@ fn parity_error_dry_run_returns_zero_on_success() {
 fn parity_info_progress2_shows_overall_progress_line() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("progress.txt");
     let dest = temp.path().join("progress.out");
     fs::write(&source, b"progress test content").expect("write source");
@@ -1801,7 +1801,7 @@ fn parity_info_progress2_shows_overall_progress_line() {
 fn parity_info_progress2_format_includes_transfer_rate() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("rate.txt");
     let dest = temp.path().join("rate.out");
     fs::write(&source, vec![0u8; 10000]).expect("write source");
@@ -1827,7 +1827,7 @@ fn parity_info_progress2_format_includes_transfer_rate() {
 fn parity_info_progress2_shows_to_chk_counter() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1867,7 +1867,7 @@ fn parity_info_progress2_shows_to_chk_counter() {
 fn parity_out_format_f_placeholder_shows_filename() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("formattest.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -1894,7 +1894,7 @@ fn parity_out_format_f_placeholder_shows_filename() {
 fn parity_out_format_n_placeholder_shows_name_with_directory_slash() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -1932,7 +1932,7 @@ fn parity_out_format_n_placeholder_shows_name_with_directory_slash() {
 fn parity_out_format_l_placeholder_shows_file_size() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("sized.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -1961,7 +1961,7 @@ fn parity_out_format_l_placeholder_shows_file_size() {
 fn parity_out_format_i_placeholder_shows_itemize_string() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("item.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -1988,7 +1988,7 @@ fn parity_out_format_i_placeholder_shows_itemize_string() {
 fn parity_out_format_o_placeholder_shows_operation() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("op.txt");
     let dest = temp.path().join("op.out");
     fs::write(&source, b"operation test").expect("write source");
@@ -2016,7 +2016,7 @@ fn parity_out_format_o_placeholder_shows_operation() {
 fn parity_out_format_combined_placeholders() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("combo.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2058,7 +2058,7 @@ fn parity_out_format_combined_placeholders() {
 fn parity_out_format_literal_text_passthrough() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("literal.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2258,7 +2258,7 @@ fn parity_verbose_v3_produces_output_with_debug_info() {
     // Run an actual transfer at -vvv and verify output contains debug-level detail
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -2375,7 +2375,7 @@ fn parity_verbose_monotonic_debug_levels() {
 fn parity_info_flag_stats_produces_stats_output() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("stats.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2402,7 +2402,7 @@ fn parity_info_flag_stats_produces_stats_output() {
 fn parity_info_flag_name_shows_filenames() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("named.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2428,7 +2428,7 @@ fn parity_info_flag_name_shows_filenames() {
 fn parity_info_flag_skip_shows_skip_messages() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -2465,7 +2465,7 @@ fn parity_info_flag_skip_shows_skip_messages() {
 fn parity_info_flag_del_shows_deletion_messages() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -2505,7 +2505,7 @@ fn parity_info_flag_del_shows_deletion_messages() {
 fn parity_info_flag_copy_shows_copy_messages() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("copied.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2530,7 +2530,7 @@ fn parity_info_flag_copy_shows_copy_messages() {
 fn parity_debug_flag_accepted_without_error() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("dbg.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2552,7 +2552,7 @@ fn parity_debug_flag_accepted_without_error() {
 fn parity_debug_flag_filter_accepted_without_error() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -2576,7 +2576,7 @@ fn parity_debug_flag_filter_accepted_without_error() {
 fn parity_debug_flag_all_accepted_without_error() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("alldbg.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2597,7 +2597,7 @@ fn parity_debug_flag_all_accepted_without_error() {
 fn parity_debug_flag_none_silences_debug_output() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("quiet.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2624,7 +2624,7 @@ fn parity_debug_flag_none_silences_debug_output() {
 fn parity_debug_flist_produces_file_list_detail() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -2718,7 +2718,7 @@ fn parity_help_double_dash_only() {
 fn parity_compress_flag_accepted_without_error() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("compressed.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2739,7 +2739,7 @@ fn parity_compress_flag_accepted_without_error() {
 fn parity_compress_with_stats_shows_transfer_statistics() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("zstats.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -2767,7 +2767,7 @@ fn parity_compress_with_stats_shows_transfer_statistics() {
 fn parity_compress_level_accepted_without_error() {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("zlevel.txt");
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");

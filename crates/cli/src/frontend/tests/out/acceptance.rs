@@ -20,7 +20,7 @@ fn out_format_argument_passes_unknown_placeholders_through_literally() {
 
 #[test]
 fn out_format_remote_placeholders_preserve_literals_without_context() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");

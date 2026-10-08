@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn rsync_path_silently_ignored_for_local_copies() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     std::fs::write(&source, b"content").expect("write source");

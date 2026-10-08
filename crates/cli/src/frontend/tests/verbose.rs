@@ -6,9 +6,7 @@ use super::*;
 /// simple file transfer.
 #[test]
 fn level_0_no_file_listing() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("quiet.txt");
     let destination = tmp.path().join("quiet.out");
     std::fs::write(&source, b"quiet").expect("write source");
@@ -35,9 +33,7 @@ fn level_0_no_file_listing() {
 /// Verifies that level 0 produces no summary totals line (sent/received).
 #[test]
 fn level_0_no_summary_totals() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("nosummary.txt");
     let destination = tmp.path().join("nosummary.out");
     std::fs::write(&source, b"no summary").expect("write source");
@@ -64,9 +60,7 @@ fn level_0_no_summary_totals() {
 /// Verifies that -v produces file names and summary totals.
 #[test]
 fn verbose_transfer_emits_event_lines() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("file.txt");
     let destination = tmp.path().join("out.txt");
     std::fs::write(&source, b"verbose").expect("write source");
@@ -99,9 +93,7 @@ fn verbose_transfer_emits_event_lines() {
 /// Verifies that -v shows the sent/received totals summary line.
 #[test]
 fn level_1_shows_summary_totals() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("totals.txt");
     let destination = tmp.path().join("totals.out");
     std::fs::write(&source, b"totals test").expect("write source");
@@ -133,9 +125,7 @@ fn level_1_shows_summary_totals() {
 /// Verifies that -v lists multiple files when transferring a directory.
 #[test]
 fn level_1_lists_multiple_transferred_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("multi_src");
     std::fs::create_dir_all(&source_dir).expect("mkdir");
     std::fs::write(source_dir.join("alpha.txt"), b"aaa").expect("write alpha");
@@ -178,9 +168,7 @@ fn level_1_lists_multiple_transferred_files() {
 /// IS present in the output. This confirms the positive listing behavior.
 #[test]
 fn level_1_lists_newly_transferred_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("new_transfer.txt");
     let destination = tmp.path().join("new_transfer.out");
     std::fs::write(&source, b"brand new content").expect("write source");
@@ -208,9 +196,7 @@ fn level_1_lists_newly_transferred_files() {
 #[cfg(unix)]
 #[test]
 fn verbose_transfer_reports_skipped_specials() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_fifo = tmp.path().join("skip.pipe");
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -248,9 +234,8 @@ fn verbose_transfer_reports_skipped_specials() {
 fn skipped_special_escapes_control_byte_in_name() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_fifo = tmp.path().join(OsStr::from_bytes(b"skip\x01mark.pipe"));
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -289,9 +274,8 @@ fn skipped_special_escapes_control_byte_in_name() {
 fn skipped_special_escapes_non_utf8_name_without_replacement() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_fifo = tmp.path().join(OsStr::from_bytes(b"skip\xffmark.pipe"));
     mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
 
@@ -324,9 +308,7 @@ fn skipped_special_escapes_non_utf8_name_without_replacement() {
 
 #[test]
 fn verbose_human_readable_formats_sizes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("sizes.bin");
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
@@ -365,9 +347,7 @@ fn verbose_human_readable_formats_sizes() {
 
 #[test]
 fn verbose_human_readable_combined_formats_sizes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("sizes.bin");
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
@@ -397,9 +377,7 @@ fn verbose_human_readable_combined_formats_sizes() {
 /// duplicate copies, so the per-file line must be bare.
 #[test]
 fn level_2_emits_bare_name_per_upstream() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("descriptor.txt");
     let destination = tmp.path().join("descriptor.out");
     std::fs::write(&source, b"descriptor test content").expect("write source");
@@ -433,9 +411,7 @@ fn level_2_emits_bare_name_per_upstream() {
 /// Verifies that -vv still includes the summary totals line.
 #[test]
 fn level_2_includes_summary_totals() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("vv_totals.txt");
     let destination = tmp.path().join("vv_totals.out");
     std::fs::write(&source, b"vv totals").expect("write source");
@@ -480,9 +456,7 @@ fn level_2_includes_summary_totals() {
 /// and omitted the `total:` line entirely.
 #[test]
 fn level_2_local_brackets_name_list_with_delta_and_total() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("src");
     let destination = tmp.path().join("dst");
     std::fs::create_dir(&source).expect("mkdir src");
@@ -565,9 +539,8 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
 #[test]
 fn level_2_local_delta_total_reports_real_match_counters() {
     use filetime::{FileTime, set_file_mtime};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("src");
     let destination = tmp.path().join("dst");
     std::fs::create_dir(&source).expect("mkdir src");
@@ -631,9 +604,7 @@ fn level_2_local_delta_total_reports_real_match_counters() {
 /// It should still contain the descriptor prefix and totals.
 #[test]
 fn level_3_at_least_as_verbose_as_level_2() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("vvv.txt");
     let destination = tmp.path().join("vvv.out");
     std::fs::write(&source, b"vvv content").expect("write source");
@@ -672,9 +643,7 @@ fn level_3_at_least_as_verbose_as_level_2() {
 /// modifying the destination, matching upstream behavior.
 #[test]
 fn verbose_with_dry_run_lists_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("drysrc");
     std::fs::create_dir_all(&source_dir).expect("mkdir");
     std::fs::write(source_dir.join("a.txt"), b"aaa").expect("write a");
@@ -717,9 +686,7 @@ fn verbose_with_dry_run_lists_files() {
 /// Verifies that dry-run at level 0 produces no file listing output.
 #[test]
 fn dry_run_without_verbose_no_file_listing() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("dry_quiet.txt");
     let destination = tmp.path().join("dry_quiet.out");
     std::fs::write(&source, b"dry quiet").expect("write source");
@@ -744,9 +711,7 @@ fn dry_run_without_verbose_no_file_listing() {
 /// Verifies that --stats with -v produces both file listings and statistics.
 #[test]
 fn verbose_with_stats_shows_statistics() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("vstats.txt");
     let destination = tmp.path().join("vstats.out");
     let payload = b"stats verbose content";
@@ -789,9 +754,7 @@ fn verbose_with_stats_shows_statistics() {
 /// Upstream rsync: --stats implies at minimum the statistics output.
 #[test]
 fn stats_without_verbose_shows_statistics() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("stats_only.txt");
     let destination = tmp.path().join("stats_only.out");
     std::fs::write(&source, b"stats only").expect("write source");
@@ -820,9 +783,8 @@ fn stats_without_verbose_shows_statistics() {
 #[test]
 fn verbose_with_delete_shows_deletion_messages() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("del_src");
     let dest_dir = tmp.path().join("del_dst");
     fs::create_dir_all(&source_dir).expect("mkdir source");
@@ -861,9 +823,8 @@ fn verbose_with_delete_shows_deletion_messages() {
 #[test]
 fn delete_without_verbose_no_deletion_messages() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("del_quiet_src");
     let dest_dir = tmp.path().join("del_quiet_dst");
     fs::create_dir_all(&source_dir).expect("mkdir source");
@@ -900,9 +861,7 @@ fn delete_without_verbose_no_deletion_messages() {
 /// Verifies that --verbose produces the same output shape as -v.
 #[test]
 fn long_verbose_flag_equivalent_to_short() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("equiv.txt");
     std::fs::write(&source, b"equivalence test").expect("write source");
 
@@ -1068,9 +1027,7 @@ fn no_verbose_resets_verbosity_to_zero() {
 /// Verifies that --quiet produces no stdout for a file transfer.
 #[test]
 fn quiet_flag_produces_no_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("quiet_file.txt");
     let destination = tmp.path().join("quiet_file.out");
     std::fs::write(&source, b"quiet mode").expect("write source");
@@ -1097,8 +1054,7 @@ fn quiet_flag_produces_no_output() {
 /// are FINFO/FCLIENT writes, which rwrite() drops under `--quiet`.
 #[test]
 fn quiet_suppresses_stats_and_itemize_output() {
-    use tempfile::tempdir;
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("src");
     let destination = tmp.path().join("dst");
     std::fs::create_dir(&source).expect("create src");
@@ -1143,13 +1099,11 @@ fn quiet_suppresses_stats_and_itemize_output() {
 /// counts isolates the monotonicity check from that timing jitter.
 #[test]
 fn higher_verbosity_produces_more_output() {
-    use tempfile::tempdir;
-
     fn line_count(bytes: &[u8]) -> usize {
         bytes.iter().filter(|b| **b == b'\n').count()
     }
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("progressive.txt");
     std::fs::write(&source, b"progressive verbosity test content here").expect("write source");
 
@@ -1204,9 +1158,8 @@ fn higher_verbosity_produces_more_output() {
 fn verbose_output_includes_symlink_target() {
     use std::fs;
     use std::os::unix::fs::symlink;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     fs::create_dir(&source_dir).expect("create src dir");
     let source_file = source_dir.join("file.txt");
@@ -1246,9 +1199,8 @@ fn default_verbosity_is_zero() {
 #[test]
 fn verbose_dry_run_with_delete_lists_deletions_without_removing() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("nv_del_src");
     let dest_dir = tmp.path().join("nv_del_dst");
     fs::create_dir_all(&source_dir).expect("mkdir source");
@@ -1289,9 +1241,7 @@ fn verbose_dry_run_with_delete_lists_deletions_without_removing() {
 /// without modifying the destination.
 #[test]
 fn verbose_dry_run_with_stats_shows_statistics() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("drystats.txt");
     let destination = tmp.path().join("drystats.out");
     std::fs::write(&source, b"dry stats content").expect("write source");
@@ -1336,9 +1286,8 @@ fn verbose_dry_run_with_stats_shows_statistics() {
 fn duplicates_testsuite_emits_bare_name_lines() {
     use std::fs;
     use std::os::unix::fs::symlink;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     fs::create_dir(&from).expect("create from");
@@ -1385,9 +1334,7 @@ fn duplicates_testsuite_emits_bare_name_lines() {
 ///    (receiver.c:1027, sender.c:451), and no `--progress` was requested here.
 #[test]
 fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     std::fs::create_dir_all(from.join("foo")).expect("mkdir from/foo");
@@ -1462,9 +1409,7 @@ fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
 /// per-file lines (which need `--progress`).
 #[test]
 fn level_1_all_uptodate_emits_banner_only() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     std::fs::create_dir_all(&from).expect("mkdir from");
@@ -1518,9 +1463,7 @@ fn level_1_all_uptodate_emits_banner_only() {
 #[cfg(unix)]
 #[test]
 fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     std::fs::create_dir_all(&from).expect("mkdir from");
@@ -1586,9 +1529,7 @@ fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
 /// before the `INFO_GTE(STATS, 1)` totals block.
 #[test]
 fn level_2_blank_line_precedes_totals_trailer() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     std::fs::create_dir_all(&from).expect("mkdir from");
@@ -1634,9 +1575,7 @@ fn level_2_blank_line_precedes_totals_trailer() {
 /// `foo/sym` alphabetically.
 #[test]
 fn level_2_uptodate_lines_precede_transferred_lines() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     std::fs::create_dir_all(&from).expect("mkdir from");
@@ -1701,9 +1640,7 @@ fn level_2_uptodate_lines_precede_transferred_lines() {
 #[cfg(unix)]
 #[test]
 fn itemize_hardlink_already_linked_omits_arrow_suffix() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     std::fs::create_dir_all(&from).expect("mkdir from");
@@ -1748,9 +1685,7 @@ fn itemize_hardlink_already_linked_omits_arrow_suffix() {
 /// directory is freshly created and reaches the bare-name emission path.
 #[test]
 fn verbose_directory_listing_has_trailing_slash_and_root_row() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("src");
     let sub = source.join("sub");
     std::fs::create_dir_all(&sub).expect("create source tree");
@@ -1796,9 +1731,8 @@ fn verbose_directory_listing_has_trailing_slash_and_root_row() {
 #[test]
 fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir_all(&source_dir).expect("mkdir source");
@@ -1919,10 +1853,8 @@ fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
 /// silent.
 #[test]
 fn quiet_suppresses_info_regardless_of_verbose_order() {
-    use tempfile::tempdir;
-
     let run = |flags: &[&str]| {
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source = tmp.path().join("q.txt");
         let destination = tmp.path().join("q.out");
         std::fs::write(&source, b"payload").expect("write source");
@@ -1966,9 +1898,7 @@ fn quiet_suppresses_info_regardless_of_verbose_order() {
 /// Shared by the file-list-banner cells below so each one differs only in the
 /// flags under test.
 fn banner_fixture() -> (tempfile::TempDir, OsString, OsString) {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
     std::fs::create_dir_all(from.join("sub")).expect("mkdir from/sub");

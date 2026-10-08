@@ -3,12 +3,10 @@ use super::*;
 
 #[test]
 fn stats_human_readable_formats_totals() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _rsh_guard = clear_rsync_rsh();
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("file.bin");
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
@@ -48,12 +46,10 @@ fn stats_human_readable_formats_totals() {
 
 #[test]
 fn stats_human_readable_combined_formats_totals() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _rsh_guard = clear_rsync_rsh();
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("file.bin");
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
@@ -81,12 +77,10 @@ fn stats_human_readable_combined_formats_totals() {
 #[cfg(unix)]
 #[test]
 fn stats_sparse_transfer_reports_literal_data() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _rsh_guard = clear_rsync_rsh();
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("sparse.bin");
     let file = std::fs::File::create(&source).expect("create source");
     let sparse_len: u64 = 1_048_576;

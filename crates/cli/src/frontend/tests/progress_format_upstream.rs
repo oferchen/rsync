@@ -19,9 +19,7 @@ use super::*;
 
 #[test]
 fn progress_line_contains_upstream_fields() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("upstream_fmt.txt");
     let destination = tmp.path().join("upstream_fmt.out");
     std::fs::write(&source, b"hello world").expect("write source");
@@ -67,9 +65,7 @@ fn progress_line_contains_upstream_fields() {
 
 #[test]
 fn progress_line_bytes_field_uses_thousands_separator() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("sep.bin");
     let destination = tmp.path().join("sep.out");
     // Write 1536 bytes so the decimal format shows "1,536"
@@ -255,9 +251,7 @@ fn format_progress_elapsed_ignores_subsecond() {
 
 #[test]
 fn progress_multiple_files_shows_correct_xfr_and_to_chk() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("multi_src");
     std::fs::create_dir_all(&source_dir).expect("mkdir source");
     std::fs::write(source_dir.join("a.txt"), b"aaa").expect("write a");
@@ -315,9 +309,7 @@ fn progress_multiple_files_shows_correct_xfr_and_to_chk() {
 
 #[test]
 fn p_short_option_enables_progress_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("p_flag.txt");
     let destination = tmp.path().join("p_flag.out");
     std::fs::write(&source, b"p_flag_data").expect("write source");
@@ -380,9 +372,7 @@ fn double_p_short_option_sets_progress_and_partial() {
 
 #[test]
 fn progress_with_dry_run_shows_progress_info() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("dry_progress.txt");
     let destination = tmp.path().join("dry_progress.out");
     std::fs::write(&source, b"dry run data").expect("write source");
@@ -541,9 +531,7 @@ fn progress_percent_field_unknown_total_is_100_percent() {
 
 #[test]
 fn progress_line_matches_upstream_pattern() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("pattern.txt");
     let destination = tmp.path().join("pattern.out");
     std::fs::write(&source, b"pattern test data").expect("write source");
@@ -600,9 +588,7 @@ fn progress_line_matches_upstream_pattern() {
 
 #[test]
 fn no_progress_suppresses_progress_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("noprog.txt");
     let destination = tmp.path().join("noprog.out");
     std::fs::write(&source, b"no progress data").expect("write source");
@@ -700,9 +686,7 @@ fn info_progress0_disables_progress() {
 
 #[test]
 fn progress_shows_filename_before_progress_line() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("fname_test.txt");
     let destination = tmp.path().join("fname_test.out");
     std::fs::write(&source, b"filename test").expect("write source");
