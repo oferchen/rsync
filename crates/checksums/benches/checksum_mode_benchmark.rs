@@ -102,7 +102,7 @@ fn bench_whole_file_hash_throughput(c: &mut Criterion) {
 fn bench_whole_file_hash_with_io(c: &mut Criterion) {
     let mut group = c.benchmark_group("checksum_mode_file_hash");
 
-    let tmpdir = tempfile::tempdir().expect("create tmpdir");
+    let tmpdir = test_support::create_tempdir();
 
     for &(size, label) in FILE_SIZES {
         let path = create_temp_file(tmpdir.path(), &format!("file_{label}.bin"), size);
@@ -146,7 +146,7 @@ fn bench_whole_file_hash_with_io(c: &mut Criterion) {
 fn bench_parallel_whole_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("checksum_mode_parallel");
 
-    let tmpdir = tempfile::tempdir().expect("create tmpdir");
+    let tmpdir = test_support::create_tempdir();
 
     // 100 files of 1 MB each = 100 MB total
     let file_count = 100;

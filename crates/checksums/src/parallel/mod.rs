@@ -12,7 +12,7 @@
 //! use checksums::parallel::hash_files_parallel;
 //! use checksums::strong::Sha256;
 //!
-//! let dir = tempfile::tempdir().unwrap();
+//! let dir = test_support::create_tempdir();
 //! let file1 = dir.path().join("file1");
 //! let file2 = dir.path().join("file2");
 //! std::fs::write(&file1, b"data1").unwrap();
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn hash_files_parallel_basic() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let files = create_test_files(&dir);
 
         let results = hash_files_parallel::<Md5>(&files, 64 * 1024);
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn hash_files_parallel_with_sha256() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let files = create_test_files(&dir);
 
         let results = hash_files_parallel::<Sha256>(&files, 32 * 1024);
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn hash_files_parallel_handles_missing_file() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let mut files = create_test_files(&dir);
         files.push(dir.path().join("nonexistent.txt"));
 
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn hash_files_parallel_single_file() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("single.txt");
         let content = b"single file content";
         std::fs::write(&path, content).unwrap();
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn hash_files_with_seed_parallel_works() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let files = create_test_files(&dir);
         let seed = 0xDEADBEEFu64;
 
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn hash_files_with_different_seeds_produces_different_digests() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("seeded.txt");
         std::fs::write(&path, b"test content").unwrap();
 
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn hash_files_parallel_with_config_custom_buffer() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let files = create_test_files(&dir);
 
         let config = FileHashConfig::new()
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn hash_files_parallel_large_file_streaming() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large.bin");
 
         let size = 2 * 1024 * 1024; // 2 MB
@@ -383,7 +383,7 @@ mod tests {
     fn compute_file_signatures_parallel_basic() {
         use crate::rolling::RollingChecksum;
 
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("sigtest.bin");
 
         let data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn compute_file_signatures_parallel_multiple_files() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let files = create_test_files(&dir);
 
         let results = compute_file_signatures_parallel::<Sha256>(&files, 16, 4096);
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn compute_file_signatures_handles_empty_file() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("empty.bin");
         std::fs::write(&path, b"").unwrap();
 
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn parallel_file_hasher_batching() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
 
         let files: Vec<std::path::PathBuf> = (0..10)
             .map(|i| {
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn file_hash_result_includes_size() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("sized.txt");
         let content = b"precise content length";
         std::fs::write(&path, content).unwrap();
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn parallel_file_hashing_preserves_order() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
 
         let files: Vec<std::path::PathBuf> = (0..20)
             .map(|i| {
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn parallel_file_hashing_with_xxh3() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let files = create_test_files(&dir);
 
         let results = hash_files_parallel::<Xxh3>(&files, 64 * 1024);
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn mmap_hash_matches_buffered_hash() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("mmap_test.bin");
 
         // File above MMAP_THRESHOLD (64 KB) triggers the mmap path
@@ -573,7 +573,7 @@ mod tests {
     fn mmap_signatures_match_buffered_signatures() {
         use crate::rolling::RollingChecksum;
 
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("mmap_sig_test.bin");
 
         // File above MMAP_THRESHOLD triggers mmap-based signature computation
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn mmap_seeded_hash_matches_buffered() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("mmap_seeded.bin");
 
         let size = 128 * 1024;
@@ -633,7 +633,7 @@ mod tests {
     /// at-threshold / over-threshold / multi-buffer boundaries.
     #[test]
     fn hash_files_parallel_matches_std_fs_read_across_size_boundaries() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
 
         // Sizes chosen to exercise every branch in hash_file_internal:
         //   - empty file (size <= max_memory_file_size, read_to_end)
@@ -692,7 +692,7 @@ mod tests {
     fn compute_file_signatures_parallel_matches_direct_read_at_boundary() {
         use crate::rolling::RollingChecksum;
 
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("signatures_boundary.bin");
 
         let size: usize = 64 * 1024 + 777; // straddles MMAP_THRESHOLD and ends on a partial block
