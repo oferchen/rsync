@@ -31,7 +31,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
 | **Compression** | zlib, zstd, lz4 with level control and negotiation |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Advertised when oc-rsync sends. An oc-rsync client that receives (a pull) does not advertise it by default, so pulls use a full up-front file list. `OC_RSYNC_PULL_INC_RECURSE=1` opts a pull in, except when a delete pass would run (#8062) |
+| **Incremental recursion** | Advertised when oc-rsync sends. An oc-rsync client that receives (a pull) does not advertise it by default, so pulls use a full up-front file list. `OC_RSYNC_PULL_INC_RECURSE=1` opts a pull in, except under `--delete-before` or `--delete-after`, which need the whole list as in upstream (#8062, #8091) |
 | **Batch** | `--write-batch` / `--read-batch` round trip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
@@ -50,14 +50,14 @@ Outcomes, counted from each leg's committed manifest:
 
 | leg | pass | fail | skip |
 |---|---:|---:|---:|
-| Linux, non-root, pipe | 274 | 0 | 86 |
-| Linux, root, pipe | 303 | 0 | 57 |
-| Linux, non-root, tcp | 123 | 4 | 34 |
-| Linux, root, tcp | 141 | 4 | 16 |
-| macOS, non-root, pipe | 248 | 0 | 112 |
-| macOS, root, pipe | 276 | 0 | 84 |
-| macOS, non-root, tcp | 120 | 4 | 37 |
-| macOS, root, tcp | 136 | 4 | 21 |
+| Linux, non-root, pipe | 275 | 0 | 85 |
+| Linux, root, pipe | 306 | 0 | 54 |
+| Linux, non-root, tcp | 125 | 4 | 32 |
+| Linux, root, tcp | 145 | 4 | 12 |
+| macOS, non-root, pipe | 249 | 0 | 111 |
+| macOS, root, pipe | 279 | 0 | 81 |
+| macOS, non-root, tcp | 122 | 4 | 35 |
+| macOS, root, tcp | 140 | 4 | 17 |
 
 Re-derive any cell, and list a release's failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
 
@@ -67,7 +67,7 @@ awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' 
 awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u
 ```
 
-**Four distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. All four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion yet. None fails only on macOS, and no pipe leg has a failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
+**Four distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. All four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion by default. None fails only on macOS, and no pipe leg has a failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 
@@ -330,7 +330,7 @@ Legend: ✓ supported, ⚠ partial, ✗ not implemented.
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.0 and 3.4.4 across local, SSH and daemon modes. It has not moved to 3.5.1 yet. It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
+Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.1, 3.5.0 and 3.4.4 across local, SSH and daemon modes (#8106). It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
 
 Releases up to and including v0.6.4 predate this harness: their report compares against 3.4.4 only, without peak RSS, corpus rate or spread. The chart above comes from the latest release, so read that release's `benchmark_report.md` for what it measured.
 
