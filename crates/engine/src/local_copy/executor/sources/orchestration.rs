@@ -754,7 +754,7 @@ pub(crate) fn copy_sources(
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
                         }
-                    } else if error.is_link_stat_failed() {
+                    } else if error.is_link_stat_failed() || error.is_change_dir_failed() {
                         // upstream: flist.c send_file_list() - a missing source
                         // argument prints `link_stat "%s" failed: %s` to stderr,
                         // sets IOERR_GENERAL (exit 23), and the transfer
@@ -1002,6 +1002,12 @@ fn process_single_source(
             return Err(LocalCopyError::io(
                 "access source",
                 source_path.to_path_buf(),
+                error,
+            ));
+        }
+        SourceMetadataResult::ChangeDirFailed(dir, error) => {
+            return Err(LocalCopyError::change_dir_failed(
+                crate::local_copy::change_dir_diagnostic_name(&dir),
                 error,
             ));
         }

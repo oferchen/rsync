@@ -126,6 +126,14 @@ pub(super) fn fetch_source_metadata(
     relative_root: Option<&Path>,
     metadata_start: Instant,
 ) -> Result<SourceMetadataResult, LocalCopyError> {
+    // upstream: flist.c:2914-2921 - the operand's `dir` half is entered before
+    // its `.` half is stat'd, so this precedes `link_stat` and `--missing-args`.
+    if !context.relative_paths_enabled()
+        && let Some((dir, error)) = crate::local_copy::operand_change_dir_failure(source.path())
+    {
+        context.record_file_list_generation(metadata_start.elapsed());
+        return Ok(SourceMetadataResult::ChangeDirFailed(dir, error));
+    }
     match operand_link_stat(context, source, source_path) {
         Ok(metadata) => Ok(SourceMetadataResult::Found(metadata)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
