@@ -2757,6 +2757,38 @@ mod phase2_guard_tests {
         );
     }
 
+    /// upstream: sender.c:521 - read_ndx_and_attrs() has no EOF tolerance in
+    /// any phase or under --dry-run; io.c:whine_about_eof() ends the run.
+    #[test]
+    fn receiver_eof_after_phase_0_is_an_error() {
+        for dry_run in [false, true] {
+            let (_dir, mut ctx) = generator_with_one_file();
+            ctx.config.flags.dry_run = dry_run;
+            let mut wire = Vec::new();
+            MonotonicNdxWriter::new(32)
+                .write_ndx_done(&mut wire)
+                .expect("write done");
+            let err = drive(&mut ctx, wire).expect_err("EOF in phase 1 must fail");
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::UnexpectedEof,
+                "dry_run={dry_run}"
+            );
+        }
+    }
+    /// upstream: rsync.c:339 calls main.c:244 read_del_stats(), whose varint
+    /// reads make a frame cut short by the peer fatal under --dry-run too.
+    #[test]
+    fn receiver_eof_inside_del_stats_is_an_error_under_dry_run() {
+        let (_dir, mut ctx) = generator_with_one_file();
+        ctx.config.flags.dry_run = true;
+        let mut wire = Vec::new();
+        MonotonicNdxWriter::new(32)
+            .write_ndx(&mut wire, protocol::codec::NDX_DEL_STATS)
+            .expect("write del stats marker");
+        let err = drive(&mut ctx, wire).expect_err("truncated NDX_DEL_STATS must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
     #[test]
     fn phase_completion_ndx_done_sequence_succeeds() {
         let (_dir, mut ctx) = generator_with_one_file();
