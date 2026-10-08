@@ -106,7 +106,7 @@ mod tests {
     /// carried through so every result can be attributed to a named oracle.
     #[test]
     fn pinned_binary_at_the_expected_version_resolves() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let root = dir.path();
         let pinned = upstream::pinned_binary(root, ORACLE_VERSION);
         std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
@@ -121,7 +121,7 @@ mod tests {
     /// rsync happens to be installed - a silent fallback is the whole defect.
     #[test]
     fn absent_pinned_binary_fails_with_a_named_diagnostic() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let err = resolve_with(dir.path(), None, |_| Some(banner(ORACLE_VERSION))).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("upstream oracle missing"), "{msg}");
@@ -134,7 +134,7 @@ mod tests {
     /// FAIL against 3.4.1 cannot be told apart from an oc defect.
     #[test]
     fn wrong_version_fails_and_names_both_versions() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let root = dir.path();
         let pinned = upstream::pinned_binary(root, ORACLE_VERSION);
         std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
@@ -151,7 +151,7 @@ mod tests {
     /// non-rsync binary (openrsync on macOS), which must not be accepted.
     #[test]
     fn non_rsync_banner_is_rejected() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let root = dir.path();
         let pinned = upstream::pinned_binary(root, ORACLE_VERSION);
         std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
@@ -164,7 +164,7 @@ mod tests {
     /// A binary that cannot be run at all is named rather than skipped.
     #[test]
     fn unprobeable_binary_is_rejected() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let root = dir.path();
         let pinned = upstream::pinned_binary(root, ORACLE_VERSION);
         std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
@@ -179,7 +179,7 @@ mod tests {
     /// printed banner instead of being assumed.
     #[test]
     fn override_accepts_another_release_but_still_probes_it() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let other = dir.path().join("rsync-3.1.3");
         let oracle =
             resolve_with(dir.path(), Some(other.clone()), |_| Some(banner("3.1.3"))).unwrap();

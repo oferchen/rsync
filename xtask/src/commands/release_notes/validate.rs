@@ -157,7 +157,6 @@ fn find_status_in_columns(columns: &[&str]) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::tempdir;
 
     #[test]
     fn extract_cve_rows_from_release_template() {
@@ -214,7 +213,7 @@ mod tests {
 
     #[test]
     fn validate_matching_statuses_succeeds() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
 
         let security = r#"
 | CVE | Upstream Issue | oc-rsync Status | Reason |
@@ -241,7 +240,7 @@ mod tests {
 
     #[test]
     fn validate_mismatched_status_fails() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
 
         let security = r#"
 | CVE | Upstream Issue | oc-rsync Status | Reason |
@@ -270,7 +269,7 @@ mod tests {
 
     #[test]
     fn validate_missing_cve_in_security_md_fails() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
 
         let security = "# Security\nNo CVE table.\n";
         fs::write(dir.path().join("SECURITY.md"), security).unwrap();
@@ -293,7 +292,7 @@ mod tests {
 
     #[test]
     fn validate_no_cves_in_body_succeeds() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
 
         fs::write(dir.path().join("SECURITY.md"), "# Security\n").unwrap();
 

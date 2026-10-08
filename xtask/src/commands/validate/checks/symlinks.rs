@@ -318,14 +318,14 @@ mod tests {
 
     #[test]
     fn preserve_violation_none_when_all_symlinks_survive() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         all_links(dir.path());
         assert!(preserve_violation(dir.path()).is_none());
     }
 
     #[test]
     fn preserve_violation_flags_a_dereferenced_link() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let d = dir.path();
         symlink("sub/inner.txt", d.join("to_inner")).unwrap();
         symlink("../outside", d.join("unsafe")).unwrap();
@@ -337,14 +337,14 @@ mod tests {
 
     #[test]
     fn safe_links_violation_none_when_unsafe_dropped_and_rel_kept() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         symlink("target.txt", dir.path().join("rel")).unwrap();
         assert!(safe_links_violation(dir.path()).is_none());
     }
 
     #[test]
     fn safe_links_violation_flags_a_surviving_unsafe_link() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         symlink("target.txt", dir.path().join("rel")).unwrap();
         symlink("../outside", dir.path().join("unsafe")).unwrap();
         let msg = safe_links_violation(dir.path()).unwrap();
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn safe_links_violation_flags_a_dropped_safe_link() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         // `unsafe` correctly gone, but the safe `rel` link was dropped too.
         let msg = safe_links_violation(dir.path()).unwrap();
         assert!(msg.contains("was dropped"));
@@ -361,14 +361,14 @@ mod tests {
 
     #[test]
     fn copy_links_violation_none_for_regular_file_with_target_body() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         fs::write(dir.path().join("rel"), TARGET_BODY).unwrap();
         assert!(copy_links_violation(dir.path()).is_none());
     }
 
     #[test]
     fn copy_links_violation_flags_a_link_that_was_not_dereferenced() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         symlink("target.txt", dir.path().join("rel")).unwrap();
         let msg = copy_links_violation(dir.path()).unwrap();
         assert!(msg.contains("still a symlink"));
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn copy_links_violation_flags_wrong_dereferenced_content() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         fs::write(dir.path().join("rel"), b"not-the-target").unwrap();
         assert!(copy_links_violation(dir.path()).unwrap().contains("!="));
     }

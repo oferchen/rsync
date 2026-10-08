@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn tree_bytes_sums_regular_file_lengths_only() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         fs::create_dir(dir.path().join("d")).unwrap();
         fs::write(dir.path().join("a"), b"12345").unwrap();
         fs::write(dir.path().join("d/b"), b"678").unwrap();

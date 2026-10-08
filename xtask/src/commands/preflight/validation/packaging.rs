@@ -342,7 +342,6 @@ mod tests {
     use crate::test_support;
     use std::collections::BTreeMap;
     use std::fs;
-    use tempfile::tempdir;
 
     fn sample_branding() -> WorkspaceBranding {
         let mut branding = test_support::workspace_branding_snapshot();
@@ -450,7 +449,7 @@ mod tests {
     #[test]
     fn validate_systemd_unit_accepts_workspace_source_url() {
         let branding = sample_branding();
-        let temp = tempdir().expect("tempdir");
+        let temp = ::test_support::create_tempdir();
         write_unit_file(temp.path(), &branding, &branding.source);
 
         validate_systemd_unit(temp.path(), &branding)
@@ -460,7 +459,7 @@ mod tests {
     #[test]
     fn validate_systemd_unit_rejects_mismatched_documentation_url() {
         let branding = sample_branding();
-        let temp = tempdir().expect("tempdir");
+        let temp = ::test_support::create_tempdir();
         write_unit_file(temp.path(), &branding, "https://example.invalid/other");
 
         let error = validate_systemd_unit(temp.path(), &branding).unwrap_err();

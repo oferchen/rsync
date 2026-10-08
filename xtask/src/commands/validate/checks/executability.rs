@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn user_exec_of_file_reflects_set_permissions() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let exec = dir.path().join("run.sh");
         let plain = dir.path().join("data.txt");
         write_mode(&exec, b"x", 0o755).unwrap();
@@ -367,7 +367,10 @@ mod tests {
     #[test]
     fn mode_diff_none_for_identical_modes() {
         // Explicit set_permissions; no reliance on GNU `touch -d @epoch`.
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         for root in [a.path(), b.path()] {
             write_mode(&root.join("f"), b"x", 0o750).unwrap();
         }
@@ -376,7 +379,10 @@ mod tests {
 
     #[test]
     fn mode_diff_names_the_diverging_path() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         write_mode(&a.path().join("f"), b"x", 0o755).unwrap();
         write_mode(&b.path().join("f"), b"x", 0o644).unwrap();
         let diff = mode_diff(a.path(), b.path()).unwrap();

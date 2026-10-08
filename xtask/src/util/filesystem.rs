@@ -71,11 +71,10 @@ mod tests {
     use super::is_probably_binary;
     use std::fs;
     use std::io::Write;
-    use tempfile::tempdir;
 
     #[test]
     fn binary_detection_flags_control_bytes() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let text_path = dir.path().join("text.rs");
         fs::write(&text_path, b"fn main() {}\n").expect("write text file");
         assert!(!is_probably_binary(&text_path).expect("check succeeds"));
