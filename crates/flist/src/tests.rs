@@ -47,7 +47,7 @@ fn walk_errors_when_root_missing() {
 
 #[test]
 fn walk_single_file_emits_root_entry() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("file.txt");
     fs::write(&file, b"contents").expect("write");
 
@@ -61,7 +61,7 @@ fn walk_single_file_emits_root_entry() {
 
 #[test]
 fn walk_directory_yields_deterministic_order() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     let dir_a = root.join("a");
@@ -90,7 +90,7 @@ fn walk_directory_yields_deterministic_order() {
 fn walk_does_not_follow_symlink_by_default() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target = temp.path().join("target");
     fs::create_dir(&root).expect("create root");
@@ -108,7 +108,7 @@ fn walk_does_not_follow_symlink_by_default() {
 fn walk_follows_symlink_when_enabled() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target = temp.path().join("target");
     fs::create_dir(&root).expect("create root");
@@ -132,7 +132,7 @@ fn walk_follows_symlink_when_enabled() {
 fn walk_root_symlink_followed_when_enabled() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target");
     fs::create_dir(&target).expect("create target");
     fs::write(target.join("file.txt"), b"data").expect("write file");
@@ -154,7 +154,7 @@ fn walk_root_symlink_followed_when_enabled() {
 fn walk_root_symlink_preserves_full_paths() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target");
     fs::create_dir(&target).expect("create target");
     let file = target.join("file.txt");
@@ -187,7 +187,7 @@ fn walk_root_symlink_preserves_full_paths() {
 fn walk_root_symlink_not_followed_by_default() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target");
     fs::create_dir(&target).expect("create target");
     fs::write(target.join("file.txt"), b"data").expect("write file");
@@ -207,7 +207,7 @@ fn walk_root_symlink_not_followed_by_default() {
 fn walk_detects_symlink_cycles() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     let _ = symlink(&root, root.join("self"));
@@ -228,7 +228,7 @@ fn walk_detects_symlink_cycles() {
 fn walk_detects_direct_symlink_loop() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -258,7 +258,7 @@ fn walk_detects_indirect_symlink_loop() {
     //                link_c -> c
     //              c/
     //                link_a -> a
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -309,7 +309,7 @@ fn walk_detects_parent_symlink_loop() {
     // Structure: root/
     //              child/
     //                parent_link -> root
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -351,7 +351,7 @@ fn walk_continues_after_detecting_loop() {
     //              normal_file.txt
     //              normal_dir/
     //                nested.txt
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -395,7 +395,7 @@ fn walk_loop_detection_with_multiple_paths_to_same_dir() {
     //                file.txt
     //              link1 -> target
     //              link2 -> target
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -441,7 +441,7 @@ fn walk_symlink_loop_not_followed_when_disabled() {
 
     // Test case: With follow_symlinks=false, loops don't matter
     // because we never dereference symlinks
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -464,7 +464,7 @@ fn walk_symlink_loop_not_followed_when_disabled() {
 fn walk_entry_file_name_matches_tail_component() {
     use std::ffi::OsStr;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let nested_dir = root.join("nested");
     let nested_file = nested_dir.join("file.txt");
@@ -485,7 +485,7 @@ fn walk_entry_file_name_matches_tail_component() {
 
 #[test]
 fn walk_empty_directory() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty");
     fs::create_dir(&root).expect("create empty dir");
 
@@ -499,7 +499,7 @@ fn walk_empty_directory() {
 
 #[test]
 fn walk_include_root_false_skips_root_entry() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -515,7 +515,7 @@ fn walk_include_root_false_skips_root_entry() {
 
 #[test]
 fn walk_entry_depth_increases() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let nested = root.join("nested");
     let deep = nested.join("deep");
@@ -545,7 +545,7 @@ fn walk_entry_depth_increases() {
 
 #[test]
 fn walk_terminates_after_exhaustion() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("a.txt"), b"a").expect("write a");
@@ -562,7 +562,7 @@ fn walk_terminates_after_exhaustion() {
 
 #[test]
 fn walk_multiple_files_sorted() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -585,7 +585,7 @@ fn walk_multiple_files_sorted() {
 
 #[test]
 fn walk_nested_directories_sorted() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -658,7 +658,7 @@ fn error_display_includes_path_and_message() {
 fn copy_links_resolves_file_symlink_to_regular_file() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -697,7 +697,7 @@ fn copy_links_resolves_file_symlink_to_regular_file() {
 fn copy_links_resolves_directory_symlink_and_descends() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -730,7 +730,7 @@ fn copy_links_resolves_directory_symlink_and_descends() {
 fn copy_links_disabled_preserves_symlinks() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -761,7 +761,7 @@ fn copy_links_disabled_preserves_symlinks() {
 fn copy_links_root_symlink_resolved_to_target() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target");
     fs::create_dir(&target).expect("create target");
     fs::write(target.join("file.txt"), b"data").expect("write file");
@@ -796,7 +796,7 @@ fn copy_links_root_symlink_resolved_to_target() {
 fn copy_links_multiple_symlinks_all_resolved() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 

@@ -29,7 +29,7 @@ fn collect_relative_paths(
 /// characters by their ASCII values.
 #[test]
 fn files_sorted_lexicographically() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("lex_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -62,7 +62,7 @@ fn files_sorted_lexicographically() {
 /// handling to put directories before or after files.
 #[test]
 fn directories_and_files_sorted_together() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -100,7 +100,7 @@ fn directories_and_files_sorted_together() {
 #[test]
 #[cfg_attr(any(target_os = "macos", windows), ignore)]
 fn case_sensitive_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("case_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -129,7 +129,7 @@ fn case_sensitive_sorting() {
 /// "10" < "2" because '1' < '2'.
 #[test]
 fn numeric_prefix_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("num_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -158,7 +158,7 @@ fn numeric_prefix_sorting() {
 /// Each directory's contents are sorted independently before traversal.
 #[test]
 fn sorting_within_nested_directories() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("nested_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -198,7 +198,7 @@ fn sorting_within_nested_directories() {
 /// Verifies deeply nested sorting consistency.
 #[test]
 fn deeply_nested_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -245,7 +245,7 @@ fn deeply_nested_sorting() {
 /// Verifies sorting with special characters in filenames.
 #[test]
 fn special_characters_in_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("special_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -273,7 +273,7 @@ fn special_characters_in_names() {
 /// Verifies sorting with dot-prefixed (hidden) files.
 #[test]
 fn hidden_files_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("hidden_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -302,7 +302,7 @@ fn hidden_files_sorting() {
 /// consistent ordering between sender and receiver.
 #[test]
 fn repeated_traversals_are_identical() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("determinism");
     fs::create_dir(&root).expect("create root");
 
@@ -334,7 +334,7 @@ fn repeated_traversals_are_identical() {
 /// (when applied to the same filesystem state).
 #[test]
 fn builder_config_consistency() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("config_consistency");
     fs::create_dir(&root).expect("create root");
 
@@ -353,7 +353,7 @@ fn builder_config_consistency() {
 /// Verifies that sibling directories are processed in sorted order.
 #[test]
 fn sibling_directories_processed_in_order() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("sibling_order");
     fs::create_dir(&root).expect("create root");
 
@@ -384,7 +384,7 @@ fn sibling_directories_processed_in_order() {
 /// Verifies directory contents are fully processed before moving to next sibling.
 #[test]
 fn directory_fully_processed_before_sibling() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("full_process");
     fs::create_dir(&root).expect("create root");
 
@@ -426,7 +426,7 @@ fn directory_fully_processed_before_sibling() {
 /// Verifies sorting of files with different extensions.
 #[test]
 fn extension_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("ext_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -455,7 +455,7 @@ fn extension_sorting() {
 /// Verifies that walker handles edge cases in directory structure.
 #[test]
 fn complex_structure_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("complex");
     fs::create_dir(&root).expect("create root");
 
@@ -500,7 +500,7 @@ fn complex_structure_sorting() {
 /// stable ordering even with hundreds of files.
 #[test]
 fn large_file_list_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("large_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -530,7 +530,7 @@ fn large_file_list_sorting() {
 /// suffix, which can stress string comparison algorithms.
 #[test]
 fn large_file_list_similar_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("similar_names");
     fs::create_dir(&root).expect("create root");
 
@@ -561,7 +561,7 @@ fn large_file_list_similar_names() {
 /// boundaries.
 #[test]
 fn large_nested_directory_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("large_nested");
     fs::create_dir(&root).expect("create root");
 
@@ -616,7 +616,7 @@ fn large_nested_directory_sorting() {
 fn binary_byte_sorting() {
     use std::os::unix::ffi::OsStrExt;
 
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("binary_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -658,7 +658,7 @@ fn binary_byte_sorting() {
 /// they sort correctly relative to each other.
 #[test]
 fn comprehensive_punctuation_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("punct_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -716,7 +716,7 @@ fn comprehensive_punctuation_sorting() {
 /// Tests realistic filenames that mix letters, numbers, and punctuation.
 #[test]
 fn mixed_alphanumeric_special_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed_sort");
     fs::create_dir(&root).expect("create root");
 
@@ -767,7 +767,7 @@ fn mixed_alphanumeric_special_sorting() {
 #[test]
 #[cfg_attr(any(target_os = "macos", windows), ignore)]
 fn extended_case_sensitive_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("case_extended");
     fs::create_dir(&root).expect("create root");
 
@@ -808,7 +808,7 @@ fn extended_case_sensitive_sorting() {
 #[test]
 #[cfg_attr(any(target_os = "macos", windows), ignore)]
 fn case_sensitive_with_numbers() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("case_num");
     fs::create_dir(&root).expect("create root");
 
@@ -843,7 +843,7 @@ fn case_sensitive_with_numbers() {
 /// systems.
 #[test]
 fn locale_independent_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("locale");
     fs::create_dir(&root).expect("create root");
 
@@ -884,7 +884,7 @@ fn locale_independent_sorting() {
 /// multiple times and comparing results.
 #[test]
 fn sorting_determinism_stress_test() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("determinism");
     fs::create_dir(&root).expect("create root");
 
@@ -925,7 +925,7 @@ fn sorting_determinism_stress_test() {
 /// of the other.
 #[test]
 fn prefix_length_sorting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("prefix");
     fs::create_dir(&root).expect("create root");
 
@@ -955,7 +955,7 @@ fn prefix_length_sorting() {
 /// adversarial input.
 #[test]
 fn reverse_order_input_sorted_correctly() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("reverse");
     fs::create_dir(&root).expect("create root");
 
@@ -988,7 +988,7 @@ fn reverse_order_input_sorted_correctly() {
 /// often returns entries in near-sorted order.
 #[test]
 fn nearly_sorted_input_sorted_correctly() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("nearly");
     fs::create_dir(&root).expect("create root");
 
@@ -1018,7 +1018,7 @@ fn nearly_sorted_input_sorted_correctly() {
 /// ensuring depth-first ordering is maintained after sort_unstable.
 #[test]
 fn large_mixed_tree_sort_order() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed_large");
     fs::create_dir(&root).expect("create root");
 
@@ -1079,7 +1079,7 @@ fn large_mixed_tree_sort_order() {
 /// sorted reference, confirming sort_unstable correctness for unique names.
 #[test]
 fn sort_matches_reference_ordering() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("reference");
     fs::create_dir(&root).expect("create root");
 

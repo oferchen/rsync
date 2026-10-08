@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 fn create_test_tree() -> TempDir {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     File::create(dir.path().join("file1.txt")).unwrap();
     File::create(dir.path().join("file2.txt")).unwrap();
     File::create(dir.path().join("file3.txt")).unwrap();

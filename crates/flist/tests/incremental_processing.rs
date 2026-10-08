@@ -45,7 +45,7 @@ fn collect_relative_paths(
 ///       file.txt (50 bytes)
 ///     top_file.txt (10 bytes)
 fn create_standard_tree() -> (tempfile::TempDir, PathBuf) {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -247,7 +247,7 @@ fn metadata_file_size_preserved() {
 /// Verifies that modification timestamps are non-zero for created files.
 #[test]
 fn metadata_mtime_nonzero() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("timed.txt");
     fs::write(&file, b"data").expect("write");
 
@@ -358,7 +358,7 @@ fn metadata_depth_matches_path_components() {
 /// Verifies that the root entry for a directory is correctly tagged.
 #[test]
 fn directory_root_entry_is_dir() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dir_root");
     fs::create_dir(&root).expect("create dir");
 
@@ -373,7 +373,7 @@ fn directory_root_entry_is_dir() {
 /// Verifies that the root entry for a single file is correctly tagged.
 #[test]
 fn file_root_entry_is_file() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("single.txt");
     fs::write(&file, b"content").expect("write");
 
@@ -392,7 +392,7 @@ fn file_root_entry_is_file() {
 /// (no files).
 #[test]
 fn directory_only_tree() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dirs_only");
     fs::create_dir_all(root.join("a/b/c")).expect("create nested dirs");
     fs::create_dir(root.join("d")).expect("create d");
@@ -420,7 +420,7 @@ fn directory_only_tree() {
 /// subdirectories).
 #[test]
 fn files_only_tree() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("files_only");
     fs::create_dir(&root).expect("create root");
 
@@ -454,7 +454,7 @@ fn files_only_tree() {
 fn symlink_entry_metadata_preserved() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("symlinks");
     fs::create_dir(&root).expect("create root");
 
@@ -496,7 +496,7 @@ fn symlink_entry_metadata_preserved() {
 fn symlink_to_dir_not_followed_yields_single_entry() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -525,7 +525,7 @@ fn symlink_to_dir_not_followed_yields_single_entry() {
 fn symlink_to_dir_followed_yields_children() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -555,7 +555,7 @@ fn symlink_to_dir_followed_yields_children() {
 /// sorted (lexicographic) order during incremental consumption.
 #[test]
 fn incremental_entries_sorted_within_directory() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("sorted");
     fs::create_dir(&root).expect("create root");
 
@@ -589,7 +589,7 @@ fn incremental_entries_sorted_within_directory() {
 /// special precedence for either type.
 #[test]
 fn incremental_mixed_types_sorted_together() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed");
     fs::create_dir(&root).expect("create root");
 
@@ -635,7 +635,7 @@ fn incremental_deterministic_across_runs() {
 /// incremental processing.
 #[test]
 fn edge_case_empty_directory() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty");
     fs::create_dir(&root).expect("create empty dir");
 
@@ -654,7 +654,7 @@ fn edge_case_empty_directory() {
 /// Verifies incremental processing of an empty directory with include_root=false.
 #[test]
 fn edge_case_empty_directory_no_root() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty_no_root");
     fs::create_dir(&root).expect("create empty dir");
 
@@ -672,7 +672,7 @@ fn edge_case_empty_directory_no_root() {
 /// Verifies that a single file root yields exactly one entry.
 #[test]
 fn edge_case_single_file() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("lone.txt");
     fs::write(&file, b"alone").expect("write");
 
@@ -701,7 +701,7 @@ fn edge_case_nonexistent_path() {
 /// calls should consistently return None.
 #[test]
 fn edge_case_fused_after_exhaustion() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("fused");
     fs::create_dir(&root).expect("create dir");
     fs::write(root.join("file.txt"), b"data").expect("write");
@@ -721,7 +721,7 @@ fn edge_case_fused_after_exhaustion() {
 /// incremental processing.
 #[test]
 fn edge_case_zero_length_file() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("zero_len");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("empty.txt"), b"").expect("write empty file");
@@ -741,7 +741,7 @@ fn edge_case_zero_length_file() {
 /// Verifies that files with varying sizes are all correctly reported.
 #[test]
 fn edge_case_varying_file_sizes() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("sizes");
     fs::create_dir(&root).expect("create root");
 
@@ -772,7 +772,7 @@ fn edge_case_varying_file_sizes() {
 /// Verifies that incremental processing works correctly with hundreds of files.
 #[test]
 fn large_list_incremental_processing() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("large");
     fs::create_dir(&root).expect("create root");
 
@@ -815,7 +815,7 @@ fn large_list_incremental_processing() {
 /// Verifies incremental processing with a wide and deep directory tree.
 #[test]
 fn large_list_wide_and_deep() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("wide_deep");
     fs::create_dir(&root).expect("create root");
 
@@ -857,7 +857,7 @@ fn large_list_wide_and_deep() {
 /// (deferred stat pattern used in incremental processing).
 #[test]
 fn lazy_entry_deferred_metadata() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("lazy.txt");
     fs::write(&file, b"lazy content").expect("write");
 
@@ -874,7 +874,7 @@ fn lazy_entry_deferred_metadata() {
 /// Verifies that filtering by path works without triggering metadata fetch.
 #[test]
 fn lazy_entry_filter_without_stat() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("test.tmp");
     fs::write(&file, b"data").expect("write");
 
@@ -894,7 +894,7 @@ fn lazy_entry_filter_without_stat() {
 /// Verifies that LazyFileListEntry resolves to a valid FileListEntry.
 #[test]
 fn lazy_entry_into_resolved() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("resolve.txt");
     fs::write(&file, b"resolve me").expect("write");
 
@@ -909,7 +909,7 @@ fn lazy_entry_into_resolved() {
 /// Verifies that pre-resolved lazy entries can be converted immediately.
 #[test]
 fn lazy_entry_with_pre_resolved_metadata() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("pre.txt");
     fs::write(&file, b"preresolved").expect("write");
 
@@ -936,7 +936,7 @@ fn lazy_entry_with_pre_resolved_metadata() {
 /// Verifies that try_into_resolved returns None for unresolved entries.
 #[test]
 fn lazy_entry_try_into_unresolved_returns_none() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("unresolved.txt");
     fs::write(&file, b"data").expect("write");
 
@@ -966,7 +966,7 @@ fn lazy_entry_resolve_nonexistent_fails() {
 /// Verifies that LazyFileListEntry root entry is correctly identified.
 #[test]
 fn lazy_entry_root_identification() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
 
     let root_entry =
         LazyFileListEntry::new(temp.path().to_path_buf(), PathBuf::new(), 0, true, false);
@@ -1038,7 +1038,7 @@ fn builder_include_root_count_difference() {
 /// subtree is yielded before moving to the next sibling directory.
 #[test]
 fn incremental_subtree_complete_before_sibling() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("subtree_order");
     fs::create_dir(&root).expect("create root");
 
@@ -1080,7 +1080,7 @@ fn incremental_subtree_complete_before_sibling() {
 /// order during incremental processing.
 #[test]
 fn incremental_hidden_files_sorted() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("hidden");
     fs::create_dir(&root).expect("create root");
 
@@ -1107,7 +1107,7 @@ fn incremental_hidden_files_sorted() {
 /// between reading entries).
 #[test]
 fn incremental_interleaved_with_fs_ops() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("interleaved");
     fs::create_dir(&root).expect("create root");
 
@@ -1248,7 +1248,7 @@ fn iterator_count_consumes_all() {
 /// incremental order with monotonically increasing then decreasing depth.
 #[test]
 fn deep_nesting_depth_progression() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep");
 
     let mut current = root.clone();
@@ -1287,7 +1287,7 @@ fn deep_nesting_depth_progression() {
 /// contains exactly one subdirectory and one file.
 #[test]
 fn deep_nesting_uniform_tree() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("uniform");
     fs::create_dir(&root).expect("create root");
 
@@ -1322,7 +1322,7 @@ fn deep_nesting_uniform_tree() {
 fn metadata_permissions_preserved() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("perms");
     fs::create_dir(&root).expect("create root");
 
@@ -1356,7 +1356,7 @@ fn metadata_permissions_preserved() {
 /// behavior -- only metadata matters.
 #[test]
 fn content_does_not_affect_traversal() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("content");
     fs::create_dir(&root).expect("create root");
 
@@ -1387,7 +1387,7 @@ fn content_does_not_affect_traversal() {
 /// "filter-then-resolve" workflow efficiently.
 #[test]
 fn lazy_metadata_filter_then_resolve_workflow() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path();
 
     // Create a mix of .txt and .tmp files
@@ -1454,7 +1454,7 @@ fn lazy_metadata_filter_then_resolve_workflow() {
 /// handled during incremental processing.
 #[test]
 fn incremental_special_filenames() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("special_names");
     fs::create_dir(&root).expect("create root");
 
@@ -1489,7 +1489,7 @@ fn incremental_special_filenames() {
 /// Verifies that unicode filenames work correctly during incremental processing.
 #[test]
 fn incremental_unicode_filenames() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("unicode");
     fs::create_dir(&root).expect("create root");
 

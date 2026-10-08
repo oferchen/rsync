@@ -205,7 +205,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_file() -> (TempDir, PathBuf) {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("test.txt");
         File::create(&path).unwrap();
         (dir, path)

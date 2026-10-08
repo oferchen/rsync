@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn file_list_walker_walks_temp_directory() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let file_path = temp.path().join("test.txt");
         std::fs::write(&file_path, b"content").expect("write");
 
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn file_list_walker_empty_directory() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true)
             .expect("create walker");
 
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn file_list_walker_single_file() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let file_path = temp.path().join("single.txt");
         std::fs::write(&file_path, b"content").expect("write");
 
@@ -455,7 +455,7 @@ mod tests {
     /// filesystem returns them in reverse order.
     #[test]
     fn directory_state_sorts_reverse_ordered_entries() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dir = temp.path().join("reverse");
         std::fs::create_dir(&dir).expect("create dir");
 
@@ -481,7 +481,7 @@ mod tests {
     /// Verifies that DirectoryState sorts a large number of entries correctly.
     #[test]
     fn directory_state_sorts_large_directory() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dir = temp.path().join("large");
         std::fs::create_dir(&dir).expect("create dir");
 
@@ -504,7 +504,7 @@ mod tests {
     /// stressing the string comparison path.
     #[test]
     fn directory_state_sorts_entries_with_long_common_prefix() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dir = temp.path().join("prefix");
         std::fs::create_dir(&dir).expect("create dir");
 
