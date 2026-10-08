@@ -45,11 +45,17 @@ fn call_emit_follower_itemize<W: std::io::Write + ?Sized>(
 ) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, dest, None)
+        ctx.emit_server_hardlink_follower_itemize(
+            buf,
+            ndx_codec,
+            0..ctx.file_list.len(),
+            dest,
+            None,
+        )
     }
     #[cfg(not(unix))]
     {
-        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, dest)
+        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, 0..ctx.file_list.len(), dest)
     }
 }
 

@@ -1088,11 +1088,13 @@ impl ReceiverContext {
             // Emit through the request-phase NDX diff-state (never the redo
             // pass, which carries no new followers) so a pushing client's
             // sender renders each `hf...` / `=> leader` row.
-            if !is_redo_pass {
+            if !is_redo_pass && !self.itemize_followers_per_segment {
+                let whole_list = 0..self.file_list.len();
                 #[cfg(unix)]
                 self.emit_server_hardlink_follower_itemize(
                     writer,
                     ndx_write_codec.inner_mut(),
+                    whole_list,
                     &setup.dest_dir,
                     setup.sandbox.as_deref(),
                 )?;
@@ -1100,6 +1102,7 @@ impl ReceiverContext {
                 self.emit_server_hardlink_follower_itemize(
                     writer,
                     ndx_write_codec.inner_mut(),
+                    whole_list,
                     &setup.dest_dir,
                 )?;
             }

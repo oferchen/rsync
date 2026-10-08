@@ -602,11 +602,17 @@ impl ReceiverContext {
         self.emit_server_hardlink_follower_itemize(
             writer,
             ndx_write_codec.inner_mut(),
+            0..self.file_list.len(),
             &dest_dir,
             sandbox.as_deref(),
         )?;
         #[cfg(not(unix))]
-        self.emit_server_hardlink_follower_itemize(writer, ndx_write_codec.inner_mut(), &dest_dir)?;
+        self.emit_server_hardlink_follower_itemize(
+            writer,
+            ndx_write_codec.inner_mut(),
+            0..self.file_list.len(),
+            &dest_dir,
+        )?;
 
         #[cfg(unix)]
         self.create_hardlinks(&dest_dir, sandbox.as_deref(), writer)?;

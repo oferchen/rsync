@@ -393,6 +393,11 @@ pub struct ReceiverContext {
     /// as before. Only [`Self::run_pipelined`] opts in; the sync, incremental,
     /// and async receive paths are converted separately.
     pub(in crate::receiver) defer_itemize: bool,
+    /// Set by the streaming INC_RECURSE driver, which itemizes each sub-list's
+    /// hard-link followers itself and drains their echoes before its next read.
+    /// The shared pipeline loop then leaves followers alone instead of
+    /// itemizing the whole list at the end of every sub-list.
+    pub(in crate::receiver) itemize_followers_per_segment: bool,
     /// Buffer of rendered itemize rows keyed by flist index, drained in ascending
     /// key order by [`Self::flush_itemize_rows`]. Populated only while
     /// [`Self::defer_itemize`] is set. A `Vec` per index tolerates the phase-2
@@ -685,6 +690,7 @@ impl ReceiverContext {
             // upstream: generator.c:2304 - MIN_FILECNT_LOOKAHEAD / 2 (1000 / 2).
             hardlink_lookahead_target: 500,
             defer_itemize: false,
+            itemize_followers_per_segment: false,
             itemize_rows: RefCell::new(BTreeMap::new()),
             event_rows: RefCell::new(BTreeMap::new()),
             interleave_names: false,
