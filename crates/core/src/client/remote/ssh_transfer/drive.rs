@@ -7,6 +7,7 @@
 
 use std::ffi::OsString;
 use std::io::BufReader;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -429,17 +430,24 @@ fn run_server_over_ssh_connection(
     };
     let mut itemize_sink = ItemizeEventSink::new(render_out_format_locally);
 
-    let transfer_result = crate::server::run_server_with_handshake(
+    // upstream: io.c:298-301 whine_about_eof() names stats.total_read, the raw
+    // bytes perform_io() read once buffered input started (io.c:938).
+    let bytes_read = Arc::new(AtomicU64::new(0));
+    let transfer_result = crate::server::run_server_with_handshake_adopting(
         config,
         handshake,
         &mut reader,
         &mut writer,
-        progress,
-        batch_recording,
-        if wants_client_output {
-            Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
-        } else {
-            None
+        crate::server::ServerTransferHooks {
+            progress,
+            batch: batch_recording,
+            itemize: if wants_client_output {
+                Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
+            } else {
+                None
+            },
+            bytes_read: Some(Arc::clone(&bytes_read)),
+            ..Default::default()
         },
     );
 
@@ -473,6 +481,7 @@ fn run_server_over_ssh_connection(
             transfer_error,
             child_exit_code,
             local_role,
+            bytes_read.load(Ordering::Relaxed),
         )),
     }
 }
@@ -483,6 +492,7 @@ fn transfer_failure_error(
     transfer_error: std::io::Error,
     child_exit_code: ExitCode,
     local_role: Role,
+    bytes_received: u64,
 ) -> ClientError {
     // upstream: io.c:1930 - a received `MSG_ERROR_EXIT` ends in the
     // NORETURN `_exit_cleanup(val)`, so the peer's code IS the client's
@@ -492,6 +502,17 @@ fn transfer_failure_error(
     // the server actually exited with.
     if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
         return remote_exit_error(ExitCode::from_raw(code), local_role);
+    }
+    // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
+    // mid-transfer prints the whine, then exit_cleanup(RERR_STREAMIO) takes the
+    // worse of that and the child's raw status (cleanup.c:150).
+    if transfer_error.kind() == std::io::ErrorKind::UnexpectedEof {
+        let exit = if child_exit_code.as_i32() > ExitCode::StreamIo.as_i32() {
+            child_exit_code
+        } else {
+            ExitCode::StreamIo
+        };
+        return connection_unexpectedly_closed_error(bytes_received, exit, local_role);
     }
     let transfer_exit = ExitCode::from_io_error(&transfer_error);
     // upstream: cleanup.c:146-153 - _exit_cleanup() polls the child with
@@ -527,6 +548,7 @@ mod transfer_failure_error_tests {
             protocol::protocol_violation("filter rules are too modern for remote rsync."),
             ExitCode::StreamIo,
             Role::Sender,
+            0,
         );
         assert_eq!(err.exit_code(), 2);
         assert!(
@@ -544,6 +566,7 @@ mod transfer_failure_error_tests {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
             ExitCode::StreamIo,
             Role::Sender,
+            0,
         );
         assert_eq!(err.exit_code(), 12);
     }
