@@ -72,10 +72,20 @@ fn client_rejects_option_spellings_upstream_does_not_have() {
         let output = run(&["-a", option, &src_arg, &dest_arg]);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{option}: {stderr}");
-        assert!(
-            stderr.contains("unknown option") && stderr.contains(option),
-            "{option}: stderr must name the refused option: {stderr}"
+        // upstream: options.c:915 option_error() then main.c:1913 exit_cleanup.
+        let mut lines = stderr.lines();
+        assert_eq!(
+            lines.next(),
+            Some(format!("oc-rsync: {option}: unknown option").as_str()),
+            "{stderr}"
         );
+        assert!(
+            lines.next().is_some_and(
+                |line| line.starts_with("oc-rsync error: syntax or usage error (code 1) at ")
+            ),
+            "{stderr}"
+        );
+        assert_eq!(lines.next(), None, "{stderr}");
         assert!(!dest.exists(), "{option}: nothing may be transferred");
     }
 }
