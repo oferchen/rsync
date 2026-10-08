@@ -343,11 +343,13 @@ fn apply_module_directive(
         }
         // upstream: daemon-parm.h:46 `lock_file` STRING, P_LOCAL. Consumed
         // per-module at clientserver.c:746 `claim_connection(lp_lock_file(i), ...)`.
-        "lockfile" if value.is_empty() => builder.lock_file = None,
+        // An empty value is stored as "" and, being non-NULL, wins over the
+        // global value (loadparm.c:347 FN_LOCAL_STRING), so a limited module
+        // then fails to open its lock file.
         "lockfile" => builder.set_lock_file(daemon_parameter_path(value)),
         // upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL). Consumed
         // per-module at log.c:143 `openlog(lp_syslog_tag(module_id), ...)`.
-        "syslogtag" if value.is_empty() => builder.syslog_tag = None,
+        // An empty value is kept as "", not replaced by the global tag.
         "syslogtag" => builder.set_syslog_tag(value.to_owned()),
         // upstream: loadparm.c syslog_facility (P_ENUM, P_LOCAL). Consumed
         // per-module at log.c:143 `openlog(..., lp_syslog_facility(module_id))`.

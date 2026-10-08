@@ -147,9 +147,10 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        "lockfile" if value.is_empty() => state.lock_file = None,
         // upstream: connection.c claim_connection() opens `lp_lock_file(i)` as
-        // given, so a relative value resolves against the daemon's cwd.
+        // given, so a relative value resolves against the daemon's cwd. An empty
+        // value is stored as "" (loadparm.c string_set) and replaces the
+        // DEFAULT_LOCK_FILE default, so a limited module then fails to open it.
         "lockfile" => {
             let resolved = daemon_parameter_path(value.trim());
             store_global_directive(&mut state.lock_file, resolved, canonical, line_number);
@@ -259,11 +260,8 @@ fn apply_global_directive(
             state.module_defaults.syslog_facility = Some(facility.clone());
             store_global_directive(&mut state.syslog_facility, facility, canonical, line_number);
         }
-        // upstream: loadparm.c - syslog tag sets the syslog ident prefix.
-        "syslogtag" if value.is_empty() => {
-            state.module_defaults.syslog_tag = None;
-            state.syslog_tag = None;
-        }
+        // upstream: loadparm.c - syslog tag sets the syslog ident prefix. An
+        // empty value is stored as "" and replaces the "rsyncd" default.
         "syslogtag" => {
             // upstream: loadparm.c - `syslog tag` is P_LOCAL; the
             // global-section value seeds every module's inherited default.
