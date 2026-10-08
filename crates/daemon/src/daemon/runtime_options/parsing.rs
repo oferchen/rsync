@@ -263,7 +263,7 @@ fn collect_dparams(arguments: &[OsString], brand: Brand) -> Result<Vec<String>, 
         })
         .find(|name| !is_daemon_parameter(name))
     {
-        return Err(config_error(format!("Unknown parameter \"{unknown}\"")));
+        return Err(daemon_syntax_error(format!("Unknown parameter \"{unknown}\"")));
     }
     Ok(dparams)
 }

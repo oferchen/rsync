@@ -21,6 +21,7 @@ use core::{
 use logging_sink::MessageSink;
 
 use crate::{
+    DaemonError,
     config::DaemonConfig,
     daemon::{
         MAX_EXIT_CODE, ParsedArgs, ServiceAction, parse_args, render_help, run_daemon,
@@ -100,26 +101,29 @@ where
     if std::env::var_os("OC_RSYNC_ASYNC_DAEMON").is_some() {
         return match crate::daemon::run_async_daemon(config) {
             Ok(()) => 0,
-            Err(error) => {
-                if write_message(error.message(), stderr).is_err() {
-                    let message = error.message();
-                    let _ = writeln!(stderr.writer_mut(), "{message}");
-                }
-                error.exit_code()
-            }
+            Err(error) => report_daemon_error(&error, stderr),
         };
     }
 
     match run_daemon(config) {
         Ok(()) => 0,
-        Err(error) => {
-            if write_message(error.message(), stderr).is_err() {
-                let message = error.message();
-                let _ = writeln!(stderr.writer_mut(), "{message}");
-            }
-            error.exit_code()
-        }
+        Err(error) => report_daemon_error(&error, stderr),
     }
+}
+
+/// Prints a daemon failure and returns its exit code.
+///
+/// Any preamble goes out verbatim first, so the trailer stands on its own line
+/// as upstream's `exit_cleanup()` prints it.
+fn report_daemon_error<Err: Write>(error: &DaemonError, stderr: &mut MessageSink<Err>) -> i32 {
+    if let Some(preamble) = error.preamble() {
+        let _ = writeln!(stderr.writer_mut(), "{preamble}");
+    }
+    if write_message(error.message(), stderr).is_err() {
+        let message = error.message();
+        let _ = writeln!(stderr.writer_mut(), "{message}");
+    }
+    error.exit_code()
 }
 
 /// Executes a Windows Service management action (install, uninstall, or run as service).
@@ -253,6 +257,43 @@ mod tests {
         use crate::daemon::parse_args;
         let parsed = parse_args(["oc-rsyncd"]).unwrap();
         assert_eq!(parsed.service_action, None);
+    }
+
+    /// upstream: options.c:1576-1596 - a daemon-mode parse error prints its
+    /// cause bare, then exit_cleanup(RERR_SYNTAX) prints the client-role
+    /// trailer on a line of its own. Nothing goes to stdout.
+    #[test]
+    fn daemon_option_errors_print_cause_lines_then_syntax_trailer() {
+        let hint = "(Type \"oc-rsync --daemon --help\" for assistance with daemon mode.)";
+        let cases: [(&str, &[&str]); 4] = [
+            (
+                "--bogus",
+                &["rsync: --bogus: unknown option (in daemon mode)", hint],
+            ),
+            ("-Q", &["rsync: -Q: unknown option (in daemon mode)", hint]),
+            (
+                "--dparam=noequals",
+                &["--dparam value is missing an '=': noequals", hint],
+            ),
+            ("--dparam=bogus=1", &["Unknown parameter \"bogus\""]),
+        ];
+        for (argument, cause) in cases {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let result = run(["oc-rsync", argument], &mut stdout, &mut stderr);
+            let text = String::from_utf8(stderr).expect("utf-8 stderr");
+            assert_eq!(result, 1, "{argument}: {text}");
+            assert!(stdout.is_empty(), "{argument}: stdout must stay empty");
+            let lines: Vec<&str> = text.lines().collect();
+            assert_eq!(lines.len(), cause.len() + 1, "{argument}: {text}");
+            assert_eq!(&lines[..cause.len()], cause, "{argument}: {text}");
+            let trailer = lines[cause.len()];
+            assert!(
+                trailer.starts_with("oc-rsync error: syntax or usage error (code 1) at "),
+                "{argument}: {trailer}"
+            );
+            assert!(trailer.contains(" [client="), "{argument}: {trailer}");
+        }
     }
 
     #[cfg(not(windows))]

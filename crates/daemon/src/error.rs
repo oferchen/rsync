@@ -32,6 +32,7 @@ use core::message::Message;
 pub struct DaemonError {
     exit_code: ExitCode,
     message: Message,
+    preamble: Option<String>,
 }
 
 impl DaemonError {
@@ -39,7 +40,27 @@ impl DaemonError {
     ///
     /// This is the preferred constructor when the exit code is known at compile time.
     pub(crate) const fn with_code(exit_code: ExitCode, message: Message) -> Self {
-        Self { exit_code, message }
+        Self {
+            exit_code,
+            message,
+            preamble: None,
+        }
+    }
+
+    /// Attaches text printed verbatim, on its own lines, before the trailer.
+    ///
+    /// upstream: options.c:1576,1595 - a daemon-mode parse error prints its
+    /// cause with a bare `rprintf(FERROR, ...)` and only then exits through
+    /// `exit_cleanup(RERR_SYNTAX)`, whose trailer stands on a separate line.
+    pub(crate) fn with_preamble(mut self, preamble: String) -> Self {
+        self.preamble = Some(preamble);
+        self
+    }
+
+    /// Returns the text printed before the trailer message, if any.
+    #[must_use]
+    pub fn preamble(&self) -> Option<&str> {
+        self.preamble.as_deref()
     }
 
     /// Creates a new [`DaemonError`] from the supplied message and i32 exit code.
@@ -153,6 +174,9 @@ impl ErrorCodification for DaemonError {
 
 impl fmt::Display for DaemonError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(preamble) = &self.preamble {
+            writeln!(f, "{preamble}")?;
+        }
         self.message.fmt(f)
     }
 }
