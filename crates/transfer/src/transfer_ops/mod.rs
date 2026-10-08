@@ -109,8 +109,15 @@ pub struct RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:926`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`
+    /// - `receiver.c:1153`: `one_inplace = inplace_partial && partial_dir && ...`
     pub inplace_partial: bool,
+    /// Whether a partial dir is in effect (`--partial-dir`, or the implied
+    /// `.~tmp~` of `--delay-updates`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1153`: the `partial_dir` term of `one_inplace`.
+    pub partial_dir: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
     /// Optional override for the io_uring submission queue depth (`--io-uring-depth=N`).
@@ -317,9 +324,10 @@ fn block_match_without_basis(file: &str) -> io::Error {
 ///
 /// - `rsync-3.5.1/receiver.c:1212` - `if (inplace || one_inplace)`.
 /// - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
-///   partial_dir && fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`. The
-///   `partial_dir` term is folded into `inplace_partial`, which
-///   `transfer/src/lib.rs` sets only when a partial directory is configured.
+///   partial_dir && fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
+///   `inplace_partial` is the negotiated capability alone, so a peer that
+///   claims a partial-dir basis cannot turn off `--inplace` on a receiver with
+///   no partial dir.
 /// - `rsync-3.5.1/receiver.c:1213` - `fnametmp = one_inplace ? partialptr : fname`.
 /// - `rsync-3.5.1/receiver.c:1305-1316` - `finish_transfer(fname, fnametmp, ...)`
 ///   then `handle_partial_dir(partialptr, PDIR_DELETE)`, with the
@@ -330,10 +338,11 @@ fn block_match_without_basis(file: &str) -> io::Error {
 fn resolve_use_inplace(
     inplace: bool,
     inplace_partial: bool,
+    partial_dir: bool,
     fnamecmp_type: Option<protocol::FnameCmpType>,
 ) -> bool {
     let one_inplace_partial_dir =
-        inplace_partial && fnamecmp_type == Some(protocol::FnameCmpType::PartialDir);
+        inplace_partial && partial_dir && fnamecmp_type == Some(protocol::FnameCmpType::PartialDir);
     inplace && !one_inplace_partial_dir
 }
 
@@ -496,6 +505,7 @@ fn read_response_header<R: Read>(
     let use_inplace = resolve_use_inplace(
         ctx.config.inplace,
         ctx.config.inplace_partial,
+        ctx.config.partial_dir,
         sender_attrs.fnamecmp_type,
     );
 
@@ -558,13 +568,14 @@ mod tests {
         // upstream: receiver.c:984 - `inplace` selects the live destination as
         // the write target. `--append` reaches this through the same flag,
         // promoted by apply_append_implies_inplace (options.c:2419).
-        assert!(resolve_use_inplace(true, false, None));
+        assert!(resolve_use_inplace(true, false, false, None));
     }
 
     #[test]
     fn resolve_use_inplace_temp_rename_without_inplace_flags() {
-        assert!(!resolve_use_inplace(false, false, None));
+        assert!(!resolve_use_inplace(false, false, false, None));
         assert!(!resolve_use_inplace(
+            false,
             false,
             false,
             Some(protocol::FnameCmpType::Fname)
@@ -582,6 +593,7 @@ mod tests {
         assert!(!resolve_use_inplace(
             false,
             true,
+            true,
             Some(protocol::FnameCmpType::PartialDir)
         ));
         // A non-partial-dir basis with the capability negotiated (e.g. a fresh
@@ -589,9 +601,23 @@ mod tests {
         assert!(!resolve_use_inplace(
             false,
             true,
+            true,
             Some(protocol::FnameCmpType::Fname)
         ));
-        assert!(!resolve_use_inplace(false, true, None));
+        assert!(!resolve_use_inplace(false, true, true, None));
+    }
+    #[test]
+    fn resolve_use_inplace_partial_dir_claim_without_partial_dir_keeps_inplace() {
+        // upstream: receiver.c:1153 - one_inplace needs a local partial_dir. With
+        // none, partialptr is fname (receiver.c:1008), so a peer that labels the
+        // basis FNAMECMP_PARTIAL_DIR still gets an --inplace write to the
+        // destination, not a temp+rename.
+        assert!(resolve_use_inplace(
+            true,
+            true,
+            false,
+            Some(protocol::FnameCmpType::PartialDir)
+        ));
     }
 
     #[test]
@@ -611,6 +637,7 @@ mod tests {
             write_devices: false,
             inplace: false,
             inplace_partial: false,
+            partial_dir: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
             preserve_xattrs: false,
@@ -638,6 +665,7 @@ mod tests {
             write_devices: false,
             inplace: false,
             inplace_partial: false,
+            partial_dir: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
             preserve_xattrs: false,

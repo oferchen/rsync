@@ -39,8 +39,9 @@ pub struct WriteConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
-    /// - `receiver.c:926`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    /// - `compat.c:789-790`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
+    /// - `receiver.c:1153-1155`: `one_inplace = inplace_partial && partial_dir && ...`
+    /// - `sender.c:629`: `updating_basis_file = (inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR) || ...`
     pub inplace_partial: bool,
     /// Write data to device files instead of creating with mknod (`--write-devices`).
     pub write_devices: bool,
@@ -589,16 +590,15 @@ pub struct ServerConfig {
     /// - `flist.c:2012`: `if (use_qsort) qsort(...); else merge_sort(...);`
     /// - `options.c`: `--qsort` flag definition
     pub qsort: bool,
-    /// Whether `--partial-dir` is configured on the client.
+    /// Whether `--partial-dir` is configured.
     ///
-    /// Used after compat flag negotiation to apply `CF_INPLACE_PARTIAL_DIR`:
-    /// when the server advertises this flag and a partial directory is configured,
-    /// the receiver uses in-place writes for partial-dir basis files.
+    /// Together with `--delay-updates`, which implies a partial dir, this is the
+    /// `partial_dir` term of the receiver's per-file in-place decision.
     ///
     /// # Upstream Reference
     ///
-    /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
-    /// - `receiver.c:926`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    /// - `options.c:2572-2573`: `if (delay_updates && !partial_dir) partial_dir = tmp_partialdir;`
+    /// - `receiver.c:1153-1155`: `one_inplace = inplace_partial && partial_dir && ...`
     pub has_partial_dir: bool,
     /// Directory path for storing partial files on interrupt (`--partial-dir=DIR`).
     ///
