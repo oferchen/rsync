@@ -105,16 +105,13 @@ pub const RSYNC_PREFIX: &str = "user.rsync.";
 #[cfg(not(target_os = "linux"))]
 pub const RSYNC_PREFIX: &str = "rsync.";
 
-/// Defence-in-depth cap on the number of xattr entries per file from the wire.
+/// Upper bound on the number of xattr entries per file read from the wire.
 ///
-/// Linux `listxattr(2)` returns at most `XATTR_LIST_MAX` (65536) bytes of
-/// name data. With a minimum 2-byte name per entry that is at most ~32K
-/// entries. 1024 is well above any real-world usage while preventing a
-/// malicious peer from forcing billions of allocations.
-///
-/// upstream: xattrs.c `receive_xattr()` uses `EXPAND_ITEM_LIST` which
-/// reallocs but has no explicit count cap.
-pub const MAX_WIRE_XATTR_COUNT: usize = 1024;
+/// upstream: rsync.h:176 `MAX_WIRE_XATTR_COUNT`, enforced by
+/// `read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT, "xattr count")` at
+/// xattrs.c:826. A count outside `[0, 65536]` is a protocol error (exit 2);
+/// a lower cap would refuse lists upstream accepts.
+pub const MAX_WIRE_XATTR_COUNT: usize = 65536;
 
 /// Defence-in-depth cap on a single xattr name length from the wire.
 ///

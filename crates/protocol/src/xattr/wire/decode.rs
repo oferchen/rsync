@@ -11,7 +11,7 @@
 use std::io::{self, Read};
 
 use crate::max_alloc::effective_max_alloc;
-use crate::varint::read_varint;
+use crate::varint::{read_varint, read_varint_bounded};
 use crate::xattr::{
     MAX_FULL_DATUM, MAX_WIRE_XATTR_COUNT, MAX_WIRE_XATTR_NAME_LEN, MAX_XATTR_DIGEST_LEN,
     XattrEntry, XattrList,
@@ -59,18 +59,8 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
     // which aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on a negative or
     // over-range value. Tag both rejections so the core exit-code mapper yields
     // RERR_PROTOCOL, not the RERR_STREAMIO (12) that a bare InvalidData maps to.
-    let count = read_varint(reader)?;
-    if count < 0 {
-        return Err(crate::protocol_violation::protocol_violation(format!(
-            "negative xattr count: {count}"
-        )));
-    }
-    let count = count as usize;
-    if count > MAX_WIRE_XATTR_COUNT {
-        return Err(crate::protocol_violation::protocol_violation(format!(
-            "xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"
-        )));
-    }
+    let count =
+        read_varint_bounded(reader, 0, MAX_WIRE_XATTR_COUNT as i32, "xattr count")? as usize;
 
     let mut entries = Vec::with_capacity(count);
 
@@ -168,12 +158,8 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
     // upstream: xattrs.c:793 read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT,
     // ...) aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on an over-range
     // count; tag it so the mapper yields RERR_PROTOCOL, not RERR_STREAMIO (12).
-    let count = read_varint(reader)? as usize;
-    if count > MAX_WIRE_XATTR_COUNT {
-        return Err(crate::protocol_violation::protocol_violation(format!(
-            "xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"
-        )));
-    }
+    let count =
+        read_varint_bounded(reader, 0, MAX_WIRE_XATTR_COUNT as i32, "xattr count")? as usize;
     let mut list = XattrList::new();
 
     for _ in 0..count {
