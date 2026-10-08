@@ -424,12 +424,7 @@ fn permission_bits(mode: u32) -> String {
 /// Renders an mtime the way log.c `case 'M'` does: `timestring()` with its
 /// space turned into `-`.
 fn format_log_mtime(mtime: i64) -> String {
-    let instant = if mtime >= 0 {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(mtime.unsigned_abs())
-    } else {
-        SystemTime::UNIX_EPOCH - Duration::from_secs(mtime.unsigned_abs())
-    };
-    logging_sink::logfile::format_log_timestamp(instant).replace(' ', "-")
+    logging_sink::logfile::format_timestring(mtime).replace(' ', "-")
 }
 
 /// Expands the transfer log format and writes the result to the log sink.
@@ -989,5 +984,12 @@ mod log_format_tests {
         assert_eq!(rendered.len(), 19, "{rendered}");
         assert_eq!(&rendered[10..11], "-", "{rendered}");
         assert!(!rendered.contains(' '), "{rendered}");
+    }
+
+    /// upstream: log.c `case 'M'` dashes every space of timestring(), the
+    /// out-of-range literal included (measured against rsync 3.5.1).
+    #[test]
+    fn log_mtime_dashes_the_out_of_range_literal() {
+        assert_eq!(format_log_mtime(i64::MAX), "(time-out-of-range)");
     }
 }
