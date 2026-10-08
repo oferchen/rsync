@@ -98,7 +98,7 @@ impl ReceiverContext {
         W: io::Write + crate::writer::MsgInfoSender + ?Sized,
     >(
         &mut self,
-        reader: crate::reader::ServerReader<R>,
+        mut reader: crate::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<(crate::reader::ServerReader<R>, usize, PipelineSetup)> {
         // upstream: generator.c:2260-2261 - emitted at the top of generate_files,
@@ -112,6 +112,9 @@ impl ReceiverContext {
         // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
         debug_log!(Recv, 1, "parallel receive-delta path active");
 
+        if self.forwards_peer_log() {
+            reader.forward_peer_log();
+        }
         let mut reader = if self.should_activate_input_multiplex() {
             reader.activate_multiplex().map_err(|e| {
                 io::Error::new(
