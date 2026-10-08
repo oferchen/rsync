@@ -1,9 +1,9 @@
 #[test]
-fn read_trimmed_line_strips_lf_only() {
+fn read_bounded_line_strips_lf_only() {
     let input: &[u8] = b"line content\n";
     let mut reader = BufReader::new(input);
 
-    let line = read_trimmed_line(&mut reader)
+    let line = read_bounded_line(&mut reader, HANDSHAKE_LINE_BUFSIZ)
         .expect("read line")
         .expect("line available");
 
