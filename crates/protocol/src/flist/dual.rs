@@ -329,14 +329,18 @@ impl DualFileList {
         stats
     }
 
-    /// Reclaims heap data from entries in the range `[start..end)`.
+    /// Reclaims heap data from the non-directory entries in `[start..end)`.
     ///
-    /// Calls [`FileEntry::reclaim_heap_data`] on each entry in the range,
-    /// freeing PathBuf, dirname Arc, and extras Box allocations while
-    /// keeping the entries in place so NDX-based indexing remains valid.
+    /// Calls [`FileEntry::reclaim_heap_data`] on each such entry, freeing
+    /// PathBuf, dirname Arc, and extras Box allocations while keeping the
+    /// entries in place so NDX-based indexing remains valid.
     ///
     /// This mirrors upstream rsync's `flist_free()` which deallocates
-    /// completed INC_RECURSE segments during the transfer loop.
+    /// completed INC_RECURSE segments during the transfer loop. Directories
+    /// are kept: upstream allocates them from `dir_flist`'s pool
+    /// (flist.c:1748-1755), which `flist_free()` of a sub-list never releases
+    /// (flist.c:3548-3551), because a sub-list's gap NDX still names its
+    /// directory long after the segment that listed it (sender.c:552-558).
     ///
     /// # Panics
     ///
@@ -348,7 +352,9 @@ impl DualFileList {
             self.legacy.len()
         );
         for entry in &mut self.legacy[start..end] {
-            entry.reclaim_heap_data();
+            if !entry.is_dir() {
+                entry.reclaim_heap_data();
+            }
         }
     }
 }
@@ -743,6 +749,19 @@ mod tests {
 
         assert!(std::sync::Arc::ptr_eq(list[0].dirname(), list[1].dirname()));
         assert!(std::sync::Arc::ptr_eq(list[1].dirname(), list[2].dirname()));
+    }
+
+    /// Directories outlive their segment like upstream's `dir_flist` entries
+    /// (flist.c:1748-1755): a later gap NDX still names them.
+    #[test]
+    fn reclaim_segment_keeps_directories() {
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_directory("d".into(), 0o755));
+        list.push(FileEntry::new_file("d.txt".into(), 10, 0o644));
+        list.reclaim_segment(0, 2);
+        assert_eq!(list[0].name(), "d");
+        assert!(list[0].is_dir());
+        assert_eq!(list[1].name(), "");
     }
 
     #[test]
