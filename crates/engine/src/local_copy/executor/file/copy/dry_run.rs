@@ -29,7 +29,8 @@ pub(super) struct DryRunRequest<'a> {
 /// Processes a file copy in dry-run mode without writing any data.
 ///
 /// Records the transfer in the summary and event log, respecting
-/// `--update`, `--ignore-existing`, and `--append` semantics.
+/// `--update` and `--append` semantics; the caller has already applied the
+/// `--existing` / `--ignore-existing` gate.
 pub(super) fn handle_dry_run(
     context: &mut CopyContext,
     request: DryRunRequest<'_>,
@@ -62,21 +63,6 @@ pub(super) fn handle_dry_run(
         context.record(LocalCopyRecord::new(
             record_path.to_path_buf(),
             LocalCopyAction::SkippedNewerDestination,
-            0,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
-        return Ok(());
-    }
-
-    if context.ignore_existing_enabled() && existing_metadata.is_some() {
-        context.summary_mut().record_regular_file_ignored_existing();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-        let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            record_path.to_path_buf(),
-            LocalCopyAction::SkippedExisting,
             0,
             total_bytes,
             Duration::default(),

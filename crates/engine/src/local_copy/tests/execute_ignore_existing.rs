@@ -696,3 +696,146 @@ fn ignore_existing_dry_run() {
     );
     assert!(!dest_root.join("new.txt").exists());
 }
+
+/// upstream: generator.c:1784-1785 - `--ignore-existing` skips ANY present
+/// destination, not only a regular file: a symlink already at the destination
+/// keeps its old target even though the source link points elsewhere.
+#[cfg(unix)]
+#[test]
+fn ignore_existing_leaves_existing_symlink_untouched() {
+    let ctx = test_helpers::setup_copy_test();
+    std::os::unix::fs::symlink("new_target", ctx.source.join("link")).expect("source link");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("dest root");
+    std::os::unix::fs::symlink("old_target", dest_root.join("link")).expect("dest link");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .links(true)
+            .ignore_existing(true),
+    )
+    .expect("copy succeeds");
+
+    assert_eq!(
+        fs::read_link(dest_root.join("link")).expect("dest link kept"),
+        Path::new("old_target")
+    );
+}
+
+/// upstream: generator.c:1784-1785 - a symlink arriving over an existing
+/// regular file is skipped too; the regular file must not be replaced.
+#[cfg(unix)]
+#[test]
+fn ignore_existing_keeps_regular_file_where_symlink_arrives() {
+    let ctx = test_helpers::setup_copy_test();
+    std::os::unix::fs::symlink("target", ctx.source.join("entry")).expect("source link");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("dest root");
+    fs::write(dest_root.join("entry"), b"keep").expect("dest file");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .links(true)
+            .ignore_existing(true),
+    )
+    .expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(dest_root.join("entry")).expect("file kept"),
+        b"keep"
+    );
+}
+
+/// upstream: generator.c:1784-1785 - `(!is_dir || stype != FT_DIR)`: a source
+/// directory arriving where the destination holds a non-directory is skipped,
+/// so the existing file survives instead of being replaced by a directory.
+#[test]
+fn ignore_existing_keeps_file_where_directory_arrives() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(ctx.source.join("dir")).expect("source dir");
+    fs::write(ctx.source.join("dir/inner"), b"inner").expect("source inner");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("dest root");
+    fs::write(dest_root.join("dir"), b"keep").expect("dest file");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let _ = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().ignore_existing(true),
+    );
+
+    assert_eq!(fs::read(dest_root.join("dir")).expect("file kept"), b"keep");
+}
+
+/// upstream: generator.c:1784-1785 - a directory arriving over a directory is
+/// still merged into: its new children are created.
+#[test]
+fn ignore_existing_merges_directory_into_directory() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(ctx.source.join("dir")).expect("source dir");
+    fs::write(ctx.source.join("dir/inner"), b"inner").expect("source inner");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(dest_root.join("dir")).expect("dest dir");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().ignore_existing(true),
+    )
+    .expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(dest_root.join("dir/inner")).expect("child created"),
+        b"inner"
+    );
+}
+
+/// upstream: generator.c:1784-1785 - a FIFO arriving over an existing regular
+/// file is skipped; the file must not be unlinked to make way for the node.
+#[cfg(unix)]
+#[test]
+fn ignore_existing_keeps_regular_file_where_fifo_arrives() {
+    let ctx = test_helpers::setup_copy_test();
+    mkfifo_for_tests(&ctx.source.join("entry"), 0o644).expect("source fifo");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("dest root");
+    fs::write(dest_root.join("entry"), b"keep").expect("dest file");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .specials(true)
+            .ignore_existing(true),
+    )
+    .expect("copy succeeds");
+
+    assert_eq!(
+        fs::read(dest_root.join("entry")).expect("file kept"),
+        b"keep"
+    );
+}

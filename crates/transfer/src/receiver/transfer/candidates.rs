@@ -16,6 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use engine::append_gate::append_skips;
+use engine::existence_gate::DestinationEntry;
 use logging::{debug_gte, debug_log, info_log};
 use metadata::{
     AttrsFlags, MetadataOptions, apply_metadata_with_attrs_flags, atime_needs_set,
@@ -269,6 +270,8 @@ impl ReceiverContext {
         let max_size = self.config.file_selection.max_file_size;
         let has_size_bounds = min_size.is_some() || max_size.is_some();
         let append = self.config.flags.append;
+        let has_existence_gate =
+            self.config.file_selection.existing_only || self.config.file_selection.ignore_existing;
         let has_failed_dirs = failed_dirs.is_some();
         let verbose_client = self.config.flags.verbose && self.config.connection.client_mode;
 
@@ -345,6 +348,23 @@ impl ReceiverContext {
             return candidates
                 .into_iter()
                 .filter(|(_, entry)| {
+                    // upstream: generator.c:1757-1806 - the existence gate runs
+                    // before the `do_xfers` split, so a dry run plans exactly
+                    // the files the real run would request.
+                    if has_existence_gate {
+                        let file_path = dest_dir.join(entry.path());
+                        let dest_meta = fs::metadata(&file_path).ok();
+                        if self.skip_regular_by_existence_gate(
+                            writer,
+                            entry,
+                            dest_dir,
+                            &file_path,
+                            dest_meta.as_ref(),
+                            metadata_opts,
+                        ) {
+                            return false;
+                        }
+                    }
                     // upstream: generator.c:1704-1718 - the max/min-size skip
                     // (`goto cleanup`) fires before the `do_xfers` gate, so a
                     // dry run still excludes out-of-range files and emits the
@@ -370,8 +390,6 @@ impl ReceiverContext {
         // upstream: generator.c:quick_check_ok() -> same_time() honours the
         // `--modify-window` tolerance for every transfer, not just local copies.
         let modify_window = self.config.file_selection.modify_window;
-        let ignore_existing = self.config.file_selection.ignore_existing;
-        let existing_only = self.config.file_selection.existing_only;
         let update_only = self.config.flags.update;
         let always_checksum = if self.config.flags.checksum {
             Some(self.get_checksum_algorithm())
@@ -430,33 +448,17 @@ impl ReceiverContext {
             // (allowed_lull None), keeping the default path wire-identical.
             let _ = writer.maybe_send_keepalive();
             let entry = &self.file_list[idx];
+            if self.skip_regular_by_existence_gate(
+                writer,
+                entry,
+                dest_dir,
+                &file_path,
+                dest_meta.as_ref(),
+                metadata_opts,
+            ) {
+                continue;
+            }
             if let Some(ref meta) = dest_meta {
-                if ignore_existing {
-                    // upstream: generator.c:1409 - `if (ignore_existing > 0 &&
-                    // statret == 0 && (!is_dir || stype != FT_DIR)) { if
-                    // (INFO_GTE(SKIP, 1) ...) rprintf(FINFO, "%s exists\n",
-                    // fname); }`. An already-present file is skipped with a
-                    // SKIP-gated notice; existing directories stay silent.
-                    if !entry.is_dir() && logging::info_gte(logging::InfoFlag::Skip, 1) {
-                        let name = entry.path().to_string_lossy();
-                        // upstream: generator.c:1398-1408 - the notice is
-                        // "%s exists%s"; the suffix is empty at SKIP1 and gains
-                        // a parenthesised reason (type/sum/file/attr change or
-                        // uptodate) at SKIP2.
-                        let suffix = self.ignore_existing_suffix(
-                            entry,
-                            &file_path,
-                            meta,
-                            ignore_times,
-                            size_only,
-                            always_checksum,
-                            modify_window,
-                            metadata_opts,
-                        );
-                        let _ = self.emit_info_line(writer, &format!("{name} exists{suffix}\n"));
-                    }
-                    continue;
-                }
                 // upstream: generator.c:1704-1718 - the max/min-size skip is
                 // tested per file after the `--ignore-existing` "exists" notice
                 // (1395) and before the `--update` "is newer" notice (1721), so
@@ -530,19 +532,6 @@ impl ReceiverContext {
                     continue;
                 }
             } else {
-                if existing_only {
-                    // upstream: generator.c:1380-1395 - --existing /
-                    // --ignore-non-existing never creates an absent
-                    // destination; a missing regular file is skipped with a
-                    // SKIP-gated "not creating new file" notice. Directories
-                    // take the same path in receiver/directory/creation.rs.
-                    if logging::info_gte(logging::InfoFlag::Skip, 1) {
-                        let name = entry.path().to_string_lossy();
-                        let _ = self
-                            .emit_info_line(writer, &format!("not creating new file \"{name}\"\n"));
-                    }
-                    continue;
-                }
                 // upstream: generator.c:1704-1718 - a not-yet-existing file
                 // still hits the max/min-size skip (after the not-creating
                 // check at 1368), so the size notice for an absent file appears
@@ -695,8 +684,9 @@ impl ReceiverContext {
     ///   whose flags are significant, transfer or not.
     /// - `receiver.c:748-762` / `sender.c:296-310` - `ITEM_IS_NEW` bumps
     ///   `stats.created_files` plus the per-type counter.
-    pub(in crate::receiver) fn plan_dry_run_in_range(
+    pub(in crate::receiver) fn plan_dry_run_in_range<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
+        writer: &mut W,
         range: std::ops::Range<usize>,
         dest_dir: &Path,
         candidates: &[(usize, PathBuf, u32)],
@@ -728,6 +718,19 @@ impl ReceiverContext {
             } else {
                 dest_dir.join(rel)
             };
+            // upstream: generator.c:1757-1806 - the existence gate precedes the
+            // `do_xfers` split for every file type; regular files were gated
+            // in the candidate pass.
+            if !entry.is_file()
+                && self.skip_non_regular_by_existence_gate(
+                    &mut *writer,
+                    entry,
+                    dest_dir,
+                    &dest_path,
+                )
+            {
+                continue;
+            }
             let raw = self.dry_run_entry_iflags(
                 entry,
                 &dest_path,
@@ -1345,6 +1348,56 @@ impl ReceiverContext {
                 always_checksum,
                 self.config.file_selection.modify_window,
             )
+    }
+
+    /// Applies the `--existing` / `--ignore-existing` gate to a regular file and
+    /// emits the SKIP notice, returning `true` when the file is skipped.
+    ///
+    /// upstream: generator.c:1757-1806 - tested ahead of every other per-file
+    /// skip, so a gated file never reaches the size, `--update` or quick-check
+    /// notices.
+    fn skip_regular_by_existence_gate<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        entry: &FileEntry,
+        dest_dir: &Path,
+        file_path: &Path,
+        dest_meta: Option<&fs::Metadata>,
+        metadata_opts: &MetadataOptions,
+    ) -> bool {
+        if !self.config.file_selection.existing_only && !self.config.file_selection.ignore_existing
+        {
+            return false;
+        }
+        // upstream: generator.c:1745 - the gate reads `link_stat()`, so a
+        // dangling destination symlink the following stat missed still exists.
+        let lstat = dest_meta.is_none().then(|| fs::symlink_metadata(file_path));
+        let (meta, destination) = match (dest_meta, &lstat) {
+            (Some(meta), _) => (Some(meta), DestinationEntry::from_metadata(meta)),
+            (None, Some(result)) => (result.as_ref().ok(), DestinationEntry::from_lstat(result)),
+            (None, None) => (None, DestinationEntry::Missing),
+        };
+        let Some(skip) = self.existence_skip(entry, destination) else {
+            return false;
+        };
+        self.emit_existence_skip_notice(writer, entry, dest_dir, skip, || {
+            meta.map_or("", |meta| {
+                self.ignore_existing_suffix(
+                    entry,
+                    file_path,
+                    meta,
+                    self.config.flags.ignore_times,
+                    self.config.file_selection.size_only,
+                    self.config
+                        .flags
+                        .checksum
+                        .then(|| self.get_checksum_algorithm()),
+                    self.config.file_selection.modify_window,
+                    metadata_opts,
+                )
+            })
+        });
+        true
     }
 
     /// Computes the parenthesised reason suffix for the `--ignore-existing`
@@ -2700,7 +2753,7 @@ mod itemize_order_tests {
             None,
             None,
         );
-        let plan = ctx.plan_dry_run_in_range(0..ctx.file_list.len(), dest, &candidates);
+        let plan = ctx.plan_dry_run_in_range(&mut writer, 0..ctx.file_list.len(), dest, &candidates);
         let rows = ctx
             .itemize_rows
             .borrow()
@@ -3618,7 +3671,7 @@ mod hlink_wire_flag_tests {
         // one file the real run requests is the one the dry run plans and
         // counts as created.
         let created_before = ctx.created_stats.get().files;
-        let plan = ctx.plan_dry_run_in_range(0..ctx.file_list.len(), dest, &files);
+        let plan = ctx.plan_dry_run_in_range(&mut writer, 0..ctx.file_list.len(), dest, &files);
         assert_eq!(plan.len(), 1, "dry-run plan must contain the same file");
         assert_eq!(
             plan[0].0, files[0].0,

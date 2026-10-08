@@ -34,6 +34,7 @@ mod context;
 mod daemon_filter;
 mod dest_root;
 mod directory;
+mod existence;
 mod file_list;
 mod itemize;
 pub(crate) mod ndx_stream;

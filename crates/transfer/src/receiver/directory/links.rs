@@ -189,6 +189,17 @@ impl ReceiverContext {
             };
             let target: &Path = &target;
 
+            // upstream: generator.c:1757-1806 - the existence gate precedes
+            // the symlink branch and reads the pre-replace lstat.
+            if self.skip_non_regular_by_existence_gate(
+                &mut *writer,
+                entry,
+                dest_dir,
+                &dest_dir.join(relative_path),
+            ) {
+                continue;
+            }
+
             // upstream: generator.c:1951 - `if (safe_symlinks && unsafe_symlink(sl, fname))`
             // skips unsafe symlinks when --safe-links is set. The check stays
             // here (not in sanitize_file_list) to preserve protocol index
@@ -519,6 +530,17 @@ impl ReceiverContext {
             } else {
                 wire_target.as_path()
             };
+
+            // upstream: generator.c:1757-1806 - the existence gate precedes
+            // the symlink branch and reads the pre-replace lstat.
+            if self.skip_non_regular_by_existence_gate(
+                &mut *writer,
+                entry,
+                dest_dir,
+                &dest_dir.join(relative_path),
+            ) {
+                continue;
+            }
 
             // upstream: generator.c:1951 - skip unsafe symlinks when
             // --safe-links. Mirrors the Unix arm: the operand is the decoded

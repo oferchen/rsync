@@ -331,13 +331,6 @@ impl ReceiverContext {
         ))]
         let mut probed_parents: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
-        // upstream: generator.c:1368-1383 - with --existing (ignore_non_existing),
-        // a directory that does not yet exist at the destination is never created;
-        // upstream sets skip_dir = file and FLAG_MISSING_DIR so the missing dir and
-        // its descendants are skipped. Because dir_entries are processed in
-        // parent-first sorted order and we never create the parent, each descendant
-        // path also fails the .exists() probe and is skipped the same way.
-        let existing_only = self.config.file_selection.existing_only;
         // upstream: generator.c:1480-1483 - itemize() compares a directory
         // against the stat taken when the generator first reaches its flist
         // entry, before any child (which sorts after its parent) is created.
@@ -351,10 +344,25 @@ impl ReceiverContext {
             .iter()
             .map(|(_, _, dir_path)| fs::metadata(dir_path).ok())
             .collect();
-        for (_, relative_path, dir_path) in &dir_entries {
+        for (idx, relative_path, dir_path) in &dir_entries {
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
             let _ = relative_path;
+            // upstream: generator.c:1757-1806 - the existence gate reads the
+            // lstat taken before the symlink obstacle is removed below. A
+            // skipped directory goes into the skip set (not `failed_dir_paths`)
+            // so the itemize and metadata passes skip it without treating the
+            // benign skip as a mkdir failure.
+            if self.skip_non_regular_by_existence_gate(
+                &mut *writer,
+                &self.file_list[*idx],
+                dest_dir,
+                dir_path,
+            ) {
+                dir_was_new.push(false);
+                skipped_existing_dirs.insert(dir_path.clone());
+                continue;
+            }
             // upstream: generator.c:1356 / 1451-1455 - classify the destination
             // via lstat (not exists()) so a symlink-to-directory is replaced by
             // a real directory unless --keep-dirlinks is set, in which case it is
@@ -402,25 +410,6 @@ impl ReceiverContext {
             };
             let is_new = dir_dest.needs_mkdir();
             dir_was_new.push(is_new);
-            // upstream: generator.c:1401 - --existing (ignore_non_existing) only
-            // skips a genuinely absent destination (statret == -1); a symlink
-            // being replaced existed, so it is not skipped.
-            if dir_dest == DirDestination::Missing && existing_only {
-                // upstream: generator.c:1374-1378 - "not creating new directory".
-                // Record in the skip set (not `failed_dir_paths`) so the
-                // itemize and metadata passes below skip this directory without
-                // treating the benign --existing skip as a mkdir failure.
-                if self.config.flags.verbose && self.config.connection.client_mode {
-                    info_log!(
-                        Skip,
-                        1,
-                        "not creating new directory \"{}\"",
-                        relative_path.display()
-                    );
-                }
-                skipped_existing_dirs.insert(dir_path.clone());
-                continue;
-            }
             if is_new {
                 #[cfg(all(
                     feature = "acl",
@@ -875,10 +864,14 @@ impl ReceiverContext {
     /// - `generator.c:1480-1483` - `itemize()` before metadata application
     /// - `syscall.c:1149-1155` - `do_mkdir()` is a no-op under `dry_run`, so
     ///   `itemize()` and the receiver's `created_dirs` tally still run
-    pub(in crate::receiver) fn create_directory_incremental(
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::receiver) fn create_directory_incremental<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
         dest_dir: &Path,
         entry: &FileEntry,
+        writer: &mut W,
         metadata_opts: &MetadataOptions,
         failed_dirs: &mut FailedDirectories,
         acl_cache: Option<&AclCache>,
@@ -909,6 +902,16 @@ impl ReceiverContext {
                 );
             }
             failed_dirs.mark_failed(entry.path());
+            return Ok(None);
+        }
+
+        // upstream: generator.c:1757-1806 - the existence gate reads the lstat
+        // taken before the symlink obstacle is removed below. Marking the
+        // directory missing drives the descendant skip through the
+        // failed-ancestor check above, as upstream's `skip_dir` does. The skip
+        // is not a failure: generator.c:1755-1761 never sets io_error.
+        if self.skip_non_regular_by_existence_gate(&mut *writer, entry, dest_dir, &dir_path) {
+            failed_dirs.mark_missing(entry.path());
             return Ok(None);
         }
 
@@ -956,26 +959,6 @@ impl ReceiverContext {
             }
         };
         let is_new = dir_dest.needs_mkdir();
-        // upstream: generator.c:1368-1383 - with --existing (ignore_non_existing),
-        // a directory missing at the destination is never created; the dir is
-        // marked skipped (FLAG_MISSING_DIR) so its descendants are skipped too.
-        // The skip is not a failure: generator.c:1755-1761 never sets io_error,
-        // so it is recorded apart from failed directories.
-        //
-        // upstream: generator.c:1401 - --existing only skips a genuinely absent
-        // destination; a replaced symlink existed and is not skipped.
-        if dir_dest == DirDestination::Missing && self.config.file_selection.existing_only {
-            if self.config.flags.verbose && self.config.connection.client_mode {
-                info_log!(
-                    Skip,
-                    1,
-                    "not creating new directory \"{}\"",
-                    relative_path.display()
-                );
-            }
-            failed_dirs.mark_missing(entry.path());
-            return Ok(None);
-        }
         // upstream: generator.c:1480-1483 - itemize() runs before set_file_attrs
         // (generator.c:1895), so compute the itemize flags from the pre-apply
         // destination stat here. A new dir reports ITEM_LOCAL_CHANGE|ITEM_IS_NEW
