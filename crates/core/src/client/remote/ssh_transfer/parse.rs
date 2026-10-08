@@ -9,7 +9,7 @@ use std::ffi::{OsStr, OsString};
 use rsync_io::ssh::parse_ssh_operand;
 
 use super::super::super::config::ClientConfig;
-use super::super::super::error::{ClientError, invalid_argument_error};
+use super::super::super::error::{ClientError, remote_operand_error};
 use super::super::invocation::{RemoteInvocationBuilder, RemoteOperands, RemoteRole};
 
 /// SSH invocation result containing args, host, optional user, optional port, and stdin args.
@@ -34,7 +34,7 @@ pub(in crate::client::remote) fn parse_single_remote(
     role: RemoteRole,
 ) -> Result<SshInvocationResult, ClientError> {
     let operand = parse_ssh_operand(operand)
-        .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
+        .map_err(|e| remote_operand_error("invalid remote operand", &e))?;
 
     let invocation_builder = RemoteInvocationBuilder::new(config, role);
     let secluded = invocation_builder.build_secluded(&[operand.path()]);
@@ -58,13 +58,12 @@ pub(in crate::client::remote) fn parse_remote_operands(
         RemoteOperands::Single(operand) => parse_single_remote(operand, config, role),
         RemoteOperands::Multiple(operands) => {
             let first_operand = parse_ssh_operand(&operands[0])
-                .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
+                .map_err(|e| remote_operand_error("invalid remote operand", &e))?;
 
             let mut paths: Vec<OsString> = Vec::new();
             for operand in operands {
-                let parsed = parse_ssh_operand(operand).map_err(|e| {
-                    invalid_argument_error(&format!("invalid remote operand: {e}"), 1)
-                })?;
+                let parsed = parse_ssh_operand(operand)
+                    .map_err(|e| remote_operand_error("invalid remote operand", &e))?;
                 paths.push(parsed.path().to_os_string());
             }
 
@@ -105,7 +104,32 @@ pub(in crate::client::remote) fn remote_operand_source_paths(
         .map(|operand| {
             parse_ssh_operand(operand)
                 .map(|parsed| parsed.path().to_string_lossy().into_owned())
-                .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))
+                .map_err(|e| remote_operand_error("invalid remote operand", &e))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// upstream: main.c:1636-1639 refuses a dash-led host, after stripping
+    /// `user@`, with this exact line and RERR_SYNTAX. Without the refusal the
+    /// host reaches the remote shell's argv, where `-oProxyCommand=...` runs a
+    /// command.
+    #[test]
+    fn dash_led_host_is_refused_with_upstream_text() {
+        let config = ClientConfig::builder().build();
+        for operand in ["-host:path", "user@-host:path", "[-host]:path"] {
+            let err = parse_single_remote(OsStr::new(operand), &config, RemoteRole::Receiver)
+                .expect_err("a dash-led host must be refused");
+            assert_eq!(err.exit_code(), 1, "{operand}");
+            assert!(
+                err.to_string().contains(
+                    "rsync error: Invalid remote host: hostnames may not start with '-'. (code 1)"
+                ),
+                "{operand}: {err}"
+            );
+        }
+    }
 }
