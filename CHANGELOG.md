@@ -53,6 +53,7 @@ for detail.
 - Honour the leading-comma form in `auth users` and `gid` (CVE-2026-70463, #7345)
 - A peer can no longer override module settings with an `@RSYNCD: OPTION` line; one sent before the module name is answered as an unknown module, as upstream does (#7754, #8002)
 - Fork one process per connection so chroot and per-module state cannot leak between sessions (#7719, #7718, #7711)
+- Serve each QUIC session in its own forked child behind a sandboxed QUIC front process, so a `use chroot` / `uid` module reached over QUIC no longer chroots or drops privileges for the whole daemon; the async daemon refuses to start as root for the same reason (#8027, #8028)
 - Enforce `max connections` on every entry point and across forked sessions (#7440, #7917)
 - Close three `refuse options` bypasses, and refuse `--remove-source-files` under `refuse options = delete` (#7262, #7448, #7427)
 - Pin the module root before the privilege drop, and the Landlock root after `chroot` (#7605, #7567)

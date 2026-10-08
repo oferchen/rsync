@@ -1269,7 +1269,8 @@ values, defaults, and required build features.
 
 **OC_RSYNC_ASYNC_DAEMON**
 :   Opt in to the async daemon accept loop (builds with the
-    async-daemon feature).
+    async-daemon feature). Refuses to start as root; use the default
+    daemon for privileged deployments.
 
 **OC_RSYNC_ASYNC_SSH**
 :   Set to **1** to use the async SSH transport (builds with the
