@@ -175,6 +175,10 @@ fn after_failed_link(
 
 #[cfg(unix)]
 fn confined_hard_link(existing: &Path, backup_path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if let Some(errno) = FORCE_LINK_ERRNO.with(std::cell::Cell::get) {
+        return Err(io::Error::from_raw_os_error(errno));
+    }
     fast_io::operator_link_confined(existing, backup_path)
 }
 
@@ -239,6 +243,26 @@ fn rename_existing(existing: &Path, backup_path: &Path) -> io::Result<()> {
 #[cfg(all(unix, test))]
 thread_local! {
     static FORCE_RENAME_ERRNO: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+    static FORCE_LINK_ERRNO: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Test-only RAII guard that forces [`confined_hard_link`] to fail with `errno`.
+#[cfg(all(unix, test))]
+pub(super) struct ForceLinkErrno;
+
+#[cfg(all(unix, test))]
+impl ForceLinkErrno {
+    pub(super) fn new(errno: i32) -> Self {
+        FORCE_LINK_ERRNO.with(|c| c.set(Some(errno)));
+        Self
+    }
+}
+
+#[cfg(all(unix, test))]
+impl Drop for ForceLinkErrno {
+    fn drop(&mut self) {
+        FORCE_LINK_ERRNO.with(|c| c.set(None));
+    }
 }
 
 #[cfg(all(unix, test))]
@@ -967,6 +991,34 @@ mod tests {
             Path::new("target"),
             "the backup is recreated at the followed-through location, as before"
         );
+    }
+
+    /// When the hard link fails, a symlink is recreated by the copy tier and
+    /// never renamed, even though the rename would succeed.
+    ///
+    /// upstream: `backup.c:236-237` - `if (!S_ISREG(stp->st_mode) || ...)
+    /// return 0;` skips `do_rename_at` for every non-regular entry.
+    #[test]
+    fn failed_link_sends_symlink_to_copy_tier_not_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        let backup = dir.path().join("victim~");
+        std::os::unix::fs::symlink("target", &victim).unwrap();
+        let _force = super::ForceLinkErrno::new(libc::EXDEV);
+        let placement = place_existing_backup(
+            &victim,
+            &backup,
+            false,
+            dir.path(),
+            None,
+            &::metadata::MetadataOptions::default(),
+        )
+        .expect("the copy tier must place the backup");
+        assert!(
+            matches!(placement, BackupPlacement::CopiedSymlink),
+            "a non-regular entry must not be renamed after a failed link"
+        );
+        assert_eq!(fs::read_link(&backup).unwrap(), Path::new("target"));
     }
 
     /// A non-EXDEV rename failure must still recreate the victim at the backup
