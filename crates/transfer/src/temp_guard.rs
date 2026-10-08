@@ -22,7 +22,7 @@ use std::sync::Arc;
 ///
 /// Upstream emits one message per site, each naming its own operation:
 /// `mkstemp %s failed` (`rsync-3.5.1/receiver.c:465-466`),
-/// `rename failed for %s (from %s)` (`rsync-3.5.1/receiver.c:726-728`) and
+/// `rename %s -> "%s"` (`rsync-3.5.1/rsync.c:919-921`) and
 /// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`). oc runs
 /// these stages behind one `Result`, so the operation identity has to ride on
 /// the error to survive the trip back to the reporting thread.
@@ -32,7 +32,8 @@ pub enum CommitOp {
     Mkstemp,
     /// Moving the pre-image aside under `--backup`.
     Backup,
-    /// Renaming the finished temp file onto its destination.
+    /// Renaming the finished temp file onto its destination. The operand is
+    /// the temp file and the destination is the rename target.
     Rename,
 }
 

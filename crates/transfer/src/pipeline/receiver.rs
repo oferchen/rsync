@@ -327,11 +327,20 @@ impl PipelinedReceiver {
             Some(crate::temp_guard::CommitOp::Backup) => {
                 keep_backup_failed_line(&name, error, &reason)
             }
-            // upstream: rsync-3.5.1/receiver.c:726-728 `rename failed for %s
-            // (from %s)`. oc names the destination only; the `from` operand is
-            // the internal temp name, which upstream prints and oc omits.
+            // upstream: rsync-3.5.1/rsync.c:919-921 `"%s %s -> \"%s\""` over
+            // full_fname(fnametmp) and fname, the target relative to the
+            // receiver's destination root.
             Some(crate::temp_guard::CommitOp::Rename) => {
-                format!("rsync: [receiver] rename failed for {name}: {reason}")
+                let target = crate::temp_guard::commit_op_destination(error).unwrap_or(dest);
+                let target = self
+                    .dest_dir
+                    .as_deref()
+                    .and_then(|root| target.strip_prefix(root).ok())
+                    .unwrap_or(target);
+                format!(
+                    "rsync: [receiver] rename {name} -> \"{}\": {reason}",
+                    target.display()
+                )
             }
         }
     }
@@ -1634,8 +1643,9 @@ mod tests {
     /// The commit path runs mkstemp, backup, rename and metadata behind one
     /// `Result`, so a `PermissionDenied` from any of them reaches the same
     /// reporting arm. Upstream gives each site its own text - `mkstemp %s
-    /// failed` (`rsync-3.5.1/receiver.c:465-466`), `rename failed for %s`
-    /// (`:710-712`), `keep_backup failed` (`rsync-3.5.1/backup.c:402-403`) -
+    /// failed` (`rsync-3.5.1/receiver.c:465-466`), `rename %s -> "%s"`
+    /// (`rsync-3.5.1/rsync.c:919-921`), `keep_backup failed`
+    /// (`rsync-3.5.1/backup.c:402-403`) -
     /// and oc must not label all three `mkstemp`.
     ///
     /// The untagged arm is the one that matters for regressions: an error
@@ -1685,7 +1695,7 @@ mod tests {
             "a backup failure must not be labelled mkstemp: {backup}"
         );
         assert!(
-            rename.contains("rename failed for") && !rename.contains("mkstemp"),
+            rename.starts_with("rsync: [receiver] rename \"") && !rename.contains("mkstemp"),
             "a rename failure must not be labelled mkstemp: {rename}"
         );
         assert!(
@@ -1840,7 +1850,8 @@ mod tests {
         let file_path = readonly_dir.join("payload.dat");
 
         let config = DiskCommitConfig {
-            temp_dir: Some(temp_dir),
+            temp_dir: Some(temp_dir.clone()),
+            dest_dir: Some(dir.path().to_path_buf()),
             ..DiskCommitConfig::default()
         };
         let mut pr = PipelinedReceiver::new(config).unwrap();
@@ -1878,10 +1889,20 @@ mod tests {
             1,
             "one warning queued for the failed rename"
         );
+        // upstream: rsync.c:919-921 names the temp file, then the target
+        // relative to the destination root.
+        let line = &warnings[0].1;
+        let temp_prefix = format!(
+            "rsync: [receiver] rename \"{}/payload.dat.",
+            temp_dir.display()
+        );
         assert!(
-            warnings[0].1.contains("rename failed for"),
-            "the live commit path must tag the rename stage: {}",
-            warnings[0].1
+            line.starts_with(&temp_prefix),
+            "the temp file is the first operand: {line}"
+        );
+        assert!(
+            line.ends_with("\" -> \"readonly/payload.dat\": Permission denied (13)"),
+            "the destination-relative target is the second operand: {line}"
         );
         assert!(
             !warnings[0].1.contains("mkstemp"),
