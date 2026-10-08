@@ -226,7 +226,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     fn make_temp_file() -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("subject");
         std::fs::write(&path, b"data fork contents").expect("write");
         (dir, path)

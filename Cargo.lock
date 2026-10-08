@@ -150,6 +150,7 @@ dependencies = [
  "libc",
  "nix",
  "tempfile",
+ "test-support",
  "unicode-normalization",
  "xattr",
 ]
