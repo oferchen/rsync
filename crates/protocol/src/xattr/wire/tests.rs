@@ -190,7 +190,10 @@ fn read_definitions_negative_count_fails() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("negative xattr count"));
+    assert_eq!(
+        err.to_string(),
+        "wire value xattr count out of range: -1 not in [0,65536]"
+    );
 }
 
 #[test]
