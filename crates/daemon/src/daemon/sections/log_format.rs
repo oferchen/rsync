@@ -1056,5 +1056,4 @@ mod log_format_tests {
             assert_eq!(log_fname(dir, name), expected, "dir={dir:?} name={name:?}");
         }
     }
-
 }
