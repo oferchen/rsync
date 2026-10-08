@@ -120,9 +120,10 @@ pub fn perform_handshake(
 /// # Errors
 ///
 /// A negotiated version below `MIN_PROTOCOL_VERSION` fails with upstream's
-/// `--protocol must be at least 20 on the Server.` (compat.c:631-634), and one in
-/// `20..28` fails because this build cannot speak it on the wire; both are
-/// protocol violations (`RERR_PROTOCOL`).
+/// `--protocol must be at least 20 on the Server.` (compat.c:631-634). One in
+/// `20..28` is deliberately unsupported by this build and fails with the same
+/// message shape at the build's floor of 28, naming the refused version. Both
+/// are protocol violations (`RERR_PROTOCOL`).
 pub fn perform_server_handshake(
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
@@ -148,10 +149,13 @@ pub fn perform_server_handshake(
         .ok()
         .and_then(|version| ProtocolVersion::try_from(version).ok())
         .ok_or_else(|| {
+            // Protocols 20..27 are valid upstream but deliberately unsupported
+            // here. The refusal keeps the shape of upstream's own range check
+            // (compat.c:631-634) with this build's floor, and names the cause.
             protocol::protocol_violation(format!(
-                "protocol version {negotiated} is not supported over the wire by this build \
-                 (supported protocols are {})",
-                ProtocolVersion::supported_protocol_numbers_display()
+                "--protocol must be at least {} on the Server \
+                 (protocol version {negotiated} is not supported by this build).",
+                ProtocolVersion::OLDEST.as_u8()
             ))
         })?;
 
@@ -656,8 +660,9 @@ mod tests {
         }
     }
 
-    // A version upstream would speak (20..28) is below this build's wire floor,
-    // so it is refused as a protocol incompatibility rather than mis-spoken.
+    // A version upstream would speak (20..28) is deliberately unsupported here,
+    // so it is refused with upstream's range-check wording at this build's
+    // floor, naming the refused version, rather than mis-spoken.
     #[test]
     fn server_handshake_refuses_legacy_request_below_wire_floor() {
         let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
@@ -667,10 +672,10 @@ mod tests {
             .expect_err("below the wire floor");
 
         assert_eq!(stdout, 25i32.to_le_bytes());
-        assert!(
-            error
-                .to_string()
-                .starts_with("protocol version 25 is not supported")
+        assert_eq!(
+            error.to_string(),
+            "--protocol must be at least 28 on the Server \
+             (protocol version 25 is not supported by this build)."
         );
         assert!(
             error
