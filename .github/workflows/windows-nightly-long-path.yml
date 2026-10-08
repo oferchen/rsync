@@ -61,8 +61,16 @@ env:
   RUST_BACKTRACE: "full"
 
 jobs:
+  # Skipped on docs-only pull requests; the literal job name reports
+  # skipped, which still satisfies a required context. See _changes.yml.
+  changes:
+    name: changes (Windows long-path)
+    uses: ./.github/workflows/_changes.yml
+
   windows-long-path:
     name: Windows long-path (\\?\) round-trip
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: windows-latest
     timeout-minutes: 30
 

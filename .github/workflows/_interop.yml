@@ -19,6 +19,13 @@ on:
         description: 'Job timeout in minutes'
         type: number
         default: 30
+      skip:
+        description: >-
+          Skip the job. Set for docs-only pull requests: skipping HERE rather
+          than at the caller keeps the required context's full
+          `<caller> / interop with upstream rsync` name.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +38,7 @@ env:
 jobs:
   interop:
     name: interop with upstream rsync
+    if: ${{ !inputs.skip }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
 

@@ -569,7 +569,11 @@ def evaluate(expression: str, context: dict):
         value = parse_and()
         while index < len(tokens) and tokens[index] == ("op", "||"):
             index += 1
-            value = bool(value) or bool(parse_and())
+            # Both operands are always parsed so the token cursor advances, and
+            # the result is an operand, not a bool: `c && 'a' || 'b'` yields
+            # 'a' or 'b', as GitHub's operators do.
+            other = parse_and()
+            value = value or other
         return value
 
     def parse_and():
@@ -577,7 +581,8 @@ def evaluate(expression: str, context: dict):
         value = parse_cmp()
         while index < len(tokens) and tokens[index] == ("op", "&&"):
             index += 1
-            value = bool(value) and bool(parse_cmp())
+            other = parse_cmp()
+            value = value and other
         return value
 
     def parse_cmp():
@@ -834,6 +839,32 @@ def _runner_os(runs_on, context: dict) -> str | None:
     return None
 
 
+def _cell_contexts(job: dict, steps: list, matrix) -> list[tuple[dict, dict]]:
+    """Every (reported row, evaluation context) pair one job can run as.
+
+    A job gated on `_changes.yml` runs two ways: with `docs_only` 'true' (a
+    docs-only pull request) and with it empty (anything else). Both are
+    analysed, so a build step gated on it covers only a test step skipped
+    under the same condition - never one that still runs on a docs-only PR.
+    Other `needs.*` outputs stay unresolved, and fail loud as before.
+    """
+    needs = job.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else list(needs)
+    gated = any("outputs.docs_only" in str(step.get("if", "")) for step in steps
+                if isinstance(step, dict))
+    branches = ["", "true"] if needs and gated else [None]
+    cells = []
+    for row in expand_matrix(matrix):
+        for docs_only in branches:
+            context = {"matrix": row}
+            reported = row
+            if docs_only is not None:
+                context["needs"] = {n: {"outputs": {"docs_only": docs_only}} for n in needs}
+                reported = {**row, "docs_only": docs_only or "''"}
+            cells.append((reported, context))
+    return cells
+
+
 def check_workflow(path: Path, workspace: Workspace, verbose: bool) -> tuple[list[Finding], int]:
     document = load_yaml(path)
     if not isinstance(document, dict):
@@ -852,8 +883,7 @@ def check_workflow(path: Path, workspace: Workspace, verbose: bool) -> tuple[lis
         if not isinstance(steps, list):
             continue  # reusable-workflow call; the callee is analysed on its own
         matrix = (job.get("strategy") or {}).get("matrix")
-        for row in expand_matrix(matrix):
-            context = {"matrix": row}
+        for row, context in _cell_contexts(job, steps, matrix):
             context["runner"] = {"os": _runner_os(job.get("runs-on"), context)}
             built: set[tuple[str, str | None]] = set()
             for step in steps:

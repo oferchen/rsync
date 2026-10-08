@@ -170,6 +170,37 @@ jobs:
       - name: Run
         run: cargo nextest run --locked -p ${{ matrix.crate }}'
 
+# Docs-only gating (_changes.yml): build and test skipped under the same
+# condition stay paired, so the cell is covered on both branches.
+expect_case docs_gate_paired 0 'ok: every test cell' 'name: t
+on: [pull_request]
+jobs:
+  tests:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build oc-rsync
+        if: needs.changes.outputs.docs_only != '"'"'true'"'"'
+        run: cargo build --locked -p bin --bin oc-rsync
+      - name: Run
+        if: needs.changes.outputs.docs_only != '"'"'true'"'"' && (runner.os == '"'"'Linux'"'"')
+        run: cargo nextest run --locked -p engine'
+
+# A gated build does not cover an ungated test: on a docs-only pull request the
+# build is skipped and the test still runs.
+expect_case docs_gate_build_only 1 'docs_only=true' 'name: t
+on: [pull_request]
+jobs:
+  tests:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build oc-rsync
+        if: needs.changes.outputs.docs_only != '"'"'true'"'"'
+        run: cargo build --locked -p bin --bin oc-rsync
+      - name: Run
+        run: cargo nextest run --locked -p engine'
+
 # A guard that analyses nothing must not report success.
 mkdir -p "${tmp}/empty"
 cases=$((cases + 1))

@@ -42,6 +42,14 @@ permissions:
   contents: read
 
 jobs:
+  # Docs-only pull requests pass variant `none`, so the CALLED jobs - whose
+  # `<caller> / <called>` names the ruleset requires - report skipped. Skipping
+  # a caller instead would never publish those names. `!cancelled()` runs every
+  # leg in full if the classifier fails. See _changes.yml.
+  changes:
+    name: changes (upstream testsuite)
+    uses: ./.github/workflows/_changes.yml
+
   # ===========================================================================
   # Upstream Testsuite - Drive upstream rsync's own testsuite corpus against
   # oc-rsync (reusable workflow)
@@ -59,8 +67,11 @@ jobs:
   # both surface regressions worth blocking on.
   # ===========================================================================
   upstream-testsuite:
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       # Its OWN variable, deliberately not the interop job's
       # `UPSTREAM_RSYNC_VERSION`. The two now want different versions - interop
@@ -105,8 +116,11 @@ jobs:
   # workflow_dispatch and cron and no pull request ever validated them.
   # ===========================================================================
   upstream-testsuite-tcp:
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
       transport: 'tcp'
@@ -158,12 +172,13 @@ jobs:
   upstream-testsuite-skip-oracle:
     # A bootstrap run has no ledger to compare against; the pipe gate's own
     # artifact carries the fresh skip set (expect-skipped.nonroot.pipe.txt).
-    if: ${{ !inputs.bootstrap }}
+    needs: changes
+    if: ${{ !cancelled() && !inputs.bootstrap }}
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      variant: 'nonroot'
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'nonroot' }}
       expect_skipped_nonroot: tools/ci/upstream-3.5.1-skiplist.nonroot.txt
       expect_failures_nonroot: tools/ci/upstream-3.5.1-expect.nonroot.txt
       artifact_suffix: '-skip-oracle'
@@ -204,16 +219,22 @@ jobs:
   # names are literals.
   # ===========================================================================
   upstream-testsuite-macos:
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_upstream-testsuite-macos.yml
     with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
       expect_result_macos: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.nonroot.txt' || '' }}
       expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.root.txt' || '' }}
 
   upstream-testsuite-macos-tcp:
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_upstream-testsuite-macos.yml
     with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
       transport: 'tcp'

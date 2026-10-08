@@ -64,11 +64,25 @@ env:
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
 
 jobs:
+  # Docs-only pull requests skip every build and test. Each required context
+  # still reports under its exact name: a literal-named job is skipped at job
+  # level, a matrix job keeps running with its steps gated (a matrix job
+  # skipped at job level reports its UNEXPANDED name, e.g.
+  # `nextest (${{ matrix.toolchain }})`, which never matches the ruleset), and
+  # the interop caller passes `skip` so the called job is the one skipped.
+  # Gates test `docs_only` against 'true' and use `!cancelled()`, so a failed
+  # classifier runs everything rather than skipping it.
+  changes:
+    name: changes (CI)
+    uses: ./.github/workflows/_changes.yml
+
   # ===========================================================================
   # Lint Job - Fast feedback on formatting and clippy issues
   # ===========================================================================
   lint:
     name: fmt + clippy
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -180,6 +194,8 @@ jobs:
   # ===========================================================================
   fuzz-workspace-check:
     name: fuzz workspaces check
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -223,7 +239,8 @@ jobs:
   unsafe-safety-comment-audit:
     name: unsafe-safety-comment-audit
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && (github.event_name == 'pull_request' || github.event_name == 'push') }}
     timeout-minutes: 5
 
     steps:
@@ -256,6 +273,8 @@ jobs:
   # ===========================================================================
   rustdoc-links:
     name: rustdoc links
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -354,6 +373,8 @@ jobs:
   # ===========================================================================
   surface-diff:
     name: surface diff (upstream 3.5.0)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -382,7 +403,8 @@ jobs:
   test:
     name: nextest (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [changes, lint]
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 120
     # Stable gates merge; beta/nightly are informational so a churning
     # nightly compiler does not block PR throughput. Branch protection
@@ -395,6 +417,7 @@ jobs:
 
     steps:
       - name: Free disk space
+        if: needs.changes.outputs.docs_only != 'true'
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
           sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-chrome-stable \
@@ -404,30 +427,36 @@ jobs:
           df -h /
 
       - name: Checkout
+        if: needs.changes.outputs.docs_only != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (${{ matrix.toolchain }})
+        if: needs.changes.outputs.docs_only != 'true'
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
+        if: needs.changes.outputs.docs_only != 'true'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: test
 
       - name: Install cargo-nextest
+        if: needs.changes.outputs.docs_only != 'true'
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
 
       # See lint job comment above re: continue-on-error on cold rust-cache.
       - name: Regenerate Cargo.lock
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo update --workspace --offline
         continue-on-error: true
 
       - name: Run tests
+        if: needs.changes.outputs.docs_only != 'true'
         env:
           # The ssh_config differential harness skips its cells when `ssh -G`
           # is unreachable, and a skip is indistinguishable from a pass to the
@@ -444,7 +473,7 @@ jobs:
           bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
       - name: Set up SSH loopback
-        if: matrix.toolchain == 'stable'
+        if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
         run: |
           sudo systemctl start ssh
           mkdir -p ~/.ssh
@@ -454,11 +483,12 @@ jobs:
           ssh -o StrictHostKeyChecking=no localhost true
 
       - name: Run SSH integration tests
-        if: matrix.toolchain == 'stable'
+        if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
         continue-on-error: true
         run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh)'
 
       - name: Upload build artifacts
+        if: needs.changes.outputs.docs_only != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-linux-${{ matrix.toolchain }}
@@ -563,8 +593,9 @@ jobs:
   # ===========================================================================
   windows-test:
     name: Windows (${{ matrix.toolchain }})
-    runs-on: windows-latest
-    needs: lint
+    runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'windows-latest' }}
+    needs: [changes, lint]
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 45
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -574,19 +605,23 @@ jobs:
 
     steps:
       - name: Checkout
+        if: needs.changes.outputs.docs_only != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (${{ matrix.toolchain }})
+        if: needs.changes.outputs.docs_only != 'true'
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
+        if: needs.changes.outputs.docs_only != 'true'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
+        if: needs.changes.outputs.docs_only != 'true'
         uses: ./.github/actions/install-cargo-nextest-windows
 
       # The steps below select individual packages, so Cargo never builds the
@@ -596,9 +631,11 @@ jobs:
       # to be built explicitly here. Default features match what the binary
       # ships with.
       - name: Build oc-rsync (for subprocess integration tests)
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo build --locked -p bin --bin oc-rsync
 
       - name: Test
+        if: needs.changes.outputs.docs_only != 'true'
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
         shell: bash
         run: |
@@ -619,6 +656,7 @@ jobs:
       # -> skip-with-soft-error), which lives in `transfer` - another crate the
       # main Test step does not run.
       - name: Test crtime + sparse + iocp read parity + symlink junction (metadata, fast_io, transfer)
+        if: needs.changes.outputs.docs_only != 'true'
         shell: bash
         run: cargo nextest run --locked -p metadata -p fast_io -p transfer
 
@@ -628,10 +666,12 @@ jobs:
       # `linux-quic`. The last step prints the runner's UDP offload
       # capabilities into the job log.
       - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
+        if: needs.changes.outputs.docs_only != 'true'
         timeout-minutes: 20
         run: cargo build --locked -p rsync_io -p cli -p daemon --features quic
 
       - name: Test rsync_io (--features quic)
+        if: needs.changes.outputs.docs_only != 'true'
         timeout-minutes: 20
         shell: bash
         run: |
@@ -639,11 +679,13 @@ jobs:
           bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
 
       - name: Report UDP offload capabilities
+        if: needs.changes.outputs.docs_only != 'true'
         timeout-minutes: 10
         shell: bash
         run: cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
 
       - name: Upload build artifacts
+        if: needs.changes.outputs.docs_only != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-windows-${{ matrix.toolchain }}
@@ -940,8 +982,9 @@ jobs:
   # ===========================================================================
   macos-test:
     name: macOS (${{ matrix.toolchain }})
-    runs-on: macos-latest
-    needs: lint
+    runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'macos-latest' }}
+    needs: [changes, lint]
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 30
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -951,19 +994,23 @@ jobs:
 
     steps:
       - name: Checkout
+        if: needs.changes.outputs.docs_only != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust (${{ matrix.toolchain }})
+        if: needs.changes.outputs.docs_only != 'true'
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
+        if: needs.changes.outputs.docs_only != 'true'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
+        if: needs.changes.outputs.docs_only != 'true'
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
@@ -972,6 +1019,7 @@ jobs:
       # `oc-rsync` binary, and a package-scoped run never builds it. See the
       # note on the Windows job above.
       - name: Build oc-rsync (for subprocess integration tests)
+        if: needs.changes.outputs.docs_only != 'true'
         run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
 
       # Invoke through `rustup run` to bypass the cargo proxy shim, which on
@@ -979,6 +1027,7 @@ jobs:
       # `error: unexpected argument 'build' found` when rust-toolchain.toml
       # pins a toolchain that was not pre-installed.
       - name: Test
+        if: needs.changes.outputs.docs_only != 'true'
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
         shell: bash
         run: |
@@ -1007,10 +1056,12 @@ jobs:
       # The last step prints the runner's UDP offload capabilities into the
       # job log.
       - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
+        if: needs.changes.outputs.docs_only != 'true'
         timeout-minutes: 15
         run: rustup run ${{ matrix.toolchain }} cargo build --locked -p rsync_io -p cli -p daemon --features quic
 
       - name: Test rsync_io (--features quic)
+        if: needs.changes.outputs.docs_only != 'true'
         timeout-minutes: 15
         shell: bash
         run: |
@@ -1018,10 +1069,12 @@ jobs:
           bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
 
       - name: Report UDP offload capabilities
+        if: needs.changes.outputs.docs_only != 'true'
         timeout-minutes: 10
         run: rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
 
       - name: Upload build artifacts
+        if: needs.changes.outputs.docs_only != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-macos-${{ matrix.toolchain }}
@@ -1037,7 +1090,8 @@ jobs:
   linux-musl:
     name: Linux musl (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [changes, lint]
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 40
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -1047,10 +1101,11 @@ jobs:
 
     steps:
       - name: Checkout
+        if: needs.changes.outputs.docs_only != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Free disk space
-        if: runner.os == 'Linux'
+        if: needs.changes.outputs.docs_only != 'true' && (runner.os == 'Linux')
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           sudo docker image prune --all --force || true
@@ -1064,6 +1119,7 @@ jobs:
       # retried rather than eating the job budget. dtolnay/rust-toolchain below
       # then hits the local cache. 2 retries is plenty; more is wasted time.
       - name: Pre-install toolchain (short-timeout retry on transient fetch)
+        if: needs.changes.outputs.docs_only != 'true'
         run: |
           for attempt in 1 2 3; do
             if timeout 90 rustup toolchain install "${{ matrix.toolchain }}" \
@@ -1078,31 +1134,38 @@ jobs:
           exit 1
 
       - name: Install Rust (${{ matrix.toolchain }})
+        if: needs.changes.outputs.docs_only != 'true'
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
           toolchain: ${{ matrix.toolchain }}
           targets: x86_64-unknown-linux-musl
 
       - name: Ensure musl target on active toolchain
+        if: needs.changes.outputs.docs_only != 'true'
         run: rustup target add x86_64-unknown-linux-musl
 
       - name: Install musl toolchain
+        if: needs.changes.outputs.docs_only != 'true'
         run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
 
       - name: Rust cache
+        if: needs.changes.outputs.docs_only != 'true'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
+        if: needs.changes.outputs.docs_only != 'true'
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
 
       - name: Build
+        if: needs.changes.outputs.docs_only != 'true'
         run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
 
       - name: Test
+        if: needs.changes.outputs.docs_only != 'true'
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
         shell: bash
         run: |
@@ -1110,6 +1173,7 @@ jobs:
           bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
       - name: Verify static linking
+        if: needs.changes.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           BINARY="target/x86_64-unknown-linux-musl/debug/oc-rsync"
@@ -1128,9 +1192,11 @@ jobs:
   # ===========================================================================
   interop-upstream:
     name: interop
-    needs: lint
+    needs: [changes, lint]
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     uses: ./.github/workflows/_interop.yml
     with:
+      skip: ${{ needs.changes.outputs.docs_only == 'true' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
       timeout_minutes: 30
