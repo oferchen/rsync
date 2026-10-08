@@ -2662,11 +2662,12 @@ mod phase2_guard_tests {
         .expect("write del stats");
         ndx.write_ndx_done(&mut wire).expect("write done");
         ndx.write_ndx_done(&mut wire).expect("write done");
+        ndx.write_ndx_done(&mut wire).expect("write done");
 
         drive(&mut ctx, wire).expect("NDX_DEL_STATS is handled above the gate");
     }
 
-    /// Runs the sender loop over one NDX_DEL_STATS frame and the two phase
+    /// Runs the sender loop over one NDX_DEL_STATS frame and the three phase
     /// NDX_DONEs, returning the frame bytes and everything the sender wrote.
     fn del_stats_round_trip(client_mode: bool) -> (Vec<u8>, Vec<u8>) {
         let (_dir, mut ctx) = generator_with_one_file();
@@ -2686,6 +2687,7 @@ mod phase2_guard_tests {
         .expect("write del stats");
         let mut wire = frame.clone();
         let mut ndx = MonotonicNdxWriter::new(32);
+        ndx.write_ndx_done(&mut wire).expect("write done");
         ndx.write_ndx_done(&mut wire).expect("write done");
         ndx.write_ndx_done(&mut wire).expect("write done");
         let mut out = Vec::new();
