@@ -131,11 +131,10 @@ jobs:
           cargo build --locked --release --features embedded-ssh
           cp target/release/oc-rsync target/release/oc-rsync-russh
 
-      # Two upstream releases are in circulation at once: 3.5.1 is current,
-      # 3.4.4 is what most distributions still ship. Comparing against only
-      # one of them answers half the question a release note is asked, so
-      # both are built and both are handed to the benchmark. Separate cache
-      # keys so a change to one version cannot invalidate the other.
+      # Three upstream releases are benchmarked: 3.5.1 is current, 3.5.0 is
+      # the previous release, and 3.4.4 is what most distributions still
+      # ship. Each is built and handed to the benchmark. Separate cache keys
+      # so a change to one version cannot invalidate the others.
       - name: Cache upstream rsync 3.5.1
         id: cache-rsync-351
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -159,6 +158,31 @@ jobs:
             ./configure
             make -j$(nproc)
           fi
+
+      - name: Cache upstream rsync 3.5.0
+        id: cache-rsync-350
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/interop/upstream-src/rsync-3.5.0
+          key: upstream-rsync-3.5.0-${{ runner.os }}-full
+
+      - name: Fetch upstream rsync 3.5.0
+        if: steps.cache-rsync-350.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.5.0'
+          extract-dir: target/interop/upstream-src
+
+      - name: Build upstream rsync 3.5.0
+        if: steps.cache-rsync-350.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd target/interop/upstream-src/rsync-3.5.0
+          if [ ! -f rsync ]; then
+            ./configure
+            make -j$(nproc)
+          fi
+
 
       - name: Cache upstream rsync 3.4.4
         id: cache-rsync-344
@@ -220,7 +244,7 @@ jobs:
           # inside benchmark.py is what let the two drift apart. The first
           # entry is the primary baseline.
           UPSTREAM_RSYNC: >-
-            3.5.1=target/interop/upstream-src/rsync-3.5.1/rsync,3.4.4=target/interop/upstream-src/rsync-3.4.4/rsync
+            3.5.1=target/interop/upstream-src/rsync-3.5.1/rsync,3.5.0=target/interop/upstream-src/rsync-3.5.0/rsync,3.4.4=target/interop/upstream-src/rsync-3.4.4/rsync
           OC_RSYNC_OPENSSL: target/release/oc-rsync-openssl
           OC_RSYNC_RUSSH: target/release/oc-rsync-russh
           # `iouring-send-zc` is not in any default feature set and the
@@ -369,5 +393,5 @@ jobs:
   # not wired into branch protection. Builds upstream rsync 3.5.1 from
   # source and compares against oc-rsync release build.
   macos-throughput:
-    name: macOS throughput (vs upstream rsync 3.5.1)
+    name: macOS throughput (vs upstream rsync 3.5.1, 3.5.0, 3.4.4)
     uses: ./.github/workflows/_benchmark-macos.yml

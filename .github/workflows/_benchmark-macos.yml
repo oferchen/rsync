@@ -1,7 +1,7 @@
 name: Benchmark (macOS throughput)
 
 # Reusable workflow: macOS throughput comparison between oc-rsync and
-# upstream rsync 3.5.1 built from source.
+# upstream rsync 3.5.1, 3.5.0 and 3.4.4 built from source.
 #
 # Best-effort: macOS runners have more wall-clock variance than
 # bare-metal Linux. Numbers are a regression sniff, not a merge gate.
@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   benchmark-macos:
-    name: throughput vs upstream rsync 3.5.1 (macOS, best-effort)
+    name: throughput vs upstream rsync 3.5.1, 3.5.0, 3.4.4 (macOS, best-effort)
     runs-on: macos-15
     timeout-minutes: ${{ inputs.timeout_minutes || 90 }}
     continue-on-error: true
@@ -60,22 +60,22 @@ jobs:
       - name: Build oc-rsync (release)
         uses: ./.github/actions/build-oc-rsync
 
-      - name: Cache upstream rsync
-        id: cache-rsync
+      - name: Cache upstream rsync 3.5.1
+        id: cache-rsync-351
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/interop/upstream-src/rsync-3.5.1
           key: upstream-rsync-3.5.1-${{ runner.os }}-full
 
       - name: Fetch upstream rsync 3.5.1
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        if: steps.cache-rsync-351.outputs.cache-hit != 'true'
         uses: ./.github/actions/fetch-upstream-rsync
         with:
           version: '3.5.1'
           extract-dir: target/interop/upstream-src
 
       - name: Build upstream rsync 3.5.1
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        if: steps.cache-rsync-351.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           cd target/interop/upstream-src/rsync-3.5.1
@@ -90,8 +90,71 @@ jobs:
             make -j$(sysctl -n hw.ncpu)
           fi
 
-      - name: Verify upstream rsync binary
-        run: target/interop/upstream-src/rsync-3.5.1/rsync --version | head -3
+      - name: Cache upstream rsync 3.5.0
+        id: cache-rsync-350
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/interop/upstream-src/rsync-3.5.0
+          key: upstream-rsync-3.5.0-${{ runner.os }}-full
+
+      - name: Fetch upstream rsync 3.5.0
+        if: steps.cache-rsync-350.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.5.0'
+          extract-dir: target/interop/upstream-src
+
+      - name: Build upstream rsync 3.5.0
+        if: steps.cache-rsync-350.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd target/interop/upstream-src/rsync-3.5.0
+          if [ ! -f rsync ]; then
+            BREW_PREFIX="$(brew --prefix)"
+            PKG_CONFIG_PATH="${BREW_PREFIX}/opt/openssl@3/lib/pkgconfig:${BREW_PREFIX}/opt/xxhash/lib/pkgconfig:${BREW_PREFIX}/opt/zstd/lib/pkgconfig:${BREW_PREFIX}/opt/lz4/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
+            ./configure \
+              --with-included-popt \
+              --disable-md2man \
+              CFLAGS="-O2 -I${BREW_PREFIX}/include" \
+              LDFLAGS="-L${BREW_PREFIX}/lib"
+            make -j$(sysctl -n hw.ncpu)
+          fi
+
+      - name: Cache upstream rsync 3.4.4
+        id: cache-rsync-344
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/interop/upstream-src/rsync-3.4.4
+          key: upstream-rsync-3.4.4-${{ runner.os }}-full
+
+      - name: Fetch upstream rsync 3.4.4
+        if: steps.cache-rsync-344.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.4.4'
+          extract-dir: target/interop/upstream-src
+
+      - name: Build upstream rsync 3.4.4
+        if: steps.cache-rsync-344.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd target/interop/upstream-src/rsync-3.4.4
+          if [ ! -f rsync ]; then
+            BREW_PREFIX="$(brew --prefix)"
+            PKG_CONFIG_PATH="${BREW_PREFIX}/opt/openssl@3/lib/pkgconfig:${BREW_PREFIX}/opt/xxhash/lib/pkgconfig:${BREW_PREFIX}/opt/zstd/lib/pkgconfig:${BREW_PREFIX}/opt/lz4/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
+            ./configure \
+              --with-included-popt \
+              --disable-md2man \
+              CFLAGS="-O2 -I${BREW_PREFIX}/include" \
+              LDFLAGS="-L${BREW_PREFIX}/lib"
+            make -j$(sysctl -n hw.ncpu)
+          fi
+
+      - name: Verify upstream rsync binaries
+        run: |
+          for v in 3.5.1 3.5.0 3.4.4; do
+            target/interop/upstream-src/rsync-$v/rsync --version | head -1
+          done
 
       - name: Set up SSH loopback
         run: |
@@ -117,7 +180,8 @@ jobs:
         env:
           # The build step above owns the upstream version; naming it again
           # inside benchmark.py is what let the two drift apart.
-          UPSTREAM_RSYNC: target/interop/upstream-src/rsync-3.5.1/rsync
+          UPSTREAM_RSYNC: >-
+            3.5.1=target/interop/upstream-src/rsync-3.5.1/rsync,3.5.0=target/interop/upstream-src/rsync-3.5.0/rsync,3.4.4=target/interop/upstream-src/rsync-3.4.4/rsync
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results_macos.json
