@@ -232,11 +232,10 @@ mod tests {
     use super::*;
     use crate::BatchMode;
     use std::fs;
-    use tempfile::TempDir;
 
     #[test]
     fn test_batch_writer_create() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -251,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_batch_writer_write_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -279,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_batch_writer_write_data() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -301,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_batch_writer_finalize() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(

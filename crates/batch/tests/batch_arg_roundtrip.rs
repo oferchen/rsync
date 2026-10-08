@@ -25,7 +25,6 @@ use std::process::Command;
 
 use batch::script::generate_script_with_filters;
 use batch::{BatchConfig, BatchMode};
-use tempfile::tempdir;
 
 /// Writes an executable shim that prints its argv NUL-separated. Used as the
 /// batch invoker (`argv[0]`) so running the generated `.sh` under `/bin/sh`
@@ -69,7 +68,7 @@ fn replay_argv(script_path: &str) -> Vec<String> {
 /// default supplies the destination.
 #[test]
 fn batch_sh_options_round_trip_through_the_shell_to_the_replay_set() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let shim = write_echo_shim(dir.path());
     let batch = dir.path().join("mybatch");
     let batch_str = batch.to_string_lossy().into_owned();
@@ -153,7 +152,7 @@ fn batch_sh_options_round_trip_through_the_shell_to_the_replay_set() {
 /// right from one that *tokenizes* right.
 #[test]
 fn embedded_single_quote_survives_the_sh_round_trip() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let shim = write_echo_shim(dir.path());
     let batch = dir.path().join("b");
     let batch_str = batch.to_string_lossy().into_owned();
@@ -271,7 +270,7 @@ fn hostile_config(dir: &Path, shim: &Path, dest: &str) -> BatchConfig {
 #[test]
 fn hostile_values_round_trip_through_sh_as_single_literal_args() {
     for dest in HOSTILE {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let work = dir.path().join("work");
         std::fs::create_dir(&work).expect("mkdir work");
         let shim = write_argv_and_stdin_shim(dir.path());
@@ -337,7 +336,7 @@ fn hostile_values_round_trip_through_sh_as_single_literal_args() {
 /// option, because `write_opt()` routes it through `write_arg()`.
 #[test]
 fn emitted_script_is_byte_identical_to_upstream() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let batch_str = dir.path().join("B").to_string_lossy().into_owned();
 
     let config = BatchConfig::new(BatchMode::Write, batch_str.clone(), 31)
@@ -364,7 +363,7 @@ fn emitted_script_is_byte_identical_to_upstream() {
     );
 
     // The full hostile set, against the write_arg() transcription above.
-    let hostile = tempdir().expect("tempdir");
+    let hostile = test_support::create_tempdir();
     let dest = "d`touch CANARY`x/";
     let config = hostile_config(hostile.path(), Path::new("/usr/bin/rsync"), dest);
     generate_script_with_filters(&config, Some(HOSTILE_RULES), Some(dest)).expect("generate .sh");

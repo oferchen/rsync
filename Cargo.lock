@@ -280,6 +280,7 @@ dependencies = [
  "metadata",
  "protocol",
  "tempfile",
+ "test-support",
  "thiserror",
 ]
 

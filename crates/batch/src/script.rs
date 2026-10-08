@@ -394,7 +394,6 @@ mod tests {
     use crate::BatchMode;
     use std::fs;
     use std::path::Path;
-    use tempfile::TempDir;
 
     #[test]
     fn test_shell_quote() {
@@ -517,7 +516,7 @@ mod tests {
     /// through check_for_hostspec before writing it.
     #[test]
     fn test_generate_script_strips_remote_destination() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -541,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_generate_script() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -575,7 +574,7 @@ mod tests {
     /// `oc-rsync: command not found`.
     #[test]
     fn test_generate_script_embeds_absolute_invoker_path() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         let absolute_invoker = "/home/runner/work/rsync/rsync/target/release/oc-rsync";
 
@@ -601,7 +600,7 @@ mod tests {
     /// Verify shell-unsafe characters in the invoker get quoted.
     #[test]
     fn test_generate_script_quotes_invoker_with_spaces() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -624,7 +623,7 @@ mod tests {
     /// backwards-compatible callers that don't configure one.
     #[test]
     fn test_generate_script_default_invoker_is_bare_name() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -647,7 +646,7 @@ mod tests {
     /// leaves the following argument to be passed through as its own token.
     #[test]
     fn test_generate_script_bare_write_batch() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -685,7 +684,7 @@ mod tests {
     /// upstream: batch.c:280-289 skips --filter, --include, --exclude, -f args.
     #[test]
     fn test_generate_script_strips_filter_args() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -726,7 +725,7 @@ mod tests {
     /// upstream: batch.c:205-222 write_filter_rules() + batch.c:262-267 option.
     #[test]
     fn test_generate_script_with_filters_embeds_heredoc() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -761,7 +760,7 @@ mod tests {
     /// clean script with no heredoc or filter options.
     #[test]
     fn test_generate_script_with_filters_none_produces_clean_script() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -793,7 +792,7 @@ mod tests {
     /// upstream: batch.c:265-266 write_opt("--exclude-from", "-")
     #[test]
     fn test_generate_script_with_filters_protocol_28_exclude_from() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -832,7 +831,7 @@ mod tests {
     /// expects the captured destination to be written to.
     #[test]
     fn test_generate_script_with_filters_embeds_destination() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -862,7 +861,7 @@ mod tests {
     /// `batch.c:303` which calls `write_arg(p)` (single-quotes when needed).
     #[test]
     fn test_generate_script_with_filters_quotes_destination_with_spaces() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -887,7 +886,7 @@ mod tests {
     /// any caller that has not yet migrated keeps working.
     #[test]
     fn test_generate_script_with_filters_no_destination_falls_back_to_dot() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -920,7 +919,7 @@ mod tests {
     /// heredoc).
     #[test]
     fn test_generate_script_reconstructs_pass_through_options() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         let batch_name = batch_path.to_string_lossy().into_owned();
 
@@ -982,7 +981,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_script_is_executable() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -1015,7 +1014,7 @@ mod tests {
     /// a newline-terminated heredoc would mis-parse a `--from0` batch.
     #[test]
     fn test_filter_heredoc_honors_eol_nulls() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(
@@ -1054,7 +1053,7 @@ mod tests {
     /// must reproduce the newline-terminated form exactly.
     #[test]
     fn test_filter_heredoc_default_uses_newlines() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
 
         let config = BatchConfig::new(

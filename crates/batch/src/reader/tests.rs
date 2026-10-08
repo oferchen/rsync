@@ -2,7 +2,6 @@ use super::*;
 use crate::format::BatchFlags;
 use crate::{BatchConfig, BatchMode, BatchWriter};
 use std::path::Path;
-use tempfile::TempDir;
 
 #[allow(clippy::field_reassign_with_default)]
 fn create_test_batch(path: &Path) {
@@ -22,7 +21,7 @@ mod reader_creation_tests {
 
     #[test]
     fn create_with_valid_file() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -143,7 +142,7 @@ mod reader_creation_tests {
 
     #[test]
     fn header_is_none_before_read() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -182,7 +181,7 @@ mod stdin_source_tests {
     /// a bug in the source abstraction, not the wire format.
     #[test]
     fn read_batch_dash_reads_from_stdin_like_a_file() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("dash.batch");
         create_test_batch(&batch_path);
         let image = std::fs::read(&batch_path).unwrap();
@@ -225,7 +224,7 @@ mod stdin_source_tests {
     #[test]
     #[cfg(unix)]
     fn read_batch_replays_a_fifo() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let regular = temp_dir.path().join("regular.batch");
         create_test_batch(&regular);
         let image = std::fs::read(&regular).unwrap();
@@ -252,7 +251,7 @@ mod header_tests {
 
     #[test]
     fn read_header_success() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -271,7 +270,7 @@ mod header_tests {
 
     #[test]
     fn double_header_read_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -289,7 +288,7 @@ mod header_tests {
 
     #[test]
     fn adopts_protocol_version_from_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -311,7 +310,7 @@ mod header_tests {
 
     #[test]
     fn adopts_compat_flags_from_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("compat.batch");
 
         let config = BatchConfig::new(
@@ -339,7 +338,7 @@ mod header_tests {
 
     #[test]
     fn adopts_checksum_seed_from_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("seed.batch");
 
         let config = BatchConfig::new(
@@ -366,7 +365,7 @@ mod header_tests {
 
     #[test]
     fn adopts_none_compat_flags_for_old_protocol() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("old_proto.batch");
 
         // Protocol < 30 has no compat flags.
@@ -399,7 +398,7 @@ mod data_tests {
 
     #[test]
     fn read_data_without_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -416,7 +415,7 @@ mod data_tests {
 
     #[test]
     fn read_data_success() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -437,7 +436,7 @@ mod data_tests {
 
     #[test]
     fn read_exact_without_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -454,7 +453,7 @@ mod data_tests {
 
     #[test]
     fn read_exact_success() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -474,7 +473,7 @@ mod data_tests {
 
     #[test]
     fn read_exact_insufficient_data() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -498,7 +497,7 @@ mod file_entry_tests {
 
     #[test]
     fn read_file_entry_without_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -515,7 +514,7 @@ mod file_entry_tests {
 
     #[test]
     fn read_file_entry_returns_none_on_eof() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("empty.batch");
 
         let config = BatchConfig::new(
@@ -545,7 +544,7 @@ mod config_tests {
 
     #[test]
     fn config_accessor() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -561,7 +560,7 @@ mod config_tests {
 
     #[test]
     fn header_accessor_before_read() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -577,7 +576,7 @@ mod config_tests {
 
     #[test]
     fn header_accessor_after_read() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -595,7 +594,7 @@ mod config_tests {
 
     #[test]
     fn io_error_starts_at_zero() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -619,7 +618,7 @@ mod flist_deserialization_tests {
     /// that batch replay depends on.
     #[test]
     fn protocol_flist_roundtrip_basic() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flist_basic.batch");
         let protocol_version = 31;
 
@@ -723,7 +722,7 @@ mod flist_deserialization_tests {
     /// upstream `uidlist.c:465,473` `numeric_ids <= 0` gate.
     #[test]
     fn numeric_ids_skips_id_list_reads() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flist_numeric.batch");
         let protocol_version = 31;
 
@@ -790,7 +789,7 @@ mod flist_deserialization_tests {
     /// `numeric_ids` gate does not regress the default id-list-consuming path.
     #[test]
     fn non_numeric_ids_consumes_id_lists() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flist_non_numeric.batch");
         let protocol_version = 31;
 
@@ -864,7 +863,7 @@ mod flist_deserialization_tests {
     /// upstream: flist.c:907 writes checksum bytes, flist.c:1455 reads them
     #[test]
     fn protocol_flist_roundtrip_with_always_checksum() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flist_checksum.batch");
         let protocol_version = 31;
         let csum_len = 16; // MD5 digest length
@@ -953,7 +952,7 @@ mod flist_deserialization_tests {
     /// an empty vec with zero io_error.
     #[test]
     fn protocol_flist_empty() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flist_empty.batch");
         let protocol_version = 31;
 
@@ -995,7 +994,7 @@ mod token_delta_tests {
     /// `read_file_delta_tokens` decodes it correctly.
     #[test]
     fn read_token_delta_roundtrip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("token_delta.batch");
 
         let config = BatchConfig::new(
@@ -1036,7 +1035,7 @@ mod token_delta_tests {
     /// Verify that multiple files' delta streams can be read sequentially.
     #[test]
     fn read_multiple_file_deltas() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("multi_delta.batch");
 
         let config = BatchConfig::new(
@@ -1085,7 +1084,7 @@ mod token_delta_tests {
 
     #[test]
     fn read_delta_tokens_without_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test.batch");
         create_test_batch(&batch_path);
 
@@ -1162,7 +1161,7 @@ mod inc_recurse_flist_tests {
 
     #[test]
     fn read_inc_recurse_flist_reads_initial_segment_only() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("inc_recurse.batch");
         build_inc_recurse_batch(&batch_path);
 
@@ -1220,7 +1219,7 @@ mod inc_recurse_flist_tests {
 
     #[test]
     fn read_inc_recurse_flist_preserves_ndx_codec_for_replay() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("inc_recurse_codec.batch");
         build_inc_recurse_batch(&batch_path);
 
@@ -1243,7 +1242,7 @@ mod inc_recurse_flist_tests {
 
     #[test]
     fn read_non_inc_recurse_flist_has_no_ndx_codec() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("no_inc_recurse.batch");
 
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
@@ -1325,7 +1324,7 @@ mod compressed_delta_tests {
 
     #[test]
     fn read_compressed_delta_tokens_literal_only() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("compressed.batch");
         let literal = b"Hello compressed batch world!";
         create_compressed_batch(&batch_path, literal);
@@ -1361,7 +1360,7 @@ mod compressed_delta_tests {
 
     #[test]
     fn read_compressed_delta_tokens_with_block_match() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("compressed_block.batch");
 
         let config = BatchConfig::new(
@@ -1420,7 +1419,7 @@ mod compressed_delta_tests {
 
     #[test]
     fn read_compressed_delta_tokens_requires_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("no_header.batch");
         create_compressed_batch(&batch_path, b"data");
 

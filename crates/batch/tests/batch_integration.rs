@@ -58,7 +58,7 @@ mod batch_file_operations {
 
     #[test]
     fn writer_creates_file_at_specified_path() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("test_create.batch");
 
         let config = BatchConfig::new(
@@ -94,7 +94,7 @@ mod batch_file_operations {
 
     #[test]
     fn reader_opens_existing_file() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = create_test_batch(&temp_dir, "existing.batch", 30, 0);
 
         let config = BatchConfig::new(BatchMode::Read, batch_path, 30);
@@ -117,7 +117,7 @@ mod batch_file_operations {
 
     #[test]
     fn writer_overwrites_existing_file() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("overwrite.batch");
 
         fs::write(&batch_path, b"initial content that should be overwritten").unwrap();
@@ -141,7 +141,7 @@ mod batch_file_operations {
 
     #[test]
     fn multiple_sequential_writes() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("sequential.batch");
 
         let config = BatchConfig::new(
@@ -169,7 +169,7 @@ mod batch_file_operations {
 
     #[test]
     fn flush_persists_data_to_disk() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flush.batch");
 
         let config = BatchConfig::new(
@@ -190,7 +190,7 @@ mod batch_file_operations {
 
     #[test]
     fn finalize_closes_file_handle() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("finalize.batch");
 
         let config = BatchConfig::new(
@@ -219,7 +219,7 @@ mod round_trip_tests {
 
     #[test]
     fn header_round_trip_protocol_30() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("roundtrip30.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -264,7 +264,7 @@ mod round_trip_tests {
 
     #[test]
     fn header_round_trip_protocol_31() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("roundtrip31.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -290,7 +290,7 @@ mod round_trip_tests {
 
     #[test]
     fn header_round_trip_protocol_29() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("roundtrip29.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -317,7 +317,7 @@ mod round_trip_tests {
 
     #[test]
     fn header_round_trip_protocol_28() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("roundtrip28.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -346,7 +346,7 @@ mod round_trip_tests {
 
     #[test]
     fn data_round_trip_binary_content() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("binary_roundtrip.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -376,7 +376,7 @@ mod round_trip_tests {
 
     #[test]
     fn data_round_trip_utf8_content() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("utf8_roundtrip.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -401,7 +401,7 @@ mod round_trip_tests {
 
     #[test]
     fn all_flags_set_round_trip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("all_flags.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -440,7 +440,7 @@ mod round_trip_tests {
 
     #[test]
     fn no_flags_set_round_trip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("no_flags.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -469,7 +469,7 @@ mod error_handling {
 
     #[test]
     fn truncated_header_reports_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("truncated.batch");
 
         // Write only 3 bytes - not enough for a valid header
@@ -489,7 +489,7 @@ mod error_handling {
 
     #[test]
     fn corrupted_flags_bitmap_handled() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("corrupt_flags.batch");
 
         // Stream flags bitmap with every defined bit (and many undefined ones) set.
@@ -518,7 +518,7 @@ mod error_handling {
 
     #[test]
     fn protocol_version_adopted_from_header() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("version_mismatch.batch");
 
         let write_config = BatchConfig::new(
@@ -555,7 +555,7 @@ mod error_handling {
 
     #[test]
     fn write_data_before_header_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("no_header.batch");
 
         let config = BatchConfig::new(
@@ -572,7 +572,7 @@ mod error_handling {
 
     #[test]
     fn double_header_write_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("double_header.batch");
 
         let config = BatchConfig::new(
@@ -590,7 +590,7 @@ mod error_handling {
 
     #[test]
     fn double_header_read_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = create_test_batch(&temp_dir, "double_read.batch", 30, 0);
 
         let config = BatchConfig::new(BatchMode::Read, batch_path, 30);
@@ -604,7 +604,7 @@ mod error_handling {
 
     #[test]
     fn read_data_before_header_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = create_test_batch(&temp_dir, "read_no_header.batch", 30, 0);
 
         let config = BatchConfig::new(BatchMode::Read, batch_path, 30);
@@ -618,7 +618,7 @@ mod error_handling {
 
     #[test]
     fn read_exact_with_insufficient_data() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("short_data.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -643,7 +643,7 @@ mod error_handling {
 
     #[test]
     fn empty_file_header_read_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("empty.batch");
 
         File::create(&batch_path).unwrap();
@@ -662,7 +662,7 @@ mod error_handling {
 
     #[test]
     fn zero_length_data_read_at_eof() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("eof.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -683,7 +683,7 @@ mod error_handling {
 
     #[test]
     fn write_file_entry_before_header_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_no_header.batch");
 
         let config = BatchConfig::new(
@@ -704,7 +704,7 @@ mod error_handling {
 
     #[test]
     fn read_file_entry_before_header_error() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = create_test_batch(&temp_dir, "entry_read_no_header.batch", 30, 0);
 
         let config = BatchConfig::new(BatchMode::Read, batch_path, 30);
@@ -726,7 +726,7 @@ mod edge_cases {
 
     #[test]
     fn empty_batch_file() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("empty.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -746,7 +746,7 @@ mod edge_cases {
 
     #[test]
     fn large_batch_one_megabyte() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("large_1mb.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -779,7 +779,7 @@ mod edge_cases {
 
     #[test]
     fn large_batch_ten_megabytes() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("large_10mb.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -812,7 +812,7 @@ mod edge_cases {
 
     #[test]
     fn checksum_seed_boundary_values() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let seeds = [0i32, 1, -1, i32::MAX, i32::MIN, 12345, -67890];
 
@@ -841,7 +841,7 @@ mod edge_cases {
 
     #[test]
     fn protocol_version_boundary_values() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let protocols = [28, 29, 30, 31, 32];
 
@@ -869,7 +869,7 @@ mod edge_cases {
 
     #[test]
     fn compat_flags_boundary_values() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let compat_flags: &[i32] = &[0, 1, 0x7F, 0x80, 0xFF, 0xFFFF, i32::MAX];
 
@@ -898,7 +898,7 @@ mod edge_cases {
 
     #[test]
     fn many_small_writes() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("many_writes.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -934,7 +934,7 @@ mod edge_cases {
 
     #[test]
     fn single_byte_data() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("single_byte.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -955,7 +955,7 @@ mod edge_cases {
 
     #[test]
     fn null_bytes_in_data() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("null_bytes.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -984,7 +984,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_basic_round_trip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_basic.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1012,7 +1012,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_with_uid_gid() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_uid_gid.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1038,7 +1038,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_root_uid_gid() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_root.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1064,7 +1064,7 @@ mod file_entry_tests {
 
     #[test]
     fn multiple_file_entries() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("multi_entry.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1101,7 +1101,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_large_size() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_large.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1123,7 +1123,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_zero_size() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_zero.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1145,7 +1145,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_special_path_characters() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_special.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1181,7 +1181,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_long_path() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_long_path.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1209,7 +1209,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_different_modes() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_modes.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1248,7 +1248,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_mtime_boundary_values() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_mtime.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1286,7 +1286,7 @@ mod file_entry_tests {
 
     #[test]
     fn file_entry_eof_returns_none() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("entry_eof.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1311,7 +1311,7 @@ mod batch_flags_tests {
 
     #[test]
     fn flags_protocol_28_ignores_newer_flags() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flags_p28.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1342,7 +1342,7 @@ mod batch_flags_tests {
 
     #[test]
     fn flags_protocol_29_supports_dirs_and_compression() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flags_p29.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1369,7 +1369,7 @@ mod batch_flags_tests {
 
     #[test]
     fn flags_protocol_30_supports_all_flags() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flags_p30.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1445,7 +1445,7 @@ mod batch_flags_tests {
 
     #[test]
     fn flags_individual_bits_round_trip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         #[allow(clippy::type_complexity)]
         let flag_setters: Vec<(&str, Box<dyn Fn(&mut BatchFlags)>)> = vec![
@@ -1528,7 +1528,7 @@ mod script_generation {
 
     #[test]
     fn generate_script_creates_file() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("script_test.batch");
 
         let config = BatchConfig::new(
@@ -1548,7 +1548,7 @@ mod script_generation {
 
     #[test]
     fn generate_script_content_format() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("content_test.batch");
 
         let config = BatchConfig::new(
@@ -1581,7 +1581,7 @@ mod script_generation {
     fn generate_script_is_executable() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("exec_test.batch");
 
         let config = BatchConfig::new(
@@ -1606,7 +1606,7 @@ mod script_generation {
 
     #[test]
     fn generate_script_with_filter_rules() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("filter_test.batch");
 
         let config = BatchConfig::new(
@@ -1630,7 +1630,7 @@ mod script_generation {
 
     #[test]
     fn script_path_with_special_characters() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("special path with spaces.batch");
 
         let config = BatchConfig::new(
@@ -1753,7 +1753,7 @@ mod integration_scenarios {
 
     #[test]
     fn scenario_full_transfer_simulation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("full_transfer.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1821,7 +1821,7 @@ mod integration_scenarios {
 
     #[test]
     fn scenario_incremental_backup_batch() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("incremental.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1859,7 +1859,7 @@ mod integration_scenarios {
 
     #[test]
     fn scenario_empty_directory_sync() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("empty_dir.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
@@ -1967,7 +1967,7 @@ mod protocol_flist_round_trip {
 
     #[test]
     fn write_and_read_single_file_entry() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let mut entry =
             protocol::flist::FileEntry::new_file(PathBuf::from("hello.txt"), 1024, 0o100644);
@@ -1987,7 +1987,7 @@ mod protocol_flist_round_trip {
 
     #[test]
     fn write_and_read_multiple_entries() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let entries = vec![
             {
@@ -2032,7 +2032,7 @@ mod protocol_flist_round_trip {
 
     #[test]
     fn write_and_read_empty_flist() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let path = write_batch_with_protocol_flist(&temp_dir, "empty_flist.batch", &[]);
 
@@ -2046,7 +2046,7 @@ mod protocol_flist_round_trip {
 
     #[test]
     fn write_and_read_with_trailing_data_after_flist() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("trailing.batch");
         let path_str = batch_path.to_string_lossy().to_string();
         let protocol_version = 32;
@@ -2098,7 +2098,7 @@ mod protocol_flist_round_trip {
 
     #[test]
     fn header_flags_round_trip_through_protocol_flist() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let entries = vec![{
             let mut e =
