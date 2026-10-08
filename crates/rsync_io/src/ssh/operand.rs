@@ -89,10 +89,15 @@ pub enum RemoteOperandParseError {
     /// The port number was invalid or out of range.
     #[error("invalid port number in remote operand")]
     InvalidPort,
-    /// The hostname or user component begins with `-`, which the spawned
-    /// remote-shell process would parse as a command-line option (argv
-    /// injection - e.g. `-oProxyCommand=evil`). Defense-in-depth mirroring
-    /// upstream rsync 3.4.3.
+    /// The hostname begins with `-`, which the spawned remote-shell process
+    /// would parse as a command-line option (argv injection - e.g.
+    /// `-oProxyCommand=evil`).
+    ///
+    /// upstream: main.c:1636-1639 start_client() - the same refusal text,
+    /// exit `RERR_SYNTAX`.
+    #[error("Invalid remote host: hostnames may not start with '-'.")]
+    InvalidHost,
+    /// The user component begins with `-`.
     #[error("remote operand component must not start with '-': {0}")]
     LeadingDash(String),
 }
@@ -158,11 +163,12 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
     // upstream: options.c::check_for_hostspec() returns `path + 1` after the
     // `:`, which may point at the trailing NUL.
 
-    // Defense-in-depth: reject hostnames or users that start with `-`. The
-    // spawned `ssh` (or other remote shell) would otherwise interpret such a
-    // value as a command-line option, enabling argv injection like
-    // `-oProxyCommand=evil`. Mirrors upstream rsync 3.4.3.
-    reject_leading_dash(host)?;
+    // Reject hostnames or users that start with `-`. The spawned `ssh` (or
+    // other remote shell) would otherwise interpret such a value as a
+    // command-line option, enabling argv injection like `-oProxyCommand=evil`.
+    if host.starts_with('-') {
+        return Err(RemoteOperandParseError::InvalidHost);
+    }
     if let Some(user_str) = user {
         reject_leading_dash(user_str)?;
     }
@@ -202,13 +208,7 @@ fn raw_path_suffix(operand: &OsStr, path_start: usize) -> OsString {
     }
 }
 
-/// Rejects a hostname or user component that begins with `-`.
-///
-/// Such a component, when forwarded verbatim to `ssh` as part of the
-/// `user@host` argv element (or as a bare `host`), would be parsed by the
-/// remote-shell binary as a command-line option. Refusing it here prevents
-/// argv-injection attacks such as `-oProxyCommand=...` smuggled through a
-/// remote source URL.
+/// Rejects a user component that begins with `-`.
 fn reject_leading_dash(component: &str) -> Result<(), RemoteOperandParseError> {
     if component.starts_with('-') {
         return Err(RemoteOperandParseError::LeadingDash(component.to_owned()));
@@ -506,8 +506,12 @@ mod tests {
             "invalid port number in remote operand"
         );
         assert_eq!(
-            RemoteOperandParseError::LeadingDash("-host".to_owned()).to_string(),
-            "remote operand component must not start with '-': -host"
+            RemoteOperandParseError::InvalidHost.to_string(),
+            "Invalid remote host: hostnames may not start with '-'."
+        );
+        assert_eq!(
+            RemoteOperandParseError::LeadingDash("-user".to_owned()).to_string(),
+            "remote operand component must not start with '-': -user"
         );
     }
 
@@ -516,12 +520,7 @@ mod tests {
         let operand = OsStr::new("-oProxyCommand=evil:/etc/passwd");
         let result = parse_ssh_operand(operand);
 
-        assert_eq!(
-            result,
-            Err(RemoteOperandParseError::LeadingDash(
-                "-oProxyCommand=evil".to_owned()
-            ))
-        );
+        assert_eq!(result, Err(RemoteOperandParseError::InvalidHost));
     }
 
     #[test]
@@ -529,12 +528,7 @@ mod tests {
         let operand = OsStr::new("--config=evil:/data");
         let result = parse_ssh_operand(operand);
 
-        assert_eq!(
-            result,
-            Err(RemoteOperandParseError::LeadingDash(
-                "--config=evil".to_owned()
-            ))
-        );
+        assert_eq!(result, Err(RemoteOperandParseError::InvalidHost));
     }
 
     #[test]
@@ -542,10 +536,7 @@ mod tests {
         let operand = OsStr::new("-:/data");
         let result = parse_ssh_operand(operand);
 
-        assert_eq!(
-            result,
-            Err(RemoteOperandParseError::LeadingDash("-".to_owned()))
-        );
+        assert_eq!(result, Err(RemoteOperandParseError::InvalidHost));
     }
 
     #[test]
@@ -566,10 +557,7 @@ mod tests {
         let operand = OsStr::new("[-bad]:/path");
         let result = parse_ssh_operand(operand);
 
-        assert_eq!(
-            result,
-            Err(RemoteOperandParseError::LeadingDash("-bad".to_owned()))
-        );
+        assert_eq!(result, Err(RemoteOperandParseError::InvalidHost));
     }
 
     /// A non-UTF-8 path byte (`0xFF`, a legal Unix filename byte that rsync

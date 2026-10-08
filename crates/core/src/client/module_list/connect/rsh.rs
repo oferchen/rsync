@@ -24,6 +24,7 @@ use crate::client::AddressMode;
 use crate::client::IPC_EXIT_CODE;
 use crate::client::error::{ClientError, invalid_argument_error};
 use crate::idn;
+use rsync_io::ssh::RemoteOperandParseError;
 
 /// Parameters for spawning a daemon-connection-over-remote-shell stream.
 pub(crate) struct RshDaemonSpawn<'a> {
@@ -256,6 +257,14 @@ impl Read for ConnectDeadlineReader {
 pub(crate) fn spawn_rsh_daemon_stream(
     spec: RshDaemonSpawn<'_>,
 ) -> Result<DaemonStream, ClientError> {
+    // upstream: main.c:1636-1639 - the dash-led host refusal covers a daemon
+    // reached through the shell too, before do_cmd() spawns it.
+    if spec.host.starts_with('-') {
+        return Err(invalid_argument_error(
+            &RemoteOperandParseError::InvalidHost.to_string(),
+            1,
+        ));
+    }
     let (program, args) = build_rsh_command_argv(&spec);
     let mut cmd = Command::new(&program);
     cmd.args(&args);
@@ -324,6 +333,37 @@ mod tests {
         assert!(
             err.to_string().contains("daemon-over-rsh"),
             "error should reference the daemon-over-rsh spawn, got: {err}"
+        );
+    }
+
+    /// upstream: main.c:1636-1639 refuses a dash-led host for a daemon reached
+    /// through the shell too, before anything is spawned. The probe program
+    /// does not exist, so reaching the spawn would surface as an IPC error.
+    #[test]
+    fn spawn_rsh_daemon_stream_refuses_dash_led_host() {
+        let shell_args = vec![OsString::from("/nonexistent/oc-rsync-rsh-daemon-probe-bin")];
+        let spec = RshDaemonSpawn {
+            shell_args: &shell_args,
+            host: "-oProxyCommand=evil",
+            username: None,
+            port: 873,
+            rsync_path: None,
+            bind_address: None,
+            jump_hosts: None,
+            connect_timeout: None,
+            address_mode: AddressMode::Default,
+        };
+
+        let err = match spawn_rsh_daemon_stream(spec) {
+            Ok(_) => panic!("a dash-led host must be refused"),
+            Err(e) => e,
+        };
+
+        assert_eq!(err.exit_code(), 1);
+        assert!(
+            err.to_string()
+                .contains("Invalid remote host: hostnames may not start with '-'. (code 1)"),
+            "got: {err}"
         );
     }
 

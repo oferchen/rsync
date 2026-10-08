@@ -9,6 +9,7 @@ use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
 use crate::rsync_error;
 use engine::local_copy::{LocalCopyError, LocalCopyErrorKind, upstream_io_error};
+use rsync_io::ssh::RemoteOperandParseError;
 
 // upstream: errcode.h - Exit code definitions
 
@@ -183,6 +184,18 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
     let code = ExitCode::from_i32(exit_code).unwrap_or(ExitCode::PartialTransfer);
     let message = rsync_error!(code.as_i32(), "{}", text).with_role(Role::Client);
     ClientError::with_code(code, message)
+}
+
+/// Maps a remote-operand parse failure to a syntax error prefixed by `context`.
+///
+/// A dash-led host keeps upstream's bare refusal text (main.c:1636-1639), so
+/// it reads the same whichever operand carried it.
+#[cold]
+pub(crate) fn remote_operand_error(context: &str, error: &RemoteOperandParseError) -> ClientError {
+    match error {
+        RemoteOperandParseError::InvalidHost => invalid_argument_error(&error.to_string(), 1),
+        _ => invalid_argument_error(&format!("{context}: {error}"), 1),
+    }
 }
 
 /// Creates an invalid argument error with a typed exit code.

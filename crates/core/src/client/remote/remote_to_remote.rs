@@ -44,7 +44,9 @@ use std::time::Duration;
 use rsync_io::ssh::{SshCommand, SshConnection, SshReader, SshWriter, parse_ssh_operand};
 
 use super::super::config::ClientConfig;
-use super::super::error::{ClientError, invalid_argument_error, invalid_argument_error_typed};
+use super::super::error::{
+    ClientError, invalid_argument_error, invalid_argument_error_typed, remote_operand_error,
+};
 use super::super::summary::ClientSummary;
 use super::invocation::{RemoteInvocationBuilder, RemoteOperands, RemoteRole};
 use crate::exit_code::ExitCode;
@@ -109,7 +111,7 @@ fn parse_source_operands(operands: &RemoteOperands) -> Result<SourceConnectionIn
     match operands {
         RemoteOperands::Single(operand) => {
             let parsed = parse_ssh_operand(operand)
-                .map_err(|e| invalid_argument_error(&format!("invalid source operand: {e}"), 1))?;
+                .map_err(|e| remote_operand_error("invalid source operand", &e))?;
             Ok((
                 parsed.host().to_owned(),
                 parsed.user().map(String::from),
@@ -119,13 +121,12 @@ fn parse_source_operands(operands: &RemoteOperands) -> Result<SourceConnectionIn
         }
         RemoteOperands::Multiple(operands) => {
             let first = parse_ssh_operand(&operands[0])
-                .map_err(|e| invalid_argument_error(&format!("invalid source operand: {e}"), 1))?;
+                .map_err(|e| remote_operand_error("invalid source operand", &e))?;
 
             let mut paths = Vec::with_capacity(operands.len());
             for operand in operands {
-                let parsed = parse_ssh_operand(operand).map_err(|e| {
-                    invalid_argument_error(&format!("invalid source operand: {e}"), 1)
-                })?;
+                let parsed = parse_ssh_operand(operand)
+                    .map_err(|e| remote_operand_error("invalid source operand", &e))?;
                 paths.push(parsed.path().to_os_string());
             }
 
@@ -144,7 +145,7 @@ fn parse_dest_operand(
     operand: &OsStr,
 ) -> Result<(String, Option<String>, Option<u16>, OsString), ClientError> {
     let parsed = parse_ssh_operand(operand)
-        .map_err(|e| invalid_argument_error(&format!("invalid destination operand: {e}"), 1))?;
+        .map_err(|e| remote_operand_error("invalid destination operand", &e))?;
     Ok((
         parsed.host().to_owned(),
         parsed.user().map(String::from),
