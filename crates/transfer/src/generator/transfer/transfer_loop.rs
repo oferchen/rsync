@@ -685,14 +685,10 @@ impl GeneratorContext {
             // configured allowed_lull), keeping the default path wire-identical.
             writer.maybe_send_keepalive()?;
 
-            // upstream: sender.c:213-463 - read NDX request from receiver
-            let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
-                Ok(ndx) => ndx,
-                Err(e) if (phase > 0 || tolerant) && is_early_close_error(&e) => {
-                    break;
-                }
-                Err(e) => return Err(e),
-            };
+            // upstream: sender.c:521 - read_ndx_and_attrs() has no EOF
+            // tolerance; a receiver that vanishes in any phase ends the run
+            // through io.c:whine_about_eof() with RERR_STREAMIO.
+            let ndx = ndx_read_codec.read_ndx(&mut *reader)?;
 
             // upstream: io.c:1774-1788, sender.c:239-261 - handle control NDX values
             if ndx < 0 {
@@ -775,14 +771,7 @@ impl GeneratorContext {
                     }
                     NDX_DEL_STATS => {
                         // Deletion statistics (upstream main.c:238-247).
-                        // During dry-run the connection may drop mid-read.
-                        let stats = match DeleteStats::read_from(&mut *reader) {
-                            Ok(s) => s,
-                            Err(e) if tolerant && is_early_close_error(&e) => {
-                                break;
-                            }
-                            Err(e) => return Err(e),
-                        };
+                        let stats = DeleteStats::read_from(&mut *reader)?;
                         self.accumulate_delete_stats(&stats);
                         debug_log!(
                             Flist,
