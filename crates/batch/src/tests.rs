@@ -317,8 +317,11 @@ mod integration {
         writer.finalize().unwrap();
 
         // The reader runs above the batch protocol; the header value wins.
-        let read_config =
-            BatchConfig::new(BatchMode::Read, batch_path.to_string_lossy().to_string(), 32);
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
 
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
