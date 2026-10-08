@@ -31,7 +31,7 @@ pub(crate) use checksum::prefetch_directory_checksums;
 use deletion::{
     apply_during_transfer_deletions, handle_empty_directory_pruning, handle_post_transfer_deletions,
 };
-use destination::{DestinationState, check_destination_state, record_skipped_missing_destination};
+use destination::{DestinationState, check_destination_state, record_existence_skip};
 use dir_metadata::{
     DirectoryFinalize, apply_final_directory_metadata, enforce_transfer_root_self_lock,
     keep_preexisting_directory_writable, record_directory_completion,
@@ -174,6 +174,10 @@ fn copy_directory_recursive_inner(
     } else {
         check_destination_state(context, destination, relative)?
     };
+    if let DestinationState::Skipped(skip) = destination_state {
+        record_existence_skip(context, skip, metadata, relative);
+        return Ok(false);
+    }
     let destination_missing = destination_state.is_missing();
     // Box the owned metadata so it lives on the heap, not on this stack frame.
     // `copy_directory_recursive_inner` recurses once per directory level; an
@@ -202,11 +206,6 @@ fn copy_directory_recursive_inner(
     } else {
         None
     };
-
-    if destination_missing && context.existing_only_enabled() {
-        record_skipped_missing_destination(context, metadata, relative);
-        return Ok(false);
-    }
 
     // The `dest_mode()` exists input for this directory: its stat from before
     // the transfer materialised it. A root the orchestrator just created
