@@ -122,12 +122,12 @@ fn place_existing_backup(
         return rename_or_copy_existing(existing, backup_path);
     }
 
-    // upstream: backup.c:236-237 - a failed link sends a non-regular entry
+    // upstream: backup.c:245 - a failed link sends a non-regular entry
     // straight to the copy tier; only a regular file is renamed instead.
     let is_regular = fs::symlink_metadata(existing).is_ok_and(|m| m.is_file());
     match confined_hard_link(existing, backup_path) {
         Ok(()) => Ok(BackupPlacement::Hardlinked),
-        // upstream: backup.c:301-310 - remove a stale backup and retry.
+        // upstream: backup.c:318-327 - remove a stale backup and retry.
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
             let _ = confined_remove_backup(backup_path);
             match confined_hard_link(existing, backup_path) {
@@ -141,7 +141,7 @@ fn place_existing_backup(
 
 /// Continues the backup ladder after the hard-link tier failed.
 ///
-/// upstream: `backup.c:236-237` `link_or_rename()` - `if (!S_ISREG(...))
+/// upstream: `backup.c:245` `link_or_rename()` - `if (!S_ISREG(...))
 /// return 0`, so only a regular file reaches `do_rename_at`; symlinks and
 /// specials fall through to the copy tier in `make_backup_inner()`.
 #[cfg(unix)]
@@ -168,7 +168,7 @@ fn after_failed_link(
     rename_or_copy_existing(existing, backup_path)
 }
 
-// upstream: backup.c:443-449 `make_backup()` runs the whole ladder under
+// upstream: backup.c:437-449 `make_backup()` runs the whole ladder under
 // `operator_path_resolve = 1`, so every syscall below resolves the backup
 // path with the ownership walk: a foreign-owned symlink component (or, in a
 // non-chrooted daemon, a leaf outside the module) is refused with `ELOOP`.
@@ -211,7 +211,7 @@ fn confined_create_dir_all(path: &Path) -> io::Result<()> {
 /// Renames `existing` to `backup_path`, falling back to recreating the node
 /// when the rename fails.
 ///
-/// upstream: `backup.c:311-312` `make_backup_inner()` - once
+/// upstream: `backup.c:316-329` `make_backup_inner()` - once
 /// `link_or_rename()` returns 0, for any errno, rsync makes a copy:
 /// `copy_file()` for regular files, or recreates the node via
 /// `do_symlink_at`/`do_mknod_at` for symlinks and specials
@@ -834,7 +834,7 @@ mod tests {
     /// before the confined ladder the hard-link/rename/symlink tiers used plain
     /// path syscalls and followed the swapped parent out of the module.
     ///
-    /// upstream: `backup.c:443-449` `make_backup()` under `operator_path_resolve`
+    /// upstream: `backup.c:437-449` `make_backup()` under `operator_path_resolve`
     /// -> `syscall.c:245-294` `abspath_outside_confinement()` returns the
     /// resolved leaf as outside the root, so every tier fails `ELOOP`.
     #[test]
@@ -1002,7 +1002,7 @@ mod tests {
     /// When the hard link fails, a symlink is recreated by the copy tier and
     /// never renamed, even though the rename would succeed.
     ///
-    /// upstream: `backup.c:236-237` - `if (!S_ISREG(stp->st_mode) || ...)
+    /// upstream: `backup.c:245` - `if (!S_ISREG(stp->st_mode) || ...)
     /// return 0;` skips `do_rename_at` for every non-regular entry.
     #[test]
     fn failed_link_sends_symlink_to_copy_tier_not_rename() {
@@ -1030,7 +1030,7 @@ mod tests {
     /// A non-EXDEV rename failure must still recreate the victim at the backup
     /// name through the copy tier, not abort the backup.
     ///
-    /// upstream: `backup.c:311-312` - `make_backup_inner()` falls back to the
+    /// upstream: `backup.c:316-329` - `make_backup_inner()` falls back to the
     /// copy tier whenever `link_or_rename()` returns 0, whatever the errno.
     #[test]
     fn non_exdev_rename_failure_recreates_symlink_via_copy_tier() {
