@@ -850,6 +850,11 @@ impl ReceiverContext {
     /// for this phase's file requests so the delta encoding stays in sync with
     /// the peer's read state.
     ///
+    /// Only followers whose flat index lies in `range` are itemized, so the
+    /// INC_RECURSE walk forwards each follower once, with the sub-list that
+    /// holds it, the way upstream's generator itemizes it while walking that
+    /// sub-list.
+    ///
     /// # Upstream Reference
     ///
     /// - `generator.c:585-591` - `itemize()` writes `NDX`,
@@ -860,6 +865,7 @@ impl ReceiverContext {
         &self,
         writer: &mut W,
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
+        range: std::ops::Range<usize>,
         dest_dir: &std::path::Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> std::io::Result<()>
@@ -897,7 +903,10 @@ impl ReceiverContext {
         }
 
         let mut emitted = 0usize;
-        for (flat_idx, entry) in self.file_list.iter_indexed() {
+        for flat_idx in range {
+            let Some(entry) = self.file_list.get(flat_idx) else {
+                continue;
+            };
             if !entry.hlinked() || entry.hlink_first() {
                 continue;
             }
