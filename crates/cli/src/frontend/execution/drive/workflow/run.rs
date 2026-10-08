@@ -17,9 +17,9 @@ use crate::frontend::progress::{ProgressOutputConfig, StderrMode};
 use crate::frontend::{
     arguments::{ChecksumThreadsSetting, ParsedArgs, StopRequest, atoi_leading},
     execution::{
-        chown::ParsedChown, extract_operands, load_file_list_operands, operand_is_remote,
-        parse_chown_argument, resolve_file_list_entries, resolve_files_from_source,
-        resolve_iconv_setting,
+        STREAM_IO_ERROR, SYNTAX_ERROR, UnsupportedOption, chown::ParsedChown, exit_trailer,
+        extract_operands, load_file_list_operands, operand_is_remote, parse_chown_argument,
+        resolve_file_list_entries, resolve_files_from_source, resolve_iconv_setting,
     },
 };
 use core::client::{BatchConfig, BatchMode, HumanReadableMode};
@@ -35,6 +35,27 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argument};
+
+/// Reports a `-M` value a local transfer's server side does not know.
+///
+/// upstream: pipe.c:143-148 - the forked child refuses it with the remote
+/// prefix and exits RERR_SYNTAX as the receiver, then the parent reads EOF on
+/// the pipe and exits RERR_STREAMIO from whine_about_eof() (io.c:303).
+fn refuse_local_remote_option<Err: Write>(
+    option: UnsupportedOption,
+    stderr: &mut MessageSink<Err>,
+) -> i32 {
+    let program = stderr.brand().client_program_name();
+    let refusal = option.remote_refusal_line(program);
+    let _ = writeln!(stderr.writer_mut(), "{refusal}");
+    fail_with_message(exit_trailer(SYNTAX_ERROR, Role::Receiver), stderr);
+    let _ = writeln!(
+        stderr.writer_mut(),
+        "{program}: connection unexpectedly closed (0 bytes received so far) [{}]",
+        Role::Sender.as_str()
+    );
+    fail_with_message(exit_trailer(STREAM_IO_ERROR, Role::Sender), stderr)
+}
 
 /// Main entry point for CLI-driven transfers: parses all arguments, builds config, and runs.
 pub(crate) fn execute<Out, Err>(
@@ -73,6 +94,7 @@ where
         #[cfg(feature = "quic")]
         quic_cipher,
         remote_options,
+        refused_remote_option,
         rsync_path: _,
         protect_args,
         old_args,
@@ -423,6 +445,10 @@ where
         Ok(address) => address,
         Err(code) => return code,
     };
+
+    if let Some(option) = refused_remote_option {
+        return refuse_local_remote_option(UnsupportedOption::new(option), stderr);
+    }
 
     let remainder = match extract_operands(raw_remainder) {
         Ok(operands) => operands,

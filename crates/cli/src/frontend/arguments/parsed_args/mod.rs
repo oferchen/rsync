@@ -67,6 +67,10 @@ pub struct ParsedArgs {
     /// `--remote-option`, `-M` - extra options for the remote process.
     pub remote_options: Vec<OsString>,
 
+    /// The first `-M` value a local transfer could not parse, which the
+    /// transfer's server side refuses instead of the client.
+    pub refused_remote_option: Option<OsString>,
+
     /// `--rsync-path` - path to rsync on the remote system.
     pub rsync_path: Option<OsString>,
 
