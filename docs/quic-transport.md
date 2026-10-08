@@ -150,6 +150,30 @@ QUIC listener requested but no certificate configured: set both
 
 rather than synthesizing an identity or silently skipping the listener.
 
+### Process model
+
+A QUIC session runs in its own forked child, exactly like a TCP session. The
+daemon parent never serves one itself:
+
+1. The parent binds the UDP sockets while it still holds its startup
+   privileges, then forks a QUIC front process before it starts any thread.
+2. The front process drops to `nobody` if it is still root. On Linux it also
+   dies with the parent, sets `no_new_privs`, and installs a Landlock ruleset
+   that grants no filesystem access. Only then does it start the QUIC threads.
+   It terminates TLS for every QUIC connection and never forks or runs a
+   session.
+3. For each accepted stream, the front process hands the parent one end of a
+   socket pair together with the peer and local addresses.
+4. The parent admits the relayed stream through the same path as a TCP
+   connection: `hosts allow` / `hosts deny`, `max connections` (counted across
+   TCP and QUIC together), then a forked per-session child. That child applies
+   `use chroot`, `uid` and `gid` for its module, as upstream does for TCP.
+
+So stock modules with `use chroot = yes` and `uid = nobody` work over QUIC, and
+a QUIC session can no longer chroot or drop privileges for the whole daemon.
+If the front process exits, the parent logs it and keeps serving TCP; QUIC
+stays down until the daemon restarts.
+
 ### Certificate identity
 
 ```

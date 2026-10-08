@@ -301,6 +301,14 @@ Cargo feature (off by default); when compiled in, setting the variable to
 any value selects the async path. Exists to enable async-vs-sync
 concurrency comparisons; the sync accept loop is the production default.
 
+The async path serves sessions inside the daemon process instead of forking
+one child per connection, so it refuses to start as root (exit 1, before it
+binds): a root daemon drops each session to `nobody`, which would drop the
+daemon itself. Run the sync daemon for privileged deployments. It also
+catches and ignores `SIGHUP` and keeps the configuration it started with;
+upstream terminates on `SIGHUP` and re-reads `rsyncd.conf` for each
+connection instead.
+
 Follow-up recommendation: the daemon knobs in this section may be better
 served as `oc-rsyncd.conf` directives, which propagate cleanly to daemon
 workers; flagged for a future design note, not implemented.
