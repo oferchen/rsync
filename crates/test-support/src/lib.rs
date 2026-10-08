@@ -12,6 +12,8 @@ pub mod capabilities;
 pub mod clean_fname;
 pub mod cli;
 pub mod daemon_port;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod daemon_process;
 pub mod deadline;
 pub mod dir_diff;
 pub mod lsh;
@@ -28,7 +30,9 @@ pub use bin_path::{oc_rsync_bin, target_profile_dir, workspace_bin, workspace_bi
 pub use capabilities::Capabilities;
 pub use clean_fname::COLLAPSE_CASES;
 pub use cli::{CliOutput, OcRsyncCliRunner, RunnerError};
-pub use daemon_port::{daemon_listen_port, spawn_daemon_on_free_port};
+pub use daemon_port::{BIND_FAILURE_EXIT_CODE, daemon_listen_port, spawn_daemon_on_free_port};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use daemon_process::{CLIENT_IO_TIMEOUT, DaemonProcess};
 pub use deadline::{Deadlined, run_deadlined, run_deadlined_with_stdin};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};
 pub use lsh::{LSH_STUB_BIN, LshError, LshRunnerStub};
