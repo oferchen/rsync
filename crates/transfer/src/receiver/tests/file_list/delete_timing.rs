@@ -150,7 +150,7 @@ fn delete_delay_defers_unlink_until_execute_phase() {
     assert!(!victims.is_empty(), "delay must record the pending victim");
 
     // The late phase executes the recorded victims: now the file is gone.
-    let (stats, _io) = ctx
+    let (stats, _io, _) = ctx
         .execute_delayed_deletions(
             dest,
             #[cfg(unix)]
@@ -174,7 +174,7 @@ fn delete_delay_defers_unlink_until_execute_phase() {
     let during_dir = tempfile::TempDir::new().unwrap();
     let dest2 = during_dir.path();
     let ctx2 = build(dest2);
-    let (during_stats, _, _) = ctx2
+    let (during_stats, _, _, _) = ctx2
         .delete_extraneous_files(
             dest2,
             #[cfg(unix)]
@@ -260,7 +260,7 @@ fn late_delete_pass_with_dest_rsync_filter_protects_bak() {
     std::fs::write(dest.join(".rsync-filter"), b"- *.bak\n").unwrap();
 
     let mut writer = TestDeletionWriter;
-    let (_stats, _, _) = ctx
+    let (_stats, _, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -472,7 +472,7 @@ fn delete_pass_without_dest_rsync_filter_deletes_bak() {
     // No `.rsync-filter` written: mirror an early sweep before the merge file
     // has been transferred into the destination.
     let mut writer = TestDeletionWriter;
-    let (_stats, _, _) = ctx
+    let (_stats, _, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]

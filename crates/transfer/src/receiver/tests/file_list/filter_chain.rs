@@ -39,7 +39,7 @@ fn receiver_filter_chain_protects_from_deletion() {
     ctx.set_filter_chain(::filters::FilterChain::new(global));
 
     let mut writer = TestDeletionWriter;
-    let (stats, _, _) = ctx
+    let (stats, _, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -91,7 +91,7 @@ fn receiver_filter_chain_empty_allows_all_deletions() {
 
     // Empty filter chain - all deletions should proceed
     let mut writer = TestDeletionWriter;
-    let (stats, _, _) = ctx
+    let (stats, _, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -147,7 +147,7 @@ fn single_char_wildcard_exclude_does_not_block_top_level_deletion() {
     ctx.set_filter_chain(::filters::FilterChain::new(global));
 
     let mut writer = TestDeletionWriter;
-    let (stats, _, _) = ctx
+    let (stats, _, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -215,7 +215,7 @@ fn implied_non_content_subdir_is_not_scanned_for_deletion() {
         .push(FileEntry::new_file("subdir/file".into(), 11, 0o644));
 
     let mut writer = TestDeletionWriter;
-    let (stats, _, _) = ctx
+    let (stats, _, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -346,7 +346,7 @@ fn delete_ordinary_subdir_succeeds_with_no_io_error() {
     let sandbox = Arc::new(::fast_io::DirSandbox::open_root(&dest).expect("open sandbox"));
 
     let mut writer = TestDeletionWriter;
-    let (stats, _exceeded, io_error_bits) = ctx
+    let (stats, _exceeded, io_error_bits, _) = ctx
         .delete_extraneous_files(&dest, Some(&sandbox), &mut writer)
         .expect("delete pass must not surface io::Error on legitimate trees");
 
@@ -440,7 +440,7 @@ fn delete_symlinked_subdir_surfaces_ioerr_general() {
     let sandbox = Arc::new(::fast_io::DirSandbox::open_root(&dest).expect("open sandbox"));
 
     let mut writer = TestDeletionWriter;
-    let (_stats, _exceeded, io_error_bits) = ctx
+    let (_stats, _exceeded, io_error_bits, _) = ctx
         .delete_extraneous_files(&dest, Some(&sandbox), &mut writer)
         .expect("delete pass returns Ok with IOERR_GENERAL surfaced via bits");
 

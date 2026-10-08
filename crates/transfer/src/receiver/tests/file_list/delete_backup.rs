@@ -69,7 +69,7 @@ fn delayed_delete_backs_up_victim_with_default_suffix() {
     let (victims, _io) = ctx
         .collect_delayed_deletions(dest, None, &mut writer)
         .unwrap();
-    let (stats, _io) = ctx
+    let (stats, _io, _) = ctx
         .execute_delayed_deletions(dest, None, &victims, &mut writer)
         .unwrap();
 
@@ -110,7 +110,7 @@ fn immediate_delete_backs_up_victim_into_backup_dir() {
     );
     let mut writer = TestDeletionWriter;
 
-    let (stats, _limit, _io) = ctx
+    let (stats, _limit, _io, _) = ctx
         .delete_extraneous_files(dest, None, &mut writer)
         .unwrap();
 
@@ -143,7 +143,7 @@ fn already_suffixed_victim_is_not_rebacked_up() {
     let ctx = build_receiver(dest, true, None, false, None);
     let mut writer = TestDeletionWriter;
 
-    let (stats, _limit, _io) = ctx
+    let (stats, _limit, _io, _) = ctx
         .delete_extraneous_files(dest, None, &mut writer)
         .unwrap();
 
@@ -171,7 +171,7 @@ fn delete_without_backup_leaves_no_backup() {
     let ctx = build_receiver(dest, false, None, false, None);
     let mut writer = TestDeletionWriter;
 
-    let (stats, _limit, _io) = ctx
+    let (stats, _limit, _io, _) = ctx
         .delete_extraneous_files(dest, None, &mut writer)
         .unwrap();
 
@@ -200,7 +200,7 @@ fn capped_delete_backs_up_victim_with_default_suffix() {
     let ctx = build_receiver(dest, true, None, false, Some(100));
     let mut writer = TestDeletionWriter;
 
-    let (stats, _limit, _io) = ctx
+    let (stats, _limit, _io, _) = ctx
         .delete_extraneous_files(dest, None, &mut writer)
         .unwrap();
 

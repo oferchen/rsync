@@ -1207,10 +1207,60 @@ impl ReceiverContext {
             .push(row);
     }
 
-    /// Drains the collected per-file daemon-log rows in ascending flist-index
-    /// order for the daemon driver to write to the module log file.
-    pub fn drain_daemon_log_rows(&self) -> crate::progress::DaemonLogRows {
-        std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
+    /// Whether a delete pass must read each victim's full `st_mode`: only the
+    /// daemon log renders it (`%B`), and it writes no `del.` rows under
+    /// `--dry-run` (log.c:924).
+    pub(in crate::receiver) const fn captures_victim_modes(&self) -> bool {
+        self.daemon_log_active && !self.config.flags.dry_run
+    }
+
+    /// Collects the daemon-log `del.` rows for the entries one delete pass
+    /// removed, in the order it removed them.
+    ///
+    /// upstream: log.c:924-928 `log_delete()` - the FLOG write is skipped under
+    /// `dry_run` and otherwise always made once `logfile_format` is set; the
+    /// daemon picks the line's format when it renders the row.
+    pub(in crate::receiver) fn record_daemon_log_deletions<'a>(
+        &mut self,
+        phase: super::transfer::DeletePassPhase,
+        deleted: impl IntoIterator<Item = &'a super::directory::deletion::DeletedEntry>,
+    ) {
+        if !self.captures_victim_modes() {
+            return;
+        }
+        // upstream: log.c `case 'G'` - the zeroed entry carries gid 0, shown
+        // only when `gid_ndx` is set (`-g`).
+        let gid = self.config.flags.group.then_some(0);
+        let checksum =
+            crate::progress::LogChecksumFormat::new(self.get_checksum_algorithm(), self.protocol)
+                .blank();
+        let rows = deleted.into_iter().map(|entry| {
+            crate::progress::DaemonLogRow::deletion(
+                entry.rel().to_path_buf(),
+                entry.mode(),
+                gid,
+                checksum.clone(),
+            )
+        });
+        match phase {
+            super::transfer::DeletePassPhase::Early => self.daemon_log_early_deletions.extend(rows),
+            super::transfer::DeletePassPhase::Late => self.daemon_log_late_deletions.extend(rows),
+        }
+    }
+
+    /// Drains the collected daemon-log rows in the order upstream writes them
+    /// to the module log file: an early delete pass's `del.` rows, the
+    /// per-file rows in ascending flist-index order, then a late delete pass's
+    /// `del.` rows.
+    pub fn drain_daemon_log_rows(&mut self) -> Vec<crate::progress::DaemonLogRow> {
+        let mut rows = std::mem::take(&mut self.daemon_log_early_deletions);
+        rows.extend(
+            std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
+                .into_values()
+                .flatten(),
+        );
+        rows.append(&mut self.daemon_log_late_deletions);
+        rows
     }
 
     /// Drains every buffered itemize row in generator walk order, routing each

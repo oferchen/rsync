@@ -365,9 +365,13 @@ fn run_daemon_transfer(
 /// in flist-index order. The `%i` string is pre-rendered with the correct
 /// direction glyph by the sending/receiving context; here the row's per-file
 /// fields fill the module format alongside the constant connection fields.
+/// A deletion row is upstream's `log_delete()` write instead (log.c:924-928).
 struct DaemonFileLogWriter<'a> {
     log: &'a SharedLogSink,
     fmt: String,
+    /// upstream `logfile_format_has_o_or_i` (clientserver.c:827): whether a
+    /// deletion renders through `fmt` or through the fixed `deleting %n`.
+    fmt_has_o_or_i: bool,
     operation: TransferOperation,
     hostname: String,
     remote_addr: String,
@@ -379,6 +383,21 @@ struct DaemonFileLogWriter<'a> {
 
 impl DaemonFileLog for DaemonFileLogWriter<'_> {
     fn on_entry(&mut self, row: &DaemonLogRow) {
+        // upstream: log.c:924-928 log_delete() falls back to "deleting %n" when
+        // the format has neither %o nor %i; log.c:871 log_item() writes no row
+        // for an empty format.
+        let (fmt, operation) = if row.deleted {
+            let fmt = if self.fmt_has_o_or_i {
+                self.fmt.as_str()
+            } else {
+                "deleting %n"
+            };
+            (fmt, TransferOperation::Delete)
+        } else if self.fmt.is_empty() {
+            return;
+        } else {
+            (self.fmt.as_str(), self.operation)
+        };
         // upstream: log.c:664 `%t` renders timestring(time(NULL)) at the moment
         // the line is written; per-file lines flush right after the transfer.
         let timestamp = logging_sink::logfile::format_log_timestamp(SystemTime::now());
@@ -406,7 +425,7 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
         let mtime = format_log_mtime(row.mtime);
         let permissions = permission_bits(row.mode);
         let log_ctx = LogFormatContext {
-            operation: self.operation,
+            operation,
             hostname: &self.hostname,
             remote_addr: &self.remote_addr,
             module_name: &self.module_name,
@@ -427,7 +446,7 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             permissions: &permissions,
             checksum: &row.checksum,
         };
-        log_transfer(&self.fmt, &log_ctx, self.log);
+        log_transfer(fmt, &log_ctx, self.log);
     }
 }
 
@@ -475,6 +494,7 @@ fn execute_transfer(
         DaemonFileLogWriter {
             log,
             fmt: fmt.to_string(),
+            fmt_has_o_or_i: log_format_has(fmt, 'i') || log_format_has(fmt, 'o'),
             operation,
             hostname: ctx.host_display().to_string(),
             remote_addr: ctx.peer_ip.to_string(),
@@ -487,7 +507,7 @@ fn execute_transfer(
         }
     });
     let daemon_log = daemon_log_writer.as_mut().map(|w| DaemonLog {
-        format_has_i: log_format_has_i(&w.fmt),
+        format_has_i: log_format_has(&w.fmt, 'i'),
         sink: w,
     });
 

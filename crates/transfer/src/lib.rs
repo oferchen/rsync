@@ -1330,10 +1330,8 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // collects them during the run and flushes them here in
                 // flist-index order, which is the order upstream logs them.
                 if let Some(dl) = daemon_log {
-                    for (_idx, rows) in ctx.drain_daemon_log_rows() {
-                        for row in rows {
-                            dl.sink.on_entry(&row);
-                        }
+                    for row in ctx.drain_daemon_log_rows() {
+                        dl.sink.on_entry(&row);
                     }
                 }
 
