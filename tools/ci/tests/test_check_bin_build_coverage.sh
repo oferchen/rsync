@@ -155,6 +155,21 @@ jobs:
       - name: Run
         run: cargo nextest run --locked -p metadata'
 
+# A run-time `fromJSON` include cannot be expanded. A package selection that
+# depends on it is reported as unresolvable, never assumed covered.
+# shellcheck disable=SC2016  # `${{ }}` is workflow syntax, not shell.
+expect_case dynamic_include 1 'package selection contains an expression' 'name: t
+on: [push]
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Run
+        run: cargo nextest run --locked -p ${{ matrix.crate }}'
+
 # A guard that analyses nothing must not report success.
 mkdir -p "${tmp}/empty"
 cases=$((cases + 1))

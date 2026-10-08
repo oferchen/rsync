@@ -501,7 +501,12 @@ def expand_matrix(matrix) -> list[dict]:
     for excluded in matrix.get("exclude") or []:
         rows = [r for r in rows if not _matches(r, excluded)]
 
-    for included in matrix.get("include") or []:
+    include = matrix.get("include") or []
+    if isinstance(include, str):
+        # A `${{ fromJSON(...) }}` include is only known at run time. Its
+        # values stay unresolved, so a test command that uses them is reported.
+        return rows
+    for included in include:
         merged_any = False
         for row in rows:
             if any(key in axes and row.get(key) != value for key, value in included.items()):

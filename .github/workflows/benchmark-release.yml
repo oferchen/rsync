@@ -22,17 +22,40 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  criterion:
-    name: Criterion (${{ matrix.crate }})
+  plan:
+    name: Plan criterion cells
     runs-on: ubuntu-24.04
-    # Each matrix cell builds the workspace once on a cold cache (~10-15 min)
-    # and runs one crate's benches. The 7 cells fan out in parallel,
-    # replacing the previous serial 60-90 min `cargo bench --workspace` run.
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: List bench targets
+        id: plan
+        run: |
+          set -euo pipefail
+          matrix=$(python3 tools/ci/criterion_bench_matrix.py checksums core engine fast_io matching protocol transfer)
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  criterion:
+    name: Criterion (${{ matrix.crate }}/${{ matrix.bench }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    # One cell per [[bench]] target, not per crate. A per-crate cell runs every
+    # bench binary of its crate in series, and the engine crate's 24 binaries
+    # do not fit one timeout: on the v0.6.3 and v0.6.4 runs its cell reached
+    # the ninth binary (delta_transfer_benchmark) and was cut off at 90
+    # minutes, which cancelled the publish job. The slowest single binary
+    # measured so far takes about 40 minutes including the build.
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # Leave runners for release-cross, which the publish job waits on.
+      max-parallel: 8
       matrix:
-        crate: [checksums, core, engine, fast_io, matching, protocol, transfer]
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,16 +71,16 @@ jobs:
       - name: Run criterion benchmarks
         run: |
           set -euo pipefail
-          cargo bench -p ${{ matrix.crate }} --all-features 2>&1 \
-            | tee criterion_output_${{ matrix.crate }}.txt
+          cargo bench -p ${{ matrix.crate }} --bench ${{ matrix.bench }} --all-features 2>&1 \
+            | tee criterion_output_${{ matrix.crate }}_${{ matrix.bench }}.txt
 
       - name: Upload criterion output
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: criterion-results-${{ matrix.crate }}
+          name: criterion-results-${{ matrix.crate }}-${{ matrix.bench }}
           retention-days: 90
           path: |
-            criterion_output_${{ matrix.crate }}.txt
+            criterion_output_${{ matrix.crate }}_${{ matrix.bench }}.txt
             target/criterion/
 
   publish:
