@@ -494,7 +494,7 @@ mod tests {
             .expect("valid principal");
         let cert = builder.sign(&ca).expect("sign certificate");
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
         std::fs::File::create(&kh_path).expect("create");
         known_hosts::learn_known_hosts_path("cert.example", 22, host.public_key(), &kh_path)
@@ -576,7 +576,7 @@ mod tests {
     #[test]
     fn known_host_match() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
 
         known_hosts::learn_known_hosts_path("testhost.example", 22, &pubkey, &kh_path)
@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn unknown_host_strict_yes() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
 
         std::fs::File::create(&kh_path).expect("create");
@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn unknown_host_strict_no_accepts_and_learns() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
 
         std::fs::File::create(&kh_path).expect("create");
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn unknown_host_accept_new_learns_without_prompting() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
         std::fs::File::create(&kh_path).expect("create");
 
@@ -703,7 +703,7 @@ mod tests {
         let original_key = test_ed25519_pubkey();
         let different_key = test_ed25519_pubkey();
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
         known_hosts::learn_known_hosts_path("changed.example", 22, &original_key, &kh_path)
             .expect("learn");
@@ -726,7 +726,7 @@ mod tests {
         let original_key = test_ed25519_pubkey();
         let different_key = test_ed25519_pubkey();
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
 
         // Learn the original key.
@@ -752,7 +752,7 @@ mod tests {
     #[test]
     fn non_standard_port_isolation() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
 
         // Learn on port 2222.
@@ -782,7 +782,7 @@ mod tests {
     #[test]
     fn missing_known_hosts_file_no_mode() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("nonexistent");
 
         let handler = SshClientHandler::new(
@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn malformed_known_hosts_treated_as_unknown() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
 
         let mut f = std::fs::File::create(&kh_path).expect("create");
@@ -853,7 +853,7 @@ mod tests {
         let pubkey = test_ed25519_pubkey();
 
         // hash = yes
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh = dir.path().join("known_hosts");
         std::fs::File::create(&kh).expect("create");
         let hashed = SshClientHandler::with_options(HostKeyOptions {
@@ -885,7 +885,7 @@ mod tests {
         );
 
         // control: hash = no writes the hostname in the clear
-        let dir2 = tempfile::tempdir().expect("tempdir");
+        let dir2 = test_support::create_tempdir();
         let kh2 = dir2.path().join("known_hosts");
         std::fs::File::create(&kh2).expect("create");
         let plain = SshClientHandler::with_options(opts(
@@ -908,7 +908,7 @@ mod tests {
     #[test]
     fn user_known_hosts_files_are_consulted_in_order() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let first = dir.path().join("first");
         let second = dir.path().join("second");
         std::fs::File::create(&first).expect("create");
@@ -944,7 +944,7 @@ mod tests {
     #[test]
     fn host_key_alias_keys_the_entry_on_the_alias() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh = dir.path().join("known_hosts");
         std::fs::File::create(&kh).expect("create");
 
@@ -975,7 +975,7 @@ mod tests {
     #[test]
     fn revoked_host_key_is_refused_under_every_policy() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh = dir.path().join("known_hosts");
         known_hosts::learn_known_hosts_path("revoke.example", 22, &pubkey, &kh).expect("learn");
         let revoked = dir.path().join("revoked");
@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn check_host_ip_treats_the_ip_as_a_second_identity() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh = dir.path().join("known_hosts");
         // The key is recorded ONLY under the IP, never the hostname.
         known_hosts::learn_known_hosts_path("192.0.2.10", 22, &pubkey, &kh).expect("learn");
@@ -1052,7 +1052,7 @@ mod tests {
     #[test]
     fn a_disabled_learn_target_accepts_without_writing() {
         let pubkey = test_ed25519_pubkey();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let kh = dir.path().join("known_hosts");
         std::fs::File::create(&kh).expect("create");
 

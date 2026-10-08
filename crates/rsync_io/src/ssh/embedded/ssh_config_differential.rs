@@ -491,7 +491,7 @@ mod tests {
     /// Returns `Err(Skipped)` rather than passing when `ssh` is missing,
     /// so a host without the oracle produces a reason, never a false green.
     fn run(text: &str, alias: &str) -> Result<Differential, Skipped> {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("ssh_config");
         let mut f = std::fs::File::create(&path).expect("create fixture");
         f.write_all(text.as_bytes()).expect("write fixture");
@@ -1023,7 +1023,7 @@ mod tests {
 
     /// Materialise a fixture and ask `ssh -G` whether it REFUSES the file.
     fn refusal(text: &str, alias: &str) -> Result<Option<String>, Skipped> {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("ssh_config");
         let mut f = std::fs::File::create(&path).expect("create fixture");
         f.write_all(text.as_bytes()).expect("write fixture");
@@ -1473,7 +1473,7 @@ mod tests {
         const USER_FIXTURE: &str = "Host t\n  Port 2345\n";
         const SYSTEM_FIXTURE: &str = "Host *\n  Port 45678\n  User sysuser\n";
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let user = dir.path().join("user_config");
         let system = dir.path().join("system_config");
         std::fs::write(&user, USER_FIXTURE).expect("write user fixture");
@@ -1531,7 +1531,7 @@ mod tests {
         use crate::ssh::embedded::ssh_config::resolve_host_files;
 
         const FIXTURE: &str = "Host t\n  Port 2345\n";
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("ww_config");
         std::fs::write(&path, FIXTURE).expect("write fixture");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).expect("chmod");
@@ -1564,7 +1564,7 @@ mod tests {
     /// real config directory.
     #[test]
     fn absolute_include_is_followed_by_both() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let snippet = dir.path().join("snippet");
         std::fs::write(
             &snippet,
@@ -1605,7 +1605,7 @@ mod tests {
     /// rather than a fixed preference.
     #[test]
     fn glob_include_first_obtained_matches_on_both() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let inc = dir.path().join("inc");
         std::fs::create_dir_all(&inc).expect("mkdir inc");
         std::fs::write(inc.join("01.conf"), "Host t\n  Port 2201\n").expect("write 01");

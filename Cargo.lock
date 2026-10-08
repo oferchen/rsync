@@ -3239,6 +3239,7 @@ dependencies = [
  "sha2 0.10.9",
  "shell-words",
  "tempfile",
+ "test-support",
  "thiserror",
  "tokio",
  "tracing",
