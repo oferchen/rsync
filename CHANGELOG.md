@@ -18,6 +18,35 @@ for detail.
 
 ### Security
 
+**CVE index** (merged PRs on this cycle's master; status and evidence per CVE are in [SECURITY.md](./SECURITY.md))
+
+| CVE | PRs |
+|---|---|
+| CVE-2026-53784 | #7304 |
+| CVE-2026-53785 | #7393, #7415, #7565 |
+| CVE-2026-53788 | #7346, #7682 |
+| CVE-2026-53789 | #7446 |
+| CVE-2026-53790 | #7465, #7430, #7445 |
+| CVE-2026-53791 | #7648, #7303, #8077 |
+| CVE-2026-53792 | #7646 |
+| CVE-2026-53793 | #7585, #8010 |
+| CVE-2026-53794 | #7285, #7693, #8011 |
+| CVE-2026-53795 | #7393, #7398, #7404, #7415, #7419, #7421, #7426, #7439, #7441, #7443, #7459, #7463 |
+| CVE-2026-53796 | #8071 |
+| CVE-2026-53797 | #8120 |
+| CVE-2026-53798 | #8108 |
+| CVE-2026-53800 | #7564 |
+| CVE-2026-53802 | #7421, #7426 |
+| CVE-2026-53803 | #7439, #7441, #7443, #8108 |
+| CVE-2026-70452 | #7314 |
+| CVE-2026-70453 | #7293, #7878 |
+| CVE-2026-70459 | #7625 |
+| CVE-2026-70462 | #7347 |
+| CVE-2026-70463 | #7345 |
+| CVE-2026-70464 | #7688, #7754, #8002 |
+
+CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: the network receiver half is still open (task 2755 and an unmerged xattr fix).
+
 **Path confinement (CVE-2026-53795 family)**
 - Confine destination writes and source reads against symlink races through one shared per-component resolver (#7393, #7349)
 - Never follow a symlinked alt-dest basis entry, and stat it through the ownership walk instead of opening it (#7419, #7418, #7421, #7463)
@@ -28,7 +57,7 @@ for detail.
 - Honour `--confine-root` on the server and apply the daemon filter to the destination argument (#7388, #7417)
 - Confine `--delay-updates` staging, the `--partial-dir` reuse probe and the partial-basis cleanup unlink (#7659, #7483, #7704)
 - Confine the backup ladder at every tier, including the `--inplace` backup copy (#7535, #7538, #7808, #7812)
-- Anchor the `--remove-source-files` unlink to a confined parent dirfd (#7564)
+- Anchor the `--remove-source-files` unlink to a confined parent dirfd (CVE-2026-53800, #7564)
 - Bound a peer-named merge file by `--confine-root` (#7598)
 - Confine receiver FIFO and device-node creation to the destination dirfd (#7872)
 - Confine a peer-supplied alternate-basis name to its basedir (#7651)
@@ -42,6 +71,7 @@ for detail.
 - Let the walk run under Landlock and seccomp, falling back to confined wrappers (#7541, #7545, #7548)
 - Never follow a leaf symlink on the `--partial-dir` basis and staging opens (#8072)
 - Refuse an untrusted destination symlink with upstream's diagnostic (CVE-2026-53796, #8071)
+- Open sender file content beneath the held source root, and refuse a replaced root with `ELOOP` (CVE-2026-53797, #8120)
 
 **Daemon**
 - `proxy protocol hosts` gates who may send a PROXY header and fails closed when unset (CVE-2026-53791, #7648)
@@ -60,7 +90,7 @@ for detail.
 - One operator opt-out governs both Landlock and seccomp; seccomp admits `mknodat` (#7546, #7547)
 - A malformed client can no longer stop the accept loop (#7579, #7590)
 - Confine an absolute alternate-basis destination to the module root (#7725, #7724)
-- Refuse control bytes in a name-converter request (#7346)
+- Refuse control bytes in a name-converter request (CVE-2026-53788, #7346), and report a refused token instead of swallowing it (#7682)
 - Apply the module `exclude` to the destination and alt-basis arguments, and clamp an alt-dest basis into the module (#7450, #7455, #7467)
 - Match module `exclude` and `filter` rules on raw name bytes, so a non-UTF-8 pushed name no longer bypasses them (#8035)
 - Gate the secrets-file mode check on `strict modes` (#7468)
@@ -73,6 +103,7 @@ for detail.
 - Apply the `proxy protocol hosts` gate to inetd sessions too (#8077)
 - Resolve a module `temp dir` inside the module, as upstream does (#8078)
 - Refuse the option combinations that upstream's `refuse options` patterns cover (#8074)
+- Read a name-converter answer strictly, so an empty or non-numeric answer is an unknown name rather than id 0, and open `--motd-file` and the `pid file` the way upstream does (CVE-2026-53798, CVE-2026-53803, #8108)
 
 **Peer-supplied input**
 - Bound the equal-weak-checksum chain in the matcher (CVE-2026-70453, #7293, #7878)
@@ -81,12 +112,12 @@ for detail.
 - Reject a `sum_head` strong-sum length wider than the negotiated digest (#7084)
 - Abort on malformed multiplex control payloads (#7096)
 - Reject stray negative or overflowing NDX values (#7365, #7630)
-- Parse `--max-alloc` on the wire as well as locally; `0` resolves to the bounded maximum, as in rsync 3.5.1 (#7285, #7693, #8011)
+- Parse `--max-alloc` on the wire as well as locally; `0` resolves to the bounded maximum, as in rsync 3.5.1 (CVE-2026-53794, #7285, #7693, #8011)
 - Mask peer `io_error` to the defined bits (#7291)
-- Reject a non-directory encoding of the `.` transfer root (#7625)
+- Reject a non-directory encoding of the `.` transfer root (CVE-2026-70459, #7625)
 - Sanitize received symlink targets when munging is off (#7333)
 - Clamp every `--files-from` line through `sanitize_path` (#7460)
-- Stop a sender widening the receiver's `--delete` scope through an implied parent (#7446)
+- Stop a sender widening the receiver's `--delete` scope through an implied parent (CVE-2026-53789, #7446)
 - Bound merge-file nesting by depth (#7432)
 - Refuse an `ITEM_TRANSFER` request for a non-regular file (#7744)
 - Refuse a hard-link group number that points before the current file-list segment, as upstream `match_gnums()` does (#8039)
@@ -202,7 +233,7 @@ for detail.
 - Send the server exit code via `MSG_ERROR_EXIT` and honour the peer's (#7609, #6935)
 - Surface `MSG_NO_SEND`, and tolerate an out-of-order decline (#7371, #7869)
 - Frame server warnings and errors to the peer (#7366, #6940, #6951, #6960)
-- A daemon `MSG_IO_TIMEOUT` of 0 no longer disables `--timeout` (#7347)
+- A daemon `MSG_IO_TIMEOUT` of 0 no longer disables `--timeout` (CVE-2026-70462, #7347)
 - Protocol 28 and 29 fixes: sort order, keep-alive frames, filter rules and `RERR_PROTOCOL` exits (#6974, #7771, #7974, #7979, #7988)
 - Match upstream checksum and compression negotiation, including unknown names (#7048, #7114, #6894, #6939)
 - Preserve non-UTF-8 bytes through operands, filter rules and `--files-from` (#7169, #7178, #7196, #7198)
