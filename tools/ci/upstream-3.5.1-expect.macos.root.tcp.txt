@@ -92,8 +92,8 @@ deep-path pass
 delete-missing-args-files-from pass
 early-input-symlink pass
 exclude-implied-trailing-backslash skip
-files-from-leak skip
-filter-leak skip
+files-from-leak pass
+filter-leak pass
 idn pass
 inband-modname-leak skip
 insecure-links-admin-optout pass
