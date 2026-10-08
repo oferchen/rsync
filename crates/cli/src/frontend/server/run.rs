@@ -14,6 +14,7 @@ use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
+use crate::frontend::execution::{SYNTAX_ERROR, UnsupportedOption, exit_trailer};
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
 ///
@@ -218,14 +219,18 @@ where
         &args[1..]
     };
 
-    // upstream: popt reports "<opt>: unknown option" and main.c exits
-    // RERR_SYNTAX before any transfer state exists.
+    // upstream: popt reports "on remote machine: <opt>: unknown option"
+    // (options.c:2053) and main.c:1913 exits RERR_SYNTAX before any transfer
+    // state exists.
     if let Some(option) = refused_server_option(effective_slice) {
-        write_server_error(
-            stderr,
-            program_brand,
-            format!("{}: unknown option", option.to_string_lossy()),
-        );
+        let refusal = UnsupportedOption::new(option.clone())
+            .remote_refusal_line(program_brand.client_program_name());
+        let _ = writeln!(stderr, "{refusal}");
+        let trailer = exit_trailer(SYNTAX_ERROR, Role::Server);
+        let mut sink = MessageSink::with_brand(&mut *stderr, program_brand);
+        if super::super::write_message(&trailer, &mut sink).is_err() {
+            let _ = writeln!(sink.writer_mut(), "{trailer}");
+        }
         return 1;
     }
     let long_flags = parse_server_long_flags(effective_slice);

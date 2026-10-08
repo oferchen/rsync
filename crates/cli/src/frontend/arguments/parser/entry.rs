@@ -14,7 +14,10 @@ use crate::frontend::arguments::short_options::{
     expand_short_options, hoist_options_before_operands,
 };
 use crate::frontend::command_builder::clap_command;
-use crate::frontend::execution::{parse_checksum_seed_argument, parse_compress_level_argument};
+use crate::frontend::execution::{
+    UnsupportedOption, extract_operands, parse_checksum_seed_argument,
+    parse_compress_level_argument,
+};
 use crate::frontend::filter_rules::{FilterOrderToken, build_filter_order};
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting, StderrMode};
 use core::client::{
@@ -367,6 +370,39 @@ fn local_remote_option_argv(
     Some(folded)
 }
 
+/// Returns the positional tokens clap left over, unknown options included.
+fn leftover_tokens(matches: &clap::ArgMatches) -> Vec<OsString> {
+    matches
+        .get_many::<OsString>("args")
+        .map(|tokens| tokens.cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Returns the first unknown option that only the `-M` fold introduced.
+///
+/// upstream: the client refuses an unknown option of its own before it forks
+/// (main.c:1913), and only the local server child parses `remote_options[]`
+/// (pipe.c:143-148). So a direct unknown option keeps the client refusal, and
+/// the child's refusal applies to the leftover tokens the re-parse added.
+fn refused_local_remote_option(direct: &[OsString], folded: &[OsString]) -> Option<OsString> {
+    if extract_operands(direct.to_vec()).is_err() {
+        return None;
+    }
+    let mut unmatched = direct.to_vec();
+    let mut added = Vec::new();
+    for token in folded {
+        match unmatched.iter().position(|seen| seen == token) {
+            Some(index) => {
+                unmatched.swap_remove(index);
+            }
+            None => added.push(token.clone()),
+        }
+    }
+    extract_operands(added)
+        .err()
+        .map(UnsupportedOption::into_option)
+}
+
 /// Relaxes clap's duplicate-occurrence error to popt's last-wins rule.
 ///
 /// upstream: popt has no "used multiple times" diagnostic - each occurrence
@@ -424,11 +460,14 @@ where
     // A local transfer applies its `-M` values to itself, exactly as upstream's
     // forked server child does. Re-parsed here, before any check below, so every
     // later validation sees the final option set.
+    let mut refused_remote_option = None;
     if let Some(folded) = local_remote_option_argv(&matches, &args) {
+        let direct = leftover_tokens(&matches);
         let command = popt_last_wins(clap_command(program_name.as_str()));
         let folded = hoist_options_before_operands(&command, folded);
         let folded = expand_short_options(&command, folded);
         matches = command.try_get_matches_from(folded)?;
+        refused_remote_option = refused_local_remote_option(&direct, &leftover_tokens(&matches));
     }
     check_basis_dir_limit(&matches)?;
     #[cfg(not(feature = "quic"))]
@@ -1448,6 +1487,7 @@ where
         remote_shell,
         connect_program,
         remote_options,
+        refused_remote_option,
         rsync_path,
         protect_args,
         old_args,
