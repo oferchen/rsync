@@ -771,10 +771,12 @@ where
         )
     } else {
         read_batch.as_ref().map(|path| {
+            // upstream: compat.c:611 - the reader refuses a batch newer than
+            // the protocol it runs, so `--protocol` is the replay ceiling.
             BatchConfig::new(
                 BatchMode::Read,
                 path.to_string_lossy().into_owned(),
-                i32::from(protocol::ProtocolVersion::NEWEST.as_u8()),
+                batch_protocol,
             )
         })
     };
