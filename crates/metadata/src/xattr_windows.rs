@@ -373,7 +373,6 @@ pub fn remove_attribute(path: &Path, name: &[u8], _follow_symlinks: bool) -> io:
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::tempdir;
 
     /// Returns `true` if the temp directory's volume supports alternate data
     /// streams. Used to gracefully skip tests on FAT32-mounted runners.
@@ -444,7 +443,7 @@ mod tests {
 
     #[test]
     fn write_then_read_roundtrip() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ads-roundtrip.txt");
         fs::write(&file, b"primary").expect("write file");
         if !ads_supported(&file) {
@@ -460,7 +459,7 @@ mod tests {
 
     #[test]
     fn list_returns_written_streams() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ads-list.txt");
         fs::write(&file, b"primary").expect("write file");
         if !ads_supported(&file) {
@@ -480,7 +479,7 @@ mod tests {
 
     #[test]
     fn remove_makes_stream_disappear() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ads-remove.txt");
         fs::write(&file, b"primary").expect("write file");
         if !ads_supported(&file) {
@@ -500,7 +499,7 @@ mod tests {
 
     #[test]
     fn remove_missing_stream_is_ok() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ads-remove-missing.txt");
         fs::write(&file, b"primary").expect("write file");
         if !ads_supported(&file) {
@@ -514,7 +513,7 @@ mod tests {
 
     #[test]
     fn empty_value_round_trips() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ads-empty.txt");
         fs::write(&file, b"primary").expect("write file");
         if !ads_supported(&file) {
@@ -529,7 +528,7 @@ mod tests {
 
     #[test]
     fn non_ascii_stream_name_round_trips() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ads-utf8.txt");
         fs::write(&file, b"primary").expect("write file");
         if !ads_supported(&file) {
@@ -551,7 +550,7 @@ mod tests {
 
     #[test]
     fn read_missing_stream_returns_none() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ads-missing.txt");
         fs::write(&file, b"primary").expect("write file");
         if !ads_supported(&file) {

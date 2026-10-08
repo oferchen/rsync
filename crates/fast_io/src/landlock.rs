@@ -340,7 +340,6 @@ mod tests {
     use std::io::ErrorKind;
     use std::sync::Mutex;
     use std::thread;
-    use tempfile::TempDir;
 
     // Landlock applies to the calling thread and is irreversible: once a
     // thread is restricted, every future syscall in that thread is subject
@@ -380,7 +379,7 @@ mod tests {
             // the sandbox and the `Unavailable` branch is never reached.
             return;
         }
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let outcome = restrict_to_module_paths(&[tmp.path()]);
         assert!(matches!(outcome, LandlockOutcome::Unavailable));
     }
@@ -393,7 +392,7 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let dir = tmp.path().to_path_buf();
         run_isolated(move || {
             let pre_opened = fs::File::create(dir.join("pre.txt"))
@@ -429,7 +428,7 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let allowed = tmp.path().to_path_buf();
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[allowed.as_path()]);
@@ -449,8 +448,8 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let allowed = TempDir::new().expect("allowed tempdir");
-        let outside = TempDir::new().expect("outside tempdir");
+        let allowed = test_support::create_tempdir();
+        let outside = test_support::create_tempdir();
         let allowed_path = allowed.path().to_path_buf();
         let outside_path = outside.path().to_path_buf();
         // Keep the directories alive past the thread's lifetime; the worker
@@ -484,8 +483,8 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let module = TempDir::new().expect("module tempdir");
-        let extra = TempDir::new().expect("extra tempdir");
+        let module = test_support::create_tempdir();
+        let extra = test_support::create_tempdir();
         let module_path = module.path().to_path_buf();
         let extra_path = extra.path().to_path_buf();
         run_isolated(move || {
@@ -516,9 +515,9 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let module = TempDir::new().expect("module tempdir");
-        let extra = TempDir::new().expect("extra tempdir");
-        let outside = TempDir::new().expect("outside tempdir");
+        let module = test_support::create_tempdir();
+        let extra = test_support::create_tempdir();
+        let outside = test_support::create_tempdir();
         let module_path = module.path().to_path_buf();
         let extra_path = extra.path().to_path_buf();
         let outside_path = outside.path().to_path_buf();
@@ -547,7 +546,7 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let scratch = TempDir::new().expect("scratch");
+        let scratch = test_support::create_tempdir();
         let scratch_path = scratch.path().to_path_buf();
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[]);
@@ -579,7 +578,7 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let allowed = TempDir::new().expect("allowed tempdir");
+        let allowed = test_support::create_tempdir();
         let allowed_path = allowed.path().to_path_buf();
         run_isolated(move || {
             // Mirror the daemon ordering: probe first, then engage on the
@@ -603,8 +602,8 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let allowed = TempDir::new().expect("allowed");
-        let outside = TempDir::new().expect("outside");
+        let allowed = test_support::create_tempdir();
+        let outside = test_support::create_tempdir();
         let allowed_path = allowed.path().to_path_buf();
         let outside_path = outside.path().to_path_buf();
         run_isolated(move || {
@@ -645,7 +644,7 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let module = TempDir::new().expect("module tempdir");
+        let module = test_support::create_tempdir();
         let module_path = module.path().to_path_buf();
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[module_path.as_path()]);
@@ -674,7 +673,7 @@ mod tests {
         if !is_supported() {
             return;
         }
-        let module = TempDir::new().expect("module tempdir");
+        let module = test_support::create_tempdir();
         let module_path = module.path().to_path_buf();
         run_isolated(move || {
             let outcome = restrict_to_module_paths(&[module_path.as_path()]);

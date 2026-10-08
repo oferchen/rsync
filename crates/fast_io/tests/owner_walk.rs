@@ -17,8 +17,6 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use tempfile::TempDir;
-
 /// Resolve `path` and read back the leaf through the returned parent handle,
 /// proving the descriptor really is the directory holding it.
 fn resolve_and_read(path: &Path) -> std::io::Result<String> {
@@ -40,7 +38,7 @@ fn resolve_and_read(path: &Path) -> std::io::Result<String> {
 /// the walk simply failed for all inputs.
 #[test]
 fn the_walk_resolves_a_plain_nested_path() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir_all(root.path().join("a/b")).expect("mkdir");
     fs::write(root.path().join("a/b/f"), "payload").expect("write");
 
@@ -54,7 +52,7 @@ fn the_walk_resolves_a_plain_nested_path() {
 /// upstream refuses on ownership, not on the mere presence of a link.
 #[test]
 fn a_symlink_component_we_own_is_followed() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("real")).expect("mkdir real");
     fs::write(root.path().join("real/f"), "payload").expect("write");
     symlink("real", root.path().join("link")).expect("plant symlink");
@@ -71,7 +69,7 @@ fn a_symlink_component_we_own_is_followed() {
 /// upstream: `rsync-3.5.1/syscall.c:554`.
 #[test]
 fn an_absolute_symlink_target_restarts_the_walk_at_the_root() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     let elsewhere = root.path().join("elsewhere");
     fs::create_dir(&elsewhere).expect("mkdir elsewhere");
     fs::write(elsewhere.join("f"), "payload").expect("write");
@@ -94,7 +92,7 @@ fn an_absolute_symlink_target_restarts_the_walk_at_the_root() {
 /// upstream: `rsync-3.5.1/syscall.c:446` `int loops = 40;`.
 #[test]
 fn a_symlink_cycle_is_refused_with_eloop() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     symlink("b", root.path().join("a")).expect("plant a");
     symlink("a", root.path().join("b")).expect("plant b");
 
@@ -112,7 +110,7 @@ fn a_symlink_cycle_is_refused_with_eloop() {
 /// out-of-tree `--backup-dir` shape the confined resolver would wrongly refuse.
 #[test]
 fn operator_rename_commits_through_a_trusted_symlink() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("backups")).expect("mkdir backups");
     symlink("backups", root.path().join("bk")).expect("plant symlink");
     let source = root.path().join("f");

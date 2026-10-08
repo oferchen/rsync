@@ -2,7 +2,6 @@ use super::scope::DirScope;
 use super::*;
 use std::fs;
 use std::path::PathBuf;
-use tempfile::TempDir;
 
 #[test]
 fn dir_merge_config_defaults() {
@@ -165,7 +164,7 @@ fn filter_chain_nested_scopes() {
 
 #[test]
 fn filter_chain_enter_directory_reads_merge_file() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let filter_content = "- *.tmp\n- *.log\n";
     fs::write(dir.path().join(".rsync-filter"), filter_content).unwrap();
 
@@ -185,7 +184,7 @@ fn filter_chain_enter_directory_reads_merge_file() {
 
 #[test]
 fn filter_chain_enter_directory_no_merge_file() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let mut chain = FilterChain::empty();
     chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
@@ -200,7 +199,7 @@ fn filter_chain_enter_directory_no_merge_file() {
 
 #[test]
 fn filter_chain_enter_directory_empty_merge_file() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rsync-filter"), "").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -214,7 +213,7 @@ fn filter_chain_enter_directory_empty_merge_file() {
 
 #[test]
 fn filter_chain_enter_directory_comments_only() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(
         dir.path().join(".rsync-filter"),
         "# This is a comment\n; Another comment\n\n",
@@ -232,7 +231,7 @@ fn filter_chain_enter_directory_comments_only() {
 
 #[test]
 fn filter_chain_enter_directory_exclude_self() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rsync-filter"), "- *.tmp\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -249,7 +248,7 @@ fn filter_chain_enter_directory_exclude_self() {
 
 #[test]
 fn filter_chain_enter_directory_with_include_rules() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rsync-filter"), "+ *.important\n- *\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -265,7 +264,7 @@ fn filter_chain_enter_directory_with_include_rules() {
 
 #[test]
 fn filter_chain_nested_directories_with_merge_files() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let outer = dir.path().join("outer");
     fs::create_dir(&outer).unwrap();
@@ -317,7 +316,7 @@ fn is_empty_accounts_for_merge_configs() {
 
 #[test]
 fn filter_chain_multiple_merge_configs() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rsync-filter"), "- *.log\n").unwrap();
     fs::write(dir.path().join(".exclude"), "- *.tmp\n").unwrap();
 
@@ -337,7 +336,7 @@ fn filter_chain_multiple_merge_configs() {
 
 #[test]
 fn filter_chain_parse_error_in_merge_file() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rsync-filter"), "invalid_directive\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -351,7 +350,7 @@ fn filter_chain_parse_error_in_merge_file() {
 
 #[test]
 fn filter_chain_modifier_application() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rsync-filter"), "- *.tmp\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -485,7 +484,7 @@ fn filter_chain_protect_in_scope() {
 /// per-dir merge so the named file is read at the current scope.
 #[test]
 fn dir_merge_inline_colon_c_loads_cvsignore_no_inherit() {
-    let parent = TempDir::new().unwrap();
+    let parent = test_support::create_tempdir();
     fs::create_dir(parent.path().join("child")).unwrap();
     fs::write(parent.path().join(".filt"), ":C\n").unwrap();
     fs::write(parent.path().join(".cvsignore"), "one-in-one-out\n").unwrap();
@@ -521,7 +520,7 @@ fn dir_merge_inline_colon_c_loads_cvsignore_no_inherit() {
 /// without error.
 #[test]
 fn dir_merge_inline_colon_c_missing_cvsignore_is_noop() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".filt"), ":C\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -545,7 +544,7 @@ fn dir_merge_inline_colon_c_missing_cvsignore_is_noop() {
 /// rewrite is `/file1` -> `/foo/file1`.
 #[test]
 fn dir_merge_leading_slash_rule_reanchors_to_merge_dir() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("foo")).unwrap();
     fs::write(root.path().join("foo/.filt"), "- /file1\n").unwrap();
 
@@ -587,7 +586,7 @@ fn dir_merge_leading_slash_rule_reanchors_to_merge_dir() {
 /// it at every directory below the declaration.
 #[test]
 fn dir_merge_nested_directive_inherits_into_every_descendant() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     fs::create_dir_all(root.path().join("bar/d1")).unwrap();
     fs::create_dir_all(root.path().join("bar/d2")).unwrap();
     fs::write(root.path().join("bar/.filt"), "dir-merge .filt2\n").unwrap();
@@ -813,7 +812,7 @@ fn filter_chain_per_dir_deletion_does_not_block_via_synthetic_descendant() {
 // include/exclude rules - so paths matching those literal strings are blocked.
 #[test]
 fn dir_merge_no_prefixes_minus_literal_excludes() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let filter_content = "+ foo\n- bar\ninclude baz\n";
     fs::write(dir.path().join(".filt"), filter_content).unwrap();
 
@@ -843,7 +842,7 @@ fn dir_merge_no_prefixes_minus_literal_excludes() {
 // the no-prefixes modifier emits literal include rules instead of excludes.
 #[test]
 fn dir_merge_no_prefixes_plus_literal_includes() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let filter_content = "+ foo\n- bar\ninclude baz\n";
     fs::write(dir.path().join(".filt"), filter_content).unwrap();
 
@@ -870,7 +869,7 @@ fn dir_merge_no_prefixes_plus_literal_includes() {
 // line is just another literal pattern (no FILTRULE_CLEAR_LIST escape).
 #[test]
 fn dir_merge_no_prefixes_bang_is_literal_without_cvs() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let filter_content = "- foo\n!\n- bar\n";
     fs::write(dir.path().join(".filt"), filter_content).unwrap();
 
@@ -894,7 +893,7 @@ fn dir_merge_no_prefixes_bang_is_literal_without_cvs() {
 // triggers FILTRULE_CLEAR_LIST and clears any previously parsed rules.
 #[test]
 fn dir_merge_no_prefixes_bang_clears_list_with_cvs() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let filter_content = "- foo\n!\n- bar\n";
     fs::write(dir.path().join(".filt"), filter_content).unwrap();
 
@@ -923,7 +922,7 @@ fn dir_merge_no_prefixes_bang_clears_list_with_cvs() {
 /// no longer fires and the delete-pass proceeds (file is deleted).
 #[test]
 fn cvs_dir_merge_expands_to_sender_side_under_delete_excluded() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".cvsignore"), "*.junk *.bak").unwrap();
 
     let config = DirMergeConfig::new(".cvsignore").with_cvs_mode(true);
@@ -960,7 +959,7 @@ fn cvs_dir_merge_expands_to_sender_side_under_delete_excluded() {
 /// then matches the rule and skips deletion (default behaviour).
 #[test]
 fn cvs_dir_merge_preserves_both_sides_without_delete_excluded() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".cvsignore"), "*.junk").unwrap();
 
     let config = DirMergeConfig::new(".cvsignore").with_cvs_mode(true);
@@ -987,7 +986,7 @@ fn cvs_dir_merge_preserves_both_sides_without_delete_excluded() {
 // guards against).
 #[test]
 fn dir_merge_word_split_parses_whitespace_separated_rules() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     // Tab and space mixed, and split across two lines, to prove any whitespace
     // acts as a token boundary (upstream isspace()).
     fs::write(dir.path().join(".filt"), "-_*.log\t-_*.tmp -_*.bak\n").unwrap();
@@ -1012,7 +1011,7 @@ fn dir_merge_word_split_parses_whitespace_separated_rules() {
 // literal excludes.
 #[test]
 fn dir_merge_word_split_no_prefixes_literal_excludes() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".filt"), "*.log\t*.tmp *.bak\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -1060,7 +1059,7 @@ fn anchored_root_exclude_does_not_match_nested_basename() {
 // `clear_inherited` directive). The two oc paths must agree on this outcome.
 #[test]
 fn dir_merge_bang_clears_inherited_ancestor_rules() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let parent = root.path().join("parent");
     fs::create_dir(&parent).unwrap();
     fs::write(parent.join(".rsync-filter"), "- secret.txt\n").unwrap();
@@ -1099,7 +1098,7 @@ fn dir_merge_bang_clears_inherited_ancestor_rules() {
 // its descendants only).
 #[test]
 fn dir_merge_bang_clear_is_restored_for_sibling() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let parent = root.path().join("parent");
     fs::create_dir(&parent).unwrap();
     fs::write(parent.join(".rsync-filter"), "- secret.txt\n").unwrap();
@@ -1144,7 +1143,7 @@ fn dir_merge_bang_clear_is_restored_for_sibling() {
 // untouched. Encodes the precise (per-config) scope of the clear.
 #[test]
 fn dir_merge_bang_only_clears_its_own_mergelist() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let parent = root.path().join("parent");
     fs::create_dir(&parent).unwrap();
     fs::write(parent.join(".rsync-filter"), "- from_rf.txt\n").unwrap();
@@ -1187,7 +1186,7 @@ fn dir_merge_bang_only_clears_its_own_mergelist() {
 /// gate closes.
 #[test]
 fn daemon_gate_treats_hidden_merge_file_as_missing() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rules"), "- bait\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -1212,7 +1211,7 @@ fn daemon_gate_treats_hidden_merge_file_as_missing() {
 /// because the fixture was inert.
 #[test]
 fn without_a_daemon_gate_the_merge_file_is_read() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     fs::write(dir.path().join(".rules"), "- bait\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -1231,7 +1230,7 @@ fn without_a_daemon_gate_the_merge_file_is_read() {
 /// anchored rules are written against.
 #[test]
 fn daemon_gate_matches_the_transfer_relative_merge_path() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let sub = root.path().join("sub");
     let other = root.path().join("other");
     fs::create_dir(&sub).unwrap();

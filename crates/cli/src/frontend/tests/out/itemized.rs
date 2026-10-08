@@ -3,7 +3,7 @@ use core::client::run_client;
 
 #[test]
 fn out_format_renders_itemized_placeholder_for_new_file() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src dir");
@@ -40,7 +40,7 @@ fn out_format_renders_itemized_placeholder_for_new_file() {
 
 #[test]
 fn out_format_itemized_placeholder_reports_deletion() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src dir");

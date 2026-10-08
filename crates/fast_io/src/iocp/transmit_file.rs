@@ -159,7 +159,6 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::os::windows::io::{AsRawHandle, AsRawSocket};
     use std::thread;
-    use tempfile::NamedTempFile;
 
     /// Round-trips a 64 KiB file across a localhost TCP pair via
     /// `try_transmit_file` and byte-compares the result.
@@ -170,7 +169,7 @@ mod tests {
 
         let payload: Vec<u8> = (0..65_536u32).map(|i| (i as u8).wrapping_mul(31)).collect();
 
-        let mut tmp = NamedTempFile::new().unwrap();
+        let mut tmp = test_support::create_named_tempfile();
         tmp.write_all(&payload).unwrap();
         tmp.flush().unwrap();
 
@@ -215,7 +214,7 @@ mod tests {
         });
 
         let client = TcpStream::connect(addr).unwrap();
-        let tmp = NamedTempFile::new().unwrap();
+        let tmp = test_support::create_named_tempfile();
         let file = OpenOptions::new().read(true).open(tmp.path()).unwrap();
 
         let err = try_transmit_file(
@@ -240,7 +239,7 @@ mod tests {
         });
 
         let client = TcpStream::connect(addr).unwrap();
-        let tmp = NamedTempFile::new().unwrap();
+        let tmp = test_support::create_named_tempfile();
         let file = OpenOptions::new().read(true).open(tmp.path()).unwrap();
 
         let sent = try_transmit_file(client.as_raw_socket(), file.as_raw_handle(), 0).unwrap();
@@ -255,13 +254,13 @@ mod tests {
     /// `WSAENOTSOCK`; this test only asserts that we surface *some* error.
     #[test]
     fn transmit_file_non_socket_target_returns_error() {
-        let src = NamedTempFile::new().unwrap();
+        let src = test_support::create_named_tempfile();
         let src_file = OpenOptions::new().read(true).open(src.path()).unwrap();
 
         // Use a second regular file's handle in place of a SOCKET. The
         // cast is well-formed at the C-ABI level (both are pointer-sized),
         // and Windows is expected to reject the call.
-        let dst = NamedTempFile::new().unwrap();
+        let dst = test_support::create_named_tempfile();
         let dst_file = OpenOptions::new().write(true).open(dst.path()).unwrap();
 
         let fake_socket = dst_file.as_raw_handle() as RawSocket;

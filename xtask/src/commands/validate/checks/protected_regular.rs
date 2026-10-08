@@ -247,8 +247,8 @@ mod tests {
 
     #[test]
     fn violation_none_when_link_replaced_and_outside_untouched() {
-        let dst = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
+        let dst = test_support::create_tempdir();
+        let out = test_support::create_tempdir();
         let outside = out.path().join("target");
         fs::write(&outside, OUTSIDE_BODY).unwrap();
         // Correct receiver outcome: payload is a regular file with source bytes.
@@ -258,8 +258,8 @@ mod tests {
 
     #[test]
     fn violation_flags_an_unfollowed_symlink_still_present() {
-        let dst = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
+        let dst = test_support::create_tempdir();
+        let out = test_support::create_tempdir();
         let outside = out.path().join("target");
         fs::write(&outside, OUTSIDE_BODY).unwrap();
         symlink(&outside, dst.path().join("payload")).unwrap();
@@ -272,8 +272,8 @@ mod tests {
 
     #[test]
     fn violation_flags_an_overwritten_outside_target() {
-        let dst = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
+        let dst = test_support::create_tempdir();
+        let out = test_support::create_tempdir();
         let outside = out.path().join("target");
         // The link was followed: outside now holds the source bytes.
         fs::write(&outside, SRC_BODY).unwrap();

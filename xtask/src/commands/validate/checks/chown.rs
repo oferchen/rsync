@@ -375,7 +375,10 @@ mod tests {
     fn owner_diff_none_for_hard_linked_identical_ownership() {
         // A hard link shares the inode, so uid/gid are guaranteed identical
         // without touching ownership (which would need root).
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         let source = a.path().join("f");
         fs::write(&source, b"x").unwrap();
         fs::hard_link(&source, b.path().join("f")).unwrap();
@@ -386,14 +389,17 @@ mod tests {
     fn owner_diff_reports_missing_entry() {
         // A structural divergence exercises the Some path without needing root
         // to synthesize a uid/gid mismatch.
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         fs::write(a.path().join("only"), b"x").unwrap();
         assert!(owner_diff(a.path(), b.path()).unwrap().contains("missing"));
     }
 
     #[test]
     fn owner_mismatch_flags_unexpected_owner() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("f");
         fs::write(&path, b"x").unwrap();
         let meta = path.symlink_metadata().unwrap();

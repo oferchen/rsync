@@ -4,9 +4,8 @@ use super::*;
 #[test]
 fn transfer_request_with_times_preserves_timestamp() {
     use filetime::{FileTime, set_file_times};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source-times.txt");
     let destination = tmp.path().join("dest-times.txt");
     std::fs::write(&source, b"data").expect("write source");

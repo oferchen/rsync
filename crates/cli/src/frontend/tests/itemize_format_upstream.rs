@@ -15,9 +15,7 @@ use super::*;
 
 #[test]
 fn itemize_new_file_output_matches_upstream() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("hello.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -38,9 +36,7 @@ fn itemize_new_file_output_matches_upstream() {
 
 #[test]
 fn itemize_short_flag_i_produces_same_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("short.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -61,9 +57,7 @@ fn itemize_short_flag_i_produces_same_output() {
 
 #[test]
 fn itemize_output_format_is_eleven_chars_plus_space_plus_filename() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("measure.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -98,9 +92,8 @@ fn itemize_output_format_is_eleven_chars_plus_space_plus_filename() {
 #[test]
 fn itemize_updated_file_shows_change_indicators() {
     use filetime::{FileTime, set_file_mtime};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("updated.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -146,9 +139,8 @@ fn itemize_updated_file_shows_change_indicators() {
 #[test]
 fn itemize_unchanged_file_with_times_shows_no_output() {
     use filetime::{FileTime, set_file_mtime};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("same.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -182,9 +174,7 @@ fn itemize_unchanged_file_with_times_shows_no_output() {
 
 #[test]
 fn itemize_multiple_new_files_each_show_new_format() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&src_dir).expect("create src dir");
@@ -220,9 +210,7 @@ fn itemize_multiple_new_files_each_show_new_format() {
 
 #[test]
 fn itemize_combined_with_dry_run_shows_what_would_transfer() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("dryrun.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -250,9 +238,7 @@ fn itemize_combined_with_dry_run_shows_what_would_transfer() {
 
 #[test]
 fn itemize_combined_with_verbose_shows_itemized_format() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("verbose.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -277,9 +263,7 @@ fn itemize_combined_with_verbose_shows_itemized_format() {
 
 #[test]
 fn itemize_with_delete_shows_star_deleting_format() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&src_dir).expect("create src dir");
@@ -308,9 +292,7 @@ fn itemize_with_delete_shows_star_deleting_format() {
 
 #[test]
 fn itemize_recursive_new_directory_shows_cd_plus_pattern() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&src_dir).expect("create src dir");
@@ -346,9 +328,8 @@ fn itemize_recursive_new_directory_shows_cd_plus_pattern() {
 #[test]
 fn itemize_new_symlink_shows_cl_plus_pattern() {
     use std::os::unix::fs::symlink;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&src_dir).expect("create src dir");
@@ -381,9 +362,8 @@ fn itemize_new_symlink_shows_cl_plus_pattern() {
 #[test]
 fn itemize_chmod_shows_permission_indicator() {
     use filetime::{FileTime, set_file_mtime};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("perms.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -426,9 +406,7 @@ fn itemize_chmod_shows_permission_indicator() {
 
 #[test]
 fn no_itemize_changes_suppresses_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("suppress.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -450,9 +428,7 @@ fn no_itemize_changes_suppresses_output() {
 
 #[test]
 fn itemize_last_toggle_wins_enabled() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("toggle.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -480,9 +456,7 @@ fn itemize_last_toggle_wins_enabled() {
 
 #[test]
 fn itemize_last_toggle_wins_disabled() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("toggle2.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
@@ -511,9 +485,7 @@ fn itemize_last_toggle_wins_disabled() {
 /// `generator.c:566-572`.
 #[test]
 fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
 
@@ -575,9 +547,7 @@ fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
 /// upstream: generator.c:566-572 root row emission.
 #[test]
 fn itemize_initial_recursive_transfer_emits_root_dir_row() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
 
@@ -638,9 +608,7 @@ fn itemize_initial_recursive_transfer_emits_root_dir_row() {
 /// upstream: generator.c:566-572 + flist walk recursion.
 #[test]
 fn itemize_initial_recursive_transfer_emits_intermediate_subdir_rows() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let from = tmp.path().join("from");
     let to = tmp.path().join("to");
 

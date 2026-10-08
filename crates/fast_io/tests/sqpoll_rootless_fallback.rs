@@ -33,7 +33,6 @@ use fast_io::{
     FORCE_ROOTLESS_ENV, IoUringPolicy, RootlessSignal, detect_rootless_container,
     is_sqpoll_disabled_by_policy, rootless_signal, writer_from_file,
 };
-use tempfile::tempdir;
 
 /// Serialises tests in this binary so concurrent env mutations do not
 /// race the rootless-detection probe. Cargo gives every `tests/*.rs`
@@ -168,7 +167,7 @@ fn writer_from_file_succeeds_under_rootless_override() {
     // Confirm the precondition: the override is in effect.
     assert!(detect_rootless_container());
 
-    let tmpdir = tempdir().expect("tempdir for sqpoll rootless fallback");
+    let tmpdir = test_support::create_tempdir();
     let path = tmpdir.path().join("rootless-fallback.bin");
     let file = std::fs::File::create(&path).expect("create destination file");
 
@@ -196,7 +195,7 @@ fn writer_from_file_succeeds_under_rootless_override() {
 fn writer_from_file_succeeds_under_rootless_with_sqpoll_off_policy() {
     let _g = EnvGuard::set(FORCE_ROOTLESS_ENV, OsStr::new("1"));
 
-    let tmpdir = tempdir().expect("tempdir for sqpoll rootless + policy-off");
+    let tmpdir = test_support::create_tempdir();
     let path = tmpdir.path().join("rootless-sqpoll-off.bin");
     let file = std::fs::File::create(&path).expect("create destination file");
 

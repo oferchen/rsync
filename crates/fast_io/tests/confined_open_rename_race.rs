@@ -45,7 +45,7 @@ struct RenameStorm {
 
 impl RenameStorm {
     fn start() -> Self {
-        let dir = TempDir::new().expect("storm dir");
+        let dir = test_support::create_tempdir();
         let stop = Arc::new(AtomicBool::new(false));
         let threads = (0..STORM_THREADS)
             .map(|i| {
@@ -84,7 +84,7 @@ impl Drop for RenameStorm {
 /// The module tree of daemon-copylinks-parent-escape: in-module targets
 /// reached through a `..`.
 fn module_tree() -> TempDir {
-    let root = TempDir::new().expect("module root");
+    let root = test_support::create_tempdir();
     let m = root.path();
     fs::create_dir_all(m.join("sub/x")).expect("mkdir");
     fs::create_dir_all(m.join("sub/y")).expect("mkdir");

@@ -280,7 +280,7 @@ mod linux_tests {
 
     #[test]
     fn writes_one_mib_chunk_byte_equal() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("vmsplice_1mib.bin");
         let file = OpenOptions::new()
             .create(true)
@@ -302,7 +302,7 @@ mod linux_tests {
 
     #[test]
     fn small_chunk_falls_back_to_write() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("vmsplice_4kib.bin");
         let file = OpenOptions::new()
             .create(true)
@@ -327,7 +327,7 @@ mod linux_tests {
 
     #[test]
     fn unaligned_large_chunk_falls_back() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("vmsplice_unaligned.bin");
         let file = OpenOptions::new()
             .create(true)
@@ -359,7 +359,7 @@ mod linux_tests {
 
     #[test]
     fn empty_chunk_is_noop() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("vmsplice_empty.bin");
         let file = OpenOptions::new()
             .create(true)
@@ -385,7 +385,7 @@ mod stub_tests {
 
     #[test]
     fn stub_constructor_returns_unsupported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("stub.bin");
         let file = OpenOptions::new()
             .create(true)

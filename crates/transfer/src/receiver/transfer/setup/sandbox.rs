@@ -216,13 +216,6 @@ pub(super) fn open_sandbox_for_dest_anchored(
 mod symlink_race_tests {
     use super::*;
     use std::os::unix::fs::symlink;
-    use tempfile::tempdir;
-
-    fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempdir().expect("tempdir");
-        let canon = std::fs::canonicalize(dir.path()).expect("canonicalize tempdir");
-        (dir, canon)
-    }
 
     /// A symlinked destination root must never become a hard refusal on the
     /// unconfined path. `DirSandbox::open_root` declines to open through the
@@ -235,7 +228,7 @@ mod symlink_race_tests {
     /// exit 23 on a symlinked `DEST` that real rsync 3.5.0 transfers into.
     #[test]
     fn unconfined_open_soft_fails_for_a_symlinked_destination() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let outside = root.join("outside");
         std::fs::create_dir(&outside).expect("create outside dir");
         let subdir = root.join("subdir");
@@ -250,7 +243,7 @@ mod symlink_race_tests {
 
     #[test]
     fn unconfined_open_accepts_a_real_directory_destination() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let real = root.join("realdir");
         std::fs::create_dir(&real).expect("create real dir");
 
@@ -275,7 +268,7 @@ mod symlink_race_tests {
     /// detect it; the platform that can detect it never has it.
     #[test]
     fn anchored_mode_accepts_a_symlinked_module_root() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let real_store = root.join("mnt-srv");
         std::fs::create_dir(&real_store).expect("create real store");
         std::fs::create_dir(real_store.join("backup")).expect("create module dir");
@@ -353,7 +346,7 @@ mod symlink_race_tests {
     /// gap cannot widen unnoticed and so the Linux contract cannot regress.
     #[test]
     fn anchored_mode_refuses_a_peer_tail_that_escapes_the_module() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module_root = root.join("module");
         std::fs::create_dir(&module_root).expect("create module root");
         let outside = root.join("outside");
@@ -402,7 +395,7 @@ mod symlink_race_tests {
     /// missing mechanism.
     #[test]
     fn anchored_mode_follows_an_in_tree_symlinked_subdirectory() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module_root = root.join("module");
         std::fs::create_dir(&module_root).expect("create module root");
         std::fs::create_dir(module_root.join("real")).expect("create real subdir");
@@ -429,7 +422,7 @@ mod symlink_race_tests {
 
     #[test]
     fn anchored_mode_soft_fails_when_the_tail_is_missing() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module_root = root.join("module");
         std::fs::create_dir(&module_root).expect("create module root");
 
@@ -440,7 +433,7 @@ mod symlink_race_tests {
 
     #[test]
     fn unconfined_open_soft_fails_when_destination_is_missing() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let missing = root.join("not-yet-created");
 
         assert!(
@@ -469,13 +462,6 @@ mod insecure_links_optout_tests {
     use fast_io::confinement::{ModuleInsecureLinks, ModuleState, install_daemon_session};
     use std::os::unix::fs::symlink;
     use std::path::Path;
-    use tempfile::tempdir;
-
-    fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempdir().expect("tempdir");
-        let canon = std::fs::canonicalize(dir.path()).expect("canonicalize tempdir");
-        (dir, canon)
-    }
 
     /// A served module at the requested opt-out setting. Everything except
     /// `insecure_links` is held fixed, so a paired cell differs in exactly one
@@ -494,7 +480,7 @@ mod insecure_links_optout_tests {
     /// every later `*at` site falls to the plain path syscalls upstream uses.
     #[test]
     fn opted_out_module_declines_the_anchored_sandbox() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module_root = root.join("module");
         std::fs::create_dir(&module_root).expect("create module root");
 
@@ -515,7 +501,7 @@ mod insecure_links_optout_tests {
     /// where the anchored open simply never succeeds.
     #[test]
     fn a_module_at_the_default_setting_still_opens_the_anchored_sandbox() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module_root = root.join("module");
         std::fs::create_dir(&module_root).expect("create module root");
 
@@ -545,7 +531,7 @@ mod insecure_links_optout_tests {
             return;
         }
 
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module_root = root.join("module");
         std::fs::create_dir(&module_root).expect("create module root");
         std::fs::create_dir(root.join("outside")).expect("create outside dir");

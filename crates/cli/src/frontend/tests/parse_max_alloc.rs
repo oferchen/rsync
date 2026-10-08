@@ -322,7 +322,7 @@ fn max_alloc_argument_resolution_rejects_excessive_value() {
 /// Copies one file with `--max-alloc=` set through `args`, returning the
 /// exit code and stderr.
 fn copy_with_max_alloc(args: &[&str]) -> (i32, String) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
     std::fs::create_dir(&src).expect("create src");
@@ -355,7 +355,7 @@ fn max_alloc_zero_value_transfers() {
 #[test]
 fn max_alloc_non_zero_value_still_transfers() {
     let _guard = clear_rsync_rsh();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
     std::fs::create_dir(&src).expect("create src");

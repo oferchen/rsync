@@ -825,7 +825,7 @@ mod tests {
 
     #[test]
     fn opens_regular_file_beneath_root() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("sub")).expect("mkdir sub");
         std::fs::write(root.join("sub/data"), b"payload").expect("write");
@@ -849,7 +849,7 @@ mod tests {
     /// could not fail on either arm. It now pins one answer for both.
     #[test]
     fn an_in_tree_symlinked_directory_component_is_followed() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("real")).expect("mkdir real");
         std::fs::write(root.join("real/data"), b"in-tree").expect("write");
@@ -876,7 +876,7 @@ mod tests {
     /// distinction.
     #[test]
     fn a_symlinked_leaf_is_refused_under_nofollow() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::write(root.join("real"), b"in-tree").expect("write");
         symlink("real", root.join("link")).expect("symlink");
@@ -900,7 +900,7 @@ mod tests {
     /// disappears.
     #[test]
     fn a_symlinked_leaf_is_resolved_under_follow_confined() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("sub")).expect("mkdir sub");
         std::fs::write(root.join("sub/real"), b"followed").expect("write");
@@ -923,7 +923,7 @@ mod tests {
     /// chain cannot walk out of the module one link at a time.
     #[test]
     fn follow_confined_resolves_a_symlink_chain() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("a")).expect("mkdir a");
         std::fs::write(root.join("a/target"), b"end-of-chain").expect("write");
@@ -944,7 +944,7 @@ mod tests {
     /// resolve back inside.
     #[test]
     fn follow_confined_refuses_an_absolute_leaf_target() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
@@ -969,7 +969,7 @@ mod tests {
     /// through a symlink.
     #[test]
     fn follow_confined_refuses_a_relative_leaf_target_that_climbs_out() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
@@ -992,7 +992,7 @@ mod tests {
     /// to the tree - hangs the daemon's sender with two symlinks.
     #[test]
     fn follow_confined_bounds_the_symlink_chain() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         symlink("pong", root.join("ping")).expect("symlink ping");
         symlink("ping", root.join("pong")).expect("symlink pong");
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn held_root_reads_a_run_of_files_and_refuses_the_escape() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("module");
         std::fs::create_dir_all(root.join("d")).expect("mkdir d");
@@ -1042,7 +1042,7 @@ mod tests {
     /// either way the outside file is never read.
     #[test]
     fn held_root_never_reads_through_a_directory_swapped_after_caching() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("module");
         std::fs::create_dir_all(root.join("d")).expect("mkdir d");
@@ -1077,7 +1077,7 @@ mod tests {
     fn refuses_escape_via_directory_symlink() {
         // A directory component symlinked to a sibling OUTSIDE the root must
         // not let the open escape. This is the core TOCTOU defence.
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
@@ -1108,7 +1108,7 @@ mod tests {
 
     #[test]
     fn refuses_symlinked_leaf_pointing_outside() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
@@ -1128,7 +1128,7 @@ mod tests {
 
     #[test]
     fn rejects_absolute_relative_path() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let err =
             open_source_confined(&root, Path::new("/etc/passwd"), LeafPolicy::Nofollow, false)
@@ -1138,7 +1138,7 @@ mod tests {
 
     #[test]
     fn rejects_dotdot_component() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let err = open_source_confined(&root, Path::new("../secret"), LeafPolicy::Nofollow, false)
             .expect_err("dotdot component must be rejected");
@@ -1155,7 +1155,7 @@ mod tests {
     /// ordinary in-module links unfollowable.
     #[test]
     fn a_followed_target_may_contain_dotdot_while_caller_input_may_not() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("here")).expect("mkdir here");
         std::fs::create_dir(root.join("there")).expect("mkdir there");
@@ -1185,7 +1185,7 @@ mod tests {
 
     #[test]
     fn missing_file_reports_not_found() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let err = open_source_confined(&root, Path::new("nope"), LeafPolicy::Nofollow, false)
             .expect_err("missing file must fail");
@@ -1207,7 +1207,7 @@ mod tests {
     /// platform split.
     #[test]
     fn the_leaf_classification_is_identical_on_both_platform_arms() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("sub")).expect("mkdir sub");
         std::fs::write(root.join("sub/data"), b"payload").expect("write");
@@ -1247,7 +1247,7 @@ mod tests {
     /// flips; `real` is the legitimate in-tree directory symlink target that
     /// the follow-the-parent rule must keep working.
     fn dest_tree() -> (tempfile::TempDir, PathBuf, PathBuf) {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("root");
         let outside = base.join("outside");
@@ -1366,7 +1366,7 @@ mod tests {
     /// the helper refuses everything.
     #[test]
     fn read_link_confined_reads_an_in_module_link() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("real")).expect("mkdir real");
         symlink("inside-target", root.join("real/link")).expect("symlink");
@@ -1387,7 +1387,7 @@ mod tests {
     /// window closed.
     #[test]
     fn read_link_confined_refuses_a_parent_symlink_escaping_the_root() {
-        let base = tempfile::tempdir().expect("tempdir");
+        let base = test_support::create_tempdir();
         let base = std::fs::canonicalize(base.path()).expect("canonicalize");
         let root = base.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
@@ -1415,7 +1415,7 @@ mod tests {
     /// exactly the over-refusal this pins against.
     #[test]
     fn read_link_confined_follows_an_in_tree_directory_symlink() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("real")).expect("mkdir real");
         symlink("in-module-target", root.join("real/link")).expect("symlink");
@@ -1430,7 +1430,7 @@ mod tests {
     /// callers' error handling is written against.
     #[test]
     fn read_link_confined_reports_einval_for_a_non_symlink() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::write(root.join("plain"), b"not a link").expect("write");
 

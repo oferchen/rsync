@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_out_format_renders_entries() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");

@@ -26,7 +26,7 @@ fn unreadable_subdirectory_continues_transfer_of_remaining_files() {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -94,7 +94,7 @@ fn unreadable_source_file_skipped_remaining_files_transfer() {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -155,7 +155,7 @@ fn read_only_destination_reports_error() {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -197,7 +197,7 @@ fn dangling_symlink_preserved_with_links_flag() {
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -256,7 +256,7 @@ fn multiple_dangling_symlinks_all_preserved() {
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -313,7 +313,7 @@ fn file_grows_between_syncs_transfers_updated_content() {
     use filetime::{FileTime, set_file_times};
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -383,7 +383,7 @@ fn file_shrinks_between_syncs_transfers_updated_content() {
     use filetime::{FileTime, set_file_times};
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -449,7 +449,7 @@ fn mixed_errors_readable_files_and_symlinks_transfer_unreadable_skipped() {
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -514,7 +514,7 @@ fn mixed_errors_readable_files_and_symlinks_transfer_unreadable_skipped() {
 fn vanished_source_directory_yields_error_remaining_files_transfer() {
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 
@@ -578,7 +578,7 @@ fn vanished_source_directory_yields_error_remaining_files_transfer() {
 fn transfer_to_nonexistent_destination_file_succeeds() {
     use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("input.txt");
     let dst = tmp.path().join("output.txt");
 

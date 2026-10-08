@@ -5,9 +5,8 @@ use super::*;
 #[test]
 fn info_progress2_enables_progress_output() {
     use std::os::unix::fs::FileTypeExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("info-fifo.in");
     mkfifo_for_tests(&source, 0o600).expect("mkfifo");
 
@@ -33,9 +32,7 @@ fn info_progress2_enables_progress_output() {
 
 #[test]
 fn info_none_disables_progress_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("info-none.txt");
     let destination = tmp.path().join("info-none.out");
     std::fs::write(&source, b"payload").expect("write source");
@@ -57,9 +54,7 @@ fn info_none_disables_progress_output() {
 
 #[test]
 fn progress_implies_name_shows_directory_names() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     std::fs::create_dir_all(src.join("sub")).expect("mkdir");
     std::fs::write(src.join("sub/f.txt"), b"hi").expect("write source");
@@ -315,9 +310,7 @@ fn debug_skips_empty_segments() {
 
 #[test]
 fn info_name_emits_filenames_without_verbose() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("name.txt");
     let destination = tmp.path().join("name.out");
     std::fs::write(&source, b"name-info").expect("write source");
@@ -346,9 +339,7 @@ fn info_name_emits_filenames_without_verbose() {
 
 #[test]
 fn info_name0_suppresses_verbose_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("quiet.txt");
     let destination = tmp.path().join("quiet.out");
     std::fs::write(&source, b"quiet").expect("write source");
@@ -375,8 +366,6 @@ fn info_name0_suppresses_verbose_output() {
 
 #[test]
 fn info_flist0_suppresses_incremental_banner_at_verbose() {
-    use tempfile::tempdir;
-
     // upstream: flist.c:2764 gates "sending incremental file list" on
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. `-v` raises FLIST to 1
     // (options.c info_verbosity[1]), so the banner normally prints; a following
@@ -384,7 +373,7 @@ fn info_flist0_suppresses_incremental_banner_at_verbose() {
     // though `-v` is still in effect. The `created directory` notice and the
     // name listing stay because they are gated on the NAME category, which `-v`
     // leaves at 1 - proving the gate is per-category, not a raw verbose level.
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     std::fs::create_dir_all(src.join("sub")).expect("mkdir");
     std::fs::write(src.join("sub/f.txt"), b"hi").expect("write source");
@@ -421,14 +410,12 @@ fn info_flist0_suppresses_incremental_banner_at_verbose() {
 
 #[test]
 fn info_name0_suppresses_created_directory_notice_at_verbose() {
-    use tempfile::tempdir;
-
     // upstream: main.c:829-830 gates `created directory %s` on
     // `INFO_GTE(NAME, 1) || stdout_format_has_i`. `-v` raises NAME to 1, so the
     // notice normally prints; `--info=name0` drops NAME to 0 and must suppress
     // it even at `-v`. The incremental-file-list banner stays because it is
     // gated on the FLIST category, which `-v` leaves at 1.
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     std::fs::create_dir_all(src.join("sub")).expect("mkdir");
     std::fs::write(src.join("sub/f.txt"), b"hi").expect("write source");
@@ -461,9 +448,7 @@ fn info_name0_suppresses_created_directory_notice_at_verbose() {
 
 #[test]
 fn info_name2_reports_unchanged_entries() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("unchanged.txt");
     let destination = tmp.path().join("unchanged.out");
     std::fs::write(&source, b"unchanged").expect("write source");
@@ -609,9 +594,7 @@ fn debug_still_accepts_the_unpadded_flag_through_the_cli() {
 
 #[test]
 fn info_stats0_suppresses_verbose_stats() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("nostats.txt");
     let destination = tmp.path().join("nostats.out");
     std::fs::write(&source, b"nostats").expect("write source");
@@ -634,9 +617,7 @@ fn info_stats0_suppresses_verbose_stats() {
 
 #[test]
 fn info_all_enables_comprehensive_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("all.txt");
     let destination = tmp.path().join("all.out");
     std::fs::write(&source, b"all-info").expect("write source");
@@ -658,9 +639,7 @@ fn info_all_enables_comprehensive_output() {
 
 #[test]
 fn info_none_suppresses_verbose_name_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("none.txt");
     let destination = tmp.path().join("none.out");
     std::fs::write(&source, b"none-test").expect("write source");

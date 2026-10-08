@@ -100,7 +100,7 @@ mod tests {
     /// behavioural test and save nothing.
     #[test]
     fn a_run_of_lookups_in_one_directory_resolves_it_once() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let held = HeldDir::new();
         let opens = Cell::new(0);
         let resolve = || {
@@ -124,8 +124,8 @@ mod tests {
     /// descriptor would apply the entry's operation in the wrong directory.
     #[test]
     fn a_different_directory_is_resolved_not_served_from_the_slot() {
-        let one = tempfile::tempdir().expect("one");
-        let two = tempfile::tempdir().expect("two");
+        let one = test_support::create_tempdir();
+        let two = test_support::create_tempdir();
         let held = HeldDir::new();
         let a = held
             .get_or_open(Path::new("one"), || open_dir(one.path()))
@@ -144,7 +144,7 @@ mod tests {
     /// under the new key, and must not poison later lookups.
     #[test]
     fn a_failed_resolution_leaves_the_cache_empty() {
-        let dir = tempfile::tempdir().expect("dir");
+        let dir = test_support::create_tempdir();
         let held = HeldDir::new();
         held.get_or_open(Path::new("x"), || open_dir(dir.path()))
             .expect("x");
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn invalidate_forces_the_next_lookup_to_resolve() {
-        let dir = tempfile::tempdir().expect("dir");
+        let dir = test_support::create_tempdir();
         let held = HeldDir::new();
         held.get_or_open(Path::new("x"), || open_dir(dir.path()))
             .expect("x");

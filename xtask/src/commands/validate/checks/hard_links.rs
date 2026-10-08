@@ -229,7 +229,7 @@ mod tests {
     fn groups_finds_multi_link_sets_and_excludes_solo() {
         // Build the real inode layout with `std::fs::hard_link` - no GNU
         // `touch -d @epoch`, so this test is portable off Linux.
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let root = dir.path();
         fs::create_dir(root.join("d1")).unwrap();
         fs::create_dir(root.join("d2")).unwrap();

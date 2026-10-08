@@ -123,7 +123,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn write_lsm_fixture(contents: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().expect("create temp file");
+        let mut file = test_support::create_named_tempfile();
         file.write_all(contents.as_bytes())
             .expect("write lsm fixture");
         file.flush().expect("flush lsm fixture");

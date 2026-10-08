@@ -30,7 +30,7 @@ fn renameat2_renames_a_real_file() {
     }
     assert!(is_io_uring_available());
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("renameat2-src");
     let dst = dir.path().join("renameat2-dst");
     fs::write(&src, b"renameat2 payload").expect("seed source file");
@@ -61,7 +61,7 @@ fn renameat2_noreplace_rejects_existing_destination() {
         return;
     }
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("noreplace-src");
     let dst = dir.path().join("noreplace-dst");
     fs::write(&src, b"src").expect("seed source");
@@ -97,7 +97,7 @@ fn renameat2_exchange_swaps_two_files() {
         return;
     }
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let a = dir.path().join("exchange-a");
     let b = dir.path().join("exchange-b");
     fs::write(&a, b"AAAA").expect("seed a");

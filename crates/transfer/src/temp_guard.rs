@@ -1505,16 +1505,6 @@ mod confined_temp_create {
     };
     use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
-    use tempfile::TempDir;
-
-    /// `TempDir` under a canonical root: the confinement root is compared
-    /// against a resolved path, so a `/var` -> `/private/var` style prefix
-    /// would make every cell below pass for the wrong reason.
-    fn canonical_tempdir() -> (TempDir, PathBuf) {
-        let keep = TempDir::new().expect("tempdir");
-        let root = keep.path().canonicalize().expect("canonicalize");
-        (keep, root)
-    }
 
     /// `module/` is the confined root, `outside/secret` the out-of-tree
     /// victim, and `module/esc` a symlink out of the root. The symlink is
@@ -1542,7 +1532,7 @@ mod confined_temp_create {
     /// miss if the error ever arrived for an unrelated reason.
     #[test]
     fn temp_create_refuses_a_parent_symlink_escaping_the_root() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module = fixture(&root);
         let escaping = module.join("esc/.oc-rsync-temp-victim");
 
@@ -1566,7 +1556,7 @@ mod confined_temp_create {
     /// refused every create.
     #[test]
     fn temp_create_still_succeeds_inside_the_root() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module = fixture(&root);
         let inside = module.join(".oc-rsync-temp-ok");
 

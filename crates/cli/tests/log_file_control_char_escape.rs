@@ -58,7 +58,7 @@ const PORTABLE_RENDERING: &[u8] = b"A\\#033B\\#012C\xc2\\#233D\x7fE\xc3\xbfF\tG"
 
 /// Builds `src/<name>` and returns the temp root.
 fn named_tree(name: &[u8]) -> TempDir {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     fs::create_dir_all(&src).expect("create src");
     fs::write(src.join(OsStr::from_bytes(name)), b"payload\n").expect("write source");

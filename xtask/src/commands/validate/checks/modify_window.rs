@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn precondition_rejects_a_seed_equal_to_the_source() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let dst = tmp.path().join("dst");
         std::fs::create_dir_all(&dst).unwrap();
         // Same-size, differing content passes; identical content is rejected as a

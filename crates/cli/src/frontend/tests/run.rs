@@ -6,9 +6,7 @@ use super::*;
 // RERR_SYNTAX (1). We assert the message and exit code byte-for-byte.
 #[test]
 fn run_reports_invalid_chmod_specification() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");

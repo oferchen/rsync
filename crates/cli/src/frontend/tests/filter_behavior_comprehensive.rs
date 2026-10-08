@@ -317,9 +317,7 @@ fn parse_args_recognises_risk_rule_via_short_f() {
 
 #[test]
 fn transfer_with_short_f_exclude_skips_matching_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -347,9 +345,7 @@ fn transfer_with_short_f_exclude_skips_matching_files() {
 
 #[test]
 fn transfer_with_short_f_include_then_exclude_all() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -399,9 +395,7 @@ fn setup_nested_log_transfer(tmp: &std::path::Path) -> (OsString, std::path::Pat
 /// earlier `- *.log` wins first-match and `sub/note.log` is excluded.
 #[test]
 fn transfer_exclude_before_include_excludes_nested_match() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let (source_operand, dest_root) = setup_nested_log_transfer(tmp.path());
 
     let (code, _stdout, _stderr) = run_with_args([
@@ -423,9 +417,7 @@ fn transfer_exclude_before_include_excludes_nested_match() {
 /// `sub/note.log` is kept.
 #[test]
 fn transfer_include_before_exclude_keeps_nested_match() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let (source_operand, dest_root) = setup_nested_log_transfer(tmp.path());
 
     let (code, _stdout, _stderr) = run_with_args([
@@ -447,9 +439,7 @@ fn transfer_include_before_exclude_keeps_nested_match() {
 /// upstream's argv-order dispatch of `--filter` and `--include`.
 #[test]
 fn transfer_filter_exclude_before_include_excludes_nested_match() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let (source_operand, dest_root) = setup_nested_log_transfer(tmp.path());
 
     let (code, _stdout, _stderr) = run_with_args([
@@ -469,9 +459,7 @@ fn transfer_filter_exclude_before_include_excludes_nested_match() {
 
 #[test]
 fn transfer_with_short_f_clear_resets_rules() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -502,9 +490,7 @@ fn transfer_with_short_f_clear_resets_rules() {
 
 #[test]
 fn transfer_with_short_f_merge_applies_rules_from_file() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -536,9 +522,7 @@ fn transfer_with_short_f_merge_applies_rules_from_file() {
 
 #[test]
 fn transfer_with_multiple_filters_order_matters() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -573,9 +557,7 @@ fn transfer_with_multiple_filters_order_matters() {
 
 #[test]
 fn transfer_with_filter_equals_excludes_patterns() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -602,10 +584,8 @@ fn transfer_with_filter_equals_excludes_patterns() {
 
 #[test]
 fn exclude_and_filter_exclude_produce_same_result() {
-    use tempfile::tempdir;
-
     // Run with --exclude
-    let tmp1 = tempdir().expect("tempdir");
+    let tmp1 = test_support::create_tempdir();
     let source_root1 = tmp1.path().join("source");
     let dest_root1 = tmp1.path().join("dest");
     std::fs::create_dir_all(&source_root1).expect("create source root");
@@ -623,7 +603,7 @@ fn exclude_and_filter_exclude_produce_same_result() {
     ]);
 
     // Run with --filter='- *.tmp'
-    let tmp2 = tempdir().expect("tempdir");
+    let tmp2 = test_support::create_tempdir();
     let source_root2 = tmp2.path().join("source");
     let dest_root2 = tmp2.path().join("dest");
     std::fs::create_dir_all(&source_root2).expect("create source root");
@@ -662,9 +642,7 @@ fn exclude_and_filter_exclude_produce_same_result() {
 /// files using first-match-wins semantics where the order is under user control.
 #[test]
 fn filter_include_then_exclude_all_via_short_f() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -695,12 +673,10 @@ fn filter_include_then_exclude_all_via_short_f() {
 
 #[test]
 fn exclude_from_and_filter_merge_produce_same_result() {
-    use tempfile::tempdir;
-
     let filter_content = "*.tmp\n";
 
     // Run with --exclude-from
-    let tmp1 = tempdir().expect("tempdir");
+    let tmp1 = test_support::create_tempdir();
     let source_root1 = tmp1.path().join("source");
     let dest_root1 = tmp1.path().join("dest");
     std::fs::create_dir_all(&source_root1).expect("create source root");
@@ -725,7 +701,7 @@ fn exclude_from_and_filter_merge_produce_same_result() {
     // and wraps them as exclude rules), while merge reads filter directives.
     // So instead of testing exact equivalence, we test the same patterns produce
     // the same outcome via -f with explicit exclude rules.
-    let tmp2 = tempdir().expect("tempdir");
+    let tmp2 = test_support::create_tempdir();
     let source_root2 = tmp2.path().join("source");
     let dest_root2 = tmp2.path().join("dest");
     std::fs::create_dir_all(&source_root2).expect("create source root");
@@ -875,9 +851,7 @@ fn parse_filter_directive_colon_dir_merge_shorthand() {
 
 #[test]
 fn transfer_with_filter_keyword_exclude() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -905,9 +879,7 @@ fn transfer_with_filter_keyword_exclude() {
 
 #[test]
 fn transfer_with_filter_keyword_include_then_exclude_all() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -940,9 +912,7 @@ fn transfer_with_filter_keyword_include_then_exclude_all() {
 
 #[test]
 fn transfer_with_short_f_dot_merge_shorthand() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -974,9 +944,7 @@ fn transfer_with_short_f_dot_merge_shorthand() {
 
 #[test]
 fn transfer_with_mixed_f_and_filter_preserves_order() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -1012,9 +980,7 @@ fn transfer_with_mixed_f_and_filter_preserves_order() {
 #[cfg(unix)]
 #[test]
 fn transfer_with_cluster_avf_excludes_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -1042,9 +1008,7 @@ fn transfer_with_cluster_avf_excludes_files() {
 
 #[test]
 fn transfer_with_multiple_wildcard_exclude_patterns() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -1078,9 +1042,7 @@ fn transfer_with_multiple_wildcard_exclude_patterns() {
 
 #[test]
 fn transfer_with_directory_only_exclude_pattern() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     let subdir = source_root.join("skipdir");
@@ -1107,9 +1069,7 @@ fn transfer_with_directory_only_exclude_pattern() {
 
 #[test]
 fn transfer_with_anchored_pattern_only_matches_root() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     let subdir = source_root.join("sub");

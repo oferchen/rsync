@@ -293,7 +293,7 @@ fn first_volume_guid_path() -> Option<String> {
 
 #[test]
 fn classify_returns_symlink_for_dir_symlink() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let target = dir.path().join("real_dir");
     std::fs::create_dir(&target).expect("create target dir");
     let link = dir.path().join("a_symlink");
@@ -317,7 +317,7 @@ fn classify_returns_symlink_for_dir_symlink() {
 
 #[test]
 fn classify_returns_junction_for_mklink_j() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let target = dir.path().join("real_dir");
     std::fs::create_dir(&target).expect("create target dir");
     let link = dir.path().join("a_junction");
@@ -341,7 +341,7 @@ fn classify_returns_junction_for_mklink_j() {
 
 #[test]
 fn classify_returns_mount_point_for_setvolumemountpoint() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let mount_dir = dir.path().join("a_mount");
     std::fs::create_dir(&mount_dir).expect("create mount target dir");
 

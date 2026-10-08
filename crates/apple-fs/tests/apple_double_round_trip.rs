@@ -55,7 +55,7 @@ fn macos_resource_fork_pipeline_matches_apple_double_payload() {
     use apple_fs::{read_finder_info, read_resource_fork, write_finder_info, write_resource_fork};
     use std::io;
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("subject.txt");
     std::fs::write(&path, b"data fork").expect("write data");
 

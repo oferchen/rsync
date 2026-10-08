@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn human_readable_formats_kilobytes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("1k.bin");
     std::fs::write(&source, vec![0u8; 1_024]).expect("write source");
 
@@ -29,9 +27,7 @@ fn human_readable_formats_kilobytes() {
 
 #[test]
 fn human_readable_formats_megabytes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("1m.bin");
     std::fs::write(&source, vec![0u8; 1_048_576]).expect("write source");
 
@@ -55,9 +51,7 @@ fn human_readable_formats_megabytes() {
 
 #[test]
 fn human_readable_formats_gigabytes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("1g.bin");
     let file = std::fs::File::create(&source).expect("create source");
     let size: u64 = 1_073_741_824;
@@ -84,8 +78,6 @@ fn human_readable_formats_gigabytes() {
 
 #[test]
 fn human_readable_formats_various_sizes() {
-    use tempfile::tempdir;
-
     let test_cases = vec![
         (512, "512"),           // Below 1K
         (1_500, "1.50K"),       // 1.5K
@@ -96,7 +88,7 @@ fn human_readable_formats_various_sizes() {
     ];
 
     for (size, expected) in test_cases {
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source = tmp.path().join("test.bin");
         std::fs::write(&source, vec![0u8; size]).expect("write source");
 
@@ -150,9 +142,7 @@ fn three_h_flags_remain_combined_mode() {
 
 #[test]
 fn combined_mode_uses_base_1024_no_exact() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("combined.bin");
     std::fs::write(&source, vec![0u8; 2_048]).expect("write source");
 
@@ -179,9 +169,7 @@ fn combined_mode_uses_base_1024_no_exact() {
 
 #[test]
 fn combined_mode_long_form_uses_base_1024() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("test.bin");
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
@@ -207,9 +195,7 @@ fn combined_mode_long_form_uses_base_1024() {
 
 #[test]
 fn human_readable_output_format_matches_upstream() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("upstream.bin");
     std::fs::write(&source, vec![0u8; 5_120]).expect("write source");
 
@@ -240,9 +226,7 @@ fn human_readable_output_format_matches_upstream() {
 
 #[test]
 fn human_readable_uses_two_decimal_places() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("decimal.bin");
     std::fs::write(&source, vec![0u8; 1_234]).expect("write source");
 
@@ -266,9 +250,7 @@ fn human_readable_uses_two_decimal_places() {
 
 #[test]
 fn human_readable_formats_bytes_without_suffix() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("small.bin");
     std::fs::write(&source, vec![0u8; 512]).expect("write source");
 
@@ -292,9 +274,7 @@ fn human_readable_formats_bytes_without_suffix() {
 
 #[test]
 fn human_readable_works_with_stats() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("stats.bin");
     std::fs::write(&source, vec![0u8; 2_048]).expect("write source");
 
@@ -320,9 +300,7 @@ fn human_readable_works_with_stats() {
 
 #[test]
 fn human_readable_works_with_progress() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("progress.bin");
     std::fs::write(&source, vec![0u8; 3_072]).expect("write source");
 
@@ -351,9 +329,7 @@ fn human_readable_works_with_progress() {
 
 #[test]
 fn human_readable_works_with_stats_and_progress() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("both.bin");
     std::fs::write(&source, vec![0u8; 4_096]).expect("write source");
 
@@ -384,9 +360,7 @@ fn human_readable_works_with_stats_and_progress() {
 
 #[test]
 fn human_readable_combined_works_with_stats() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("combined-stats.bin");
     std::fs::write(&source, vec![0u8; 8_192]).expect("write source");
 
@@ -414,9 +388,7 @@ fn human_readable_combined_works_with_stats() {
 
 #[test]
 fn human_readable_combined_works_with_progress() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("combined-progress.bin");
     std::fs::write(&source, vec![0u8; 6_144]).expect("write source");
 
@@ -443,9 +415,7 @@ fn human_readable_combined_works_with_progress() {
 
 #[test]
 fn human_readable_handles_zero_bytes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("empty.bin");
     std::fs::write(&source, vec![]).expect("write empty source");
 
@@ -469,9 +439,7 @@ fn human_readable_handles_zero_bytes() {
 
 #[test]
 fn human_readable_with_verbose_output() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("verbose.bin");
     std::fs::write(&source, vec![0u8; 10_240]).expect("write source");
 
@@ -496,9 +464,7 @@ fn human_readable_with_verbose_output() {
 
 #[test]
 fn no_human_readable_shows_raw_digits() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("exact.bin");
     std::fs::write(&source, vec![0u8; 1_234_567]).expect("write source");
 
@@ -540,9 +506,7 @@ fn no_human_readable_shows_raw_digits() {
 /// keeps `1,501`, unlike byte sizes. oc previously grouped counts
 /// unconditionally, mis-rendering `--no-h` counts as `1,501`.
 fn stats_counts_for_level(flag: Option<&str>) -> String {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("tree");
     std::fs::create_dir(&source).expect("mkdir source");
     for i in 0..1_500 {
@@ -630,9 +594,7 @@ fn stats_counts_grouped_not_humanised_at_hh() {
 
 #[test]
 fn human_readable_format_consistency_across_stats() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("consistent.bin");
     std::fs::write(&source, vec![0u8; 20_480]).expect("write source");
 

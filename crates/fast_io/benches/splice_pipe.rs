@@ -44,7 +44,7 @@ fn bench_splice_pipe(c: &mut Criterion) {
     const BUFFER_SIZE: usize = 64 * 1024;
 
     fn create_payload(size: usize) -> NamedTempFile {
-        let mut file = NamedTempFile::new().expect("create temp file");
+        let mut file = test_support::create_named_tempfile();
         let chunk: Vec<u8> = (0..BUFFER_SIZE).map(|i| (i % 251) as u8).collect();
         let mut remaining = size;
         while remaining > 0 {
@@ -88,7 +88,7 @@ fn bench_splice_pipe(c: &mut Criterion) {
 
     /// Creates a destination temp file and returns (file, raw_fd).
     fn make_dest_file() -> (NamedTempFile, i32) {
-        let file = NamedTempFile::new().expect("create dest temp file");
+        let file = test_support::create_named_tempfile();
         let fd = file.as_file().as_raw_fd();
         (file, fd)
     }

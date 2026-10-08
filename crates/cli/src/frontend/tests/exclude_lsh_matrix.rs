@@ -16,7 +16,7 @@ use super::*;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use tempfile::{TempDir, tempdir};
+use tempfile::TempDir;
 
 /// Mirrors upstream `exclude.test:33-92` source tree construction.
 ///
@@ -24,7 +24,7 @@ use tempfile::{TempDir, tempdir};
 /// guard keeps the tree alive for the duration of one leg; each leg
 /// builds its own copy so tests are independent.
 fn setup_fixture() -> (TempDir, PathBuf) {
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let fromdir = tmp.path().join("from");
 
     let dirs = [

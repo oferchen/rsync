@@ -17,9 +17,7 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn duplicate_source_operands_copy_each_file_once() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("from");
     std::fs::create_dir(&source_dir).expect("create source");
 
@@ -85,9 +83,7 @@ fn duplicate_source_operands_copy_each_file_once() {
 /// deduplication removes identical ones.
 #[test]
 fn distinct_sources_with_duplicates_all_copied() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
 
     let src_a = tmp.path().join("src_a");
     let src_b = tmp.path().join("src_b");

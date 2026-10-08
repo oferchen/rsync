@@ -60,7 +60,6 @@ impl PlatformCopy for NoZeroCopyPlatformCopy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn reports_standard_copy_method() {
@@ -80,7 +79,7 @@ mod tests {
 
     #[test]
     fn copies_file_via_standard_copy() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("src.bin");
         let dst = dir.path().join("dst.bin");
         std::fs::write(&src, b"hello world").unwrap();

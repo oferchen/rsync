@@ -212,14 +212,14 @@ mod tests {
 
     #[test]
     fn violation_none_when_escapes_dropped_and_safe_kept() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         symlink("good.txt", dir.path().join("safe")).unwrap();
         assert!(safe_links_violation(dir.path()).is_none());
     }
 
     #[test]
     fn violation_flags_a_surviving_relative_escape() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         symlink("good.txt", dir.path().join("safe")).unwrap();
         symlink("../sl-outside", dir.path().join("up")).unwrap();
         assert!(
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn violation_flags_a_surviving_absolute_escape() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         symlink("good.txt", dir.path().join("safe")).unwrap();
         symlink("/etc/hostname", dir.path().join("abs")).unwrap();
         assert!(
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn violation_flags_a_dropped_safe_link() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         // Escapes correctly gone, but the safe link was dropped too.
         assert!(
             safe_links_violation(dir.path())

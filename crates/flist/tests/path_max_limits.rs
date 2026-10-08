@@ -71,7 +71,7 @@ fn calculate_path_length(root: &Path, relative: &Path) -> usize {
 /// Verifies that very deep directory structures can be traversed.
 #[test]
 fn traverse_very_deep_directory_hierarchy() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep");
 
     // Scale depth to fit within platform PATH_MAX
@@ -104,7 +104,7 @@ fn traverse_very_deep_directory_hierarchy() {
 /// Verifies multiple deep branches can coexist and be traversed correctly.
 #[test]
 fn multiple_deep_branches() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("branches");
     fs::create_dir(&root).expect("create root");
 
@@ -136,7 +136,7 @@ fn multiple_deep_branches() {
 /// Verifies depth tracking is accurate for very deep structures.
 #[test]
 fn accurate_depth_tracking_in_deep_structures() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("depth");
 
     let deep_path = create_deep_structure(&root, 50, 8);
@@ -165,7 +165,7 @@ fn accurate_depth_tracking_in_deep_structures() {
 /// Verifies paths approaching PATH_MAX can be handled successfully.
 #[test]
 fn handle_paths_near_path_max() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("near_max");
 
     // Calculate how many levels we can create
@@ -210,7 +210,7 @@ fn handle_paths_near_path_max() {
 /// Verifies relative paths are correctly constructed for very long absolute paths.
 #[test]
 fn relative_paths_correct_for_long_absolute_paths() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("long_relative");
 
     // Scale depth to fit within PATH_MAX
@@ -254,7 +254,7 @@ fn relative_paths_correct_for_long_absolute_paths() {
 /// Verifies that paths with long individual component names are handled.
 #[test]
 fn handle_long_individual_component_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("long_names");
     fs::create_dir(&root).expect("create root");
 
@@ -290,7 +290,7 @@ fn handle_long_individual_component_names() {
 /// Verifies correct traversal of structures with varying depth levels.
 #[test]
 fn mixed_depth_structure_traversal() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed");
     fs::create_dir(&root).expect("create root");
 
@@ -324,7 +324,7 @@ fn mixed_depth_structure_traversal() {
 /// Verifies files at various depths are all discovered.
 #[test]
 fn files_at_various_depths_discovered() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("varied");
     fs::create_dir(&root).expect("create root");
 
@@ -357,7 +357,7 @@ fn files_at_various_depths_discovered() {
 /// Verifies include_root(false) works correctly with deep paths.
 #[test]
 fn include_root_false_with_deep_paths() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("no_root_deep");
 
     let deep_path = create_deep_structure(&root, 30, 10);
@@ -383,7 +383,7 @@ fn include_root_false_with_deep_paths() {
 /// Verifies root entry properties with very long absolute paths.
 #[test]
 fn root_entry_with_long_absolute_path() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     // Create a root with a relatively long name
     let root = temp.path().join("a".repeat(100));
     fs::create_dir(&root).expect("create root");
@@ -414,7 +414,7 @@ fn root_entry_with_long_absolute_path() {
 /// arbitrary limits ourselves.
 #[test]
 fn graceful_handling_of_filesystem_path_limits() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("limit_test");
     fs::create_dir(&root).expect("create root");
 
@@ -450,7 +450,7 @@ fn graceful_handling_of_filesystem_path_limits() {
 /// Verifies traversal of a realistic deeply nested node_modules-like structure.
 #[test]
 fn realistic_node_modules_style_structure() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("project");
     fs::create_dir(&root).expect("create root");
 
@@ -487,7 +487,7 @@ fn realistic_node_modules_style_structure() {
 /// Verifies traversal of deep directory tree with many files at leaf level.
 #[test]
 fn deep_tree_with_many_leaf_files() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep_leaves");
 
     // Create 20-level deep structure
@@ -520,7 +520,7 @@ fn deep_tree_with_many_leaf_files() {
 /// Verifies walker can be partially consumed with deep structures.
 #[test]
 fn partial_consumption_of_deep_walker() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("partial");
 
     let deep_path = create_deep_structure(&root, 50, 10);
@@ -548,7 +548,7 @@ fn partial_consumption_of_deep_walker() {
 /// Verifies walker filter operations work correctly with deep structures.
 #[test]
 fn filter_operations_on_deep_walker() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("filter");
 
     let deep_path = create_deep_structure(&root, 30, 10);
@@ -589,7 +589,7 @@ fn filter_operations_on_deep_walker() {
 /// Verifies that relative paths never contain '..' components even in deep structures.
 #[test]
 fn no_parent_references_in_deep_relative_paths() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("no_parent");
 
     let deep_path = create_deep_structure(&root, 40, 12);
@@ -615,7 +615,7 @@ fn no_parent_references_in_deep_relative_paths() {
 /// Verifies that full paths are always absolute even for deep structures.
 #[test]
 fn full_paths_always_absolute_for_deep_structures() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("absolute");
 
     let deep_path = create_deep_structure(&root, 35, 10);
@@ -642,7 +642,7 @@ fn full_paths_always_absolute_for_deep_structures() {
 fn file_names_correct_in_deep_structures() {
     use std::ffi::OsStr;
 
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("names");
 
     let deep_path = create_deep_structure(&root, 25, 15);
@@ -669,7 +669,7 @@ fn file_names_correct_in_deep_structures() {
 /// and verifying we can iterate through it without loading everything into memory.
 #[test]
 fn lazy_evaluation_for_very_deep_structures() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("lazy");
 
     // Scale depth to fit within PATH_MAX (use short names to maximize depth)
@@ -754,7 +754,7 @@ fn try_create_path_of_length(root: &Path, target_len: usize) -> Option<PathBuf> 
 /// Verifies handling of paths at exactly PATH_MAX - 1 (maximum valid).
 #[test]
 fn path_at_exactly_path_max_minus_one() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("exact_max");
     fs::create_dir(&root).expect("create root");
 
@@ -788,7 +788,7 @@ fn path_at_exactly_path_max_minus_one() {
 /// Verifies that paths approaching PATH_MAX with long filenames are handled.
 #[test]
 fn long_path_with_long_filename_combination() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("combo");
     fs::create_dir(&root).expect("create root");
 
@@ -823,7 +823,7 @@ fn long_path_with_long_filename_combination() {
 /// that either the OS rejects it (expected) or we can still traverse what exists.
 #[test]
 fn path_exceeding_path_max_filesystem_rejection() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("exceed");
     fs::create_dir(&root).expect("create root");
 
@@ -870,7 +870,7 @@ fn path_exceeding_path_max_filesystem_rejection() {
 /// but don't exceed the limit gracefully.
 #[test]
 fn walk_structure_approaching_limit_from_multiple_branches() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("multi_approach");
     fs::create_dir(&root).expect("create root");
 
@@ -915,7 +915,7 @@ fn walk_structure_approaching_limit_from_multiple_branches() {
 /// long absolute paths are handled correctly.
 #[test]
 fn relative_path_resolving_to_long_absolute() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("rel_long");
 
     // Create a deep structure
@@ -951,7 +951,7 @@ fn relative_path_resolving_to_long_absolute() {
 /// Verifies handling of paths containing '.' components in deeply nested structures.
 #[test]
 fn paths_with_current_dir_components_in_deep_structure() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dot_deep");
 
     let deep_path = create_deep_structure(&root, 25, 20);
@@ -982,7 +982,7 @@ mod symlink_long_path_tests {
     /// Verifies handling of symlinks pointing to very long target paths.
     #[test]
     fn symlink_with_long_target_path() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("link_long");
         fs::create_dir(&root).expect("create root");
 
@@ -1019,7 +1019,7 @@ mod symlink_long_path_tests {
     /// Verifies handling of symlinks with target paths near PATH_MAX.
     #[test]
     fn symlink_target_approaching_path_max() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("link_max");
         fs::create_dir(&root).expect("create root");
 
@@ -1051,7 +1051,7 @@ mod symlink_long_path_tests {
     /// Verifies handling of relative symlinks in deep directory structures.
     #[test]
     fn relative_symlink_in_deep_structure() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("rel_sym_deep");
 
         // Create deep structure with a sibling branch
@@ -1087,7 +1087,7 @@ mod symlink_long_path_tests {
     /// Verifies symlink target stored correctly for long paths.
     #[test]
     fn symlink_target_storage_for_long_paths() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("sym_store");
         fs::create_dir(&root).expect("create root");
 
@@ -1124,7 +1124,7 @@ mod symlink_long_path_tests {
 #[test]
 fn very_long_base_path_handling() {
     // This tests what happens when the starting path itself is very long
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
 
     // Scale depth to fit within PATH_MAX
     let levels = max_levels_for(temp.path(), 80).min(20);
@@ -1157,7 +1157,7 @@ fn very_long_base_path_handling() {
 /// Verifies behavior when creating entries would result in paths exceeding limits.
 #[test]
 fn entry_creation_at_path_limits() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("entry_limit");
     fs::create_dir(&root).expect("create root");
 
@@ -1188,7 +1188,7 @@ fn entry_creation_at_path_limits() {
 /// Verifies that file names are not truncated when stored in entries.
 #[test]
 fn no_filename_truncation_at_max_length() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("no_trunc");
     fs::create_dir(&root).expect("create root");
 
@@ -1215,7 +1215,7 @@ fn no_filename_truncation_at_max_length() {
 /// Verifies relative paths are not truncated for deeply nested files.
 #[test]
 fn no_relative_path_truncation_in_deep_structure() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep_no_trunc");
 
     // Scale depth to fit within PATH_MAX
@@ -1256,7 +1256,7 @@ fn no_relative_path_truncation_in_deep_structure() {
 /// Verifies that directory names at maximum length are preserved.
 #[test]
 fn no_directory_name_truncation() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dir_no_trunc");
     fs::create_dir(&root).expect("create root");
 
@@ -1285,7 +1285,7 @@ fn no_directory_name_truncation() {
 fn combined_deep_long_symlink_structure() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("combined");
     fs::create_dir(&root).expect("create root");
 
@@ -1328,7 +1328,7 @@ fn combined_deep_long_symlink_structure() {
 /// Tests handling of empty directories at various depths near the limit.
 #[test]
 fn empty_directories_at_path_limits() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty_deep");
     fs::create_dir(&root).expect("create root");
 
@@ -1362,7 +1362,7 @@ fn empty_directories_at_path_limits() {
 /// Tests iteration patterns with paths near the limit.
 #[test]
 fn iterator_patterns_with_long_paths() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("iter_long");
 
     // Scale depth to fit within PATH_MAX

@@ -28,7 +28,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
-    use tempfile::tempdir;
 
     fn init_git_repo(path: &std::path::Path) {
         let status = Command::new("git")
@@ -55,7 +54,7 @@ mod tests {
 
     #[test]
     fn execute_succeeds_when_all_tracked_files_are_textual() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         init_git_repo(temp.path());
 
         let source = temp.path().join("src/lib.rs");
@@ -68,7 +67,7 @@ mod tests {
 
     #[test]
     fn execute_reports_detected_binary_files() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         init_git_repo(temp.path());
 
         let text_file = temp.path().join("README.md");

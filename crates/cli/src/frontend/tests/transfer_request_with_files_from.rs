@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_files_from_uses_source_directory_for_relative_entries() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("files-from-source");
     std::fs::create_dir(&source_dir).expect("create source");
     let nested = source_dir.join("nested");
@@ -53,9 +51,7 @@ fn transfer_request_with_files_from_uses_source_directory_for_relative_entries()
 /// - `options.c:2178-2186` - `--files-from` disables recursion, enables xfer_dirs
 #[test]
 fn files_from_excludes_unlisted_files() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("ff-exclude-src");
     std::fs::create_dir(&source_dir).expect("create source");
 
@@ -112,9 +108,7 @@ fn files_from_excludes_unlisted_files() {
 /// - `flist.c:2556-2558` - `strstr(fbuf, "/./")` splits at marker
 #[test]
 fn files_from_embedded_dot_marker_determines_destination_structure() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let scratch = tmp.path().join("scratch");
 
     // Create: scratch/from/dir/subdir/file.txt
@@ -173,9 +167,7 @@ fn files_from_embedded_dot_marker_determines_destination_structure() {
 /// - `flist.c:2682-2696` - `(xfer_dirs && name_type != NORMAL_NAME)` walk
 #[test]
 fn files_from_dotdir_entry_walks_immediate_children() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let scratch = tmp.path().join("scratch");
     let from = scratch.join("from");
     std::fs::create_dir_all(&from).expect("create from");
@@ -236,9 +228,7 @@ fn files_from_dotdir_entry_walks_immediate_children() {
 /// where the trailing slash must pull `bin-lt-list` into the destination.
 #[test]
 fn files_from_slash_ending_entry_walks_immediate_children() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let scratch = tmp.path().join("scratch");
     let leaf = scratch.join("from").join("dir").join("leaf");
     std::fs::create_dir_all(&leaf).expect("create leaf");

@@ -43,7 +43,6 @@ use std::io::{self, Write};
 use std::io::{Seek, SeekFrom};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use tempfile::TempDir;
 
 /// Block size used for COPY tokens - matches upstream rsync's typical block
 /// size for files in the 1-100 MB range (see `sum_sizes_sqroot()`).
@@ -234,7 +233,7 @@ fn bench_pattern(c: &mut Criterion, group_name: &str, ops_fn: fn(usize) -> Vec<C
             BenchmarkId::new("copy_basis_range", label),
             &size,
             |b, &size| {
-                let dir = TempDir::new().unwrap();
+                let dir = test_support::create_tempdir();
                 let basis = create_basis(dir.path(), size);
                 let dest = create_dest(dir.path(), size);
                 b.iter(|| {
@@ -246,7 +245,7 @@ fn bench_pattern(c: &mut Criterion, group_name: &str, ops_fn: fn(usize) -> Vec<C
 
         // pread+write baseline
         group.bench_with_input(BenchmarkId::new("pread_write", label), &size, |b, &size| {
-            let dir = TempDir::new().unwrap();
+            let dir = test_support::create_tempdir();
             let basis = create_basis(dir.path(), size);
             let dest = create_dest(dir.path(), size);
             b.iter(|| {
@@ -292,7 +291,7 @@ fn bench_single_block(c: &mut Criterion) {
             BenchmarkId::new("copy_basis_range", label),
             &bsize,
             |b, &bsize| {
-                let dir = TempDir::new().unwrap();
+                let dir = test_support::create_tempdir();
                 let basis = create_basis(dir.path(), bsize);
                 let dest = create_dest(dir.path(), bsize);
                 b.iter(|| {
@@ -306,7 +305,7 @@ fn bench_single_block(c: &mut Criterion) {
             BenchmarkId::new("pread_write", label),
             &bsize,
             |b, &bsize| {
-                let dir = TempDir::new().unwrap();
+                let dir = test_support::create_tempdir();
                 let basis = create_basis(dir.path(), bsize);
                 let dest = create_dest(dir.path(), bsize);
                 let op = CopyOp {

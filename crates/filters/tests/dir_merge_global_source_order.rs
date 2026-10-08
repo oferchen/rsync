@@ -20,7 +20,7 @@ use tempfile::TempDir;
 
 /// Builds `root/sub/.rsf` containing `+ keep.tmp` and returns the temp dir.
 fn setup() -> TempDir {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let sub = root.path().join("sub");
     fs::create_dir(&sub).unwrap();
     fs::write(sub.join(".rsf"), "+ keep.tmp\n").unwrap();

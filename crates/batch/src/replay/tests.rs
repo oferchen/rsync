@@ -5,7 +5,6 @@
 //! tests in `crates/batch/src/tests.rs`.
 
 use std::fs;
-use tempfile::TempDir;
 
 use super::codec::create_compressed_decoder;
 use super::delta::{apply_delta_ops, write_literals_to_file};
@@ -17,7 +16,7 @@ fn head(count: u32, blength: u32, remainder: u32) -> protocol::wire::SumHead {
 
 #[test]
 fn apply_delta_ops_literal_only() {
-    let temp = TempDir::new().unwrap();
+    let temp = test_support::create_tempdir();
     let basis_path = temp.path().join("basis.txt");
     let dest_path = temp.path().join("output.txt");
 
@@ -38,7 +37,7 @@ fn apply_delta_ops_literal_only() {
 
 #[test]
 fn apply_delta_ops_copy_from_basis() {
-    let temp = TempDir::new().unwrap();
+    let temp = test_support::create_tempdir();
     let basis_path = temp.path().join("basis.txt");
     let dest_path = temp.path().join("output.txt");
 
@@ -56,7 +55,7 @@ fn apply_delta_ops_copy_from_basis() {
 
 #[test]
 fn apply_delta_ops_mixed() {
-    let temp = TempDir::new().unwrap();
+    let temp = test_support::create_tempdir();
     let basis_path = temp.path().join("basis.txt");
     let dest_path = temp.path().join("output.txt");
 
@@ -78,7 +77,7 @@ fn apply_delta_ops_mixed() {
 
 #[test]
 fn apply_delta_ops_nonexistent_basis() {
-    let temp = TempDir::new().unwrap();
+    let temp = test_support::create_tempdir();
     let basis_path = temp.path().join("no_such_file.txt");
     let dest_path = temp.path().join("output.txt");
 
@@ -97,7 +96,7 @@ fn apply_delta_ops_nonexistent_basis() {
 /// specifies the actual size.
 #[test]
 fn apply_delta_last_block_uses_remainder() {
-    let temp = TempDir::new().unwrap();
+    let temp = test_support::create_tempdir();
     // Basis: 15 bytes, block_length=10, so block 0 = 10 bytes, block 1 = 5 bytes (remainder).
     let basis_path = temp.path().join("basis.dat");
     fs::write(&basis_path, b"AAAAAAAAAA12345").unwrap();
@@ -121,7 +120,7 @@ fn apply_delta_last_block_uses_remainder() {
 
 #[test]
 fn write_literals_to_new_file() {
-    let temp = TempDir::new().unwrap();
+    let temp = test_support::create_tempdir();
     let dest_path = temp.path().join("new_file.txt");
 
     let ops = vec![
@@ -136,7 +135,7 @@ fn write_literals_to_new_file() {
 
 #[test]
 fn write_literals_ignores_copy_ops() {
-    let temp = TempDir::new().unwrap();
+    let temp = test_support::create_tempdir();
     let dest_path = temp.path().join("literals_only.txt");
 
     let ops = vec![
@@ -178,7 +177,7 @@ fn compressed_decoder_created_is_zlib() {
 /// `ITEM_REPORT_CRTIME` (rsync.h:247) and would be a different flag entirely.
 #[test]
 fn read_iflags_pre_29_synthesises_item_transfer_without_reading() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("stream");
     fs::write(&path, [0xAA, 0xBB]).expect("write stream");
     let mut stream = std::io::BufReader::new(crate::reader::BatchSource::File(
@@ -207,7 +206,7 @@ fn read_iflags_pre_29_synthesises_item_transfer_without_reading() {
 /// upstream: rsync.c:383 - `read_shortint(f_in)`
 #[test]
 fn read_iflags_proto_29_reads_shortint() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("stream");
     fs::write(&path, [0x00, 0x80]).expect("write stream");
     let mut stream = std::io::BufReader::new(crate::reader::BatchSource::File(

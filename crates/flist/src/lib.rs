@@ -57,7 +57,7 @@
 //! use std::fs;
 //!
 //! # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-//! let temp = tempfile::tempdir()?;
+//! let temp = test_support::create_tempdir();
 //! let root = temp.path().join("src");
 //! let nested = root.join("nested");
 //! fs::create_dir_all(&nested)?;

@@ -13,7 +13,7 @@ use super::macos::try_sendfile_macos;
 
 /// Helper to create a temp file with specified content
 fn create_temp_file(content: &[u8]) -> io::Result<NamedTempFile> {
-    let mut file = NamedTempFile::new()?;
+    let mut file = test_support::create_named_tempfile();
     file.write_all(content)?;
     file.flush()?;
     file.seek(SeekFrom::Start(0))?;

@@ -18,7 +18,6 @@ mod local_recursion {
     use std::time::Duration;
 
     use core::client::{ClientConfig, run_client};
-    use tempfile::tempdir;
 
     use super::test_timeout::run_with_timeout;
 
@@ -92,7 +91,7 @@ mod local_recursion {
     #[test]
     fn deep_nesting_50_levels() {
         run_with_timeout(HANG_GUARD, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
 
@@ -147,7 +146,7 @@ mod local_recursion {
     #[test]
     fn wide_directory_1000_files() {
         run_with_timeout(HANG_GUARD, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
 
@@ -190,7 +189,7 @@ mod local_recursion {
     #[test]
     fn mixed_deep_and_wide() {
         run_with_timeout(HANG_GUARD, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
 
@@ -268,7 +267,7 @@ mod local_recursion {
     #[test]
     fn incremental_update_add_remove_modify() {
         run_with_timeout(HANG_GUARD, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("src");
             let dest = temp.path().join("dst");
 

@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn small_file_skips_nocache() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("small.bin");
 
         let writer = MacosWriter::create(&path, 512).unwrap();
@@ -578,7 +578,7 @@ mod tests {
 
     #[test]
     fn large_file_enables_nocache_on_macos() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large.bin");
 
         let writer = MacosWriter::create(&path, 2 * 1024 * 1024).unwrap();
@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn threshold_boundary_below() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("boundary_below.bin");
 
         let writer = MacosWriter::create(&path, F_NOCACHE_THRESHOLD - 1).unwrap();
@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn threshold_boundary_exact() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("boundary_exact.bin");
 
         let writer = MacosWriter::create(&path, F_NOCACHE_THRESHOLD).unwrap();
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn write_and_read_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("roundtrip.bin");
         let data = b"hello, macos optimized writer!";
 
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn write_large_payload_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large_roundtrip.bin");
         let data: Vec<u8> = (0..65536).map(|i| ((i * 17 + 3) % 256) as u8).collect();
 
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn write_above_threshold_with_nocache() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("nocache_write.bin");
         let size = (F_NOCACHE_THRESHOLD + 4096) as usize;
         let data: Vec<u8> = (0..size).map(|i| ((i * 7 + 11) % 256) as u8).collect();
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn multiple_small_writes_accumulate() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("multi_write.bin");
 
         {
@@ -697,7 +697,7 @@ mod tests {
 
     #[test]
     fn bytes_written_tracks_correctly() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("tracking.bin");
 
         let mut writer = MacosWriter::create(&path, 0).unwrap();
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn from_file_works() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("from_file.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn from_file_large_enables_nocache() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("from_file_large.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -746,7 +746,7 @@ mod tests {
 
     #[test]
     fn empty_write_succeeds() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("empty.bin");
 
         let mut writer = MacosWriter::create(&path, 0).unwrap();
@@ -760,7 +760,7 @@ mod tests {
 
     #[test]
     fn flush_on_drop_writes_data() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("drop_flush.bin");
 
         {
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn writev_buffers_single_buffer() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("writev_single.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -789,7 +789,7 @@ mod tests {
 
     #[test]
     fn writev_buffers_multiple_buffers() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("writev_multi.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -803,7 +803,7 @@ mod tests {
 
     #[test]
     fn writev_buffers_empty() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("writev_empty.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn set_nocache_returns_expected_value() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("nocache_test.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn is_nocache_set_returns_expected_value() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("nocache_query.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -857,7 +857,7 @@ mod tests {
 
     #[test]
     fn write_chunks_exceed_flush_threshold() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("exceed_threshold.bin");
 
         // Write enough data to trigger auto-flush (default 256 KB threshold)
@@ -880,7 +880,7 @@ mod tests {
 
     #[test]
     fn writev_buffers_large_payload() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("writev_large.bin");
 
         let file = std::fs::File::create(&path).unwrap();
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn multiple_flush_calls_are_idempotent() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("multi_flush.bin");
 
         let mut writer = MacosWriter::create(&path, 0).unwrap();
@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn apply_sequential_read_hint_below_threshold_returns_false() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("small_source.bin");
         std::fs::write(&path, b"tiny").unwrap();
 
@@ -925,7 +925,7 @@ mod tests {
 
     #[test]
     fn apply_sequential_read_hint_large_file_matches_platform() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large_source.bin");
         std::fs::write(&path, b"placeholder").unwrap();
 
@@ -944,7 +944,7 @@ mod tests {
 
     #[test]
     fn write_interleaved_with_flush() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("interleaved.bin");
 
         let mut writer = MacosWriter::create(&path, 0).unwrap();
@@ -969,7 +969,7 @@ mod tests {
         // changes the bytes returned. (The Windows flag path itself is
         // exercised by the Windows CI matrix.)
         use std::io::Read;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("seq.bin");
         std::fs::write(&path, b"sequential-scan-payload").unwrap();
 

@@ -60,7 +60,6 @@ use metadata::apply_xattrs_from_list;
 #[cfg(unix)]
 use metadata::{XattrRole, XattrSendOptions, read_xattrs_for_wire};
 use protocol::xattr::{XattrEntry, XattrList};
-use tempfile::tempdir;
 
 /// Reserved xattr name that carries the Windows security descriptor
 /// across the cross-platform xattr stream. Matches Samba's NT-ACL slot
@@ -157,7 +156,7 @@ fn read_back(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
 #[cfg(unix)]
 #[test]
 fn simulated_windows_xattr_dropped_on_linux() {
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("dest.txt");
     fs::write(&file, b"payload").expect("seed dest file");
 
@@ -229,7 +228,7 @@ fn simulated_windows_xattr_dropped_on_linux() {
 #[cfg(target_os = "windows")]
 #[test]
 fn simulated_windows_xattr_applied_on_windows() {
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("dest.txt");
     fs::write(&file, b"payload").expect("seed dest file");
 
@@ -262,7 +261,7 @@ fn simulated_windows_xattr_applied_on_windows() {
 #[cfg(unix)]
 #[test]
 fn pure_posix_acl_roundtrip_unaffected_by_reserved_slot() {
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("dest.txt");
     fs::write(&file, b"payload").expect("seed dest file");
 

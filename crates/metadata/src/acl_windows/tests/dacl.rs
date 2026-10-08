@@ -3,7 +3,6 @@
 //! short-circuit branches.
 
 use std::fs::File;
-use tempfile::tempdir;
 
 use protocol::acl::{AclCache, IdAccess, IdaEntries, NO_ENTRY, RsyncAcl};
 
@@ -50,7 +49,7 @@ fn reconstruct_acl_no_mode_passes_through() {
 
 #[test]
 fn apply_acls_from_cache_skips_when_not_following() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let cache = AclCache::new();
@@ -60,7 +59,7 @@ fn apply_acls_from_cache_skips_when_not_following() {
 
 #[test]
 fn apply_acls_from_cache_missing_index_is_noop() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let cache = AclCache::new();
@@ -70,7 +69,7 @@ fn apply_acls_from_cache_missing_index_is_noop() {
 
 #[test]
 fn apply_acls_from_cache_empty_cache_no_op() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let mut cache = AclCache::new();
@@ -82,7 +81,7 @@ fn apply_acls_from_cache_empty_cache_no_op() {
 
 #[test]
 fn get_rsync_acl_default_returns_empty() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let acl = get_rsync_acl(&file, 0o644, true);
@@ -233,7 +232,7 @@ fn dacl_to_rsync_acl_audits_deny_aces_instead_of_dropping_them_silently() {
 fn read_dacl_on_temp_file_returns_dacl() {
     use crate::acl_windows::dacl::read_dacl;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let result = read_dacl(&file);

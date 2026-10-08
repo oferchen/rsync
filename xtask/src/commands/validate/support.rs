@@ -278,7 +278,7 @@ mod tests {
     /// backdate the quick-check relies on works where BSD `touch -d` would fail.
     #[test]
     fn portable_touch_backdates_mtime_from_epoch() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("f");
         fs::write(&file, b"x").unwrap();
         capture(
@@ -293,7 +293,7 @@ mod tests {
     /// `touch -m` - the separation the atimes fixture depends on.
     #[test]
     fn portable_touch_m_sets_only_mtime() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("f");
         fs::write(&file, b"x").unwrap();
         capture(
@@ -321,7 +321,7 @@ mod tests {
     /// it has not written yet still succeeds.
     #[test]
     fn portable_touch_creates_missing_regular_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("new");
         capture("touch", &["-d", "@1614830767", &file.to_string_lossy()]).unwrap();
         assert!(file.exists());
@@ -339,7 +339,7 @@ mod tests {
     /// atime/crtime comparisons work without GNU `stat`.
     #[test]
     fn portable_stat_reads_access_time_as_epoch_seconds() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("f");
         fs::write(&file, b"x").unwrap();
         capture(
@@ -354,14 +354,14 @@ mod tests {
     /// A missing path fails, so `stat`-based readers get `None` via `.ok()`.
     #[test]
     fn portable_stat_errors_on_missing_path() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let missing = dir.path().join("nope");
         assert!(capture("stat", &["-c", "%W", &missing.to_string_lossy()]).is_err());
     }
 
     #[test]
     fn backdated_tree_populates_and_backdates_the_root() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("src");
         build_backdated_tree(&src).unwrap();
         // a.txt + b.txt + sub + sub/c.txt = 4 entries.
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn entry_count_recurses_but_does_not_follow_symlinks() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let root = dir.path();
         fs::create_dir(root.join("sub")).unwrap();
         fs::write(root.join("a"), b"a").unwrap();
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn rel_entries_are_sorted_and_relative() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         fs::create_dir(dir.path().join("z")).unwrap();
         fs::write(dir.path().join("a"), b"").unwrap();
         fs::write(dir.path().join("z/y"), b"").unwrap();

@@ -23,8 +23,6 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use tempfile::tempdir;
-
 /// Test that we can list modules from upstream daemon (handshake verification).
 #[test]
 #[ignore = "requires upstream rsync binary"]
@@ -115,7 +113,7 @@ fn test_pull_from_upstream_daemon_baseline() {
     );
 
     // Set up destination
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     // Use upstream client to pull from upstream daemon (baseline)
     let status = Command::new(UPSTREAM_3_4_1)
@@ -158,7 +156,7 @@ fn test_push_to_upstream_daemon_baseline() {
         TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start upstream daemon");
 
     // Create source files
-    let source_root = tempdir().expect("create source dir");
+    let source_root = test_support::create_tempdir();
     create_test_file(&source_root.path().join("upload1.txt"), b"upload content");
     create_test_file(
         &source_root.path().join("nested/upload2.txt"),
@@ -292,7 +290,7 @@ fn test_daemon_transfer_preserves_metadata_baseline() {
     let original_metadata = fs::metadata(&test_file).expect("read metadata");
 
     // Pull file via daemon using upstream client
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
         .arg("--timeout=10")

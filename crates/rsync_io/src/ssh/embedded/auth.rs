@@ -573,7 +573,7 @@ mod tests {
         // because rsync redirects stdin/stdout for its protocol pipe. When no
         // controlling terminal is available (cron/daemon), the encrypted key
         // must be skipped rather than blocking on an unreachable prompt.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let key_path = dir.path().join("id_ed25519");
 
         let private =
@@ -592,7 +592,7 @@ mod tests {
     fn load_identity_key_unencrypted_loads_regardless_of_terminal() {
         // An unencrypted key never needs a prompt, so the terminal gate must
         // not affect it: it loads whether or not a terminal is available.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let key_path = dir.path().join("id_ed25519");
 
         let private =
@@ -656,14 +656,14 @@ mod tests {
 
     #[test]
     fn load_identity_key_directory_returns_none() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let result = load_identity_key(dir.path());
         assert!(result.is_none());
     }
 
     #[test]
     fn load_identity_key_invalid_content_returns_none() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let key_path = dir.path().join("bad_key");
         std::fs::write(&key_path, "not a valid key").expect("write");
         let result = load_identity_key(&key_path);
@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn load_identity_key_valid_unencrypted_ed25519() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let key_path = dir.path().join("id_ed25519");
 
         // Generate a private key and write it in PKCS8 PEM format.
@@ -840,7 +840,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn load_identity_key_symlink_to_missing_returns_none() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let link_path = dir.path().join("broken_link");
         std::os::unix::fs::symlink("/nonexistent/target", &link_path).expect("symlink");
         let result = load_identity_key(&link_path);
@@ -1032,7 +1032,7 @@ mod tests {
         // Create an empty known_hosts in a temp dir to avoid conflicts with
         // the system known_hosts (which may already have a different key for
         // 127.0.0.1 at this port from prior test runs or CI jobs).
-        let kh_dir = tempfile::tempdir().expect("tempdir for known_hosts");
+        let kh_dir = test_support::create_tempdir();
         let kh_path = kh_dir.path().join("known_hosts");
 
         let handler = SshClientHandler::new(
@@ -1054,7 +1054,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_pubkey_succeeds() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let key_path = dir.path().join("id_ed25519");
 
         // Generate a private key and write it.
@@ -1103,7 +1103,7 @@ mod tests {
     /// observable as an empty offer log, not merely a changed outcome.
     #[tokio::test]
     async fn pubkey_authentication_no_offers_no_key() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let (key_path, policy) = accepted_identity(dir.path());
         let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
@@ -1125,7 +1125,7 @@ mod tests {
     /// exercising the gate rather than a server that ignores keys.
     #[tokio::test]
     async fn pubkey_authentication_yes_offers_the_key() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let (key_path, policy) = accepted_identity(dir.path());
         let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
@@ -1146,7 +1146,7 @@ mod tests {
     /// filters methods, not just reorders them.
     #[tokio::test]
     async fn preferred_authentications_omitting_publickey_offers_no_key() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let (key_path, policy) = accepted_identity(dir.path());
         let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
@@ -1309,7 +1309,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_identity_file_wrong_key_falls_to_password() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let key_path = dir.path().join("id_ed25519");
 
         // Generate a private key the server does NOT accept.
@@ -1367,7 +1367,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_multiple_identity_files_tries_in_order() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         // Generate two private keys - server accepts the second one.
         let wrong_key =
@@ -1435,7 +1435,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticate_tried_list_includes_all_attempted_methods() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let key_path = dir.path().join("id_ed25519");
 
         let private =
@@ -1517,7 +1517,7 @@ mod tests {
         const SIGN_REQUEST: u8 = 13;
         const AGENT_FAILURE: u8 = 5;
 
-        let dir = tempfile::tempdir().expect("tempdir for agent socket");
+        let dir = test_support::create_tempdir();
         let sock_path = dir.path().join("s");
         let listener = tokio::net::UnixListener::bind(&sock_path).expect("bind agent socket");
         let sock = sock_path.to_string_lossy().into_owned();
@@ -1655,7 +1655,7 @@ mod tests {
         let agent_key = fresh_key();
         let configured = fresh_key();
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let configured_path = dir.path().join("configured_ed25519");
         write_private_key(&configured_path, &configured);
 
@@ -1687,7 +1687,7 @@ mod tests {
         let agent_key = fresh_key();
         let configured = fresh_key();
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let configured_path = dir.path().join("configured_ed25519");
         write_private_key(&configured_path, &configured);
 
@@ -1713,7 +1713,7 @@ mod tests {
         // upstream: openssh/sshconnect2.c:1745 `sshkey_equal()`.
         let agent_key = fresh_key();
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let configured_path = dir.path().join("unrelated_name");
         write_private_key(&configured_path, &agent_key);
 
@@ -1741,7 +1741,7 @@ mod tests {
         // half.
         let agent_key = fresh_key();
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let configured_path = dir.path().join("agent_only_ed25519");
         let public_path = dir.path().join("agent_only_ed25519.pub");
         std::fs::write(

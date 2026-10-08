@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn get_or_fetch_caches_result() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn cache_hit_miss_ratio() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path1 = temp.path().join("file1.txt");
         let path2 = temp.path().join("file2.txt");
         fs::write(&path1, b"content1").expect("write");
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn invalidate_removes_cached_entry() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn clear_removes_all_entries() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path1 = temp.path().join("test1.txt");
         let path2 = temp.path().join("test2.txt");
         fs::write(&path1, b"content1").expect("write");
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn multiple_paths_are_cached_independently() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let paths: Vec<PathBuf> = (0..10)
             .map(|i| {
                 let path = temp.path().join(format!("file{i}.txt"));
@@ -362,7 +362,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn mode_matches_returns_true_for_matching_mode() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -379,7 +379,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn mode_matches_returns_false_for_different_mode() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -396,7 +396,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn mode_matches_uses_cache() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -418,7 +418,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn ownership_matches_returns_true_for_matching_ownership() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -436,7 +436,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn ownership_matches_returns_false_for_different_ownership() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -450,7 +450,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn ownership_matches_uses_cache() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn fetch_metadata_optimized_works_for_regular_file() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn fetch_metadata_optimized_works_for_directory() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dir = temp.path().join("subdir");
         fs::create_dir(&dir).expect("mkdir");
 
@@ -497,7 +497,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn fetch_metadata_optimized_works_for_symlink() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("target.txt");
         let link = temp.path().join("link.txt");
         fs::write(&target, b"content").expect("write");
@@ -529,7 +529,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn check_mode_matches_helper_function() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -546,7 +546,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn check_ownership_matches_helper_function() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -564,7 +564,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn fetch_metadata_lstat_works() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -577,7 +577,7 @@ mod tests {
     fn fetch_metadata_lstat_returns_correct_mode() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("mode_test.txt");
         fs::write(&path, b"content").expect("write");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
@@ -591,7 +591,7 @@ mod tests {
     fn fetch_metadata_lstat_returns_correct_ownership() {
         use std::os::unix::fs::MetadataExt;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("owner_test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -607,7 +607,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn fetch_metadata_lstat_directory() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dir = temp.path().join("lstat_dir");
         fs::create_dir(&dir).expect("mkdir");
 
@@ -619,7 +619,7 @@ mod tests {
     fn fetch_metadata_lstat_symlink() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("lstat_target.txt");
         let link = temp.path().join("lstat_link.txt");
         fs::write(&target, b"content").expect("write");
@@ -646,7 +646,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_readonly_metadata() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn stress_test_many_cache_entries() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let mut cache = MetadataCache::with_capacity(1000);
 
         for i in 0..1000 {
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn paths_with_special_characters() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("file with spaces.txt");
         fs::write(&path, b"content").expect("write");
 

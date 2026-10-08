@@ -78,7 +78,7 @@ fn plain_cmd() -> SshCommand {
 #[test]
 fn top_level_compression_yes_in_home_config() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     write_ssh_config(&home, "Compression yes\n");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
@@ -89,7 +89,7 @@ fn top_level_compression_yes_in_home_config() {
 #[test]
 fn host_star_block_compression_yes_in_home_config() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     write_ssh_config(&home, "Host *\n  Compression yes\n");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
@@ -100,7 +100,7 @@ fn host_star_block_compression_yes_in_home_config() {
 #[test]
 fn per_host_block_does_not_match_unrelated_target() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // Per-host `Host foo` blocks now resolve via the SSC-5.b pattern
     // matcher. The target is `example.com` (from `plain_cmd`), which
     // does not match `foo.example.com`, so the block contributes
@@ -115,7 +115,7 @@ fn per_host_block_does_not_match_unrelated_target() {
 #[test]
 fn per_host_glob_block_fires_for_matching_target() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // SSC-5.b: `Host *.example.com` now resolves against the connection
     // target via the shared SSC-4.b pattern matcher.
     write_ssh_config(&home, "Host *.example.com\n  Compression yes\n");
@@ -129,7 +129,7 @@ fn per_host_glob_block_fires_for_matching_target() {
 #[test]
 fn per_host_negation_blocks_match_for_banned_target() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // SSC-5.b: bang-prefixed token causes the pattern-list to fail when
     // the negated token matches the target, even though the positive
     // `*` token would otherwise match.
@@ -147,7 +147,7 @@ fn per_host_negation_blocks_match_for_banned_target() {
 #[test]
 fn compression_no_returns_false() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     write_ssh_config(&home, "Compression no\n");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
@@ -158,7 +158,7 @@ fn compression_no_returns_false() {
 #[test]
 fn malformed_config_falls_back_to_false() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // Lines without a value, stray separators, and unrecognised
     // Compression values must not abort the transfer. The lookup logs
     // and returns false so the caller falls back to argv-only.
@@ -175,7 +175,7 @@ fn malformed_config_falls_back_to_false() {
 #[test]
 fn empty_config_returns_false() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     write_ssh_config(&home, "");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
@@ -186,7 +186,7 @@ fn empty_config_returns_false() {
 #[test]
 fn missing_config_returns_false() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // No .ssh directory under HOME.
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
@@ -197,14 +197,14 @@ fn missing_config_returns_false() {
 #[test]
 fn dash_f_override_wins_over_home_config() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // `~/.ssh/config` disables compression. The `-F` override is
     // consulted first and flips the answer to true.
     write_ssh_config(&home, "Compression no\n");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
 
-    let override_dir = TempDir::new().expect("tempdir");
+    let override_dir = test_support::create_tempdir();
     let override_path = override_dir.path().join("override.config");
     fs::write(&override_path, "Compression yes\n").expect("write override");
 
@@ -218,11 +218,11 @@ fn dash_f_override_wins_over_home_config() {
 #[test]
 fn dash_f_combined_form_is_honoured() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
 
-    let override_dir = TempDir::new().expect("tempdir");
+    let override_dir = test_support::create_tempdir();
     let override_path = override_dir.path().join("override.config");
     fs::write(&override_path, "Compression yes\n").expect("write override");
 
@@ -238,7 +238,7 @@ fn dash_f_combined_form_is_honoured() {
 #[test]
 fn argv_dash_c_still_wins_when_config_disables() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     write_ssh_config(&home, "Compression no\n");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
@@ -262,7 +262,7 @@ fn argv_dash_c_still_wins_when_config_disables() {
 #[test]
 fn match_exec_block_with_compression_yes_returns_false() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // A `Match exec` block containing `Compression yes` should not
     // enable the compression flag because the exec condition is not
     // evaluated. The function returns `false` since no other scope
@@ -280,7 +280,7 @@ fn match_exec_block_with_compression_yes_returns_false() {
 #[test]
 fn match_exec_block_compression_inside_exec_scope() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // After `Match exec`, the active block is `MatchExecSkipped` until
     // another `Host` or `Match` directive resets it. So `Compression yes`
     // on the following line is inside the exec block scope and should
@@ -299,7 +299,7 @@ fn match_exec_block_compression_inside_exec_scope() {
 #[test]
 fn match_exec_with_host_star_compression_detected() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // The `Host *` block after the exec block should be evaluated
     // normally.
     write_ssh_config(
@@ -316,7 +316,7 @@ fn match_exec_with_host_star_compression_detected() {
 #[test]
 fn match_exec_with_match_all_compression_detected() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // A `Match all` block after a `Match exec` block should be
     // evaluated normally and contribute its compression setting.
     write_ssh_config(
@@ -333,7 +333,7 @@ fn match_exec_with_match_all_compression_detected() {
 #[test]
 fn match_exec_only_no_other_compression_source() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     // When the only compression setting is inside a `Match exec` block,
     // has_ssh_compression must return false since we cannot evaluate
     // the exec condition.
@@ -351,7 +351,7 @@ fn match_exec_only_no_other_compression_source() {
 #[test]
 fn dash_f_override_with_match_exec_block() {
     let _lock = ENV_LOCK.lock().unwrap();
-    let home = TempDir::new().expect("tempdir");
+    let home = test_support::create_tempdir();
     write_ssh_config(&home, "Compression no\n");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
@@ -359,7 +359,7 @@ fn dash_f_override_with_match_exec_block() {
     // The `-F` override file contains a `Match exec` block with
     // `Compression yes`. Since `-F` is consulted first and it only
     // has compression inside the exec block, the result should be false.
-    let override_dir = TempDir::new().expect("tempdir");
+    let override_dir = test_support::create_tempdir();
     let override_path = override_dir.path().join("override.config");
     fs::write(
         &override_path,

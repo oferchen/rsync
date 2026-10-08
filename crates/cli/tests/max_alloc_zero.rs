@@ -15,7 +15,6 @@
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use tempfile::TempDir;
 use test_support::oc_rsync_bin;
 
 fn combined(output: &Output) -> String {
@@ -38,7 +37,7 @@ fn client_accepts_max_alloc_zero() {
     // upstream: testsuite/max-alloc-zero_test.py - "0 is accepted, and a
     // transfer using it works". 3.5.0 refused it; 3.5.1 restored it with a
     // bounded meaning.
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = make_source(tmp.path());
     let dst = tmp.path().join("dst");
     let output = Command::new(oc_rsync_bin())
@@ -65,7 +64,7 @@ fn client_rejects_a_value_at_the_ceiling() {
     // upstream: testsuite/max-alloc-zero_test.py part 3 - accepting 0 must not
     // bring back an unbounded value: 8192P reaches SIZE_MAX/2 on a 64-bit
     // build, and on a 32-bit one the P multiplier alone already exceeds it.
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let output = Command::new(oc_rsync_bin())
         .arg("--max-alloc=8192P")
         .arg(tmp.path().join("src"))
@@ -88,7 +87,7 @@ fn server_accepts_a_peer_forwarded_max_alloc_zero() {
     // Option decoding happens before any protocol byte is read, so the
     // rejection this replaced surfaced with a closed stdin; with the value
     // accepted, the session instead ends on the closed stream.
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let output = Command::new(oc_rsync_bin())
         .arg("--server")
         .arg("--sender")
@@ -113,7 +112,7 @@ fn server_accepts_a_peer_forwarded_max_alloc_zero() {
 fn forwarded_argv(max_alloc: &str) -> String {
     use std::os::unix::fs::PermissionsExt;
 
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = make_source(tmp.path());
     let dst = tmp.path().join("dst");
     let log = tmp.path().join("server-argv");

@@ -189,7 +189,7 @@ fn run_stdfs(paths: &[PathBuf], payload: &[u8]) {
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 mod linux_cells {
-    use super::{FILE_COUNT, PAYLOAD_SIZES, PathBuf, TempDir, prepare_workload, run_stdfs};
+    use super::{FILE_COUNT, PAYLOAD_SIZES, PathBuf, prepare_workload, run_stdfs};
     use criterion::{BenchmarkId, Criterion, Throughput};
     use fast_io::{IoUringConfig, IoUringDiskBatch};
     use std::env;
@@ -275,7 +275,7 @@ mod linux_cells {
             group.bench_function(BenchmarkId::new("std_baseline", payload_size), |b| {
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let (paths, payload) = prepare_workload(&dir, payload_size);
                         (dir, paths, payload)
                     },
@@ -294,7 +294,7 @@ mod linux_cells {
                 let config = IoUringConfig::default();
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let (paths, payload) = prepare_workload(&dir, payload_size);
                         (dir, paths, payload)
                     },
@@ -314,7 +314,7 @@ mod linux_cells {
                     };
                     b.iter_with_setup(
                         || {
-                            let dir = TempDir::new().expect("tempdir");
+                            let dir = test_support::create_tempdir();
                             let (paths, payload) = prepare_workload(&dir, payload_size);
                             (dir, paths, payload)
                         },
@@ -334,7 +334,7 @@ mod linux_cells {
                     };
                     b.iter_with_setup(
                         || {
-                            let dir = TempDir::new().expect("tempdir");
+                            let dir = test_support::create_tempdir();
                             let (paths, payload) = prepare_workload(&dir, payload_size);
                             (dir, paths, payload)
                         },
@@ -357,7 +357,7 @@ mod linux_cells {
 
 #[cfg(all(target_os = "windows", feature = "iocp"))]
 mod windows_cells {
-    use super::{FILE_COUNT, PAYLOAD_SIZES, PathBuf, TempDir, prepare_workload, run_stdfs};
+    use super::{FILE_COUNT, PAYLOAD_SIZES, PathBuf, prepare_workload, run_stdfs};
     use criterion::{BenchmarkId, Criterion, Throughput};
     use fast_io::{IocpConfig, IocpDiskBatch};
     use std::fs::OpenOptions;
@@ -395,7 +395,7 @@ mod windows_cells {
             group.bench_function(BenchmarkId::new("std_baseline", payload_size), |b| {
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let (paths, payload) = prepare_workload(&dir, payload_size);
                         (dir, paths, payload)
                     },
@@ -410,7 +410,7 @@ mod windows_cells {
                 let config = IocpConfig::default();
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let (paths, payload) = prepare_workload(&dir, payload_size);
                         (dir, paths, payload)
                     },
@@ -430,7 +430,7 @@ mod windows_cells {
                     };
                     b.iter_with_setup(
                         || {
-                            let dir = TempDir::new().expect("tempdir");
+                            let dir = test_support::create_tempdir();
                             let (paths, payload) = prepare_workload(&dir, payload_size);
                             (dir, paths, payload)
                         },
@@ -458,7 +458,7 @@ mod windows_cells {
     all(target_os = "windows", feature = "iocp"),
 )))]
 mod baseline_only {
-    use super::{FILE_COUNT, PAYLOAD_SIZES, TempDir, prepare_workload, run_stdfs};
+    use super::{FILE_COUNT, PAYLOAD_SIZES, prepare_workload, run_stdfs};
     use criterion::{BenchmarkId, Criterion, Throughput};
 
     pub fn bench_matched(c: &mut Criterion) {
@@ -477,7 +477,7 @@ mod baseline_only {
             group.bench_function(BenchmarkId::new("std_baseline", payload_size), |b| {
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let (paths, payload) = prepare_workload(&dir, payload_size);
                         (dir, paths, payload)
                     },

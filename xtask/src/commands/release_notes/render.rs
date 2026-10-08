@@ -100,7 +100,6 @@ fn find_previous_tag(workspace: &Path, current_version: &str) -> TaskResult<Stri
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::tempdir;
 
     fn create_test_workspace(dir: &Path) {
         let github_dir = dir.join(".github");
@@ -114,7 +113,7 @@ mod tests {
 
     #[test]
     fn render_substitutes_placeholders() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         create_test_workspace(dir.path());
 
         let template_path = dir.path().join(".github/RELEASE_TEMPLATE.md");
@@ -154,7 +153,7 @@ mod tests {
 
     #[test]
     fn render_to_file_creates_output() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         create_test_workspace(dir.path());
 
         init_git_repo(dir.path());
@@ -179,7 +178,7 @@ mod tests {
 
     #[test]
     fn render_version_prefix_normalization() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         create_test_workspace(dir.path());
 
         init_git_repo(dir.path());
@@ -208,7 +207,7 @@ mod tests {
 
     #[test]
     fn find_previous_tag_falls_back_to_v0() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         init_git_repo(dir.path());
 
         let tag = find_previous_tag(dir.path(), "v1.0.0").unwrap();
@@ -217,7 +216,7 @@ mod tests {
 
     #[test]
     fn find_previous_tag_skips_current_version() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         init_git_repo(dir.path());
         Command::new("git")
             .args(["tag", "v0.5.0"])

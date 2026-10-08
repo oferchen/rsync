@@ -17,7 +17,6 @@ use std::fs;
 use std::path::Path;
 
 use core::client::{ClientConfig, run_client};
-use tempfile::tempdir;
 use test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
 
 /// Creates a file with the given content, building parent directories as needed.
@@ -34,7 +33,7 @@ fn touch(path: &Path, contents: &[u8]) {
 #[test]
 fn deep_directory_tree_transfers_all_levels() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let dest = temp.path().join("dst");
 
@@ -95,7 +94,7 @@ fn deep_directory_tree_transfers_all_levels() {
 #[test]
 fn empty_directories_are_preserved() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let dest = temp.path().join("dst");
 
@@ -153,7 +152,7 @@ fn empty_directories_are_preserved() {
 #[test]
 fn symlinks_within_incremental_directories() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let dest = temp.path().join("dst");
 
@@ -220,7 +219,7 @@ fn symlinks_within_incremental_directories() {
 #[test]
 fn large_file_count_single_directory() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let dest = temp.path().join("dst");
 
@@ -280,7 +279,7 @@ fn large_file_count_single_directory() {
 #[test]
 fn mixed_content_deep_tree() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let dest = temp.path().join("dst");
 
@@ -365,7 +364,7 @@ fn mixed_content_deep_tree() {
 #[test]
 fn second_pass_skips_unchanged_files() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let dest = temp.path().join("dst");
 

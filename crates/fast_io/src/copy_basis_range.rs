@@ -424,7 +424,6 @@ mod tests {
     use std::io::Write;
     #[cfg(target_os = "linux")]
     use std::io::{Read, Seek, SeekFrom};
-    use tempfile::tempdir;
 
     fn make_basis(dir: &std::path::Path, name: &str, payload: &[u8]) -> File {
         let path = dir.join(name);
@@ -455,7 +454,7 @@ mod tests {
 
     #[test]
     fn empty_len_returns_zero_without_syscall() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let basis = make_basis(dir.path(), "b", b"abc");
         let dest = make_dest(dir.path(), "d");
         let copied = copy_basis_range(&basis, 0, &dest, 0, 0).unwrap();
@@ -465,7 +464,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn same_fs_copy_produces_byte_identical_output() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload: Vec<u8> = (0..64 * 1024).map(|i| (i % 251) as u8).collect();
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -488,7 +487,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn offset_copy_extracts_correct_window() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload: Vec<u8> = (0..8 * 1024).map(|i| (i % 211) as u8).collect();
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -507,7 +506,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn dest_offset_writes_at_correct_position() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload: Vec<u8> = (0..4 * 1024).map(|i| (i % 199) as u8).collect();
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -534,7 +533,7 @@ mod tests {
         // hits EOF mid-loop. The wrapper exits the loop and reports the
         // bytes that did make it through - the receiver's checksum verifier
         // (when sequential) will then surface the mismatch.
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload = vec![0xA5u8; 2048];
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -562,7 +561,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_copy_produces_byte_identical_output() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload: Vec<u8> = (0..64 * 1024).map(|i| (i % 251) as u8).collect();
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -577,7 +576,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_offset_copy_extracts_correct_window() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload: Vec<u8> = (0..8 * 1024).map(|i| (i % 211) as u8).collect();
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -593,7 +592,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_dest_offset_writes_at_correct_position() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload: Vec<u8> = (0..4 * 1024).map(|i| (i % 199) as u8).collect();
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -611,7 +610,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_short_copy_when_basis_eof() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload = vec![0xA5u8; 2048];
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let mut dest = make_dest(dir.path(), "dest.bin");
@@ -633,7 +632,7 @@ mod tests {
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     #[test]
     fn unsupported_platform_returns_zero() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let basis = make_basis(dir.path(), "b", b"abcd");
         let dest = make_dest(dir.path(), "d");
         let copied = copy_basis_range(&basis, 0, &dest, 0, 4).unwrap();

@@ -66,7 +66,7 @@ fn the_ruleset_installs_for_a_module_whose_parent_is_unsearchable() {
         return;
     }
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let private = temp.path().join("private");
     let module = private.join("mod");
     fs::create_dir_all(module.join("sub")).expect("mkdir module");

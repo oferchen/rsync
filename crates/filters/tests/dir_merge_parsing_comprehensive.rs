@@ -9,11 +9,10 @@
 use filters::{FilterAction, FilterRule, FilterSet};
 use std::fs;
 use std::path::Path;
-use tempfile::TempDir;
 
 #[test]
 fn dir_merge_multiple_modifiers() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Dir-merge with multiple modifiers: perishable, sender-only, no-inherit
@@ -30,7 +29,7 @@ fn dir_merge_multiple_modifiers() {
 
 #[test]
 fn dir_merge_receiver_only() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Dir-merge receiver-only
@@ -44,7 +43,7 @@ fn dir_merge_receiver_only() {
 
 #[test]
 fn dir_merge_both_sides_explicit() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Dir-merge with both sender and receiver flags (should apply to both)
@@ -59,7 +58,7 @@ fn dir_merge_both_sides_explicit() {
 
 #[test]
 fn dir_merge_exclude_self_modifier() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // The `e` modifier (FILTRULE_EXCLUDE_SELF) is valid on a dir-merge rule.
@@ -76,7 +75,7 @@ fn dir_merge_exclude_self_modifier() {
 
 #[test]
 fn exclude_self_modifier_rejected_on_plain_rule() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // upstream: exclude.c:1256-1258 - `e` on a non-merge rule jumps to `invalid`.
@@ -89,7 +88,7 @@ fn exclude_self_modifier_rejected_on_plain_rule() {
 
 #[test]
 fn dir_merge_with_underscore_separator() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Underscore separator between modifiers and pattern
@@ -103,7 +102,7 @@ fn dir_merge_with_underscore_separator() {
 
 #[test]
 fn dir_merge_with_space_separator() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Space separator between modifiers and pattern
@@ -117,7 +116,7 @@ fn dir_merge_with_space_separator() {
 
 #[test]
 fn dir_merge_requires_separator_before_pattern() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // upstream: exclude.c:1226 - without a separator, the modifier loop reads
@@ -135,7 +134,7 @@ fn dir_merge_requires_separator_before_pattern() {
 
 #[test]
 fn dir_merge_with_separator_parses_no_inherit() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // The space-separated form is the valid spelling: `:n .rsync-filter`.
@@ -149,7 +148,7 @@ fn dir_merge_with_separator_parses_no_inherit() {
 
 #[test]
 fn merge_with_modifiers_ignored() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let nested = dir.path().join("nested.rules");
     fs::write(&nested, "- *.tmp\n").unwrap();
 
@@ -164,7 +163,7 @@ fn merge_with_modifiers_ignored() {
 
 #[test]
 fn merge_absolute_path() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Absolute path in merge
@@ -177,7 +176,7 @@ fn merge_absolute_path() {
 
 #[test]
 fn merge_relative_path_with_subdirs() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Relative path with subdirectories
@@ -190,7 +189,7 @@ fn merge_relative_path_with_subdirs() {
 
 #[test]
 fn dir_merge_empty_filename() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Dir-merge with just colon and whitespace
@@ -203,7 +202,7 @@ fn dir_merge_empty_filename() {
 
 #[test]
 fn dir_merge_only_modifiers_no_pattern() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Only modifiers, no actual filename
@@ -216,7 +215,7 @@ fn dir_merge_only_modifiers_no_pattern() {
 
 #[test]
 fn dir_merge_with_leading_whitespace_is_rejected() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // upstream: exclude.c:1211-1213 - leading whitespace is not a valid rule
@@ -229,7 +228,7 @@ fn dir_merge_with_leading_whitespace_is_rejected() {
 
 #[test]
 fn dir_merge_with_trailing_whitespace_kept() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // upstream: exclude.c:1313 - the pattern (merge-file name) length is strlen,
@@ -243,7 +242,7 @@ fn dir_merge_with_trailing_whitespace_kept() {
 
 #[test]
 fn dir_merge_mixed_case_long_form_rejected() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // upstream: exclude.c:1069 rule_strcmp is a case-sensitive strncmp, so
@@ -257,7 +256,7 @@ fn dir_merge_mixed_case_long_form_rejected() {
 
 #[test]
 fn dir_merge_upper_case_long_form_rejected() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // upstream rejects `DIR-MERGE` for the same reason as the mixed-case form:
@@ -269,7 +268,7 @@ fn dir_merge_upper_case_long_form_rejected() {
 
 #[test]
 fn dir_merge_pattern_with_wildcards() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Dir-merge with wildcards in filename (unusual but valid)
@@ -282,7 +281,7 @@ fn dir_merge_pattern_with_wildcards() {
 
 #[test]
 fn dir_merge_pattern_with_path_separator() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Dir-merge with path separator (unusual)
@@ -295,7 +294,7 @@ fn dir_merge_pattern_with_path_separator() {
 
 #[test]
 fn dir_merge_between_include_exclude() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     fs::write(
@@ -315,7 +314,7 @@ fn dir_merge_between_include_exclude() {
 
 #[test]
 fn multiple_dir_merges_different_files() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     fs::write(
@@ -338,7 +337,7 @@ fn multiple_dir_merges_different_files() {
 
 #[test]
 fn dir_merge_and_merge_interleaved() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let nested = dir.path().join("nested.rules");
     fs::write(&nested, "- *.log\n").unwrap();
@@ -364,7 +363,7 @@ fn dir_merge_and_merge_interleaved() {
 
 #[test]
 fn dir_merge_with_protect_rules() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     fs::write(
@@ -384,7 +383,7 @@ fn dir_merge_with_protect_rules() {
 
 #[test]
 fn dir_merge_after_clear() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     fs::write(
@@ -406,7 +405,7 @@ fn dir_merge_after_clear() {
 
 #[test]
 fn dir_merge_modifiers_different_order_same_result() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     // Test all permutations of common modifiers
     let patterns = vec![
@@ -493,7 +492,7 @@ fn filter_set_dir_merge_with_cvs_patterns() {
 
 #[test]
 fn dir_merge_preserves_pattern_case() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Mixed case in pattern should be preserved
@@ -505,7 +504,7 @@ fn dir_merge_preserves_pattern_case() {
 
 #[test]
 fn dir_merge_preserves_special_chars() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Special characters in filename
@@ -517,7 +516,7 @@ fn dir_merge_preserves_special_chars() {
 
 #[test]
 fn dir_merge_with_inline_comment() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Pattern followed by comment (comment should not be part of pattern)
@@ -538,7 +537,7 @@ fn dir_merge_with_inline_comment() {
 
 #[test]
 fn dir_merge_after_comment_line() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     fs::write(
@@ -555,7 +554,7 @@ fn dir_merge_after_comment_line() {
 
 #[test]
 fn dir_merge_with_empty_lines_around() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     fs::write(

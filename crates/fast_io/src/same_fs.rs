@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn two_files_in_one_dir_share_a_device() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let a = dir.path().join("a");
         let b = dir.path().join("b");
         std::fs::write(&a, b"a").expect("write a");
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn missing_path_yields_none() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let present = dir.path().join("present");
         std::fs::write(&present, b"x").expect("write");
         let missing = dir.path().join("missing");
@@ -178,7 +178,7 @@ mod volume_tests {
         // A file and the directory that contains it always live on the same
         // volume, so their identities must match on every platform that
         // resolves one (all CI targets: Linux, macOS, Windows).
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("probe");
         std::fs::write(&file, b"x").expect("write probe");
 
@@ -189,7 +189,7 @@ mod volume_tests {
 
     #[test]
     fn volume_id_missing_path_is_none() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         assert_eq!(volume_id(&dir.path().join("does-not-exist")), None);
     }
 }

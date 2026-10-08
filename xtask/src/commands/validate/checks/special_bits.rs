@@ -260,7 +260,10 @@ mod tests {
 
     #[test]
     fn mode_diff_none_for_identical_special_bits() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         for root in [a.path(), b.path()] {
             let f = root.join("suid");
             fs::write(&f, b"x").unwrap();
@@ -272,7 +275,10 @@ mod tests {
 
     #[test]
     fn mode_diff_names_the_diverging_entry_and_modes() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         let (fa, fb) = (a.path().join("sgid"), b.path().join("sgid"));
         fs::write(&fa, b"x").unwrap();
         fs::write(&fb, b"x").unwrap();

@@ -41,7 +41,6 @@ use std::os::windows::io::FromRawHandle;
 use std::path::Path;
 
 use fast_io::{FileWriter, IocpConfig, IocpDiskBatch, IocpWriter, is_iocp_available};
-use tempfile::tempdir;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
@@ -164,7 +163,7 @@ fn disk_batch_accumulates_under_simulated_pressure() {
         return;
     }
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("disk_batch_partial.bin");
     let payload = make_payload(payload_size());
 
@@ -227,7 +226,7 @@ fn writer_accumulates_across_implicit_flushes() {
         return;
     }
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("writer_partial.bin");
     let payload = make_payload(payload_size());
 
@@ -278,7 +277,7 @@ fn writer_splits_single_write_across_many_chunks() {
         return;
     }
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("writer_split.bin");
 
     // Pick a payload that is not a multiple of the buffer size so the
@@ -338,7 +337,7 @@ fn disk_batch_begin_file_with_readonly_handle_errors() {
         return;
     }
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("readonly_handle.bin");
     std::fs::write(&path, b"pre-existing").expect("seed file");
 

@@ -7,21 +7,13 @@
 use std::os::fd::AsFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
-use tempfile::tempdir;
-
 use super::*;
 use crate::dir_sandbox::DirSandbox;
 use crate::secure_dir::secure_open_dir;
 
-fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
-
 #[test]
 fn fstatat_nofollow_stats_regular_file() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("file"), b"hello").expect("write");
     let dirfd = secure_open_dir(&root).expect("open root");
 
@@ -34,7 +26,7 @@ fn fstatat_nofollow_stats_regular_file() {
 
 #[test]
 fn fstatat_nofollow_stats_directory() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir");
     let dirfd = secure_open_dir(&root).expect("open root");
 
@@ -49,7 +41,7 @@ fn fstatat_nofollow_rejects_symlink_leaf() {
     // SEC-1.f core invariant: the helper must observe the symlink
     // itself rather than the entry it points at. A path-based
     // `fs::metadata` would follow and report the target.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("target"), b"contents").expect("write target");
     symlink(root.join("target"), root.join("link")).expect("symlink");
 
@@ -65,7 +57,7 @@ fn fstatat_nofollow_rejects_symlink_leaf() {
 
 #[test]
 fn fstatat_nofollow_reports_enoent_for_missing_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dirfd = secure_open_dir(&root).expect("open root");
 
     let err = fstatat_nofollow(dirfd.as_fd(), OsStr::new("does-not-exist"))
@@ -75,7 +67,7 @@ fn fstatat_nofollow_reports_enoent_for_missing_leaf() {
 
 #[test]
 fn fstatat_nofollow_exposes_dev_and_ino() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let dirfd = secure_open_dir(&root).expect("open root");
@@ -88,7 +80,7 @@ fn fstatat_nofollow_exposes_dev_and_ino() {
 
 #[test]
 fn lstat_via_sandbox_takes_at_path_for_single_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("file"), b"hello").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
@@ -107,7 +99,7 @@ fn lstat_via_sandbox_multi_component_anchors_or_falls_back() {
     // Linux kernel without openat2. Assert the correct outcome variant
     // for each state and confirm the reported dev/ino matches the real
     // entry either way.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     std::fs::write(root.join("sub/file"), b"hello").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -135,7 +127,7 @@ fn lstat_via_sandbox_multi_component_anchors_or_falls_back() {
 
 #[test]
 fn lstat_via_sandbox_falls_back_when_sandbox_absent() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("file"), b"hello").expect("write");
 
     let leaf = Path::new("file");
@@ -146,7 +138,7 @@ fn lstat_via_sandbox_falls_back_when_sandbox_absent() {
 
 #[test]
 fn lstat_via_sandbox_outcome_matches_dev_ino_across_paths() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -161,7 +153,7 @@ fn lstat_via_sandbox_outcome_matches_dev_ino_across_paths() {
 
 #[test]
 fn unlinkat_removes_regular_file() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("victim");
     std::fs::write(&path, b"data").expect("write");
     let dirfd = secure_open_dir(&root).expect("open root");
@@ -172,7 +164,7 @@ fn unlinkat_removes_regular_file() {
 
 #[test]
 fn unlinkat_removes_empty_dir_with_at_removedir() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("empty");
     std::fs::create_dir(&path).expect("mkdir");
     let dirfd = secure_open_dir(&root).expect("open root");
@@ -189,7 +181,7 @@ fn unlinkat_returns_eperm_or_eisdir_on_dir_without_at_removedir() {
     // SEC-1.g invariant: removing a directory without `AT_REMOVEDIR`
     // must fail rather than silently succeed. Linux reports `EISDIR`,
     // BSDs and macOS report `EPERM` per the `unlink(2)` contract.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("dir");
     std::fs::create_dir(&path).expect("mkdir");
     let dirfd = secure_open_dir(&root).expect("open root");
@@ -208,7 +200,7 @@ fn unlinkat_returns_eperm_or_eisdir_on_dir_without_at_removedir() {
 fn unlinkat_returns_enotempty_on_non_empty_dir_with_at_removedir() {
     // SEC-1.g invariant: `AT_REMOVEDIR` mirrors `rmdir(2)` exactly,
     // refusing to remove a non-empty directory.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dir = root.join("non-empty");
     std::fs::create_dir(&dir).expect("mkdir");
     std::fs::write(dir.join("inner"), b"x").expect("write inner");
@@ -234,7 +226,7 @@ fn unlinkat_rejects_symlink_traversal() {
     // the symlink itself rather than the target it points at. The
     // syscall is hard-coded to never follow a terminal symlink, but
     // this test pins that contract against future regressions.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     // Sensitive target lives outside any path the receiver names.
     let sensitive = root.join("sensitive");
     std::fs::write(&sensitive, b"do-not-delete").expect("write sensitive");
@@ -258,7 +250,7 @@ fn unlinkat_rejects_symlink_traversal() {
 
 #[test]
 fn unlinkat_reports_enoent_for_missing_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dirfd = secure_open_dir(&root).expect("open root");
 
     let err = unlinkat(dirfd.as_fd(), OsStr::new("absent"), UnlinkFlags::File)
@@ -268,7 +260,7 @@ fn unlinkat_reports_enoent_for_missing_leaf() {
 
 #[test]
 fn unlink_via_sandbox_takes_at_path_for_single_component_file() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -284,7 +276,7 @@ fn unlink_via_sandbox_takes_at_path_for_single_component_file() {
 
 #[test]
 fn unlink_via_sandbox_takes_at_path_for_single_component_dir() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("empty");
     std::fs::create_dir(&path).expect("mkdir");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -303,7 +295,7 @@ fn unlink_via_sandbox_removes_multi_component_end_to_end() {
     // A multi-component path anchors its parent under RESOLVE_BENEATH
     // where supported and falls back to std::fs::remove_file otherwise;
     // in both cases the leaf must be removed end-to-end.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
     std::fs::write(&path, b"x").expect("write");
@@ -320,7 +312,7 @@ fn unlink_via_sandbox_removes_multi_component_end_to_end() {
 
 #[test]
 fn unlink_via_sandbox_falls_back_when_sandbox_absent() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
 
@@ -337,7 +329,7 @@ fn unlink_via_sandbox_falls_back_when_sandbox_absent() {
 fn unlink_via_sandbox_dispatches_rmdir_in_fallback() {
     // Without a sandbox the helper must still pick the correct std
     // call from `UnlinkFlags`: `remove_dir`, not `remove_file`.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/inner");
     std::fs::create_dir(&path).expect("mkdir inner");
@@ -353,7 +345,7 @@ fn unlink_via_sandbox_dispatches_rmdir_in_fallback() {
 
 #[test]
 fn fchmodat_sets_mode_on_regular_file() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("seed perms");
@@ -366,7 +358,7 @@ fn fchmodat_sets_mode_on_regular_file() {
 
 #[test]
 fn fchmodat_reports_enoent_for_missing_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dirfd = secure_open_dir(&root).expect("open root");
     let err = fchmodat(dirfd.as_fd(), OsStr::new("absent"), 0o644, true)
         .expect_err("missing leaf must error");
@@ -378,7 +370,7 @@ fn fchmodat_does_not_follow_symlink_under_nofollow() {
     // SEC-1.i invariant: with AT_SYMLINK_NOFOLLOW the chmod must
     // either no-op on the link itself (Linux: EOPNOTSUPP) or affect
     // only the link; the target's mode must not change.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let target = root.join("target");
     std::fs::write(&target, b"x").expect("write target");
     std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).expect("seed target");
@@ -399,7 +391,7 @@ fn fchmodat_does_not_follow_symlink_under_nofollow() {
 
 #[test]
 fn fchmodat_via_sandbox_takes_at_path_for_single_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("seed perms");
@@ -416,7 +408,7 @@ fn fchmodat_via_sandbox_takes_at_path_for_single_component() {
 
 #[test]
 fn fchmodat_via_sandbox_falls_back_for_multi_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
     std::fs::write(&path, b"x").expect("write");
@@ -434,7 +426,7 @@ fn fchmodat_via_sandbox_falls_back_for_multi_component() {
 
 #[test]
 fn fchmodat_via_sandbox_falls_back_when_sandbox_absent() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("seed perms");
@@ -450,7 +442,7 @@ fn fchmodat_via_sandbox_falls_back_when_sandbox_absent() {
 
 #[test]
 fn secure_chmod_at_changes_mode_on_clean_path() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("seed perms");
@@ -470,7 +462,7 @@ fn secure_chmod_at_refuses_symlinked_parent_leaf() {
     // on the parent `secure_open_dir` is enough to surface ELOOP on
     // every Unix target (Linux 5.6+ additionally rejects any
     // symlink anywhere in the parent path via openat2).
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside");
     let module = root.join("module");
     std::fs::create_dir(&outside).expect("mkdir outside");
@@ -513,7 +505,7 @@ fn secure_chmod_at_dirfd_changes_mode_via_shared_parent() {
     // The metadata-dedup fast path resolves the parent ONCE through
     // `secure_open_dir` and reuses the borrowed dirfd for chmod. Prove the
     // shared-dirfd chmod lands the same mode `secure_chmod_at` would.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("seed perms");
@@ -533,7 +525,7 @@ fn secure_chmod_at_dirfd_does_not_follow_symlinked_leaf() {
     // a symlink swapped in at the LEAF must not be chased to an outside
     // target. The parent dirfd is still the hardened `secure_open_dir`
     // result, so ancestor confinement is unchanged; this pins the leaf guard.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside_target");
     std::fs::write(&outside, b"OUTSIDE").expect("write outside");
     std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o600))
@@ -559,7 +551,7 @@ fn secure_chmod_at_dirfd_does_not_follow_symlinked_leaf() {
 fn secure_utimes_at_dirfd_sets_mtime_via_shared_parent() {
     // The shared-dirfd utimes must land the mtime the per-attribute
     // `secure_utimes_at` would, with a `None` atime slot left untouched.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
 
@@ -584,7 +576,7 @@ fn secure_chown_at_dirfd_neg1_sentinel_is_noop_via_shared_parent() {
     // The (-1, -1) sentinel leaves ownership unchanged; real reowning needs
     // CAP_CHOWN/root which CI lacks. Proves the shared-dirfd chown reaches the
     // libc `fchownat` symbol (fakeroot-visible) without erroring.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let before = std::fs::metadata(&path).expect("stat");
@@ -609,7 +601,7 @@ fn fchownat_no_change_when_uid_gid_are_neg1_sentinel() {
     // Passing the (-1, -1) sentinel must succeed and leave the
     // existing uid/gid unchanged. Exercising real reowning requires
     // CAP_CHOWN / root which CI workers do not have.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let dirfd = secure_open_dir(&root).expect("open root");
@@ -624,7 +616,7 @@ fn fchownat_no_change_when_uid_gid_are_neg1_sentinel() {
 
 #[test]
 fn fchownat_via_sandbox_takes_at_path_for_single_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -646,7 +638,7 @@ fn fchownat_via_sandbox_takes_at_path_for_single_component() {
 
 #[test]
 fn fchownat_via_sandbox_falls_back_for_multi_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
     std::fs::write(&path, b"x").expect("write");
@@ -659,7 +651,7 @@ fn fchownat_via_sandbox_falls_back_for_multi_component() {
 
 #[test]
 fn fchownat_via_sandbox_falls_back_when_sandbox_absent() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
 
@@ -670,7 +662,7 @@ fn fchownat_via_sandbox_falls_back_when_sandbox_absent() {
 
 #[test]
 fn utimensat_sets_atime_and_mtime() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let dirfd = secure_open_dir(&root).expect("open root");
@@ -686,7 +678,7 @@ fn utimensat_sets_atime_and_mtime() {
 
 #[test]
 fn utimensat_reports_enoent_for_missing_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dirfd = secure_open_dir(&root).expect("open root");
     let atime = FileTime::from_unix_time(1, 0);
     let mtime = FileTime::from_unix_time(2, 0);
@@ -697,7 +689,7 @@ fn utimensat_reports_enoent_for_missing_leaf() {
 
 #[test]
 fn utimensat_via_sandbox_takes_at_path_for_single_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -714,7 +706,7 @@ fn utimensat_via_sandbox_takes_at_path_for_single_component() {
 
 #[test]
 fn utimensat_via_sandbox_falls_back_for_multi_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
     std::fs::write(&path, b"x").expect("write");
@@ -732,7 +724,7 @@ fn utimensat_via_sandbox_falls_back_for_multi_component() {
 
 #[test]
 fn utimensat_via_sandbox_falls_back_when_sandbox_absent() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
 
@@ -750,7 +742,7 @@ fn utimensat_via_sandbox_falls_back_when_sandbox_absent() {
 fn utimensat_via_sandbox_symlink_no_follow_preserves_target_mtime() {
     // SEC-1.i invariant: with `follow_symlinks = false` the helper
     // must affect the symlink itself, not the target it points at.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let target = root.join("target");
     std::fs::write(&target, b"x").expect("write target");
     let initial_target_mtime = FileTime::from_unix_time(100, 0);
@@ -783,7 +775,7 @@ fn utimensat_via_sandbox_symlink_no_follow_preserves_target_mtime() {
 
 #[test]
 fn renameat_renames_regular_file_in_same_dir() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let src = root.join("src");
     let dst = root.join("dst");
     std::fs::write(&src, b"payload").expect("write src");
@@ -804,7 +796,7 @@ fn renameat_renames_regular_file_in_same_dir() {
 
 #[test]
 fn renameat_reports_enoent_for_missing_source() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dirfd = secure_open_dir(&root).expect("open root");
     let err = renameat(
         dirfd.as_fd(),
@@ -822,7 +814,7 @@ fn renameat_at_fdcwd_interop() {
     // AT_FDCWD passed via BorrowedFd::borrow_raw must behave like a
     // path-based rename(2). Sanity check: rename inside a tempdir
     // referenced by relative path with the process cwd set there.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let original_cwd = std::env::current_dir().expect("getcwd");
     std::env::set_current_dir(&root).expect("chdir");
     let src_relative = OsStr::new("at_fdcwd_src");
@@ -849,7 +841,7 @@ fn renameat_at_fdcwd_interop() {
 
 #[test]
 fn renameat_across_two_distinct_dirfds() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("from")).expect("mkdir from");
     std::fs::create_dir(root.join("to")).expect("mkdir to");
     std::fs::write(root.join("from").join("file"), b"cross").expect("write");
@@ -874,7 +866,7 @@ fn renameat_across_two_distinct_dirfds() {
 
 #[test]
 fn renameat_via_sandbox_takes_at_path_for_single_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let src = root.join("src");
     let dst = root.join("dst");
     std::fs::write(&src, b"sandboxed").expect("write src");
@@ -905,7 +897,7 @@ fn renameat_via_sandbox_falls_back_for_multi_component_source() {
     // BOTH endpoints resolve their parents, never mixing an anchored and
     // an ambient endpoint. The dest here is single-component, so the
     // helper drops to std::fs::rename regardless of openat2 support.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let src = root.join("sub").join("src");
     let dst = root.join("dst");
@@ -930,7 +922,7 @@ fn renameat_via_sandbox_falls_back_for_multi_component_source() {
 
 #[test]
 fn renameat_via_sandbox_falls_back_when_sandbox_absent() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let src = root.join("src");
     let dst = root.join("dst");
     std::fs::write(&src, b"no-sandbox").expect("write src");
@@ -957,7 +949,7 @@ fn renameat_via_sandbox_falls_back_when_paths_cross_sandbox_boundary() {
     // the single-component-leaf check fails and the helper falls
     // back to std::fs::rename. This is the safety net for callers
     // that pass a mismatched (dest_dir, link_path) pair.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let elsewhere = root.join("elsewhere");
     std::fs::create_dir(&elsewhere).expect("mkdir elsewhere");
     let src = elsewhere.join("src");
@@ -985,7 +977,7 @@ fn renameat_via_sandbox_falls_back_when_paths_cross_sandbox_boundary() {
 
 #[test]
 fn renameat_overwrites_existing_destination_by_default() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let src = root.join("src");
     let dst = root.join("dst");
     std::fs::write(&src, b"new").expect("write src");
@@ -1013,7 +1005,7 @@ fn renameat_noreplace_refuses_existing_destination_on_linux() {
     // and the helper falls back to overwriting; on that path the
     // assertion below would fail, so this test is Linux-only and
     // tolerates the fallback path by accepting overwrite as well.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let src = root.join("src");
     let dst = root.join("dst");
     std::fs::write(&src, b"new").expect("write src");
@@ -1046,7 +1038,7 @@ fn renameat_via_sandbox_succeeds_with_sandbox_secondary_dirs() {
     // Confirm the sandbox path works when the same dest_dir is used
     // for both endpoints (the common receiver case where temp file
     // and final file share a parent).
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let temp = root.join(".final.XXXXXX");
     let final_path = root.join("final");
     std::fs::write(&temp, b"committed").expect("write temp");
@@ -1070,7 +1062,7 @@ fn renameat_via_sandbox_succeeds_with_sandbox_secondary_dirs() {
 
 #[test]
 fn openat_raw_returns_file_for_existing_path() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"hello").expect("write");
     let dirfd = secure_open_dir(&root).expect("open root");
@@ -1085,7 +1077,7 @@ fn openat_raw_returns_file_for_existing_path() {
 
 #[test]
 fn openat_raw_returns_enoent_for_missing_name() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dirfd = secure_open_dir(&root).expect("open root");
 
     let err = openat(dirfd.as_fd(), OsStr::new("absent"), libc::O_RDONLY, 0)
@@ -1095,7 +1087,7 @@ fn openat_raw_returns_enoent_for_missing_name() {
 
 #[test]
 fn openat_via_sandbox_fast_path_succeeds_on_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("created");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
@@ -1138,7 +1130,7 @@ fn openat_via_sandbox_fast_path_succeeds_on_leaf() {
 fn openat_via_sandbox_nofollow_create_lands_payload_at_real_path() {
     use std::io::Write;
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("upload.bin");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
@@ -1179,7 +1171,7 @@ fn openat_via_sandbox_nofollow_create_lands_payload_at_real_path() {
 
 #[test]
 fn openat_via_sandbox_fallback_for_multi_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub").join("created");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -1204,7 +1196,7 @@ fn openat_via_sandbox_fallback_for_multi_component() {
 
 #[test]
 fn openat_via_sandbox_or_fallback_with_no_sandbox() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"present").expect("write");
 
@@ -1219,7 +1211,7 @@ fn openat_via_sandbox_or_fallback_with_no_sandbox() {
 
 #[test]
 fn readlinkat_returns_target_for_symlink() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let target = root.join("target");
     std::fs::write(&target, b"x").expect("write target");
     let link = root.join("link");
@@ -1232,7 +1224,7 @@ fn readlinkat_returns_target_for_symlink() {
 
 #[test]
 fn readlinkat_returns_einval_for_non_symlink() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("file"), b"x").expect("write");
     let dirfd = secure_open_dir(&root).expect("open root");
 
@@ -1242,7 +1234,7 @@ fn readlinkat_returns_einval_for_non_symlink() {
 
 #[test]
 fn readlinkat_via_sandbox_returns_target_for_symlink() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let target = root.join("target");
     std::fs::write(&target, b"x").expect("write target");
     let link = root.join("link");
@@ -1257,7 +1249,7 @@ fn readlinkat_via_sandbox_returns_target_for_symlink() {
 
 #[test]
 fn readlinkat_via_sandbox_returns_einval_for_non_symlink() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("file");
     std::fs::write(&path, b"x").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -1270,7 +1262,7 @@ fn readlinkat_via_sandbox_returns_einval_for_non_symlink() {
 
 #[test]
 fn readlinkat_via_sandbox_falls_back_for_multi_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let target = root.join("sub").join("target");
     std::fs::write(&target, b"x").expect("write target");
@@ -1299,7 +1291,7 @@ fn build_three_deep_tree(root: &Path, leaf: &str) {
 
 #[test]
 fn recursive_unlinkat_removes_three_deep_tree() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     build_three_deep_tree(&root, "tree");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
@@ -1318,7 +1310,7 @@ fn recursive_unlinkat_removes_three_deep_tree() {
 
 #[test]
 fn recursive_unlinkat_treats_missing_root_as_success() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
     let leaf = Path::new("does-not-exist");
@@ -1332,7 +1324,7 @@ fn recursive_unlinkat_refuses_to_follow_symlink_at_descent_root() {
     // SEC-1.s core invariant: a symlink at the descent root must
     // never be dereferenced; the helper must refuse with ELOOP and
     // leave the symlink target intact.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside");
     std::fs::create_dir(&outside).expect("mkdir outside");
     let sentinel = outside.join("sentinel");
@@ -1363,7 +1355,7 @@ fn recursive_unlinkat_unlinks_symlinks_inside_tree_without_following() {
     // Symlinks beneath the descent root must be unlinked as files
     // (their inode goes away) without the helper following them
     // into the link target. We assert the target survives.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside");
     std::fs::create_dir(&outside).expect("mkdir outside");
     let sentinel = outside.join("sentinel");
@@ -1388,7 +1380,7 @@ fn recursive_unlinkat_unlinks_symlinks_inside_tree_without_following() {
 
 #[test]
 fn recursive_unlinkat_fallback_matches_std_remove_dir_all() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     build_three_deep_tree(&root, "sandbox_tree");
     build_three_deep_tree(&root, "control_tree");
 
@@ -1416,7 +1408,7 @@ fn recursive_unlinkat_fallback_treats_missing_root_as_success() {
     // Fallback path mirrors the sandbox path's idempotent-ENOENT
     // policy so callers can rely on a single error contract
     // regardless of which path is taken.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let leaf = Path::new("does-not-exist");
     let target = root.join(leaf);
     recursive_unlinkat_via_sandbox_or_fallback(None, &root, leaf, &target)
@@ -1429,7 +1421,7 @@ fn recursive_unlinkat_removes_multi_component_relative_end_to_end() {
     // RESOLVE_BENEATH where supported and fall back to the path-based
     // walk otherwise; either way the helper must remove the subtree
     // end-to-end while leaving the parent directory intact.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("outer")).expect("mkdir outer");
     let inner = root.join("outer").join("inner");
     std::fs::create_dir(&inner).expect("mkdir inner");
@@ -1448,7 +1440,7 @@ fn recursive_unlinkat_removes_multi_component_relative_end_to_end() {
 fn recursive_unlinkat_propagates_enotdir_for_non_directory_leaf() {
     // A non-directory at the descent root surfaces ENOTDIR
     // verbatim from openat(O_DIRECTORY).
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("not-a-dir");
     std::fs::write(&path, b"hello").expect("write file");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -1470,7 +1462,7 @@ fn recursive_unlinkat_handles_wide_directory() {
     // Exercises the `read_dir_entries` collect loop with enough
     // entries that the `readdir(3)` walk wraps several internal
     // buffer-fill rounds.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let tree = root.join("wide");
     std::fs::create_dir(&tree).expect("mkdir wide");
     for i in 0..256 {
@@ -1485,7 +1477,7 @@ fn recursive_unlinkat_handles_wide_directory() {
 
 #[test]
 fn recursive_unlinkat_via_sandbox_or_fallback_with_no_sandbox_removes_tree() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     build_three_deep_tree(&root, "tree");
     let leaf = Path::new("tree");
     let target = root.join(leaf);
@@ -1515,7 +1507,7 @@ fn recursive_unlinkat_removes_owned_read_only_directory() {
         return;
     }
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let tree = root.join("readonly");
     std::fs::create_dir(&tree).expect("mkdir");
     std::fs::write(tree.join("extraneous"), b"x").expect("write");
@@ -1541,7 +1533,7 @@ fn recursive_unlinkat_removes_nested_owned_read_only_directory() {
         return;
     }
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let tree = root.join("tree");
     let nested = tree.join("readonly-child");
     std::fs::create_dir_all(&nested).expect("mkdir -p");
@@ -1566,7 +1558,7 @@ fn recursive_unlinkat_fallback_removes_owned_read_only_directory() {
         return;
     }
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let tree = root.join("readonly");
     std::fs::create_dir(&tree).expect("mkdir");
     std::fs::write(tree.join("extraneous"), b"x").expect("write");
@@ -1590,7 +1582,7 @@ fn collect_names(outcome: ReadDirOutcome) -> Vec<std::ffi::OsString> {
 
 #[test]
 fn read_dir_via_sandbox_lists_root_when_relative_is_empty() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("a"), b"x").expect("write a");
     std::fs::create_dir(root.join("b")).expect("mkdir b");
     symlink(root.join("a"), root.join("c")).expect("symlink c");
@@ -1610,7 +1602,7 @@ fn read_dir_via_sandbox_lists_root_when_relative_is_empty() {
 
 #[test]
 fn read_dir_via_sandbox_lists_single_component_subdir() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sub = root.join("sub");
     std::fs::create_dir(&sub).expect("mkdir sub");
     std::fs::write(sub.join("file"), b"x").expect("write file");
@@ -1637,7 +1629,7 @@ fn read_dir_via_sandbox_lists_single_component_subdir() {
 
 #[test]
 fn read_dir_via_sandbox_falls_back_for_multi_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let nested = root.join("a/b");
     std::fs::create_dir_all(&nested).expect("mkdir -p");
     std::fs::write(nested.join("leaf"), b"x").expect("write leaf");
@@ -1657,7 +1649,7 @@ fn read_dir_via_sandbox_falls_back_for_multi_component() {
 
 #[test]
 fn read_dir_via_sandbox_falls_back_when_sandbox_absent() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("file"), b"x").expect("write");
 
     let outcome =
@@ -1675,7 +1667,7 @@ fn read_dir_via_sandbox_refuses_symlink_at_leaf() {
     // decide-to-list moment and the syscall, the sandbox-anchored
     // helper must refuse with ELOOP/ENOTDIR rather than redirect the
     // listing to the attacker-chosen tree.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside");
     std::fs::create_dir(&outside).expect("mkdir outside");
     std::fs::write(outside.join("sentinel"), b"do-not-touch").expect("sentinel");
@@ -1695,7 +1687,7 @@ fn read_dir_via_sandbox_refuses_symlink_at_leaf() {
 
 #[test]
 fn read_dir_view_via_sandbox_matches_std_for_subdir_listing() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sub = root.join("sub");
     std::fs::create_dir(&sub).expect("mkdir sub");
     std::fs::write(sub.join("a"), b"a").expect("write a");
@@ -1743,7 +1735,7 @@ fn nested_anchor_live() -> bool {
 fn nested_symlinkat_via_sandbox_creates_under_interior_dir() {
     // Legitimate nested create: `a/b/link` with real interior dirs must
     // succeed and place the symlink exactly under the resolved parent.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
@@ -1767,7 +1759,7 @@ fn nested_symlinkat_via_sandbox_allows_legit_intree_symlink() {
     // RESOLVE_BENEATH must NOT reject an in-tree symlink along the path:
     // `a/blink -> b` (both inside root) is legitimate and the create at
     // `a/blink/link` must resolve through it to `a/b/link`.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
     // In-tree relative symlink a/blink -> b.
     symlink("b", root.join("a/blink")).expect("plant in-tree symlink");
@@ -1790,7 +1782,7 @@ fn nested_symlinkat_via_sandbox_allows_legit_intree_symlink() {
 fn nested_symlinkat_via_sandbox_refuses_interior_symlink_escape() {
     // The keystone security assertion: an interior directory swapped for
     // a symlink pointing OUTSIDE the root must not let the create escape.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside");
     std::fs::create_dir(&outside).expect("mkdir outside");
     std::fs::create_dir(root.join("a")).expect("mkdir a");
@@ -1835,7 +1827,7 @@ fn nested_symlinkat_via_sandbox_refuses_interior_symlink_escape() {
 fn nested_unlinkat_via_sandbox_refuses_interior_symlink_escape() {
     // Deleting `a/evil/victim` where `a/evil -> outside` must not reach
     // the outside file when anchoring is live.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside");
     std::fs::create_dir(&outside).expect("mkdir outside");
     let victim = outside.join("victim");
@@ -1870,7 +1862,7 @@ fn nested_unlinkat_via_sandbox_refuses_interior_symlink_escape() {
 
 #[test]
 fn nested_mkdirat_via_sandbox_creates_under_interior_dir() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
@@ -1899,7 +1891,7 @@ fn fifo_mode() -> u32 {
 fn fifo_via_sandbox_creates_single_component_leaf() {
     use std::os::unix::fs::FileTypeExt;
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
     let rel = Path::new("pipe");
@@ -1925,7 +1917,7 @@ fn fifo_via_sandbox_creates_single_component_leaf() {
 fn nested_fifo_via_sandbox_creates_under_interior_dir() {
     use std::os::unix::fs::FileTypeExt;
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
@@ -1957,7 +1949,7 @@ fn nested_fifo_via_sandbox_creates_under_interior_dir() {
 /// followed and the node appear at the outside target, reddening this test.
 #[test]
 fn nested_fifo_via_sandbox_refuses_interior_symlink_escape() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let outside = root.join("outside");
     std::fs::create_dir(&outside).expect("mkdir outside");
     std::fs::create_dir(root.join("a")).expect("mkdir a");
@@ -2001,7 +1993,7 @@ fn nested_fifo_via_sandbox_refuses_interior_symlink_escape() {
 
 #[test]
 fn nested_lstat_via_sandbox_stats_under_interior_dir() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
     std::fs::write(root.join("a/b/file"), b"hi").expect("write");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -2018,7 +2010,7 @@ fn nested_lstat_via_sandbox_stats_under_interior_dir() {
 
 #[test]
 fn nested_renameat_via_sandbox_commits_under_interior_dir() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
     std::fs::write(root.join("a/b/tmp"), b"payload").expect("write tmp");
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
@@ -2051,7 +2043,7 @@ fn nested_renameat_via_sandbox_commits_under_interior_dir() {
 fn single_component_symlinkat_unchanged_by_nested_path() {
     // Regression guard: the common single-component case must still take
     // the existing fast path and behave byte-identically.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
     let rel = Path::new("link");
@@ -2082,12 +2074,11 @@ fn single_component_symlinkat_unchanged_by_nested_path() {
 /// -> `AT_FDCWD`).
 mod endpoint_provenance {
     use super::super::rename::{ConfinedEndpoint, anchor_confined_endpoint};
-    use super::canonical_tempdir;
     use std::path::Path;
 
     #[test]
     fn an_endpoint_beneath_the_root_takes_the_confined_walk() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         std::fs::create_dir(root.join("sub")).expect("mkdir");
 
         let path = root.join("sub/f");
@@ -2101,8 +2092,8 @@ mod endpoint_provenance {
 
     #[test]
     fn an_absolute_endpoint_outside_the_root_takes_the_ownership_walk() {
-        let (_keep, root) = canonical_tempdir();
-        let (_keep_out, outside) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
+        let (_keep_out, outside) = test_support::create_canonical_tempdir();
 
         let path = outside.join("f0.tmp");
         let endpoint = anchor_confined_endpoint(&root, &path).expect("anchor");
@@ -2116,7 +2107,7 @@ mod endpoint_provenance {
 
     #[test]
     fn a_bare_relative_endpoint_stays_ambient() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
 
         let endpoint = anchor_confined_endpoint(&root, Path::new("f0.tmp")).expect("anchor");
 
@@ -2158,7 +2149,7 @@ mod no_sandbox_tail {
     }
 
     fn fixture() -> Fx {
-        let (keep, temp) = canonical_tempdir();
+        let (keep, temp) = test_support::create_canonical_tempdir();
         let root = temp.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
         let outside = temp.join("outside");
@@ -2269,7 +2260,7 @@ mod no_sandbox_tail {
     /// flags | O_NOFOLLOW, mode)`.
     #[test]
     fn open_tail_honours_o_nofollow_on_the_leaf() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         std::fs::write(root.join("target"), b"TARGET").expect("write target");
         symlink("target", root.join("leaf")).expect("symlink leaf");
         let leaf = root.join("leaf");
@@ -2303,7 +2294,7 @@ mod no_sandbox_tail {
     /// added by either side, so it isolates the flag word itself.
     #[test]
     fn open_tail_honours_o_directory_on_a_regular_file() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let file = root.join("plain");
         std::fs::write(&file, b"BODY").expect("write plain");
         assert_eq!(
@@ -2345,7 +2336,7 @@ mod no_sandbox_tail {
 
     #[test]
     fn daemon_session_refuses_an_escaping_unlink() {
-        let (keep, temp) = canonical_tempdir();
+        let (keep, temp) = test_support::create_canonical_tempdir();
         let root = temp.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
         let outside = temp.join("outside");
@@ -2411,7 +2402,7 @@ mod held_parent {
 
     /// `root/a/b` plus an `outside` directory beside the root.
     fn tree() -> (tempfile::TempDir, PathBuf, PathBuf) {
-        let (keep, base) = canonical_tempdir();
+        let (keep, base) = test_support::create_canonical_tempdir();
         let root = base.join("root");
         std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
         let outside = base.join("outside");

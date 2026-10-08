@@ -25,7 +25,6 @@
 use metadata::nfsv4_acl::{
     AccessMask, AceFlags, AceType, Nfs4Ace, Nfs4Acl, get_nfsv4_acl, set_nfsv4_acl,
 };
-use tempfile::tempdir;
 
 fn sample_acl() -> Nfs4Acl {
     Nfs4Acl {
@@ -44,7 +43,7 @@ fn sample_acl() -> Nfs4Acl {
 /// ACL the user asked to preserve.
 #[test]
 fn applying_nfsv4_acl_on_unsupported_fs_surfaces_error_not_silent_success() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("f");
     std::fs::write(&file, b"x").expect("write file");
 
@@ -68,7 +67,7 @@ fn applying_nfsv4_acl_on_unsupported_fs_surfaces_error_not_silent_success() {
 /// never spuriously fails the ACL read.
 #[test]
 fn reading_nfsv4_acl_on_unsupported_fs_is_a_silent_absence() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("f");
     std::fs::write(&file, b"x").expect("write file");
 
@@ -94,7 +93,7 @@ fn reading_nfsv4_acl_on_unsupported_fs_is_a_silent_absence() {
 /// to it - is explicit and reviewed, not silent.
 #[test]
 fn clearing_nfsv4_acl_on_unsupported_fs_currently_surfaces_eopnotsupp() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("f");
     std::fs::write(&file, b"x").expect("write file");
 

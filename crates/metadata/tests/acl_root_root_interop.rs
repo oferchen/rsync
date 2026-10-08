@@ -205,7 +205,7 @@ struct Scratch {
 impl Scratch {
     fn try_new() -> io::Result<Self> {
         let dir = tempfile::Builder::new()
-            .prefix("oc_rsync_acl_root_interop_")
+            .prefix(&format!("{}acl_root_interop_", test_support::temp_prefix()))
             .tempdir()?;
         let src = dir.path().join("src");
         let dst = dir.path().join("dst");

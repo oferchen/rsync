@@ -3,12 +3,10 @@ use super::*;
 
 #[test]
 fn transfer_request_with_apple_double_skip_excludes_dot_underscore_files() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -41,12 +39,10 @@ fn transfer_request_with_apple_double_skip_excludes_dot_underscore_files() {
 
 #[test]
 fn transfer_request_without_apple_double_skip_includes_dot_underscore_files() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");

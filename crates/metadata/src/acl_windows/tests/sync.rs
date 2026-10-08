@@ -1,13 +1,12 @@
 //! Tests for the cross-platform `sync_acls` integration.
 
 use std::fs::File;
-use tempfile::tempdir;
 
 use crate::acl_windows::sync::sync_acls;
 
 #[test]
 fn sync_acls_skips_when_not_following_symlinks() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     let dst = dir.path().join("dst");
     File::create(&src).expect("src");
@@ -18,7 +17,7 @@ fn sync_acls_skips_when_not_following_symlinks() {
 
 #[test]
 fn sync_acls_returns_not_found_for_missing_source() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("missing");
     let dst = dir.path().join("dst");
     File::create(&dst).expect("dst");
@@ -29,7 +28,7 @@ fn sync_acls_returns_not_found_for_missing_source() {
 #[cfg(windows)]
 #[test]
 fn sync_acls_round_trips_on_ntfs() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     let dst = dir.path().join("dst");
     File::create(&src).expect("src");
@@ -46,7 +45,7 @@ fn sync_acls_round_trips_on_ntfs() {
 fn sync_acls_prefers_sddl_round_trip() {
     use crate::acl_windows::sddl::{read_dacl_sddl, write_dacl_sddl};
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     let dst = dir.path().join("dst");
     File::create(&src).expect("src");

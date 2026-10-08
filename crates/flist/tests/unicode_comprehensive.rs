@@ -75,7 +75,7 @@ fn create_dir(dir: &Path, name: &str) {
 /// - Linux ext4/btrfs: Preserves byte sequences exactly
 #[test]
 fn normalization_nfc_vs_nfd() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("normalization");
     fs::create_dir(&root).expect("create root");
 
@@ -109,7 +109,7 @@ fn normalization_nfc_vs_nfd() {
 /// Tests multiple combining character scenarios.
 #[test]
 fn multiple_combining_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("combining");
     fs::create_dir(&root).expect("create root");
 
@@ -143,7 +143,7 @@ fn multiple_combining_characters() {
 /// Tests Korean Hangul composition (Jamo to Syllables).
 #[test]
 fn korean_hangul_composition() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("hangul");
     fs::create_dir(&root).expect("create root");
 
@@ -166,7 +166,7 @@ fn korean_hangul_composition() {
 /// Tests invisible Unicode characters.
 #[test]
 fn invisible_unicode_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("invisible");
     fs::create_dir(&root).expect("create root");
 
@@ -199,7 +199,7 @@ fn invisible_unicode_characters() {
 /// Tests invisible characters at different positions.
 #[test]
 fn invisible_at_positions() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("invisible_pos");
     fs::create_dir(&root).expect("create root");
 
@@ -228,7 +228,7 @@ fn invisible_at_positions() {
 /// Tests sorting of visually similar characters from different scripts.
 #[test]
 fn sorting_cross_script_homoglyphs() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("homoglyphs");
     fs::create_dir(&root).expect("create root");
 
@@ -263,7 +263,7 @@ fn sorting_cross_script_homoglyphs() {
 /// Tests sorting of different byte lengths.
 #[test]
 fn sorting_by_byte_length() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("bytelength");
     fs::create_dir(&root).expect("create root");
 
@@ -290,7 +290,7 @@ fn sorting_by_byte_length() {
 /// Tests sorting of supplementary plane characters.
 #[test]
 fn sorting_supplementary_plane() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("smp");
     fs::create_dir(&root).expect("create root");
 
@@ -319,7 +319,7 @@ fn sorting_supplementary_plane() {
 /// Tests near-maximum filename length with multi-byte characters.
 #[test]
 fn maximum_length_multibyte() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("maxlen_mb");
     fs::create_dir(&root).expect("create root");
 
@@ -358,7 +358,7 @@ fn maximum_length_multibyte() {
 /// Tests very deep nested Unicode paths.
 #[test]
 fn deeply_nested_unicode_path() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep_unicode");
     fs::create_dir(&root).expect("create root");
 
@@ -402,7 +402,7 @@ fn deeply_nested_unicode_path() {
 /// Tests Unicode at the start of filename.
 #[test]
 fn unicode_at_start() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("unicode_start");
     fs::create_dir(&root).expect("create root");
 
@@ -426,7 +426,7 @@ fn unicode_at_start() {
 /// Tests Unicode at the end of filename (before extension).
 #[test]
 fn unicode_at_end() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("unicode_end");
     fs::create_dir(&root).expect("create root");
 
@@ -450,7 +450,7 @@ fn unicode_at_end() {
 /// Tests Unicode in file extension.
 #[test]
 fn unicode_in_extension() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("unicode_ext");
     fs::create_dir(&root).expect("create root");
 
@@ -473,7 +473,7 @@ fn unicode_in_extension() {
 /// Tests Private Use Area characters.
 #[test]
 fn private_use_area() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("pua");
     fs::create_dir(&root).expect("create root");
 
@@ -502,7 +502,7 @@ fn private_use_area() {
 /// Tests Unicode boundary code points.
 #[test]
 fn unicode_boundaries() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("boundaries");
     fs::create_dir(&root).expect("create root");
 
@@ -533,7 +533,7 @@ fn unicode_boundaries() {
 /// Tests replacement character handling.
 #[test]
 fn replacement_character() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("replacement");
     fs::create_dir(&root).expect("create root");
 
@@ -550,7 +550,7 @@ fn replacement_character() {
 /// Tests various Unicode whitespace characters.
 #[test]
 fn unicode_whitespace_variants() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("whitespace");
     fs::create_dir(&root).expect("create root");
 
@@ -589,7 +589,7 @@ fn unicode_whitespace_variants() {
 /// Tests Unicode bidirectional control characters.
 #[test]
 fn bidirectional_control_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("bidi_control");
     fs::create_dir(&root).expect("create root");
 
@@ -624,7 +624,7 @@ fn bidirectional_control_characters() {
 /// Tests Thai script with tone marks.
 #[test]
 fn thai_script() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("thai");
     fs::create_dir(&root).expect("create root");
 
@@ -646,7 +646,7 @@ fn thai_script() {
 /// Tests Devanagari script with conjuncts.
 #[test]
 fn devanagari_script() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("devanagari");
     fs::create_dir(&root).expect("create root");
 
@@ -668,7 +668,7 @@ fn devanagari_script() {
 /// Tests Tamil script.
 #[test]
 fn tamil_script() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tamil");
     fs::create_dir(&root).expect("create root");
 
@@ -689,7 +689,7 @@ fn tamil_script() {
 /// Tests Georgian script.
 #[test]
 fn georgian_script() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("georgian");
     fs::create_dir(&root).expect("create root");
 
@@ -710,7 +710,7 @@ fn georgian_script() {
 /// Tests Armenian script.
 #[test]
 fn armenian_script() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("armenian");
     fs::create_dir(&root).expect("create root");
 
@@ -732,7 +732,7 @@ fn armenian_script() {
 #[cfg(unix)]
 #[test]
 fn invalid_utf8_sequences() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("invalid_utf8");
     fs::create_dir(&root).expect("create root");
 
@@ -778,7 +778,7 @@ fn invalid_utf8_sequences() {
 #[cfg(unix)]
 #[test]
 fn mixed_valid_invalid_utf8() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed_utf8");
     fs::create_dir(&root).expect("create root");
 
@@ -804,7 +804,7 @@ fn mixed_valid_invalid_utf8() {
 /// Stress test with many Unicode files.
 #[test]
 fn stress_many_unicode_files() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("stress_unicode");
     fs::create_dir(&root).expect("create root");
 
@@ -833,7 +833,7 @@ fn stress_many_unicode_files() {
 /// Stress test with diverse character set.
 #[test]
 fn stress_character_diversity() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("stress_diverse");
     fs::create_dir(&root).expect("create root");
 

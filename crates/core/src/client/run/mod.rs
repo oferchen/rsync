@@ -1282,8 +1282,6 @@ mod cow_policy_wiring_tests {
 mod run_client_tests {
     use std::fs;
 
-    use tempfile::tempdir;
-
     use super::run_client;
     use crate::client::config::{ClientConfig, FilterRuleSpec};
 
@@ -1377,7 +1375,7 @@ mod run_client_tests {
     fn run_client_update_skips_newer_destination() {
         use filetime::{FileTime, set_file_times};
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source = tmp.path().join("source-update.txt");
         let destination = tmp.path().join("dest-update.txt");
         fs::write(&source, b"fresh").expect("write source");
@@ -1409,7 +1407,7 @@ mod run_client_tests {
 
     #[test]
     fn run_client_respects_filter_rules() {
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source_root = tmp.path().join("source");
         let dest_root = tmp.path().join("dest");
         fs::create_dir_all(&source_root).expect("create source root");
@@ -1431,7 +1429,7 @@ mod run_client_tests {
 
     #[test]
     fn run_client_filter_clear_resets_previous_rules() {
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source_root = tmp.path().join("source");
         let dest_root = tmp.path().join("dest");
         fs::create_dir_all(&source_root).expect("create source root");
@@ -1463,7 +1461,7 @@ mod run_client_tests {
 
         use crate::client::{ClientEntryMetadata, ClientEventKind};
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let target_file = tmp.path().join("target.txt");
         fs::write(&target_file, b"symlink target").expect("write target");
 
@@ -1501,7 +1499,7 @@ mod run_client_tests {
         use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source = tmp.path().join("source-metadata.txt");
         let destination = tmp.path().join("dest-metadata.txt");
         fs::write(&source, b"metadata").expect("write source");
@@ -1545,7 +1543,7 @@ mod run_client_tests {
         use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source_dir = tmp.path().join("source-dir");
         fs::create_dir(&source_dir).expect("create source dir");
 
@@ -1586,7 +1584,7 @@ mod run_client_tests {
         use filetime::{FileTime, set_file_times};
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source_dir = tmp.path().join("source-tree");
         let source_nested = source_dir.join("nested");
         fs::create_dir_all(&source_nested).expect("create source tree");
@@ -1644,7 +1642,7 @@ mod run_client_tests {
         use std::io::{Seek, SeekFrom, Write};
         use std::os::unix::fs::MetadataExt;
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source = tmp.path().join("sparse-source.bin");
         let mut source_file = fs::File::create(&source).expect("create source");
         source_file.write_all(&[0x11]).expect("write leading");
@@ -1705,7 +1703,7 @@ mod run_client_tests {
 
     #[test]
     fn run_client_merges_directory_contents_when_trailing_separator_present() {
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let source_root = tmp.path().join("source");
         let nested = source_root.join("nested");
         fs::create_dir_all(&nested).expect("create nested");
@@ -1738,7 +1736,7 @@ mod run_client_tests {
 
         use filetime::{FileTime, set_file_times};
 
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("source.txt");
         let destination = temp.path().join("destination.txt");
         fs::write(&source, b"newdata").expect("write source");
@@ -1965,7 +1963,7 @@ mod temp_dir_anchor_tests {
     const STAGE: &str = "oc-temp-dir-anchor-stage";
 
     fn tree_with_stage_under(dest_stage: bool) -> TempDir {
-        let base = TempDir::new().expect("tempdir");
+        let base = test_support::create_tempdir();
         let src = base.path().join("src");
         let dest = base.path().join("dest");
         fs::create_dir(&src).expect("src");
@@ -2026,7 +2024,7 @@ mod temp_dir_anchor_tests {
 
     #[test]
     fn working_directory_is_the_destination_when_it_is_a_directory() {
-        let base = TempDir::new().expect("tempdir");
+        let base = test_support::create_tempdir();
         let dest = base.path().join("dest");
         fs::create_dir(&dest).expect("dest");
         assert_eq!(receiver_working_directory(&dest), dest);
@@ -2035,7 +2033,7 @@ mod temp_dir_anchor_tests {
     /// upstream main.c:865 chdirs to the parent when a single file is written.
     #[test]
     fn working_directory_is_the_parent_for_a_file_destination() {
-        let base = TempDir::new().expect("tempdir");
+        let base = test_support::create_tempdir();
         let dest = base.path().join("dest");
         fs::create_dir(&dest).expect("dest");
         let file = dest.join("f0");
@@ -2047,7 +2045,7 @@ mod temp_dir_anchor_tests {
     /// creates it and chdirs in (main.c:817-836).
     #[test]
     fn working_directory_honours_a_trailing_separator_on_a_missing_directory() {
-        let base = TempDir::new().expect("tempdir");
+        let base = test_support::create_tempdir();
         let absent = base.path().join("not-yet").join("");
         assert_eq!(receiver_working_directory(&absent), absent);
     }

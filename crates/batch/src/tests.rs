@@ -7,12 +7,11 @@ mod integration {
     use crate::writer::BatchWriter;
     use crate::{BatchConfig, BatchMode};
     use std::fs;
-    use tempfile::TempDir;
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn test_batch_roundtrip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("roundtrip.batch");
 
         let write_config = BatchConfig::new(
@@ -57,7 +56,7 @@ mod integration {
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn test_batch_protocol_28() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("protocol28.batch");
 
         let config = BatchConfig::new(
@@ -94,7 +93,7 @@ mod integration {
     /// this build speaks 33, so it must replay it rather than refuse it.
     #[test]
     fn read_header_accepts_protocol_33_batch() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("proto33.batch");
 
         let write_config = BatchConfig::new(
@@ -122,7 +121,7 @@ mod integration {
         // client that supports at most protocol 33, rather than silently
         // adopting an unsupported protocol and replaying it wrong.
         // upstream: compat.c:609-613 "protocol version in the batch file is too new".
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("too_new.batch");
 
         let write_config = BatchConfig::new(
@@ -149,7 +148,7 @@ mod integration {
 
     #[test]
     fn test_batch_empty_data() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("empty.batch");
 
         let config = BatchConfig::new(
@@ -178,7 +177,7 @@ mod integration {
 
     #[test]
     fn test_batch_large_data() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("large.batch");
 
         let config = BatchConfig::new(
@@ -246,7 +245,7 @@ mod integration {
 
     #[test]
     fn test_batch_header_and_file_entries_roundtrip() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("full_roundtrip.batch");
 
         let protocol_version = 31;
@@ -375,7 +374,7 @@ mod integration {
 
     #[test]
     fn test_batch_header_and_stats_roundtrip_protocol_28() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("proto28_roundtrip.batch");
 
         let protocol_version = 28;
@@ -452,7 +451,7 @@ mod integration {
 
     #[test]
     fn test_batch_file_corruption() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("corrupt.batch");
 
         fs::write(&batch_path, b"CORRUPT").unwrap();
@@ -475,7 +474,7 @@ mod integration {
     fn test_protocol_flist_roundtrip() {
         use protocol::flist::{FileEntry, FileListWriter};
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("flist_roundtrip.batch");
 
         let protocol_version = 31;
@@ -601,7 +600,7 @@ mod integration {
     fn test_protocol_flist_roundtrip_with_devices() {
         use protocol::flist::{FileEntry, FileListWriter};
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("devices.batch");
 
         let protocol_version = 31;
@@ -665,7 +664,7 @@ mod integration {
     fn test_protocol_flist_roundtrip_with_always_checksum() {
         use protocol::flist::{FileEntry, FileListWriter};
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("checksum_roundtrip.batch");
 
         let protocol_version = 31;
@@ -765,7 +764,7 @@ mod integration {
     fn test_io_error_zero_after_clean_flist() {
         use protocol::flist::{FileEntry, FileListWriter};
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("io_error.batch");
         let protocol_version = 31;
 
@@ -811,7 +810,7 @@ mod integration {
     fn test_replay_with_token_deltas() {
         use protocol::flist::{FileEntry, FileListWriter};
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_test.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -929,7 +928,7 @@ mod integration {
     /// re-encode what it is given.
     #[test]
     fn test_batch_roundtrip_with_compression_flag() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("compress_flag.batch");
 
         let write_config = BatchConfig::new(
@@ -1001,7 +1000,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_delta_z.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -1135,7 +1134,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_compress.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -1247,7 +1246,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_zstd.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -1365,7 +1364,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_multi_z.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -1505,7 +1504,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_multi_delta_z.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -1684,7 +1683,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_mixed_z.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -1857,7 +1856,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use protocol::wire::CompressedTokenEncoder;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("replay_zlib_no_basis.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();
@@ -1977,7 +1976,7 @@ mod integration {
         use protocol::flist::{FileEntry, FileListWriter};
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("symlink_meta.batch");
         let dest_dir = temp_dir.path().join("dest");
         fs::create_dir_all(&dest_dir).unwrap();

@@ -9,7 +9,6 @@ use crate::IoUringPolicy;
 use crate::io_uring_common::IoBackend;
 use crate::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
 use std::io::{self, Read, Write};
-use tempfile::{NamedTempFile, tempdir};
 
 #[test]
 fn io_uring_unavailable_on_stub_platform() {
@@ -127,7 +126,7 @@ fn config_has_register_buffers_fields() {
 
 #[test]
 fn policy_disabled_writer_uses_std() {
-    let mut tmp = NamedTempFile::new().unwrap();
+    let mut tmp = test_support::create_named_tempfile();
     tmp.write_all(b"").unwrap();
     let file = tmp.reopen().unwrap();
 
@@ -137,7 +136,7 @@ fn policy_disabled_writer_uses_std() {
 
 #[test]
 fn policy_disabled_reader_uses_std() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("disabled_reader.txt");
     std::fs::write(&path, b"hello").unwrap();
 
@@ -147,7 +146,7 @@ fn policy_disabled_reader_uses_std() {
 
 #[test]
 fn policy_auto_falls_back_to_std_writer() {
-    let mut tmp = NamedTempFile::new().unwrap();
+    let mut tmp = test_support::create_named_tempfile();
     tmp.write_all(b"").unwrap();
     let file = tmp.reopen().unwrap();
 
@@ -157,7 +156,7 @@ fn policy_auto_falls_back_to_std_writer() {
 
 #[test]
 fn policy_auto_falls_back_to_std_reader() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("auto_reader.txt");
     std::fs::write(&path, b"world").unwrap();
 
@@ -167,7 +166,7 @@ fn policy_auto_falls_back_to_std_reader() {
 
 #[test]
 fn policy_enabled_writer_returns_error() {
-    let tmp = NamedTempFile::new().unwrap();
+    let tmp = test_support::create_named_tempfile();
     let file = tmp.reopen().unwrap();
 
     let result = writer_from_file(file, 8192, IoUringPolicy::Enabled);
@@ -179,7 +178,7 @@ fn policy_enabled_writer_returns_error() {
 
 #[test]
 fn policy_enabled_reader_returns_error() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("enabled_reader.txt");
     std::fs::write(&path, b"data").unwrap();
 
@@ -194,7 +193,7 @@ fn policy_enabled_reader_returns_error() {
 fn writer_parity_disabled_vs_auto() {
     let test_data: Vec<u8> = (0..4096).map(|i| ((i * 7 + 13) % 256) as u8).collect();
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path_disabled = dir.path().join("parity_disabled.bin");
     {
         let file = std::fs::File::create(&path_disabled).unwrap();
@@ -221,7 +220,7 @@ fn writer_parity_disabled_vs_auto() {
 
 #[test]
 fn reader_parity_disabled_vs_auto() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("parity_read.bin");
     let test_data: Vec<u8> = (0..8192).map(|i| ((i * 11 + 3) % 256) as u8).collect();
     std::fs::write(&path, &test_data).unwrap();
@@ -239,7 +238,7 @@ fn reader_parity_disabled_vs_auto() {
 
 #[test]
 fn writer_bytes_written_tracking() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("bytes_tracking.bin");
     let file = std::fs::File::create(&path).unwrap();
     let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
@@ -255,7 +254,7 @@ fn writer_bytes_written_tracking() {
 
 #[test]
 fn reader_size_and_position_tracking() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("position_tracking.bin");
     let data = b"abcdefghijklmnop";
     std::fs::write(&path, data).unwrap();
@@ -272,7 +271,7 @@ fn reader_size_and_position_tracking() {
 
 #[test]
 fn write_then_read_roundtrip_via_policy() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("roundtrip.bin");
     let test_data: Vec<u8> = (0..65536).map(|i| ((i * 17 + 5) % 256) as u8).collect();
 
@@ -292,7 +291,7 @@ fn write_then_read_roundtrip_via_policy() {
 
 #[test]
 fn factory_reader_forced_fallback_produces_std() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("factory_fallback.txt");
     std::fs::write(&path, b"factory test").unwrap();
 
@@ -305,7 +304,7 @@ fn factory_reader_forced_fallback_produces_std() {
 
 #[test]
 fn factory_writer_forced_fallback_produces_std() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("factory_fallback_write.txt");
 
     let factory = IoUringWriterFactory::default().force_fallback(true);

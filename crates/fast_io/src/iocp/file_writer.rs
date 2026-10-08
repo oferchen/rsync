@@ -368,11 +368,10 @@ unsafe impl Send for IocpWriter {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn create_and_write_small_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("small.txt");
 
         let config = IocpConfig::default();
@@ -389,7 +388,7 @@ mod tests {
 
     #[test]
     fn write_empty_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("empty.bin");
 
         let config = IocpConfig::default();
@@ -405,7 +404,7 @@ mod tests {
 
     #[test]
     fn write_large_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large.bin");
         let data: Vec<u8> = (0..256 * 1024).map(|i| (i % 256) as u8).collect();
 
@@ -422,7 +421,7 @@ mod tests {
 
     #[test]
     fn write_with_multiple_flushes() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("multi_flush.txt");
 
         let config = IocpConfig::default();
@@ -441,7 +440,7 @@ mod tests {
 
     #[test]
     fn sync_persists_data() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("sync.txt");
 
         let config = IocpConfig::default();
@@ -457,7 +456,7 @@ mod tests {
 
     #[test]
     fn create_with_size_preallocates() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("prealloc.bin");
 
         let config = IocpConfig::default();

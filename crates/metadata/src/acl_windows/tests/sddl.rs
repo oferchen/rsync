@@ -9,8 +9,6 @@ use windows::Win32::Storage::FileSystem::{FILE_GENERIC_READ, FILE_GENERIC_WRITE}
 
 #[cfg(windows)]
 use std::fs::File;
-#[cfg(windows)]
-use tempfile::tempdir;
 
 #[test]
 fn sddl_rights_decode_two_letter_tokens() {
@@ -73,7 +71,7 @@ fn parse_aces_skips_malformed_entries() {
 fn read_dacl_sddl_returns_non_empty_for_temp_file() {
     use crate::acl_windows::sddl::read_dacl_sddl;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let sddl = read_dacl_sddl(&file).expect("read sddl");
@@ -86,7 +84,7 @@ fn read_dacl_sddl_returns_non_empty_for_temp_file() {
 fn write_dacl_sddl_round_trips_known_descriptor() {
     use crate::acl_windows::sddl::{read_dacl_sddl, write_dacl_sddl};
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
 
@@ -118,7 +116,7 @@ fn write_dacl_sddl_round_trips_known_descriptor() {
 fn write_dacl_sddl_preserves_owner_and_group() {
     use crate::acl_windows::sddl::{read_dacl_sddl, write_dacl_sddl};
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
 
@@ -133,7 +131,7 @@ fn write_dacl_sddl_preserves_owner_and_group() {
 fn write_dacl_sddl_rejects_invalid_input() {
     use crate::acl_windows::sddl::write_dacl_sddl;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let result = write_dacl_sddl(&file, "not-a-sddl-string");

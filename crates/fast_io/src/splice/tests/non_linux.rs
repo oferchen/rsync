@@ -38,13 +38,12 @@ mod unix_fallback_tests {
     use super::super::super::syscalls::copy_fd_to_fd;
     use super::super::super::*;
     use std::io::{Read, Seek, SeekFrom};
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_recv_fd_to_file_uses_fallback() {
         // On non-Linux unix, recv_fd_to_file uses the read/write fallback.
         let content = b"Testing recv_fd_to_file fallback on non-Linux unix";
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
 
         let mut socket_fds = [0i32; 2];
         // SAFETY: `socket_fds`/`fds` provides the two-int output slot the
@@ -91,7 +90,7 @@ mod unix_fallback_tests {
     fn test_copy_fd_to_fd_on_non_linux() {
         // Direct test of the fallback path on macOS/BSD.
         let content = b"Fallback path direct test on non-Linux unix";
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
 
         let mut socket_fds = [0i32; 2];
         // SAFETY: `socket_fds`/`fds` provides the two-int output slot the

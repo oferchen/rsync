@@ -3,12 +3,10 @@ use super::*;
 
 #[test]
 fn skip_compress_env_variable_enables_list() {
-    use tempfile::tempdir;
-
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new("gz"));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("archive.gz");
     let destination = tmp.path().join("dest.gz");
     std::fs::write(&source, b"payload").expect("write source");
@@ -28,12 +26,10 @@ fn skip_compress_env_variable_enables_list() {
 
 #[test]
 fn skip_compress_invalid_env_reports_error() {
-    use tempfile::tempdir;
-
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new("["));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("file.txt");
     let destination = tmp.path().join("dest.txt");
     std::fs::write(&source, b"payload").expect("write source");
@@ -126,9 +122,7 @@ fn skip_compress_invalid_reports_error() {
 
 #[test]
 fn compress_flag_is_accepted_for_local_copies() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("compress.txt");
     let destination = tmp.path().join("compress.out");
     std::fs::write(&source, b"compressed").expect("write source");
@@ -151,10 +145,8 @@ fn compress_flag_is_accepted_for_local_copies() {
 
 #[test]
 fn compress_level_flag_is_accepted_for_local_copies() {
-    use tempfile::tempdir;
-
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("compress.txt");
     let destination = tmp.path().join("compress.out");
     std::fs::write(&source, b"payload").expect("write source");
@@ -177,10 +169,8 @@ fn compress_level_flag_is_accepted_for_local_copies() {
 
 #[test]
 fn compress_level_zero_disables_local_compression() {
-    use tempfile::tempdir;
-
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("compress.txt");
     let destination = tmp.path().join("compress.out");
     std::fs::write(&source, b"payload").expect("write source");

@@ -28,7 +28,7 @@ use tempfile::TempDir;
 /// Builds `root/{top,bar,sub/{bar,keep,deeper/bar}}` plus `sub/.filt` holding
 /// `body`, and returns a chain rooted at `root` with one dir-merge config.
 fn chain_for(body: &str, anchor_root: bool) -> (TempDir, FilterChain) {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     let sub = root.path().join("sub");
     fs::create_dir_all(sub.join("deeper")).expect("mkdir");
     for rel in ["top", "bar", "sub/bar", "sub/keep", "sub/deeper/bar"] {
@@ -169,7 +169,7 @@ fn plain_dir_merge_leaves_a_slash_free_pattern_alone() {
 /// fix that removes the anchor rewrite must remove ONLY that.
 #[test]
 fn abs_path_modifier_composes_with_the_side_and_perishable_modifiers() {
-    let (root, mut chain) = TempDir::new()
+    let (root, mut chain) = Some(test_support::create_tempdir())
         .map(|root| {
             let sub = root.path().join("sub");
             fs::create_dir_all(&sub).expect("mkdir");

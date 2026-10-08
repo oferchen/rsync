@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_files_from_copies_listed_sources() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     std::fs::create_dir(&source_dir).expect("create source dir");
     std::fs::write(source_dir.join("files-from-a.txt"), b"files-from-a").expect("write source a");
@@ -42,9 +40,7 @@ fn transfer_request_with_files_from_copies_listed_sources() {
 
 #[test]
 fn transfer_request_with_files_from_skips_comment_lines() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     std::fs::create_dir(&source_dir).expect("create source dir");
     std::fs::write(source_dir.join("comment-a.txt"), b"comment-a").expect("write source a");

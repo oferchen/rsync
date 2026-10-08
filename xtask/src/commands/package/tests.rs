@@ -280,7 +280,7 @@ fn tarball_resolution_skips_targets_without_cross_tooling() {
 }
 
 fn fake_rpmbuild_path() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().expect("create temp directory for fake rpmbuild");
+    let dir = test_support::create_tempdir();
     let rpmbuild_name = if cfg!(windows) {
         "rpmbuild.cmd"
     } else {
@@ -312,7 +312,7 @@ fn fake_rpmbuild_path() -> (tempfile::TempDir, PathBuf) {
 
 #[cfg(all(test, target_os = "linux"))]
 fn fake_tool(name: &str) -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().expect("create temp directory for fake tool");
+    let dir = test_support::create_tempdir();
     let file_name = if cfg!(windows) {
         format!("{name}.cmd")
     } else {

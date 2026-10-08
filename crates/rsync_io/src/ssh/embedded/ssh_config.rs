@@ -2806,7 +2806,7 @@ mod tests {
     /// placeholder - the path really is threaded through.
     #[test]
     fn a_refusal_names_the_file_it_came_from() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("ssh_config");
         std::fs::write(&path, "Host a \"\" b\n").expect("write fixture");
         let err = resolve_host(&path, "a").expect_err("refused");
@@ -2989,7 +2989,7 @@ mod tests {
     /// (openssh/readconf.c:1229 over openssh/ssh.c:571-589).
     #[test]
     fn user_file_claims_scalar_slots_before_the_system_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let user = fixture_file(&dir, "user", "Host t\n  Port 1111\n  User first\n", false);
         let system = fixture_file(
             &dir,
@@ -3010,7 +3010,7 @@ mod tests {
     /// (openssh/readconf.c:1394 `add_identity_file` has no unset test).
     #[test]
     fn identity_files_accumulate_across_both_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let user = fixture_file(&dir, "user", "Host t\n  IdentityFile /user/key\n", false);
         let system = fixture_file(
             &dir,
@@ -3029,7 +3029,7 @@ mod tests {
     /// (openssh/ssh.c:580-589 discards the default reads' results).
     #[test]
     fn a_missing_user_file_still_reaches_the_system_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let user = ConfigFile {
             path: dir.path().join("nonexistent"),
             check_perm: true,
@@ -3046,7 +3046,7 @@ mod tests {
     /// (openssh/readconf.c:2667 fatals before the second read).
     #[test]
     fn a_refused_user_file_stops_before_the_system_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let user = fixture_file(&dir, "user", "Host \"broken\n", false);
         let system = fixture_file(&dir, "system", "ok line\nHost \"broken\n", false);
         let err = resolve_host_files(&[user.clone(), system], "t").expect_err("refused");
@@ -3065,7 +3065,7 @@ mod tests {
     #[test]
     fn checkperm_refuses_the_default_user_file_but_not_an_explicit_one() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let mut file = fixture_file(&dir, "config", "Host t\n  Port 2222\n", true);
         std::fs::set_permissions(&file.path, std::fs::Permissions::from_mode(0o666))
             .expect("chmod");
@@ -3121,7 +3121,7 @@ mod tests {
     /// the current (active) block state.
     #[test]
     fn absolute_include_pulls_in_a_scalar() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let snippet = write_at(
             dir.path().join("snippet"),
             "Host t\n  HostName inc.example\n",
@@ -3138,7 +3138,7 @@ mod tests {
     /// which files exist.
     #[test]
     fn glob_include_reads_matches_in_sorted_order() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let inc = dir.path().join("inc");
         write_at(inc.join("01.conf"), "Host *\n  User first\n");
         write_at(inc.join("02.conf"), "Host *\n  User second\n");
@@ -3165,7 +3165,7 @@ mod tests {
     /// kind reads its own.
     #[test]
     fn relative_include_anchors_by_config_kind() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let anchors = anchors_under(&dir);
         write_at(
             anchors.user_dir.clone().unwrap().join("inc.conf"),
@@ -3204,7 +3204,7 @@ mod tests {
     /// (openssh/readconf.c:2095-2098).
     #[test]
     fn tilde_include_is_user_only() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let anchors = anchors_under(&dir);
         write_at(
             anchors.home.clone().unwrap().join("inc.conf"),
@@ -3238,7 +3238,7 @@ mod tests {
     /// proves the resolve was otherwise live.
     #[test]
     fn missing_glob_is_tolerated() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let present = write_at(dir.path().join("present"), "Host t\n  Port 7\n");
         let top = include_top(
             &dir,
@@ -3261,7 +3261,7 @@ mod tests {
     #[test]
     fn present_include_failing_the_perm_check_is_fatal() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let snippet = write_at(dir.path().join("snippet"), "Host t\n  Port 9\n");
         std::fs::set_permissions(&snippet, std::fs::Permissions::from_mode(0o666)).expect("chmod");
         let top = include_top(&dir, &format!("Include {}\n", snippet.display()), true);
@@ -3277,7 +3277,7 @@ mod tests {
     /// recursing forever (READCONF_MAX_DEPTH, openssh/readconf.c:2573-2574).
     #[test]
     fn include_depth_limit_is_fatal() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("self");
         write_at(path.clone(), &format!("Include {}\n", path.display()));
         let top = ConfigFile {
@@ -3298,7 +3298,7 @@ mod tests {
     /// upstream's wording (openssh/readconf.c:2081-2083).
     #[test]
     fn empty_include_argument_is_refused() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let top = include_top(&dir, "Include \"\"\n", true);
         let err = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
             .expect_err("refused");
@@ -3315,7 +3315,7 @@ mod tests {
     /// include boundary (openssh/readconf.c:2130, :2144).
     #[test]
     fn include_inherits_the_block_active_state() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let snippet = write_at(dir.path().join("snippet"), "User included\n");
 
         // Matching block: the include's top-level directive applies.
@@ -3356,7 +3356,7 @@ mod tests {
     /// the same block applies.
     #[test]
     fn included_host_block_obeys_never_match() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let snippet = write_at(dir.path().join("snippet"), "Host *\n  Port 4242\n");
 
         let active = include_top(
@@ -3394,7 +3394,7 @@ mod tests {
     /// (openssh/readconf.c:2144).
     #[test]
     fn block_state_restores_after_the_include() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         // The included file ends inside a NON-matching Host block.
         let snippet = write_at(dir.path().join("snippet"), "Host nomatch\n  User dead\n");
         let top = include_top(

@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn non_refs_returns_false() {
         // On macOS/Linux CI, always false. On Windows CI (NTFS), also false.
-        let temp = tempfile::tempdir().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let result = is_refs_filesystem(temp.path());
         assert!(
             result.is_ok(),
@@ -267,14 +267,14 @@ mod tests {
     fn cache_clear_does_not_panic() {
         clear_refs_cache();
         // Verify detection still works after clearing
-        let temp = tempfile::tempdir().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let result = is_refs_filesystem(temp.path());
         assert!(result.is_ok());
     }
 
     #[test]
     fn repeated_calls_use_cache() {
-        let temp = tempfile::tempdir().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         clear_refs_cache();
 
         // First call populates cache
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn multiple_paths_same_volume() {
-        let temp = tempfile::tempdir().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         clear_refs_cache();
 
         let dir_a = temp.path().join("subdir_a");

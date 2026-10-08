@@ -171,11 +171,10 @@ fn try_copy_file_ex_impl(_src: &Path, _dst: &Path) -> io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_try_copy_file_ex_nonexistent_src() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let src = temp.path().join("nonexistent.txt");
         let dst = temp.path().join("dest.txt");
 
@@ -186,7 +185,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn test_try_copy_file_ex_returns_unsupported() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let src = temp.path().join("source.txt");
         let dst = temp.path().join("dest.txt");
         std::fs::write(&src, b"data").expect("write source");
@@ -205,7 +204,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_try_copy_file_ex_copies_content() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let src = temp.path().join("source.txt");
         let dst = temp.path().join("dest.txt");
         let content = b"The quick brown fox jumps over the lazy dog";
@@ -221,7 +220,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_try_copy_file_ex_empty_file() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let src = temp.path().join("empty_src.txt");
         let dst = temp.path().join("empty_dst.txt");
         std::fs::write(&src, b"").expect("write empty source");

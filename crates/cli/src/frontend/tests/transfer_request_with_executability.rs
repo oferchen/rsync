@@ -5,9 +5,8 @@ use super::*;
 #[test]
 fn transfer_request_with_executability_preserves_execute_bits() {
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source-exec.txt");
     let destination = tmp.path().join("dest-exec.txt");
 

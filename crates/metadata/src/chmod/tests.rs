@@ -66,7 +66,7 @@ fn parse_rejects_invalid_token() {
 fn apply_numeric_and_symbolic_modifiers() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file_path = temp.path().join("file.txt");
     let dir_path = temp.path().join("dir");
     std::fs::write(&file_path, b"payload").expect("write file");
@@ -88,7 +88,7 @@ fn apply_numeric_and_symbolic_modifiers() {
 #[cfg(unix)]
 #[test]
 fn conditional_execute_bit_behaviour_matches_rsync() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file_path = temp.path().join("script.sh");
     let dir_path = temp.path().join("bin");
     std::fs::write(&file_path, b"#!/bin/sh").expect("write file");
@@ -136,7 +136,7 @@ fn who_letter_copy_forms_are_accepted() {
 #[test]
 #[allow(unsafe_code)]
 fn implied_who_applies_umask_masking() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dir_path = temp.path().join("testdir");
     std::fs::create_dir(&dir_path).expect("create dir");
     let dir_is_dir = std::fs::metadata(&dir_path).expect("dir metadata").is_dir();

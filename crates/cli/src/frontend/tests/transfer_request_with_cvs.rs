@@ -3,13 +3,11 @@ use super::*;
 
 #[test]
 fn transfer_request_with_cvs_exclude_skips_default_patterns() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
     let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new(""));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -44,13 +42,11 @@ fn transfer_request_with_cvs_exclude_skips_default_patterns() {
 
 #[test]
 fn transfer_request_with_cvs_exclude_respects_cvsignore_files() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
     let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new(""));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -82,13 +78,11 @@ fn transfer_request_with_cvs_exclude_respects_cvsignore_files() {
 
 #[test]
 fn transfer_request_with_cvs_exclude_respects_cvsignore_env() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
     let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new("*.tmp"));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");

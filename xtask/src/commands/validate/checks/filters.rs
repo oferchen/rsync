@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn exclusion_violation_flags_a_surviving_excluded_suffix() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         fs::write(dir.path().join("keep.txt"), b"x").unwrap();
         fs::write(dir.path().join("bad.log"), b"x").unwrap();
         assert!(
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn exclusion_violation_flags_a_surviving_cache_dir() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         fs::create_dir(dir.path().join("cache")).unwrap();
         fs::write(dir.path().join("cache/blob.bin"), b"x").unwrap();
         assert!(
@@ -242,13 +242,13 @@ mod tests {
 
     #[test]
     fn exclusion_violation_flags_a_vacuous_empty_tree() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         assert!(exclusion_violation(dir.path()).unwrap().contains("vacuous"));
     }
 
     #[test]
     fn exclusion_violation_none_when_only_kept_files_remain() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         fs::create_dir(dir.path().join("sub")).unwrap();
         fs::write(dir.path().join("keep.txt"), b"x").unwrap();
         fs::write(dir.path().join("sub/keep.txt"), b"x").unwrap();
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn build_fixture_is_idempotent_and_populates_the_tree() {
         use super::build_fixture;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("src");
         build_fixture(&src).unwrap();
         // Second call must not error on the pre-existing tree.
