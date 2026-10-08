@@ -862,6 +862,75 @@ mod tests {
         );
     }
 
+    /// Runs `place_existing_backup` for `victim` under a confinement root whose
+    /// `sub` is a symlink to an out-of-root directory, backing up to
+    /// `root/sub/<rel>`. Returns the result and whether anything landed outside.
+    fn backup_through_escaping_parent(
+        make_victim: impl FnOnce(&Path),
+        rel: &str,
+    ) -> (std::io::Result<BackupPlacement>, bool) {
+        use fast_io::confinement::{install_local_session, LocalInsecureLinks};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("module");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(root.join("sub_real")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("sub")).unwrap();
+        let victim = root.join("sub_real").join("f0");
+        make_victim(&victim);
+
+        install_local_session(LocalInsecureLinks::default(), Some(root.clone()));
+        let result = place_existing_backup(
+            &victim,
+            &root.join("sub").join(rel),
+            false,
+            &root,
+            None,
+            &::metadata::MetadataOptions::default(),
+        );
+        install_local_session(LocalInsecureLinks::default(), None);
+        let leaked = fs::read_dir(&outside).unwrap().next().is_some();
+        (result, leaked)
+    }
+
+    /// A regular victim takes the link -> rename tiers: both must refuse the
+    /// escaping parent, so nothing is renamed out of the module.
+    #[test]
+    fn confined_backup_of_regular_file_does_not_escape_the_root() {
+        let (result, leaked) =
+            backup_through_escaping_parent(|v| fs::write(v, b"data").unwrap(), "f0");
+        assert!(result.is_err(), "the escaping backup must fail");
+        assert!(!leaked, "no backup may land outside the confinement root");
+    }
+
+    /// A FIFO victim reaches the copy tier's `do_mknod_at`, which must refuse
+    /// the escaping parent rather than create the node outside the module.
+    #[test]
+    fn confined_backup_of_fifo_does_not_escape_the_root() {
+        let (result, leaked) = backup_through_escaping_parent(
+            |v| metadata::create_fifo_node_from_parts(v, 0o644, false, false).unwrap(),
+            "f0",
+        );
+        assert!(result.is_err(), "the escaping backup must fail");
+        assert!(!leaked, "no backup node may land outside the confinement root");
+    }
+
+    /// A backup whose missing parent sits beneath the escaping symlink must not
+    /// have that parent created outside the module.
+    ///
+    /// upstream: `backup.c:157-184` `get_backup_name` -> `make_path` runs
+    /// under the same `operator_path_resolve` window.
+    #[test]
+    fn confined_backup_does_not_create_parents_outside_the_root() {
+        let (result, leaked) = backup_through_escaping_parent(
+            |v| std::os::unix::fs::symlink("target", v).unwrap(),
+            "deep/f0",
+        );
+        assert!(result.is_err(), "the escaping parent creation must fail");
+        assert!(!leaked, "no directory may be created outside the confinement root");
+    }
+
     /// Control for the escape test: with NO confinement root (a plain local or
     /// remote-shell receiver), a trusted-owned parent symlink is followed, so
     /// the backup is recreated at its target - the pre-fix behaviour, preserved.
