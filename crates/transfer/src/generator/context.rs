@@ -1454,12 +1454,16 @@ impl GeneratorContext {
         );
 
         self.file_list.reclaim_segment(start, end);
-        // Also reclaim the parallel source_bases entries. Point them at a single
-        // shared empty Arc so dropping the reclaimed slots releases the last
-        // reference to the segment's source base(s).
+        // Also reclaim the parallel source_bases entries of everything the
+        // file list just reclaimed. Point them at a single shared empty Arc so
+        // dropping the reclaimed slots releases the last reference to the
+        // segment's source base(s). Directories keep theirs, as they keep
+        // their entries.
         let empty: Arc<Path> = Arc::from(Path::new(""));
-        for base in &mut self.source_bases[start..end] {
-            *base = Arc::clone(&empty);
+        for idx in start..end {
+            if !self.file_list[idx].is_dir() {
+                self.source_bases[idx] = Arc::clone(&empty);
+            }
         }
         self.incremental.ndx_map.advance_reclaimed();
     }
