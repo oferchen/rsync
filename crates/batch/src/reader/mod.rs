@@ -248,20 +248,19 @@ impl BatchReader {
                 ))
             })?;
 
-            // A batch written by a newer rsync than this build supports cannot
-            // be replayed correctly, so abort rather than adopt an unsupported
-            // protocol. The comparison uses this build's maximum supported
-            // protocol, matching upstream's `remote_protocol > protocol_version`
-            // (for --read-batch `protocol_version` is the client's compiled max).
-            // upstream: compat.c:609-613 setup_protocol()
-            let max_supported = i32::from(protocol::SUPPORTED_PROTOCOL_BOUNDS.1);
-            if header.protocol_version > max_supported {
-                // upstream: compat.c:610-611 rprintf(FERROR, "The protocol
+            // A batch recorded at a newer protocol than the reader runs cannot
+            // be replayed correctly. The ceiling is the configured protocol,
+            // which `--protocol` lowers below this build's newest.
+            // upstream: compat.c:611-614 setup_protocol() - `remote_protocol >
+            // protocol_version` under read_batch exits RERR_PROTOCOL.
+            let ceiling = self.config.protocol_version;
+            if header.protocol_version > ceiling {
+                // upstream: compat.c:612 rprintf(FERROR, "The protocol
                 // version in the batch file is too new (%d > %d).\n", ...) -
                 // match the diagnostic text, including the trailing period.
                 return Err(BatchError::Io(protocol::protocol_violation(format!(
                     "The protocol version in the batch file is too new ({} > {}).",
-                    header.protocol_version, max_supported
+                    header.protocol_version, ceiling
                 ))));
             }
 
