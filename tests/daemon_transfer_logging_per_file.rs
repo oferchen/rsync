@@ -841,6 +841,13 @@ fn lines_from(log: &str, needle: &str) -> Vec<String> {
 
 const DELETE_FORMAT: &str = "%o|%f|%n|%l|%U|%G|%M|%B|%b|%c|%C|%i";
 
+// Ordering of `del.` rows against the per-file rows: upstream's generator
+// deletes while its receiver process logs transfers, so the interleaving in
+// the module log follows process scheduling and is not deterministic. oc
+// writes every row of an early pass (and every make-room deletion) before the
+// per-file rows and every row of a late pass after them, which is one of the
+// orders upstream produces; the tests below pin that order.
+
 /// A `--delete` push logs one `del.` row per removed entry, rendered from a
 /// zeroed entry that keeps only the victim's mode, ahead of the per-file rows.
 ///
@@ -1115,4 +1122,37 @@ fn single_file_push_to_a_new_name_logs_the_file_list_name() {
     assert!(module_dir.join("a/newname").is_file(), "file not renamed");
     let text = fs::read_to_string(&log).expect("read log");
     assert_has_line(&transfer_lines(&text, "recv|"), "recv|a/t0|t0");
+}
+
+/// upstream: delete.c:126 - a file replacing a non-empty directory clears it
+/// through delete_dir_contents(), which drops `DEL_MAKE_ROOM` before it
+/// recurses, so every entry inside is logged while the directory itself is
+/// not (measured against rsync 3.5.1: `x/sub/b`, `x/sub`, `x/a`, no `x`).
+#[test]
+fn push_file_over_non_empty_dir_logs_its_contents_as_del_rows() {
+    let Some(text) = module_log(
+        "%o|%f|%n|%i",
+        &[],
+        &["-rt", "--delete"],
+        true,
+        |src, module| {
+            fs::write(src.join("x"), b"x").expect("src file");
+            fs::create_dir_all(module.join("x/sub")).expect("mkdir");
+            fs::write(module.join("x/a"), b"a").expect("a");
+            fs::write(module.join("x/sub/b"), b"b").expect("b");
+        },
+        "recv|x|",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_eq!(
+        lines_from(&text, "del.|"),
+        [
+            "del.|x/sub/b|x/sub/b|*deleting  ",
+            "del.|x/sub|x/sub/|*deleting  ",
+            "del.|x/a|x/a|*deleting  ",
+        ],
+        "log:\n{text}"
+    );
 }
