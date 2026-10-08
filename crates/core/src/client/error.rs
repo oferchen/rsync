@@ -816,7 +816,7 @@ mod tests {
         /// "The temp-dir does not exist: <path>" and exit_cleanup(RERR_SYNTAX=1).
         #[test]
         fn validate_temp_dir_missing_is_syntax_error() {
-            let dir = tempfile::tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let missing = dir.path().join("does-not-exist");
             let error = validate_temp_dir(&missing).expect_err("missing temp-dir must error");
             assert_eq!(error.exit_code(), 1);
@@ -830,7 +830,7 @@ mod tests {
         /// prints "The temp-dir is not a directory: <path>" and RERR_SYNTAX.
         #[test]
         fn validate_temp_dir_non_directory_is_syntax_error() {
-            let dir = tempfile::tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let file = dir.path().join("a-file");
             std::fs::write(&file, b"x").expect("write");
             let error = validate_temp_dir(&file).expect_err("file temp-dir must error");
@@ -848,7 +848,7 @@ mod tests {
         /// the check without error.
         #[test]
         fn validate_temp_dir_existing_directory_is_ok() {
-            let dir = tempfile::tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             assert!(validate_temp_dir(dir.path()).is_ok());
         }
 

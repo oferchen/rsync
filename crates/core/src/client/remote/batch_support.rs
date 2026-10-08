@@ -146,7 +146,7 @@ mod tests {
     fn batch_context_tracks_the_compress_option() {
         for compress_enabled in [true, false] {
             let config = ClientConfig::builder().compress(compress_enabled).build();
-            let temp = tempfile::TempDir::new().unwrap();
+            let temp = test_support::create_tempdir();
             let path = temp.path().join("test.batch");
             let batch_cfg = engine::batch::BatchConfig::new(
                 engine::batch::BatchMode::Write,
@@ -171,7 +171,7 @@ mod tests {
         const SEED: i32 = 0x1234_5678;
         let newest = i32::from(protocol::ProtocolVersion::NEWEST.as_u8());
         for negotiated in 28..=newest {
-            let temp = tempfile::TempDir::new().unwrap();
+            let temp = test_support::create_tempdir();
             let path = temp.path().join("negotiated.batch");
             let batch_cfg = engine::batch::BatchConfig::new(
                 engine::batch::BatchMode::Write,

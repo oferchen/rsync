@@ -7,7 +7,6 @@
 use core::client::{ClientConfig, ClientConfigBuilder, run_client};
 use protocol::ProtocolVersion;
 use std::fs;
-use tempfile::tempdir;
 
 /// Runs `src/ -> dst/` at `protocol` and returns the exit code and message,
 /// or `None` when the copy succeeds.
@@ -15,7 +14,7 @@ fn run_at(
     protocol: u8,
     set: fn(ClientConfigBuilder) -> ClientConfigBuilder,
 ) -> Option<(i32, String)> {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     fs::create_dir(&src).expect("src");
     fs::write(src.join("f"), b"x").expect("file");

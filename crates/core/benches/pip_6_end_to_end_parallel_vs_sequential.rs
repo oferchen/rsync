@@ -330,7 +330,7 @@ impl OcRsyncDaemon {
     fn start(variant: BuildVariant) -> Option<Self> {
         let binary = variant.resolve_path()?;
 
-        let workdir = TempDir::new().ok()?;
+        let workdir = test_support::create_tempdir();
         let port = next_port();
         let config_path = workdir.path().join("oc-rsyncd.conf");
         let pid_path = workdir.path().join("oc-rsyncd.pid");
@@ -454,7 +454,7 @@ fn bench_shape_variant(c: &mut Criterion, shape: WorkloadShape, variant: BuildVa
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
-                    let dest = TempDir::new().expect("dest tempdir");
+                    let dest = test_support::create_tempdir();
                     total += run_client(&binary, &module_url, dest.path());
                 }
                 total

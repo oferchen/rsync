@@ -622,7 +622,7 @@ mod tests {
     /// upstream diagnostic text.
     #[test]
     fn read_batch_from_newer_protocol_exits_rerr_protocol() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let batch_path = temp.path().join("too_new.batch");
         let dest = temp.path().join("dest");
         std::fs::create_dir_all(&dest).unwrap();
@@ -691,7 +691,7 @@ mod tests {
     /// instead of mis-replaying the stream.
     #[test]
     fn read_batch_refuses_inc_recurse_its_options_disallow() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let read_cfg = inc_recurse_batch(temp.path());
         let dest = temp.path().join("dest").to_string_lossy().into_owned();
         for (name, config) in [
@@ -744,7 +744,7 @@ mod tests {
         use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
         use protocol::CompatibilityFlags;
 
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let batch_path = temp.path().join("in_range.batch");
         std::fs::create_dir_all(&source).unwrap();
@@ -840,7 +840,7 @@ mod tests {
     /// the receiver instead of failing loudly.
     #[test]
     fn read_batch_iconv_mismatch_exits_rerr_syntax() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let batch_path = temp.path().join("iconv.batch");
         let dest = temp.path().join("dest");
         std::fs::create_dir_all(&dest).unwrap();
@@ -900,7 +900,7 @@ mod tests {
         use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
         use protocol::CompatibilityFlags;
 
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         let batch_path = temp.path().join("counts.batch");
         std::fs::create_dir_all(source.join("sub")).unwrap();
@@ -1063,7 +1063,7 @@ mod tests {
     /// and not to the transfer itself.
     #[test]
     fn read_batch_delete_removes_extraneous_dest_file() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         std::fs::create_dir_all(&source).unwrap();
         std::fs::write(source.join("keep.txt"), b"keep payload").unwrap();
@@ -1136,7 +1136,7 @@ mod tests {
     /// preserved backup is attributable to `-b`.
     #[test]
     fn read_batch_backup_preserves_pre_image() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         std::fs::create_dir_all(&source).unwrap();
         std::fs::write(source.join("top.txt"), b"new payload").unwrap();
@@ -1210,7 +1210,7 @@ mod tests {
     /// so the itemize rows are attributable to the out-format request.
     #[test]
     fn read_batch_out_format_itemizes_transferred_rows() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("src");
         std::fs::create_dir_all(source.join("sub")).unwrap();
         std::fs::write(source.join("top.txt"), b"top payload").unwrap();
@@ -1296,7 +1296,7 @@ mod tests {
 
     /// Reads back the stream flags recorded by `write_batch_header`.
     fn recorded_flags(compress: bool, proto: i32) -> engine::batch::BatchFlags {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.batch");
         let batch_cfg =
             BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), proto)
@@ -1429,7 +1429,7 @@ mod tests {
     /// Full round-trip: serialize rules, embed in batch script, verify output.
     #[test]
     fn serialize_and_embed_in_batch_script() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("roundtrip.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
             .with_checksum_seed(1);
@@ -1464,7 +1464,7 @@ mod tests {
     /// Verify finalize_batch embeds filter rules from config.
     #[test]
     fn finalize_batch_embeds_filter_rules_in_script() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("finalize.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
             .with_checksum_seed(1);
@@ -1514,7 +1514,7 @@ mod tests {
     /// upstream: batch.c:222-231 write_filter_rules() - rprintf + RERR_SYNTAX.
     #[test]
     fn finalize_batch_refuses_newline_filter_rule_and_writes_no_script() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("inject.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
             .with_checksum_seed(1);
@@ -1551,7 +1551,7 @@ mod tests {
     /// Verify finalize_batch produces clean script when no filter rules.
     #[test]
     fn finalize_batch_no_filters_produces_clean_script() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("nofilt.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
             .with_checksum_seed(1);

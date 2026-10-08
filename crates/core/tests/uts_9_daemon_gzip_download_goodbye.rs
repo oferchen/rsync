@@ -43,9 +43,6 @@ use std::fs;
 #[cfg(unix)]
 use std::process::Command;
 
-#[cfg(unix)]
-use tempfile::tempdir;
-
 /// Deterministic ~700 KB payload - large enough to cross the 612425-byte
 /// cutoff observed in the original UTS-9 capture, small enough to keep the
 /// test fast on CI runners.
@@ -77,7 +74,7 @@ fn daemon_download_with_zz_completes_without_connection_drop() {
     let test_data = generate_test_data(TEST_FILE_SIZE);
     create_test_file(&daemon.module_path().join("uts9.bin"), &test_data);
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
     let dest_file = dest_dir.path().join("uts9.bin");
 
     // `-azz` archives + new-style compression (zlibx in upstream's

@@ -53,7 +53,7 @@ impl BenchDaemon {
             return None;
         }
 
-        let workdir = TempDir::new().ok()?;
+        let workdir = test_support::create_tempdir();
         let port = get_port();
         let config_path = workdir.path().join("rsyncd.conf");
         let pid_path = workdir.path().join("rsyncd.pid");
@@ -202,7 +202,7 @@ fn bench_small_files_pull(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes(total_bytes as u64));
 
-        let dest_up = TempDir::new().unwrap();
+        let dest_up = test_support::create_tempdir();
         group.bench_with_input(BenchmarkId::new("upstream", count), &count, |b, _| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
@@ -215,7 +215,7 @@ fn bench_small_files_pull(c: &mut Criterion) {
             });
         });
 
-        let dest_oc = TempDir::new().unwrap();
+        let dest_oc = test_support::create_tempdir();
         group.bench_with_input(BenchmarkId::new("oc-rsync", count), &count, |b, _| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
@@ -248,7 +248,7 @@ fn bench_large_file_pull(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes(size as u64));
 
-        let dest_up = TempDir::new().unwrap();
+        let dest_up = test_support::create_tempdir();
         group.bench_with_input(
             BenchmarkId::new("upstream", format!("{size_mb}MB")),
             &size,
@@ -265,7 +265,7 @@ fn bench_large_file_pull(c: &mut Criterion) {
             },
         );
 
-        let dest_oc = TempDir::new().unwrap();
+        let dest_oc = test_support::create_tempdir();
         group.bench_with_input(
             BenchmarkId::new("oc-rsync", format!("{size_mb}MB")),
             &size,
@@ -300,10 +300,10 @@ fn bench_incremental_no_change(c: &mut Criterion) {
     group.throughput(Throughput::Elements(500));
 
     // Pre-sync for both
-    let dest_up = TempDir::new().unwrap();
+    let dest_up = test_support::create_tempdir();
     run_upstream(&daemon.module_url(), dest_up.path(), &[]);
 
-    let dest_oc = TempDir::new().unwrap();
+    let dest_oc = test_support::create_tempdir();
     run_oc_rsync(&daemon.module_url(), dest_oc.path(), &[]);
 
     group.bench_function("upstream", |b| {
@@ -351,7 +351,7 @@ fn bench_deep_tree(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(depth as u64));
 
-        let dest_up = TempDir::new().unwrap();
+        let dest_up = test_support::create_tempdir();
         group.bench_with_input(BenchmarkId::new("upstream", depth), &depth, |b, _| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
@@ -364,7 +364,7 @@ fn bench_deep_tree(c: &mut Criterion) {
             });
         });
 
-        let dest_oc = TempDir::new().unwrap();
+        let dest_oc = test_support::create_tempdir();
         group.bench_with_input(BenchmarkId::new("oc-rsync", depth), &depth, |b, _| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;

@@ -61,7 +61,7 @@
 //! use std::fs;
 //! use tempfile::tempdir;
 //!
-//! let temp = tempdir().unwrap();
+//! let temp = test_support::create_tempdir();
 //! let source = temp.path().join("source.txt");
 //! let destination = temp.path().join("dest.txt");
 //! fs::write(&source, b"example").unwrap();
