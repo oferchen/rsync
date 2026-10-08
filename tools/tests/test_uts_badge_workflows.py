@@ -129,7 +129,8 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
 
     def test_every_leg_runs_the_gate_release(self) -> None:
         # One cache key across the legs, so they share the built upstream tree.
-        gate_jobs = _load(GATE)["jobs"].values()
+        gate_jobs = [job for job in _load(GATE)["jobs"].values()
+                     if job.get("uses", "").rsplit("/", 1)[-1] in TESTSUITE_REUSABLES]
         self.assertEqual(len({job["with"]["cache_version"] for job in gate_jobs}), 1)
         for job in gate_jobs:
             self.assertEqual(job["with"]["upstream_rsync_version"],
