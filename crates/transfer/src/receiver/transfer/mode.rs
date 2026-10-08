@@ -110,6 +110,7 @@ impl ReceiverContext {
         self.run_non_transfer_segment(
             mode,
             0..self.file_list.len(),
+            0..self.ndx_segments.len(),
             reader,
             writer,
             setup,
@@ -133,7 +134,8 @@ impl ReceiverContext {
             .collect();
     }
 
-    /// Drives one non-transfer mode over the flat-index range `range`.
+    /// Drives one non-transfer mode over the flat-index range `range`, which
+    /// holds the sub-lists `segments`.
     ///
     /// `files_to_transfer` must be the candidate list built for the same range.
     /// The NDX codec pair is the connection-wide read/write state (io.c keeps a
@@ -154,6 +156,7 @@ impl ReceiverContext {
         &mut self,
         mode: NonTransferMode,
         range: Range<usize>,
+        segments: Range<usize>,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         setup: &PipelineSetup,
@@ -197,6 +200,7 @@ impl ReceiverContext {
                 // rows and created-file counts are produced.
                 let plan = self.plan_dry_run_in_range(range, &setup.dest_dir, files_to_transfer);
                 stats.directories_created += self.new_dir_count(&plan);
+                let plan = self.order_plan_for_walk(plan, segments);
                 self.run_dry_run_loop(reader, writer, &plan, ndx_write_codec, ndx_read_codec)
             }
         }

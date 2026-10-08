@@ -470,6 +470,23 @@ pub struct ReceiverContext {
     ///
     /// upstream: generator.c:582-593 - `itemize()` wire emission gate.
     pub(in crate::receiver) server_no_transfer_itemize: RefCell<Vec<(usize, u16)>>,
+    /// Directory itemize rows a server receiver under INC_RECURSE holds back
+    /// until the directory's own sub-list is walked, keyed by the directory's
+    /// name, as `(flist index, iflags, entry)`. The entry is kept with the row
+    /// because the segment that listed the directory may be released first;
+    /// upstream likewise keeps directories in `dir_flist`'s pool
+    /// (flist.c:1374-1379).
+    ///
+    /// upstream: generator.c:1631-1633 - a directory met inside its parent's
+    /// list is `is_dir < 0`, so recv_generator() only creates it there
+    /// (generator.c:1819-1834); generate_files() itemizes it when its sub-list
+    /// becomes `cur_flist` (generator.c:2780-2787).
+    pub(in crate::receiver) deferred_dir_rows:
+        RefCell<HashMap<std::path::PathBuf, (usize, u32, FileEntry)>>,
+    /// Released sub-list heads by flist index, as `(flat start of the
+    /// sub-list, gap NDX, entry)`. The row sorts ahead of that sub-list's
+    /// entries and goes out on the gap NDX `ndx_start - 1` (generator.c:2787).
+    pub(in crate::receiver) released_dir_heads: RefCell<HashMap<usize, (usize, i32, FileEntry)>>,
     /// True when this server receiver must write per-file lines to a daemon
     /// module's log file (`transfer logging = yes`). Set by
     /// [`Self::enable_daemon_log`] before the transfer runs. Independent of the
@@ -713,6 +730,8 @@ impl ReceiverContext {
             hardlink_follower_echoes: std::cell::Cell::new(0),
             early_sender_ndx_dones: std::cell::Cell::new(0),
             server_no_transfer_itemize: RefCell::new(Vec::new()),
+            deferred_dir_rows: RefCell::new(HashMap::new()),
+            released_dir_heads: RefCell::new(HashMap::new()),
             daemon_log_active: false,
             daemon_logfile_format_has_i: false,
             daemon_log_rows: RefCell::new(BTreeMap::new()),

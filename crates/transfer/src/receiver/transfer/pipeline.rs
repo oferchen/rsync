@@ -431,14 +431,19 @@ impl ReceiverContext {
         // flist-index order before merging with the ascending transfer list.
         let mut no_transfer_rows =
             std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
-        no_transfer_rows.sort_by_key(|&(idx, _)| idx);
+        // A released INC_RECURSE sub-list head sorts ahead of its sub-list
+        // (generator.c:2780-2787), not at its own place in the parent's list.
+        no_transfer_rows.sort_by_key(|&(idx, _)| self.itemize_walk_key(idx));
         let files_to_transfer = if no_transfer_rows.is_empty() {
             files_to_transfer
         } else {
             let mut merged = Vec::with_capacity(files_to_transfer.len() + no_transfer_rows.len());
             let mut rows = no_transfer_rows.into_iter().peekable();
             for item in files_to_transfer {
-                while let Some(&(idx, iflags)) = rows.peek().filter(|&&(idx, _)| idx < item.0) {
+                while let Some(&(idx, iflags)) = rows
+                    .peek()
+                    .filter(|&&(idx, _)| self.itemize_walk_key(idx) < (item.0, true))
+                {
                     rows.next();
                     merged.push((idx, PathBuf::new(), u32::from(iflags)));
                 }
@@ -666,7 +671,7 @@ impl ReceiverContext {
                     let batch: Vec<(usize, FileEntry, PathBuf, u32)> = file_iter
                         .by_ref()
                         .take(pipeline.available_slots())
-                        .map(|(idx, path, iflags)| (idx, self.file_list[idx].clone(), path, iflags))
+                        .map(|(idx, path, iflags)| (idx, self.itemize_row_entry(idx), path, iflags))
                         .collect();
 
                     // The phase-2 redo takes this same path: upstream re-enters
@@ -1173,7 +1178,7 @@ impl ReceiverContext {
         file_path: PathBuf,
         base_iflags: u32,
     ) -> io::Result<()> {
-        let wire_ndx = self.flat_to_wire_ndx(file_idx);
+        let wire_ndx = self.itemize_wire_ndx(file_idx);
         ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
         writer.write_all(&((base_iflags & 0xFFFF) as u16).to_le_bytes())?;
         pipeline.push(
@@ -1254,8 +1259,9 @@ impl ReceiverContext {
                 continue;
             }
 
-            // upstream: generator.c:1938 - write_ndx(f_out, ndx)
-            let wire_ndx = self.flat_to_wire_ndx(file_idx);
+            // upstream: generator.c:1938 - write_ndx(f_out, ndx); a released
+            // sub-list head goes out on its gap NDX (generator.c:2787).
+            let wire_ndx = self.itemize_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
 
             // upstream: generator.c:1937-1947 then itemize() at 581-600 - the

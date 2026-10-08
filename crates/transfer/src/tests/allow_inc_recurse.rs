@@ -1,14 +1,10 @@
-//! Regression coverage for `compute_allow_inc_recurse` and the upstream
-//! option predicate `ServerConfig::allows_inc_recurse` it builds on.
+//! Regression coverage for the server's INC_RECURSE grant and the upstream
+//! option predicate `ServerConfig::allows_inc_recurse` it rests on.
 //!
-//! Pins the receiver-side restriction that gates INC_RECURSE so the upstream
-//! testsuite `hardlinks` test no longer deadlocks against a source tree that
-//! exceeds upstream's `MIN_FILECNT_LOOKAHEAD` window.
-//!
-//! upstream: compat.c:161-179 set_allow_inc_recurse,
-//! sender.c:231-235 send_extra_file_list throttle.
+//! upstream: compat.c:161-179 set_allow_inc_recurse, compat.c:724 (the server
+//! writes `CF_INC_RECURSE` whenever `allow_inc_recurse` survives).
 
-use crate::{ServerConfig, ServerRole, compute_allow_inc_recurse};
+use crate::{ServerConfig, ServerRole};
 
 fn config(role: ServerRole, recursive: bool, qsort: bool) -> ServerConfig {
     let mut config = ServerConfig {
@@ -21,59 +17,70 @@ fn config(role: ServerRole, recursive: bool, qsort: bool) -> ServerConfig {
 }
 
 #[test]
-fn generator_with_recursion_advertises_inc_recurse() {
-    assert!(compute_allow_inc_recurse(&config(
-        ServerRole::Generator,
-        true,
-        false
-    )));
+fn recursion_without_qsort_allows_inc_recurse_in_either_role() {
+    for role in [ServerRole::Generator, ServerRole::Receiver] {
+        assert!(config(role, true, false).allows_inc_recurse(), "{role:?}");
+        assert!(!config(role, false, false).allows_inc_recurse(), "{role:?}");
+        assert!(!config(role, true, true).allows_inc_recurse(), "{role:?}");
+    }
 }
 
-#[test]
-fn generator_without_recursion_does_not_advertise() {
-    assert!(!compute_allow_inc_recurse(&config(
-        ServerRole::Generator,
-        false,
-        false
-    )));
+/// A push into an oc server makes it the receiver. Upstream's server grants
+/// INC_RECURSE there exactly as it does on a pull: set_allow_inc_recurse() has
+/// no role term beyond the receiver delete/delay/prune clauses, so a client
+/// that offered `i` gets `CF_INC_RECURSE` back.
+mod server_receiver_grant {
+    use super::config;
+    use crate::handshake::HandshakeResult;
+    use crate::{ServerRole, run_server_with_handshake};
+    use protocol::{CompatibilityFlags, ProtocolVersion};
+
+    /// Runs a server receiver against a client that sent `flag_string` and
+    /// returns the compat flags it wrote. They are the first bytes a server
+    /// writes (compat.c:724-727); the empty input ends the session right after.
+    fn written_compat_flags(flag_string: &str) -> CompatibilityFlags {
+        let mut server = config(ServerRole::Receiver, true, false);
+        server.flag_string = flag_string.to_owned();
+        server.args = vec![std::ffi::OsString::from(".")];
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut wire = Vec::new();
+        let mut stdin: &[u8] = &[];
+        let _ =
+            run_server_with_handshake(server, handshake, &mut stdin, &mut wire, None, None, None);
+        CompatibilityFlags::decode_from_slice(&wire)
+            .expect("compat flags on the wire")
+            .0
+    }
+
+    #[test]
+    fn server_receiver_grants_inc_recurse_the_client_offered() {
+        let flags = written_compat_flags("-re.iLsfxCIvu");
+        assert!(flags.contains(CompatibilityFlags::INC_RECURSE), "{flags:?}");
+    }
+
+    /// Opposed control: without the client's `i` the server withholds it
+    /// (compat.c:178-179).
+    #[test]
+    fn server_receiver_withholds_inc_recurse_the_client_did_not_offer() {
+        let flags = written_compat_flags("-re.LsfxCIvu");
+        assert!(
+            !flags.contains(CompatibilityFlags::INC_RECURSE),
+            "{flags:?}"
+        );
+    }
 }
 
-#[test]
-fn generator_with_qsort_does_not_advertise() {
-    assert!(!compute_allow_inc_recurse(&config(
-        ServerRole::Generator,
-        true,
-        true
-    )));
-}
-
-/// Receiver MUST never advertise INC_RECURSE. Measured: dropping the role term
-/// deadlocks the upstream testsuite `hardlinks` cell on a source tree of 1024
-/// entries while 961 still passes, so the boundary is upstream's
-/// MIN_FILECNT_LOOKAHEAD of 1000. See `compute_allow_inc_recurse` for the full
-/// A/B table and for why the receiver-side blocking site is deliberately left
-/// unnamed.
-#[test]
-fn receiver_never_advertises_inc_recurse() {
-    assert!(!compute_allow_inc_recurse(&config(
-        ServerRole::Receiver,
-        true,
-        false
-    )));
-    assert!(!compute_allow_inc_recurse(&config(
-        ServerRole::Receiver,
-        true,
-        true
-    )));
-    assert!(!compute_allow_inc_recurse(&config(
-        ServerRole::Receiver,
-        false,
-        false
-    )));
-}
-
-/// A plain recursive receiver is allowed by its options even though oc never
-/// advertises from it: a peer-set CF_INC_RECURSE must stay honoured on a pull,
+/// A plain recursive receiver is allowed by its options: a peer-set
+/// CF_INC_RECURSE must stay honoured on a pull,
 /// or every inc-recursive pull would abort with RERR_SYNTAX.
 #[test]
 fn plain_recursive_receiver_options_allow_inc_recurse() {

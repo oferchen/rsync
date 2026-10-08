@@ -290,6 +290,15 @@ impl ReceiverContext {
                 )?;
             }
             ReceiverMode::Transfer => {
+                // upstream: generator.c:2780-2787 - each directory row goes out
+                // ahead of its own sub-list, on that sub-list's gap NDX.
+                for segment_idx in 0..self.ndx_segments.len() {
+                    if let Some((idx, iflags)) = self.release_segment_head_row(segment_idx) {
+                        self.server_no_transfer_itemize
+                            .borrow_mut()
+                            .push((idx, iflags as u16));
+                    }
+                }
                 let total_files = files_to_transfer.len();
                 // Stage 0: hand the pipeline the transfer set by flist index;
                 // the in-flight window clones each FileEntry as it is pushed
@@ -670,7 +679,9 @@ impl ReceiverContext {
                 &mut stats,
             )?;
 
-            if seg_start >= seg_end {
+            // upstream: generator.c:2780-2787 - an empty sub-list still itemizes
+            // its directory, so only a segment with no held row is skipped.
+            if seg_start >= seg_end && !self.segment_has_deferred_head(segment_idx) {
                 // An empty segment (e.g. a sub-list of only tombstones): nothing
                 // to create or transfer, but it still counts toward the
                 // per-segment NDX_DONE. Release it if it is not the last.
@@ -742,6 +753,16 @@ impl ReceiverContext {
                 }
             }
 
+            // upstream: generator.c:2780-2787 - the directory this sub-list
+            // expands is itemized ahead of the sub-list's own entries.
+            if let ReceiverMode::Transfer = mode
+                && let Some((idx, iflags)) = self.release_segment_head_row(segment_idx)
+            {
+                self.server_no_transfer_itemize
+                    .borrow_mut()
+                    .push((idx, iflags as u16));
+            }
+
             // The per-entry passes upstream's recv_generator() runs inline
             // (missing args generator.c:1749-1755, symlinks :1948-2002,
             // devices and specials :2031-2060), over this segment only so its
@@ -778,6 +799,7 @@ impl ReceiverContext {
                     let (seg_transferred, seg_size) = self.run_non_transfer_segment(
                         non_transfer,
                         range.clone(),
+                        segment_idx..segment_idx + 1,
                         reader,
                         writer,
                         &setup,
