@@ -6,13 +6,12 @@
 use matching::{FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatcher};
 use std::ffi::OsStr;
 use std::fs;
-use tempfile::TempDir;
 
 /// Verifies that level 1 fuzzy only searches the destination directory.
 #[test]
 fn level_1_searches_only_dest_directory() {
-    let dest_dir = TempDir::new().expect("create dest dir");
-    let ref_dir = TempDir::new().expect("create ref dir");
+    let dest_dir = test_support::create_tempdir();
+    let ref_dir = test_support::create_tempdir();
 
     // Put candidates in both directories
     fs::write(dest_dir.path().join("file_v1.txt"), "dest version").expect("write dest");
@@ -36,9 +35,9 @@ fn level_1_searches_only_dest_directory() {
 /// Verifies that level 2 fuzzy searches both dest and reference directories.
 #[test]
 fn level_2_searches_dest_and_reference_dirs() {
-    let dest_dir = TempDir::new().expect("create dest dir");
-    let ref_dir1 = TempDir::new().expect("create ref dir 1");
-    let ref_dir2 = TempDir::new().expect("create ref dir 2");
+    let dest_dir = test_support::create_tempdir();
+    let ref_dir1 = test_support::create_tempdir();
+    let ref_dir2 = test_support::create_tempdir();
 
     // Put candidates in reference directories only
     fs::write(ref_dir1.path().join("app_v1.0.tar.gz"), "version 1.0").expect("write ref1");
@@ -65,8 +64,8 @@ fn level_2_searches_dest_and_reference_dirs() {
 /// Verifies that level 2 prefers better matches across all directories.
 #[test]
 fn level_2_chooses_best_match_across_all_dirs() {
-    let dest_dir = TempDir::new().expect("create dest dir");
-    let ref_dir = TempDir::new().expect("create ref dir");
+    let dest_dir = test_support::create_tempdir();
+    let ref_dir = test_support::create_tempdir();
 
     // Dest has a poor match
     fs::write(dest_dir.path().join("other_file.dat"), "x".repeat(1000)).expect("write dest");
@@ -115,7 +114,7 @@ fn with_level_constructor() {
 /// Verifies that level 2 without configured basis dirs acts like level 1.
 #[test]
 fn level_2_without_basis_dirs_acts_like_level_1() {
-    let dest_dir = TempDir::new().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     fs::write(dest_dir.path().join("test_v1.txt"), "data").expect("write");
 
@@ -131,7 +130,7 @@ fn level_2_without_basis_dirs_acts_like_level_1() {
 /// Verifies real-world scenario: renamed versioned files.
 #[test]
 fn real_world_versioned_file_rename() {
-    let dest_dir = TempDir::new().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     // Old version exists
     fs::write(dest_dir.path().join("myapp-1.2.3.tar.gz"), "x".repeat(5000))
@@ -168,7 +167,7 @@ fn real_world_versioned_file_rename() {
 /// Verifies real-world scenario: date-stamped backups.
 #[test]
 fn real_world_dated_backup_files() {
-    let dest_dir = TempDir::new().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     // Previous backups exist
     fs::write(
@@ -199,8 +198,8 @@ fn real_world_dated_backup_files() {
 /// Verifies that fuzzy matching respects the distance cap at each level.
 #[test]
 fn distance_cap_respected_at_all_levels() {
-    let dest_dir = TempDir::new().expect("create dest dir");
-    let ref_dir = TempDir::new().expect("create ref dir");
+    let dest_dir = test_support::create_tempdir();
+    let ref_dir = test_support::create_tempdir();
 
     // Poor match in dest
     fs::write(dest_dir.path().join("abc.txt"), "data1").expect("write dest");
