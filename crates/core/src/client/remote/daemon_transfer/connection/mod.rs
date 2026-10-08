@@ -560,8 +560,9 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
             return Err(handle_daemon_at_error(trimmed));
         }
 
-        // upstream: rprintf(FINFO, "%s\n", line) - MOTD output.
-        if output_motd {
+        // upstream: clientserver.c:434-435 rprintf(FINFO, "%s\n", line) - MOTD
+        // output, dropped under --quiet by log.c:344-345.
+        if output_motd && !logging::finfo_suppressed() {
             println!("{trimmed}");
         }
     }
