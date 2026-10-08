@@ -1207,4 +1207,42 @@ mod runtime_options_tests {
         assert_eq!(options.pid_file(), None);
         assert_eq!(options.modules().len(), 1);
     }
+
+    // upstream: a global `lock file =` / `syslog tag =` stores "" (loadparm.c
+    // string_set), replacing the DEFAULT_LOCK_FILE / "rsyncd" defaults and
+    // overriding an earlier global value; later modules copy "". A limited
+    // module then fails claim_connection("") with "@ERROR: failed to open
+    // lock file" (verified against a live 3.5.1 daemon).
+    #[test]
+    fn empty_global_lock_file_and_syslog_tag_store_empty_not_default() {
+        let dir = TempDir::new().expect("tempdir");
+        let data = dir.path().join("data");
+        fs::create_dir(&data).expect("create data dir");
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(
+            file,
+            "lock file = {}\nlock file =\nsyslog tag =\n[limited]\npath = {}\nmax connections = 1",
+            dir.path().join("first.lock").display(),
+            data.display()
+        )
+        .expect("write config");
+        let args = vec![
+            OsString::from("--config"),
+            OsString::from(file.path().as_os_str()),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.lock_file(), Some(Path::new("")));
+        assert_eq!(options.syslog_tag(), "");
+        assert_eq!(options.modules()[0].syslog_tag.as_deref(), Some(""));
+
+        let (runtimes, _limiter) = crate::daemon::build_module_runtimes_with_lock_file(
+            options.modules().to_vec(),
+            options.lock_file().map(Path::to_path_buf),
+        )
+        .expect("build runtimes");
+        match runtimes[0].try_acquire_connection() {
+            Err(ModuleConnectionError::Io(_)) => {}
+            _ => panic!("an empty global lock file must fail to open, not use the default"),
+        }
+    }
 }
