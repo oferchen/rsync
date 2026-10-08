@@ -353,6 +353,8 @@ include!("tests/chunks/runtime_options_module_definition_parses_inline_options.r
 include!("tests/chunks/runtime_options_module_definition_preserves_escaped_backslash.rs");
 include!("tests/chunks/runtime_options_module_definition_rejects_duplicate_inline_option.rs");
 include!("tests/chunks/runtime_options_module_definition_rejects_unknown_inline_option.rs");
+include!("tests/chunks/runtime_options_module_definition_refuses_hyphenated_parameter_names.rs");
+include!("tests/chunks/runtime_options_module_definition_matches_parameter_names_like_upstream.rs");
 include!(
     "tests/chunks/runtime_options_module_definition_requires_secrets_for_inline_auth_users.rs"
 );
