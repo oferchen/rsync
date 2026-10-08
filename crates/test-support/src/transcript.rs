@@ -316,7 +316,7 @@ mod tests {
     fn finish_refuses_a_missing_capture() {
         // Why: a comparison that silently read two absent files as equal
         // would pass without the instrument ever running - Rule 12.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = crate::create_tempdir();
         let recorder = TranscriptRecorder::new(dir.path());
         match recorder.finish() {
             Err(TranscriptError::Missing { direction, .. }) => {
@@ -330,7 +330,7 @@ mod tests {
     fn finish_refuses_an_empty_capture() {
         // Why: an empty pair compares equal trivially; the harness must
         // treat zero forwarded bytes as instrument failure, not evidence.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = crate::create_tempdir();
         let recorder = TranscriptRecorder::new(dir.path());
         fs::write(dir.path().join("client-to-server.bin"), b"x").expect("write c2s");
         fs::write(dir.path().join("server-to-client.bin"), b"").expect("write s2c");
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn finish_returns_both_directions_verbatim() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = crate::create_tempdir();
         let recorder = TranscriptRecorder::new(dir.path());
         fs::write(dir.path().join("client-to-server.bin"), b"ping").expect("write c2s");
         fs::write(dir.path().join("server-to-client.bin"), b"pong!").expect("write s2c");

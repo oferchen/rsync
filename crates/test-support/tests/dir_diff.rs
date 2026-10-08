@@ -32,8 +32,8 @@ fn seed(root: &Path) {
 fn identical_trees_report_no_difference() {
     // Why: if DirDiff flagged equal trees, every passing port would be a
     // false positive. This is the base case every port depends on.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     seed(a.path());
     seed(b.path());
 
@@ -45,8 +45,8 @@ fn identical_trees_report_no_difference() {
 fn dropped_file_is_reported_as_only_in_expected() {
     // Why: the most common transfer regression is a file that never
     // arrived. A port must fail loudly, not skip the missing path.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     seed(a.path());
     seed(b.path());
     fs::remove_file(b.path().join("sub/deep/b.txt")).unwrap();
@@ -64,8 +64,8 @@ fn dropped_file_is_reported_as_only_in_expected() {
 fn extra_file_is_reported_as_only_in_actual() {
     // Why: a stale file left in the destination (e.g. a --delete bug) must
     // be caught symmetrically with a dropped file.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     seed(a.path());
     seed(b.path());
     write(b.path(), "sub/unexpected.txt", b"stale");
@@ -84,8 +84,8 @@ fn content_mismatch_is_detected_when_length_matches() {
     // Why: a same-length payload with different bytes is exactly what a
     // broken delta or checksum bug produces. Length-only comparison would
     // miss it, so content must be compared byte-for-byte.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     write(a.path(), "f", b"aaaaa");
     write(b.path(), "f", b"aaaab");
 
@@ -102,8 +102,8 @@ fn content_mismatch_is_detected_when_length_matches() {
 fn content_not_compared_when_check_content_disabled() {
     // Why: structure-only comparison must ignore bytes, so a port that
     // only cares about layout is not coupled to file content.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     write(a.path(), "f", b"aaaaa");
     write(b.path(), "f", b"bbbbb");
 
@@ -116,8 +116,8 @@ fn content_not_compared_when_check_content_disabled() {
 fn type_flip_file_to_dir_is_reported() {
     // Why: a path that is a file in one tree and a directory in the other
     // is a corruption a content-only check would mis-handle.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     write(a.path(), "x", b"file");
     fs::create_dir_all(b.path().join("x")).unwrap();
 
@@ -134,8 +134,8 @@ fn type_flip_file_to_dir_is_reported() {
 fn unsupported_options_error_instead_of_passing_silently() {
     // Why: Rule 12 - a port that asks for xattr comparison must never
     // believe it checked xattrs when the harness silently ignored them.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
 
     let opts = DirDiffOptions {
         check_xattr: true,
@@ -152,8 +152,8 @@ fn mode_mismatch_is_detected() {
     // is invisible to content comparison alone.
     use std::os::unix::fs::PermissionsExt;
 
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     write(a.path(), "f", b"same");
     write(b.path(), "f", b"same");
     fs::set_permissions(a.path().join("f"), fs::Permissions::from_mode(0o644)).unwrap();
@@ -176,8 +176,8 @@ fn symlink_target_drift_is_detected_literally() {
     // literally rather than dereferencing, matching -a semantics.
     use std::os::unix::fs::symlink;
 
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     symlink("target/one", a.path().join("link")).unwrap();
     symlink("target/two", b.path().join("link")).unwrap();
 
@@ -197,8 +197,8 @@ fn matching_symlinks_are_equal_under_archive() {
     // -a port with a symlink would be a false positive.
     use std::os::unix::fs::symlink;
 
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     symlink("same/target", a.path().join("link")).unwrap();
     symlink("same/target", b.path().join("link")).unwrap();
 
@@ -213,8 +213,8 @@ fn matching_symlinks_are_equal_under_archive() {
 fn large_file_streaming_compare_matches() {
     // Why: the streaming path (> 1 MiB) must produce the same verdict as
     // the small-file path, so a big basis file is not a blind spot.
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = test_support::create_tempdir();
+    let b = test_support::create_tempdir();
     let big: Vec<u8> = (0..(2 * 1024 * 1024u32)).map(|i| i as u8).collect();
     write(a.path(), "big", &big);
     write(b.path(), "big", &big);

@@ -120,7 +120,7 @@ fn backdate_tree(root: &Path) {
 /// full wire transcript. `configure` runs last, so a cell can override any
 /// env var or append flags on top of the harness normalization.
 fn capture(src: &Path, label: &str, configure: impl FnOnce(&mut Command)) -> WireTranscript {
-    let workdir = tempfile::tempdir().expect("capture workdir");
+    let workdir = test_support::create_tempdir();
     let dest = workdir.path().join("dest");
     fs::create_dir(&dest).expect("mkdir dest");
 
@@ -175,7 +175,7 @@ fn assert_transcripts_eq(left: &WireTranscript, right: &WireTranscript, what: &s
 /// Cell 1: the instrument is stable - same binary, same fixture, twice.
 #[test]
 fn transcript_is_deterministic_for_same_binary_and_fixture() {
-    let src = tempfile::tempdir().expect("src");
+    let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
 
     let first = capture(src.path(), "determinism run 1", |_| {});
@@ -186,11 +186,11 @@ fn transcript_is_deterministic_for_same_binary_and_fixture() {
 /// Cell 2: the instrument can SEE change - and only the planted change.
 #[test]
 fn transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
-    let base_src = tempfile::tempdir().expect("base src");
+    let base_src = test_support::create_tempdir();
     build_fixture(base_src.path(), false);
     let base = capture(base_src.path(), "sensitivity base", |_| {});
 
-    let mutated_src = tempfile::tempdir().expect("mutated src");
+    let mutated_src = test_support::create_tempdir();
     build_fixture(mutated_src.path(), true);
     let mutated = capture(mutated_src.path(), "sensitivity mutated", |_| {});
     // The flipped content byte crosses client->server on a push; a comparison
@@ -203,7 +203,7 @@ fn transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
     // Revert arm: an independently built fixture WITHOUT the mutation must
     // restore byte-identity, proving the difference above was exactly the
     // planted byte and not fixture-construction noise.
-    let reverted_src = tempfile::tempdir().expect("reverted src");
+    let reverted_src = test_support::create_tempdir();
     build_fixture(reverted_src.path(), false);
     let reverted = capture(reverted_src.path(), "sensitivity reverted", |_| {});
     assert_transcripts_eq(&base, &reverted, "reverted fixture");
@@ -217,7 +217,7 @@ fn transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
 /// here first.
 #[test]
 fn transcript_unchanged_by_lazy_flist_env_off() {
-    let src = tempfile::tempdir().expect("src");
+    let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
 
     // The recorder's command() removes the variable; this arm is "unset".
@@ -249,7 +249,7 @@ fn transcript_unchanged_by_lazy_flist_env_off() {
 /// the wire negotiation lands, this cell becomes the end-to-end gate unchanged.
 #[test]
 fn transcript_unchanged_by_lazy_flist_env_on() {
-    let src = tempfile::tempdir().expect("src");
+    let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
 
     // Eager arm: variable unset (command() removes it).

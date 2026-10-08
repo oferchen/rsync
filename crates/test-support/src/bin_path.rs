@@ -230,8 +230,6 @@ fn assert_executable(_path: &Path) {}
 mod tests {
     use std::fs;
 
-    use tempfile::TempDir;
-
     use super::*;
 
     #[test]
@@ -304,7 +302,7 @@ mod tests {
         // Why: this is the whole point of the guard. A stale binary makes
         // every test that shells out to it fail as though the code under test
         // had regressed, and the diff under review looks innocent.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = crate::create_tempdir();
         let binary = fixture(tmp.path(), OLDER_THAN_SOURCES, &["src/lib.rs"]);
         assert_fresh("fakebin", &binary);
     }
@@ -314,7 +312,7 @@ mod tests {
         // Why: the non-vacuity companion. Without it the panic above would
         // also be satisfied by a guard that rejects every binary, which would
         // make the whole suite unrunnable rather than correct.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = crate::create_tempdir();
         let binary = fixture(tmp.path(), NEWER_THAN_SOURCES, &["src/lib.rs"]);
         assert_fresh("fakebin", &binary);
     }
@@ -325,7 +323,7 @@ mod tests {
         // dependency. It changes on every commit, checkout and fetch without
         // altering a byte of program input, so honouring it would demand a
         // relink after each commit and train everyone to distrust the guard.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = crate::create_tempdir();
         let binary = fixture(tmp.path(), OLDER_THAN_SOURCES, &[".git/HEAD"]);
         assert_fresh("fakebin", &binary);
     }
@@ -335,7 +333,7 @@ mod tests {
         // Why: a removed source is a rebuild Cargo owns, not a fault to
         // report here. Treating an unreadable path as infinitely new would
         // wedge the suite until someone rebuilt for no stated reason.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = crate::create_tempdir();
         let binary = fixture(tmp.path(), OLDER_THAN_SOURCES, &["src/lib.rs"]);
         fs::remove_file(tmp.path().join("src/lib.rs")).expect("remove source");
         assert_fresh("fakebin", &binary);
@@ -349,7 +347,7 @@ mod tests {
         // checking against it would pass while the binary was stale with
         // respect to every workspace crate. With no sound source set available
         // the honest outcome is to assert nothing; see `assert_fresh`.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = crate::create_tempdir();
         let binary = tmp.path().join("fakebin");
         fs::write(&binary, b"").expect("binary");
         assert_fresh("fakebin", &binary);

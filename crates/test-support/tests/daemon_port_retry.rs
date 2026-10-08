@@ -66,7 +66,7 @@ fn wait_bounded(child: &mut ReapOnDrop) -> ExitStatus {
 /// failure code, not with a generic one.
 #[test]
 fn a_daemon_on_a_held_port_exits_with_the_bind_failure_code() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("hold a port");
     let port = held.local_addr().expect("held addr").port();
 
@@ -79,7 +79,7 @@ fn a_daemon_on_a_held_port_exits_with_the_bind_failure_code() {
 
 #[test]
 fn a_lost_bind_race_is_retried_on_a_fresh_port() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let config = write_config(&dir);
     let attempts = Cell::new(0u32);
     let mut held = Vec::new();
@@ -103,7 +103,7 @@ fn a_lost_bind_race_is_retried_on_a_fresh_port() {
 
 #[test]
 fn a_bad_config_fails_after_exactly_one_attempt() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let missing = dir.path().join("absent.conf");
     let attempts = Cell::new(0u32);
 

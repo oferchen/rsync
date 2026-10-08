@@ -22,7 +22,7 @@ fn trampoline_tees_both_directions_through_cat() {
     use std::io::Write;
     use std::process::Stdio;
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let recorder = TranscriptRecorder::new(dir.path());
     let payload = b"transcript round-trip payload\n";
 
@@ -56,7 +56,7 @@ fn trampoline_tees_both_directions_through_cat() {
 fn trampoline_drops_options_and_host_before_the_server_argv() {
     use std::process::Stdio;
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let output = Command::new(env!("CARGO_BIN_EXE_capture-rsh"))
         .args(["-l", "-q", "host", "/bin/echo", "server-argv-marker"])
         .env(TRANSCRIPT_C2S_ENV, dir.path().join("c2s.bin"))

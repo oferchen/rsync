@@ -140,7 +140,7 @@ fn backdate_tree(root: &Path) {
 /// `configure` runs last, so a cell can override any env var or append flags
 /// on top of the harness normalization.
 fn capture(src: &Path, label: &str, configure: impl FnOnce(&mut Command)) -> WireTranscript {
-    let workdir = tempfile::tempdir().expect("capture workdir");
+    let workdir = test_support::create_tempdir();
     let dest = workdir.path().join("dest");
     fs::create_dir(&dest).expect("mkdir dest");
     let recorder = TranscriptRecorder::new(workdir.path());
@@ -199,7 +199,7 @@ fn assert_transcripts_eq(left: &WireTranscript, right: &WireTranscript, what: &s
 /// Cell 1: the instrument is stable - same binary, same fixture, twice.
 #[test]
 fn pull_transcript_is_deterministic_for_same_binary_and_fixture() {
-    let src = tempfile::tempdir().expect("src");
+    let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
     let first = capture(src.path(), "determinism run 1", |_| {});
     let second = capture(src.path(), "determinism run 2", |_| {});
@@ -208,10 +208,10 @@ fn pull_transcript_is_deterministic_for_same_binary_and_fixture() {
 /// Cell 2: the instrument can SEE change - and only the planted change.
 #[test]
 fn pull_transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
-    let base_src = tempfile::tempdir().expect("base src");
+    let base_src = test_support::create_tempdir();
     build_fixture(base_src.path(), false);
     let base = capture(base_src.path(), "sensitivity base", |_| {});
-    let mutated_src = tempfile::tempdir().expect("mutated src");
+    let mutated_src = test_support::create_tempdir();
     build_fixture(mutated_src.path(), true);
     let mutated = capture(mutated_src.path(), "sensitivity mutated", |_| {});
     // On a pull the changed content is the SENDER's literal data, which crosses
@@ -224,7 +224,7 @@ fn pull_transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
     // Revert arm: an independently built fixture WITHOUT the mutation must
     // restore byte-identity in BOTH directions, proving the difference above
     // was exactly the planted byte and not fixture-construction noise.
-    let reverted_src = tempfile::tempdir().expect("reverted src");
+    let reverted_src = test_support::create_tempdir();
     build_fixture(reverted_src.path(), false);
     let reverted = capture(reverted_src.path(), "sensitivity reverted", |_| {});
     assert_transcripts_eq(&base, &reverted, "reverted fixture");
@@ -243,11 +243,11 @@ fn pull_transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
 /// timing change; this growth check shows it can.
 #[test]
 fn pull_receiver_outbound_stream_is_substantive_and_scales_with_entries() {
-    let single_src = tempfile::tempdir().expect("single-file src");
+    let single_src = test_support::create_tempdir();
     build_single_file_fixture(single_src.path());
     let single = capture(single_src.path(), "single-file tree", |_| {});
 
-    let multi_src = tempfile::tempdir().expect("multi-level src");
+    let multi_src = test_support::create_tempdir();
     build_fixture(multi_src.path(), false);
     let multi = capture(multi_src.path(), "multi-level tree", |_| {});
 
@@ -354,12 +354,12 @@ fn tree_listing(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 /// silently failed to engage would leave it byte-identical and fail here.
 #[test]
 fn pull_inc_recurse_flag_engages_and_transfers_the_tree() {
-    let src = tempfile::tempdir().expect("src");
+    let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
 
-    let off_dir = tempfile::tempdir().expect("off dest");
+    let off_dir = test_support::create_tempdir();
     let off = capture_into(src.path(), off_dir.path(), "flag off", |_| {});
-    let on_dir = tempfile::tempdir().expect("on dest");
+    let on_dir = test_support::create_tempdir();
     let on = capture_into(src.path(), on_dir.path(), "flag on", |cmd| {
         cmd.env(PULL_INC_RECURSE_ENV, "1");
     });
@@ -385,14 +385,14 @@ fn pull_inc_recurse_flag_engages_and_transfers_the_tree() {
 /// withholds `'i'` for them (compat.c:172-177).
 #[test]
 fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes() {
-    let src = tempfile::tempdir().expect("src");
+    let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
     for extra in ["--no-inc-recursive", "--delete-before", "--delete-after"] {
-        let off_dir = tempfile::tempdir().expect("off dest");
+        let off_dir = test_support::create_tempdir();
         let off = capture_into(src.path(), off_dir.path(), extra, |cmd| {
             cmd.arg(extra);
         });
-        let on_dir = tempfile::tempdir().expect("on dest");
+        let on_dir = test_support::create_tempdir();
         let on = capture_into(src.path(), on_dir.path(), extra, |cmd| {
             cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "1");
         });
@@ -407,7 +407,7 @@ fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes(
 /// sub-list is walked, so a `--delete` pull keeps INC_RECURSE.
 #[test]
 fn pull_inc_recurse_flag_engages_under_per_directory_deletes() {
-    let src = tempfile::tempdir().expect("src");
+    let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
     let seed = |dest_root: &Path| {
         let dest = dest_root.join("dest");
@@ -419,12 +419,12 @@ fn pull_inc_recurse_flag_engages_under_per_directory_deletes() {
     };
     let expected = tree_listing(src.path());
     for extra in ["--delete", "--delete-during", "--delete-delay"] {
-        let off_dir = tempfile::tempdir().expect("off dest");
+        let off_dir = test_support::create_tempdir();
         seed(off_dir.path());
         let off = capture_into(src.path(), off_dir.path(), extra, |cmd| {
             cmd.arg(extra);
         });
-        let on_dir = tempfile::tempdir().expect("on dest");
+        let on_dir = test_support::create_tempdir();
         seed(on_dir.path());
         let on = capture_into(src.path(), on_dir.path(), extra, |cmd| {
             cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "1");
