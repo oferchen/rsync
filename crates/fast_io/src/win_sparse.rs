@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn mark_file_sparse_reports_availability() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("sparse-probe.bin");
         let file = std::fs::File::create(&path).expect("create");
         // On non-Windows this is a no-op that returns Ok(true); on Windows it

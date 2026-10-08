@@ -278,7 +278,10 @@ mod tests {
     #[test]
     fn mode_diff_none_for_identical_modes() {
         // Seed equal modes explicitly (portable; no reliance on `touch -d @epoch`).
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         for root in [a.path(), b.path()] {
             let f = root.join("f");
             fs::write(&f, b"x").unwrap();
@@ -289,7 +292,10 @@ mod tests {
 
     #[test]
     fn mode_diff_names_the_diverging_path() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         fs::write(a.path().join("f"), b"x").unwrap();
         fs::write(b.path().join("f"), b"x").unwrap();
         set_mode(&a.path().join("f"), 0o640).unwrap();

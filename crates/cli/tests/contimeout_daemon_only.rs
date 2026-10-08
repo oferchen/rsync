@@ -16,7 +16,6 @@ use std::process::{Command, Output};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use tempfile::TempDir;
 use test_support::oc_rsync_bin;
 
 const REJECTED: &str = "may only be used when connecting to an rsync daemon";
@@ -38,7 +37,7 @@ fn run(args: &[String]) -> Output {
 
 #[test]
 fn local_copy_rejects_contimeout() {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let output = run(&[
         "--contimeout=5".to_owned(),
         tmp.path().join("src").display().to_string(),
@@ -53,7 +52,7 @@ fn local_copy_rejects_contimeout() {
 fn remote_shell_transfer_rejects_contimeout() {
     // upstream: testsuite/contimeout-rsh_test.py - the guard runs before any
     // remote shell is spawned, so no ssh is needed to observe it.
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let output = run(&[
         "--contimeout=5".to_owned(),
         "-a".to_owned(),
@@ -69,7 +68,7 @@ fn remote_shell_transfer_rejects_contimeout() {
 fn zero_contimeout_is_not_rejected() {
     // upstream tests `connect_timeout` for non-zero, so `--contimeout=0` (no
     // timeout) is accepted everywhere.
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     std::fs::create_dir(&src).expect("create src");
     std::fs::write(src.join("f"), b"x").expect("write");
@@ -97,7 +96,7 @@ fn rsh_helper(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathB
 fn daemon_over_rsh_keeps_contimeout() {
     // rsync-ssl's shape of call: a daemon URL reached through --rsh. The
     // helper fails at once, so the run fails, but not on the option guard.
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let helper = rsh_helper(tmp.path(), "fail-rsh", "exit 1");
     let output = run(&[
         "--contimeout=5".to_owned(),
@@ -121,7 +120,7 @@ fn daemon_over_rsh_times_out_a_helper_that_never_answers() {
     // connecting, so only --contimeout can end the run. Its `sleep` child keeps
     // the pipe open after the shell itself is killed, so a deadline that merely
     // killed the spawned process would still hang here.
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let helper = rsh_helper(tmp.path(), "hang-rsh", "exec 2>/dev/null\nsleep 30");
     let start = Instant::now();
     let output = run(&[

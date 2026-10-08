@@ -371,17 +371,16 @@ mod windows {
     mod tests {
         use super::*;
         use std::io::Write;
-        use tempfile::tempdir;
 
         #[test]
         fn probe_returns_true_for_valid_directory() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             assert!(delete_on_close_available(dir.path()));
         }
 
         #[test]
         fn open_creates_file_that_is_writable() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let (mut file, path) = open_delete_on_close_tmpfile(dir.path()).expect("open");
             file.write_all(b"test data").expect("write");
             assert!(path.exists());
@@ -389,7 +388,7 @@ mod windows {
 
         #[test]
         fn file_deleted_on_drop() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let (file, path) = open_delete_on_close_tmpfile(dir.path()).expect("open");
             assert!(path.exists());
             drop(file);
@@ -399,7 +398,7 @@ mod windows {
 
         #[test]
         fn clear_disposition_prevents_deletion() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let (file, path) = open_delete_on_close_tmpfile(dir.path()).expect("open");
             clear_delete_on_close(&file).expect("clear disposition");
             drop(file);
@@ -414,7 +413,7 @@ mod windows {
 
         #[test]
         fn commit_creates_destination_file() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let (mut file, temp_path) = open_delete_on_close_tmpfile(dir.path()).expect("open");
             file.write_all(b"commit test data").expect("write");
 
@@ -429,7 +428,7 @@ mod windows {
 
         #[test]
         fn commit_replaces_existing_destination() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("existing.txt");
             std::fs::write(&dest, b"old content").expect("create existing");
 
@@ -443,7 +442,7 @@ mod windows {
 
         #[test]
         fn unique_names_do_not_collide() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let (f1, p1) = open_delete_on_close_tmpfile(dir.path()).expect("open 1");
             let (f2, p2) = open_delete_on_close_tmpfile(dir.path()).expect("open 2");
             assert_ne!(p1, p2);

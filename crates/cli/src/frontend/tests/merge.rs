@@ -28,7 +28,7 @@ fn apply_merge_directive_parses_whitespace_risk_and_exclude_if_present() {
     use std::collections::HashSet;
     use tempfile::tempdir;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let merge_file = temp.path().join("rules.txt");
     std::fs::write(
         &merge_file,
@@ -69,7 +69,7 @@ fn apply_merge_directive_rejects_per_dir_alias() {
     use std::collections::HashSet;
     use tempfile::tempdir;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let merge_file = temp.path().join("rules.txt");
     std::fs::write(&merge_file, "per-dir .rsync-filter\n").expect("write merge rules");
 
@@ -132,7 +132,7 @@ fn apply_merge_directive_collapses_dot_dot_before_opening_the_file() {
     use std::collections::HashSet;
     use tempfile::tempdir;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     std::fs::create_dir(temp.path().join("a")).expect("mkdir a");
     std::fs::write(temp.path().join("a/rules.txt"), "- *.log\n").expect("write merge rules");
     // `a/b` deliberately does not exist: only the lexical collapse can find the
@@ -165,7 +165,7 @@ fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
     use std::collections::HashSet;
     use tempfile::tempdir;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     std::fs::create_dir(temp.path().join("a")).expect("mkdir a");
 
     let directive = MergeDirective::new(OsString::from("a/b/../missing.txt"), None);
@@ -198,7 +198,7 @@ fn an_unparsable_line_in_a_merge_file_is_described_not_echoed() {
 
     const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let merge_file = temp.path().join("rules");
     std::fs::write(&merge_file, format!("{SECRET}\n")).expect("write merge rules");
 
@@ -236,7 +236,7 @@ fn a_merge_file_named_by_another_file_reports_where_it_was_named() {
 
     const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let inner = temp.path().join("inner-bad");
     std::fs::write(&inner, format!("{SECRET}\n")).expect("write inner");
     let outer = temp.path().join("outer-known");

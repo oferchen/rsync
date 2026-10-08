@@ -15,9 +15,7 @@ use super::*;
 /// IGNORED, which is the failure mode the old refusal existed to prevent.
 #[test]
 fn remote_option_applies_to_a_local_transfer() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     let log = temp.path().join("applied.log");
@@ -48,9 +46,7 @@ fn remote_option_applies_to_a_local_transfer() {
 /// assertion is attributable to the folded option and nothing else.
 #[test]
 fn a_local_transfer_writes_no_log_file_without_the_remote_option() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     let log = temp.path().join("applied.log");

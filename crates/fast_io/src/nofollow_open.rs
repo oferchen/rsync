@@ -221,7 +221,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn opens_basis_through_directory_symlink() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let real_dir = tmp.path().join("real-dir");
         std::fs::create_dir(&real_dir).expect("mkdir real-dir");
         let basis_path = real_dir.join("basis");
@@ -243,7 +243,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn rejects_symlinked_basename() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let target = tmp.path().join("secret");
         std::fs::write(&target, b"do-not-leak").expect("write target");
 
@@ -263,7 +263,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn opens_basis_through_nested_directory_symlink() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let nested_real_sub = tmp.path().join("nested_real").join("sub");
         std::fs::create_dir_all(&nested_real_sub).expect("mkdir nested_real/sub");
         let basis_path = nested_real_sub.join("data");
@@ -281,7 +281,7 @@ mod tests {
     /// Top-level basis (test 6 mirror): no dirname split needed.
     #[test]
     fn opens_top_level_basis_without_split() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let basis = tmp.path().join("topfile");
         {
             let mut f = std::fs::File::create(&basis).expect("create");
@@ -297,7 +297,7 @@ mod tests {
     /// (reference dirs, fuzzy match) keeps working.
     #[test]
     fn missing_path_returns_not_found() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let missing = tmp.path().join("does-not-exist");
         let err = open_basis_nofollow(&missing).expect_err("missing path must fail");
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
@@ -312,7 +312,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn refuses_fifo_basis_without_blocking() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let fifo = tmp.path().join("fifo-basis");
         // Same `mkfifo(1)` shell-out as tests/drop_devices.rs.
         let status = std::process::Command::new("mkfifo")
@@ -338,7 +338,7 @@ mod tests {
     /// declines it here.
     #[test]
     fn refuses_directory_basis() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let dir = tmp.path().join("dir-basis");
         std::fs::create_dir(&dir).expect("mkdir");
         let err = open_basis_nofollow(&dir).expect_err("a directory is not a delta basis");
@@ -351,7 +351,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn regular_basis_descriptor_has_no_nonblock() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let basis = tmp.path().join("sub").join("basis");
         std::fs::create_dir(basis.parent().expect("parent")).expect("mkdir");
         std::fs::write(&basis, b"payload").expect("write basis");

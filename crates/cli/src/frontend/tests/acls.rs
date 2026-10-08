@@ -4,9 +4,7 @@ use super::*;
 #[cfg(not(feature = "acl"))]
 #[test]
 fn acls_option_reports_unsupported_when_feature_disabled() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");

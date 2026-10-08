@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_relative_preserves_parent_directories() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("src");
     let destination_root = tmp.path().join("dest");
     std::fs::create_dir_all(source_root.join("foo/bar")).expect("create source tree");

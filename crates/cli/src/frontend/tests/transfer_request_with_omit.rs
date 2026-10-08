@@ -6,9 +6,8 @@ use super::*;
 #[test]
 fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
     use filetime::{FileTime, set_file_times};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     let source_dir = source_root.join("nested");
@@ -51,9 +50,8 @@ fn transfer_request_with_omit_link_times_skips_symlink_timestamp() {
     use filetime::{FileTime, set_file_times, set_symlink_file_times};
     use std::fs;
     use std::os::unix::fs::symlink;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     fs::create_dir_all(&source_root).expect("create source dir");

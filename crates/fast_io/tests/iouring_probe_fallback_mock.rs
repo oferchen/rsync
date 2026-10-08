@@ -24,7 +24,6 @@ use fast_io::{
     IoUringOrStdReader, IoUringOrStdWriter, IoUringPolicy, IoUringReaderFactory,
     IoUringWriterFactory, is_io_uring_available, reader_from_path, writer_from_file,
 };
-use tempfile::tempdir;
 
 const DISABLE_VAR: &str = "OC_RSYNC_DISABLE_IOURING";
 
@@ -100,7 +99,7 @@ fn disable_env_var_accepts_common_truthy_spellings() {
 fn auto_policy_writer_falls_back_to_std_when_probe_disabled() {
     let _g = EnvGuard::set(DISABLE_VAR, OsStr::new("1"));
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("disabled_probe.bin");
     let payload = b"mocked probe fallback content";
 
@@ -148,7 +147,7 @@ fn factory_will_use_io_uring_returns_false_when_probe_disabled() {
 fn enabled_policy_returns_unsupported_when_probe_disabled() {
     let _g = EnvGuard::set(DISABLE_VAR, OsStr::new("1"));
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("enabled_probe_disabled.bin");
     let file = std::fs::File::create(&path).expect("create file");
 
@@ -170,7 +169,7 @@ fn enabled_policy_returns_unsupported_when_probe_disabled() {
 fn disabled_policy_round_trips_regardless_of_env_var() {
     let _g = EnvGuard::set(DISABLE_VAR, OsStr::new("1"));
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("disabled_policy.bin");
     let payload = b"disabled policy still works";
 

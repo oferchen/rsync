@@ -5,9 +5,7 @@ use std::ffi::OsString;
 #[cfg(not(feature = "xattr"))]
 #[test]
 fn xattrs_option_reports_unsupported_when_feature_disabled() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");
@@ -33,9 +31,7 @@ fn xattrs_option_reports_unsupported_when_feature_disabled() {
 #[cfg(all(windows, feature = "xattr"))]
 #[test]
 fn xattrs_preflight_accepts_on_windows_with_feature() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");
@@ -57,9 +53,7 @@ fn xattrs_preflight_accepts_on_windows_with_feature() {
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn xattrs_option_preserves_attributes() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"attr data").expect("write source");

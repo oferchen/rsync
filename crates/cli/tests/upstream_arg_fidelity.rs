@@ -791,8 +791,8 @@ fn temp_dir_short_equals_value_is_accepted() {
 /// Runs `oc-rsync -n <args...> <tmp-src>/ <tmp-dst>/` over empty temp dirs so
 /// only argument handling (not I/O) determines the exit status.
 fn run_oc(args: &[&str]) -> std::process::ExitStatus {
-    let src = tempfile::tempdir().expect("tempdir src");
-    let dst = tempfile::tempdir().expect("tempdir dst");
+    let src = test_support::create_tempdir();
+    let dst = test_support::create_tempdir();
     std::process::Command::new(test_support::oc_rsync_bin())
         .arg("-n")
         .args(args)

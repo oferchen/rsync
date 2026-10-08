@@ -1210,7 +1210,7 @@ mod landlock_root_tests {
     /// returning the operand there denies the sibling temp with `EACCES`.
     #[test]
     fn root_is_the_written_directory_for_every_operand_shape() {
-        let scratch = tempfile::tempdir().expect("tempdir");
+        let scratch = test_support::create_tempdir();
         let dir = scratch.path().join("dest");
         fs::create_dir(&dir).unwrap();
         let existing_file = dir.join("f.bin");
@@ -1249,7 +1249,7 @@ mod keep_dirlink_target_tests {
     /// it; a symlink-to-file and a plain directory contribute nothing.
     #[test]
     fn collects_only_symlink_to_dir_targets() {
-        let scratch = tempfile::tempdir().expect("tempdir");
+        let scratch = test_support::create_tempdir();
         let root = scratch.path().join("dest");
         fs::create_dir(&root).unwrap();
 
@@ -1284,7 +1284,7 @@ mod keep_dirlink_target_tests {
     /// upstream follows kept dirlinks at any depth.
     #[test]
     fn collects_nested_symlink_to_dir_targets() {
-        let scratch = tempfile::tempdir().expect("tempdir");
+        let scratch = test_support::create_tempdir();
         let root = scratch.path().join("dest");
         let sub = root.join("sub");
         fs::create_dir_all(&sub).unwrap();

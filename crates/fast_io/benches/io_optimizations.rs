@@ -14,7 +14,7 @@ use std::io::{BufWriter, IoSlice, Read, Write};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-use tempfile::{NamedTempFile, tempdir};
+use tempfile::NamedTempFile;
 
 #[cfg(all(unix, not(all(target_os = "linux", feature = "io_uring"))))]
 use fast_io::MmapReader;
@@ -23,7 +23,7 @@ use fast_io::MmapReader;
 use fast_io::{IoUringConfig, IoUringReader, IoUringWriter, is_io_uring_available};
 
 fn create_test_file(size: usize) -> NamedTempFile {
-    let mut file = NamedTempFile::new().expect("Failed to create temp file");
+    let mut file = test_support::create_named_tempfile();
     let mut data = vec![0u8; size];
     for (i, byte) in data.iter_mut().enumerate() {
         *byte = (i % 256) as u8;
@@ -38,7 +38,7 @@ fn bench_vectored_io(c: &mut Criterion) {
     group.sample_size(20); // Reduce sample size to avoid disk quota
 
     // Use a shared temp directory to avoid quota issues
-    let bench_dir = tempdir().unwrap();
+    let bench_dir = test_support::create_tempdir();
 
     // Test with different chunk counts
     for num_chunks in [4, 8, 16] {
@@ -241,7 +241,7 @@ fn bench_io_uring_writes(c: &mut Criterion) {
         // Standard I/O baseline
         group.bench_with_input(BenchmarkId::new("standard_io", name), &data, |b, data| {
             b.iter(|| {
-                let dir = tempdir().unwrap();
+                let dir = test_support::create_tempdir();
                 let path = dir.path().join("test.bin");
                 let file = File::create(&path).unwrap();
                 let mut writer = BufWriter::new(file);
@@ -260,7 +260,7 @@ fn bench_io_uring_writes(c: &mut Criterion) {
         // resources have not yet been reclaimed by the kernel. Hoisting also
         // doubles as the sentinel: a failed open here skips the sub-bench
         // and keeps the standard_io baseline measurable.
-        let writer_dir = tempdir().unwrap();
+        let writer_dir = test_support::create_tempdir();
         let writer_path = writer_dir.path().join("test.bin");
         let config = IoUringConfig::default();
         match IoUringWriter::create(&writer_path, &config) {
@@ -336,7 +336,7 @@ fn bench_buffered_writes(c: &mut Criterion) {
         // Unbuffered writes (direct File::write)
         group.bench_with_input(BenchmarkId::new("unbuffered", name), &data, |b, data| {
             b.iter(|| {
-                let dir = tempdir().unwrap();
+                let dir = test_support::create_tempdir();
                 let path = dir.path().join("test.bin");
                 let mut file = File::create(&path).unwrap();
 
@@ -353,7 +353,7 @@ fn bench_buffered_writes(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let dir = tempdir().unwrap();
+                    let dir = test_support::create_tempdir();
                     let path = dir.path().join("test.bin");
                     let file = File::create(&path).unwrap();
                     let mut writer = BufWriter::with_capacity(256 * 1024, file);

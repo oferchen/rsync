@@ -10,7 +10,7 @@ use tempfile::TempDir;
 fn create_sample_summary() -> (ClientSummary, TempDir) {
     use std::fs;
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("source");
     let dest_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source directory");

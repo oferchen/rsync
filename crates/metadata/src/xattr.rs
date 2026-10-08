@@ -782,7 +782,6 @@ mod tests {
     use crate::xattr_send::XattrRole;
     use protocol::xattr::XattrEntry;
     use std::fs;
-    use tempfile::tempdir;
 
     /// Helper to check if xattrs are supported on the current filesystem.
     fn xattrs_supported(path: &Path) -> bool {
@@ -840,7 +839,7 @@ mod tests {
 
     #[test]
     fn list_attributes_returns_empty_for_file_without_xattrs() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("test.txt");
         fs::write(&file, "test content").expect("write file");
 
@@ -860,7 +859,7 @@ mod tests {
 
     #[test]
     fn write_and_read_attribute_roundtrip() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("test.txt");
         fs::write(&file, "test content").expect("write file");
 
@@ -883,7 +882,7 @@ mod tests {
 
     #[test]
     fn read_nonexistent_attribute_returns_none() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("test.txt");
         fs::write(&file, "test content").expect("write file");
 
@@ -899,7 +898,7 @@ mod tests {
 
     #[test]
     fn strip_source_xattrs_removes_shared_keeps_dest_only() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let dest = dir.path().join("dest.txt");
         fs::write(&source, "src").expect("write source");
@@ -937,7 +936,7 @@ mod tests {
 
     #[test]
     fn strip_source_xattrs_with_no_source_attrs_is_noop() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let dest = dir.path().join("dest.txt");
         fs::write(&source, "src").expect("write source");
@@ -962,7 +961,7 @@ mod tests {
 
     #[test]
     fn remove_attribute_deletes_xattr() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("test.txt");
         fs::write(&file, "test content").expect("write file");
 
@@ -993,7 +992,7 @@ mod tests {
 
     #[test]
     fn sync_xattrs_copies_attributes() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
         fs::write(&source, "source").expect("write source");
@@ -1036,7 +1035,7 @@ mod tests {
     // transferable attr means the pair differs; the rsync.%* channel is ignored.
     #[test]
     fn xattrs_match_detects_value_and_membership_differences() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let a = dir.path().join("a.txt");
         let b = dir.path().join("b.txt");
         fs::write(&a, "a").expect("write a");
@@ -1072,7 +1071,7 @@ mod tests {
 
     #[test]
     fn sync_xattrs_removes_extra_dest_attributes() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
         fs::write(&source, "source").expect("write source");
@@ -1121,7 +1120,7 @@ mod tests {
     // `--fake-super --chmod=a=` leg.
     #[test]
     fn sync_xattrs_leaves_rsync_internal_stat_untouched() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
         fs::write(&source, "source").expect("write source");
@@ -1178,7 +1177,7 @@ mod tests {
     /// preserve_xattrs < 2) ...) continue; }`
     #[test]
     fn sender_transmits_the_fake_super_store_only_at_level_two() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("stored.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -1240,7 +1239,7 @@ mod tests {
     /// `am_root < 0` is what `set_fake_super()` sets.
     #[test]
     fn fake_super_drops_the_store_attrs_even_at_level_two() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("faked.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -1296,7 +1295,7 @@ mod tests {
     /// upstream: xattrs.c:262 - `if ((am_sender && preserve_xattrs < 2) ...)`
     #[test]
     fn generator_keeps_the_rsync_store_at_a_single_x() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -1388,7 +1387,7 @@ mod tests {
     /// (name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)) continue; }`
     #[test]
     fn sender_applies_the_xattr_name_filter() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("filtered.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -1434,7 +1433,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_filter_bypasses_the_namespace_check() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("ns.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -1487,7 +1486,7 @@ mod tests {
     // (large-value round-trip fidelity varies across xattr backends).
     #[test]
     fn read_xattrs_for_wire_num_is_ascending_like_the_receiver() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("multi.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -1528,7 +1527,7 @@ mod tests {
 
     #[test]
     fn sync_xattrs_with_filter_skips_filtered_attrs() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
         fs::write(&source, "source").expect("write source");
@@ -1767,7 +1766,7 @@ mod tests {
 
     #[test]
     fn sync_xattrs_filter_preserves_unfiltered_dest_attrs() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
         fs::write(&source, "source").expect("write source");
@@ -1824,7 +1823,7 @@ mod tests {
     /// the inverse row is what makes this non-vacuous rather than decoration.
     #[test]
     fn sync_xattrs_consults_each_side_filter_for_its_own_half() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("source.txt");
         let destination = dir.path().join("dest.txt");
         fs::write(&source, "source").expect("write source");
@@ -1942,7 +1941,7 @@ mod tests {
 
     #[test]
     fn apply_xattrs_from_list_sets_attributes() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -1998,7 +1997,7 @@ mod tests {
             return;
         }
 
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("readonly.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2055,7 +2054,7 @@ mod tests {
             return;
         }
 
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let name = test_xattr_name("class");
 
         // Probe support once, on a throwaway file, so an unsupported
@@ -2139,7 +2138,7 @@ mod tests {
     // received name via name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS).
     #[test]
     fn apply_xattrs_from_list_filter_drops_excluded_received() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2183,7 +2182,7 @@ mod tests {
     // excluded destination name.
     #[test]
     fn apply_xattrs_from_list_filter_preserves_excluded_dest_attr() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2231,7 +2230,7 @@ mod tests {
 
     #[test]
     fn apply_xattrs_from_list_removes_stale_dest_attrs() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2276,7 +2275,7 @@ mod tests {
     /// attribute unset rather than writing a checksum as if it were the datum.
     #[test]
     fn apply_xattrs_from_list_no_basis_leaves_abbreviated_unset() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2324,7 +2323,7 @@ mod tests {
     fn apply_xattrs_from_list_resolves_abbreviated_against_basis() {
         use protocol::xattr::compute_xattr_checksum;
 
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let basis = dir.path().join("basis.txt");
         let dest = dir.path().join("dest.txt");
         fs::write(&basis, "basis-content").expect("write basis");
@@ -2365,7 +2364,7 @@ mod tests {
     /// destination unchanged rather than copying an unrelated basis value.
     #[test]
     fn apply_xattrs_from_list_abbreviated_mismatch_not_applied() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let basis = dir.path().join("basis.txt");
         let dest = dir.path().join("dest.txt");
         fs::write(&basis, "basis-content").expect("write basis");
@@ -2394,7 +2393,7 @@ mod tests {
 
     #[test]
     fn apply_xattrs_from_list_empty_list_clears_all() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2416,7 +2415,7 @@ mod tests {
 
     #[test]
     fn apply_xattrs_from_list_overwrites_existing() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2446,7 +2445,7 @@ mod tests {
 
     #[test]
     fn apply_xattrs_from_list_with_empty_value() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("dest.txt");
         fs::write(&file, "content").expect("write file");
 
@@ -2477,7 +2476,7 @@ mod tests {
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn a_flipped_parent_does_not_carry_the_attribute_outside_the_confine_root() {
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         let root = base.join("root");
         let outside = base.join("outside");
@@ -2519,7 +2518,7 @@ mod tests {
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn an_in_tree_parent_symlink_still_receives_the_attribute() {
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
         std::fs::create_dir(root.join("real")).expect("mkdir real");
         let target = root.join("real/data");

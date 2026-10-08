@@ -11,7 +11,7 @@ use core::client::run_client;
 
 #[test]
 fn out_format_filename_placeholder_renders_basename() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -48,7 +48,7 @@ fn out_format_filename_placeholder_renders_basename() {
 
 #[test]
 fn out_format_full_path_placeholder_renders_complete_path() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -86,7 +86,7 @@ fn out_format_full_path_placeholder_renders_complete_path() {
 
 #[test]
 fn out_format_file_length_placeholder_shows_size() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -124,7 +124,7 @@ fn out_format_file_length_placeholder_shows_size() {
 
 #[test]
 fn out_format_bytes_transferred_placeholder_shows_transferred() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -162,7 +162,7 @@ fn out_format_bytes_transferred_placeholder_shows_transferred() {
 
 #[test]
 fn out_format_operation_placeholder_describes_event() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -200,7 +200,7 @@ fn out_format_operation_placeholder_describes_event() {
 
 #[test]
 fn out_format_process_id_placeholder_shows_pid() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -239,7 +239,7 @@ fn out_format_process_id_placeholder_shows_pid() {
 
 #[test]
 fn out_format_escaped_percent_renders_literal_percent() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -276,7 +276,7 @@ fn out_format_escaped_percent_renders_literal_percent() {
 
 #[test]
 fn out_format_multiple_escaped_percent_signs() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -313,7 +313,7 @@ fn out_format_multiple_escaped_percent_signs() {
 
 #[test]
 fn out_format_combines_multiple_placeholders() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -354,7 +354,7 @@ fn out_format_combines_multiple_placeholders() {
 
 #[test]
 fn out_format_mixes_literals_and_placeholders() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -393,7 +393,7 @@ fn out_format_mixes_literals_and_placeholders() {
 
 #[test]
 fn out_format_respects_width_specifier() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -433,7 +433,7 @@ fn out_format_respects_width_specifier() {
 
 #[test]
 fn out_format_respects_left_alignment() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -478,7 +478,7 @@ fn out_format_respects_left_alignment() {
 
 #[test]
 fn out_format_humanizes_with_separator() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -516,7 +516,7 @@ fn out_format_humanizes_with_separator() {
 
 #[test]
 fn out_format_humanizes_with_decimal_units() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -556,7 +556,7 @@ fn out_format_humanizes_with_decimal_units() {
 
 #[test]
 fn out_format_humanizes_with_binary_units() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -646,7 +646,7 @@ fn out_format_all_supported_placeholders_parse_successfully() {
 
 #[test]
 fn out_format_complex_realistic_format() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -689,7 +689,7 @@ fn out_format_complex_realistic_format() {
 
 #[test]
 fn out_format_directory_names_include_trailing_slash() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");

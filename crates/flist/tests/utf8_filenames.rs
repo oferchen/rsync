@@ -51,7 +51,7 @@ fn try_create_dir(dir: &Path, name: &str) -> bool {
 /// Verifies handling of files with accented Latin characters.
 #[test]
 fn basic_utf8_accented_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("accented");
     fs::create_dir(&root).expect("create root");
 
@@ -111,7 +111,7 @@ fn basic_utf8_accented_characters() {
 /// Verifies directories with accented names are traversed correctly.
 #[test]
 fn directories_with_accented_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("accented_dirs");
     fs::create_dir(&root).expect("create root");
 
@@ -131,7 +131,7 @@ fn directories_with_accented_names() {
 /// Verifies handling of Japanese filenames (Hiragana, Katakana, Kanji).
 #[test]
 fn japanese_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("japanese");
     fs::create_dir(&root).expect("create root");
 
@@ -176,7 +176,7 @@ fn japanese_filenames() {
 /// Verifies handling of Chinese filenames (Simplified and Traditional).
 #[test]
 fn chinese_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("chinese");
     fs::create_dir(&root).expect("create root");
 
@@ -211,7 +211,7 @@ fn chinese_filenames() {
 /// Verifies handling of Korean filenames (Hangul).
 #[test]
 fn korean_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("korean");
     fs::create_dir(&root).expect("create root");
 
@@ -244,7 +244,7 @@ fn korean_filenames() {
 /// Verifies nested directories with CJK names.
 #[test]
 fn cjk_nested_directories() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("cjk_nested");
     fs::create_dir(&root).expect("create root");
 
@@ -279,7 +279,7 @@ fn cjk_nested_directories() {
 /// Verifies handling of emoji filenames.
 #[test]
 fn emoji_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("emoji");
     fs::create_dir(&root).expect("create root");
 
@@ -318,7 +318,7 @@ fn emoji_filenames() {
 /// Verifies handling of complex emoji sequences (skin tones, ZWJ sequences).
 #[test]
 fn complex_emoji_sequences() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("complex_emoji");
     fs::create_dir(&root).expect("create root");
 
@@ -351,7 +351,7 @@ fn complex_emoji_sequences() {
 /// Verifies handling of various multi-byte UTF-8 sequences.
 #[test]
 fn multi_byte_utf8_sequences() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("multibyte");
     fs::create_dir(&root).expect("create root");
 
@@ -395,7 +395,7 @@ fn multi_byte_utf8_sequences() {
 /// Verifies byte length preservation for UTF-8 names.
 #[test]
 fn utf8_byte_length_preservation() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("bytelength");
     fs::create_dir(&root).expect("create root");
 
@@ -425,7 +425,7 @@ fn utf8_byte_length_preservation() {
 /// Verifies handling of combining characters (diacritical marks).
 #[test]
 fn combining_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("combining");
     fs::create_dir(&root).expect("create root");
 
@@ -467,7 +467,7 @@ fn combining_characters() {
 /// Verifies that precomposed and decomposed forms are handled distinctly.
 #[test]
 fn precomposed_vs_decomposed() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("normalization");
     fs::create_dir(&root).expect("create root");
 
@@ -513,7 +513,7 @@ fn precomposed_vs_decomposed() {
 /// Verifies handling of Arabic filenames.
 #[test]
 fn arabic_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("arabic");
     fs::create_dir(&root).expect("create root");
 
@@ -549,7 +549,7 @@ fn arabic_filenames() {
 /// Verifies handling of Hebrew filenames.
 #[test]
 fn hebrew_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("hebrew");
     fs::create_dir(&root).expect("create root");
 
@@ -585,7 +585,7 @@ fn hebrew_filenames() {
 /// Verifies handling of bidirectional text in filenames.
 #[test]
 fn bidirectional_text() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("bidi");
     fs::create_dir(&root).expect("create root");
 
@@ -624,7 +624,7 @@ fn bidirectional_text() {
 /// Verifies handling of filenames with multiple scripts.
 #[test]
 fn mixed_scripts_single_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed_scripts");
     fs::create_dir(&root).expect("create root");
 
@@ -676,7 +676,7 @@ fn mixed_scripts_single_filename() {
 /// Verifies directory traversal with mixed-script paths.
 #[test]
 fn mixed_scripts_nested_paths() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed_nested");
     fs::create_dir(&root).expect("create root");
 
@@ -708,7 +708,7 @@ fn mixed_scripts_nested_paths() {
 /// Verifies handling of maximum-length UTF-8 filenames.
 #[test]
 fn maximum_length_utf8_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("maxlen");
     fs::create_dir(&root).expect("create root");
 
@@ -730,7 +730,7 @@ fn maximum_length_utf8_filename() {
 /// Verifies handling of filenames that look similar but differ in encoding.
 #[test]
 fn visually_similar_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("similar");
     fs::create_dir(&root).expect("create root");
 
@@ -764,7 +764,7 @@ fn visually_similar_filenames() {
 /// Verifies handling of filenames with zero-width characters.
 #[test]
 fn zero_width_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("zerowidth");
     fs::create_dir(&root).expect("create root");
 
@@ -794,7 +794,7 @@ fn zero_width_characters() {
 /// Verifies sorting behavior with UTF-8 filenames.
 #[test]
 fn utf8_sorting_order() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("sorting");
     fs::create_dir(&root).expect("create root");
 
@@ -828,7 +828,7 @@ fn utf8_sorting_order() {
 /// Verifies file_name() returns correct OsStr for UTF-8 names.
 #[test]
 fn file_name_method_utf8() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("filename_test");
     fs::create_dir(&root).expect("create root");
 
@@ -851,7 +851,7 @@ fn file_name_method_utf8() {
 /// Verifies relative and full paths are correct for UTF-8 names.
 #[test]
 fn path_methods_utf8() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("path_test");
     fs::create_dir(&root).expect("create root");
 
@@ -885,7 +885,7 @@ fn path_methods_utf8() {
 /// Verifies handling of characters from the Supplementary Multilingual Plane (SMP).
 #[test]
 fn supplementary_plane_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("smp");
     fs::create_dir(&root).expect("create root");
 
@@ -918,7 +918,7 @@ fn supplementary_plane_characters() {
 /// Verifies handling of mathematical and technical symbols.
 #[test]
 fn mathematical_symbols() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("math");
     fs::create_dir(&root).expect("create root");
 
@@ -950,7 +950,7 @@ fn mathematical_symbols() {
 /// Verifies handling of currency symbols.
 #[test]
 fn currency_symbols() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("currency");
     fs::create_dir(&root).expect("create root");
 

@@ -409,9 +409,9 @@ mod tests {
 
     #[test]
     fn evaluate_accepts_linked_unchanged_and_copied_changed() {
-        let r = tempfile::tempdir().unwrap();
-        let oc = tempfile::tempdir().unwrap();
-        let up = tempfile::tempdir().unwrap();
+        let r = test_support::create_tempdir();
+        let oc = test_support::create_tempdir();
+        let up = test_support::create_tempdir();
         seed_reference(r.path());
         seed_like_link_dest(oc.path(), r.path());
         seed_like_link_dest(up.path(), r.path());
@@ -420,9 +420,9 @@ mod tests {
 
     #[test]
     fn evaluate_rejects_hardlinked_changed_file() {
-        let r = tempfile::tempdir().unwrap();
-        let oc = tempfile::tempdir().unwrap();
-        let up = tempfile::tempdir().unwrap();
+        let r = test_support::create_tempdir();
+        let oc = test_support::create_tempdir();
+        let up = test_support::create_tempdir();
         seed_reference(r.path());
         seed_like_link_dest(up.path(), r.path());
         // oc wrongly hardlinks the changed file to the reference.

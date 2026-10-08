@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn progress_transfer_renders_progress_lines() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("progress.txt");
     let destination = tmp.path().join("progress.out");
     std::fs::write(&source, b"progress").expect("write source");
@@ -35,9 +33,8 @@ fn progress_does_not_relist_names() {
     // upstream prints each name exactly once, inline before its progress line.
     // `--progress` (info=name1, verbosity 0) must NOT re-emit the whole name
     // listing after the per-file progress block.
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
     std::fs::create_dir(&src).expect("mkdir src");
@@ -66,9 +63,7 @@ fn progress_does_not_relist_names() {
 
 #[test]
 fn progress_human_readable_formats_sizes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("human-progress.bin");
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
@@ -104,9 +99,7 @@ fn progress_human_readable_formats_sizes() {
 
 #[test]
 fn progress_human_readable_combined_formats_sizes() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("human-progress.bin");
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
@@ -129,9 +122,7 @@ fn progress_human_readable_combined_formats_sizes() {
 
 #[test]
 fn progress_transfer_routes_messages_to_stderr_when_requested() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("stderr-progress.txt");
     let destination = tmp.path().join("stderr-progress.out");
     std::fs::write(&source, b"stderr-progress").expect("write source");
@@ -171,9 +162,7 @@ fn progress_percent_unknown_total_resolves_to_complete() {
 
 #[test]
 fn progress_reports_intermediate_updates() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("large.bin");
     let destination = tmp.path().join("large.out");
     // Use 4MB to ensure intermediate progress updates even on fast systems.
@@ -208,9 +197,8 @@ fn progress_reports_intermediate_updates() {
 #[test]
 fn progress_reports_unknown_totals_with_placeholder() {
     use std::os::unix::fs::FileTypeExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("fifo.in");
     mkfifo_for_tests(&source, 0o600).expect("mkfifo");
 
@@ -243,9 +231,7 @@ fn progress_reports_unknown_totals_with_placeholder() {
 
 #[test]
 fn progress_with_verbose_inserts_separator_before_totals() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("progress.txt");
     let destination = tmp.path().join("progress.out");
     std::fs::write(&source, b"progress").expect("write source");

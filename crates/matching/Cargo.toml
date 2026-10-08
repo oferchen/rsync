@@ -40,6 +40,7 @@ tracing = ["dep:tracing"]
 bench-internal = []
 
 [dev-dependencies]
+test-support = { path = "../test-support" }
 criterion = { workspace = true }
 proptest = { workspace = true }
 protocol = { path = "../protocol" }

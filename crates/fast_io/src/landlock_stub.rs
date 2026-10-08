@@ -79,7 +79,6 @@ pub fn best_effort_fs_downgrade() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn is_supported_returns_false() {
@@ -88,7 +87,7 @@ mod tests {
 
     #[test]
     fn restrict_returns_unavailable() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let outcome = restrict_to_module_paths(&[tmp.path()]);
         assert!(matches!(outcome, LandlockOutcome::Unavailable));
     }

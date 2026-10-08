@@ -377,7 +377,6 @@ mod tests {
     use crate::util::test_env::EnvGuard;
     use std::ffi::OsString;
     use std::io::Write;
-    use tempfile::TempDir;
 
     fn sample_branding() -> WorkspaceBranding {
         test_support::workspace_branding_snapshot()
@@ -416,7 +415,7 @@ mod tests {
 
     #[test]
     fn gather_release_artifacts_collects_known_outputs() {
-        let temp = TempDir::new().expect("temp workspace");
+        let temp = ::test_support::create_tempdir();
         let workspace = temp.path();
         let mut branding = sample_branding();
         branding
@@ -494,7 +493,7 @@ mod tests {
 
     #[test]
     fn upload_release_artifacts_invokes_command_with_assets() {
-        let temp = TempDir::new().expect("temp workspace");
+        let temp = ::test_support::create_tempdir();
         let workspace = temp.path();
 
         let mut branding = sample_branding();

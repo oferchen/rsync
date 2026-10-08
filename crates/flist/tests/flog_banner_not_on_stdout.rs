@@ -44,7 +44,7 @@ fn leaked_banners(events: Vec<DiagnosticEvent>) -> Vec<String> {
 }
 
 fn tree() -> tempfile::TempDir {
-    let temp = tempfile::tempdir().expect("temp dir");
+    let temp = test_support::create_tempdir();
     let nested = temp.path().join("nested");
     fs::create_dir_all(&nested).expect("create nested dir");
     fs::write(temp.path().join("file.txt"), b"data").expect("write file");

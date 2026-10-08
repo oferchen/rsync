@@ -194,7 +194,6 @@ mod tests {
     use super::*;
 
     use logging::{DiagnosticEvent, VerbosityConfig, drain_events, init};
-    use tempfile::tempdir;
 
     /// Collects the warning texts `check_alt_basis_dirs` emitted.
     fn warnings_for(references: &[ReferenceDirectory], destination: &Path) -> Vec<String> {
@@ -219,7 +218,7 @@ mod tests {
     /// warns at all would satisfy none of them and still look correct.
     #[test]
     fn an_existing_basis_directory_is_silent() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let basis = temp.path().join("prev");
         fs::create_dir(&basis).expect("create basis");
 
@@ -229,7 +228,7 @@ mod tests {
     /// upstream: `main.c:914` - a missing arg reports `does not exist`.
     #[test]
     fn a_missing_basis_reports_does_not_exist() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let basis = temp.path().join("absent");
 
         assert_eq!(
@@ -245,7 +244,7 @@ mod tests {
     /// reports `is not a dir`.
     #[test]
     fn a_plain_file_basis_reports_is_not_a_dir() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let basis = temp.path().join("file");
         fs::write(&basis, b"not a directory").expect("write basis");
 
@@ -261,7 +260,7 @@ mod tests {
     /// upstream: `main.c:889-890`; measured against real 3.5.0.
     #[test]
     fn one_trailing_separator_is_stripped_before_the_stat() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let basis = temp.path().join("file");
         fs::write(&basis, b"not a directory").expect("write basis");
 
@@ -282,7 +281,7 @@ mod tests {
     /// This is the row that a general path normalisation would get wrong.
     #[test]
     fn only_one_trailing_separator_is_stripped() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let basis = temp.path().join("file");
         fs::write(&basis, b"not a directory").expect("write basis");
 
@@ -308,7 +307,7 @@ mod tests {
     /// directory. upstream: `main.c:898-911` joins onto `curr_dir`.
     #[test]
     fn a_relative_basis_resolves_against_the_destination() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let destination = temp.path().join("dest");
         fs::create_dir(&destination).expect("create dest");
 
@@ -349,7 +348,7 @@ mod tests {
     /// Each alt-dest option names itself. upstream: `options.c:1450`.
     #[test]
     fn each_alt_dest_kind_names_its_own_option() {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let basis = temp.path().join("absent");
 
         for (kind, expected) in [

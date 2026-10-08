@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn pump_dispatches_overlapped_write_completion() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("pumped_write.bin");
         let wide = to_wide(&path);
 

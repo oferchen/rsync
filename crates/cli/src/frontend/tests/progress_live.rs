@@ -52,7 +52,7 @@ fn run_with_live_progress(
 
 /// Creates a temp directory with a single source file of the given size.
 fn setup_single_file(name: &str, size: usize) -> (TempDir, std::path::PathBuf) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir_all(&source_dir).expect("create source dir");
     let file_path = source_dir.join(name);
@@ -62,7 +62,7 @@ fn setup_single_file(name: &str, size: usize) -> (TempDir, std::path::PathBuf) {
 
 /// Creates a temp directory with multiple source files.
 fn setup_multiple_files(files: &[(&str, usize)]) -> (TempDir, std::path::PathBuf) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir_all(&source_dir).expect("create source dir");
     for (name, size) in files {

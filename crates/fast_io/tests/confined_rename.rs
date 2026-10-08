@@ -12,8 +12,6 @@
 use std::fs;
 use std::path::Path;
 
-use tempfile::TempDir;
-
 /// Stage `<dir>/name` with `body` and return its path.
 fn write_file(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     let path = dir.join(name);
@@ -26,7 +24,7 @@ fn write_file(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
 /// pass if `confined_rename` simply failed for every input.
 #[test]
 fn confined_rename_commits_a_nested_destination() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("sub")).expect("mkdir sub");
     let temp = write_file(root.path(), ".tmp", "payload");
     let final_path = root.path().join("sub").join("f0");
@@ -41,7 +39,7 @@ fn confined_rename_commits_a_nested_destination() {
 /// may appear in the outside tree.
 #[test]
 fn confined_rename_refuses_a_destination_parent_symlinked_outside() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("dest");
     let outside = base.path().join("outside");
     fs::create_dir(&root).expect("mkdir dest");
@@ -66,7 +64,7 @@ fn confined_rename_refuses_a_destination_parent_symlinked_outside() {
 /// replaced is exactly what this pins against.
 #[test]
 fn an_out_of_tree_source_does_not_disable_destination_confinement() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("dest");
     let outside = base.path().join("outside");
     let tmpd = base.path().join("tmpd");
@@ -107,7 +105,7 @@ fn an_out_of_tree_source_does_not_disable_destination_confinement() {
 /// upstream: `rsync-3.5.1/syscall.c:2065` `do_rename_at()`.
 #[test]
 fn an_out_of_tree_source_behind_an_owned_symlink_still_commits() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("dest");
     let staging = base.path().join("staging");
     fs::create_dir(&root).expect("mkdir dest");

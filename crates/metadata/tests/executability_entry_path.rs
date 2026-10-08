@@ -20,7 +20,6 @@ use std::os::unix::fs::PermissionsExt;
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry};
 use protocol::flist::FileEntry;
-use tempfile::tempdir;
 
 fn mode_of(path: &std::path::Path) -> u32 {
     fs::metadata(path).expect("stat dest").permissions().mode() & 0o7777
@@ -30,7 +29,7 @@ fn mode_of(path: &std::path::Path) -> u32 {
 /// for every class that can already read (`(dest & 0444) >> 2`).
 #[test]
 fn executability_entry_path_grants_exec_when_source_is_executable() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("dest.bin");
     fs::write(&dest, b"data").expect("write dest");
     // Start dest at rw------- so only the owner can read; after `-E` the
@@ -56,7 +55,7 @@ fn executability_entry_path_grants_exec_when_source_is_executable() {
 /// Source has no exec bits, dest does: receiver must clear all exec bits.
 #[test]
 fn executability_entry_path_clears_exec_when_source_is_not_executable() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("dest.txt");
     fs::write(&dest, b"data").expect("write dest");
     // Dest starts with x for every class; source has no x at all.

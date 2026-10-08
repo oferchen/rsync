@@ -38,7 +38,7 @@ pub fn umask_masked(requested_mode: u32) -> u32 {
 
 /// Returns the permission bits the umask currently leaves through, `~umask & 0o777`.
 fn permitted_permission_bits() -> u32 {
-    let dir = tempfile::tempdir().expect("create umask probe directory");
+    let dir = crate::create_tempdir();
     let probe = dir.path().join("umask-probe");
     fs::OpenOptions::new()
         .write(true)
@@ -77,7 +77,7 @@ mod tests {
     fn matches_what_the_filesystem_actually_does() {
         // The whole point is agreement with a real create(2); prove it for a
         // mode other than the 0o777 the probe itself uses.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = crate::create_tempdir();
         let path = dir.path().join("observed");
         fs::OpenOptions::new()
             .write(true)

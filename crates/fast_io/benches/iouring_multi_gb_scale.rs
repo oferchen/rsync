@@ -207,8 +207,11 @@ fn active_sizes() -> Vec<(u64, &'static str)> {
 ))]
 fn make_scratch_dir() -> TempDir {
     match env::var(NVME_PATH_ENV) {
-        Ok(path) if !path.is_empty() => TempDir::new_in(path).expect("nvme tempdir"),
-        _ => TempDir::new().expect("tempdir"),
+        Ok(path) if !path.is_empty() => tempfile::Builder::new()
+            .prefix(&test_support::temp_prefix())
+            .tempdir_in(path)
+            .expect("nvme tempdir"),
+        _ => test_support::create_tempdir(),
     }
 }
 

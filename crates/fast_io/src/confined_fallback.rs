@@ -495,7 +495,7 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("module");
         std::fs::create_dir(&root).expect("mkdir module");
         let inside = root.join("payload");

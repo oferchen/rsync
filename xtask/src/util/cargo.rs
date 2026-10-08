@@ -35,7 +35,6 @@ mod tests {
     use super::cargo_metadata_json;
     use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
-    use tempfile::tempdir;
 
     fn workspace_root() -> &'static Path {
         static ROOT: OnceLock<PathBuf> = OnceLock::new();
@@ -55,7 +54,7 @@ mod tests {
 
     #[test]
     fn cargo_metadata_json_reports_failure() {
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let err = cargo_metadata_json(dir.path()).unwrap_err();
         assert!(matches!(
             err,

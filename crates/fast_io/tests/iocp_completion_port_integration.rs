@@ -32,7 +32,6 @@ use fast_io::iocp::{
     IocpWriterFactory, is_iocp_available,
 };
 use fast_io::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
-use tempfile::tempdir;
 
 // ---------------------------------------------------------------------------
 // WTD-2.a: IOCP reader + writer round-trip via factory
@@ -48,7 +47,7 @@ fn factory_roundtrip_above_min_size() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("factory_roundtrip.bin");
 
     // Payload must exceed IOCP_MIN_FILE_SIZE so the reader factory picks IOCP.
@@ -88,7 +87,7 @@ fn factory_reader_uses_std_below_threshold() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("small.bin");
     let payload = vec![0xABu8; (IOCP_MIN_FILE_SIZE as usize) - 1];
     fs::write(&path, &payload).unwrap();
@@ -113,7 +112,7 @@ fn writer_seek_start_then_write() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("seek_write.bin");
     let config = IocpConfig::default();
 
@@ -140,7 +139,7 @@ fn writer_seek_current_forward() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("seek_current.bin");
     let config = IocpConfig::default();
 
@@ -170,7 +169,7 @@ fn writer_seek_end_returns_error() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("seek_end.bin");
     let config = IocpConfig::default();
     let mut writer = IocpWriter::create(&path, &config).unwrap();
@@ -193,7 +192,7 @@ fn writer_preallocate_then_fill() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("prealloc_fill.bin");
     let config = IocpConfig::default();
 
@@ -229,7 +228,7 @@ fn writer_sync_persists_data() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("sync_persist.bin");
     let config = IocpConfig::default();
 
@@ -256,7 +255,7 @@ fn concurrent_disk_batch_instances() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let config = IocpConfig::default();
 
     let path_a = dir.path().join("concurrent_a.bin");
@@ -315,7 +314,7 @@ fn reader_read_at_arbitrary_offset() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("read_at.bin");
     // Write a known pattern.
     let payload: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
@@ -343,7 +342,7 @@ fn reader_seek_beyond_eof_errors() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("seek_eof.bin");
     fs::write(&path, b"short").unwrap();
 
@@ -369,7 +368,7 @@ fn writer_create_for_append_preserves_content() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("append.bin");
     fs::write(&path, b"existing-content").unwrap();
 
@@ -399,7 +398,7 @@ fn disk_batch_deep_in_flight_queue() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("deep_queue.bin");
 
     let config = IocpConfig {

@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_exclude_from_skips_patterns() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -39,9 +37,7 @@ fn transfer_request_with_exclude_from_skips_patterns() {
 
 #[test]
 fn transfer_request_with_exclude_from_stdin_skips_patterns() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");

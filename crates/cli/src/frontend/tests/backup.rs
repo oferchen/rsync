@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn backup_flag_creates_default_suffix_backups() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&source_dir).expect("create source dir");
@@ -48,9 +46,7 @@ fn backup_flag_creates_default_suffix_backups() {
 
 #[test]
 fn backup_dir_flag_places_backups_in_relative_directory() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(source_dir.join("nested")).expect("create nested source");
@@ -100,9 +96,7 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
 
 #[test]
 fn backup_suffix_flag_overrides_default_suffix() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&source_dir).expect("create source dir");

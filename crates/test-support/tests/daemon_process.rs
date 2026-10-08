@@ -82,7 +82,7 @@ fn list_modules(daemon: &DaemonProcess) -> Vec<String> {
 
 #[test]
 fn reported_port_is_served_by_this_daemon_process() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let daemon = DaemonProcess::spawn(&write_config(&dir), ["--once"]).expect("spawn daemon");
 
     assert_eq!(
@@ -101,7 +101,7 @@ fn reported_port_is_served_by_this_daemon_process() {
 
 #[test]
 fn once_daemon_exits_successfully_after_its_session() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let daemon = DaemonProcess::spawn(&write_config(&dir), ["--once"]).expect("spawn daemon");
     list_modules(&daemon);
 
@@ -113,7 +113,7 @@ fn once_daemon_exits_successfully_after_its_session() {
 
 #[test]
 fn wait_for_exit_is_bounded_and_reaps_a_daemon_that_keeps_serving() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let daemon = DaemonProcess::spawn(&write_config(&dir), std::iter::empty::<&str>())
         .expect("spawn daemon");
     let pid = daemon.id();
@@ -127,7 +127,7 @@ fn wait_for_exit_is_bounded_and_reaps_a_daemon_that_keeps_serving() {
 
 #[test]
 fn a_panicking_test_does_not_orphan_its_daemon() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let config = write_config(&dir);
     let mut pid = None;
 
@@ -145,7 +145,7 @@ fn a_panicking_test_does_not_orphan_its_daemon() {
 
 #[test]
 fn startup_failure_reports_the_daemon_stderr() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let missing: &Path = &dir.path().join("absent.conf");
 
     let error = DaemonProcess::spawn(missing, ["--once"])
@@ -160,6 +160,6 @@ fn startup_failure_reports_the_daemon_stderr() {
 #[test]
 #[should_panic(expected = "always runs --no-detach")]
 fn detach_is_refused() {
-    let dir = TempDir::new().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let _ = DaemonProcess::spawn(&write_config(&dir), ["--detach"]);
 }

@@ -871,7 +871,7 @@ mod fifo_hang_regression {
     /// so a regression surfaces as a fast failure rather than a hung CI job.
     #[test]
     fn applying_times_to_fifo_does_not_block_open() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let fifo = tmp.path().join("f");
         create_fifo_node_from_parts(&fifo, 0o644, false, false).expect("create fifo");
 
@@ -922,7 +922,7 @@ mod special_time_tests {
 
     #[test]
     fn regular_file_is_not_special() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("regular.txt");
         std::fs::write(&path, b"x").expect("write");
         let meta = std::fs::metadata(&path).expect("metadata");
@@ -1047,7 +1047,7 @@ mod crtime_macos_tests {
         // crtime is actually settable.
         use std::os::unix::fs::MetadataExt;
 
-        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let tmp = test_support::create_named_tempfile();
         let path = tmp.path();
         let meta = std::fs::metadata(path).expect("metadata");
         let existing = meta
@@ -1087,7 +1087,7 @@ mod crtime_macos_tests {
                 .map(|d| d.as_secs() as i64)
         }
 
-        let dir = tempfile::tempdir().expect("temp dir");
+        let dir = test_support::create_tempdir();
         let target = dir.path().join("target.txt");
         let link = dir.path().join("link");
         std::fs::write(&target, b"payload").expect("write target");

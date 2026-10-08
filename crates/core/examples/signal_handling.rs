@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Signal handlers installed successfully\n");
 
     // 2. Create some temporary files to simulate work
-    let temp_dir = tempfile::tempdir()?;
+    let temp_dir = test_support::create_tempdir();
     let temp_files: Vec<PathBuf> = (0..5)
         .map(|i| {
             let path = temp_dir.path().join(format!("transfer_{i}.tmp"));

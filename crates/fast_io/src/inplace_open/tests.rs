@@ -15,7 +15,7 @@ fn mode_of(path: &Path) -> u32 {
 /// opened without truncation. upstream: receiver.c:1221-1226.
 #[test]
 fn the_first_arm_creates_an_absent_target_and_keeps_an_existing_one() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
 
     let fresh = dir.path().join("fresh.bin");
     let mut file = open_inplace_output(&fresh, false, InplaceResolution::Direct).expect("created");
@@ -37,7 +37,7 @@ fn the_first_arm_creates_an_absent_target_and_keeps_an_existing_one() {
 /// upstream: receiver.c:1236-1241.
 #[test]
 fn the_third_arm_recovers_a_read_only_target() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("readonly.bin");
     fs::write(&path, b"old").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(READ_ONLY)).unwrap();
@@ -56,7 +56,7 @@ fn the_third_arm_recovers_a_read_only_target() {
 /// to drop - a correct mode with wrong contents.
 #[test]
 fn the_truncate_choice_survives_the_recovery_arm() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("readonly.bin");
     fs::write(&path, b"a longer old payload").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(READ_ONLY)).unwrap();
@@ -84,7 +84,7 @@ fn the_truncate_choice_survives_the_recovery_arm() {
 /// one needs a second uid, which `owner_walk`'s own tests already cover.
 #[test]
 fn the_operator_walk_resolution_reaches_the_ownership_walk() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let no_leaf = dir.path().join("sub").join("..");
     fs::create_dir(dir.path().join("sub")).unwrap();
 
@@ -106,7 +106,7 @@ fn the_operator_walk_resolution_reaches_the_ownership_walk() {
 /// through the recovery arm too.
 #[test]
 fn the_operator_walk_opens_an_ordinary_target() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("plain.bin");
 
     let mut file =

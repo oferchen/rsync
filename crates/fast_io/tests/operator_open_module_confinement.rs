@@ -68,7 +68,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     let module = root.path().join("module");
     fs::create_dir_all(module.join("backup/sub")).expect("mkdir module");
     let outside = root.path().join("outside");

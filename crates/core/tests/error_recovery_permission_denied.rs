@@ -18,7 +18,6 @@ mod permission_denied {
 
     use crate::test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
     use core::client::{ClientConfig, PARTIAL_TRANSFER_EXIT_CODE, run_client};
-    use tempfile::tempdir;
 
     /// Helper: create a file with the given content, creating parent dirs as needed.
     fn touch(path: &Path, contents: &[u8]) {
@@ -40,7 +39,7 @@ mod permission_denied {
     #[test]
     fn unreadable_source_file_yields_partial_transfer_with_delete() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source_root = temp.path().join("source");
             let dest_root = temp.path().join("dest");
 
@@ -122,7 +121,7 @@ mod permission_denied {
     #[test]
     fn unreadable_source_file_aborts_without_delete() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source_root = temp.path().join("source");
             let dest_root = temp.path().join("dest");
 
@@ -169,7 +168,7 @@ mod permission_denied {
     #[test]
     fn nested_unreadable_file_yields_partial_transfer() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source_root = temp.path().join("source");
             let dest_root = temp.path().join("dest");
 
@@ -258,7 +257,7 @@ mod permission_denied {
                 return; // root traverses any directory; the fixture cannot fire.
             }
 
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source_root = temp.path().join("source");
             let dest_root = temp.path().join("dest");
             fs::create_dir_all(&source_root).expect("create source root");
@@ -321,7 +320,7 @@ mod permission_denied {
                 return;
             }
 
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source_root = temp.path().join("source");
             let dest_root = temp.path().join("dest");
             fs::create_dir_all(&source_root).expect("create source root");
@@ -364,7 +363,7 @@ mod permission_denied {
             if nix_is_root() {
                 return;
             }
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source_root = temp.path().join("source");
             let dest_root = temp.path().join("dest");
             fs::create_dir_all(&source_root).expect("create source root");

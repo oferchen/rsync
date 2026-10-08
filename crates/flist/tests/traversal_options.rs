@@ -31,7 +31,7 @@ fn collect_all_entries(
 /// Verifies include_root(true) includes the root entry (default behavior).
 #[test]
 fn include_root_true_includes_root_entry() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -53,7 +53,7 @@ fn include_root_true_includes_root_entry() {
 /// Verifies include_root(false) excludes the root entry.
 #[test]
 fn include_root_false_excludes_root_entry() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -75,7 +75,7 @@ fn include_root_false_excludes_root_entry() {
 /// Verifies include_root(false) on empty directory yields empty iterator.
 #[test]
 fn include_root_false_empty_dir_yields_nothing() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty");
     fs::create_dir(&root).expect("create root");
 
@@ -91,7 +91,7 @@ fn include_root_false_empty_dir_yields_nothing() {
 /// Verifies include_root(false) still traverses nested content.
 #[test]
 fn include_root_false_traverses_nested_content() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::create_dir(root.join("subdir")).expect("create subdir");
@@ -113,7 +113,7 @@ fn include_root_false_traverses_nested_content() {
 /// Verifies include_root affects depth calculation.
 #[test]
 fn include_root_false_depth_starts_at_one() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -132,7 +132,7 @@ fn include_root_false_depth_starts_at_one() {
 /// Verifies include_root with single file root.
 #[test]
 fn include_root_false_with_single_file_root() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("single.txt");
     fs::write(&file, b"content").expect("write file");
 
@@ -155,7 +155,7 @@ mod symlink_option_tests {
     /// Verifies follow_symlinks(false) does not descend into symlinked dirs.
     #[test]
     fn follow_symlinks_false_does_not_descend() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("root");
         let target = temp.path().join("target");
 
@@ -178,7 +178,7 @@ mod symlink_option_tests {
     /// Verifies follow_symlinks(true) descends into symlinked dirs.
     #[test]
     fn follow_symlinks_true_descends_into_symlinks() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("root");
         let target = temp.path().join("target");
 
@@ -204,7 +204,7 @@ mod symlink_option_tests {
     /// Verifies default follow_symlinks behavior is false.
     #[test]
     fn default_follow_symlinks_is_false() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("root");
         let target = temp.path().join("target");
 
@@ -225,7 +225,7 @@ mod symlink_option_tests {
     /// Verifies follow_symlinks can be toggled multiple times.
     #[test]
     fn follow_symlinks_toggle() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("root");
         let target = temp.path().join("target");
 
@@ -259,7 +259,7 @@ mod combined_option_tests {
     /// Verifies include_root and follow_symlinks work together.
     #[test]
     fn include_root_false_with_follow_symlinks_true() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("root");
         let target = temp.path().join("target");
 
@@ -293,7 +293,7 @@ mod combined_option_tests {
     /// Verifies root symlink with include_root false.
     #[test]
     fn root_symlink_with_include_root_false() {
-        let temp = tempfile::tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("target");
         let link = temp.path().join("link");
 
@@ -318,7 +318,7 @@ mod combined_option_tests {
 /// Verifies builder preserves its state through cloning.
 #[test]
 fn builder_clone_preserves_options() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -338,7 +338,7 @@ fn builder_clone_preserves_options() {
 /// Verifies builder can be reused after building.
 #[test]
 fn builder_can_be_reused() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -358,7 +358,7 @@ fn builder_can_be_reused() {
 /// Verifies builder accepts various path types.
 #[test]
 fn builder_accepts_path_types() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -379,7 +379,7 @@ fn builder_accepts_path_types() {
 /// Verifies builder handles relative paths by absolutizing them.
 #[test]
 fn builder_absolutizes_relative_paths() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
 
     // Create structure in temp dir
     let subdir = temp.path().join("subdir");
@@ -435,7 +435,7 @@ fn error_message_is_informative() {
 /// Verifies all options can be chained fluently.
 #[test]
 fn fluent_option_chaining() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -454,7 +454,7 @@ fn fluent_option_chaining() {
 /// Verifies builder methods return Self for chaining.
 #[test]
 fn builder_methods_return_self() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -469,7 +469,7 @@ fn builder_methods_return_self() {
 /// Verifies default builder has sensible defaults.
 #[test]
 fn default_builder_behavior() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -493,7 +493,7 @@ fn default_builder_behavior() {
 /// Verifies walker can be partially consumed.
 #[test]
 fn walker_partial_consumption() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -516,7 +516,7 @@ fn walker_partial_consumption() {
 /// Verifies walker handles early termination gracefully.
 #[test]
 fn walker_early_termination() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 

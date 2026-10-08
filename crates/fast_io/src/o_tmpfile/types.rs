@@ -125,11 +125,10 @@ pub fn open_temp_file(dir: &Path) -> TempFileResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn probe_returns_valid_enum() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let result = o_tmpfile_probe(dir.path());
         assert!(result == OTmpfileSupport::Available || result == OTmpfileSupport::Unavailable);
     }
@@ -142,7 +141,7 @@ mod tests {
 
     #[test]
     fn open_temp_file_returns_result() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let result = open_temp_file(dir.path());
         match result {
             TempFileResult::Anonymous(_) => {}
@@ -157,7 +156,7 @@ mod tests {
 
         #[test]
         fn anonymous_temp_file_write_and_link() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let mut atf = match AnonymousTempFile::open(dir.path()) {
                 Ok(a) => a,
                 Err(_) => return, // O_TMPFILE not supported on this filesystem
@@ -173,7 +172,7 @@ mod tests {
 
         #[test]
         fn anonymous_temp_file_into_file() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let atf = match AnonymousTempFile::open(dir.path()) {
                 Ok(a) => a,
                 Err(_) => return,
@@ -189,7 +188,7 @@ mod tests {
 
         #[test]
         fn open_returns_unsupported() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             match AnonymousTempFile::open(dir.path()) {
                 Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::Unsupported),
                 Ok(_) => panic!("should fail on non-Linux"),
@@ -198,7 +197,7 @@ mod tests {
 
         #[test]
         fn open_temp_file_returns_unavailable() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             assert!(matches!(
                 open_temp_file(dir.path()),
                 TempFileResult::Unavailable

@@ -500,13 +500,12 @@ mod imp {
     mod tests {
         use super::*;
         use std::io::Write;
-        use tempfile::tempdir;
 
         /// Happy path: an anchored commit into an ordinary directory renames the
         /// temp file to the destination leaf and removes the temp file.
         #[test]
         fn rename_no_follow_commits_into_plain_dir() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let temp = dir.path().join(".payload.AbC123");
             let dest = dir.path().join("payload.bin");
             {
@@ -525,7 +524,7 @@ mod imp {
         /// upstream `do_rename`.
         #[test]
         fn rename_no_follow_replaces_existing() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("existing.bin");
             std::fs::write(&dest, b"old").expect("seed dest");
             let temp = dir.path().join(".existing.XyZ789");
@@ -543,7 +542,7 @@ mod imp {
         /// loop.
         #[test]
         fn create_new_no_follow_rejects_existing_name() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let path = dir.path().join(".taken.Aa0000");
             let _first = create_new_no_follow(&path).expect("first create");
             let err = create_new_no_follow(&path).expect_err("second must fail");
@@ -560,7 +559,7 @@ mod imp {
         /// CI. If even the junction fallback is unavailable the test skips.
         #[test]
         fn rename_no_follow_refuses_reparse_point_parent() {
-            let root = tempdir().expect("tempdir");
+            let root = test_support::create_tempdir();
             let real_dest = root.path().join("real_dest");
             let attacker = root.path().join("attacker");
             std::fs::create_dir(&real_dest).expect("real_dest");

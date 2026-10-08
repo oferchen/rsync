@@ -159,7 +159,7 @@ fn delta_section(data: &[u8], count: usize, remainder: usize) -> Vec<u8> {
 /// sender. Returns the sender's delta section and the client's `--stats`
 /// output.
 fn pull(client: &Path, server: &Path, basis: &[u8], source: &[u8]) -> (Vec<u8>, String) {
-    let work = tempfile::tempdir().expect("workdir");
+    let work = test_support::create_tempdir();
     let src = work.path().join("src.bin");
     let dest = work.path().join("dest.bin");
     fs::write(&src, source).expect("write source");

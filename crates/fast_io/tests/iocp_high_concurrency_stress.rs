@@ -27,8 +27,6 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use tempfile::tempdir;
-
 use fast_io::iocp::{IocpConfig, IocpDiskBatch, IocpWriter, is_iocp_available};
 
 /// Stress runs are opt-in; absence of the gate variable skips the test with
@@ -80,7 +78,7 @@ fn stress_10k_small_writes_distinct_files() {
         return;
     }
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let root: PathBuf = dir.path().to_path_buf();
 
     let config = IocpConfig {
@@ -178,7 +176,7 @@ fn stress_10k_alternating_files_via_iocp_writer() {
     const TOTAL_WRITES: usize = FILE_COUNT * WRITES_PER_FILE;
     const EXPECTED_SIZE: u64 = (WRITES_PER_FILE * SMALL_PAYLOAD_LEN) as u64;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let root: PathBuf = dir.path().to_path_buf();
 
     let config = IocpConfig {

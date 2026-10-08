@@ -210,7 +210,7 @@ fn bench_iocp_vs_stdio(c: &mut Criterion) {
             let config = IocpConfig::default();
             b.iter_with_setup(
                 || {
-                    let dir = TempDir::new().expect("tempdir");
+                    let dir = test_support::create_tempdir();
                     let (paths, payload) = prepare_workload(&dir, payload_size);
                     (dir, paths, payload)
                 },
@@ -230,7 +230,7 @@ fn bench_iocp_vs_stdio(c: &mut Criterion) {
                 };
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let (paths, payload) = prepare_workload(&dir, payload_size);
                         (dir, paths, payload)
                     },
@@ -245,7 +245,7 @@ fn bench_iocp_vs_stdio(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("stdfs", payload_size), |b| {
             b.iter_with_setup(
                 || {
-                    let dir = TempDir::new().expect("tempdir");
+                    let dir = test_support::create_tempdir();
                     let (paths, payload) = prepare_workload(&dir, payload_size);
                     (dir, paths, payload)
                 },
@@ -259,7 +259,7 @@ fn bench_iocp_vs_stdio(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("bufwriter_64k", payload_size), |b| {
             b.iter_with_setup(
                 || {
-                    let dir = TempDir::new().expect("tempdir");
+                    let dir = test_support::create_tempdir();
                     let (paths, payload) = prepare_workload(&dir, payload_size);
                     (dir, paths, payload)
                 },

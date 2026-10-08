@@ -1207,12 +1207,11 @@ mod fuzzy_matching {
     use matching::FuzzyMatcher;
     use std::ffi::OsStr;
     use std::fs;
-    use tempfile::TempDir;
 
     /// Verifies fuzzy matching finds similar files in a directory.
     #[test]
     fn finds_similar_file_in_directory() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
 
         // Create files with similar names
         fs::write(temp.path().join("report_2023.csv"), "old data").expect("write file");
@@ -1245,7 +1244,7 @@ mod fuzzy_matching {
     /// Verifies fuzzy matching returns None when no similar files exist.
     #[test]
     fn no_match_when_files_differ_completely() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
 
         // Create files with completely different names
         fs::write(temp.path().join("alpha.bin"), "data1").expect("write file");
@@ -1265,7 +1264,7 @@ mod fuzzy_matching {
     /// Verifies fuzzy matching respects the distance cap.
     #[test]
     fn respects_distance_cap() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
 
         fs::write(temp.path().join("file_a.txt"), "data").expect("write file");
 
@@ -1285,8 +1284,8 @@ mod fuzzy_matching {
     /// Verifies fuzzy matching searches additional basis directories (level 2).
     #[test]
     fn searches_additional_fuzzy_basis_dirs() {
-        let temp1 = TempDir::new().expect("create temp dir 1");
-        let temp2 = TempDir::new().expect("create temp dir 2");
+        let temp1 = test_support::create_tempdir();
+        let temp2 = test_support::create_tempdir();
 
         // Put the similar file in the second directory
         fs::write(temp2.path().join("config_v1.json"), "old config").expect("write file");
@@ -1313,7 +1312,7 @@ mod fuzzy_matching {
     /// Verifies fuzzy matching handles empty directories gracefully.
     #[test]
     fn handles_empty_directory() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
 
         let matcher = FuzzyMatcher::new();
         let result = matcher.find_fuzzy_basis(OsStr::new("anyfile.txt"), temp.path(), 100, None);
@@ -1324,7 +1323,7 @@ mod fuzzy_matching {
     /// Verifies fuzzy matching skips directories in search results.
     #[test]
     fn skips_directories() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
 
         // Create a directory with similar name
         fs::create_dir(temp.path().join("similar_dir.txt")).expect("create dir");
@@ -1349,7 +1348,7 @@ mod fuzzy_matching {
     /// smaller reported distance (upstream `find_fuzzy()` selection).
     #[test]
     fn closest_name_has_smallest_distance() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
 
         // Near-identical name (one digit differs) and a distant name.
         fs::write(temp.path().join("report_2023.csv"), "data").expect("write near");
@@ -1377,7 +1376,7 @@ mod fuzzy_matching {
     /// Verifies fuzzy matching chooses best match among multiple candidates.
     #[test]
     fn chooses_best_match_among_candidates() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = test_support::create_tempdir();
 
         // Create several files with varying similarity
         fs::write(temp.path().join("data_backup_2024.csv"), "x".repeat(1000)).expect("write");

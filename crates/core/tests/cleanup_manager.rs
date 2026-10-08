@@ -17,7 +17,6 @@
 use core::signal::{CleanupManager, ShutdownReason};
 use std::fs;
 use std::sync::Mutex;
-use tempfile::tempdir;
 
 /// `CleanupManager::global()` is process-wide and `reset_for_testing()` drains
 /// it, so two of these running concurrently would each clear the other's
@@ -34,7 +33,7 @@ fn cleanup_removes_only_registered_paths() {
     let manager = CleanupManager::global();
     manager.reset_for_testing();
 
-    let dest = tempdir().expect("create dest dir");
+    let dest = test_support::create_tempdir();
     let sub = dest.path().join("subdir");
     fs::create_dir(&sub).expect("create subdir");
 
@@ -75,7 +74,7 @@ fn cleanup_still_runs_after_an_abort_request() {
     manager.reset_for_testing();
     core::signal::reset_for_testing();
 
-    let dest = tempdir().expect("create dest dir");
+    let dest = test_support::create_tempdir();
     let temp_file = dest.path().join(".data.bin.abc123");
     fs::write(&temp_file, b"partial").expect("write temp");
     manager.register_temp_file(temp_file.clone());

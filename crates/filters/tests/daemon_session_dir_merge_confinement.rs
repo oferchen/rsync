@@ -81,7 +81,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     // The module is a level BELOW the tempdir root, so `outside_rules` is a
     // genuine sibling outside the confinement root rather than an ancestor.
     let module = tmp.path().join("module");

@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn check_layout_enforces_the_form_specific_tree() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = test_support::create_tempdir();
         let nested = tmp.path().join("no-slash");
         std::fs::create_dir_all(nested.join(SRC_NAME)).unwrap();
         std::fs::write(nested.join(SRC_NAME).join(LEAF), b"x").unwrap();

@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn compare_accepts_only_changed_present() {
         // --compare-dest correct outcome: only the changed file was written.
-        let dst = tempfile::tempdir().unwrap();
+        let dst = test_support::create_tempdir();
         fs::write(dst.path().join(CHANGED), b"changed-new-longer-content\n").unwrap();
         assert!(evaluate_compare(dst.path()).is_ok());
     }
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn compare_rejects_written_unchanged_file() {
         // A client that copied an unchanged file breaks --compare-dest semantics.
-        let dst = tempfile::tempdir().unwrap();
+        let dst = test_support::create_tempdir();
         fs::create_dir_all(dst.path().join("sub")).unwrap();
         fs::write(dst.path().join(CHANGED), b"changed-new-longer-content\n").unwrap();
         fs::write(dst.path().join(UNCHANGED[0]), b"same-content\n").unwrap();
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn compare_rejects_missing_changed_file() {
-        let dst = tempfile::tempdir().unwrap();
+        let dst = test_support::create_tempdir();
         let err = evaluate_compare(dst.path()).unwrap_err();
         assert!(err.contains(CHANGED));
     }
@@ -425,7 +425,10 @@ mod tests {
     #[test]
     fn copy_accepts_full_tree_matching_source() {
         // --copy-dest correct outcome: the whole source tree is present.
-        let (src, dst) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (src, dst) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         seed_full(src.path());
         seed_full(dst.path());
         assert!(evaluate_copy(dst.path(), src.path()).is_ok());
@@ -433,7 +436,10 @@ mod tests {
 
     #[test]
     fn copy_rejects_missing_unchanged_file() {
-        let (src, dst) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (src, dst) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         seed_full(src.path());
         // Destination is missing the unchanged files - only the changed one landed.
         fs::write(dst.path().join(CHANGED), b"changed-new-longer-content\n").unwrap();

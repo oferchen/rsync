@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_filter_excludes_patterns() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -35,9 +33,7 @@ fn transfer_request_with_filter_excludes_patterns() {
 
 #[test]
 fn transfer_request_with_filter_clear_resets_rules() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -69,9 +65,7 @@ fn transfer_request_with_filter_clear_resets_rules() {
 
 #[test]
 fn transfer_request_with_filter_merge_applies_rules() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -106,9 +100,7 @@ fn transfer_request_with_filter_merge_applies_rules() {
 
 #[test]
 fn transfer_request_with_filter_merge_clear_resets_rules() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -145,9 +137,7 @@ fn transfer_request_with_filter_merge_clear_resets_rules() {
 
 #[test]
 fn transfer_request_with_filter_protect_preserves_destination_entry() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -186,9 +176,7 @@ fn transfer_request_with_filter_protect_preserves_destination_entry() {
 /// comparable with rsync's for an operator debugging a filter set.
 #[test]
 fn transfer_request_with_filter_merge_bounds_include_depth() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -226,11 +214,9 @@ fn transfer_request_with_filter_merge_bounds_include_depth() {
 /// without it the fix could regress to a cycle set and still look correct.
 #[test]
 fn transfer_request_with_filter_merge_bounds_an_acyclic_chain() {
-    use tempfile::tempdir;
-
     const CHAIN: usize = filters::MAX_MERGE_DEPTH + 4;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -265,11 +251,9 @@ fn transfer_request_with_filter_merge_bounds_an_acyclic_chain() {
 /// the two tests above cannot pass merely because merge chains are broken.
 #[test]
 fn transfer_request_with_filter_merge_allows_a_chain_within_the_cap() {
-    use tempfile::tempdir;
-
     const CHAIN: usize = filters::MAX_MERGE_DEPTH - 2;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -304,9 +288,7 @@ fn transfer_request_with_filter_merge_allows_a_chain_within_the_cap() {
 /// rules collected before the merge directive.
 #[test]
 fn transfer_request_with_filter_merge_bang_preserves_parent_cli_rule() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -350,9 +332,7 @@ fn transfer_request_with_filter_merge_bang_preserves_parent_cli_rule() {
 /// reference survive.
 #[test]
 fn transfer_request_with_filter_nested_merge_bang_preserves_outer_scope() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -394,9 +374,7 @@ fn transfer_request_with_filter_nested_merge_bang_preserves_outer_scope() {
 /// only the scope of that file. Parent `--filter`/`--exclude` CLI rules survive.
 #[test]
 fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");
@@ -438,15 +416,13 @@ fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
 /// (e.g. `core`) are wiped too. Only patterns added after the `!` survive.
 #[test]
 fn transfer_request_with_cvsignore_bang_wipes_default_cvs_patterns() {
-    use tempfile::tempdir;
-
     let _env_lock = ENV_LOCK.lock().expect("env lock");
     let _home_guard = EnvGuard::set("HOME", OsStr::new(""));
     // A leading bare `!` clears the whole shared CVS list, then `*.skip` is the
     // only surviving exclude.
     let _cvs_guard = EnvGuard::set("CVSIGNORE", OsStr::new("! *.skip"));
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");

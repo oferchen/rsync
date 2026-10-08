@@ -133,7 +133,7 @@ pub fn crc32c_bytes(data: &[u8]) -> u32 {
 /// ```
 /// use checksums::crc32c::{crc32c_file, crc32c_bytes};
 ///
-/// let dir = tempfile::tempdir().unwrap();
+/// let dir = test_support::create_tempdir();
 /// let path = dir.path().join("test.txt");
 /// std::fs::write(&path, b"hello world").unwrap();
 ///
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn crc32c_file_reads_correctly() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("test.bin");
 
         let data = b"file content for CRC32C testing";
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn crc32c_file_empty_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("empty.bin");
         File::create(&path).unwrap();
 
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn crc32c_file_single_byte() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("one.bin");
         std::fs::write(&path, [0x42]).unwrap();
 
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn crc32c_file_large_data() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large.bin");
 
         // Larger than BUF_SIZE to exercise multi-chunk reading.
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn crc32c_file_exactly_buf_size() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("exact.bin");
 
         // Boundary condition for the read loop.
@@ -426,7 +426,7 @@ mod tests {
 
     #[test]
     fn crc32c_file_buf_size_plus_one() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("plus1.bin");
 
         // Just past the first chunk boundary.

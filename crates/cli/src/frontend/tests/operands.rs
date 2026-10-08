@@ -14,9 +14,8 @@ fn operand_detection_ignores_windows_drive_and_device_prefixes() {
 #[test]
 fn operands_after_end_of_options_are_preserved() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("-source");
     let destination = tmp.path().join("dest.txt");
     fs::write(&source, b"dash source").expect("write source");

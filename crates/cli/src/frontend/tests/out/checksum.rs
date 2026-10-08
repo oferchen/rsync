@@ -36,7 +36,7 @@ fn render_full_checksum(
 // against upstream rather than against the renderer's own hashing.
 #[test]
 fn out_format_renders_full_checksum_per_negotiated_algorithm() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src dir");
@@ -95,7 +95,7 @@ fn out_format_renders_full_checksum_per_negotiated_algorithm() {
 // quick-check `MetadataReused` skip) renders the space-padded field, not a sum.
 #[test]
 fn out_format_full_checksum_untransferred_file_is_spaces_without_checksum() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -133,7 +133,7 @@ fn out_format_full_checksum_untransferred_file_is_spaces_without_checksum() {
 
 #[test]
 fn out_format_renders_full_checksum_for_non_file_entries_as_spaces() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir_all(src_dir.join("nested")).expect("create source tree");
@@ -171,7 +171,7 @@ fn out_format_renders_full_checksum_for_non_file_entries_as_spaces() {
 
 #[test]
 fn out_format_renders_checksum_bytes_for_data_copy_events() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -225,7 +225,7 @@ fn out_format_renders_checksum_bytes_for_data_copy_events() {
 
 #[test]
 fn out_format_renders_checksum_bytes_as_zero_when_metadata_reused() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");

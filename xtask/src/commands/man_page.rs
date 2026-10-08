@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn execute_fails_when_source_missing() {
-        let temp = tempfile::tempdir().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let error = execute(temp.path()).unwrap_err();
         assert!(matches!(error, TaskError::Validation(msg) if msg.contains("not found")));
     }

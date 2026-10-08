@@ -4,10 +4,9 @@ use super::*;
 #[test]
 fn dry_run_flag_skips_destination_mutation() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     fs::write(&source, b"contents").expect("write source");
     let destination = tmp.path().join("dest.txt");
@@ -28,10 +27,9 @@ fn dry_run_flag_skips_destination_mutation() {
 #[test]
 fn short_dry_run_flag_skips_destination_mutation() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     fs::write(&source, b"contents").expect("write source");
     let destination = tmp.path().join("dest.txt");
@@ -52,10 +50,9 @@ fn short_dry_run_flag_skips_destination_mutation() {
 #[test]
 fn dry_run_with_verbose_lists_files_on_stdout() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     fs::create_dir_all(&source_dir).expect("create source dir");
     fs::write(source_dir.join("file1.txt"), b"aaa").expect("write file1");
@@ -99,10 +96,9 @@ fn dry_run_with_verbose_lists_files_on_stdout() {
 #[test]
 fn dry_run_with_recursive_does_not_create_directories() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     let subdir = source_dir.join("subdir");
     fs::create_dir_all(&subdir).expect("create subdir");
@@ -132,10 +128,9 @@ fn dry_run_with_recursive_does_not_create_directories() {
 #[test]
 fn dry_run_preserves_existing_destination_content() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("dest.txt");
     fs::write(&source, b"new content").expect("write source");
@@ -161,10 +156,9 @@ fn dry_run_preserves_existing_destination_content() {
 #[test]
 fn dry_run_with_delete_does_not_remove_files() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -208,10 +202,9 @@ fn dry_run_with_delete_does_not_remove_files() {
 #[test]
 fn dry_run_verbose_with_delete_lists_deletions() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
@@ -245,10 +238,9 @@ fn dry_run_verbose_with_delete_lists_deletions() {
 #[test]
 fn dry_run_with_archive_flag() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     let subdir = source_dir.join("sub");
     fs::create_dir_all(&subdir).expect("create subdir");
@@ -279,10 +271,9 @@ fn dry_run_with_archive_flag() {
 #[test]
 fn dry_run_with_exclude_filter() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     fs::create_dir_all(&source_dir).expect("create source");
     fs::write(source_dir.join("include.txt"), b"include").expect("write include");
@@ -323,10 +314,9 @@ fn dry_run_with_exclude_filter() {
 #[test]
 fn dry_run_source_file_preserved() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("dest.txt");
     let original = b"must remain unchanged";
@@ -350,10 +340,9 @@ fn dry_run_source_file_preserved() {
 #[test]
 fn dry_run_combined_with_stats_produces_summary() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("dest.txt");
     fs::write(&source, b"stats test data").expect("write source");
@@ -386,10 +375,9 @@ fn dry_run_combined_with_stats_produces_summary() {
 #[test]
 fn dry_run_multiple_files_exit_zero() {
     use std::fs;
-    use tempfile::tempdir;
 
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     fs::create_dir_all(&source_dir).expect("create source");
     fs::write(source_dir.join("a.txt"), b"a").expect("write a");

@@ -216,11 +216,10 @@ impl FileWriterFactory for StdWriterFactory {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::tempdir;
 
     #[test]
     fn std_reader_tracks_position() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("test.txt");
         std::fs::write(&path, b"hello world").unwrap();
 
@@ -236,7 +235,7 @@ mod tests {
 
     #[test]
     fn std_writer_tracks_bytes() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -249,7 +248,7 @@ mod tests {
 
     #[test]
     fn std_writer_flush_writes_buffered_data() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("flush_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -270,7 +269,7 @@ mod tests {
 
     #[test]
     fn std_writer_auto_flush_on_buffer_full() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("auto_flush_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -294,7 +293,7 @@ mod tests {
 
     #[test]
     fn std_writer_flush_on_drop() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("drop_flush_test.txt");
 
         {
@@ -310,7 +309,7 @@ mod tests {
 
     #[test]
     fn std_writer_multiple_flush_operations() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("multiple_flush_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -334,7 +333,7 @@ mod tests {
 
     #[test]
     fn std_writer_flush_empty_buffer() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("empty_flush_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -354,7 +353,7 @@ mod tests {
 
     #[test]
     fn std_writer_sync_includes_flush() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("sync_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -370,7 +369,7 @@ mod tests {
 
     #[test]
     fn std_writer_flush_after_partial_writes() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("partial_writes_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -397,7 +396,7 @@ mod tests {
 
     #[test]
     fn std_writer_flush_consistency() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("consistency_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();
@@ -421,7 +420,7 @@ mod tests {
 
     #[test]
     fn std_writer_bytes_written_accurate_across_flushes() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("bytes_tracking_test.txt");
 
         let mut writer = StdFileWriter::create(&path).unwrap();

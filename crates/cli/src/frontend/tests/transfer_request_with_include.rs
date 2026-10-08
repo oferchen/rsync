@@ -8,9 +8,7 @@ use super::*;
 /// `--exclude "*"` correctly includes only the specified patterns.
 #[test]
 fn transfer_request_with_include_from_reinstate_patterns() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     let keep_dir = source_root.join("keep");

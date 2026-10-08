@@ -316,7 +316,7 @@ fn fixture_file(dir: &tempfile::TempDir, name: &str, text: &str, check_perm: boo
 /// value - in both directions, so this pins the order, not a constant.
 #[test]
 fn user_file_claims_the_slot_before_the_system_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let user = fixture_file(&dir, "user", "Compression no\n", false);
     let system = fixture_file(&dir, "system", "Compression yes\n", false);
     assert!(!enables_compression_in(
@@ -338,7 +338,7 @@ fn user_file_claims_the_slot_before_the_system_file() {
 /// lookup and an existing user file hid the system file entirely.
 #[test]
 fn a_directive_only_in_the_system_file_applies() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     // The user file EXISTS but does not claim the slot.
     let user = fixture_file(&dir, "user", "Host other\n  Port 2222\n", false);
     let system = fixture_file(&dir, "system", "Compression yes\n", false);
@@ -349,7 +349,7 @@ fn a_directive_only_in_the_system_file_applies() {
 /// read (openssh/ssh.c:580-589 discards the default reads' results).
 #[test]
 fn a_missing_user_file_still_reaches_the_system_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let user = ConfigFile {
         path: dir.path().join("nonexistent"),
         check_perm: true,
@@ -366,7 +366,7 @@ fn a_missing_user_file_still_reaches_the_system_file() {
 /// `read_config_file_depth()` re-initialises `active` per file).
 #[test]
 fn a_host_block_does_not_extend_into_the_next_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let user = fixture_file(&dir, "user", "Host nevermatches\n  Port 2222\n", false);
     let system = fixture_file(&dir, "system", "Compression yes\n", false);
     assert!(enables_compression_in(&[user, system], &host_ctx("t")));
@@ -377,7 +377,7 @@ fn a_host_block_does_not_extend_into_the_next_file() {
 /// read_config_file call), so its `Compression yes` must not apply.
 #[test]
 fn a_refused_user_file_stops_the_scan_before_the_system_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let user = fixture_file(&dir, "user", "Host \"broken\n", false);
     let system = fixture_file(&dir, "system", "Compression yes\n", false);
     assert!(!enables_compression_in(&[user, system], &host_ctx("t")));
@@ -392,7 +392,7 @@ fn a_refused_user_file_stops_the_scan_before_the_system_file() {
 #[test]
 fn checkperm_scope_follows_the_flag_not_the_file() {
     use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let mut file = fixture_file(&dir, "config", "Compression yes\n", true);
     std::fs::set_permissions(&file.path, std::fs::Permissions::from_mode(0o666)).expect("chmod");
     // As the default user file: refused, and the refusal kills the

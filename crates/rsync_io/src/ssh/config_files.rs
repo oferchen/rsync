@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn perm_check_refuses_group_or_world_writable() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host a\n").expect("write fixture");
 

@@ -4,9 +4,7 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn transfer_request_with_owner_group_preserves_flags() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("destination.txt");
     std::fs::write(&source, b"metadata").expect("write source");

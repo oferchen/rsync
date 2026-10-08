@@ -113,7 +113,7 @@ where
 /// use checksums::parallel::hash_files_parallel;
 /// use checksums::strong::Sha256;
 ///
-/// let dir = tempfile::tempdir().unwrap();
+/// let dir = test_support::create_tempdir();
 /// let file1 = dir.path().join("file1.txt");
 /// let file2 = dir.path().join("file2.txt");
 /// std::fs::write(&file1, b"hello").unwrap();
@@ -150,7 +150,7 @@ where
 /// use checksums::parallel::{hash_files_parallel_with_config, FileHashConfig};
 /// use checksums::strong::Md5;
 ///
-/// let dir = tempfile::tempdir().unwrap();
+/// let dir = test_support::create_tempdir();
 /// let path = dir.path().join("data.bin");
 /// std::fs::write(&path, b"test data").unwrap();
 ///
@@ -192,7 +192,7 @@ where
 /// use checksums::parallel::hash_files_with_seed_parallel;
 /// use checksums::strong::Xxh64;
 ///
-/// let dir = tempfile::tempdir().unwrap();
+/// let dir = test_support::create_tempdir();
 /// let path = dir.path().join("data.bin");
 /// std::fs::write(&path, b"seeded hash input").unwrap();
 ///
@@ -305,7 +305,7 @@ where
 /// use checksums::parallel::compute_file_signatures_parallel;
 /// use checksums::strong::Md5;
 ///
-/// let dir = tempfile::tempdir().unwrap();
+/// let dir = test_support::create_tempdir();
 /// let path = dir.path().join("test.bin");
 /// std::fs::write(&path, b"block signature test data").unwrap();
 ///

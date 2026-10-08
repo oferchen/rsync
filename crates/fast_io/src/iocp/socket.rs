@@ -672,7 +672,6 @@ mod tests {
         use std::fs::OpenOptions;
         use std::io::Write;
         use std::os::windows::io::AsRawHandle;
-        use tempfile::NamedTempFile;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -686,7 +685,7 @@ mod tests {
             received
         });
 
-        let mut tmp = NamedTempFile::new().unwrap();
+        let mut tmp = test_support::create_named_tempfile();
         tmp.write_all(&payload).unwrap();
         tmp.flush().unwrap();
         let file = OpenOptions::new().read(true).open(tmp.path()).unwrap();

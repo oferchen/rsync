@@ -31,7 +31,6 @@ pub type WindowsChunkedReader = std::fs::File;
 mod tests {
     use super::WindowsChunkedReader;
     use std::io::Write;
-    use tempfile::NamedTempFile;
 
     /// Cross-platform smoke test: `WindowsChunkedReader` is nameable and
     /// openable on the current platform. On non-Windows targets this
@@ -39,7 +38,7 @@ mod tests {
     /// test in `windows_chunked_reader::tests` exercises the real reader.
     #[test]
     fn nameable_and_openable() {
-        let mut f = NamedTempFile::new().expect("create temp file");
+        let mut f = test_support::create_named_tempfile();
         f.write_all(b"hello").expect("write temp file");
         f.flush().expect("flush temp file");
         let _reader: WindowsChunkedReader =
@@ -54,7 +53,7 @@ mod tests {
     #[test]
     fn len_matches_fixture_size() {
         let payload = b"0123456789abcdef";
-        let mut f = NamedTempFile::new().expect("create temp file");
+        let mut f = test_support::create_named_tempfile();
         f.write_all(payload).expect("write temp file");
         f.flush().expect("flush temp file");
         let reader: WindowsChunkedReader =

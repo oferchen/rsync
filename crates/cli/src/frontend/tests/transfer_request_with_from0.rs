@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_from0_reads_null_separated_list() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     std::fs::create_dir(&source_dir).expect("create source dir");
     std::fs::write(source_dir.join("from0-a.txt"), b"from0-a").expect("write source a");
@@ -42,9 +40,7 @@ fn transfer_request_with_from0_reads_null_separated_list() {
 
 #[test]
 fn transfer_request_with_from0_strips_comment_prefix_entries() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     std::fs::create_dir(&source_dir).expect("create source dir");
     std::fs::write(source_dir.join("#commented.txt"), b"from0-comment")

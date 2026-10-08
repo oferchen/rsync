@@ -58,7 +58,7 @@ fn try_create_dir(dir: &Path, name: &str) -> bool {
 /// Verifies handling of a file with exactly 255-byte filename.
 #[test]
 fn file_with_255_byte_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("max_name");
     fs::create_dir(&root).expect("create root");
 
@@ -92,7 +92,7 @@ fn file_with_255_byte_name() {
 /// Verifies handling of multiple files with maximum-length names.
 #[test]
 fn multiple_files_with_max_length_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("multi_max");
     fs::create_dir(&root).expect("create root");
 
@@ -139,7 +139,7 @@ fn multiple_files_with_max_length_names() {
 /// Verifies handling of filenames just under the 255-byte limit.
 #[test]
 fn file_with_254_byte_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("near_max");
     fs::create_dir(&root).expect("create root");
 
@@ -158,7 +158,7 @@ fn file_with_254_byte_name() {
 /// Verifies handling of filenames at various lengths approaching maximum.
 #[test]
 fn files_with_varying_long_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("varying_lengths");
     fs::create_dir(&root).expect("create root");
 
@@ -184,7 +184,7 @@ fn files_with_varying_long_names() {
 /// Verifies metadata access for files with maximum-length names.
 #[test]
 fn metadata_access_max_length_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("metadata_test");
     fs::create_dir(&root).expect("create root");
 
@@ -223,7 +223,7 @@ fn metadata_access_max_length_filename() {
 /// Verifies handling of a directory with exactly 255-byte name.
 #[test]
 fn directory_with_255_byte_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("max_dir");
     fs::create_dir(&root).expect("create root");
 
@@ -248,7 +248,7 @@ fn directory_with_255_byte_name() {
 /// Verifies traversal into directory with maximum-length name.
 #[test]
 fn traverse_into_max_length_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("traverse_max");
     fs::create_dir(&root).expect("create root");
 
@@ -271,7 +271,7 @@ fn traverse_into_max_length_directory() {
 /// Verifies multiple files in directory with maximum-length name.
 #[test]
 fn multiple_files_in_max_length_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("multi_in_max");
     fs::create_dir(&root).expect("create root");
 
@@ -309,7 +309,7 @@ fn multiple_files_in_max_length_directory() {
 /// Verifies nested directories where parent has maximum-length name.
 #[test]
 fn nested_directories_with_max_length_parent() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("nested_max_parent");
     fs::create_dir(&root).expect("create root");
 
@@ -337,7 +337,7 @@ fn nested_directories_with_max_length_parent() {
 /// Verifies file with max-length name inside directory with max-length name.
 #[test]
 fn max_length_file_in_max_length_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("both_max");
     fs::create_dir(&root).expect("create root");
 
@@ -365,7 +365,7 @@ fn max_length_file_in_max_length_directory() {
 /// Verifies deeply nested structure with multiple max-length directory names.
 #[test]
 fn deeply_nested_max_length_directories() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep_max");
     fs::create_dir(&root).expect("create root");
 
@@ -401,7 +401,7 @@ fn deeply_nested_max_length_directories() {
 /// Verifies path combining respects component limits but allows long paths.
 #[test]
 fn long_path_with_max_length_components() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("long_path");
     fs::create_dir(&root).expect("create root");
 
@@ -447,7 +447,7 @@ fn long_path_with_max_length_components() {
 /// Verifies relative path computation with max-length names.
 #[test]
 fn relative_path_with_max_length_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("relative_test");
     fs::create_dir(&root).expect("create root");
 
@@ -485,7 +485,7 @@ fn relative_path_with_max_length_names() {
 /// Verifies sorting with max-length filenames.
 #[test]
 fn sorting_max_length_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("sorting_max");
     fs::create_dir(&root).expect("create root");
 
@@ -523,7 +523,7 @@ fn sorting_max_length_filenames() {
 /// Verifies depth tracking with max-length names.
 #[test]
 fn depth_tracking_with_max_length_names() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("depth_test");
     fs::create_dir(&root).expect("create root");
 
@@ -557,7 +557,7 @@ fn depth_tracking_with_max_length_names() {
 /// Verifies empty directory with max-length name.
 #[test]
 fn empty_directory_with_max_length_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty_max");
     fs::create_dir(&root).expect("create root");
 
@@ -576,7 +576,7 @@ fn empty_directory_with_max_length_name() {
 /// Verifies zero-length file with max-length name.
 #[test]
 fn zero_length_file_with_max_length_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("zero_len");
     fs::create_dir(&root).expect("create root");
 
@@ -599,7 +599,7 @@ fn zero_length_file_with_max_length_name() {
 /// Verifies file_name() works correctly with max-length names.
 #[test]
 fn file_name_method_with_max_length() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("file_name_test");
     fs::create_dir(&root).expect("create root");
 
@@ -625,7 +625,7 @@ fn file_name_method_with_max_length() {
 /// Verifies hidden file with max-length name (starting with dot).
 #[test]
 fn hidden_file_with_max_length_name() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("hidden_max");
     fs::create_dir(&root).expect("create root");
 
@@ -645,7 +645,7 @@ fn hidden_file_with_max_length_name() {
 /// Verifies max-length filename using multi-byte UTF-8 characters.
 #[test]
 fn max_length_utf8_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("utf8_max");
     fs::create_dir(&root).expect("create root");
 
@@ -678,7 +678,7 @@ fn max_length_utf8_filename() {
 /// Verifies max-length filename with emoji (4-byte UTF-8).
 #[test]
 fn max_length_emoji_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("emoji_max");
     fs::create_dir(&root).expect("create root");
 
@@ -707,7 +707,7 @@ fn max_length_emoji_filename() {
 /// Verifies max-length filename with mixed ASCII and UTF-8.
 #[test]
 fn max_length_mixed_utf8_filename() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed_utf8_max");
     fs::create_dir(&root).expect("create root");
 
@@ -733,7 +733,7 @@ fn max_length_mixed_utf8_filename() {
 /// Verifies max-length filename with spaces.
 #[test]
 fn max_length_filename_with_spaces() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces_max");
     fs::create_dir(&root).expect("create root");
 
@@ -753,7 +753,7 @@ fn max_length_filename_with_spaces() {
 /// Verifies max-length filename with special shell characters.
 #[test]
 fn max_length_filename_with_special_chars() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("special_max");
     fs::create_dir(&root).expect("create root");
 

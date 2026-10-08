@@ -1230,18 +1230,8 @@ mod confined_partial_basis_cleanup {
         Activation, DaemonState, LocalInsecureLinks, Role, install_session,
     };
     use std::os::unix::fs::symlink;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::Arc;
-    use tempfile::TempDir;
-
-    /// `TempDir` under a canonical root: the confinement root is compared
-    /// against a resolved path, so a `/tmp` -> `/private/tmp` style prefix
-    /// would make every cell below pass for the wrong reason.
-    fn canonical_tempdir() -> (TempDir, PathBuf) {
-        let keep = TempDir::new().expect("tempdir");
-        let root = keep.path().canonicalize().expect("canonicalize");
-        (keep, root)
-    }
 
     /// `module/` is both the destination root and the confinement root.
     fn confine_to(module: &Path) {
@@ -1283,7 +1273,7 @@ mod confined_partial_basis_cleanup {
     /// only the victim's survival distinguishes a refusal from a success.
     #[test]
     fn partial_basis_cleanup_refuses_a_partial_dir_symlink_escaping_the_root() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module = root.join("module");
         std::fs::create_dir(&module).expect("module");
         std::fs::create_dir(root.join("outside")).expect("outside");
@@ -1326,7 +1316,7 @@ mod confined_partial_basis_cleanup {
     /// would measure nothing.
     #[test]
     fn partial_basis_cleanup_refuses_an_absolute_partial_dir_without_a_confine_root() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module = root.join("module");
         std::fs::create_dir_all(module.join("escape")).expect("escape dir");
         std::fs::create_dir(root.join("outside")).expect("outside");
@@ -1362,7 +1352,7 @@ mod confined_partial_basis_cleanup {
     /// target back into the walk (`syscall.c:3102`) rather than refusing it.
     #[test]
     fn partial_basis_cleanup_follows_a_relative_in_tree_partial_dir_without_a_confine_root() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module = root.join("module");
         std::fs::create_dir_all(module.join("real")).expect("real dir");
         symlink("real", module.join("sub")).expect("in-tree relative symlink");
@@ -1385,7 +1375,7 @@ mod confined_partial_basis_cleanup {
     /// no-op, which is a silent availability regression rather than a fix.
     #[test]
     fn partial_basis_cleanup_still_removes_an_in_tree_basis() {
-        let (_keep, root) = canonical_tempdir();
+        let (_keep, root) = test_support::create_canonical_tempdir();
         let module = root.join("module");
         std::fs::create_dir_all(module.join(".partial")).expect("partial dir");
         let basis = module.join(".partial/payload.bin");

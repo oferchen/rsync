@@ -18,14 +18,12 @@
 use std::fs;
 use std::io::Write;
 
-use tempfile::TempDir;
-
 /// Non-vacuity companion: with no symlink in play the walked create makes an
 /// ordinary nested file. Without this, the refusal test below would also pass if
 /// `operator_open_create_new` simply failed for every input.
 #[test]
 fn operator_open_create_new_creates_a_nested_file() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("tmp")).expect("mkdir tmp");
     let dest = root.path().join("tmp").join(".f0.XXXXXX");
 
@@ -42,7 +40,7 @@ fn operator_open_create_new_creates_a_nested_file() {
 /// other error would escape the retry arm and abort the transfer.
 #[test]
 fn operator_open_create_new_reports_already_exists_on_a_collision() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     let dest = root.path().join("occupied");
     fs::write(&dest, b"first").expect("seed");
 
@@ -67,8 +65,8 @@ fn operator_open_create_new_reports_already_exists_on_a_collision() {
 /// behind the walk.
 #[test]
 fn operator_open_create_new_refuses_a_symlinked_leaf() {
-    let root = TempDir::new().expect("tempdir");
-    let outside = TempDir::new().expect("outside tempdir");
+    let root = test_support::create_tempdir();
+    let outside = test_support::create_tempdir();
     let target = outside.path().join("victim");
     fs::write(&target, b"original").expect("seed victim");
     let dest = root.path().join(".f0.XXXXXX");
@@ -91,7 +89,7 @@ fn operator_open_create_new_refuses_a_symlinked_leaf() {
 /// which is precisely the case upstream's comment says must keep working.
 #[test]
 fn operator_open_create_new_follows_a_self_owned_parent_symlink() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("real")).expect("mkdir real");
     std::os::unix::fs::symlink("real", root.path().join("tmp")).expect("plant symlink");
     let dest = root.path().join("tmp").join(".f0.XXXXXX");

@@ -942,7 +942,6 @@ mod own_debug_tests {
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
     use std::fs;
     use std::path::PathBuf;
-    use tempfile::tempdir;
 
     fn init_at(level: u8) {
         let mut cfg = VerbosityConfig::default();
@@ -975,7 +974,7 @@ mod own_debug_tests {
         // upstream: rsync.c:667-670 - "set uid of %s from %u to %u".
         init_at(1);
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("probe");
         let meta = fake_existing(&path);
         let current_uid = meta.uid() as u64;
@@ -1002,7 +1001,7 @@ mod own_debug_tests {
         // upstream: rsync.c:672-676 - "set gid of %s from %u to %u".
         init_at(1);
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("probe");
         let meta = fake_existing(&path);
         let current_gid = meta.gid() as u64;
@@ -1029,7 +1028,7 @@ mod own_debug_tests {
         // upstream: rsync.c:665-669 - `if (change_uid)` gates the uid trace.
         init_at(1);
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("probe");
         let meta = fake_existing(&path);
         let same_uid = meta.uid() as u32;
@@ -1047,7 +1046,7 @@ mod own_debug_tests {
         // upstream: DEBUG_GTE(OWN, 1) is false when --debug=OWN is disabled.
         init_at(0);
 
-        let tmp = tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("probe");
         let meta = fake_existing(&path);
         let owner = Some(ownership::uid_from_raw(((meta.uid() as u32) ^ 1) as RawUid));
@@ -1194,7 +1193,6 @@ mod post_chown_tests {
 
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
     #[test]
     fn setuid_or_setgid_mode_forces_restat() {
@@ -1267,7 +1265,7 @@ mod post_chown_tests {
         // End-to-end over a real stat: a setuid file signals the re-stat, a
         // plain file does not. Exercised without root because the owning user
         // may set the setuid bit on a file it owns.
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         let plain = dir.path().join("plain");
         fs::write(&plain, b"x").expect("write plain");

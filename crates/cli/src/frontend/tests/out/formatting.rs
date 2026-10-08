@@ -3,7 +3,7 @@ use core::client::run_client;
 
 #[test]
 fn out_format_respects_width_alignment_and_humanization_controls() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -74,7 +74,7 @@ fn out_format_respects_width_alignment_and_humanization_controls() {
 
 #[test]
 fn out_format_renders_modify_time_placeholder() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("file.txt");
     std::fs::write(&source, b"data").expect("write source");
     let destination = temp.path().join("dest");

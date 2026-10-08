@@ -845,7 +845,7 @@ mod tests {
     /// distinguishes it from a blanket insecure flag.
     #[test]
     fn tofu_pins_then_accepts_same_and_rejects_changed() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("state").join("quic_known_hosts");
         let cert = synthetic_cert();
         let rogue = synthetic_cert();
@@ -887,7 +887,7 @@ mod tests {
     fn known_hosts_file_is_owner_only() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let parent = dir.path().join("state");
         let path = parent.join("quic_known_hosts");
         let store = KnownHostsFile::new(path.clone());
@@ -917,7 +917,7 @@ mod tests {
     /// fingerprint, and an unknown authority reads back as `None`.
     #[test]
     fn store_round_trips_pins() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("quic_known_hosts");
         let store = KnownHostsFile::new(path);
         let fp = Fingerprint::of_certificate(&synthetic_cert());
@@ -940,7 +940,7 @@ mod tests {
     /// degrade trust.
     #[test]
     fn load_private_ca_reads_pem_and_rejects_empty() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         let issued =
             rcgen::generate_simple_self_signed(vec!["ca.example".to_owned()]).expect("gen cert");
@@ -994,7 +994,7 @@ mod tests {
     /// first-contact accept here.
     #[test]
     fn accept_new_pins_unknown_then_verifies_then_refuses_changed() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("state").join("quic_known_hosts");
         let cert = synthetic_cert();
         let rogue = synthetic_cert();
@@ -1041,7 +1041,7 @@ mod tests {
     #[test]
     fn accept_new_ca_validation_wins_over_a_conflicting_pin() {
         let (ca_pem, leaf) = private_ca_and_leaf();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let ca_path = dir.path().join("private-ca.pem");
         std::fs::write(&ca_path, ca_pem).expect("write ca pem");
         let known_hosts = dir.path().join("quic_known_hosts");
@@ -1086,7 +1086,7 @@ mod tests {
     #[test]
     fn resolve_yields_accept_new_verifier_with_and_without_ca() {
         let (ca_pem, _leaf) = private_ca_and_leaf();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let ca_path = dir.path().join("private-ca.pem");
         std::fs::write(&ca_path, ca_pem).expect("write ca pem");
         let known_hosts = dir.path().join("quic_known_hosts");
@@ -1169,7 +1169,7 @@ mod tests {
     fn private_ca_trusts_signed_leaf_and_rejects_unrelated() {
         let (ca_pem, leaf) = private_ca_and_leaf();
         let rogue = synthetic_cert();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let ca_path = dir.path().join("private-ca.pem");
         std::fs::write(&ca_path, ca_pem).expect("write ca pem");
 
@@ -1205,7 +1205,7 @@ mod tests {
     #[test]
     fn private_ca_file_yields_a_roots_trust_source() {
         let (ca_pem, _leaf) = private_ca_and_leaf();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let ca_path = dir.path().join("private-ca.pem");
         std::fs::write(&ca_path, ca_pem).expect("write ca pem");
 
@@ -1225,7 +1225,7 @@ mod tests {
     /// trust nothing while looking configured.
     #[test]
     fn load_private_ca_reports_unusable_inputs() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         let missing = dir.path().join("absent.pem");
         let err = load_private_ca(&missing).expect_err("missing file must error");

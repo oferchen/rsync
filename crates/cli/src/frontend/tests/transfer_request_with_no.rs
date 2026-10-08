@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_no_bwlimit_copies_file() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("destination.txt");
     std::fs::write(&source, b"unlimited").expect("write source");
@@ -30,9 +28,8 @@ fn transfer_request_with_no_bwlimit_copies_file() {
 #[test]
 fn transfer_request_with_no_perms_overrides_archive() {
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source-no-perms.txt");
     let destination = tmp.path().join("dest-no-perms.txt");
     std::fs::write(&source, b"data").expect("write source");
@@ -70,9 +67,8 @@ fn transfer_request_with_no_perms_overrides_archive() {
 fn transfer_request_with_no_times_overrides_archive() {
     use filetime::{FileTime, set_file_times};
     use std::time::SystemTime;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source-no-times.txt");
     let destination = tmp.path().join("dest-no-times.txt");
     std::fs::write(&source, b"data").expect("write source");

@@ -4,9 +4,7 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn combined_archive_and_verbose_flags_are_supported() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("combo.txt");
     let destination = tmp.path().join("combo.out");
     std::fs::write(&source, b"combo").expect("write source");

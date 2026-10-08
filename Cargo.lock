@@ -150,6 +150,7 @@ dependencies = [
  "libc",
  "nix",
  "tempfile",
+ "test-support",
  "unicode-normalization",
  "xattr",
 ]
@@ -280,6 +281,7 @@ dependencies = [
  "metadata",
  "protocol",
  "tempfile",
+ "test-support",
  "thiserror",
 ]
 
@@ -567,6 +569,7 @@ dependencies = [
  "sha1 0.10.6",
  "sha2 0.10.9",
  "tempfile",
+ "test-support",
  "thiserror",
  "xxh3",
  "xxhash-rust",
@@ -2204,6 +2207,7 @@ dependencies = [
  "rustc-hash 2.1.3",
  "signature 0.6.4",
  "tempfile",
+ "test-support",
  "thiserror",
  "tracing",
 ]
@@ -3239,6 +3243,7 @@ dependencies = [
  "sha2 0.10.9",
  "shell-words",
  "tempfile",
+ "test-support",
  "thiserror",
  "tokio",
  "tracing",
@@ -3798,6 +3803,7 @@ dependencies = [
  "protocol",
  "rayon",
  "tempfile",
+ "test-support",
  "thiserror",
  "tracing",
 ]

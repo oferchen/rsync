@@ -349,7 +349,7 @@ mod linux_tests {
 
     #[test]
     fn writes_one_mib_chunk_byte_equal() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("dontcache_1mib.bin");
         let mut writer = DontcacheFileWriter::new(create(&path)).expect("writer");
         let chunk = vec![0xABu8; 1024 * 1024];
@@ -363,7 +363,7 @@ mod linux_tests {
 
     #[test]
     fn multiple_chunks_concatenate_in_order() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("dontcache_multi.bin");
         let mut writer = DontcacheFileWriter::new(create(&path)).expect("writer");
 
@@ -384,7 +384,7 @@ mod linux_tests {
 
     #[test]
     fn empty_chunk_is_noop() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("dontcache_empty.bin");
         let mut writer = DontcacheFileWriter::new(create(&path)).expect("writer");
         assert_eq!(writer.write_chunk(&[]).expect("empty"), 0);
@@ -431,7 +431,7 @@ mod linux_tests {
         // RWF_DONTCACHE (Linux 6.14+) or falls back. The chunk set mixes a
         // >1 MiB bulk chunk (exercises the positioned pwritev2 path) with a
         // tiny chunk and a sub-page counter-pattern chunk.
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let bulk = vec![0xABu8; 1024 * 1024 + 4096];
         let tiny = vec![0x22u8; 64];
         let pattern: Vec<u8> = (0..512u32 * 1024).map(|i| (i & 0xFF) as u8).collect();
@@ -465,7 +465,7 @@ mod stub_tests {
 
     #[test]
     fn stub_constructor_returns_unsupported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let path = tmp.path().join("stub.bin");
         let file = OpenOptions::new()
             .create(true)

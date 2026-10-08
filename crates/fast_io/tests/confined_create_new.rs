@@ -16,14 +16,12 @@
 use std::fs;
 use std::io::Write;
 
-use tempfile::TempDir;
-
 /// Non-vacuity companion: with no symlink in play the confined create makes an
 /// ordinary nested file. Without this, the refusal tests below would also pass
 /// if `confined_create_new` simply failed for every input.
 #[test]
 fn confined_create_new_creates_a_nested_destination() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("sub")).expect("mkdir sub");
     let dest = root.path().join("sub").join("f0");
 
@@ -39,7 +37,7 @@ fn confined_create_new_creates_a_nested_destination() {
 /// "refuse every symlink" simplification from breaking `-K`.
 #[test]
 fn confined_create_new_follows_a_relative_in_tree_parent_symlink() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("real")).expect("mkdir real");
     std::os::unix::fs::symlink("real", root.path().join("sub")).expect("plant symlink");
     let dest = root.path().join("sub").join("f0");
@@ -60,7 +58,7 @@ fn confined_create_new_follows_a_relative_in_tree_parent_symlink() {
 /// appear in the outside tree.
 #[test]
 fn confined_create_new_refuses_a_parent_symlinked_outside() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("dest");
     let outside = base.path().join("outside");
     fs::create_dir(&root).expect("mkdir dest");
@@ -82,7 +80,7 @@ fn confined_create_new_refuses_a_parent_symlinked_outside() {
 /// follow" rather than "it exists" - and neither may write through the link.
 #[test]
 fn confined_create_new_refuses_a_leaf_symlinked_outside() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("dest");
     let outside = base.path().join("outside");
     fs::create_dir(&root).expect("mkdir dest");
@@ -102,7 +100,7 @@ fn confined_create_new_refuses_a_leaf_symlinked_outside() {
 /// exists as a regular file loses the race rather than being truncated.
 #[test]
 fn confined_create_new_refuses_an_existing_regular_file() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     let dest = root.path().join("f0");
     fs::write(&dest, "original").expect("seed");
 

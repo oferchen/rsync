@@ -59,20 +59,8 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::PathBuf;
 
 use fast_io::DirSandbox;
-use tempfile::{TempDir, tempdir};
-
-/// `tempdir()` may sit under a symlink prefix on macOS (`/tmp ->
-/// /private/tmp`) or some CI runners. [`DirSandbox::open_root`] refuses
-/// any symlink in the path under `RESOLVE_NO_SYMLINKS`, so canonicalise
-/// the test root first to keep the harness portable.
-fn canonical_tempdir() -> (TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = fs::canonicalize(dir.path()).expect("canonicalize tempdir");
-    (dir, canon)
-}
 
 /// Stable sentinel content used by both scenarios so the positive and
 /// negative tests share the same "outside" fixture.
@@ -101,7 +89,7 @@ const OUTSIDE_MODE: u32 = 0o600;
 ///    through the symlink).
 #[test]
 fn rejects_symlinked_subdir_and_leaves_outside_untouched() {
-    let (_keep, scratch) = canonical_tempdir();
+    let (_keep, scratch) = test_support::create_canonical_tempdir();
 
     // Outside the module: a sensitive directory with a sentinel the
     // attacker is trying to overwrite or chmod through the planted
@@ -197,7 +185,7 @@ fn rejects_symlinked_subdir_and_leaves_outside_untouched() {
 /// to the symlink swap.
 #[test]
 fn accepts_real_subdir_and_writes_keep_file() {
-    let (_keep, scratch) = canonical_tempdir();
+    let (_keep, scratch) = test_support::create_canonical_tempdir();
 
     let module = scratch.join("module");
     let subdir = module.join("subdir");

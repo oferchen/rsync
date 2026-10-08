@@ -47,7 +47,7 @@ const HISTORICAL_CRTIME_SECS: i64 = 946_684_800;
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn crtimes_entry_apply_is_a_documented_noop_on_non_macos_unix() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let dst = dir.path().join("f");
     std::fs::write(&dst, b"payload").expect("write dst");
 
@@ -77,7 +77,7 @@ fn crtimes_entry_apply_is_a_documented_noop_on_non_macos_unix() {
 #[cfg(windows)]
 #[test]
 fn crtimes_entry_apply_sets_creation_time_on_windows() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let dst = dir.path().join("f");
     std::fs::write(&dst, b"payload").expect("write dst");
 
@@ -129,7 +129,7 @@ fn non_root_receiver_skips_non_user_namespace_xattr_and_keeps_user_one() {
         return;
     }
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("f");
     std::fs::write(&file, b"x").expect("write file");
 

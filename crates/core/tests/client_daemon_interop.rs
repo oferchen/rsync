@@ -33,7 +33,6 @@ use common::{
     require_upstream,
 };
 use core::client::{ClientConfig, FilesFromSource, run_client};
-use tempfile::tempdir;
 
 /// Test pulling a single file from upstream daemon.
 #[test]
@@ -50,7 +49,7 @@ fn test_client_pull_single_file_from_daemon() {
     );
 
     // Set up local destination
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     // Pull file using our client
     let config = ClientConfig::builder()
@@ -88,7 +87,7 @@ fn test_client_pull_directory_recursive() {
         b"content3",
     );
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     // Pull directory recursively
     let config = ClientConfig::builder()
@@ -136,7 +135,7 @@ fn test_client_pull_with_archive_mode() {
         fs::set_permissions(&test_file, perms).expect("set permissions");
     }
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     // Pull with archive mode flags (recursive, preserve links, perms, times, etc.)
     let config = ClientConfig::builder()
@@ -185,7 +184,7 @@ fn test_client_pull_with_compression() {
     let large_content = b"repetitive data ".repeat(1000);
     create_test_file(&daemon.module_path().join("large.txt"), &large_content);
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     // Pull with compression
     let config = ClientConfig::builder()
@@ -219,7 +218,7 @@ fn test_client_pull_with_checksum() {
         b"test data",
     );
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     // Pull with checksum verification
     let config = ClientConfig::builder()
@@ -248,7 +247,7 @@ fn test_client_push_to_daemon() {
     let daemon = TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create source files locally
-    let source_root = tempdir().expect("create source dir");
+    let source_root = test_support::create_tempdir();
     create_test_file(&source_root.path().join("upload.txt"), b"upload content");
 
     // Push to daemon
@@ -282,7 +281,7 @@ fn test_client_push_directory_to_daemon() {
     let daemon = TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create source directory structure
-    let source_root = tempdir().expect("create source dir");
+    let source_root = test_support::create_tempdir();
     create_test_file(&source_root.path().join("file1.txt"), b"data1");
     create_test_file(&source_root.path().join("nested/file2.txt"), b"data2");
 
@@ -326,7 +325,7 @@ fn test_client_protocol_compatibility_3_0_9() {
         b"version 3.0.9",
     );
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -358,7 +357,7 @@ fn test_client_protocol_compatibility_3_1_3() {
         b"version 3.1.3",
     );
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -390,7 +389,7 @@ fn test_client_protocol_compatibility_3_4_1() {
         b"version 3.4.1",
     );
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -478,7 +477,7 @@ fn test_client_pull_with_exclude_filter() {
     create_test_file(&daemon.module_path().join("subdir/data.txt"), b"data");
     create_test_file(&daemon.module_path().join("subdir/temp.tmp"), b"temp");
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     use core::client::FilterRuleSpec;
 
@@ -516,7 +515,7 @@ fn test_client_pull_with_include_exclude() {
     create_test_file(&daemon.module_path().join("debug.log"), b"debug");
     create_test_file(&daemon.module_path().join("data.txt"), b"data");
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     use core::client::FilterRuleSpec;
 
@@ -553,7 +552,7 @@ fn test_client_incremental_transfer() {
     create_test_file(&daemon.module_path().join("unchanged.txt"), b"no changes");
     create_test_file(&daemon.module_path().join("modified.txt"), b"old content");
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
     let daemon_url = daemon.url();
     let dest_path = dest_root.path().to_string_lossy().to_string();
 
@@ -603,7 +602,7 @@ fn test_client_incremental_size_only() {
 
     create_test_file(&daemon.module_path().join("sizetest.txt"), b"original");
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
     let daemon_url = daemon.url();
     let dest_path = dest_root.path().to_string_lossy().to_string();
 
@@ -634,7 +633,7 @@ fn test_client_incremental_size_only() {
 /// Test error when connecting to non-existent daemon.
 #[test]
 fn test_error_connection_refused() {
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -735,7 +734,7 @@ fn test_metadata_preservation_permissions() {
     let perms = fs::Permissions::from_mode(0o755);
     fs::set_permissions(&test_file, perms).expect("set permissions");
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -776,7 +775,7 @@ fn test_metadata_preservation_times() {
     let original_metadata = fs::metadata(&test_file).expect("read metadata");
     let original_mtime = original_metadata.modified().expect("get mtime");
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -822,7 +821,7 @@ fn test_many_small_files() {
         );
     }
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -859,7 +858,7 @@ fn test_large_file_transfer() {
     let large_content = vec![0xAB; 10 * 1024 * 1024];
     create_test_file(&daemon.module_path().join("large.bin"), &large_content);
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -891,7 +890,7 @@ fn test_empty_directory_transfer() {
     // Create empty directory
     fs::create_dir_all(daemon.module_path().join("emptydir")).expect("create empty dir");
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -929,7 +928,7 @@ fn test_special_characters_in_filename() {
         b"underscores",
     );
 
-    let dest_root = tempdir().expect("create dest dir");
+    let dest_root = test_support::create_tempdir();
 
     let config = ClientConfig::builder()
         .transfer_args([
@@ -961,7 +960,7 @@ fn test_client_push_to_daemon_with_files_from() {
     let daemon = TestDaemon::start(DaemonBinary::Upstream(UPSTREAM_3_4_1)).expect("start daemon");
 
     // Create source files - some will be selected, some not
-    let source_root = tempdir().expect("create source dir");
+    let source_root = test_support::create_tempdir();
     create_test_file(&source_root.path().join("selected1.txt"), b"selected one");
     create_test_file(&source_root.path().join("selected2.txt"), b"selected two");
     create_test_file(
@@ -970,7 +969,7 @@ fn test_client_push_to_daemon_with_files_from() {
     );
 
     // Write a files-from list that selects only two of the three files
-    let files_list = tempdir().expect("create list dir");
+    let files_list = test_support::create_tempdir();
     let list_path = files_list.path().join("filelist.txt");
     fs::write(&list_path, "selected1.txt\nselected2.txt\n").expect("write file list");
 

@@ -42,7 +42,7 @@ fn setup(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
 
 #[test]
 fn no_perms_before_archive_preserves_permissions() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let (src, dst) = setup(dir.path());
     // `--no-perms -a`: the trailing -a re-enables perms, so the destination
     // takes the source's 0700.
@@ -62,7 +62,7 @@ fn no_perms_before_archive_preserves_permissions() {
 
 #[test]
 fn no_perms_after_archive_drops_permissions() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let (src, dst) = setup(dir.path());
     // `-a --no-perms`: the trailing --no-perms wins, so the destination keeps
     // its pre-existing 0600.

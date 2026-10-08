@@ -306,7 +306,7 @@ mod tests {
     /// target's contents.
     #[test]
     fn junction_fallback_creates_resolvable_directory_link() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let target = dir.path().join("real_dir");
         fs::create_dir(&target).expect("create target");
         fs::write(target.join("inside.txt"), b"hello").expect("write inside");
@@ -334,7 +334,7 @@ mod tests {
     /// a skip-with-warning.
     #[test]
     fn file_symlink_reports_privilege_without_panicking() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let target = dir.path().join("target.txt");
         fs::write(&target, b"payload").expect("write target");
 

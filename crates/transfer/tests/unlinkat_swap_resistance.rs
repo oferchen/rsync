@@ -21,19 +21,9 @@
 #![cfg(unix)]
 
 use std::os::unix::fs::symlink;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fast_io::{DirSandbox, UnlinkFlags, unlink_via_sandbox_or_fallback};
-use tempfile::tempdir;
-
-/// `tempdir()` may sit under a symlink prefix on macOS / some CI
-/// runners; canonicalise so the sandbox open succeeds under
-/// `RESOLVE_NO_SYMLINKS`.
-fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
 
 /// Simulates the attack the receiver-side obstacle unlink defends
 /// against: between the receiver's decide-to-delete moment and the
@@ -43,7 +33,7 @@ fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
 /// destination tree must survive.
 #[test]
 fn unlink_via_sandbox_does_not_follow_swapped_symlink() {
-    let (_keep, parent) = canonical_tempdir();
+    let (_keep, parent) = test_support::create_canonical_tempdir();
 
     // Sensitive tree the attacker hopes to redirect the unlink to.
     let sensitive_dir = parent.join("sensitive");
@@ -85,7 +75,7 @@ fn unlink_via_sandbox_does_not_follow_swapped_symlink() {
 /// takes for symlink and hardlink quick-check misses.
 #[test]
 fn unlink_via_sandbox_removes_regular_file_at_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let path = root.join("obstacle");
     std::fs::write(&path, b"contents").expect("write");
 
@@ -103,7 +93,7 @@ fn unlink_via_sandbox_removes_regular_file_at_leaf() {
 /// promote `rmdir` into a recursive removal.
 #[test]
 fn unlink_via_sandbox_dir_flag_refuses_non_empty_directory() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dir = root.join("non-empty");
     std::fs::create_dir(&dir).expect("mkdir");
     std::fs::write(dir.join("inner"), b"x").expect("write inner");
@@ -127,7 +117,7 @@ fn unlink_via_sandbox_dir_flag_refuses_non_empty_directory() {
 /// states so a future regression cannot silently drop the leaf.
 #[test]
 fn unlink_via_sandbox_multi_component_removes_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
     std::fs::write(&path, b"x").expect("write");

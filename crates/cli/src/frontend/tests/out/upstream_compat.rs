@@ -17,7 +17,7 @@ use core::client::run_client;
 
 #[test]
 fn out_format_itemize_filename_combined_matches_upstream_new_file() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src dir");
@@ -62,7 +62,7 @@ fn out_format_itemize_filename_combined_matches_upstream_new_file() {
 
 #[test]
 fn out_format_itemize_space_filename_matches_upstream_output() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src dir");
@@ -100,7 +100,7 @@ fn out_format_itemize_space_filename_matches_upstream_output() {
 
 #[test]
 fn out_format_modify_time_follows_upstream_format() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("timestamped.txt");
     std::fs::write(&source, b"data").expect("write source");
     let destination = temp.path().join("dest.txt");
@@ -158,7 +158,7 @@ fn out_format_modify_time_follows_upstream_format() {
 
 #[test]
 fn out_format_current_time_follows_upstream_format() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("time.txt");
     std::fs::write(&source, b"time").expect("write source");
     let destination = temp.path().join("dest.txt");
@@ -209,7 +209,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
     };
     use core::client::{ClientConfig, HumanReadableMode};
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("verbose_test.txt");
     std::fs::write(&source, b"data").expect("write source");
     let destination = temp.path().join("dest.txt");
@@ -303,7 +303,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
 
 #[test]
 fn out_format_renders_multiple_files_in_order() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -360,7 +360,7 @@ fn out_format_renders_multiple_files_in_order() {
 
 #[test]
 fn out_format_complex_upstream_format_renders_all_fields() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -423,7 +423,7 @@ fn out_format_complex_upstream_format_renders_all_fields() {
 
 #[test]
 fn out_format_literal_only_string_renders_as_is() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");

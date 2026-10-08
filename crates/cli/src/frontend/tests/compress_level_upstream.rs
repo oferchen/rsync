@@ -485,9 +485,7 @@ fn compression_setting_try_from_numeric_matches_upstream_levels() {
 
 #[test]
 fn local_copy_with_all_valid_compress_levels() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     std::fs::write(&source, b"compressible test data content").expect("write source");
 

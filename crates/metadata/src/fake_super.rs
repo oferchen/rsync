@@ -685,7 +685,7 @@ mod tests {
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn effective_source_stat_prefers_recorded_xattr() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("placeholder");
         std::fs::write(&path, b"placeholder body").expect("write");
 
@@ -715,7 +715,7 @@ mod tests {
     fn effective_source_stat_falls_back_to_metadata() {
         use std::os::unix::fs::MetadataExt;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("real");
         std::fs::write(&path, b"real body").expect("write");
 
@@ -733,7 +733,7 @@ mod tests {
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn remove_fake_super_absent_xattr_is_ok() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
 
         // Confirm the FS supports user xattrs at all; skip on tmpfs without it,
         // where every xattr op returns ENOTSUP rather than the ENODATA we test.
@@ -784,7 +784,7 @@ mod tests {
     fn store_and_load_fake_super_acl_roundtrips() {
         use protocol::acl::{IdAccess, RsyncAcl};
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("acl-file");
         std::fs::write(&path, b"body").expect("write");
 
@@ -835,7 +835,7 @@ mod tests {
 
         const NOBODY: u32 = 65534;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("acl-target");
         std::fs::write(&path, b"body").expect("write");
 
@@ -880,7 +880,7 @@ mod tests {
     fn remove_fake_super_default_acl_absent_is_ok() {
         use protocol::acl::RsyncAcl;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
 
         // Confirm the FS supports user xattrs at all; skip otherwise.
         let probe = temp.path().join("probe");
@@ -901,7 +901,7 @@ mod tests {
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn load_fake_super_acl_rejects_corrupt_value() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("corrupt-acl");
         std::fs::write(&path, b"body").expect("write");
 
@@ -973,7 +973,7 @@ mod tests {
     #[cfg(not(unix))]
     #[test]
     fn from_metadata_non_unix_returns_defaults() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("test.txt");
         std::fs::write(&path, b"content").expect("write");
         let metadata = std::fs::metadata(&path).expect("metadata");

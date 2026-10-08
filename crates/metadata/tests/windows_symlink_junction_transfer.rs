@@ -58,8 +58,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tempfile::tempdir;
-
 /// Minimal RAII wrapper around `cmd.exe /c mklink /d <link> <target>`.
 ///
 /// Returns [`io::ErrorKind::PermissionDenied`] when `mklink /d` exits
@@ -181,7 +179,7 @@ fn run_oc_rsync_push(oc: &Path, src: &Path, dst: &Path) {
 /// mode); skips cleanly otherwise.
 #[test]
 fn dir_symlink_push_preserves_link() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     let dst = dir.path().join("dst");
     fs::create_dir_all(&src).expect("create src");
@@ -242,7 +240,7 @@ fn dir_symlink_push_preserves_link() {
 /// proves the transfer pipeline preserves the reparse-point shape.
 #[test]
 fn junction_push_preserves_junction() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     let dst = dir.path().join("dst");
     fs::create_dir_all(&src).expect("create src");

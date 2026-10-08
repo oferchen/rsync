@@ -3,7 +3,6 @@
 
 use super::common::*;
 use super::*;
-use tempfile::tempdir;
 
 /// upstream: compat.c:190 `unknown compress name` -> RERR_UNSUPPORTED
 /// (errcode.h:28 `RERR_UNSUPPORTED 4`), not RERR_SYNTAX.
@@ -34,7 +33,7 @@ fn empty_compress_choice_returns_unsupported() {
 /// normal codec negotiation runs; it is accepted (exit 0), not rejected.
 #[test]
 fn compress_choice_auto_is_accepted() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");
@@ -65,7 +64,7 @@ fn compress_choice_auto_auto_returns_unsupported() {
 /// (or a lone operand) is a syntax error (RERR_SYNTAX = 1).
 #[test]
 fn files_from_extra_operands_return_syntax_error() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let list = temp.path().join("list");
     std::fs::write(&list, b"file\n").expect("write list");
     let mut list_arg = OsString::from("--files-from=");
@@ -114,7 +113,7 @@ fn empty_checksum_choice_returns_unsupported() {
 /// blank `--filter` value is a no-op and the transfer succeeds (exit 0).
 #[test]
 fn empty_filter_is_accepted_as_noop() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");
@@ -132,7 +131,7 @@ fn empty_filter_is_accepted_as_noop() {
 #[test]
 fn empty_exclude_and_include_are_accepted_as_noop() {
     for flag in ["--exclude=", "--include="] {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("source.txt");
         let destination = temp.path().join("dest.txt");
         std::fs::write(&source, b"data").expect("write source");

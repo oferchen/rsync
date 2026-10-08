@@ -22,7 +22,6 @@ use std::fs;
 use std::path::Path;
 
 use filters::{DirMergeConfig, FilterChain};
-use tempfile::TempDir;
 
 /// Sibling per-dir scopes must not leak Deletion rules across `leave_directory`.
 ///
@@ -36,7 +35,7 @@ use tempfile::TempDir;
 /// a scope clears its rules.
 #[test]
 fn sibling_scope_does_not_leak_deletion_rules() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let alpha = root.path().join("alpha");
     let beta = root.path().join("beta");
     fs::create_dir(&alpha).unwrap();
@@ -86,7 +85,7 @@ fn sibling_scope_does_not_leak_deletion_rules() {
 /// flag (`applies_to_sender` vs `applies_to_receiver`) the predicate consults.
 #[test]
 fn sibling_scope_does_not_leak_transfer_rules() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let alpha = root.path().join("alpha");
     let beta = root.path().join("beta");
     fs::create_dir(&alpha).unwrap();
@@ -119,7 +118,7 @@ fn sibling_scope_does_not_leak_transfer_rules() {
 /// descend for inheriting rules.
 #[test]
 fn nested_scope_keeps_inherited_deletion_rule() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let alpha = root.path().join("alpha");
     let inner = alpha.join("inner");
     fs::create_dir(&alpha).unwrap();

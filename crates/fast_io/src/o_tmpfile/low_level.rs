@@ -236,7 +236,7 @@ mod linux {
         #[test]
         fn probe_returns_consistent_results() {
             reset_probe_cache();
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             let first = o_tmpfile_available(dir.path());
             let second = o_tmpfile_available(dir.path());
             assert_eq!(first, second);
@@ -251,7 +251,7 @@ mod linux {
 
         #[test]
         fn open_anonymous_tmpfile_succeeds() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             let result = open_anonymous_tmpfile(dir.path(), 0o644);
             // O_TMPFILE may not be supported on all filesystems (e.g., tmpfs in CI)
             if let Ok(file) = result {
@@ -267,7 +267,7 @@ mod linux {
         fn anonymous_tmpfile_is_readable() {
             use std::io::{Read, Seek, SeekFrom};
 
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             let mut file = match open_anonymous_tmpfile(dir.path(), 0o644) {
                 Ok(f) => f,
                 Err(_) => return, // O_TMPFILE not supported on this filesystem
@@ -282,7 +282,7 @@ mod linux {
 
         #[test]
         fn open_and_link_roundtrip() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             let file = match open_anonymous_tmpfile(dir.path(), 0o644) {
                 Ok(f) => f,
                 Err(_) => return, // O_TMPFILE not supported on this filesystem
@@ -307,7 +307,7 @@ mod linux {
 
         #[test]
         fn link_fails_when_dest_exists() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("existing.txt");
             std::fs::write(&dest, "already here").unwrap();
 
@@ -333,7 +333,7 @@ mod linux {
         fn open_respects_mode_bits() {
             use std::os::unix::fs::MetadataExt;
 
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             let file = match open_anonymous_tmpfile(dir.path(), 0o600) {
                 Ok(f) => f,
                 Err(_) => return,

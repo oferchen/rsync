@@ -198,7 +198,6 @@ pub fn os_name_to_bytes(name: &OsStr) -> Vec<u8> {
 #[cfg(all(test, target_os = "macos"))]
 mod macos_tests {
     use super::*;
-    use tempfile::tempdir;
 
     /// The macOS single-call `getxattr(2)` ceiling that the positioned read
     /// loop works around (upstream `GETXATTR_FETCH_LIMIT`).
@@ -210,7 +209,7 @@ mod macos_tests {
 
     #[test]
     fn read_attribute_reads_small_value_and_missing() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("small");
         std::fs::write(&path, b"data").unwrap();
 
@@ -228,7 +227,7 @@ mod macos_tests {
 
     #[test]
     fn read_attribute_reads_resource_fork_past_fetch_limit() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("bigfork");
         std::fs::write(&path, b"payload").unwrap();
 

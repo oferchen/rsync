@@ -127,6 +127,7 @@ fast_io = { path = "../fast_io", default-features = false, optional = true }
 # env-mutating tests on every target. Declare it as an all-target dev
 # dependency so those cross-platform tests compile on Windows too.
 [dev-dependencies]
+test-support = { path = "../test-support" }
 platform = { path = "../platform" }
 proptest = { workspace = true }
 rand = { workspace = true }

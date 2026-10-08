@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_delete_excluded_prunes_filtered_entries() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
     std::fs::create_dir_all(&source_root).expect("create source root");

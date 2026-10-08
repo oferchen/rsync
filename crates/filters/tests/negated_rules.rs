@@ -345,9 +345,8 @@ fn negated_star_star() {
 #[test]
 fn parse_negated_exclude_short() {
     use std::fs;
-    use tempfile::TempDir;
 
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, "-! *.txt\n").unwrap();
 
@@ -361,9 +360,8 @@ fn parse_negated_exclude_short() {
 #[test]
 fn parse_negated_include_short() {
     use std::fs;
-    use tempfile::TempDir;
 
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, "+! *.bak\n").unwrap();
 
@@ -376,9 +374,8 @@ fn parse_negated_include_short() {
 #[test]
 fn parse_negated_with_other_modifiers() {
     use std::fs;
-    use tempfile::TempDir;
 
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, "-!ps *.tmp\n").unwrap();
 

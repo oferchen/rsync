@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn stub_submit_statx_batch_returns_unsupported_for_each_path() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let p1 = dir.path().join("a.txt");
         let p2 = dir.path().join("b.txt");
         std::fs::write(&p1, b"a").unwrap();

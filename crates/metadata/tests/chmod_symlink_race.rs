@@ -28,19 +28,8 @@
 use std::error::Error;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::PathBuf;
 
 use metadata::{MetadataOptions, apply_file_metadata_with_options};
-use tempfile::TempDir;
-
-/// `tempdir()` may sit under a symlink prefix on macOS / some CI
-/// runners; canonicalise so the sandbox open succeeds under
-/// `RESOLVE_NO_SYMLINKS`.
-fn canonical_tempdir() -> (TempDir, PathBuf) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let canon = fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
 
 fn perms(mode: u32) -> fs::Permissions {
     <fs::Permissions as PermissionsExt>::from_mode(mode)
@@ -55,7 +44,7 @@ fn mode_of(path: &std::path::Path) -> u32 {
 /// target mode.
 #[test]
 fn receiver_chmod_succeeds_on_clean_path() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let source = root.join("source");
     let destination = root.join("dest");
     fs::write(&source, b"src").expect("write source");
@@ -82,7 +71,7 @@ fn receiver_chmod_succeeds_on_clean_path() {
 /// symlinked parent) and the outside file's mode must be unchanged.
 #[test]
 fn receiver_chmod_refuses_symlinked_parent_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
 
     let outside = root.join("outside");
     let module = root.join("module");

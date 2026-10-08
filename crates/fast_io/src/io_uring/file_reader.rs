@@ -301,13 +301,12 @@ impl FileReader for IoUringReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     /// Builds a reader for testing via the per-thread ring. Returns `None`
     /// when the kernel rejects `io_uring_setup(2)` (e.g., container,
     /// seccomp, or non-5.6+ kernel) so the test skips cleanly.
     fn make_reader() -> Option<IoUringReader> {
-        let dir = tempdir().ok()?;
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("in.bin");
         std::fs::write(&path, b"hello").ok()?;
         // Probe the per-thread ring; on hosts without io_uring we skip the

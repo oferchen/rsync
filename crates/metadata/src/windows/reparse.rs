@@ -1135,7 +1135,7 @@ mod integration_tests {
 
     #[test]
     fn junction_is_classified_as_junction() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let target = tmp.path().join("target");
         let junction = tmp.path().join("link");
         fs::create_dir(&target).expect("create target dir");
@@ -1165,7 +1165,7 @@ mod integration_tests {
 
     #[test]
     fn junction_parse_extracts_target_path() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = test_support::create_tempdir();
         let target = tmp.path().join("target");
         let junction = tmp.path().join("link");
         fs::create_dir(&target).expect("create target dir");

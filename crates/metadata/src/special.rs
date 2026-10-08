@@ -825,8 +825,6 @@ mod tests {
     use std::io;
     #[cfg(unix)]
     use std::path::Path;
-    #[cfg(unix)]
-    use tempfile::tempdir;
 
     // Pins the POSIX octal type-bit literals used by `fifo_mknod_mode` and
     // `device_mknod_mode` to libc's `S_IF*`, so they cannot silently drift.
@@ -853,7 +851,7 @@ mod tests {
     fn create_fifo_applies_metadata_permissions() {
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-        let temp = tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let source_path = temp.path().join("source");
         fs::File::create(&source_path).expect("create metadata source");
 
@@ -948,7 +946,7 @@ mod tests {
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
         use std::os::unix::net::UnixListener;
 
-        let temp = tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
 
         // Derive metadata from a genuine socket so `is_socket()` is true.
         let source_path = temp.path().join("source.sock");
@@ -986,7 +984,7 @@ mod tests {
     fn create_device_node_rejects_non_device_metadata() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let source_path = temp.path().join("regular");
         fs::File::create(&source_path).expect("create regular file");
 
@@ -1024,7 +1022,7 @@ mod tests {
             _ => return,
         };
 
-        let temp = tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let dest = temp.path().join("null");
 
         match create_device_node(&dest, &metadata) {
@@ -1079,7 +1077,7 @@ mod tests {
     #[cfg(not(unix))]
     #[test]
     fn create_fifo_skips_with_warn_on_non_unix() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("source");
         fs::File::create(&source).expect("create source");
         let metadata = fs::metadata(&source).expect("metadata");
@@ -1105,7 +1103,7 @@ mod tests {
     #[cfg(not(unix))]
     #[test]
     fn create_device_node_skips_with_warn_on_non_unix() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source = temp.path().join("source");
         fs::File::create(&source).expect("create source");
         let metadata = fs::metadata(&source).expect("metadata");
@@ -1135,7 +1133,7 @@ mod tests {
     fn fake_super_replaces_mkfifo_with_regular_placeholder() {
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-        let temp = tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let source_path = temp.path().join("source");
         fs::File::create(&source_path).expect("create source");
         let metadata = fs::metadata(&source_path).expect("metadata");
@@ -1160,7 +1158,7 @@ mod tests {
     fn fake_super_replaces_mknod_with_regular_placeholder() {
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-        let temp = tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let source_path = temp.path().join("source");
         fs::File::create(&source_path).expect("create source");
         let metadata = fs::metadata(&source_path).expect("metadata");
@@ -1195,7 +1193,7 @@ mod tests {
     fn create_fifo_with_fake_super_disabled_creates_real_fifo() {
         use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-        let temp = tempdir().expect("create tempdir");
+        let temp = test_support::create_tempdir();
         let source_path = temp.path().join("source");
         fs::File::create(&source_path).expect("create source");
         let mut permissions = fs::metadata(&source_path).expect("metadata").permissions();

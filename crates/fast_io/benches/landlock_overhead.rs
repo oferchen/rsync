@@ -57,7 +57,7 @@ const ROOT_COUNTS: &[usize] = &[1, 2, 4];
 
 #[cfg(all(target_os = "linux", feature = "landlock"))]
 fn make_roots(count: usize) -> (TempDir, Vec<PathBuf>) {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let mut roots = Vec::with_capacity(count);
     for i in 0..count {
         let p = tmp.path().join(format!("root_{i}"));

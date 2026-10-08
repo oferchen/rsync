@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn load_filter_file_patterns_skips_comments_and_trims_crlf() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let path = tmp.path().join("filters.txt");
     std::fs::write(&path, b"# comment\r\n\r\n include \r\npattern\r\n").expect("write filters");
 
@@ -24,9 +22,7 @@ fn load_filter_file_patterns_skips_comments_and_trims_crlf() {
 /// reader trimmed before testing.
 #[test]
 fn load_filter_file_patterns_skip_only_column_zero_semicolon_comments() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let path = tmp.path().join("filters-semicolon.txt");
     std::fs::write(&path, b"; leading comment\n  ; spaced comment\nkeep\n").expect("write filters");
 
@@ -41,9 +37,7 @@ fn load_filter_file_patterns_skip_only_column_zero_semicolon_comments() {
 
 #[test]
 fn load_filter_file_patterns_handles_invalid_utf8() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let path = tmp.path().join("filters.bin");
     std::fs::write(&path, [0xFFu8, b'\n']).expect("write invalid bytes");
 

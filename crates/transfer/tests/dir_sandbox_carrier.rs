@@ -31,20 +31,10 @@ use std::os::unix::fs::symlink;
 use std::sync::Arc;
 
 use fast_io::DirSandbox;
-use tempfile::tempdir;
-
-/// `tempdir()` paths may include a symlink prefix (macOS `/tmp ->
-/// /private/tmp`, some CI runners). [`DirSandbox::open_root`] refuses
-/// such paths under `RESOLVE_NO_SYMLINKS`, so canonicalise first.
-fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
 
 #[test]
 fn receiver_shaped_descent_tracks_current_dirfd() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
 
     // Build a destination tree shaped like a typical receiver run:
     //   root/
@@ -112,7 +102,7 @@ fn receiver_shaped_descent_tracks_current_dirfd() {
 /// walk (`syscall.c:3102`), so refusing here is parity, not strictness.
 #[test]
 fn descent_refuses_absolute_symlink_target_without_disturbing_stack() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("real")).unwrap();
     // NOTE: `root.join("real")` is an ABSOLUTE target. That is the whole
     // point of this case - see the relative-target test below for the
@@ -165,7 +155,7 @@ fn descent_refuses_absolute_symlink_target_without_disturbing_stack() {
 #[cfg(target_os = "linux")]
 #[test]
 fn descent_follows_relative_in_tree_symlink() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("real")).unwrap();
     symlink("real", root.join("link")).unwrap();
 
@@ -179,8 +169,8 @@ fn descent_follows_relative_in_tree_symlink() {
 
 #[test]
 fn secondary_operand_shares_handle_across_lookups() {
-    let (_keep_root, root) = canonical_tempdir();
-    let (_keep_op, operand) = canonical_tempdir();
+    let (_keep_root, root) = test_support::create_canonical_tempdir();
+    let (_keep_op, operand) = test_support::create_canonical_tempdir();
     std::fs::create_dir(operand.join("subdir")).unwrap();
 
     let sandbox = DirSandbox::open_root(&root).expect("open root");
@@ -192,7 +182,7 @@ fn secondary_operand_shares_handle_across_lookups() {
     assert_eq!(sandbox.secondary_count(), 1);
 
     // A different operand path produces a different cached handle.
-    let (_keep_op2, operand2) = canonical_tempdir();
+    let (_keep_op2, operand2) = test_support::create_canonical_tempdir();
     let fd3 = sandbox.secondary(&operand2).expect("register second");
     assert!(!Arc::ptr_eq(&fd1, &fd3));
     assert_eq!(sandbox.secondary_count(), 2);
@@ -204,7 +194,7 @@ fn root_arc_outlives_borrowed_cursor() {
     // background disk-commit thread (the receiver's pipelined commit
     // path) can hold an owner that survives the per-entry borrow
     // lifetime. Confirm the Arc clone is a stable handle.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("open root");
     let arc = sandbox.root_arc();
     let raw_via_arc = arc.as_raw_fd();

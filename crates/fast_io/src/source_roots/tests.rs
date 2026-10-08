@@ -13,7 +13,7 @@ fn read(file: File) -> String {
 
 /// `base/src/sub/f` (in-tree) and `base/outside/f` (the secret).
 fn tree() -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let base = tmp.path().to_path_buf();
     std::fs::create_dir_all(base.join("src/sub")).expect("mkdir sub");
     std::fs::create_dir_all(base.join("outside")).expect("mkdir outside");

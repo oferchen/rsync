@@ -18,7 +18,6 @@ use fast_io::{
     is_io_uring_available, log_io_uring_probe_result, parse_kernel_version, reader_from_path,
     sqpoll_fell_back, writer_from_file,
 };
-use tempfile::tempdir;
 
 #[test]
 fn is_io_uring_available_is_idempotent() {
@@ -140,7 +139,7 @@ fn concurrent_probe_calls_are_safe() {
 
 #[test]
 fn auto_policy_yields_working_writer_and_reader() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("auto_policy.bin");
 
     // Writer must succeed regardless of io_uring availability.
@@ -162,7 +161,7 @@ fn auto_policy_yields_working_writer_and_reader() {
 
 #[test]
 fn disabled_policy_always_uses_std() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("disabled_policy.bin");
 
     {
@@ -215,7 +214,7 @@ fn probe_is_unavailable_without_linux_io_uring() {
 #[cfg(not(all(target_os = "linux", feature = "io_uring")))]
 #[test]
 fn enabled_policy_returns_unsupported_without_linux_io_uring() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("enabled_policy.bin");
     let file = std::fs::File::create(&path).unwrap();
 

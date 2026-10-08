@@ -40,7 +40,7 @@ struct Fixture {
 
 impl Fixture {
     fn build() -> io::Result<Self> {
-        let temp = tempfile::tempdir()?;
+        let temp = test_support::create_tempdir();
         let private = temp.path().join("private");
         let module = private.join("mod");
         let sub = module.join("sub");
@@ -299,7 +299,7 @@ fn sealed_stat_mutation(module: &Path) {
 /// its pin are process globals, so two cells installing sessions concurrently
 /// would answer each other's questions.
 fn an_operator_owned_symlink_at_the_module_root_is_followed_and_pinned() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let real = temp.path().join("real");
     fs::create_dir(&real).expect("mkdir real");
     fs::write(real.join("payload"), b"served\n").expect("write payload");

@@ -4,9 +4,8 @@ use super::*;
 #[test]
 fn transfer_request_with_ignore_times_forces_copy_despite_matching_timestamps() {
     use filetime::{FileTime, set_file_times};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("destination.txt");
     std::fs::write(&source, b"newdata").expect("write source");

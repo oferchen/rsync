@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn reads_every_unchanged_file_or_falls_back() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let paths: Vec<_> = (0..40)
             .map(|i| write(dir.path(), &format!("f{i}"), format!("body-{i}").as_bytes()))
             .collect();
@@ -169,7 +169,7 @@ mod tests {
     /// open + fstat reproduces.
     #[test]
     fn size_mismatch_is_left_to_the_caller() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let grown = write(dir.path(), "grown", b"0123456789");
         let shrunk = write(dir.path(), "shrunk", b"01");
         let requests = [
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn missing_and_oversized_files_fall_back() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let missing = dir.path().join("missing");
         let big = write(
             dir.path(),
@@ -214,7 +214,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn nofollow_refuses_a_symlinked_leaf() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let target = write(dir.path(), "target", b"secret");
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
@@ -235,9 +235,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn confined_open_stays_beneath_the_root() {
-        let outside = tempfile::tempdir().expect("tempdir");
+        let outside = test_support::create_tempdir();
         let secret = write(outside.path(), "secret", b"secret");
-        let module = tempfile::tempdir().expect("tempdir");
+        let module = test_support::create_tempdir();
         std::fs::create_dir(module.path().join("sub")).expect("mkdir");
         let inside = write(&module.path().join("sub"), "file", b"inside");
         let escape = module.path().join("escape");

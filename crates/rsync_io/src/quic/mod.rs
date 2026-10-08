@@ -1499,7 +1499,7 @@ mod tests {
     fn from_socket_pem_files_presents_configured_cert() {
         let issued = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
             .expect("generate cert");
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let cert_path = dir.path().join("cert.pem");
         let key_path = dir.path().join("key.pem");
         std::fs::write(
@@ -1535,7 +1535,7 @@ mod tests {
     /// file error instead of silently falling back to an ephemeral identity.
     #[test]
     fn from_socket_pem_files_missing_cert_errors() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
         let err = QuicAcceptor::from_socket(
             socket,
@@ -1630,7 +1630,7 @@ mod tests {
     #[test]
     fn mutual_tls_accepts_client_signed_by_configured_ca() {
         let (ca_pem, cert_pem, key_pem) = ca_and_client_identity();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let (ca_path, cert_path, key_path) = write_pems(dir.path(), &ca_pem, &cert_pem, &key_pem);
 
         let client_ca = load_private_ca(&ca_path).expect("load client ca");
@@ -1669,7 +1669,7 @@ mod tests {
     #[test]
     fn mutual_tls_rejects_client_presenting_no_cert() {
         let (ca_pem, _cert_pem, _key_pem) = ca_and_client_identity();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let ca_path = dir.path().join("client-ca.pem");
         std::fs::write(&ca_path, &ca_pem).expect("write ca");
 
@@ -1699,7 +1699,7 @@ mod tests {
     fn mutual_tls_rejects_client_signed_by_untrusted_ca() {
         let (trusted_ca_pem, _tc, _tk) = ca_and_client_identity();
         let (_untrusted_ca_pem, rogue_cert_pem, rogue_key_pem) = ca_and_client_identity();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let ca_path = dir.path().join("trusted-ca.pem");
         let cert_path = dir.path().join("rogue-cert.pem");
         let key_path = dir.path().join("rogue-key.pem");

@@ -305,10 +305,6 @@ mod tests {
     use std::ffi::OsString;
     use std::io::Write;
 
-    use tempfile::NamedTempFile;
-    #[cfg(unix)]
-    use tempfile::tempdir;
-
     #[test]
     fn trims_trailing_newlines() {
         let mut bytes = b"secret\n\r".to_vec();
@@ -330,7 +326,7 @@ mod tests {
 
     #[test]
     fn load_optional_password_reads_file_contents() {
-        let mut file = NamedTempFile::new().expect("create temp file");
+        let mut file = test_support::create_named_tempfile();
         file.write_all(b"from-file\n").expect("write secret");
         let path = file.into_temp_path();
 
@@ -353,7 +349,7 @@ mod tests {
     fn load_password_file_follows_a_self_owned_parent_symlink() {
         use std::os::unix::fs::symlink;
 
-        let dir = tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let real = dir.path().join("real");
         std::fs::create_dir(&real).expect("create real dir");
         let secret = real.join("pw");
@@ -386,7 +382,7 @@ mod tests {
     #[cfg(not(unix))]
     #[test]
     fn load_password_file_accepts_any_permission_off_unix() {
-        let mut file = NamedTempFile::new().expect("create temp file");
+        let mut file = test_support::create_named_tempfile();
         file.write_all(b"secret\n").expect("write secret");
         let path = file.into_temp_path();
 
@@ -401,7 +397,7 @@ mod tests {
         // On Unix, File::open() on a directory succeeds but we check is_file()
         // and return a "must be a regular file" error. On Windows, File::open()
         // on a directory fails with "Access denied" before we reach the check.
-        let dir = tempdir().expect("temporary directory");
+        let dir = test_support::create_tempdir();
         let error = load_password_file(dir.path()).expect_err("directories rejected");
 
         assert_eq!(error.code(), Some(1));
@@ -418,7 +414,7 @@ mod tests {
     fn load_password_file_rejects_group_or_world_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut file = NamedTempFile::new().expect("create temp file");
+        let mut file = test_support::create_named_tempfile();
         file.write_all(b"perms").expect("write secret");
 
         let permissions = std::fs::Permissions::from_mode(0o644);
@@ -519,7 +515,7 @@ mod tests {
 
     #[test]
     fn resolve_password_prefers_command_over_file() {
-        let mut file = NamedTempFile::new().expect("create temp file");
+        let mut file = test_support::create_named_tempfile();
         file.write_all(b"file-secret\n").expect("write secret");
         let path = file.into_temp_path();
 
@@ -531,7 +527,7 @@ mod tests {
 
     #[test]
     fn resolve_password_falls_back_to_file() {
-        let mut file = NamedTempFile::new().expect("create temp file");
+        let mut file = test_support::create_named_tempfile();
         file.write_all(b"file-secret\n").expect("write secret");
         let path = file.into_temp_path();
 

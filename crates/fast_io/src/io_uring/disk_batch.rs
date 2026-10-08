@@ -280,7 +280,6 @@ impl Drop for IoUringDiskBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn config_defaults_are_valid() {
@@ -333,7 +332,7 @@ mod tests {
             return; // io_uring not available
         };
 
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("single.bin");
         let file = File::create(&path).unwrap();
         let data = b"hello io_uring disk batch";
@@ -355,7 +354,7 @@ mod tests {
             return;
         };
 
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let test_data: Vec<(&str, Vec<u8>)> = vec![
             ("file_a.bin", vec![0xAA; 1024]),
             ("file_b.bin", vec![0xBB; 4096]),
@@ -388,7 +387,7 @@ mod tests {
             return;
         };
 
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large.bin");
         let file = File::create(&path).unwrap();
         let data: Vec<u8> = (0..32768).map(|i| (i % 256) as u8).collect();
@@ -409,7 +408,7 @@ mod tests {
             return;
         };
 
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("write_trait.bin");
         let file = File::create(&path).unwrap();
 
@@ -435,7 +434,7 @@ mod tests {
             return;
         };
 
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("fsync.bin");
         let file = File::create(&path).unwrap();
 
@@ -455,7 +454,7 @@ mod tests {
             return;
         };
 
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
 
         // Write to first file without explicit commit.
         let path1 = dir.path().join("first.bin");
@@ -480,7 +479,7 @@ mod tests {
     #[test]
     fn drop_flushes_pending_data() {
         let config = IoUringConfig::default();
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("drop_flush.bin");
 
         {

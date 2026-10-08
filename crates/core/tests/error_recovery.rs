@@ -16,7 +16,6 @@ mod error_recovery {
 
     use crate::test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
     use core::client::{ClientConfig, PARTIAL_TRANSFER_EXIT_CODE, run_client};
-    use tempfile::tempdir;
 
     /// Helper: create a file with the given content, creating parent dirs as needed.
     fn touch(path: &Path, contents: &[u8]) {
@@ -33,7 +32,7 @@ mod error_recovery {
     #[test]
     fn error_recovery_partial_transfer_exit_code() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("source");
             let dest = temp.path().join("dest");
 
@@ -112,7 +111,7 @@ mod error_recovery {
     #[test]
     fn error_recovery_symlink_loop() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("source");
             let dest = temp.path().join("dest");
 
@@ -159,7 +158,7 @@ mod error_recovery {
     #[test]
     fn error_recovery_readonly_destination() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("source");
             let dest = temp.path().join("dest");
 
@@ -210,7 +209,7 @@ mod error_recovery {
     #[test]
     fn error_recovery_source_permission_denied() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("source");
             let dest = temp.path().join("dest");
 
@@ -274,7 +273,7 @@ mod error_recovery {
     #[test]
     fn error_recovery_concurrent_modification() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("source");
             let dest = temp.path().join("dest");
 
@@ -345,7 +344,7 @@ mod error_recovery {
     #[test]
     fn error_recovery_empty_source_directory() {
         run_with_timeout(LOCAL_TIMEOUT, || {
-            let temp = tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let source = temp.path().join("source");
             let dest = temp.path().join("dest");
 

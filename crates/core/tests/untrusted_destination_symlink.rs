@@ -56,7 +56,7 @@ mod untrusted_destination_symlink {
             eprintln!("skipped: planting a symlink owned by another uid needs root");
             return;
         }
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let base = fs::canonicalize(temp.path()).expect("canonicalize");
         fixture(&base);
         symlink(base.join("outside"), base.join("dest/sub")).expect("plant");
@@ -84,7 +84,7 @@ mod untrusted_destination_symlink {
             eprintln!("skipped: the matching witness needs root");
             return;
         }
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let base = fs::canonicalize(temp.path()).expect("canonicalize");
         fixture(&base);
         symlink(base.join("outside"), base.join("dest/sub")).expect("plant");

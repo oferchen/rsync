@@ -44,7 +44,7 @@ fn collect_all_entries(
 /// should emit the symlink entry but not descend into the target directory.
 #[test]
 fn symlink_to_directory_not_followed_by_default() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target = temp.path().join("target");
 
@@ -65,7 +65,7 @@ fn symlink_to_directory_not_followed_by_default() {
 /// Verifies symlink metadata indicates it is a symlink.
 #[test]
 fn symlink_metadata_is_symlink() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target = temp.path().join("target");
 
@@ -91,7 +91,7 @@ fn symlink_metadata_is_symlink() {
 /// Verifies symlink to file is yielded without following.
 #[test]
 fn symlink_to_file_not_followed_by_default() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     fs::create_dir(&root).expect("create root");
@@ -115,7 +115,7 @@ fn symlink_to_file_not_followed_by_default() {
 /// Verifies multiple symlinks in a directory are all yielded.
 #[test]
 fn multiple_symlinks_in_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let targets = temp.path().join("targets");
 
@@ -154,7 +154,7 @@ fn multiple_symlinks_in_directory() {
 /// directories, similar to rsync's `--copy-links` option.
 #[test]
 fn symlink_to_directory_followed_when_enabled() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target = temp.path().join("target");
 
@@ -180,7 +180,7 @@ fn symlink_to_directory_followed_when_enabled() {
 /// Verifies that nested symlinks are followed when enabled.
 #[test]
 fn nested_symlinks_followed() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target1 = temp.path().join("target1");
     let target2 = temp.path().join("target2");
@@ -214,7 +214,7 @@ fn nested_symlinks_followed() {
 /// Verifies symlinked file contents are accessible when following.
 #[test]
 fn symlink_preserves_relative_paths_when_following() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target = temp.path().join("target");
 
@@ -254,7 +254,7 @@ fn symlink_preserves_relative_paths_when_following() {
 /// behavior using canonical path tracking.
 #[test]
 fn symlink_cycle_to_self_detected() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     fs::create_dir(&root).expect("create root");
@@ -275,7 +275,7 @@ fn symlink_cycle_to_self_detected() {
 /// Verifies that indirect cycles are detected.
 #[test]
 fn symlink_indirect_cycle_detected() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     fs::create_dir(&root).expect("create root");
@@ -300,7 +300,7 @@ fn symlink_indirect_cycle_detected() {
 /// Verifies that complex cycle patterns are handled.
 #[test]
 fn complex_symlink_cycle_detected() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     // Create: root/a/b/link -> root/a
@@ -334,7 +334,7 @@ fn complex_symlink_cycle_detected() {
 /// dereferenced. The walker should yield the symlink entry.
 #[test]
 fn broken_symlink_is_yielded() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     fs::create_dir(&root).expect("create root");
@@ -351,7 +351,7 @@ fn broken_symlink_is_yielded() {
 /// Verifies broken symlink metadata indicates it is a symlink.
 #[test]
 fn broken_symlink_metadata_is_symlink() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     fs::create_dir(&root).expect("create root");
@@ -371,7 +371,7 @@ fn broken_symlink_metadata_is_symlink() {
 /// Verifies behavior when the root itself is a symlink (not followed).
 #[test]
 fn root_is_symlink_not_followed() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target");
     let link = temp.path().join("link");
 
@@ -393,7 +393,7 @@ fn root_is_symlink_not_followed() {
 /// Verifies behavior when the root is a symlink and following is enabled.
 #[test]
 fn root_is_symlink_followed_when_enabled() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target");
     let link = temp.path().join("link");
 
@@ -425,7 +425,7 @@ fn root_is_symlink_followed_when_enabled() {
 /// Verifies full_path for entries when root is a symlink.
 #[test]
 fn root_symlink_full_paths_use_link_path() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target");
     let link = temp.path().join("link");
 
@@ -452,7 +452,7 @@ fn root_symlink_full_paths_use_link_path() {
 /// Verifies symlinks are sorted alongside regular files and directories.
 #[test]
 fn symlinks_sorted_with_other_entries() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let target = temp.path().join("target");
 
@@ -481,7 +481,7 @@ fn symlinks_sorted_with_other_entries() {
 /// Verifies relative symlinks are handled correctly.
 #[test]
 fn relative_symlink_in_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     fs::create_dir(&root).expect("create root");
@@ -505,7 +505,7 @@ fn relative_symlink_in_directory() {
 /// Verifies parent-relative symlinks (..) are handled.
 #[test]
 fn parent_relative_symlink() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     let external = temp.path().join("external");
 
@@ -531,7 +531,7 @@ fn parent_relative_symlink() {
 /// Verifies symlinks to files are handled when following symlinks.
 #[test]
 fn symlink_to_file_when_following() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     fs::create_dir(&root).expect("create root");

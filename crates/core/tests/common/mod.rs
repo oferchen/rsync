@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tempfile::{TempDir, tempdir};
+use tempfile::TempDir;
 
 /// Default timeout for daemon readiness checks.
 const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -183,7 +183,7 @@ impl TestDaemon {
         let binary_path = binary.resolve()?;
         let is_oc = binary.is_oc_rsync();
 
-        let workdir = tempdir()?;
+        let workdir = test_support::create_tempdir();
         let config_path = workdir.path().join("rsyncd.conf");
         let log_path = workdir.path().join("rsyncd.log");
         let pid_path = workdir.path().join("rsyncd.pid");
@@ -760,7 +760,7 @@ impl StalledTransfer {
         Self {
             daemon,
             proxy,
-            dest: tempdir().expect("create dest dir"),
+            dest: test_support::create_tempdir(),
         }
     }
 

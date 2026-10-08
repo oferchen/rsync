@@ -23,22 +23,12 @@
 #![cfg(unix)]
 
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fast_io::{
     DirSandbox, EntryKind, ReadDirOutcome, UnlinkFlags, read_dir_via_sandbox_or_fallback,
     recursive_unlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback,
 };
-use tempfile::tempdir;
-
-/// `tempdir()` may sit under a symlink prefix on macOS / some CI
-/// runners; canonicalise so the sandbox open succeeds under
-/// `RESOLVE_NO_SYMLINKS`.
-fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
 
 /// Simulates the attack the receiver-side `--delete` loop defends
 /// against on its symlink-removal branch: between the receiver's
@@ -48,7 +38,7 @@ fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
 /// the sensitive target must survive.
 #[test]
 fn delete_symlink_extraneous_does_not_follow_swap() {
-    let (_keep, parent) = canonical_tempdir();
+    let (_keep, parent) = test_support::create_canonical_tempdir();
 
     // Sensitive tree outside the destination the attacker wants the
     // unlink to land on.
@@ -92,7 +82,7 @@ fn delete_symlink_extraneous_does_not_follow_swap() {
 /// and leave the sensitive directory intact.
 #[test]
 fn delete_directory_swap_to_symlink_refuses_descent() {
-    let (_keep, parent) = canonical_tempdir();
+    let (_keep, parent) = test_support::create_canonical_tempdir();
 
     let sensitive_dir = parent.join("sensitive");
     std::fs::create_dir(&sensitive_dir).expect("mkdir sensitive");
@@ -130,7 +120,7 @@ fn delete_directory_swap_to_symlink_refuses_descent() {
 /// and the outside tree is untouched.
 #[test]
 fn read_dir_swap_to_symlink_refuses_listing() {
-    let (_keep, parent) = canonical_tempdir();
+    let (_keep, parent) = test_support::create_canonical_tempdir();
 
     let outside = parent.join("outside");
     std::fs::create_dir(&outside).expect("mkdir outside");
@@ -164,7 +154,7 @@ fn read_dir_swap_to_symlink_refuses_listing() {
 /// (directories).
 #[test]
 fn read_dir_at_root_classifies_entries_for_dispatch() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("file"), b"x").expect("write file");
     std::fs::create_dir(root.join("dir")).expect("mkdir dir");
     symlink(root.join("file"), root.join("link")).expect("symlink link");
@@ -200,7 +190,7 @@ fn read_dir_at_root_classifies_entries_for_dispatch() {
 /// every existing `delete_extraneous_files` test relies on.
 #[test]
 fn sandbox_off_fallback_matches_std_for_legitimate_delete() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dir = root.join("subdir");
     std::fs::create_dir(&dir).expect("mkdir subdir");
     std::fs::write(dir.join("a"), b"a").expect("write a");
@@ -251,7 +241,7 @@ fn delete_removes_owned_read_only_directory_containing_extraneous_file() {
         return;
     }
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let dir = root.join("readonly");
     std::fs::create_dir(&dir).expect("mkdir readonly");
     std::fs::write(dir.join("extraneous"), b"stale").expect("write extraneous");

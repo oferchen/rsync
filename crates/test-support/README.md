@@ -5,8 +5,9 @@ test suites need, avoiding duplicated setup boilerplate across crates.
 
 ## Key Public Functions
 
-- `create_tempdir` - creates a temporary directory with retry logic for transient
-  OS errors (Windows CI antivirus/lock contention)
+- `create_tempdir`, `create_named_tempfile`, `create_canonical_tempdir` - create
+  temporary paths named with a `.tmp<pid>-` prefix, so concurrent test processes
+  never draw the same name
 
 ## Dependencies
 
@@ -15,6 +16,7 @@ test suites need, avoiding duplicated setup boilerplate across crates.
 
 ## Platform Notes
 
-- Windows: retries `tempdir()` up to 3 times with exponential backoff (50ms, 100ms,
-  150ms) to handle antivirus and filesystem lock contention on CI runners
-- Unix: typically succeeds on first attempt
+- Windows: a plain `tempfile` name can collide across concurrent nextest
+  processes, and creating over another process's directory or delete-pending
+  file fails with `PermissionDenied`, which `tempfile` does not retry. The
+  per-process prefix makes such collisions impossible.

@@ -69,7 +69,7 @@ fn nested_tree() -> TempDir {
 /// destination would satisfy every expectation below, including the one where
 /// the client fails to start at all.
 fn new_tree() -> TempDir {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     fs::create_dir_all(tmp.path().join("src")).expect("source root");
     fs::create_dir_all(tmp.path().join("dst")).expect("destination root");
     fs::write(tmp.path().join("src/FOO"), b"foo\n").expect("excluded file");

@@ -67,7 +67,6 @@ use std::time::{Duration, Instant};
 
 use io_uring::{IoUring, cqueue, opcode, types};
 use memmap2::MmapOptions;
-use tempfile::tempdir;
 
 /// Size of the mmap'd scratch region (256 MiB). Large enough to span many
 /// page-cache entries so the kthread is statistically likely to touch a
@@ -113,7 +112,7 @@ fn repro_sqpoll_mmap_race() {
         "repro_sqpoll_mmap: {ITERATIONS} iterations, scratch={SCRATCH_SIZE}B, read={READ_LEN}B, timeout={ITER_TIMEOUT:?}"
     );
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let scratch_path = dir.path().join("scratch_mmap.bin");
     let source_path = dir.path().join("source.bin");
 

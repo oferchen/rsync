@@ -35,8 +35,6 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use tempfile::tempdir;
-
 /// Test that oc-rsync daemon starts successfully and accepts connections.
 ///
 /// This is a smoke test to verify basic daemon functionality before
@@ -151,7 +149,7 @@ fn test_upstream_3_4_1_client_handshake() {
         b"test content from oc-rsync daemon",
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     // Use upstream 3.4.1 client to connect to oc-rsync daemon
     let output = Command::new(UPSTREAM_3_4_1)
@@ -192,7 +190,7 @@ fn test_upstream_3_1_3_client_handshake() {
         b"content for 3.1.3 client test",
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let output = Command::new(UPSTREAM_3_1_3)
         .arg("-v")
@@ -231,7 +229,7 @@ fn test_upstream_3_0_9_client_handshake() {
         b"content for 3.0.9 ancient client",
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let output = Command::new(UPSTREAM_3_0_9)
         .arg("-v")
@@ -269,7 +267,7 @@ fn test_pull_single_file_from_oc_daemon() {
         b"single file content",
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
@@ -319,7 +317,7 @@ fn test_pull_directory_tree_from_oc_daemon() {
         b"file in dir2",
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
@@ -372,7 +370,7 @@ fn test_pull_large_file_from_oc_daemon() {
     let large_content: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
     create_test_file(&daemon.module_path().join("large.bin"), &large_content);
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
@@ -416,7 +414,7 @@ fn test_pull_files_with_special_chars_from_oc_daemon() {
         b"underscores",
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
@@ -458,7 +456,7 @@ fn test_push_single_file_to_oc_daemon() {
 
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
-    let source_dir = tempdir().expect("create source dir");
+    let source_dir = test_support::create_tempdir();
     create_test_file(&source_dir.path().join("upload.txt"), b"uploaded content");
 
     let status = Command::new(UPSTREAM_3_4_1)
@@ -491,7 +489,7 @@ fn test_push_directory_tree_to_oc_daemon() {
 
     let daemon = TestDaemon::start(DaemonBinary::OcRsync).expect("start oc-rsync daemon");
 
-    let source_dir = tempdir().expect("create source dir");
+    let source_dir = test_support::create_tempdir();
     create_test_file(&source_dir.path().join("file1.txt"), b"first");
     create_test_file(&source_dir.path().join("subdir/file2.txt"), b"second");
     create_test_file(&source_dir.path().join("subdir/deep/file3.txt"), b"third");
@@ -552,7 +550,7 @@ fn test_pull_preserves_permissions() {
         .permissions()
         .mode();
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av") // Archive mode preserves permissions
@@ -604,7 +602,7 @@ fn test_pull_preserves_mtime() {
         .modified()
         .expect("get mtime");
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av") // Archive mode preserves times
@@ -805,7 +803,7 @@ fn test_pull_with_compression() {
     let compressible: Vec<u8> = b"AAAA".iter().cycle().take(10000).copied().collect();
     create_test_file(&daemon.module_path().join("compress.txt"), &compressible);
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-avz") // Enable compression
@@ -849,7 +847,7 @@ fn test_pull_with_checksum_algorithm() {
         b"content for checksum test",
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     // Request specific checksum algorithm (md5)
     let status = Command::new(UPSTREAM_3_4_1)
@@ -893,7 +891,7 @@ fn test_pull_many_small_files() {
         );
     }
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
@@ -935,7 +933,7 @@ fn test_pull_empty_file() {
 
     create_test_file(&daemon.module_path().join("empty.txt"), b"");
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")
@@ -970,7 +968,7 @@ fn test_pull_whitespace_only_file() {
         whitespace_content,
     );
 
-    let dest_dir = tempdir().expect("create dest dir");
+    let dest_dir = test_support::create_tempdir();
 
     let status = Command::new(UPSTREAM_3_4_1)
         .arg("-av")

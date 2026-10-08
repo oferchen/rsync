@@ -12,7 +12,6 @@
 use std::fs;
 
 use fast_io::{is_io_uring_available, write_file_with_io_uring};
-use tempfile::tempdir;
 
 /// Builds a deterministic pseudo-random buffer using a 64-bit LCG so the
 /// payload survives test-to-test reproducibility without pulling in `rand`.
@@ -36,7 +35,7 @@ fn write_file_with_io_uring_round_trip_4mib() {
         return;
     }
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let dst = dir.path().join("iud5_payload.bin");
 
     let payload = pseudo_random_payload(4 * 1024 * 1024, 0xC0FF_EE00_BEEF_F00D);
@@ -56,7 +55,7 @@ fn write_file_with_io_uring_creates_empty_file() {
     if !is_io_uring_available() {
         return;
     }
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let dst = dir.path().join("iud5_empty.bin");
     write_file_with_io_uring(&dst, &[]).expect("zero-length write must succeed");
     let meta = fs::metadata(&dst).expect("stat destination");

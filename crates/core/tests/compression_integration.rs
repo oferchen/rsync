@@ -10,7 +10,6 @@ use std::fs;
 use std::path::Path;
 
 use core::client::ClientConfig;
-use tempfile::tempdir;
 use test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
 
 fn touch(path: &Path, contents: &[u8]) {
@@ -41,7 +40,7 @@ fn create_incompressible_data(size: usize) -> Vec<u8> {
 fn test_compression_disabled_by_default() {
     run_with_timeout(LOCAL_TIMEOUT, || {
         // Verify that compression is NOT enabled by default in local copy mode
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -72,7 +71,7 @@ fn test_compression_disabled_by_default() {
 fn test_compression_enabled_copies_correctly() {
     run_with_timeout(LOCAL_TIMEOUT, || {
         // Verify that compression can be enabled and files are copied correctly
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -104,7 +103,7 @@ fn test_compression_enabled_copies_correctly() {
 fn test_compression_preserves_binary_data() {
     run_with_timeout(LOCAL_TIMEOUT, || {
         // Verify compression works with binary (incompressible) data
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -135,7 +134,7 @@ fn test_compression_preserves_binary_data() {
 fn test_compression_with_multiple_files() {
     run_with_timeout(LOCAL_TIMEOUT, || {
         // Verify compression works with multiple files of varying compressibility
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -180,7 +179,7 @@ fn test_skip_compress_default_patterns() {
     run_with_timeout(LOCAL_TIMEOUT, || {
         // Verify that default skip-compress patterns are applied
         // (This tests the skip_compress infrastructure in local copy mode)
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -215,7 +214,7 @@ fn test_skip_compress_default_patterns() {
 fn test_large_file_with_compression() {
     run_with_timeout(LOCAL_TIMEOUT, || {
         // Verify compression works with larger files
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -276,7 +275,7 @@ fn nstr_messages_during<F: FnOnce()>(f: F) -> Vec<String> {
 #[test]
 fn local_copy_emits_nstr_summaries_under_debug_nstr() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
         fs::create_dir_all(&source_root).expect("source root");
@@ -339,7 +338,7 @@ fn local_copy_emits_nstr_summaries_under_debug_nstr() {
 #[test]
 fn local_copy_nstr_compress_summary_renders_explicit_level() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
         fs::create_dir_all(&source_root).expect("source root");
@@ -379,7 +378,7 @@ fn local_copy_nstr_compress_summary_renders_explicit_level() {
 #[test]
 fn local_copy_nstr_compress_summary_preserves_zlibx_name() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
         fs::create_dir_all(&source_root).expect("source root");

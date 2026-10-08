@@ -51,7 +51,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use metadata::{XattrRole, XattrSendOptions, read_xattrs_for_wire};
-use tempfile::tempdir;
 
 /// Bare stream name written via the NTFS `path:streamname` path syntax.
 /// Mimics the Mark Of The Web stream browsers attach to downloads.
@@ -170,7 +169,7 @@ fn assert_wire_entry(path: &Path, wire_name: &[u8], expected: &[u8]) {
 ///    source's primary content.
 #[test]
 fn ads_zone_identifier_round_trips_through_xattrs() {
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     let dst = dir.path().join("dst");
     fs::create_dir_all(&src).expect("create src");
@@ -233,7 +232,7 @@ fn ads_zone_identifier_round_trips_through_xattrs() {
 /// that drops every stream after the first is caught.
 #[test]
 fn ads_multi_stream_round_trips() {
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     let dst = dir.path().join("dst");
     fs::create_dir_all(&src).expect("create src");

@@ -133,11 +133,10 @@ fn run_command(cli: Cli) -> Result<(), TaskError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn run_command_executes_sbom() {
-        let temp = tempdir().expect("create temp dir");
+        let temp = ::test_support::create_tempdir();
         let output = temp.path().join("cmd-sbom.json");
 
         let cli = Cli::parse_from(["cargo-xtask", "sbom", "--output", output.to_str().unwrap()]);

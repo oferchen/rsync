@@ -28,7 +28,6 @@ use std::fs;
 use std::path::Path;
 
 use filters::{DirMergeConfig, FilterChain, FilterRule, FilterSet};
-use tempfile::TempDir;
 
 /// `!` inside `inner/.rsync-filter` clears the whole mergelist for that
 /// directory and its descendants, so the inherited outer exclude of `*.outer`
@@ -40,7 +39,7 @@ use tempfile::TempDir;
 /// + exclude.c:1399-1400 FILTRULE_CLEAR_LIST (pop_filter_list then head=NULL).
 #[test]
 fn inner_bang_clear_wipes_inherited_outer_scope() {
-    let root = TempDir::new().unwrap();
+    let root = test_support::create_tempdir();
     let src = root.path().join("src");
     let inner = src.join("inner");
     fs::create_dir(&src).unwrap();

@@ -4,8 +4,6 @@ use std::io::{Read, Write};
 use std::os::unix::io::RawFd;
 use std::path::Path;
 
-use tempfile::tempdir;
-
 use super::config::{IoUringConfig, is_io_uring_available, parse_kernel_version};
 use super::file_factory::{
     IoUringOrStdReader, IoUringOrStdWriter, IoUringReaderFactory, IoUringWriterFactory,
@@ -55,7 +53,7 @@ fn test_io_uring_config_presets() {
 
 #[test]
 fn test_reader_factory_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, b"hello world").unwrap();
 
@@ -71,7 +69,7 @@ fn test_reader_factory_fallback() {
 
 #[test]
 fn test_writer_factory_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
 
     let factory = IoUringWriterFactory::default().force_fallback(true);
@@ -88,7 +86,7 @@ fn test_writer_factory_fallback() {
 
 #[test]
 fn test_convenience_functions_with_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
 
     write_file(&path, b"test data").unwrap();
@@ -103,7 +101,7 @@ fn test_io_uring_reader_if_available() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, b"hello from io_uring").unwrap();
 
@@ -124,7 +122,7 @@ fn test_io_uring_writer_if_available() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
 
     let config = IoUringConfig::default();
@@ -141,7 +139,7 @@ fn test_io_uring_writer_if_available() {
 
 #[test]
 fn test_io_uring_factory_uses_io_uring_when_available() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, b"test").unwrap();
 
@@ -162,7 +160,7 @@ fn test_io_uring_read_at() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, b"hello world").unwrap();
 
@@ -184,7 +182,7 @@ fn test_io_uring_write_at() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
 
     let config = IoUringConfig::default();
@@ -206,7 +204,7 @@ fn test_reader_seek() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("test.txt");
     std::fs::write(&path, b"hello world").unwrap();
 
@@ -223,7 +221,7 @@ fn test_reader_seek() {
 
 #[test]
 fn test_basic_read_with_io_uring_or_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("read_test.txt");
     let test_data = b"The quick brown fox jumps over the lazy dog";
     std::fs::write(&path, test_data).unwrap();
@@ -238,7 +236,7 @@ fn test_basic_read_with_io_uring_or_fallback() {
 
 #[test]
 fn test_basic_write_with_io_uring_or_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("write_test.txt");
     let test_data = b"Hello, io_uring world!";
 
@@ -255,7 +253,7 @@ fn test_basic_write_with_io_uring_or_fallback() {
 
 #[test]
 fn test_large_file_read_with_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("large_read.bin");
 
     let chunk_size = 1024;
@@ -277,7 +275,7 @@ fn test_large_file_read_with_fallback() {
 
 #[test]
 fn test_large_file_write_with_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("large_write.bin");
 
     let chunk_size = 1024;
@@ -303,7 +301,7 @@ fn test_large_file_write_with_fallback() {
 
 #[test]
 fn test_forced_fallback_to_standard_io() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("fallback_test.txt");
     let test_data = b"Testing forced fallback";
     std::fs::write(&path, test_data).unwrap();
@@ -320,7 +318,7 @@ fn test_forced_fallback_to_standard_io() {
 
 #[test]
 fn test_writer_forced_fallback() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("fallback_write.txt");
     let test_data = b"Forced fallback write";
 
@@ -339,7 +337,7 @@ fn test_writer_forced_fallback() {
 
 #[test]
 fn test_reader_partial_reads() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("partial_read.txt");
     std::fs::write(&path, b"0123456789ABCDEF").unwrap();
 
@@ -363,7 +361,7 @@ fn test_reader_partial_reads() {
 
 #[test]
 fn test_writer_buffering() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("buffering_test.txt");
 
     let _config = IoUringConfig {
@@ -395,7 +393,7 @@ fn test_writer_buffering() {
 
 #[test]
 fn test_writer_sync() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("sync_test.txt");
 
     let factory = IoUringWriterFactory::default();
@@ -410,7 +408,7 @@ fn test_writer_sync() {
 
 #[test]
 fn test_writer_preallocate() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("preallocate_test.txt");
 
     let factory = IoUringWriterFactory::default();
@@ -425,7 +423,7 @@ fn test_writer_preallocate() {
 
 #[test]
 fn test_read_empty_file() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("empty.txt");
     std::fs::write(&path, b"").unwrap();
 
@@ -439,7 +437,7 @@ fn test_read_empty_file() {
 
 #[test]
 fn test_read_at_eof() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("eof_test.txt");
     std::fs::write(&path, b"short").unwrap();
 
@@ -456,7 +454,7 @@ fn test_read_at_eof() {
 
 #[test]
 fn test_seek_beyond_eof_error() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("seek_error.txt");
     std::fs::write(&path, b"data").unwrap();
 
@@ -472,7 +470,7 @@ fn test_concurrent_operations_with_fallback() {
     use std::sync::Arc;
     use std::thread;
 
-    let dir = Arc::new(tempdir().unwrap());
+    let dir = Arc::new(test_support::create_tempdir());
     let test_data = b"concurrent test data";
 
     let handles: Vec<_> = (0..4)
@@ -503,7 +501,7 @@ fn test_concurrent_operations_with_fallback() {
 
 #[test]
 fn test_convenience_functions() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("convenience.txt");
     let test_data = b"convenience function test";
 
@@ -515,7 +513,7 @@ fn test_convenience_functions() {
 
 #[test]
 fn test_multiple_sequential_operations() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("sequential.txt");
 
     let factory = IoUringWriterFactory::default();
@@ -558,7 +556,7 @@ fn test_config_presets() {
 
 #[test]
 fn test_factory_with_custom_config() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("custom_config.txt");
     std::fs::write(&path, b"custom").unwrap();
 
@@ -593,7 +591,7 @@ fn test_error_handling_permission_denied() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("readonly.txt");
     std::fs::write(&path, b"data").unwrap();
 
@@ -617,7 +615,7 @@ fn test_queue_depth_limits() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("queue_test.txt");
 
     let config = IoUringConfig {
@@ -644,7 +642,7 @@ fn test_queue_depth_limits() {
 
 #[test]
 fn test_reader_remaining() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("remaining.txt");
     std::fs::write(&path, b"0123456789").unwrap();
 
@@ -663,7 +661,7 @@ fn test_reader_remaining() {
 
 #[test]
 fn test_write_zero_bytes() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("zero_write.txt");
 
     let factory = IoUringWriterFactory::default();
@@ -685,7 +683,7 @@ fn test_io_uring_reader_read_all_batched() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("batched.txt");
 
     let size = 256 * 1024;
@@ -719,7 +717,7 @@ fn test_io_uring_batched_read_small_sq() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("batched_small_sq.bin");
 
     // 128 KB file with 4 SQ entries and 8 KB buffers = 4 batches of 4 reads
@@ -754,7 +752,7 @@ fn test_io_uring_batched_write() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("batched_write.bin");
 
     // Write 512 KB in one shot via write_all_batched
@@ -790,7 +788,7 @@ fn test_io_uring_large_file_batched_roundtrip() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("roundtrip.bin");
 
     // 2 MB file
@@ -826,7 +824,7 @@ fn test_io_uring_large_file_batched_roundtrip() {
 
 #[test]
 fn test_binary_data_integrity() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("binary.bin");
 
     let data: Vec<u8> = (0..=255).cycle().take(4096).collect();
@@ -847,7 +845,7 @@ fn test_binary_data_integrity() {
 
 #[test]
 fn test_drop_flushes_writer() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("drop_flush.txt");
 
     {
@@ -1310,7 +1308,7 @@ fn test_fd_reader_writer_basic() {
 
 #[test]
 fn test_policy_disabled_writer_uses_std() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("policy_disabled_write.txt");
     let file = std::fs::File::create(&path).unwrap();
 
@@ -1320,7 +1318,7 @@ fn test_policy_disabled_writer_uses_std() {
 
 #[test]
 fn test_policy_disabled_reader_uses_std() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("policy_disabled_read.txt");
     std::fs::write(&path, b"test data").unwrap();
 
@@ -1330,7 +1328,7 @@ fn test_policy_disabled_reader_uses_std() {
 
 #[test]
 fn test_policy_auto_writer_selects_variant() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("policy_auto_write.txt");
     let file = std::fs::File::create(&path).unwrap();
 
@@ -1344,7 +1342,7 @@ fn test_policy_auto_writer_selects_variant() {
 
 #[test]
 fn test_policy_auto_reader_selects_variant() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("policy_auto_read.txt");
     std::fs::write(&path, b"auto test").unwrap();
 
@@ -1358,7 +1356,7 @@ fn test_policy_auto_reader_selects_variant() {
 
 #[test]
 fn test_policy_enabled_writer_behavior() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("policy_enabled_write.txt");
     let file = std::fs::File::create(&path).unwrap();
 
@@ -1374,7 +1372,7 @@ fn test_policy_enabled_writer_behavior() {
 
 #[test]
 fn test_policy_enabled_reader_behavior() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("policy_enabled_read.txt");
     std::fs::write(&path, b"enabled test").unwrap();
 
@@ -1391,7 +1389,7 @@ fn test_policy_enabled_reader_behavior() {
 #[test]
 fn test_writer_parity_disabled_vs_auto() {
     let test_data: Vec<u8> = (0..16384).map(|i| ((i * 7 + 13) % 256) as u8).collect();
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
 
     // Write via Disabled policy (always Std)
     let path_disabled = dir.path().join("parity_disabled.bin");
@@ -1421,7 +1419,7 @@ fn test_writer_parity_disabled_vs_auto() {
 
 #[test]
 fn test_reader_parity_disabled_vs_auto() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("parity_read.bin");
     let test_data: Vec<u8> = (0..32768).map(|i| ((i * 11 + 3) % 256) as u8).collect();
     std::fs::write(&path, &test_data).unwrap();
@@ -1439,7 +1437,7 @@ fn test_reader_parity_disabled_vs_auto() {
 
 #[test]
 fn test_policy_partial_writes_via_writer_from_file() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("partial_policy_write.bin");
     let file = std::fs::File::create(&path).unwrap();
     let mut writer = writer_from_file(file, 4096, IoUringPolicy::Disabled).unwrap();
@@ -1457,7 +1455,7 @@ fn test_policy_partial_writes_via_writer_from_file() {
 
 #[test]
 fn test_policy_large_payload_roundtrip() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("large_roundtrip.bin");
     // 1 MB payload
     let test_data: Vec<u8> = (0..1024 * 1024)
@@ -1485,7 +1483,7 @@ fn test_policy_default_is_auto() {
 
 #[test]
 fn test_writer_bytes_written_tracking_via_policy() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("bytes_track.bin");
     let file = std::fs::File::create(&path).unwrap();
     let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
@@ -1501,7 +1499,7 @@ fn test_writer_bytes_written_tracking_via_policy() {
 
 #[test]
 fn test_empty_file_roundtrip_via_policy() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("empty_policy.bin");
 
     {
@@ -1549,7 +1547,7 @@ fn test_registered_buffer_group_via_writer() {
     // Verify that writer creation with register_buffers=true succeeds and
     // produces correct output (proving the WRITE_FIXED path is functional
     // or falls back gracefully).
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("reg_buf_writer.bin");
     let config = IoUringConfig {
         register_buffers: true,
@@ -1579,7 +1577,7 @@ fn test_registered_buffer_group_via_writer() {
 fn test_registered_buffer_group_via_reader() {
     // Verify that reader with register_buffers=true reads correctly (proving
     // the READ_FIXED path is functional or falls back gracefully).
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("reg_buf_reader.bin");
     let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
     std::fs::write(&path, &data).unwrap();
@@ -1608,7 +1606,7 @@ fn test_registered_buffer_group_via_reader() {
 #[test]
 fn test_registered_buffer_write_read_roundtrip() {
     // End-to-end test: write with WRITE_FIXED, read back with READ_FIXED.
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("reg_buf_roundtrip.bin");
     let data: Vec<u8> = (0..128000).map(|i| (i % 256) as u8).collect();
 
@@ -1639,7 +1637,7 @@ fn test_registered_buffer_write_read_roundtrip() {
 #[test]
 fn test_registered_buffer_disabled_still_works() {
     // With register_buffers=false, regular Read/Write path must still work.
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("reg_buf_disabled.bin");
     let data: Vec<u8> = (0..32768).map(|i| (i % 256) as u8).collect();
 
@@ -1718,7 +1716,7 @@ fn both_write_routes_produce_identical_bytes_at_the_same_offsets() {
         return;
     }
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let chunk = 4096usize;
 
     // Payloads below the threshold (positional route) and above it (ring
@@ -1769,7 +1767,7 @@ fn positional_write_places_every_byte_at_the_requested_offset() {
 
     use super::batching::write_all_positional;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("positional.bin");
     let file = File::create(&path).expect("create");
 

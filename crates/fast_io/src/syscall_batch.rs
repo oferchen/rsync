@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_individual_stat() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path = create_test_file(&temp_dir, "test.txt", b"hello").unwrap();
 
         let ops = vec![MetadataOp::Stat(path.clone())];
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_individual_lstat() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path = create_test_file(&temp_dir, "test.txt", b"hello world").unwrap();
 
         let ops = vec![MetadataOp::Lstat(path.clone())];
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_batched_stat_multiple() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path1 = create_test_file(&temp_dir, "file1.txt", b"content1").unwrap();
         let path2 = create_test_file(&temp_dir, "file2.txt", b"content22").unwrap();
         let path3 = create_test_file(&temp_dir, "file3.txt", b"content333").unwrap();
@@ -467,7 +467,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_set_times() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path = create_test_file(&temp_dir, "test.txt", b"hello").unwrap();
 
         let new_mtime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000000);
@@ -498,7 +498,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_set_permissions() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path = create_test_file(&temp_dir, "test.txt", b"hello").unwrap();
 
         let ops = vec![MetadataOp::SetPermissions {
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_threshold_routing() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
 
         let mut paths = Vec::new();
         for i in 0..BATCH_THRESHOLD {
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn test_batched_preserves_order() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path1 = create_test_file(&temp_dir, "file1.txt", b"a").unwrap();
         let path2 = create_test_file(&temp_dir, "file2.txt", b"bb").unwrap();
         let path3 = create_test_file(&temp_dir, "file3.txt", b"ccc").unwrap();
@@ -587,7 +587,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_mixed_operations() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path1 = create_test_file(&temp_dir, "file1.txt", b"test1").unwrap();
         let path2 = create_test_file(&temp_dir, "file2.txt", b"test2").unwrap();
         let path3 = create_test_file(&temp_dir, "file3.txt", b"test3").unwrap();
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_nonexistent_file_in_batch() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path1 = create_test_file(&temp_dir, "exists.txt", b"hello").unwrap();
         let path2 = temp_dir.path().join("does_not_exist.txt");
         let path3 = create_test_file(&temp_dir, "exists2.txt", b"world").unwrap();
@@ -680,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_parity_individual_vs_batched() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = test_support::create_tempdir();
         let path1 = create_test_file(&temp_dir, "file1.txt", b"content1").unwrap();
         let path2 = create_test_file(&temp_dir, "file2.txt", b"content2").unwrap();
         let path3 = temp_dir.path().join("nonexistent.txt");

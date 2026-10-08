@@ -1567,14 +1567,13 @@ pub(super) fn apply_permissions_from_entry(
 mod tests {
     use super::*;
     use crate::MetadataOptions;
-    use tempfile::tempdir;
 
     /// upstream: syscall.c:do_chmod():939-941 - when neither --perms nor
     /// --executability is active, do_chmod returns 0 on failure.
     /// Verify that a chmod ENOENT is swallowed in the !perms path.
     #[test]
     fn chmod_failure_swallowed_without_perms_or_executability() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("src.txt");
         std::fs::write(&source, b"data").expect("write");
 
@@ -1598,7 +1597,7 @@ mod tests {
     /// When --perms IS active, chmod failure must propagate.
     #[test]
     fn chmod_failure_propagates_with_perms() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let source = dir.path().join("src.txt");
         std::fs::write(&source, b"data").expect("write");
 
@@ -1633,7 +1632,7 @@ mod tests {
     fn fake_super_mode_follows_dest_mode_without_perms() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         // Source carries a setuid bit + full perms; this is what `-p` would
         // preserve but a non-`-p` transfer must collapse away.
@@ -1737,7 +1736,7 @@ mod tests {
     /// verbatim - no umask reduction, and no `--chmod`.
     #[test]
     fn symlink_target_mode_under_preserve_perms_is_the_source_bits_verbatim() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let link = dir.path().join("l");
         let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
 
@@ -1778,7 +1777,7 @@ mod tests {
     fn symlink_target_mode_existing_link_keeps_its_own_bits() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let chmod = crate::ChmodModifiers::parse("a=rw").expect("parse chmod");
 
         // (dest bits, source mode, what the S_ISREG-gated -E tweak would do)
@@ -1816,7 +1815,7 @@ mod tests {
     /// permissions", rsync.c:482-483).
     #[test]
     fn symlink_target_mode_new_link_masks_the_source_and_drops_special_bits() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let link = dir.path().join("l");
         let dflt = default_perms_seed(link.parent());
         let opts = symlink_opts(false, false, true);
@@ -1837,7 +1836,7 @@ mod tests {
     /// destination's bits with the source's.
     #[test]
     fn symlink_target_mode_executability_never_blends_a_link() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let link = dir.path().join("l");
         let dflt = default_perms_seed(link.parent());
 
@@ -1860,7 +1859,7 @@ mod tests {
     fn symlink_pre_transfer_stat_prefers_the_explicit_obstacle_stat() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let current_path = dir.path().join("current");
         let obstacle_path = dir.path().join("obstacle");
         std::fs::write(&current_path, b"x").expect("write current");
@@ -1904,7 +1903,7 @@ mod tests {
     /// rsync.c:464-486 dest_mode().
     #[test]
     fn directory_dest_mode_new_dir_masks_the_source_and_drops_special_bits() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("d");
         let dflt = default_perms_seed(dest.parent());
         let opts = MetadataOptions::new()
@@ -1929,7 +1928,7 @@ mod tests {
     fn directory_dest_mode_existing_dir_keeps_its_own_bits() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("d");
         std::fs::create_dir(&dest).expect("create dir");
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o555))
@@ -1953,7 +1952,7 @@ mod tests {
     /// (generator.c:1856 runs only under `!preserve_perms`).
     #[test]
     fn directory_dest_mode_chmod_reaches_a_directory() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("d");
         let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
 

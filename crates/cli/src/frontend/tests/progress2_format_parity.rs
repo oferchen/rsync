@@ -196,7 +196,7 @@ fn run_progress2_transfer(
 
 /// Creates a temp directory with a single source file.
 fn setup_single_file(name: &str, size: usize) -> (tempfile::TempDir, std::path::PathBuf) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir_all(&source_dir).expect("create source dir");
     std::fs::write(source_dir.join(name), vec![0xABu8; size]).expect("write source file");
@@ -205,7 +205,7 @@ fn setup_single_file(name: &str, size: usize) -> (tempfile::TempDir, std::path::
 
 /// Creates a temp directory with multiple source files.
 fn setup_multiple_files(files: &[(&str, usize)]) -> (tempfile::TempDir, std::path::PathBuf) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("source");
     std::fs::create_dir_all(&source_dir).expect("create source dir");
     for (name, size) in files {
@@ -584,9 +584,7 @@ fn progress2_human_readable_structural_parity() {
 /// lines matching the upstream format.
 #[test]
 fn progress2_cli_info_flag_produces_upstream_format() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("cli_p2.dat");
     let destination = tmp.path().join("cli_p2.out");
     std::fs::write(&source, vec![0u8; 2048]).expect("write source");
@@ -621,9 +619,7 @@ fn progress2_cli_info_flag_produces_upstream_format() {
 /// structured output through the CLI path.
 #[test]
 fn progress2_cli_multiple_files_format_parity() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("multi_src");
     std::fs::create_dir_all(&source_dir).expect("mkdir source");
     std::fs::write(source_dir.join("one.txt"), b"one").expect("write one");

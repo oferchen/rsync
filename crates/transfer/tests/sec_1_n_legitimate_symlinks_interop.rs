@@ -66,16 +66,6 @@ use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
 use fast_io::{DirSandbox, LstatOutcome, lstat_via_sandbox_or_fallback};
-use tempfile::{TempDir, tempdir};
-
-/// `tempdir()` may sit under a symlink prefix on macOS / some CI
-/// runners; canonicalise so the sandbox open succeeds under
-/// `RESOLVE_NO_SYMLINKS`.
-fn canonical_tempdir() -> (TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
 
 /// Mirrors the receiver's `create_symlinks` shape: probe the
 /// destination leaf through the sandbox-anchored stat (SEC-1.f), then
@@ -133,7 +123,7 @@ fn assert_outcome_is_symlink(outcome: &LstatOutcome, ctx: &str) {
 
 #[test]
 fn scenario_1_plain_relative_symlink_preserved_verbatim() {
-    let (_keep, dest) = canonical_tempdir();
+    let (_keep, dest) = test_support::create_canonical_tempdir();
     std::fs::write(dest.join("target.txt"), b"plain-relative-target").expect("write target");
 
     let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
@@ -170,7 +160,7 @@ fn scenario_1_plain_relative_symlink_preserved_verbatim() {
 
 #[test]
 fn scenario_2_absolute_symlink_preserved_verbatim() {
-    let (_keep, dest) = canonical_tempdir();
+    let (_keep, dest) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
 
     // `/etc/hostname` is a stable absolute target on Linux and macOS.
@@ -199,7 +189,7 @@ fn scenario_2_absolute_symlink_preserved_verbatim() {
 
 #[test]
 fn scenario_3_symlink_to_directory_preserved_with_unique_contents() {
-    let (_keep, dest) = canonical_tempdir();
+    let (_keep, dest) = test_support::create_canonical_tempdir();
     // Receiver-shaped tree: a real subdir with a file, plus a leaf
     // symlink pointing at the subdir.
     std::fs::create_dir(dest.join("subdir")).expect("mkdir subdir");
@@ -247,7 +237,7 @@ fn scenario_3_symlink_to_directory_preserved_with_unique_contents() {
 
 #[test]
 fn scenario_4_broken_symlink_preserved_without_follow_error() {
-    let (_keep, dest) = canonical_tempdir();
+    let (_keep, dest) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
 
     let outcome = receiver_shaped_symlink_create(
@@ -288,7 +278,7 @@ fn scenario_4_broken_symlink_preserved_without_follow_error() {
 
 #[test]
 fn scenario_5_symlink_chain_preserved_link_by_link() {
-    let (_keep, dest) = canonical_tempdir();
+    let (_keep, dest) = test_support::create_canonical_tempdir();
     std::fs::write(dest.join("file.txt"), b"chain-terminus").expect("write file.txt");
 
     let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
@@ -341,7 +331,7 @@ fn scenario_5_symlink_chain_preserved_link_by_link() {
 
 #[test]
 fn scenario_6_hardlink_pair_with_symlink_preserved() {
-    let (_keep, dest) = canonical_tempdir();
+    let (_keep, dest) = test_support::create_canonical_tempdir();
 
     // Hardlink leader + follower, as the receiver's `create_hardlinks`
     // would lay them down: leader transferred as a regular file,

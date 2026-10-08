@@ -30,7 +30,6 @@ use std::os::unix::io::AsRawFd;
 
 use fast_io::{SharedCompletion, SharedRing, SharedRingConfig, is_io_uring_available};
 use memmap2::MmapOptions;
-use tempfile::tempdir;
 
 /// 64 MiB matches the size called out in issue #1664; large enough to span
 /// many page-cache entries while staying well below typical CI tmpfs limits.
@@ -60,7 +59,7 @@ fn io_uring_reads_tolerate_mmap_madv_dontneed() {
 
     // Deterministic payload: byte at offset i is (i % 251) so every page
     // looks distinct from its neighbours.
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("mmap_pressure.bin");
     let payload: Vec<u8> = (0..FILE_SIZE).map(|i| (i % 251) as u8).collect();
     std::fs::write(&path, &payload).expect("write payload");

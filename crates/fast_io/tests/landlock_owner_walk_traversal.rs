@@ -38,7 +38,6 @@ use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths}
 use fast_io::operator_read_to_string;
 use std::path::PathBuf;
 use std::thread;
-use tempfile::TempDir;
 
 /// Landlock restricts the calling THREAD irreversibly, so each scenario runs
 /// on a worker that exits immediately afterwards. The `TempDir` is owned by
@@ -61,7 +60,7 @@ fn the_walk_reaches_a_leaf_inside_the_only_granted_root() {
     if !is_supported() {
         return;
     }
-    let temp = TempDir::new().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let module = temp.path().join("module");
     std::fs::create_dir(&module).expect("mkdir module");
     let payload = module.join("payload");

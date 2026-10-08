@@ -6,7 +6,6 @@ use core::signal::{CleanupManager, ShutdownReason, install_signal_handlers};
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tempfile::tempdir;
 
 #[test]
 fn signal_handler_installation_succeeds() {
@@ -24,7 +23,7 @@ fn signal_handler_installation_succeeds() {
 #[test]
 fn cleanup_manager_tracks_temp_files() {
     let manager = CleanupManager::global();
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
 
     // Create multiple temp files
     let paths: Vec<_> = (0..5)
@@ -151,7 +150,7 @@ fn shutdown_reason_descriptions_are_clear() {
 #[test]
 fn temp_file_guard_integrates_with_cleanup_manager() {
     let manager = CleanupManager::global();
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let temp_path = dir.path().join("integration_test.tmp");
 
     // Create and register temp file

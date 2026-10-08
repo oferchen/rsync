@@ -22,23 +22,13 @@
 #![cfg(unix)]
 
 use std::os::unix::fs::symlink;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fast_io::{DirSandbox, LstatOutcome, lstat_via_sandbox_or_fallback};
-use tempfile::tempdir;
-
-/// `tempdir()` may sit under a symlink prefix on macOS / some CI
-/// runners; canonicalise so the sandbox open succeeds under
-/// `RESOLVE_NO_SYMLINKS`.
-fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
-    let canon = std::fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
 
 #[test]
 fn sandbox_anchored_lstat_reports_symlink_at_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::write(root.join("real-target"), b"contents").expect("write target");
     symlink(root.join("real-target"), root.join("the-link")).expect("symlink");
 
@@ -70,7 +60,7 @@ fn sandbox_anchored_lstat_reports_symlink_at_leaf() {
 fn sandbox_anchored_lstat_dev_ino_matches_path_lstat() {
     use std::os::unix::fs::MetadataExt;
 
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let file_path = root.join("regular");
     std::fs::write(&file_path, b"contents").expect("write");
 
@@ -104,7 +94,7 @@ fn multi_component_path_anchors_or_falls_back_lstat() {
     // from openat2_supported(): anchoring off Linux does not follow from
     // that probe, and a site spelling the old formula would assert the
     // pre-change contract while looking correct.
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let file_path = root.join("sub/file");
     std::fs::write(&file_path, b"x").expect("write");
@@ -140,7 +130,7 @@ fn multi_component_path_anchors_or_falls_back_lstat() {
 
 #[test]
 fn sandbox_anchored_lstat_returns_enoent_for_missing_leaf() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
     let leaf = Path::new("does-not-exist");
@@ -161,7 +151,7 @@ fn sandbox_anchored_lstat_returns_enoent_for_missing_leaf() {
 /// the symlink leaf rather than following it.
 #[test]
 fn receiver_shaped_hardlink_quickcheck_uses_at_path() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
 
     // Simulate the leader having already been committed by the receiver
     // and the follower currently being processed: both files exist in

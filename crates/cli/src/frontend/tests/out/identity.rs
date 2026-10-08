@@ -2,11 +2,10 @@ use super::*;
 use core::client::run_client;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use tempfile::tempdir;
 
 #[test]
 fn out_format_renders_permission_and_identity_placeholders() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src_dir = temp.path().join("src");
     let dst_dir = temp.path().join("dst");
     fs::create_dir(&src_dir).expect("create src");

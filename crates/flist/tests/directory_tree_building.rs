@@ -40,7 +40,7 @@ fn collect_all_entries(
 /// directory. This test ensures our implementation matches that behavior.
 #[test]
 fn empty_directory_yields_root_only() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty");
     fs::create_dir(&root).expect("create empty dir");
 
@@ -59,7 +59,7 @@ fn empty_directory_yields_root_only() {
 /// Verifies that a single file in a directory is correctly discovered.
 #[test]
 fn single_file_in_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("single");
     fs::create_dir(&root).expect("create root dir");
     fs::write(root.join("file.txt"), b"content").expect("write file");
@@ -76,7 +76,7 @@ fn single_file_in_directory() {
 /// `entries.sort()`). This ensures deterministic output across platforms.
 #[test]
 fn multiple_files_sorted_alphabetically() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("multi");
     fs::create_dir(&root).expect("create root dir");
 
@@ -106,7 +106,7 @@ fn multiple_files_sorted_alphabetically() {
 /// the next sibling.
 #[test]
 fn nested_directories_depth_first_traversal() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("nested");
     fs::create_dir(&root).expect("create root");
 
@@ -141,7 +141,7 @@ fn nested_directories_depth_first_traversal() {
 /// Verifies deeply nested directory structures are traversed correctly.
 #[test]
 fn deeply_nested_directories() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep");
 
     // Create: root/a/b/c/d/e/file.txt
@@ -168,7 +168,7 @@ fn deeply_nested_directories() {
 /// Verifies mixed files and directories at multiple levels.
 #[test]
 fn mixed_files_and_directories_at_multiple_levels() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("mixed");
     fs::create_dir(&root).expect("create root");
 
@@ -214,7 +214,7 @@ fn mixed_files_and_directories_at_multiple_levels() {
 /// Verifies root entry properties when starting from a directory.
 #[test]
 fn root_entry_properties_for_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root_test");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("child.txt"), b"data").expect("write child");
@@ -239,7 +239,7 @@ fn root_entry_properties_for_directory() {
 /// Verifies root entry when starting from a single file.
 #[test]
 fn root_entry_when_starting_from_file() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let file_path = temp.path().join("single_file.txt");
     fs::write(&file_path, b"content").expect("write file");
 
@@ -258,7 +258,7 @@ fn root_entry_when_starting_from_file() {
 /// Verifies include_root(false) skips the root entry.
 #[test]
 fn include_root_false_skips_root_entry() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("no_root");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -280,7 +280,7 @@ fn include_root_false_skips_root_entry() {
 /// Verifies include_root(false) on empty directory yields no entries.
 #[test]
 fn include_root_false_empty_directory_yields_nothing() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty_no_root");
     fs::create_dir(&root).expect("create root");
 
@@ -299,7 +299,7 @@ fn include_root_false_empty_directory_yields_nothing() {
 /// Verifies that entry metadata correctly reflects file properties.
 #[test]
 fn entry_metadata_reflects_file_properties() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("meta");
     fs::create_dir(&root).expect("create root");
 
@@ -321,7 +321,7 @@ fn entry_metadata_reflects_file_properties() {
 /// Verifies that directory entries have correct metadata.
 #[test]
 fn directory_entry_metadata() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("dir_meta");
     fs::create_dir(&root).expect("create root");
     fs::create_dir(root.join("subdir")).expect("create subdir");
@@ -343,7 +343,7 @@ fn directory_entry_metadata() {
 /// Verifies relative paths are correctly constructed at various depths.
 #[test]
 fn relative_paths_at_various_depths() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("depth_test");
     fs::create_dir(&root).expect("create root");
 
@@ -383,7 +383,7 @@ fn relative_paths_at_various_depths() {
 fn file_name_returns_basename() {
     use std::ffi::OsStr;
 
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("basename");
     fs::create_dir(&root).expect("create root");
     fs::create_dir(root.join("subdir")).expect("create subdir");
@@ -411,7 +411,7 @@ fn file_name_returns_basename() {
 /// Verifies full_path() returns absolute paths.
 #[test]
 fn full_path_is_always_absolute() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("abs_test");
     fs::create_dir(&root).expect("create root");
     fs::create_dir(root.join("subdir")).expect("create subdir");
@@ -432,7 +432,7 @@ fn full_path_is_always_absolute() {
 /// Verifies full_path() points to the correct filesystem location.
 #[test]
 fn full_path_points_to_correct_location() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("loc_test");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"specific content").expect("write file");
@@ -453,7 +453,7 @@ fn full_path_points_to_correct_location() {
 /// Verifies walker correctly terminates after processing all entries.
 #[test]
 fn walker_terminates_after_exhaustion() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("exhaust");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -472,7 +472,7 @@ fn walker_terminates_after_exhaustion() {
 /// Verifies walker can be collected into a Vec.
 #[test]
 fn walker_can_be_collected() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("collect");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("a.txt"), b"a").expect("write a");
@@ -488,7 +488,7 @@ fn walker_can_be_collected() {
 /// Verifies walker implements Iterator correctly with for-loop.
 #[test]
 fn walker_works_with_for_loop() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("forloop");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -507,7 +507,7 @@ fn walker_works_with_for_loop() {
 /// Verifies builder can be cloned and produces equivalent walkers.
 #[test]
 fn builder_clone_produces_equivalent_walker() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("clone_test");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -538,7 +538,7 @@ fn builder_debug_format() {
 /// Verifies builder method chaining works correctly.
 #[test]
 fn builder_method_chaining() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("chain");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -562,7 +562,7 @@ fn builder_method_chaining() {
 /// Verifies that each directory entry is yielded exactly once.
 #[test]
 fn each_entry_yielded_exactly_once() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("unique");
     fs::create_dir(&root).expect("create root");
 

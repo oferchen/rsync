@@ -298,11 +298,10 @@ impl FileReaderFactory for AdaptiveReaderFactory {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::tempdir;
 
     #[test]
     fn mmap_reader_basic() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("test.txt");
         std::fs::write(&path, b"hello world").unwrap();
 
@@ -313,7 +312,7 @@ mod tests {
 
     #[test]
     fn mmap_reader_read_trait() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("test.txt");
         std::fs::write(&path, b"hello world").unwrap();
 
@@ -330,7 +329,7 @@ mod tests {
 
     #[test]
     fn mmap_reader_seek() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("test.txt");
         std::fs::write(&path, b"hello world").unwrap();
 
@@ -344,7 +343,7 @@ mod tests {
 
     #[test]
     fn adaptive_factory_chooses_correctly() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
 
         // Small file -> Std
         let small_path = dir.path().join("small.txt");

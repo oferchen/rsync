@@ -57,7 +57,6 @@ mod linux_only {
     use std::os::unix::net::UnixStream;
 
     use fast_io::{OpTag, SharedCompletion, SharedRing, SharedRingConfig, is_io_uring_available};
-    use tempfile::tempdir;
 
     /// Drives the shared ring through a single read + poll-write + send
     /// cycle, demonstrating that one ring services both directions and that
@@ -73,7 +72,7 @@ mod linux_only {
         }
 
         // File: prepare a known payload to read.
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("shared_ring_input.bin");
         let payload = b"hello shared io_uring world".to_vec();
         std::fs::write(&path, &payload).expect("write payload");
@@ -168,7 +167,7 @@ mod linux_only {
             return;
         }
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("interleaved.bin");
         let payload: Vec<u8> = (0..1024).map(|i| (i % 251) as u8).collect();
         std::fs::write(&path, &payload).expect("write payload");
@@ -305,7 +304,7 @@ mod linux_only {
             return;
         }
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("drained_queue.bin");
         std::fs::write(&path, vec![0x5au8; 512]).expect("write payload");
         let file = std::fs::File::open(&path).expect("open payload");

@@ -308,7 +308,10 @@ mod tests {
 
     #[test]
     fn content_diff_none_for_identical_trees() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         for root in [a.path(), b.path()] {
             fs::write(root.join("f"), b"same").unwrap();
             symlink("f", root.join("l")).unwrap();
@@ -318,7 +321,10 @@ mod tests {
 
     #[test]
     fn content_diff_reports_content_symlink_and_set_differences() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         fs::write(a.path().join("f"), b"alpha").unwrap();
         fs::write(b.path().join("f"), b"beta").unwrap();
         assert!(
@@ -327,7 +333,10 @@ mod tests {
                 .contains("content differs")
         );
 
-        let (c, d) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (c, d) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         symlink("x", c.path().join("l")).unwrap();
         symlink("y", d.path().join("l")).unwrap();
         assert!(
@@ -336,7 +345,10 @@ mod tests {
                 .contains("symlink target")
         );
 
-        let (e, f) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (e, f) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         fs::write(e.path().join("only"), b"").unwrap();
         assert!(
             content_diff(e.path(), f.path())
@@ -349,7 +361,10 @@ mod tests {
     fn metadata_diff_none_for_hard_linked_identical_entries() {
         // A hard link shares the inode, so mode/mtime/uid/gid/nlink all match
         // without depending on a GNU-only `touch -d @epoch` (portable to BSD).
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         let source = a.path().join("f");
         fs::write(&source, b"x").unwrap();
         fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).unwrap();
@@ -359,7 +374,10 @@ mod tests {
 
     #[test]
     fn metadata_diff_names_the_diverging_permission() {
-        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (
+            test_support::create_tempdir(),
+            test_support::create_tempdir(),
+        );
         fs::write(a.path().join("f"), b"x").unwrap();
         fs::write(b.path().join("f"), b"x").unwrap();
         fs::set_permissions(a.path().join("f"), fs::Permissions::from_mode(0o644)).unwrap();

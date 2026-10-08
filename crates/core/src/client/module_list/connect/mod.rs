@@ -799,7 +799,7 @@ mod quic_connect_tests {
     /// PEM-encodes a certificate DER and writes it to a `--quic-ca` bundle file,
     /// returning the temp dir (kept alive) and the file path.
     fn write_ca_pem(cert_der: &[u8]) -> (TempDir, PathBuf) {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("ca.pem");
         let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
         for chunk in STANDARD.encode(cert_der).as_bytes().chunks(64) {
@@ -968,7 +968,7 @@ mod quic_connect_tests {
     /// case); a non-matching CA no longer forces a hard failure.
     #[test]
     fn quic_nonmatching_ca_falls_through_to_accept_new() {
-        let config_home = tempfile::tempdir().expect("config home");
+        let config_home = test_support::create_tempdir();
         let _xdg = XdgConfigGuard::set(config_home.path());
 
         let acceptor = bind_server_first("127.0.0.1:0");
@@ -1096,7 +1096,7 @@ mod quic_connect_tests {
     /// (the old default) would fail the dial.
     #[test]
     fn quic_self_signed_default_accepts_on_first_use_and_persists() {
-        let config_home = tempfile::tempdir().expect("config home");
+        let config_home = test_support::create_tempdir();
         let _xdg = XdgConfigGuard::set(config_home.path());
 
         let acceptor = bind_server_first("127.0.0.1:0");

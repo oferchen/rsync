@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn write_lists_uses_newline_and_nul_separators() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let (list, list0) = (dir.path().join("l"), dir.path().join("l0"));
         write_lists(&list, &list0).unwrap();
         assert_eq!(std::fs::read(&list).unwrap(), b"a.txt\nsub/d.txt\n");

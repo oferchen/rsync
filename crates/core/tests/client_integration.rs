@@ -8,7 +8,6 @@ use core::client::{
     ClientConfig, ClientEventKind, ClientProgressObserver, ClientProgressUpdate, FilterRuleSpec,
     run_client, run_client_with_observer,
 };
-use tempfile::tempdir;
 use test_timeout::{LOCAL_TIMEOUT, run_with_timeout};
 
 /// Sets the creation time (birth time) of a file via `setattrlist(2)`.
@@ -73,7 +72,7 @@ fn touch(path: &Path, contents: &[u8]) {
 #[test]
 fn run_client_copies_with_delete_and_filters() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -151,7 +150,7 @@ fn run_client_copies_with_delete_and_filters() {
 #[test]
 fn backup_with_delete_protects_suffix_files_from_deletion() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -207,7 +206,7 @@ fn backup_with_delete_protects_suffix_files_from_deletion() {
 #[test]
 fn backup_with_delete_excluded_still_deletes_suffix_files() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -258,7 +257,7 @@ impl ClientProgressObserver for RecordingObserver {
 #[test]
 fn progress_observer_reports_transfers() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("src");
         let dest_root = temp.path().join("dst");
 
@@ -331,7 +330,7 @@ fn test_atimes_preservation() {
         use filetime::FileTime;
         use std::time::Duration;
 
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         let dest_root = temp.path().join("dest");
 
@@ -419,7 +418,7 @@ fn test_atimes_preservation() {
 #[test]
 fn test_crtimes_preservation() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("crtime-src");
         let dest_root = temp.path().join("crtime-dst");
 
@@ -491,7 +490,7 @@ fn test_crtimes_preservation() {
 #[test]
 fn list_only_single_source_succeeds_without_destination() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         touch(&source_root.join("a.txt"), b"hello");
         touch(&source_root.join("nested/c.txt"), b"nested");
@@ -523,7 +522,7 @@ fn list_only_single_source_succeeds_without_destination() {
 #[test]
 fn single_source_without_list_only_still_errors() {
     run_with_timeout(LOCAL_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let source_root = temp.path().join("source");
         touch(&source_root.join("a.txt"), b"hello");
 

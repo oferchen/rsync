@@ -503,7 +503,6 @@ mod tests {
     use crate::test_support;
     use std::collections::BTreeMap;
     use std::fs;
-    use tempfile::tempdir;
 
     fn branding_with_cross_compile(
         linux_arches: &[&str],
@@ -569,7 +568,7 @@ mod tests {
 
     #[test]
     fn resolve_binary_path_falls_back_to_release_when_build_skipped() {
-        let workspace = tempdir().expect("create workspace");
+        let workspace = ::test_support::create_tempdir();
         let release_dir = workspace
             .path()
             .join("target")

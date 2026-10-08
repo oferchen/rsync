@@ -5,9 +5,8 @@ use crate::frontend::escape::EscapeStyle;
 #[test]
 fn list_only_lists_entries_without_copying() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     fs::create_dir(&source_dir).expect("create src dir");
     let source_file = source_dir.join("file.txt");
@@ -45,9 +44,8 @@ fn list_only_lists_entries_without_copying() {
 #[test]
 fn list_only_formats_directory_without_trailing_slash() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -86,9 +84,8 @@ fn list_only_formats_directory_without_trailing_slash() {
 #[test]
 fn list_only_lists_bare_directory_without_recursion_or_slash() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     fs::create_dir(&source_dir).expect("create src dir");
     fs::write(source_dir.join("file.txt"), b"contents").expect("write source file");
@@ -122,9 +119,8 @@ fn list_only_lists_bare_directory_without_recursion_or_slash() {
 #[test]
 fn implicit_list_only_lists_local_source_without_destination() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     fs::create_dir(&source_dir).expect("create src dir");
     fs::write(source_dir.join("file.txt"), b"contents").expect("write source file");
@@ -152,9 +148,8 @@ fn list_only_matches_rsync_format_for_regular_file() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -230,9 +225,8 @@ fn list_only_formats_special_permission_bits_like_rsync() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -303,9 +297,8 @@ fn list_only_formats_special_permission_bits_like_rsync() {
 fn list_only_output_lines_match_upstream_regex_pattern() {
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -432,9 +425,8 @@ fn list_only_symlink_shows_arrow_target_in_exact_format() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -491,9 +483,8 @@ fn list_only_zero_byte_file_shows_zero_size() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -544,9 +535,8 @@ fn list_only_directory_permissions_start_with_d() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -600,9 +590,8 @@ fn list_only_size_field_right_aligned_in_14_chars() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -668,9 +657,8 @@ fn list_only_size_field_right_aligned_in_14_chars() {
 fn list_only_recursive_shows_nested_paths() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -734,9 +722,8 @@ fn list_only_large_file_size_has_thousands_separators() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -789,9 +776,8 @@ fn list_only_with_verbose_still_shows_listing_format() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -842,9 +828,8 @@ fn list_only_read_only_file_permissions() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -891,9 +876,8 @@ fn list_only_executable_file_permissions() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -941,9 +925,8 @@ fn list_only_human_readable_size_format() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -996,9 +979,8 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -1091,9 +1073,8 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
 #[test]
 fn list_only_no_files_transferred() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -1143,9 +1124,8 @@ fn list_only_no_files_transferred() {
 #[test]
 fn list_only_fifo_shows_pipe_type() {
     use std::fs;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -1188,9 +1168,8 @@ fn list_only_fifo_shows_pipe_type() {
 fn list_only_with_stats_appends_summary() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -1239,9 +1218,8 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -1323,9 +1301,8 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
 fn list_only_verbose_appends_totals() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -1370,9 +1347,8 @@ fn list_only_verbose_appends_totals() {
 fn list_only_mixed_file_types_in_single_listing() {
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     let dest_dir = tmp.path().join("dst");
     fs::create_dir(&source_dir).expect("create src dir");
@@ -1612,8 +1588,7 @@ fn list_only_renders_atime_and_crtime_columns() {
 #[test]
 fn quiet_list_only_prints_nothing() {
     use std::fs;
-    use tempfile::tempdir;
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     fs::create_dir(&source_dir).expect("create src dir");
     fs::write(source_dir.join("file.txt"), b"contents").expect("write source file");
@@ -1636,8 +1611,7 @@ fn quiet_list_only_prints_nothing() {
 /// stderr with the partial-transfer exit code (upstream: log.c:338-342).
 #[test]
 fn quiet_list_only_still_reports_errors() {
-    use tempfile::tempdir;
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let missing = tmp.path().join("missing");
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),

@@ -5,9 +5,8 @@ use super::*;
 #[test]
 fn transfer_request_with_sparse_preserves_holes() {
     use std::os::unix::fs::MetadataExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.bin");
     let mut source_file = std::fs::File::create(&source).expect("create source");
     source_file.write_all(&[0x10]).expect("write leading byte");
@@ -60,9 +59,8 @@ fn transfer_request_with_sparse_preserves_holes() {
 #[test]
 fn transfer_request_with_sparse_copies_all_zero_source_without_extra_blocks() {
     use std::os::unix::fs::MetadataExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("zeros.bin");
     let mut source_file = std::fs::File::create(&source).expect("create source");
     let payload = vec![0u8; 2 * 1024 * 1024];
@@ -119,9 +117,8 @@ fn transfer_request_with_sparse_copies_all_zero_source_without_extra_blocks() {
 #[test]
 fn transfer_request_with_sparse_and_preallocate_punches_the_reserved_extent() {
     use std::os::unix::fs::MetadataExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.bin");
     let mut source_file = std::fs::File::create(&source).expect("create source");
     source_file.write_all(&[0x10; 4096]).expect("write head");
@@ -160,9 +157,8 @@ fn transfer_request_with_sparse_and_append_uses_dense_allocation() {
     use std::fs::{self, File, OpenOptions};
     use std::io::Write;
     use std::os::unix::fs::MetadataExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let base = tmp.path().join("base.bin");
     let mut base_file = File::create(&base).expect("create base");
     base_file
@@ -241,9 +237,8 @@ fn transfer_request_with_sparse_and_append_verify_uses_dense_allocation() {
     use std::fs::{self, File, OpenOptions};
     use std::io::Write;
     use std::os::unix::fs::MetadataExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let base = tmp.path().join("base.bin");
     let mut base_file = File::create(&base).expect("create base");
     base_file
@@ -327,9 +322,8 @@ fn transfer_request_with_sparse_and_inplace_punches_hole() {
     use std::fs::{self, OpenOptions};
     use std::io::Write;
     use std::os::unix::fs::MetadataExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let base = tmp.path().join("inplace-base.bin");
     let mut base_file = fs::File::create(&base).expect("create base");
     base_file
@@ -402,9 +396,8 @@ fn transfer_request_with_sparse_and_inplace_punches_hole() {
 fn transfer_request_with_write_devices_updates_in_place() {
     use std::fs;
     use std::os::unix::fs::MetadataExt;
-    use tempfile::tempdir;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("wd-source.bin");
     let dest = tmp.path().join("wd-dest.bin");
 

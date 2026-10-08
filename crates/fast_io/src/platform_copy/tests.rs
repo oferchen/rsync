@@ -2,7 +2,6 @@ use super::dispatch;
 use super::*;
 use std::io;
 use std::io::Write;
-use tempfile::TempDir;
 
 fn setup_source(dir: &std::path::Path, name: &str, content: &[u8]) -> std::path::PathBuf {
     let path = dir.join(name);
@@ -70,7 +69,7 @@ fn copy_method_equality_and_hash() {
 
 #[test]
 fn default_platform_copy_small_file() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"Hello, platform copy!";
     let src = setup_source(temp.path(), "small_src.txt", content);
     let dst = temp.path().join("small_dst.txt");
@@ -87,7 +86,7 @@ fn default_platform_copy_small_file() {
 
 #[test]
 fn default_platform_copy_empty_file() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = setup_source(temp.path(), "empty_src.txt", b"");
     let dst = temp.path().join("empty_dst.txt");
 
@@ -105,7 +104,7 @@ fn default_platform_copy_empty_file() {
 
 #[test]
 fn default_platform_copy_large_file() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let size = 256 * 1024; // 256KB - above copy_file_range threshold
     let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
     let src = setup_source(temp.path(), "large_src.bin", &content);
@@ -126,7 +125,7 @@ fn default_platform_copy_large_file() {
 
 #[test]
 fn default_platform_copy_preserves_binary_data() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     // Binary content with all byte values
     let content: Vec<u8> = (0..=255).collect();
     let src = setup_source(temp.path(), "binary_src.bin", &content);
@@ -146,7 +145,7 @@ fn default_platform_copy_preserves_binary_data() {
 
 #[test]
 fn default_platform_copy_nonexistent_source() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("nonexistent.txt");
     let dst = temp.path().join("dest.txt");
 
@@ -157,7 +156,7 @@ fn default_platform_copy_nonexistent_source() {
 
 #[test]
 fn default_platform_copy_overwrites_destination() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = setup_source(temp.path(), "overwrite_src.txt", b"new content");
     let dst = temp.path().join("overwrite_dst.txt");
     std::fs::write(&dst, b"old content").expect("write old content");
@@ -230,7 +229,7 @@ fn trait_object_usage() {
 
 #[test]
 fn parity_default_vs_std_fs_copy() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
 
     let mut content = Vec::new();
     content.extend_from_slice(b"ASCII text\n");
@@ -263,7 +262,7 @@ fn parity_default_vs_std_fs_copy() {
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn ficlone_returns_unsupported_on_non_linux() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "ficlone_stub", b"data");
 
     let err = try_ficlone(&src, &dst).unwrap_err();
@@ -275,7 +274,7 @@ fn ficlone_returns_unsupported_on_non_linux() {
 fn ficlone_graceful_fallback_on_tmpfs() {
     // tmpfs does not support reflinks - FICLONE should fail with EOPNOTSUPP.
     // The platform_copy_impl dispatch chain handles this transparently.
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "ficlone_tmpfs", b"test data");
 
     // Direct FICLONE call - expected to fail on tmpfs/ext4
@@ -304,7 +303,7 @@ fn ficlone_graceful_fallback_on_tmpfs() {
 #[cfg(target_os = "linux")]
 #[test]
 fn ficlone_fails_on_missing_source() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("nonexistent.txt");
     let dst = temp.path().join("dst.txt");
 
@@ -317,7 +316,7 @@ fn ficlone_fails_on_missing_source() {
 fn platform_copy_falls_through_ficlone_failure() {
     // Verify the full dispatch chain works: FICLONE fails on tmpfs/ext4,
     // falls through to copy_file_range or std::fs::copy.
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"fallback test content";
     let src = setup_source(temp.path(), "ficlone_fallback_src.txt", content);
     let dst = temp.path().join("ficlone_fallback_dst.txt");
@@ -346,7 +345,7 @@ fn platform_copy_falls_through_ficlone_failure() {
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn clonefile_returns_unsupported_on_non_macos() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "clone_stub", b"data");
 
     let err = try_clonefile(&src, &dst).unwrap_err();
@@ -356,7 +355,7 @@ fn clonefile_returns_unsupported_on_non_macos() {
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn fcopyfile_returns_unsupported_on_non_macos() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "fcopy_stub", b"data");
 
     let err = try_fcopyfile(&src, &dst).unwrap_err();
@@ -366,7 +365,7 @@ fn fcopyfile_returns_unsupported_on_non_macos() {
 #[cfg(target_os = "macos")]
 #[test]
 fn clonefile_copies_data() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"hello from clonefile";
     let (src, dst) = setup_test_files(temp.path(), "clone_data", content);
 
@@ -392,7 +391,7 @@ fn clonefile_copies_data() {
 #[cfg(target_os = "macos")]
 #[test]
 fn clonefile_fails_when_dst_exists() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "clone_exists", b"data");
 
     // Create destination so clonefile fails
@@ -405,7 +404,7 @@ fn clonefile_fails_when_dst_exists() {
 #[cfg(target_os = "macos")]
 #[test]
 fn clonefile_fails_on_missing_source() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("nonexistent.txt");
     let dst = temp.path().join("dst.txt");
 
@@ -418,7 +417,7 @@ fn clonefile_fails_on_missing_source() {
 fn macos_dispatch_uses_fcopyfile_when_clonefile_fails() {
     // When destination already exists, clonefile will fail. The dispatch
     // chain should then succeed via fcopyfile (reporting CopyMethod::Copyfile).
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"dispatch chain test";
     let src = setup_source(temp.path(), "dispatch_src.txt", content);
     let dst = temp.path().join("dispatch_dst.txt");
@@ -448,7 +447,7 @@ fn macos_dispatch_uses_fcopyfile_when_clonefile_fails() {
 #[cfg(target_os = "macos")]
 #[test]
 fn fcopyfile_copies_data() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"hello from fcopyfile";
     let (src, dst) = setup_test_files(temp.path(), "fcopy_data", content);
 
@@ -461,7 +460,7 @@ fn fcopyfile_copies_data() {
 #[cfg(target_os = "macos")]
 #[test]
 fn fcopyfile_overwrites_destination() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"new content";
     let (src, dst) = setup_test_files(temp.path(), "fcopy_overwrite", content);
 
@@ -477,7 +476,7 @@ fn fcopyfile_overwrites_destination() {
 #[cfg(target_os = "macos")]
 #[test]
 fn fcopyfile_fails_on_missing_source() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("nonexistent.txt");
     let dst = temp.path().join("dst.txt");
 
@@ -488,7 +487,7 @@ fn fcopyfile_fails_on_missing_source() {
 #[cfg(target_os = "macos")]
 #[test]
 fn fcopyfile_copies_empty_file() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "fcopy_empty", b"");
 
     try_fcopyfile(&src, &dst).expect("fcopyfile should succeed for empty file");
@@ -500,7 +499,7 @@ fn fcopyfile_copies_empty_file() {
 #[cfg(target_os = "macos")]
 #[test]
 fn fcopyfile_copies_large_file() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = vec![0xAB_u8; 1024 * 1024]; // 1MB
     let src = temp.path().join("fcopy_large_src.bin");
     let dst = temp.path().join("fcopy_large_dst.bin");
@@ -516,7 +515,7 @@ fn fcopyfile_copies_large_file() {
 #[cfg(target_os = "macos")]
 #[test]
 fn parity_fcopyfile_vs_std_copy() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
 
     let mut content = Vec::new();
     content.extend_from_slice(b"ASCII text\n");
@@ -545,7 +544,7 @@ fn parity_fcopyfile_vs_std_copy() {
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn refs_reflink_returns_unsupported_on_non_windows() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "refs_stub", b"data");
 
     let err = try_refs_reflink(&src, &dst).unwrap_err();
@@ -557,7 +556,7 @@ fn refs_reflink_returns_unsupported_on_non_windows() {
 fn refs_reflink_fails_gracefully_on_ntfs() {
     // Standard Windows CI runners use NTFS, not ReFS.
     // The reflink attempt should fail with a clean error, not panic.
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"reflink test data on NTFS";
     let (src, dst) = setup_test_files(temp.path(), "refs_ntfs", content);
 
@@ -572,7 +571,7 @@ fn refs_reflink_fails_gracefully_on_ntfs() {
 #[cfg(target_os = "windows")]
 #[test]
 fn refs_reflink_fails_on_missing_source() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("nonexistent.txt");
     let dst = temp.path().join("dst.txt");
 
@@ -585,7 +584,7 @@ fn refs_reflink_fails_on_missing_source() {
 fn dispatch_falls_back_from_reflink_on_ntfs() {
     // When is_refs returns false (NTFS), the dispatch chain should skip
     // reflink and proceed to CopyFileExW or standard copy.
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"fallback test content";
     let src = setup_source(temp.path(), "refs_fallback_src.txt", content);
     let dst = temp.path().join("refs_fallback_dst.txt");
@@ -611,7 +610,7 @@ fn dispatch_falls_back_from_reflink_on_ntfs() {
 
 #[test]
 fn no_cow_platform_copy_returns_standard_copy() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"hello no-cow";
     let (src, dst) = setup_test_files(temp.path(), "no_cow", content);
 
@@ -646,7 +645,7 @@ fn no_cow_platform_copy_preferred_method_is_standard() {
 
 #[test]
 fn no_cow_platform_copy_propagates_missing_source_error() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let missing = temp.path().join("does_not_exist");
     let dst = temp.path().join("dst");
 
@@ -746,7 +745,7 @@ fn duplicate_extents_params_one_byte() {
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn refs_reflink_range_returns_unsupported_on_non_windows() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "refs_range_stub", b"data");
 
     let err = try_refs_reflink_range(&src, &dst, 0, 0, 4).unwrap_err();
@@ -756,7 +755,7 @@ fn refs_reflink_range_returns_unsupported_on_non_windows() {
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn refs_reflink_range_zero_bytes_returns_unsupported_on_non_windows() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "refs_range_zero", b"data");
 
     // Even zero-byte range returns Unsupported on non-Windows
@@ -767,7 +766,7 @@ fn refs_reflink_range_zero_bytes_returns_unsupported_on_non_windows() {
 #[cfg(target_os = "windows")]
 #[test]
 fn refs_reflink_range_zero_bytes_succeeds() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let (src, dst) = setup_test_files(temp.path(), "refs_range_zero", b"data");
     std::fs::write(&dst, b"dest").expect("write dst");
 
@@ -779,7 +778,7 @@ fn refs_reflink_range_zero_bytes_succeeds() {
 #[cfg(target_os = "windows")]
 #[test]
 fn refs_reflink_range_fails_gracefully_on_ntfs() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let content = b"partial reflink test data on NTFS";
     let (src, dst) = setup_test_files(temp.path(), "refs_range_ntfs", content);
     // Pre-create destination so OPEN_EXISTING succeeds
@@ -795,7 +794,7 @@ fn refs_reflink_range_fails_gracefully_on_ntfs() {
 #[cfg(target_os = "windows")]
 #[test]
 fn refs_reflink_range_fails_on_missing_source() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("nonexistent_range_src.txt");
     let dst = temp.path().join("range_dst.txt");
     std::fs::write(&dst, b"dest").expect("write dst");
@@ -807,7 +806,7 @@ fn refs_reflink_range_fails_on_missing_source() {
 #[cfg(target_os = "windows")]
 #[test]
 fn refs_reflink_range_fails_on_missing_destination() {
-    let temp = TempDir::new().expect("create temp dir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("range_src.txt");
     let dst = temp.path().join("nonexistent_range_dst.txt");
     std::fs::write(&src, b"source").expect("write src");

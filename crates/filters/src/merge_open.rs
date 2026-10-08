@@ -111,7 +111,7 @@ mod tests {
     fn a_self_owned_symlink_is_still_followed() {
         use std::os::unix::fs::symlink;
 
-        let dir = tempfile::tempdir().expect("create temp dir");
+        let dir = test_support::create_tempdir();
         let real = dir.path().join("real");
         std::fs::create_dir(&real).expect("create real dir");
         std::fs::write(real.join("rules"), b"- *.tmp\n").expect("write merge file");

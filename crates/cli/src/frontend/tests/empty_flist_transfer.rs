@@ -19,9 +19,7 @@ use super::*;
 /// report errors on any platform.
 #[test]
 fn empty_source_directory_transfers_successfully() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     let dst = tmp.path().join("dst");
 

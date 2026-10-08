@@ -6,8 +6,7 @@ fn protocol_option_accepted_on_local_copy() {
     // upstream: setup_protocol (compat.c:629-637) runs for local copies too, so
     // `--protocol=N` (20..=32) is accepted on a local transfer (exit 0) and the
     // copy proceeds. This build ignores the value for a local copy.
-    use tempfile::tempdir;
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");

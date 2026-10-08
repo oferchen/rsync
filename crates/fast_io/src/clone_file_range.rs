@@ -161,7 +161,6 @@ mod tests {
     use super::*;
     use std::fs::{File, OpenOptions};
     use std::io::Write;
-    use tempfile::tempdir;
 
     fn make_basis(dir: &std::path::Path, name: &str, payload: &[u8]) -> File {
         let path = dir.join(name);
@@ -186,7 +185,7 @@ mod tests {
 
     #[test]
     fn zero_length_returns_false_without_syscall() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let basis = make_basis(dir.path(), "b", b"abc");
         let dest = make_dest(dir.path(), "d", 0);
         let ok = try_clone_file_range(&basis, 0, &dest, 0, 0).unwrap();
@@ -201,7 +200,7 @@ mod tests {
         // clone succeeds. Either outcome is fine; what we are asserting is
         // that the wrapper never panics and never propagates a filesystem
         // unsupported-error as `Err`.
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload = vec![0xA5u8; 64 * 1024];
         let basis = make_basis(dir.path(), "basis.bin", &payload);
         let dest = make_dest(dir.path(), "dest.bin", payload.len() as u64);
@@ -216,7 +215,7 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn non_linux_always_returns_false() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let payload = vec![0u8; 4096];
         let basis = make_basis(dir.path(), "b", &payload);
         let dest = make_dest(dir.path(), "d", payload.len() as u64);

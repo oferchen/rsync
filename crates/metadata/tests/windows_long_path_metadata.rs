@@ -40,7 +40,6 @@ use metadata::{
     write_dacl_sddl,
 };
 use protocol::xattr::{XattrEntry, XattrList};
-use tempfile::tempdir;
 
 /// Builds a directory tree under `root` consisting of `depth` nested
 /// directories, each segment 25 characters long. Returns the deepest
@@ -123,7 +122,7 @@ fn long_path_acl_round_trip() {
     // matches the audit doc and the test surfaces the boundary clearly.
     const TARGET_CHARS: usize = 600;
 
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let Some(leaf) = try_create_long_tree(dir.path(), TARGET_CHARS) else {
         return;
     };
@@ -163,7 +162,7 @@ fn long_path_acl_round_trip() {
 fn long_path_ads_round_trip() {
     const TARGET_CHARS: usize = 600;
 
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let Some(leaf) = try_create_long_tree(dir.path(), TARGET_CHARS) else {
         return;
     };
@@ -216,7 +215,7 @@ fn long_path_reparse_classifier_acquires_handle() {
     // `to_extended_path` so deeply nested files do not trip `MAX_PATH`.
     const TARGET_CHARS: usize = 600;
 
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let Some(leaf) = try_create_long_tree(dir.path(), TARGET_CHARS) else {
         return;
     };

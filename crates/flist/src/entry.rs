@@ -43,7 +43,7 @@ impl FileListEntry {
     /// ```
     /// use flist::FileListBuilder;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
-    /// let temp = tempfile::tempdir()?;
+    /// let temp = test_support::create_tempdir();
     /// let root = temp.path().join("root");
     /// std::fs::create_dir(&root)?;
     /// let mut walker = FileListBuilder::new(&root).build()?;
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn entry_debug_format() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn full_path_returns_absolute() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn relative_path_returns_path() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn metadata_returns_metadata() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn file_name_none_for_root() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn depth_zero_for_root() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn is_root_true_for_root_entry() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn child_entry_has_file_name() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let child = temp.path().join("child.txt");
         std::fs::write(&child, "content").unwrap();
 
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn child_entry_has_depth_one() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = test_support::create_tempdir();
         let child = temp.path().join("child.txt");
         std::fs::write(&child, "content").unwrap();
 

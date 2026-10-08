@@ -17,9 +17,7 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn missing_source_operand_yields_exit_23_and_remaining_files_transfer() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src_dir = tmp.path().join("src");
     let dst_dir = tmp.path().join("dst");
 
@@ -108,9 +106,7 @@ fn missing_source_operand_yields_exit_23_and_remaining_files_transfer() {
 #[cfg(unix)]
 #[test]
 fn recursive_transfer_without_vanished_files_exits_zero() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src_dir = tmp.path().join("src");
     let dst_dir = tmp.path().join("dst");
 
@@ -152,9 +148,7 @@ fn recursive_transfer_without_vanished_files_exits_zero() {
 #[cfg(unix)]
 #[test]
 fn single_missing_source_yields_exit_23() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let missing = tmp.path().join("does_not_exist.txt");
     let dst = tmp.path().join("dest.txt");
 

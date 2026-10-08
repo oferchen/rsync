@@ -219,7 +219,7 @@ fn bench_stdfs(c: &mut Criterion) {
     group.bench_function("stdfs", |b| {
         b.iter_with_setup(
             || {
-                let dir = TempDir::new().expect("tempdir");
+                let dir = test_support::create_tempdir();
                 let (paths, payload) = prepare_workload(&dir);
                 (dir, paths, payload)
             },
@@ -267,7 +267,7 @@ fn bench_iouring_regular(c: &mut Criterion) {
     group.bench_function("iouring_regular", |b| {
         b.iter_with_setup(
             || {
-                let dir = TempDir::new().expect("tempdir");
+                let dir = test_support::create_tempdir();
                 let (paths, payload) = prepare_workload(&dir);
                 let ring = IoUring::new(SQ_ENTRIES).expect("ring");
                 (dir, paths, payload, ring)
@@ -320,7 +320,7 @@ fn bench_iouring_sqpoll(c: &mut Criterion) {
     group.bench_function("iouring_sqpoll", |b| {
         b.iter_with_setup(
             || {
-                let dir = TempDir::new().expect("tempdir");
+                let dir = test_support::create_tempdir();
                 let (paths, payload) = prepare_workload(&dir);
                 let ring = IoUring::<io_uring::squeue::Entry>::builder()
                     .setup_sqpoll(SQPOLL_IDLE_MS)

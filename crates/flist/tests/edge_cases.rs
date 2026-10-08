@@ -31,7 +31,7 @@ fn collect_all_entries(
 /// Verifies handling of an empty directory.
 #[test]
 fn empty_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("empty");
     fs::create_dir(&root).expect("create empty dir");
 
@@ -45,7 +45,7 @@ fn empty_directory() {
 /// Verifies handling of nested empty directories.
 #[test]
 fn nested_empty_directories() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
 
     // Create empty nested structure
@@ -69,7 +69,7 @@ fn nested_empty_directories() {
 /// Verifies handling of empty directories mixed with files.
 #[test]
 fn empty_directories_mixed_with_files() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
@@ -93,7 +93,7 @@ fn empty_directories_mixed_with_files() {
 /// Verifies handling of deeply nested directory structures.
 #[test]
 fn very_deep_nesting() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("deep");
 
     // Create 50 levels deep
@@ -125,7 +125,7 @@ fn very_deep_nesting() {
 /// Verifies depth tracking in complex structures.
 #[test]
 fn depth_tracking_accuracy() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("depth");
     fs::create_dir(&root).expect("create root");
 
@@ -160,7 +160,7 @@ fn depth_tracking_accuracy() {
 /// Verifies handling of filenames with spaces.
 #[test]
 fn filenames_with_spaces() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("spaces");
     fs::create_dir(&root).expect("create root");
 
@@ -179,7 +179,7 @@ fn filenames_with_spaces() {
 /// Verifies handling of filenames with special characters.
 #[test]
 fn filenames_with_special_characters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("special");
     fs::create_dir(&root).expect("create root");
 
@@ -223,7 +223,7 @@ fn filenames_with_special_characters() {
 /// Verifies handling of Unicode filenames.
 #[test]
 fn unicode_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("unicode");
     fs::create_dir(&root).expect("create root");
 
@@ -246,7 +246,7 @@ fn unicode_filenames() {
 /// Verifies handling of hidden files (dot prefix).
 #[test]
 fn hidden_files() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("hidden");
     fs::create_dir(&root).expect("create root");
 
@@ -270,7 +270,7 @@ fn hidden_files() {
 /// Verifies handling when root is a single file.
 #[test]
 fn single_file_as_root() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("single.txt");
     fs::write(&file, b"content").expect("write file");
 
@@ -286,7 +286,7 @@ fn single_file_as_root() {
 /// Verifies single file has no children.
 #[test]
 fn single_file_no_children() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let file = temp.path().join("single.txt");
     fs::write(&file, b"content").expect("write file");
 
@@ -377,7 +377,7 @@ fn error_debug_format() {
 #[test]
 fn empty_root_path_handling() {
     // Empty path resolves to current directory
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path();
 
     // Should work from absolute path
@@ -390,7 +390,7 @@ fn empty_root_path_handling() {
 /// Verifies walker terminates correctly.
 #[test]
 fn walker_termination() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("term");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -409,7 +409,7 @@ fn walker_termination() {
 /// Verifies large number of files in single directory.
 #[test]
 fn many_files_in_single_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("many");
     fs::create_dir(&root).expect("create root");
 
@@ -432,7 +432,7 @@ fn many_files_in_single_directory() {
 /// Verifies large directory tree.
 #[test]
 fn large_directory_tree() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("tree");
     fs::create_dir(&root).expect("create root");
 
@@ -455,7 +455,7 @@ fn large_directory_tree() {
 /// Verifies handling of zero-length files.
 #[test]
 fn zero_length_files() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("zero");
     fs::create_dir(&root).expect("create root");
 
@@ -478,7 +478,7 @@ fn zero_length_files() {
 /// Verifies handling of files with long names.
 #[test]
 fn long_filenames() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("long");
     fs::create_dir(&root).expect("create root");
 
@@ -496,7 +496,7 @@ fn long_filenames() {
 /// Verifies walker implements standard iterator patterns.
 #[test]
 fn walker_iterator_patterns() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("iter");
     fs::create_dir(&root).expect("create root");
 
@@ -520,7 +520,7 @@ fn walker_iterator_patterns() {
 /// Verifies walker can be used with iterator adapters.
 #[test]
 fn walker_with_iterator_adapters() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("adapt");
     fs::create_dir(&root).expect("create root");
 
@@ -545,7 +545,7 @@ fn walker_with_iterator_adapters() {
 /// Verifies walker works with for_each.
 #[test]
 fn walker_for_each() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("foreach");
     fs::create_dir(&root).expect("create root");
 
@@ -567,7 +567,7 @@ fn walker_for_each() {
 /// Verifies multiple walkers can operate on same directory.
 #[test]
 fn multiple_walkers_same_directory() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("multi");
     fs::create_dir(&root).expect("create root");
 
@@ -591,7 +591,7 @@ fn multiple_walkers_same_directory() {
 /// Verifies handling of paths with redundant separators.
 #[test]
 fn redundant_path_separators() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("normal");
     fs::create_dir(&root).expect("create root");
     fs::write(root.join("file.txt"), b"data").expect("write file");
@@ -607,7 +607,7 @@ fn redundant_path_separators() {
 /// Verifies relative paths in entries never contain parent references.
 #[test]
 fn relative_paths_no_parent_refs() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let root = temp.path().join("noparent");
     fs::create_dir(&root).expect("create root");
     fs::create_dir(root.join("subdir")).expect("create subdir");

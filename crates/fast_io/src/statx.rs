@@ -261,7 +261,7 @@ mod tests {
             if !has_statx_support() {
                 return;
             }
-            let temp = tempfile::tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             let path = temp.path().join("probe.bin");
             std::fs::write(&path, b"probe payload").expect("write probe file");
 
@@ -285,7 +285,7 @@ mod tests {
             if !has_statx_support() {
                 return;
             }
-            let temp = tempfile::tempdir().expect("tempdir");
+            let temp = test_support::create_tempdir();
             std::fs::write(temp.path().join("rel.bin"), b"12345").expect("write");
             let dir = std::fs::File::open(temp.path()).expect("open dir");
 

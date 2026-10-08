@@ -38,7 +38,6 @@ use std::path::Path;
 
 use metadata::{XattrSyncFilters, apply_xattrs_from_list, sync_xattrs};
 use protocol::xattr::{XattrEntry, XattrList};
-use tempfile::tempdir;
 
 /// Canonical SELinux label used by the round-trip fixtures.
 ///
@@ -86,7 +85,7 @@ fn security_selinux_xattr_round_trips() {
         return;
     }
 
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let source = dir.path().join("source");
     let destination = dir.path().join("dest");
     fs::write(&source, b"payload").expect("write source");
@@ -135,7 +134,7 @@ fn security_selinux_xattr_preserved_via_wire_path() {
         return;
     }
 
-    let dir = tempdir().expect("create temp dir");
+    let dir = test_support::create_tempdir();
     let destination = dir.path().join("dest");
     fs::write(&destination, b"payload").expect("write dest");
 

@@ -40,7 +40,7 @@ use test_support::oc_rsync_bin;
 /// not created: the cells that need it say so, because its presence is the
 /// discriminator between two of them.
 fn dot_root_tree() -> TempDir {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     fs::create_dir_all(tmp.path().join("src/sub")).expect("source tree");
     fs::write(tmp.path().join("src/sub/f.txt"), b"hi\n").expect("leaf file");
     tmp

@@ -144,11 +144,10 @@ fn run_gh(workspace: &Path, args: &[String]) -> TaskResult<()> {
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::tempdir;
 
     #[test]
     fn publish_rejects_missing_body_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let options = PublishOptions {
             tag: "v0.7.0".to_owned(),
             body_file: dir.path().join("nonexistent.md"),
@@ -161,7 +160,7 @@ mod tests {
 
     #[test]
     fn publish_resolves_relative_body_path() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let body = dir.path().join("RELEASE.md");
         fs::write(&body, "## Release\n").unwrap();
 

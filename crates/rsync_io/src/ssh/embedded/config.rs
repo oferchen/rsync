@@ -1285,7 +1285,7 @@ mod tests {
         // empty directory so the assertion measures URL parsing alone.
         // Safe under nextest's process-per-test isolation (no concurrent
         // env mutation); EnvGuard restores the prior value on drop.
-        let home = tempfile::tempdir().expect("tempdir");
+        let home = test_support::create_tempdir();
         let _home = EnvGuard::set("HOME", home.path().as_os_str());
         let _userprofile = EnvGuard::set("USERPROFILE", home.path().as_os_str());
 
@@ -1318,7 +1318,7 @@ mod tests {
 
     #[test]
     fn identity_agent_from_config_is_applied() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  IdentityAgent /run/custom.sock\n")
             .expect("write config");
@@ -1330,7 +1330,7 @@ mod tests {
 
     #[test]
     fn proxy_command_from_config_is_applied() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  ProxyCommand ssh -W %h:%p gw\n")
             .expect("write config");
@@ -1343,7 +1343,7 @@ mod tests {
 
     #[test]
     fn proxy_jump_and_fdpass_from_config_are_applied() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1360,7 +1360,7 @@ mod tests {
 
     #[test]
     fn host_key_verification_family_from_config_is_applied() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1397,7 +1397,7 @@ mod tests {
     fn user_known_hosts_file_none_disables_and_explicit_wins_over_config() {
         // `none` resolves to Some(empty): the user list is explicitly
         // disabled rather than falling back to the default file.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  UserKnownHostsFile none\n").expect("write");
         let mut cfg = SshConfig::default();
@@ -1420,7 +1420,7 @@ mod tests {
     fn verification_family_defaults_when_unconfigured() {
         // Non-vacuity: a config that mentions none of the family leaves every
         // slot at its default, so the assertions above track real reads.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  User someone\n").expect("write");
         let mut cfg = SshConfig::default();
@@ -1439,7 +1439,7 @@ mod tests {
     /// rather than setting these fields unconditionally.
     #[test]
     fn proxy_fields_default_to_direct_dial() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  Port 2200\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1456,7 +1456,7 @@ mod tests {
         // instruction to forget the configured identities. Discarding them
         // would leave nothing for the agent restriction to match against.
         // upstream: openssh/sshconnect2.c:1753.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1479,7 +1479,7 @@ mod tests {
         // them in fill_default_options regardless of the flag
         // (openssh/readconf.c:2860). Emptying the list here would turn the
         // directive into "offer nothing at all".
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  IdentitiesOnly yes\n").expect("write config");
 
@@ -1502,7 +1502,7 @@ mod tests {
         // upstream: openssh/readconf.c:2860 seeds `~/.ssh/id_*` only when no
         // `IdentityFile` was configured, so a configured identity replaces the
         // defaults rather than queueing behind them.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  IdentityFile /keys/deploy\n").expect("write config");
 
@@ -1525,7 +1525,7 @@ mod tests {
         // directive lands in `SshConfig::connect_timeout`, the exact field
         // the russh connect site wraps the TCP dial with. Unit-level on
         // the plumbing; the dial itself is exercised by the connect tests.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  ConnectTimeout 7\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1536,7 +1536,7 @@ mod tests {
 
     #[test]
     fn explicit_connect_timeout_wins_over_config() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  ConnectTimeout 7\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1548,7 +1548,7 @@ mod tests {
 
     #[test]
     fn connect_timeout_under_a_non_matching_host_keeps_the_default() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host other\n  ConnectTimeout 7\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1562,7 +1562,7 @@ mod tests {
         // The effect pin: an `AddressFamily` directive lands in
         // `SshConfig::ip_preference`, the field `embedded::resolve` filters
         // DNS answers by.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  AddressFamily inet6\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1573,7 +1573,7 @@ mod tests {
 
     #[test]
     fn address_family_inet_forces_v4() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  AddressFamily inet\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1584,7 +1584,7 @@ mod tests {
 
     #[test]
     fn explicit_ip_preference_wins_over_config() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  AddressFamily inet\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1599,7 +1599,7 @@ mod tests {
         // The effect pin: `ServerAliveInterval` lands in
         // `SshConfig::keepalive_interval`, which `embedded::connect`
         // forwards into the russh client config.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  ServerAliveInterval 15\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1612,7 +1612,7 @@ mod tests {
     fn server_alive_interval_zero_disables_keepalives() {
         // Upstream stores 0 = disabled (openssh/readconf.c:1916); the
         // transport models "off" as `None`.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  ServerAliveInterval 0\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1623,7 +1623,7 @@ mod tests {
 
     #[test]
     fn server_alive_count_max_reaches_the_keepalive_knob() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  ServerAliveCountMax 7\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1635,7 +1635,7 @@ mod tests {
     #[test]
     fn server_alive_interval_first_obtained_wins() {
         // Two directives in the same block: the FIRST claims the slot.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1650,7 +1650,7 @@ mod tests {
 
     #[test]
     fn connection_establishment_options_under_non_matching_host_keep_defaults() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1668,7 +1668,7 @@ mod tests {
 
     #[test]
     fn bad_server_alive_count_max_is_refused() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  ServerAliveCountMax bogus\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1683,7 +1683,7 @@ mod tests {
 
     #[test]
     fn bad_address_family_is_refused() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  AddressFamily ipv4\n").expect("write config");
         let mut cfg = SshConfig::default();
@@ -1698,7 +1698,7 @@ mod tests {
 
     #[test]
     fn explicit_identity_agent_wins_over_config() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  IdentityAgent /run/from-file.sock\n")
             .expect("write config");
@@ -1718,7 +1718,7 @@ mod tests {
 
     #[test]
     fn identity_file_expands_tokens_against_final_parameters() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1739,7 +1739,7 @@ mod tests {
 
     #[test]
     fn known_hosts_and_revoked_keys_expand_tokens() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1764,7 +1764,7 @@ mod tests {
     /// `tilde_expand_paths`), so expanding it here would diverge.
     #[test]
     fn global_known_hosts_keeps_percent_literal() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  GlobalKnownHostsFile /g/%n.known\n")
             .expect("write config");
@@ -1780,7 +1780,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn identity_agent_expands_env_and_tokens() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(
             &path,
@@ -1801,7 +1801,7 @@ mod tests {
     /// upstream's wording (openssh/misc.c:1345-1363 `unknown key`).
     #[test]
     fn unknown_token_in_identity_file_is_refused() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("config");
         std::fs::write(&path, "Host example\n  IdentityFile /k/%q\n").expect("write config");
         let mut cfg = SshConfig::default();

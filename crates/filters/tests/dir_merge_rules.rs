@@ -6,7 +6,6 @@
 use filters::{FilterAction, FilterRule, FilterSet};
 use std::fs;
 use std::path::Path;
-use tempfile::TempDir;
 
 #[test]
 fn dir_merge_basic_construction() {
@@ -140,7 +139,7 @@ fn filter_set_dir_merge_with_other_rules() {
 
 #[test]
 fn parse_dir_merge_short_form() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, ": .rsync-filter\n").unwrap();
 
@@ -152,7 +151,7 @@ fn parse_dir_merge_short_form() {
 
 #[test]
 fn parse_dir_merge_long_form() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, "dir-merge .rsync-filter\n").unwrap();
 
@@ -164,7 +163,7 @@ fn parse_dir_merge_long_form() {
 
 #[test]
 fn parse_merge_short_form() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let nested = dir.path().join("nested.rules");
     fs::write(&nested, "- *.tmp\n").unwrap();
 
@@ -178,7 +177,7 @@ fn parse_merge_short_form() {
 
 #[test]
 fn parse_merge_long_form() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let nested = dir.path().join("nested.rules");
     fs::write(&nested, "- *.tmp\n").unwrap();
 
@@ -194,7 +193,7 @@ fn parse_merge_long_form() {
 fn recursive_expansion_preserves_dir_merge() {
     // Dir-merge rules should NOT be expanded recursively
     // They are evaluated during directory traversal
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(&rules_path, ": .rsync-filter\n+ *.txt\n- *.bak\n").unwrap();
 
@@ -208,7 +207,7 @@ fn recursive_expansion_preserves_dir_merge() {
 
 #[test]
 fn recursive_expansion_expands_merge_but_not_dir_merge() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     // Create a nested rules file
     let nested = dir.path().join("nested.rules");
@@ -234,7 +233,7 @@ fn recursive_expansion_expands_merge_but_not_dir_merge() {
 
 #[test]
 fn multiple_dir_merge_rules_preserved() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
     fs::write(
         &rules_path,
@@ -254,7 +253,7 @@ fn multiple_dir_merge_rules_preserved() {
 
 #[test]
 fn dir_merge_with_modifiers_via_parsing() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
     // Dir-merge with no-inherit modifier
@@ -327,7 +326,7 @@ fn dir_merge_debug() {
 
 #[test]
 fn mixed_merge_and_dir_merge_ordering() {
-    let dir = TempDir::new().unwrap();
+    let dir = test_support::create_tempdir();
 
     let nested = dir.path().join("nested.rules");
     fs::write(&nested, "+ important.txt\n").unwrap();

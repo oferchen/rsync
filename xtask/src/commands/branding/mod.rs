@@ -81,7 +81,7 @@ windows = ["x86_64", "aarch64"]
 
     #[test]
     fn execute_renders_branding_metadata() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
+        let tempdir = test_support::create_tempdir();
         let manifest_path = tempdir.path().join("Cargo.toml");
         std::fs::write(&manifest_path, sample_manifest()).expect("write manifest");
 
@@ -103,7 +103,7 @@ windows = ["x86_64", "aarch64"]
 
     #[test]
     fn execute_reports_missing_manifest() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
+        let tempdir = test_support::create_tempdir();
         let error = execute(tempdir.path(), BrandingOptions::default()).unwrap_err();
         match error {
             TaskError::Io(inner) => {

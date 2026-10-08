@@ -18,7 +18,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 use exacl::{AclEntry, AclOption, Perm, setfacl};
-use tempfile::tempdir;
 
 use metadata::{MetadataOptions, apply_file_metadata_with_options, default_perms_for_dir};
 
@@ -29,7 +28,7 @@ use metadata::{MetadataOptions, apply_file_metadata_with_options, default_perms_
 /// CHMOD bits, not the umask-derived fallback.
 #[test]
 fn child_file_inherits_parent_default_acl_when_perms_disabled() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let dest_parent = dir.path().join("dest_parent");
     fs::create_dir(&dest_parent).expect("create dest_parent");
 
@@ -100,7 +99,7 @@ fn child_file_inherits_parent_default_acl_when_perms_disabled() {
 /// - `acls.c:129-134` `rsync_acl_get_perms` mask-vs-group_obj precedence
 #[test]
 fn default_perms_honours_mask_over_group_obj() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let probe = dir.path().join("probe");
     fs::create_dir(&probe).expect("create probe");
 

@@ -1799,7 +1799,7 @@ mod tests {
     /// through the walk rather than a path-based read.
     #[test]
     fn operator_read_to_string_returns_the_file_contents() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("rsyncd.conf");
         std::fs::write(&path, "[mod]\n    path = /srv\n").expect("write");
 
@@ -1820,7 +1820,7 @@ mod tests {
     /// half a careless "confine it" change would silently break.
     #[test]
     fn operator_read_to_string_follows_a_self_owned_symlink() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("real.conf");
         std::fs::write(&target, "motd line\n").expect("write");
 
@@ -1845,7 +1845,7 @@ mod tests {
     /// entry from being hard-linked or read.
     #[test]
     fn operator_symlink_metadata_does_not_follow_a_leaf_symlink() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("real");
         std::fs::write(&target, b"basis payload").expect("write");
 
@@ -1870,7 +1870,7 @@ mod tests {
     /// half that a careless "refuse every symlink" change would break.
     #[test]
     fn operator_symlink_metadata_follows_a_self_owned_parent_symlink() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let outside = temp.path().join("outside");
         std::fs::create_dir(&outside).expect("mkdir");
         std::fs::write(outside.join("basis"), b"basis payload").expect("write");
@@ -1889,7 +1889,7 @@ mod tests {
     /// would make an absent basis look like a matching one.
     #[test]
     fn operator_symlink_metadata_reports_a_missing_leaf_as_an_error() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         assert!(operator_symlink_metadata(&temp.path().join("absent")).is_err());
     }
 
@@ -1912,7 +1912,7 @@ mod tests {
             install_local_session,
         };
 
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         // The session root is stored PHYSICAL, and the walk resolves
         // physically, so build the fixture from the canonical path.
         let base = temp.path().canonicalize().expect("canonicalise tempdir");
@@ -1958,7 +1958,7 @@ mod tests {
             install_local_session,
         };
 
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let base = temp.path().canonicalize().expect("canonicalise tempdir");
         let module = base.join("module");
         std::fs::create_dir(&module).expect("mkdir module");
@@ -1985,7 +1985,7 @@ mod tests {
     /// walk must not break the ordinary case it guards.
     #[test]
     fn reads_a_plain_path_through_a_real_directory() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dir = temp.path().join("logs");
         std::fs::create_dir(&dir).expect("mkdir");
         std::fs::write(dir.join("f"), b"payload").expect("write");
@@ -2013,7 +2013,7 @@ mod tests {
     /// upstream's cell failed.
     #[test]
     fn follows_a_self_owned_symlink_at_the_leaf() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("real.log");
         std::fs::write(&target, b"SENTINEL").expect("write target");
         let named = temp.path().join("log");
@@ -2036,7 +2036,7 @@ mod tests {
     /// halves are genuinely different policies rather than one blanket rule.
     #[test]
     fn follows_a_self_owned_parent_symlink() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let real = temp.path().join("real");
         std::fs::create_dir(&real).expect("mkdir");
         let via = temp.path().join("via");
@@ -2056,7 +2056,7 @@ mod tests {
     /// Append creates the file when absent and does not truncate it when present.
     #[test]
     fn append_creates_then_appends() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let log = temp.path().join("rsync.log");
 
         operator_open_append(&log, 0o600)
@@ -2097,7 +2097,7 @@ mod tests {
     /// A temp tree with a confinement root, an in-root payload and an
     /// out-of-root one.
     fn confined_fixture() -> (TempDir, PathBuf, PathBuf, PathBuf) {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let root = temp.path().join("module");
         std::fs::create_dir(&root).expect("mkdir module");
         let inside = root.join("payload");
@@ -2127,7 +2127,7 @@ mod tests {
     /// reason.
     #[test]
     fn every_check_survives_the_o_path_traversal() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dir = temp.path().join("d");
         std::fs::create_dir(&dir).expect("mkdir");
 
@@ -2319,7 +2319,7 @@ mod tests {
     /// - `return enforce && final ? 1 : 0;` for an ancestor of the root.
     #[test]
     fn an_ancestor_of_the_confinement_root_is_refused_as_the_final_target() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let parent = temp.path().join("parent");
         let root = parent.join("module");
         std::fs::create_dir_all(&root).expect("mkdir root");
@@ -2420,7 +2420,7 @@ mod tests {
         // path, so anchor the fixture on the canonical tempdir (macOS resolves
         // `/var` -> `/private/var`, and a logical root would read every in-root
         // control as an escape).
-        let temp = TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let base = temp.path().canonicalize().expect("canonicalise tempdir");
         let root = base.join("module");
         std::fs::create_dir(&root).expect("mkdir module");
@@ -2738,7 +2738,7 @@ mod pseudo_path_tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_confined_session_refuses_a_pipe_pin() {
-        let temp = tempfile::TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         install_local_session(
             LocalInsecureLinks::default(),
             Some(temp.path().to_path_buf()),
@@ -2763,7 +2763,7 @@ mod untrusted_symlink_diagnostic_tests {
             eprintln!("skipped: planting a symlink owned by another uid needs root");
             return;
         }
-        let temp = tempfile::TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("target");
         std::fs::write(&target, b"x").expect("write");
         let link = temp.path().join("link");
@@ -2797,7 +2797,7 @@ mod partial_leaf_nofollow_tests {
     /// trusted-owned leaf here, so this cell separates the two releases.
     #[test]
     fn a_trusted_leaf_symlink_is_not_written_or_read_through() {
-        let temp = tempfile::TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let target = temp.path().join("elsewhere");
         std::fs::write(&target, b"basis").expect("write");
         let leaf = temp.path().join("partial");
@@ -2816,7 +2816,7 @@ mod partial_leaf_nofollow_tests {
     /// `partial -> /mnt/scratch` layout - is still followed.
     #[test]
     fn a_trusted_parent_symlink_is_followed() {
-        let temp = tempfile::TempDir::new().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let real = temp.path().join("real");
         std::fs::create_dir(&real).expect("mkdir");
         std::fs::write(real.join("file"), b"basis").expect("write");

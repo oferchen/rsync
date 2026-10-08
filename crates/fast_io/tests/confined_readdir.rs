@@ -15,8 +15,6 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 
-use tempfile::TempDir;
-
 fn names(entries: Vec<OsString>) -> BTreeSet<String> {
     entries
         .into_iter()
@@ -29,7 +27,7 @@ fn names(entries: Vec<OsString>) -> BTreeSet<String> {
 /// simply errored - or returned nothing - for all inputs.
 #[test]
 fn read_dir_confined_lists_a_plain_directory() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("sub")).expect("mkdir sub");
     fs::write(root.path().join("sub/a"), b"a").expect("write a");
     fs::write(root.path().join("sub/b"), b"b").expect("write b");
@@ -49,7 +47,7 @@ fn read_dir_confined_lists_a_plain_directory() {
 /// upstream's scan skips them too.
 #[test]
 fn read_dir_confined_omits_dot_and_dotdot() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("sub")).expect("mkdir sub");
     fs::write(root.path().join("sub/only"), b"x").expect("write");
 
@@ -69,7 +67,7 @@ fn read_dir_confined_omits_dot_and_dotdot() {
 /// copy whose source contains a directory symlink.
 #[test]
 fn read_dir_confined_follows_a_relative_in_tree_symlink() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("real")).expect("mkdir real");
     fs::write(root.path().join("real/inside"), b"x").expect("write");
     std::os::unix::fs::symlink("real", root.path().join("link")).expect("plant symlink");
@@ -90,7 +88,7 @@ fn read_dir_confined_follows_a_relative_in_tree_symlink() {
 /// turns them into paths it then copies.
 #[test]
 fn read_dir_confined_refuses_a_parent_symlinked_outside() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("source");
     let outside = base.path().join("outside");
     fs::create_dir(&root).expect("mkdir source");
@@ -110,7 +108,7 @@ fn read_dir_confined_refuses_a_parent_symlinked_outside() {
 /// the file list.
 #[test]
 fn read_dir_confined_never_reports_names_from_outside_the_root() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("source");
     let outside = base.path().join("outside");
     fs::create_dir(&root).expect("mkdir source");
@@ -134,7 +132,7 @@ fn read_dir_confined_never_reports_names_from_outside_the_root() {
 /// front-door check the confined open already applies.
 #[test]
 fn read_dir_confined_refuses_dotdot_above_the_anchor() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("source");
     fs::create_dir(&root).expect("mkdir source");
 

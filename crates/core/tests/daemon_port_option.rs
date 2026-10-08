@@ -26,7 +26,7 @@ use std::path::Path;
 use common::{DaemonBinary, TestDaemon, create_test_file};
 use core::client::ClientConfig;
 use core::client::run_client;
-use tempfile::{TempDir, tempdir};
+use tempfile::TempDir;
 
 /// Payload the daemon publishes; the byte comparison is what proves the
 /// transfer reached the daemon rather than merely exiting 0.
@@ -49,7 +49,7 @@ fn daemon_serving_a_file() -> Option<TestDaemon> {
 /// Pulls `file.txt` from `operand` with `--port` set to `daemon_port`, and
 /// returns the destination directory so the caller can assert on the bytes.
 fn pull(operand: String, daemon_port: Option<u16>) -> TempDir {
-    let dest = tempdir().expect("create dest dir");
+    let dest = test_support::create_tempdir();
     let config = ClientConfig::builder()
         .transfer_args([operand, dest.path().to_string_lossy().to_string()])
         .daemon_port(daemon_port)
@@ -122,7 +122,7 @@ fn the_port_flag_reaches_the_transfer_path_through_the_cli() {
     let Some(daemon) = daemon_serving_a_file() else {
         return;
     };
-    let dest = tempdir().expect("create dest dir");
+    let dest = test_support::create_tempdir();
     let output = std::process::Command::new(test_support::oc_rsync_bin())
         .arg(format!("--port={}", daemon.port()))
         .arg("rsync://127.0.0.1/testmodule/file.txt")

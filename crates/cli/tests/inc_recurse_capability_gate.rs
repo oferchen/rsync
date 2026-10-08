@@ -23,7 +23,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
-use tempfile::TempDir;
 use test_support::oc_rsync_bin;
 
 /// Writes a remote-shell stub that appends its argv to `log` and exits 0.
@@ -45,7 +44,7 @@ fn write_shell_stub(dir: &Path, log: &Path) -> std::path::PathBuf {
 /// Runs `oc-rsync` against a stub remote shell and returns the compact flag
 /// string it sent (the first single-dash argument of the server argv).
 fn server_flag_string(extra: &[&str]) -> String {
-    let tmp = TempDir::new().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let root = tmp.path();
     fs::create_dir_all(root.join("src/adir")).expect("src tree");
     fs::write(root.join("src/a.txt"), b"a").expect("src file");

@@ -154,7 +154,7 @@ mod rename_dispatch_tests {
 
     #[test]
     fn try_rename_via_io_uring_renames_or_returns_none() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("rename_src.txt");
         let dst = dir.path().join("rename_dst.txt");
         fs::write(&src, b"rename payload").unwrap();
@@ -178,7 +178,7 @@ mod rename_dispatch_tests {
 
     #[test]
     fn try_rename_via_io_uring_returns_none_consistently() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("consistency_src.txt");
         let dst = dir.path().join("consistency_dst.txt");
         fs::write(&src, b"data").unwrap();
@@ -199,7 +199,7 @@ mod rename_dispatch_tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn try_rename_via_io_uring_returns_none_on_non_linux() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("non_linux_src.txt");
         let dst = dir.path().join("non_linux_dst.txt");
         fs::write(&src, b"data").unwrap();
@@ -219,7 +219,7 @@ mod statx_dispatch_tests {
 
     #[test]
     fn try_statx_batch_via_io_uring_stats_or_returns_none() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("statx_dispatch.txt");
         fs::write(&file, b"dispatch payload").unwrap();
 
@@ -240,7 +240,7 @@ mod statx_dispatch_tests {
 
     #[test]
     fn try_statx_batch_via_io_uring_returns_none_consistently() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("statx_consistency.txt");
         fs::write(&file, b"data").unwrap();
 
@@ -256,7 +256,7 @@ mod statx_dispatch_tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn try_statx_batch_via_io_uring_returns_none_on_non_linux() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("non_linux_statx.txt");
         fs::write(&file, b"data").unwrap();
 
@@ -293,7 +293,7 @@ mod hard_link_convenience_tests {
     /// using io_uring when available and falling back to `std::fs::hard_link`.
     #[test]
     fn hard_link_creates_link() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("hl_src.txt");
         let dst = dir.path().join("hl_dst.txt");
         fs::write(&src, b"hard link payload").unwrap();
@@ -312,7 +312,7 @@ mod hard_link_convenience_tests {
     fn hard_link_shares_inode() {
         use std::os::unix::fs::MetadataExt;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("hl_inode_src.txt");
         let dst = dir.path().join("hl_inode_dst.txt");
         fs::write(&src, b"inode check").unwrap();
@@ -328,7 +328,7 @@ mod hard_link_convenience_tests {
     /// exists (EEXIST).
     #[test]
     fn hard_link_fails_when_dst_exists() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("hl_exists_src.txt");
         let dst = dir.path().join("hl_exists_dst.txt");
         fs::write(&src, b"source").unwrap();
@@ -341,7 +341,7 @@ mod hard_link_convenience_tests {
     /// Verifies `hard_link` returns an error when the source does not exist.
     #[test]
     fn hard_link_fails_for_missing_source() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("hl_missing.txt");
         let dst = dir.path().join("hl_missing_dst.txt");
 
@@ -353,7 +353,7 @@ mod hard_link_convenience_tests {
     /// through the destination path, confirming shared data blocks.
     #[test]
     fn hard_link_shares_data() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("hl_shared_src.txt");
         let dst = dir.path().join("hl_shared_dst.txt");
         fs::write(&src, b"original").unwrap();

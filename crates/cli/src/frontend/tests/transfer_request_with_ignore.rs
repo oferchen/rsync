@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn transfer_request_with_ignore_existing_leaves_destination_unchanged() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source = tmp.path().join("source.txt");
     let destination = tmp.path().join("destination.txt");
     std::fs::write(&source, b"updated").expect("write source");
@@ -29,9 +27,7 @@ fn transfer_request_with_ignore_existing_leaves_destination_unchanged() {
 
 #[test]
 fn ignore_existing_verbose_reports_exists_in_upstream_format() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let src_dir = tmp.path().join("src");
     let dst_dir = tmp.path().join("dst");
     std::fs::create_dir(&src_dir).expect("create src");
@@ -72,9 +68,7 @@ fn ignore_existing_verbose_reports_exists_in_upstream_format() {
 
 #[test]
 fn transfer_request_with_ignore_missing_args_skips_missing_sources() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let missing = tmp.path().join("missing.txt");
     let destination = tmp.path().join("destination.txt");
     std::fs::write(&destination, b"existing").expect("write destination");

@@ -9,7 +9,6 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 #[cfg(unix)]
 use std::path::Path;
-use tempfile::tempdir;
 
 #[cfg(unix)]
 fn current_mode(path: &Path) -> u32 {
@@ -20,7 +19,7 @@ fn current_mode(path: &Path) -> u32 {
 
 #[test]
 fn file_permissions_and_times_are_preserved() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let dest = temp.path().join("dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -66,7 +65,7 @@ fn file_ownership_is_preserved_when_requested() {
         return;
     }
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-owner.txt");
     let dest = temp.path().join("dest-owner.txt");
     fs::write(&source, b"data").expect("write source");
@@ -103,7 +102,7 @@ fn file_ownership_is_preserved_when_requested() {
 fn file_permissions_respect_toggle() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-perms.txt");
     let dest = temp.path().join("dest-perms.txt");
     fs::write(&source, b"data").expect("write source");
@@ -128,7 +127,7 @@ fn file_permissions_respect_toggle() {
 fn file_executability_can_be_preserved_without_other_bits() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-exec.txt");
     let dest = temp.path().join("dest-exec.txt");
 
@@ -164,7 +163,7 @@ fn file_executability_matches_upstream_dest_mode_fixture() {
     // source mode 0o601, dest mode 0o604, expected 0o705 after `-E`.
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-2");
     let dest = temp.path().join("dest-2");
 
@@ -192,7 +191,7 @@ fn file_executability_matches_upstream_dest_mode_fixture() {
 
 #[test]
 fn file_times_respect_toggle() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-times.txt");
     let dest = temp.path().join("dest-times.txt");
     fs::write(&source, b"data").expect("write source");
@@ -240,7 +239,7 @@ fn map_gid_round_trips_current_group_without_numeric_flag() {
 
 #[test]
 fn directory_permissions_and_times_are_preserved() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-dir");
     let dest = temp.path().join("dest-dir");
     fs::create_dir(&source).expect("create source dir");
@@ -283,7 +282,7 @@ fn symlink_times_are_preserved_without_following_target() {
     use filetime::set_symlink_file_times;
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target.txt");
     fs::write(&target, b"data").expect("write target");
 
@@ -315,7 +314,7 @@ fn symlink_times_are_preserved_without_following_target() {
 fn symlink_metadata_with_options_no_times() {
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target.txt");
     fs::write(&target, b"data").expect("write target");
 
@@ -339,7 +338,7 @@ fn symlink_metadata_with_options_no_times() {
 #[cfg(unix)]
 #[test]
 fn directory_metadata_with_options_no_times() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-dir-notime");
     let dest = temp.path().join("dest-dir-notime");
     fs::create_dir(&source).expect("create source dir");
@@ -360,7 +359,7 @@ fn directory_metadata_with_options_no_times() {
 
 #[test]
 fn file_metadata_with_all_options_disabled() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-noop.txt");
     let dest = temp.path().join("dest-noop.txt");
     fs::write(&source, b"data").expect("write source");
@@ -387,7 +386,7 @@ fn file_metadata_with_all_options_disabled() {
 fn executability_not_applied_to_directory() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-exec-dir");
     let dest = temp.path().join("dest-exec-dir");
     fs::create_dir(&source).expect("create source dir");
@@ -416,7 +415,7 @@ fn executability_not_applied_to_directory() {
 fn executability_removed_when_source_not_executable() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-noexec.txt");
     let dest = temp.path().join("dest-noexec.txt");
     fs::write(&source, b"data").expect("write source");
@@ -448,7 +447,7 @@ fn owner_override_takes_precedence() {
         return;
     }
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-override.txt");
     let dest = temp.path().join("dest-override.txt");
     fs::write(&source, b"data").expect("write source");
@@ -477,7 +476,7 @@ fn group_override_takes_precedence() {
         return;
     }
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-grp-override.txt");
     let dest = temp.path().join("dest-grp-override.txt");
     fs::write(&source, b"data").expect("write source");
@@ -514,7 +513,7 @@ fn owner_override_non_root_chown_is_skipped_not_fatal() {
         return;
     }
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-nonroot-override.txt");
     let dest = temp.path().join("dest-nonroot-override.txt");
     fs::write(&source, b"data").expect("write source");
@@ -561,7 +560,7 @@ fn group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal() {
         .find(|candidate| !super::ownership::process_in_group(ownership::gid_from_raw(*candidate)))
         .expect("must find a gid outside the process's groups");
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source-nonroot-grp-override.txt");
     let dest = temp.path().join("dest-nonroot-grp-override.txt");
     fs::write(&source, b"data").expect("write source");
@@ -611,7 +610,7 @@ fn symlink_owner_override_non_root_chown_is_skipped_not_fatal() {
         return;
     }
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target.txt");
     let dest_link = temp.path().join("dest-link");
     fs::write(&target, b"data").expect("write target");
@@ -664,7 +663,7 @@ fn symlink_group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal()
         .find(|candidate| !super::ownership::process_in_group(ownership::gid_from_raw(*candidate)))
         .expect("must find a gid outside the process's groups");
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target-grp.txt");
     let dest_link = temp.path().join("dest-link-grp");
     fs::write(&target, b"data").expect("write target");
@@ -704,7 +703,7 @@ fn symlink_group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal()
 fn apply_metadata_from_file_entry_with_timestamps() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("entry-dest.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -736,7 +735,7 @@ fn apply_metadata_sets_times_before_readonly_chmod() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("times-then-chmod.txt");
     fs::write(&dest, b"data").expect("write dest");
     // Start writable so the failure mode is solely about the apply ordering.
@@ -769,7 +768,7 @@ fn apply_metadata_sets_times_before_readonly_chmod() {
 fn apply_metadata_from_file_entry_no_times() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("entry-notime.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -787,7 +786,7 @@ fn apply_permissions_from_entry_respects_permissions_flag() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("entry-perms.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o666)).expect("set dest perms");
@@ -809,7 +808,7 @@ fn apply_permissions_from_entry_no_change_when_disabled() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("entry-noperms.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o666)).expect("set dest perms");
@@ -857,7 +856,7 @@ fn no_perms_new_file_from_entry_gets_umask_masked_source_mode() {
         (0o600, 0o600),
         (0o777, 0o755),
     ] {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let dest = temp.path().join("newfile.bin");
         fs::write(&dest, b"payload").expect("write dest");
         // Seed the temp file's O_TMPFILE creation mode the receiver commits.
@@ -889,7 +888,7 @@ fn no_perms_existing_file_from_entry_keeps_prior_mode() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     // The committed (post-rename) file carries the temp file's 0o600 mode.
     let dest = temp.path().join("existing.bin");
     fs::write(&dest, b"payload").expect("write dest");
@@ -928,7 +927,7 @@ fn chmod_without_perms_existing_file_from_entry_keeps_prior_mode() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("existing.bin");
     fs::write(&dest, b"payload").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o620)).expect("seed temp mode");
@@ -970,7 +969,7 @@ fn chmod_without_perms_new_file_from_entry_masks_tweak_by_umask() {
     // process-per-test isolation (the crate caches the umask on first read).
     let prev = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o022));
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("newfile.bin");
     fs::write(&dest, b"payload").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("seed temp mode");
@@ -1003,7 +1002,7 @@ fn chmod_without_perms_pre_transfer_rides_the_exists_split() {
 
     let prev = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o022));
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.bin");
     fs::write(&source, b"payload").expect("write source");
     fs::set_permissions(&source, PermissionsExt::from_mode(0o644)).expect("chmod source");
@@ -1058,7 +1057,7 @@ fn chmod_without_perms_directory_rides_the_exists_split() {
 
     let prev = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o022));
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("src_dir");
     fs::create_dir(&src).expect("create src dir");
     fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).expect("chmod src");
@@ -1108,7 +1107,7 @@ fn chmod_with_perms_applies_tweaked_source_mode_exactly() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("existing.bin");
     fs::write(&dest, b"payload").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("seed dest mode");
@@ -1135,7 +1134,7 @@ fn chmod_with_perms_applies_tweaked_source_mode_exactly() {
 
 #[test]
 fn epoch_timestamp_zero_seconds_is_preserved() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("epoch-source.txt");
     let dest = temp.path().join("epoch-dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -1165,7 +1164,7 @@ fn epoch_timestamp_zero_seconds_is_preserved() {
 #[cfg(unix)]
 #[test]
 fn epoch_timestamp_with_nanoseconds_is_preserved() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("epoch-nsec-source.txt");
     let dest = temp.path().join("epoch-nsec-dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -1191,7 +1190,7 @@ fn epoch_timestamp_with_nanoseconds_is_preserved() {
 #[cfg(unix)]
 #[test]
 fn epoch_timestamp_round_trip_file() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let file1 = temp.path().join("epoch-rt1.txt");
     let file2 = temp.path().join("epoch-rt2.txt");
     let file3 = temp.path().join("epoch-rt3.txt");
@@ -1220,7 +1219,7 @@ fn epoch_timestamp_round_trip_file() {
 
 #[test]
 fn epoch_timestamp_directory_preserved() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source_dir = temp.path().join("epoch-source-dir");
     let dest_dir = temp.path().join("epoch-dest-dir");
     fs::create_dir(&source_dir).expect("create source dir");
@@ -1247,7 +1246,7 @@ fn epoch_timestamp_symlink_preserved() {
     use filetime::set_symlink_file_times;
     use std::os::unix::fs::symlink;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("epoch-target.txt");
     let source_link = temp.path().join("epoch-source-link");
     let dest_link = temp.path().join("epoch-dest-link");
@@ -1274,7 +1273,7 @@ fn epoch_timestamp_symlink_preserved() {
 fn epoch_timestamp_from_file_entry() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("epoch-entry.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1301,7 +1300,7 @@ fn epoch_timestamp_from_file_entry() {
 fn epoch_timestamp_from_file_entry_with_nanoseconds() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("epoch-entry-nsec.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1340,7 +1339,7 @@ fn epoch_timestamp_formatting_is_correct() {
 
 #[test]
 fn epoch_timestamp_edge_case_one_nanosecond() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("epoch-one-nsec-source.txt");
     let dest = temp.path().join("epoch-one-nsec-dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -1364,7 +1363,7 @@ fn epoch_timestamp_edge_case_one_nanosecond() {
 fn attrs_flags_empty_applies_mtime_normally() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("attrs-empty.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1384,7 +1383,7 @@ fn attrs_flags_empty_applies_mtime_normally() {
 fn attrs_flags_skip_mtime_prevents_mtime_application() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("attrs-skip-mtime.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1406,7 +1405,7 @@ fn attrs_flags_skip_mtime_prevents_mtime_application() {
 fn attrs_flags_skip_crtime_prevents_crtime_application() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("attrs-skip-crtime.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1457,7 +1456,7 @@ fn birthtime_secs(path: &std::path::Path) -> i64 {
 fn incoming_zero_crtime_is_applied_rather_than_treated_as_absent() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("zero-crtime.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1499,7 +1498,7 @@ fn incoming_zero_crtime_is_applied_rather_than_treated_as_absent() {
 fn skip_crtime_still_suppresses_an_incoming_zero_crtime() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("zero-crtime-skipped.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1530,7 +1529,7 @@ fn skip_crtime_still_suppresses_an_incoming_zero_crtime() {
 fn attrs_flags_skip_all_times_prevents_all_time_application() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("attrs-skip-all.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1556,7 +1555,7 @@ fn attrs_flags_skip_all_times_prevents_all_time_application() {
 fn attrs_flags_skip_mtime_with_atime_still_applies_atime() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("attrs-skip-mtime-keep-atime.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1584,7 +1583,7 @@ fn attrs_flags_skip_mtime_with_atime_still_applies_atime() {
 fn attrs_flags_delegating_function_matches_direct_call() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest1 = temp.path().join("delegate1.txt");
     let dest2 = temp.path().join("delegate2.txt");
     fs::write(&dest1, b"data").expect("write");
@@ -1608,7 +1607,7 @@ fn attrs_flags_delegating_function_matches_direct_call() {
 fn attrs_flags_skip_atime_alone_does_not_affect_mtime() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("attrs-skip-atime-only.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1633,7 +1632,7 @@ fn attrs_flags_skip_mtime_does_not_affect_permissions() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("attrs-perms.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o666)).expect("set dest perms");
@@ -1656,7 +1655,7 @@ fn fake_super_writes_rsync_stat_xattr_for_regular_file() {
     use crate::fake_super::{FAKE_SUPER_XATTR, FakeSuperStat};
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("fakesuper-regular.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1695,7 +1694,7 @@ fn fake_super_does_not_chown_destination() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::MetadataExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("fakesuper-nochown.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1745,7 +1744,7 @@ fn fake_super_chmod_deflects_directory_real_mode() {
     use crate::fake_super::load_fake_super;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("src_dir");
     let dst = temp.path().join("dst_dir");
     fs::create_dir(&src).expect("create src dir");
@@ -1785,7 +1784,7 @@ fn fake_super_chmod_deflects_regular_file_real_mode() {
     use crate::fake_super::load_fake_super;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("src.txt");
     let dst = temp.path().join("dst.txt");
     fs::write(&src, b"data").expect("write src");
@@ -1822,7 +1821,7 @@ fn fake_super_faithful_directory_writes_no_stat_xattr() {
     use crate::fake_super::load_fake_super;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("src_dir");
     let dst = temp.path().join("dst_dir");
     fs::create_dir(&src).expect("create src dir");
@@ -1854,7 +1853,7 @@ fn fake_super_skips_rewrite_when_xattr_already_matches() {
     use crate::fake_super::{FAKE_SUPER_XATTR, FakeSuperStat, store_fake_super};
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("fakesuper-skip.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1898,7 +1897,7 @@ fn fake_super_skips_rewrite_when_xattr_already_matches() {
 fn fake_super_writes_stat_xattr_via_local_metadata() {
     use crate::fake_super::{FAKE_SUPER_XATTR, FakeSuperStat};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("fakesuper-localmeta.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1933,7 +1932,7 @@ fn fake_super_writes_stat_xattr_via_local_metadata() {
 fn fake_super_off_does_not_write_stat_xattr_via_local_metadata() {
     use crate::fake_super::FAKE_SUPER_XATTR;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("fakesuper-off.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1958,7 +1957,7 @@ fn fake_super_off_does_not_write_stat_xattr_via_local_metadata() {
 fn metadata_unchanged_returns_true_when_all_attrs_match() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("unchanged.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -1987,7 +1986,7 @@ fn metadata_unchanged_returns_true_when_all_attrs_match() {
 fn metadata_unchanged_returns_false_on_permission_mismatch() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("perm-mismatch.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2020,7 +2019,7 @@ fn metadata_unchanged_returns_false_on_permission_mismatch() {
 fn metadata_unchanged_returns_false_on_mtime_mismatch() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("mtime-mismatch.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2055,7 +2054,7 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
 fn metadata_unchanged_honors_modify_window() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("window.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2135,7 +2134,7 @@ fn windows_readonly_differs_maps_owner_write_bit() {
 fn metadata_unchanged_detects_readonly_difference() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("ro.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2178,7 +2177,7 @@ fn metadata_unchanged_detects_readonly_difference() {
 fn metadata_unchanged_ignores_perms_when_not_preserved() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("no-perms.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2214,7 +2213,7 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("exec-mismatch.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o644)).expect("chmod dest");
@@ -2259,7 +2258,7 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("exec-match.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o654)).expect("chmod dest");
@@ -2300,7 +2299,7 @@ fn metadata_unchanged_returns_false_when_chmod_would_change_mode() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("chmod-changes.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o644)).expect("set perms");
@@ -2332,7 +2331,7 @@ fn metadata_unchanged_ignores_chmod_without_perms_on_existing_dest() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("chmod-no-perms.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("set perms");
@@ -2359,7 +2358,7 @@ fn metadata_unchanged_returns_true_when_chmod_is_noop() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("chmod-noop.txt");
     fs::write(&dest, b"data").expect("write dest");
     fs::set_permissions(&dest, PermissionsExt::from_mode(0o755)).expect("set perms");
@@ -2392,7 +2391,7 @@ fn metadata_unchanged_returns_true_when_chmod_is_noop() {
 fn metadata_unchanged_returns_true_when_owner_override_matches() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("owner-match.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2421,7 +2420,7 @@ fn metadata_unchanged_returns_true_when_owner_override_matches() {
 fn metadata_unchanged_returns_false_when_owner_override_differs() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("owner-differ.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2450,7 +2449,7 @@ fn metadata_unchanged_returns_false_when_owner_override_differs() {
 fn metadata_unchanged_returns_true_when_group_override_matches() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("group-match.txt");
     fs::write(&dest, b"data").expect("write dest");
 
@@ -2483,7 +2482,7 @@ fn metadata_unchanged_returns_true_when_group_override_matches() {
 fn metadata_unchanged_ignores_atime() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("atime-only.txt");
     fs::write(&dest, b"data").expect("write dest");
     let mtime = FileTime::from_unix_time(1_700_000_000, 0);
@@ -2520,7 +2519,7 @@ fn atime_fixture(
     protocol::flist::FileEntry,
     fs::Metadata,
 ) {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("atime.txt");
     fs::write(&dest, b"data").expect("write dest");
     set_file_times(
@@ -2590,7 +2589,7 @@ fn atime_needs_set_mirrors_set_file_attrs_atime_leg() {
         "a positive --modify-window tolerates the drift"
     );
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dir_meta = fs::metadata(temp.path()).expect("dir metadata");
     let mut dir_entry = protocol::flist::FileEntry::new_directory("d".into(), 0o755);
     dir_entry.set_atime(1);
@@ -2687,7 +2686,7 @@ fn epoch_atime_is_stamped() {
 #[cfg(unix)]
 #[test]
 fn directory_atime_is_never_stamped() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dir = temp.path().join("d");
     fs::create_dir(&dir).expect("mkdir");
     let original = FileTime::from_unix_time(1_650_000_000, 250_000_000);
@@ -2716,7 +2715,7 @@ fn subsecond_skewed_dir() -> (
     protocol::flist::FileEntry,
     fs::Metadata,
 ) {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dir = temp.path().join("d");
     fs::create_dir(&dir).expect("mkdir");
     filetime::set_file_mtime(&dir, FileTime::from_unix_time(1_700_000_000, 400_000_000))
@@ -2786,7 +2785,7 @@ fn apply_permissions_from_entry_refuses_parent_symlink_escape() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let module = temp.path().join("module");
     let outside = temp.path().join("outside");
     fs::create_dir(&module).expect("create module");
@@ -2843,7 +2842,7 @@ fn apply_permissions_from_entry_refuses_parent_symlink_escape() {
 fn keep_dirlinks_bypasses_secure_chmod_sandbox() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let real_alpha = temp.path().join("real_alpha");
     fs::create_dir(&real_alpha).expect("create real_alpha");
 
@@ -2914,7 +2913,7 @@ fn keep_dirlinks_bypasses_secure_chmod_sandbox() {
 fn operator_destination_root_symlink_is_followed_without_keep_dirlinks() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let real = temp.path().join("real");
     fs::create_dir(&real).expect("create real");
 
@@ -2961,7 +2960,7 @@ fn operator_destination_root_symlink_is_followed_without_keep_dirlinks() {
 // Windows (chmod is a no-op) were CLEAN by construction but unpinned.
 #[test]
 fn keep_dirlinks_bypass_is_cross_platform_safe() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let real_dir = temp.path().join("real_dir");
     fs::create_dir(&real_dir).expect("create real_dir");
 
@@ -3066,7 +3065,7 @@ fn dir_without_perms_over_entry_path_lands_source_mode() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dir = temp.path().join("d");
     fs::create_dir(&dir).expect("create dir");
     // Simulate the receiver's mkdirat(0o777) umask-default result.
@@ -3094,7 +3093,7 @@ fn dir_without_perms_over_entry_path_keeps_existing_dir_mode() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dir = temp.path().join("d");
     fs::create_dir(&dir).expect("create dir");
     fs::set_permissions(&dir, PermissionsExt::from_mode(0o700)).expect("chmod 0700");
@@ -3120,7 +3119,7 @@ fn dir_without_perms_over_entry_path_keeps_existing_dir_mode() {
 fn entry_path_omits_atime_without_atimes() {
     use protocol::flist::FileEntry;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let dest = temp.path().join("f.txt");
     fs::write(&dest, b"data").expect("write dest");
     let before = FileTime::from_last_access_time(&fs::metadata(&dest).expect("pre meta"));
@@ -3159,7 +3158,7 @@ fn setgid_parent_new_dir_keeps_inherited_sgid() {
     use protocol::flist::FileEntry;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let parent = temp.path().join("sgid-parent");
     fs::create_dir(&parent).expect("create parent");
     // Mark the parent setgid so a child directory inherits S_ISGID at mkdir.
@@ -3197,7 +3196,7 @@ fn setgid_parent_new_dir_keeps_inherited_sgid() {
 #[cfg(unix)]
 #[test]
 fn local_atimes_zeroes_atime_nsec() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("src.txt");
     let dest = temp.path().join("dst.txt");
     fs::write(&source, b"data").expect("write source");
@@ -3245,7 +3244,7 @@ fn symlink_own_mode_applied_from_entry_under_preserve_perms() {
         "macOS must advertise symlink chmod support"
     );
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target.txt");
     let link = temp.path().join("link");
     fs::write(&target, b"data").expect("write target");
@@ -3287,7 +3286,7 @@ fn symlink_own_mode_applied_from_entry_under_preserve_perms() {
 fn symlink_own_mode_applied_from_source_metadata_local_copy() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("t.txt");
     let src = temp.path().join("src");
     let dst = temp.path().join("dst");
@@ -3335,7 +3334,7 @@ fn symlink_own_mode_applied_from_source_metadata_local_copy() {
 fn symlink_chmod_spec_is_ignored_without_preserve_perms_local_copy() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("t.txt");
     let src = temp.path().join("src");
     let dst = temp.path().join("dst");
@@ -3370,7 +3369,7 @@ fn symlink_chmod_spec_is_ignored_without_preserve_perms_local_copy() {
 fn symlink_chmod_spec_does_not_compose_with_preserve_perms_local_copy() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("t.txt");
     let src = temp.path().join("src");
     let dst = temp.path().join("dst");
@@ -3408,7 +3407,7 @@ fn symlink_chmod_spec_does_not_compose_with_preserve_perms_from_entry() {
 
     // The receiver path already ignores `--chmod` for a link; pin it so the two
     // paths keep sharing the one rule in `permissions::symlink_target_mode`.
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("target.txt");
     let link = temp.path().join("link");
     fs::write(&target, b"data").expect("write target");
@@ -3444,7 +3443,7 @@ fn symlink_chmod_spec_does_not_compose_with_preserve_perms_from_entry() {
 fn chmod_spec_used_by_the_symlink_pins_still_tweaks_a_regular_file() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let src = temp.path().join("src.txt");
     let dst = temp.path().join("dst.txt");
     fs::write(&src, b"data").expect("write src");
@@ -3480,7 +3479,7 @@ fn symlink_own_mode_is_noop_on_linux() {
     // neither error nor change anything - report and action stay silent as one.
     assert!(!crate::CAN_CHMOD_SYMLINK);
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let target = temp.path().join("t.txt");
     let dst = temp.path().join("dst");
     fs::write(&target, b"data").expect("write target");
@@ -3512,7 +3511,7 @@ fn symlink_own_mode_is_noop_on_linux() {
 fn apply_file_metadata_sets_times_before_readonly_chmod() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("ro-source.txt");
     let dest = temp.path().join("ro-dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -3546,7 +3545,7 @@ fn apply_file_metadata_sets_times_before_readonly_chmod() {
 #[cfg(unix)]
 #[test]
 fn apply_file_metadata_reports_times_failure_before_chmod() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("order-source.txt");
     fs::write(&source, b"data").expect("write source");
     let metadata = fs::metadata(&source).expect("source metadata");
@@ -3571,7 +3570,7 @@ fn apply_file_metadata_reports_times_failure_before_chmod() {
 fn apply_directory_metadata_sets_times_before_readonly_chmod() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("ro-src-dir");
     let dest = temp.path().join("ro-dst-dir");
     fs::create_dir(&source).expect("mkdir source");
@@ -3607,7 +3606,7 @@ fn apply_directory_metadata_sets_times_before_readonly_chmod() {
 #[cfg(unix)]
 #[test]
 fn apply_directory_metadata_reports_times_failure_before_chmod() {
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("order-src-dir");
     fs::create_dir(&source).expect("mkdir source");
     let metadata = fs::metadata(&source).expect("source metadata");
@@ -3633,7 +3632,7 @@ fn apply_file_metadata_with_fd_sets_times_before_readonly_chmod() {
     use std::os::fd::AsFd;
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("fd-ro-source.txt");
     let dest = temp.path().join("fd-ro-dest.txt");
     fs::write(&source, b"data").expect("write source");
@@ -3664,7 +3663,7 @@ fn apply_file_metadata_with_fd_sets_times_before_readonly_chmod() {
 fn apply_file_metadata_if_changed_sets_times_before_readonly_chmod() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("ic-ro-source.txt");
     let dest = temp.path().join("ic-ro-dest.txt");
     fs::write(&source, b"data").expect("write source");

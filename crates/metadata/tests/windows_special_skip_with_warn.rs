@@ -32,7 +32,7 @@ use metadata::{create_device_node, create_fifo};
 /// WIND-2 contract for FIFO entries on a non-Unix target.
 #[test]
 fn create_fifo_skips_without_writing_destination() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let source_path = temp.path().join("source");
     fs::File::create(&source_path).expect("create source placeholder");
     let metadata = fs::metadata(&source_path).expect("read source metadata");
@@ -54,7 +54,7 @@ fn create_fifo_skips_without_writing_destination() {
 /// WIND-2 contract for device entries on a non-Unix target.
 #[test]
 fn create_device_node_skips_without_writing_destination() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let source_path = temp.path().join("source");
     fs::File::create(&source_path).expect("create source placeholder");
     let metadata = fs::metadata(&source_path).expect("read source metadata");
@@ -79,7 +79,7 @@ fn create_device_node_skips_without_writing_destination() {
 /// writes a placeholder on the second invocation.
 #[test]
 fn skip_with_warn_is_idempotent_across_repeated_calls() {
-    let temp = tempfile::tempdir().expect("create tempdir");
+    let temp = test_support::create_tempdir();
     let source_path = temp.path().join("source");
     fs::File::create(&source_path).expect("create source placeholder");
     let metadata = fs::metadata(&source_path).expect("read source metadata");

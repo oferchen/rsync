@@ -148,8 +148,6 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use io_uring::{IoUring, opcode, types};
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use memmap2::MmapOptions;
-#[cfg(all(target_os = "linux", feature = "io_uring"))]
-use tempfile::TempDir;
 
 /// One mebibyte. Used both as the registered-buffer slot size and as
 /// the mmap stride, so the two dispatch styles read the basis file in
@@ -454,7 +452,7 @@ fn bench_mmap(c: &mut Criterion) {
     for &(size, label) in selected_sizes().iter() {
         group.throughput(Throughput::Bytes(size));
         group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-            let dir = TempDir::new().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let basis = dir.path().join("basis.bin");
             build_basis(&basis, size);
             b.iter_with_setup(
@@ -505,7 +503,7 @@ fn bench_read_fixed_sqpoll(c: &mut Criterion) {
     for &(size, label) in selected_sizes().iter() {
         group.throughput(Throughput::Bytes(size));
         group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-            let dir = TempDir::new().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let basis = dir.path().join("basis.bin");
             build_basis(&basis, size);
             b.iter_with_setup(

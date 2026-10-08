@@ -348,7 +348,7 @@ mod tests {
     /// accounted for skips and there were none", which a missing file does not.
     #[test]
     fn artifact_is_written_even_when_nothing_skipped() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let ledger = SkipLedger::from_outcomes(&[], ExpectedSkips::DEFAULT);
         let path = ledger.write_artifact(dir.path()).unwrap();
         assert_eq!(path.file_name().unwrap(), WHYSKIPPED);
@@ -361,7 +361,7 @@ mod tests {
     /// and grepped by check the way upstream's `whyskipped` can be read.
     #[test]
     fn artifact_holds_one_tab_separated_record_per_skip() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let outcomes = vec![
             outcome(Status::Skip, "acl", "local", "no acl support"),
             outcome(Status::Skip, "xattr", "daemon", "no xattr support"),

@@ -295,7 +295,7 @@ mod tests {
         /// upstream: generator.c:858-863 - size/modtime match short-circuits.
         #[test]
         fn size_mtime_match_wins_over_closer_name() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             // Closer name but wrong size: must lose to the fast-path.
             write_file(dir.path(), "target_v1.bin", b"different length data here");
             let exact = write_file(dir.path(), "unrelated.bin", b"exactly-ten");
@@ -321,7 +321,7 @@ mod tests {
         /// through to the lowest-distance pass.
         #[test]
         fn no_target_mtime_disables_fast_path() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             let closer = write_file(dir.path(), "report_2023.csv", b"some csv payload");
             write_file(dir.path(), "wholly-different.log", b"some csv payload");
 
@@ -336,7 +336,7 @@ mod tests {
         /// Zero-length candidates are screened out (upstream `!F_LENGTH(fp)`).
         #[test]
         fn zero_length_candidate_skipped() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             write_file(dir.path(), "report_2023.csv", b"");
 
             let matcher = FuzzyMatcher::new();
@@ -375,7 +375,7 @@ mod tests {
         /// with a non-zero distance that lossy scoring could never produce.
         #[test]
         fn non_utf8_names_scored_by_raw_bytes_not_lossy() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             // Both basenames lossy-decode to "f\u{FFFD}" but differ in their raw
             // trailing byte (0xF0 vs 0xF4).
             let Some(near) = try_write_raw(dir.path(), b"f\xF0", b"some bytes") else {
@@ -406,7 +406,7 @@ mod tests {
         /// by raw-byte order, not by an arbitrary lossy-string collision.
         #[test]
         fn non_utf8_tie_break_follows_bytewise_order() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = test_support::create_tempdir();
             // Distances from target "m\xF2": |0xF1-0xF2| = 1 and |0xF3-0xF2| = 1
             // are equal, so the `<=` rule selects the last in bytewise order.
             if try_write_raw(dir.path(), b"m\xF1", b"payload!!").is_none() {

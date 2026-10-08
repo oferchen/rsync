@@ -243,7 +243,7 @@ fn bench_per_file_ring(c: &mut Criterion) {
     group.bench_function("per_file_ring", |b| {
         b.iter_with_setup(
             || {
-                let dir = TempDir::new().expect("tempdir");
+                let dir = test_support::create_tempdir();
                 let (paths, payload) = prepare_workload(&dir);
                 (dir, paths, payload)
             },
@@ -277,7 +277,7 @@ fn bench_shared_ring(c: &mut Criterion) {
     group.bench_function("shared_ring", |b| {
         b.iter_with_setup(
             || {
-                let dir = TempDir::new().expect("tempdir");
+                let dir = test_support::create_tempdir();
                 let (paths, payload) = prepare_workload(&dir);
                 let ring = IoUring::new(SQ_ENTRIES).expect("ring");
                 (dir, paths, payload, ring)

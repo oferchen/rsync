@@ -49,11 +49,10 @@ pub use upstream_compat::{
     upstream_compat_enabled, upstream_install_bin, workspace_root,
 };
 
+use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::thread;
-use std::time::Duration;
 
-use tempfile::TempDir;
+use tempfile::{NamedTempFile, TempDir};
 
 /// Process-global mutex serializing tests that touch the shared
 /// `engine::CleanupManager` registry (a `OnceLock<Mutex<HashSet>>` singleton).
@@ -80,24 +79,66 @@ pub fn cleanup_registry_test_guard() -> MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Creates a temporary directory with retry logic for transient OS errors.
+/// Returns the `.tmp<pid>-` prefix every temp path created here carries.
 ///
-/// Windows CI runners occasionally return `PermissionDenied` from
-/// `tempdir()` due to antivirus or filesystem lock contention. This
-/// helper retries up to 3 times with exponential backoff (50ms, 100ms,
-/// 150ms) before panicking.
+/// nextest runs each test in its own process, and `tempfile` names temp paths
+/// with a `fastrand` generator seeded only from the clock and the thread id.
+/// The test thread id is the same in every process, so concurrent test
+/// processes that seed within one clock tick draw the same names. On Windows,
+/// creating a path over another process's same-named directory or
+/// delete-pending file fails with `PermissionDenied`, which `tempfile` does not
+/// retry (it retries only `AlreadyExists`). The process id makes names from
+/// concurrently live processes disjoint.
+#[must_use]
+pub fn temp_prefix() -> String {
+    format!(".tmp{}-", std::process::id())
+}
+
+/// Creates a temporary directory whose name is unique across concurrent test
+/// processes (see [`temp_prefix`]).
+///
+/// # Panics
+///
+/// Panics if the directory cannot be created.
 #[must_use]
 pub fn create_tempdir() -> TempDir {
-    const MAX_RETRIES: u32 = 3;
-    for attempt in 1..=MAX_RETRIES {
-        match tempfile::tempdir() {
-            Ok(dir) => return dir,
-            Err(e) if attempt < MAX_RETRIES => {
-                thread::sleep(Duration::from_millis(50 * u64::from(attempt)));
-                eprintln!("tempdir attempt {attempt}/{MAX_RETRIES} failed: {e}");
-            }
-            Err(e) => panic!("tempdir failed after {MAX_RETRIES} attempts: {e}"),
-        }
-    }
-    unreachable!()
+    tempfile::Builder::new()
+        .prefix(&temp_prefix())
+        .tempdir()
+        .unwrap_or_else(|e| panic!("create tempdir: {e}"))
+}
+
+/// Creates a named temporary file whose name is unique across concurrent test
+/// processes (see [`temp_prefix`]).
+///
+/// # Panics
+///
+/// Panics if the file cannot be created.
+#[must_use]
+pub fn create_named_tempfile() -> NamedTempFile {
+    tempfile::Builder::new()
+        .prefix(&temp_prefix())
+        .tempfile()
+        .unwrap_or_else(|e| panic!("create named tempfile: {e}"))
+}
+
+/// Creates a temporary directory (see [`create_tempdir`]) and returns it with
+/// its canonical path.
+///
+/// The system temp dir can sit under a symlink (macOS `/tmp -> /private/tmp`,
+/// some CI runners). Confined opens that refuse symlinks in the path, and
+/// assertions against resolved paths, need the canonical form. Keep the
+/// returned `TempDir` alive for as long as the path is used.
+///
+/// # Panics
+///
+/// Panics if the directory cannot be created or canonicalised.
+#[must_use]
+pub fn create_canonical_tempdir() -> (TempDir, PathBuf) {
+    let dir = create_tempdir();
+    let canon = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|e| panic!("canonicalize tempdir: {e}"));
+    (dir, canon)
 }

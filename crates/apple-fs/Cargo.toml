@@ -23,4 +23,5 @@ unicode-normalization = "0.1"
 xattr = { workspace = true }
 
 [dev-dependencies]
+test-support = { path = "../test-support" }
 tempfile = { workspace = true }

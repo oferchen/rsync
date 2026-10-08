@@ -3,9 +3,7 @@ use super::*;
 
 #[test]
 fn password_file_requires_daemon_operands() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let password_path = temp.path().join("local.pw");
     std::fs::write(&password_path, b"secret\n").expect("write password");
     #[cfg(unix)]
@@ -55,9 +53,7 @@ fn password_file_dash_conflicts_with_files_from_dash() {
 
 #[test]
 fn password_command_requires_daemon_operands() {
-    use tempfile::tempdir;
-
-    let temp = tempdir().expect("tempdir");
+    let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"data").expect("write source");

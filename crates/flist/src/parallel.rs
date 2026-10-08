@@ -456,7 +456,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_tree() -> TempDir {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let root = dir.path();
 
         File::create(root.join("file1.txt")).unwrap();
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn batched_stats_performance_test() {
-        let temp = TempDir::new().unwrap();
+        let temp = test_support::create_tempdir();
         let root = temp.path();
 
         for i in 0..100 {

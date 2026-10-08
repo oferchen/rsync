@@ -1,7 +1,6 @@
 //! Tests for the reserved SDDL xattr slot helpers.
 
 use std::fs::File;
-use tempfile::tempdir;
 
 use protocol::xattr::{XattrEntry, XattrList};
 
@@ -40,7 +39,7 @@ fn find_sddl_in_xattrs_skips_abbreviated_entries() {
 
 #[test]
 fn apply_sddl_from_xattrs_no_payload_is_noop() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let list = XattrList::new();
@@ -54,7 +53,7 @@ fn sddl_xattr_entry_round_trips_on_ntfs() {
     use crate::acl_windows::sddl::{read_dacl_sddl, write_dacl_sddl};
     use crate::acl_windows::xattr::sddl_xattr_entry;
 
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("src");
     File::create(&src).expect("src");
     // Pin a known descriptor so the round-trip assertion is stable

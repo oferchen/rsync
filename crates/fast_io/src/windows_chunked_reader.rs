@@ -424,7 +424,7 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn write_temp(bytes: &[u8]) -> NamedTempFile {
-        let mut f = NamedTempFile::new().expect("create temp file");
+        let mut f = test_support::create_named_tempfile();
         f.write_all(bytes).expect("write temp file");
         f.flush().expect("flush temp file");
         f

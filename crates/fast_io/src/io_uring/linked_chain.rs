@@ -380,7 +380,7 @@ mod tests {
             eprintln!("skipping: io_uring unavailable");
             return;
         };
-        let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let mut tmp = test_support::create_named_tempfile();
         let payload: Vec<u8> = (0..3 * 256).map(|i| (i % 251) as u8).collect();
         tmp.write_all(&payload).expect("write payload");
         let file = OpenOptions::new()
@@ -416,14 +416,14 @@ mod tests {
             eprintln!("skipping: io_uring unavailable");
             return;
         };
-        let mut src = tempfile::NamedTempFile::new().expect("src tempfile");
+        let mut src = test_support::create_named_tempfile();
         let payload: Vec<u8> = (0..512).map(|i| (i % 211) as u8).collect();
         src.write_all(&payload).expect("write src");
         let src_file = OpenOptions::new()
             .read(true)
             .open(src.path())
             .expect("reopen src");
-        let dst = tempfile::NamedTempFile::new().expect("dst tempfile");
+        let dst = test_support::create_named_tempfile();
         let dst_file = OpenOptions::new()
             .write(true)
             .open(dst.path())
@@ -458,7 +458,7 @@ mod tests {
             eprintln!("skipping: io_uring unavailable");
             return;
         };
-        let mut src = tempfile::NamedTempFile::new().expect("src tempfile");
+        let mut src = test_support::create_named_tempfile();
         src.write_all(b"hello world").expect("write");
         let src_file = OpenOptions::new()
             .read(true)

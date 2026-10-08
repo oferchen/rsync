@@ -306,7 +306,6 @@ mod macos_provenance_tests {
     use super::{XattrRole, XattrSendOptions, dest_xattrs_differ};
     use protocol::xattr::{XattrEntry, XattrList};
     use std::fs;
-    use tempfile::tempdir;
 
     /// macOS attaches `com.apple.provenance` to executables and quarantined
     /// files on its own, and each inode receives its own value. Before the fix
@@ -318,7 +317,7 @@ mod macos_provenance_tests {
     /// provenance value alone flips the comparison to "differ".
     #[test]
     fn provenance_is_excluded_from_the_dest_diff_but_real_changes_are_not() {
-        let dir = tempdir().expect("temp dir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("bin");
         fs::write(&dest, "content").expect("write dest");
 

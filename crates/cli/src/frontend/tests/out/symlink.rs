@@ -2,11 +2,10 @@ use super::*;
 use core::client::run_client;
 use std::fs;
 use std::os::unix::fs::symlink;
-use tempfile::tempdir;
 
 #[test]
 fn out_format_renders_symlink_target_placeholder() {
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     fs::create_dir(&source_dir).expect("create src dir");
     let file = source_dir.join("file.txt");
@@ -45,7 +44,7 @@ fn out_format_renders_symlink_target_placeholder() {
 
 #[test]
 fn out_format_renders_combined_name_and_target_placeholder() {
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let source_dir = tmp.path().join("src");
     fs::create_dir(&source_dir).expect("create src dir");
     let file = source_dir.join("file.txt");

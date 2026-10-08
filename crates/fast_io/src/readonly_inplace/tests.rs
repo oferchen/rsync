@@ -24,7 +24,7 @@ fn plant_readonly(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
 /// abort path can strand it at 0600. upstream: receiver.c:213-254.
 #[test]
 fn a_read_only_file_is_writable_and_its_mode_is_restored_on_return() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = plant_readonly(dir.path(), "basis.bin", b"old");
 
     let mut file =
@@ -47,7 +47,7 @@ fn a_read_only_file_is_writable_and_its_mode_is_restored_on_return() {
 /// and would risk dropping a special bit. upstream: receiver.c:237-243.
 #[test]
 fn an_owner_writable_file_is_refused_instead_of_chmodded() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("writable.bin");
     fs::write(&path, b"old").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
@@ -64,7 +64,7 @@ fn an_owner_writable_file_is_refused_instead_of_chmodded() {
 /// upstream: receiver.c:229.
 #[test]
 fn a_symlink_at_the_leaf_is_refused_without_touching_its_target() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let target = plant_readonly(dir.path(), "target.bin", b"old");
     let link = dir.path().join("link.bin");
     std::os::unix::fs::symlink(&target, &link).unwrap();
@@ -82,7 +82,7 @@ fn a_symlink_at_the_leaf_is_refused_without_touching_its_target() {
 /// upstream: receiver.c:232-235.
 #[test]
 fn a_non_regular_target_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let subdir = dir.path().join("subdir");
     fs::create_dir(&subdir).unwrap();
     fs::set_permissions(&subdir, fs::Permissions::from_mode(0o555)).unwrap();
@@ -98,7 +98,7 @@ fn a_non_regular_target_is_refused() {
 /// still truncate through the recovery.
 #[test]
 fn the_callers_truncate_choice_is_honoured() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = plant_readonly(dir.path(), "basis.bin", b"a longer old payload");
 
     let mut file =
@@ -121,7 +121,7 @@ fn the_callers_truncate_choice_is_honoured() {
 /// upstream: receiver.c:227 passes `one_inplace` into `secure_recv_open()`.
 #[test]
 fn the_operator_walk_resolution_reaches_the_recovery() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let real = dir.path().join("real");
     fs::create_dir(&real).unwrap();
     let target = plant_readonly(&real, "leaf.bin", b"old");

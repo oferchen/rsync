@@ -23,7 +23,6 @@ use std::time::Duration;
 
 use core::client::{ClientConfig, ClientError, run_client};
 use core::exit_code::ExitCode;
-use tempfile::tempdir;
 use test_timeout::{SSH_TIMEOUT, run_with_timeout};
 
 /// Maximum number of retry attempts for flaky SSH connections.
@@ -143,7 +142,7 @@ fn ssh_localhost_single_file_transfer() {
             return;
         }
 
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let src_dir = temp.path().join("src");
         let dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");
@@ -197,7 +196,7 @@ fn ssh_localhost_pull_transfer() {
             return;
         }
 
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let src_dir = temp.path().join("src");
         let dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");
@@ -251,7 +250,7 @@ fn ssh_localhost_recursive_transfer() {
             return;
         }
 
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let src_dir = temp.path().join("src");
         let dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");
@@ -302,7 +301,7 @@ fn ssh_localhost_recursive_transfer() {
 #[test]
 fn ssh_command_not_found_exit_code() {
     run_with_timeout(SSH_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let src_dir = temp.path().join("src");
         let dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");
@@ -347,7 +346,7 @@ fn ssh_command_not_found_exit_code() {
 #[test]
 fn ssh_connection_failure_exit_code() {
     run_with_timeout(SSH_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let src_dir = temp.path().join("src");
         let _dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");
@@ -399,7 +398,7 @@ fn ssh_rsync_path_not_found() {
             return;
         }
 
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let src_dir = temp.path().join("src");
         let dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");
@@ -456,7 +455,7 @@ fn ssh_rsync_path_not_found() {
 #[test]
 fn ssh_stderr_not_reappended_to_error_message() {
     run_with_timeout(SSH_TIMEOUT, || {
-        let temp = tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let src_dir = temp.path().join("src");
         let dst_dir = temp.path().join("dst");
         fs::create_dir_all(&src_dir).expect("create src dir");

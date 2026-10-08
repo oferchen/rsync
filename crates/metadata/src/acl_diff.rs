@@ -156,7 +156,6 @@ mod tests {
 mod integration_tests {
     use super::*;
     use protocol::acl::IdAccess;
-    use tempfile::tempdir;
 
     /// Reads a path's real access ACL and condenses it exactly as the sender
     /// would before shipping it (`strip_perms_for_send`), yielding the
@@ -171,7 +170,7 @@ mod integration_tests {
     /// light the `a` column. This is the identical-ACL false-positive guard.
     #[test]
     fn identical_named_user_acl_does_not_differ() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("f");
         std::fs::write(&file, b"x").expect("write");
         let mode = 0o644;
@@ -197,7 +196,7 @@ mod integration_tests {
     /// the same via `equal_enough`.
     #[test]
     fn trivial_acl_does_not_differ() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("f");
         std::fs::write(&file, b"x").expect("write");
         let mode = 0o644;
@@ -216,7 +215,7 @@ mod integration_tests {
     /// ACL differs and the `a` column lights.
     #[test]
     fn extra_named_user_on_sender_differs() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let file = dir.path().join("f");
         std::fs::write(&file, b"x").expect("write");
         let mode = 0o644;
@@ -243,7 +242,7 @@ mod integration_tests {
     /// depending on setting a (necessarily complete) POSIX default ACL on disk.
     #[test]
     fn default_acl_on_dir() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let sub = dir.path().join("d");
         std::fs::create_dir(&sub).expect("mkdir");
         let mode = 0o755;

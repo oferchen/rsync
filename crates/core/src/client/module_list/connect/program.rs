@@ -1044,7 +1044,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dropping_the_stream_lets_the_connect_program_finish_after_eof() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let marker = dir.path().join("post.out");
 
         let config = ConnectProgramConfig::new(
@@ -1076,7 +1076,7 @@ mod tests {
     fn finishing_the_split_guard_waits_for_the_connect_program() {
         use std::process::Command;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let marker = dir.path().join("post.out");
 
         let mut child = Command::new("sh")

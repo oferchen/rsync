@@ -104,8 +104,9 @@ cargo llvm-cov nextest -p <crate> --all-features
 
 ### Temporary directories
 
-Use `tempfile::TempDir` for all filesystem fixtures. The `test-support` crate provides
-`create_tempdir()` with retry logic for Windows CI antivirus contention.
+Create filesystem fixtures with the `test-support` helpers `create_tempdir()`,
+`create_named_tempfile()` and `create_canonical_tempdir()`. They name every path
+with a `.tmp<pid>-` prefix so concurrent nextest processes cannot collide.
 
 ### Environment isolation
 

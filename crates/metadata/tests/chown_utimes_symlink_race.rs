@@ -44,15 +44,6 @@ use std::path::{Path, PathBuf};
 
 use filetime::{FileTime, set_file_times};
 use metadata::{MetadataOptions, apply_file_metadata_with_options};
-use tempfile::TempDir;
-
-/// `tempdir()` may sit under a symlink prefix on macOS / some CI runners;
-/// canonicalise so the sandbox open succeeds under `RESOLVE_NO_SYMLINKS`.
-fn canonical_tempdir() -> (TempDir, PathBuf) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let canon = fs::canonicalize(dir.path()).expect("canonicalize");
-    (dir, canon)
-}
 
 fn mtime_of(path: &Path) -> FileTime {
     FileTime::from_last_modification_time(&fs::metadata(path).expect("stat"))
@@ -128,7 +119,7 @@ fn plant_ancestor_symlink_trap(root: &Path) -> (PathBuf, PathBuf) {
 /// destination's mtime to the source value.
 #[test]
 fn receiver_utimes_succeeds_on_clean_path() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let source_meta = seed_source(&root);
 
     let destination = root.join("dest");
@@ -161,7 +152,7 @@ fn receiver_utimes_succeeds_on_clean_path() {
 /// fires.
 #[test]
 fn receiver_utimes_refuses_symlinked_parent_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let source_meta = seed_source(&root);
     let (attack_dest, outside_target) = plant_ancestor_symlink_trap(&root);
     let sentinel_mtime_before = mtime_of(&outside_target);
@@ -194,7 +185,7 @@ fn receiver_utimes_refuses_symlinked_parent_component() {
 /// destination owned by the caller.
 #[test]
 fn receiver_chown_succeeds_on_clean_path() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let source_meta = seed_source(&root);
 
     let destination = root.join("dest");
@@ -235,7 +226,7 @@ fn receiver_chown_succeeds_on_clean_path() {
 /// there is nothing left to attempt.
 #[test]
 fn receiver_chown_refuses_symlinked_parent_component() {
-    let (_keep, root) = canonical_tempdir();
+    let (_keep, root) = test_support::create_canonical_tempdir();
     let source_meta = seed_source(&root);
     let (attack_dest, outside_target) = plant_ancestor_symlink_trap(&root);
     let owner_before = fs::symlink_metadata(&outside_target)

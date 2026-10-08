@@ -39,7 +39,7 @@ fn read_fixed_write_fixed_roundtrip() {
         return;
     };
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("fixed_roundtrip.bin");
 
     // Generate test data larger than one buffer.
@@ -103,7 +103,7 @@ fn read_fixed_batch_short_read_at_eof() {
         return;
     };
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("short_read.bin");
 
     // File is 5000 bytes but we ask to read 16384 (4 * 4096).
@@ -147,7 +147,7 @@ fn read_fixed_batch_file_smaller_than_chunk() {
         return;
     };
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("tiny.bin");
 
     let test_data = b"small file content";

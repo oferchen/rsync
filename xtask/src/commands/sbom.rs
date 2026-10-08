@@ -199,7 +199,6 @@ mod tests {
     use super::*;
     use crate::cli::SbomArgs;
     use std::path::{Path, PathBuf};
-    use tempfile::tempdir;
 
     #[test]
     fn from_args_default_configuration() {
@@ -234,7 +233,7 @@ mod tests {
 
     #[test]
     fn execute_generates_sbom_document() {
-        let temp = tempdir().expect("create temp dir");
+        let temp = test_support::create_tempdir();
         let output = temp.path().join("sbom.json");
         execute(
             workspace_root(),
