@@ -358,6 +358,9 @@ fn delete_missing_args_keeps_populated_destination_directory_without_delete() {
         dest_root.join("vanish_dir/inner.txt").is_file(),
         "a populated directory must survive without --delete or --force"
     );
-    assert_eq!(summary.items_deleted(), 0, "nothing may be counted as deleted");
+    assert_eq!(
+        summary.items_deleted(),
+        0,
+        "nothing may be counted as deleted"
+    );
 }
-
