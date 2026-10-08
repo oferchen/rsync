@@ -315,20 +315,24 @@ mod tests {
             Box::new(move || aborted_thread.store(true, Ordering::Release)),
         );
 
-        // Never record progress: the watchdog must latch a timeout and run the
-        // abort action within a generous window (fires at ~150-225ms; 10s
-        // tolerates a heavily loaded/slow runner without a false pass).
+        // Never record progress: the watchdog must run the abort action within
+        // a generous window (fires at ~150-225ms; 10s tolerates a heavily
+        // loaded/slow runner without a false pass). Wait on the abort, not on
+        // `timed_out()`: the watchdog latches `fired` *before* it runs the
+        // action, so `timed_out()` alone can be observed while the action is
+        // still pending. The Release/Acquire pair through `aborted` makes the
+        // earlier `fired` store visible once the action has run.
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !handle.timed_out() && Instant::now() < deadline {
+        while !aborted.load(Ordering::Acquire) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(
-            handle.timed_out(),
-            "watchdog should latch a timeout on a stall"
-        );
-        assert!(
             aborted.load(Ordering::Acquire),
             "abort action should run on expiry"
+        );
+        assert!(
+            handle.timed_out(),
+            "watchdog must latch the timeout before running the abort action"
         );
 
         let err = handle.timeout_error();
