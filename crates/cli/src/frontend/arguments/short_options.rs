@@ -46,6 +46,14 @@ pub(crate) fn hoist_options_before_operands(
         let token = &rest[index];
 
         if token.as_os_str() == "--" {
+            // clap consumes a `--` that precedes every positional as its own
+            // escape, which would hide the terminator from `extract_operands`
+            // and let `-- -x dst` report `-x` as an unknown option. Doubling
+            // it keeps one copy among the operands, as popt keeps option
+            // processing off for everything after it.
+            if operands.is_empty() {
+                operands.push(token.clone());
+            }
             // Preserve the terminator and everything after it verbatim.
             operands.extend(rest[index..].iter().cloned());
             break;
@@ -659,6 +667,15 @@ mod tests {
         assert_eq!(
             hoist(&["rsync", "src/", "--", "--rsync-path=/bin/rsync"]),
             vec!["rsync", "src/", "--", "--rsync-path=/bin/rsync"]
+        );
+    }
+
+    #[test]
+    fn hoist_keeps_a_leading_terminator_visible_to_operand_extraction() {
+        // clap eats a `--` that precedes every positional, so it is doubled.
+        assert_eq!(
+            hoist(&["rsync", "-a", "--", "-x", "dst/"]),
+            vec!["rsync", "-a", "--", "--", "-x", "dst/"]
         );
     }
 
