@@ -134,6 +134,8 @@ pub(super) fn process_remaining_tokens<R: Read>(
                         )
                     })?;
 
+                // The caller fills `data_read`: it alone holds the pre-sum-head
+                // counter snapshot.
                 return Ok(StreamingResult {
                     total_bytes,
                     literal_bytes,
@@ -141,6 +143,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     expected_checksum,
                     checksum_len,
                     is_inplace,
+                    data_read: 0,
                 });
             }
             DeltaToken::Literal(literal_data) => {

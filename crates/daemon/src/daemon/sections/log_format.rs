@@ -82,6 +82,8 @@ struct LogFormatContext<'a> {
     mtime: &'a str,
     /// Nine-character permission string without the type char (`%B`).
     permissions: &'a str,
+    /// Hex whole-file checksum, or its width in spaces (`%C`).
+    checksum: &'a str,
 }
 
 /// Upper bound on the modifier run scanned before an escape letter.
@@ -366,6 +368,7 @@ fn expand_log_format(format: &str, ctx: &LogFormatContext<'_>) -> String {
             },
             'M' => pad_field(&mut result, ctx.mtime, &spec),
             'B' => pad_field(&mut result, ctx.permissions, &spec),
+            'C' => pad_field(&mut result, ctx.checksum, &spec),
             '%' => result.push('%'),
             _ => result.push_str(&raw),
         }
@@ -518,6 +521,7 @@ mod log_format_tests {
             gid: Some(1000),
             mtime: "2026/02/21-14:30:00",
             permissions: "rw-r--r--",
+            checksum: "0123456789abcdef0123456789abcdef",
         }
     }
 
@@ -953,6 +957,19 @@ mod log_format_tests {
         assert_eq!(expand_log_format("[%L]", &ctx), "[]");
         assert_eq!(expand_log_format("[%3L]", &ctx), "[       ]");
         assert_eq!(expand_log_format("[%-L]", &ctx), "[    ]");
+    }
+
+    #[test]
+    fn checksum_escape_renders_the_row_field_with_width() {
+        let ctx = sample_context();
+        assert_eq!(
+            expand_log_format("[%C]", &ctx),
+            "[0123456789abcdef0123456789abcdef]"
+        );
+        assert_eq!(
+            expand_log_format("[%34C]", &ctx),
+            "[  0123456789abcdef0123456789abcdef]"
+        );
     }
 
     #[test]

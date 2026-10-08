@@ -606,3 +606,172 @@ fn push_of_foreign_group_file_logs_default_gid() {
         "expected `{want}`, got:\n{text}"
     );
 }
+
+/// Runs one transfer against a fresh daemon whose module logs `format`
+/// (which must start `%o|%f|`), and returns the `op` lines it wrote.
+///
+/// `prepare` seeds the module before the daemon starts; `push` selects the
+/// direction. The source tree is `d/f` holding `0123456789`.
+fn module_log_lines(
+    format: &str,
+    client_args: &[&str],
+    push: bool,
+    prepare: impl FnOnce(&Path, &Path),
+) -> Option<Vec<String>> {
+    let port = free_port()?;
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    let module_dir = root.join("mod");
+    let src = root.join("src");
+    let dest = root.join("dest");
+    for dir in [&module_dir, &src.join("d"), &dest] {
+        fs::create_dir_all(dir).expect("mkdir");
+    }
+    fs::write(src.join("d/f"), b"0123456789").expect("src file");
+    prepare(&src, &module_dir);
+
+    let log = root.join("daemon.log");
+    let conf = format!(
+        "port = {port}\n\
+         use chroot = no\n\
+         log file = {log}\n\
+         reverse lookup = no\n\
+         \n\
+         [m]\n\
+         \tpath = {module}\n\
+         \tread only = no\n\
+         \ttransfer logging = yes\n\
+         \tlog format = {format}\n",
+        log = log.display(),
+        module = module_dir.display(),
+    );
+    fs::write(root.join("rsyncd.conf"), conf).expect("config");
+    let oc = oc_binary();
+    let daemon = spawn_daemon(&oc, &root.join("rsyncd.conf"), port);
+
+    let url = format!("rsync://127.0.0.1:{port}/m/");
+    let local = format!("{}/", if push { &src } else { &dest }.display());
+    let (from, to, op) = if push {
+        (local.as_str(), url.as_str(), "recv|")
+    } else {
+        (url.as_str(), local.as_str(), "send|")
+    };
+    let status = Command::new(&oc)
+        .args(client_args)
+        .args([from, to])
+        .status()
+        .expect("run client");
+    wait_for_lines(&log, &format!("{op}d/f|"), 1);
+    drop(daemon);
+    assert!(status.success(), "transfer {client_args:?} failed");
+    let text = fs::read_to_string(&log).expect("read log");
+    Some(transfer_lines(&text, op))
+}
+
+fn assert_has_line(lines: &[String], want: &str) {
+    assert!(
+        lines.iter().any(|l| l == want),
+        "expected `{want}`, got:\n{}",
+        lines.join("\n")
+    );
+}
+
+/// Upstream oracle (rsync 3.5.1 daemon, lxhost): the whole-file sum of
+/// `0123456789` under the negotiated xxh128, printed byte-reversed by
+/// `sum_as_hex()` because `canonical_checksum(CSUM_XXH3_128)` is 1.
+const XXH128_HEX: &str = "e353667619ec664b49655fc9692165fb";
+/// The same content under `--checksum-choice=md5`, printed in digest order.
+const MD5_HEX: &str = "781e5e245d69b566979b86e28d23f2c7";
+const CHECKSUM_FORMAT: &str = "%o|%f|%C|%i";
+
+/// `%C` shows the transfer sum for a transferred regular file and
+/// `csum_len * 2` spaces for a directory (log.c `case 'C'`).
+#[test]
+fn push_logs_the_transfer_checksum_for_percent_c() {
+    let Some(lines) = module_log_lines(CHECKSUM_FORMAT, &["-r"], true, |_, _| {}) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_has_line(&lines, &format!("recv|d/f|{XXH128_HEX}|>f+++++++++"));
+    assert_has_line(&lines, &format!("recv|d|{}|cd+++++++++", " ".repeat(32)));
+}
+
+/// The digest follows the negotiated checksum: MD5 prints in digest order.
+#[test]
+fn push_with_md5_logs_the_md5_sum_for_percent_c() {
+    let Some(lines) = module_log_lines(
+        CHECKSUM_FORMAT,
+        &["-r", "--checksum-choice=md5"],
+        true,
+        |_, _| {},
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_has_line(&lines, &format!("recv|d/f|{MD5_HEX}|>f+++++++++"));
+}
+
+/// Under `--checksum` a regular file shows its file-list sum even when no data
+/// moves: a permissions-only change still logs the digest.
+#[test]
+fn push_with_checksum_logs_the_file_list_sum_for_an_untransferred_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(lines) = module_log_lines(CHECKSUM_FORMAT, &["-rpc"], true, |src, module| {
+        fs::create_dir_all(module.join("d")).expect("module d");
+        fs::copy(src.join("d/f"), module.join("d/f")).expect("seed f");
+        fs::set_permissions(src.join("d/f"), fs::Permissions::from_mode(0o644)).expect("chmod");
+        fs::set_permissions(module.join("d/f"), fs::Permissions::from_mode(0o600)).expect("chmod");
+    }) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_has_line(&lines, &format!("recv|d/f|{XXH128_HEX}|.f...p....."));
+}
+
+/// A daemon sender logs the sum it computed while sending.
+#[test]
+fn pull_logs_the_sent_checksum_for_percent_c() {
+    let Some(lines) = module_log_lines(CHECKSUM_FORMAT, &["-r"], false, |src, module| {
+        fs::create_dir_all(module.join("d")).expect("module d");
+        fs::copy(src.join("d/f"), module.join("d/f")).expect("seed f");
+    }) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_has_line(&lines, &format!("send|d/f|{XXH128_HEX}|<f+++++++++"));
+}
+
+const BYTES_FORMAT: &str = "%o|%f|%b|%c|%i";
+
+/// A pushed new file logs the payload the daemon receiver read for it and no
+/// checksum bytes; a directory logs neither.
+///
+/// Upstream oracle (rsync 3.5.1 daemon, lxhost): `%b` = sum head (16) +
+/// literal token (4 + 10) + end token (4) + xxh128 file sum (16); `%c` counts
+/// the receiver's writes in the window, of which there are none.
+#[test]
+fn push_logs_received_bytes_for_percent_b_and_c() {
+    let Some(lines) = module_log_lines(BYTES_FORMAT, &["-r"], true, |_, _| {}) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_has_line(&lines, "recv|d/f|50|0|>f+++++++++");
+    assert_has_line(&lines, "recv|d|0|0|cd+++++++++");
+}
+
+/// A daemon sender logs what it wrote (the echoed ndx and iflags, sum head,
+/// tokens and file sum) as `%b`, and the sum head it read as `%c`.
+///
+/// Upstream oracle (rsync 3.5.1 daemon, lxhost): `%b` = 3 + 50, `%c` = 16.
+#[test]
+fn pull_logs_sent_and_checksum_bytes_for_percent_b_and_c() {
+    let Some(lines) = module_log_lines(BYTES_FORMAT, &["-r"], false, |src, module| {
+        fs::create_dir_all(module.join("d")).expect("module d");
+        fs::copy(src.join("d/f"), module.join("d/f")).expect("seed f");
+    }) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_has_line(&lines, "send|d/f|53|16|<f+++++++++");
+}

@@ -48,6 +48,10 @@ pub struct StreamingResult {
     /// upstream `keptstr` wording on a verification failure (an in-place update
     /// is "retained", not "discarded").
     pub is_inplace: bool,
+    /// Payload bytes read for this file: sum head, delta tokens and file sum.
+    ///
+    /// upstream: log.c `case 'b'` - `total_data_read - initial_data_read`.
+    pub data_read: u64,
 }
 
 /// Outcome of reading one pipelined response.
@@ -139,6 +143,7 @@ pub fn process_file_response_streaming<R: Read>(
     let updating_basis =
         header.use_inplace && header.basis_path.as_deref() == Some(header.file_path.as_path());
     let is_inplace = header.use_inplace;
+    let data_read_start = header.data_read_start;
 
     // upstream: xattrs.c:744-755 - apply abbreviated values from sender to xattr list
     let xattr_list = if !header.xattr_values.is_empty() {
@@ -221,7 +226,7 @@ pub fn process_file_response_streaming<R: Read>(
     // Try single-chunk coalescing: if the first token is a literal and the
     // next token is end-of-file, send one WholeFile message instead of
     // Begin + Chunk + Commit (3 sends -> 1).
-    let result = match first_delta {
+    let mut result = match first_delta {
         DeltaToken::Literal(literal_data) if basis_map.is_none() => {
             let buf = literal_to_buf(literal_data, reader, buf_return_rx)?;
             let len = buf.len();
@@ -259,6 +264,7 @@ pub fn process_file_response_streaming<R: Read>(
                     expected_checksum,
                     checksum_len,
                     is_inplace,
+                    data_read: reader.data_read() - data_read_start,
                 }));
             }
 
@@ -316,5 +322,6 @@ pub fn process_file_response_streaming<R: Read>(
             )?
         }
     };
+    result.data_read = reader.data_read() - data_read_start;
     Ok(ResponseProgress::Received(result))
 }

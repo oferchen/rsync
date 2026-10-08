@@ -30,6 +30,9 @@ pub struct ServerReader<R: Read> {
     /// Sender acceptance of `MSG_BLOCK_STATS`, applied to the
     /// `MultiplexReader` on multiplex activation. upstream: io.c:1721-1732.
     pending_block_stats_accept: bool,
+    /// Payload bytes delivered to the caller, in every mode.
+    /// upstream: io.c:2166,2185 `total_data_read` in `read_buf()`.
+    data_read: u64,
 }
 
 #[allow(private_interfaces)]
@@ -53,7 +56,13 @@ impl<R: Read> ServerReader<R> {
             pending_io_timeout_adoption: None,
             pending_deleted_render: None,
             pending_block_stats_accept: false,
+            data_read: 0,
         }
+    }
+
+    /// Payload bytes read so far (upstream `total_data_read`).
+    pub const fn data_read(&self) -> u64 {
+        self.data_read
     }
 
     /// Enables client-side rendering of received `MSG_DELETED` frames.
@@ -165,6 +174,7 @@ impl<R: Read> ServerReader<R> {
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
                     pending_block_stats_accept: false,
+                    data_read: self.data_read,
                 })
             }
             ServerReaderInner::Multiplex(_) => Err(io::Error::new(
@@ -205,6 +215,7 @@ impl<R: Read> ServerReader<R> {
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
                     pending_block_stats_accept: false,
+                    data_read: self.data_read,
                 })
             }
             ServerReaderInner::Plain(_) => Err(io::Error::new(
@@ -237,7 +248,13 @@ impl<R: Read> ServerReader<R> {
     /// Callers should fall back to `Read::read_exact()` when this returns `None`.
     pub fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
         match &mut self.inner {
-            ServerReaderInner::Multiplex(mux) => mux.try_borrow_exact(len),
+            ServerReaderInner::Multiplex(mux) => {
+                let borrowed = mux.try_borrow_exact(len)?;
+                if borrowed.is_some() {
+                    self.data_read += len as u64;
+                }
+                Ok(borrowed)
+            }
             _ => Ok(None),
         }
     }
@@ -391,10 +408,12 @@ impl<R: Read> super::BufferedInputHint for ServerReader<R> {
 
 impl<R: Read> Read for ServerReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match &mut self.inner {
+        let n = match &mut self.inner {
             ServerReaderInner::Plain(r) => r.read(buf),
             ServerReaderInner::Multiplex(r) => r.read(buf),
             ServerReaderInner::Compressed(r) => r.read(buf),
-        }
+        }?;
+        self.data_read += n as u64;
+        Ok(n)
     }
 }

@@ -123,6 +123,18 @@ impl<W: Write> ServerWriter<W> {
         matches!(self, Self::Multiplex(_) | Self::Compressed(_))
     }
 
+    /// Payload bytes written for the wire so far (upstream `total_data_written`).
+    ///
+    /// Counted by the multiplex layer, which is always active once file data
+    /// flows on a server; a plain writer reports 0.
+    pub fn data_written(&self) -> u64 {
+        match self {
+            Self::Multiplex(mux) => mux.data_written(),
+            Self::Compressed(compressed) => compressed.inner_ref().data_written(),
+            Self::Plain(_) | Self::Taken => 0,
+        }
+    }
+
     /// Activates multiplex mode in place (mirrors upstream `io_start_multiplex_out`).
     ///
     /// Used when the generator needs to activate multiplex AFTER sending
