@@ -17,6 +17,12 @@ pub(crate) fn render_module_list<W: Write, E: Write>(
         writeln!(stderr, "@WARNING: {warning}")?;
     }
 
+    // upstream: clientserver.c:434-435 prints the MOTD and every module row
+    // with rprintf(FINFO), which log.c:344-345 drops under --quiet.
+    if logging::finfo_suppressed() {
+        return Ok(());
+    }
+
     if !suppress_motd {
         for line in list.motd_lines() {
             writeln!(stdout, "{line}")?;
