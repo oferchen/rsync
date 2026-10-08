@@ -25,9 +25,12 @@ use super::super::{CompressedToken, MAX_DATA_COUNT};
 /// upstream token.c:862-865 (r_init state just resets rx_token).
 ///
 /// The decoder processes one DEFLATED_DATA block at a time, matching
-/// upstream's state machine (r_idle -> r_inflating -> r_idle). When all
-/// compressed input is consumed and the output buffer is not full, the
-/// decoder returns to idle to read the next wire flag.
+/// upstream's state machine (r_idle -> r_inflating -> r_idle). Each step
+/// decompresses into a fixed `out_buffer_size` buffer and that step's output is
+/// emitted as one literal before the next step runs, so memory never depends
+/// on the compression ratio. When all compressed input is consumed and the
+/// output buffer is not full, the decoder returns to idle to read the next
+/// wire flag.
 ///
 /// upstream: token.c:recv_zstd_token() - DCtx created once (line 844),
 /// never reset between files (line 862-865 only resets rx_token)
@@ -55,6 +58,9 @@ struct ZstdDeflate {
     output_buf: Vec<u8>,
     /// Reusable buffer for compressed input data read from the wire.
     compressed_input_buf: Vec<u8>,
+    /// Bytes of `compressed_input_buf` already fed to the decoder; carried
+    /// across steps like upstream's `zstd_in_buff.pos`.
+    input_pos: usize,
 }
 
 impl DeflateSink for ZstdDeflate {
@@ -63,8 +69,10 @@ impl DeflateSink for ZstdDeflate {
     }
 
     fn begin_block(&mut self, payload: &[u8]) {
+        // upstream: token.c:875-878 - read_buf into cbuf, zstd_in_buff.pos = 0
         self.compressed_input_buf.clear();
         self.compressed_input_buf.extend_from_slice(payload);
+        self.input_pos = 0;
     }
 
     fn push_block(&mut self, payload: &[u8]) -> io::Result<()> {
@@ -73,52 +81,22 @@ impl DeflateSink for ZstdDeflate {
         Ok(())
     }
 
-    fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
-        // upstream: token.c lines 892-909 (r_inflating state)
-        let mut input_pos = 0;
-
-        while input_pos < self.compressed_input_buf.len() {
-            let mut in_buf =
-                zstd::stream::raw::InBuffer::around(&self.compressed_input_buf[input_pos..]);
-            let mut out_buf = zstd::stream::raw::OutBuffer::around(&mut self.output_buf);
-
-            self.decoder.run(&mut in_buf, &mut out_buf)?;
-            input_pos += in_buf.pos();
-            let produced = out_buf.pos();
-
-            if produced > 0 {
-                output.extend_from_slice(&self.output_buf[..produced]);
-            }
-
-            // upstream: token.c lines 908-909
-            // If input is fully consumed and output buffer not full,
-            // transition back to idle (read next flag).
-            if input_pos >= self.compressed_input_buf.len() && produced < self.output_buf.len() {
-                break;
-            }
-        }
-
-        // Drain any remaining buffered output from the zstd decoder.
-        // After all compressed input is consumed, the decoder may still
-        // hold decompressed data internally when the output buffer was
-        // full on the last iteration. Flush by feeding empty input.
-        // upstream: token.c lines 892-909 - inflate loop continues until
-        // output buffer is not full, indicating decoder is drained.
-        loop {
-            let mut in_buf = zstd::stream::raw::InBuffer::around(&[]);
-            let mut out_buf = zstd::stream::raw::OutBuffer::around(&mut self.output_buf);
-            self.decoder.run(&mut in_buf, &mut out_buf)?;
-            let produced = out_buf.pos();
-            if produced == 0 {
-                break;
-            }
-            output.extend_from_slice(&self.output_buf[..produced]);
-        }
-
-        Ok(())
+    fn decompress_step(&mut self, output: &mut Vec<u8>) -> io::Result<bool> {
+        // upstream: token.c:895-919 r_inflating - one ZSTD_decompressStream
+        // into the fixed out_buffer_size dbuf; its output is returned before
+        // any more input is decompressed.
+        let mut in_buf =
+            zstd::stream::raw::InBuffer::around(&self.compressed_input_buf[self.input_pos..]);
+        let mut out_buf = zstd::stream::raw::OutBuffer::around(self.output_buf.as_mut_slice());
+        self.decoder.run(&mut in_buf, &mut out_buf)?;
+        self.input_pos += in_buf.pos();
+        let produced = out_buf.pos();
+        output.extend_from_slice(&self.output_buf[..produced]);
+        // upstream: token.c:911-912 - input consumed and output buffer not full
+        // means the block is finished; read the next flag.
+        Ok(self.input_pos == self.compressed_input_buf.len() && produced < self.output_buf.len())
     }
 }
-
 impl ZstdTokenDecoder {
     /// Creates a zstd decoder with a fresh persistent decompression context.
     ///
@@ -129,11 +107,12 @@ impl ZstdTokenDecoder {
         // upstream: token.c line 851 - out_buffer_size = ZSTD_DStreamOutSize() * 2
         let out_size = zstd::zstd_safe::DCtx::out_size() * 2;
         Ok(Self {
-            core: TokenDecodeCore::new(true),
+            core: TokenDecodeCore::new(false),
             deflate: ZstdDeflate {
                 decoder,
                 output_buf: vec![0u8; out_size],
                 compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT),
+                input_pos: 0,
             },
         })
     }
@@ -153,6 +132,7 @@ impl ZstdTokenDecoder {
     pub(in crate::wire::compressed_token) fn reset(&mut self) {
         self.core.reset();
         self.deflate.compressed_input_buf.clear();
+        self.deflate.input_pos = 0;
         // Keep initialized=true - the DCtx is still valid from the same stream
     }
 
