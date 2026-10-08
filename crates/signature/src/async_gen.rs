@@ -397,7 +397,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn create_test_file(size: usize) -> io::Result<NamedTempFile> {
-        let mut file = NamedTempFile::new()?;
+        let mut file = test_support::create_named_tempfile();
         let data = vec![0xAB; size];
         file.write_all(&data)?;
         file.flush()?;

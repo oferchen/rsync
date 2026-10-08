@@ -3798,6 +3798,7 @@ dependencies = [
  "protocol",
  "rayon",
  "tempfile",
+ "test-support",
  "thiserror",
  "tracing",
 ]

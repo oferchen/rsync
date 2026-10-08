@@ -35,6 +35,7 @@ tracing = ["dep:tracing"]
 parallel = []
 
 [dev-dependencies]
+test-support = { path = "../test-support" }
 tempfile = { workspace = true }
 criterion = { workspace = true }
 
