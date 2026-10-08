@@ -18,7 +18,8 @@ use rsync_io::ssh::SshConnection;
 
 use super::super::super::config::ClientConfig;
 use super::super::super::error::{
-    ClientError, invalid_argument_error, invalid_argument_error_typed_with_role, remote_exit_error,
+    ClientError, connection_unexpectedly_closed_error, invalid_argument_error,
+    invalid_argument_error_typed_with_role, remote_exit_error,
 };
 use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::{ClientEvent, ClientSummary};
@@ -368,6 +369,13 @@ fn run_server_over_ssh_connection(
                 ExitCode::StartClient
             };
             let child_overrides = child_exit.as_i32() > base.as_i32();
+            if base == ExitCode::StreamIo {
+                // upstream: io.c:298-303 - whine_about_eof() prints its line
+                // before exit_cleanup() picks the worse code, and nothing is
+                // counted before buffered input starts (main.c:1307-1308).
+                let exit = if child_overrides { child_exit } else { base };
+                return Err(connection_unexpectedly_closed_error(0, exit, local_role));
+            }
             if child_overrides {
                 // upstream: log.c:912 log_exit() - when the remote/child's raw
                 // exit status outranks the local base code (cleanup.c:150-152),
@@ -376,15 +384,10 @@ fn run_server_over_ssh_connection(
                 // (log.c:903-905), not the EOF whine text.
                 return Err(remote_exit_error(child_exit, local_role));
             }
-            let detail = if base == ExitCode::StreamIo {
-                // upstream: io.c:246-250 - the EOF whine omits the underlying
-                // error and reports the byte count received so far.
-                "connection unexpectedly closed (0 bytes received so far)".to_string()
-            } else {
-                format!("handshake failed: {e}")
-            };
             return Err(invalid_argument_error_typed_with_role(
-                &detail, base, local_role,
+                &format!("handshake failed: {e}"),
+                base,
+                local_role,
             ));
         }
     };

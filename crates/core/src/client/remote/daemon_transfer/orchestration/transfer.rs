@@ -14,7 +14,9 @@ use protocol::ProtocolVersion;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
-use crate::client::error::{ClientError, invalid_argument_error, remote_exit_error};
+use crate::client::error::{
+    ClientError, connection_unexpectedly_closed_error, invalid_argument_error, remote_exit_error,
+};
 use crate::client::module_list::{
     DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply, register_shutdown_wake,
 };
@@ -328,26 +330,11 @@ fn map_server_transfer_error(
         );
     }
     // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
-    // before the transfer finished is reported on its own line, then
-    // exit_cleanup(RERR_STREAMIO) names the exit code ("error in rsync
-    // protocol data stream"). It is not a per-file partial transfer.
+    // before the transfer finished is not a per-file partial transfer.
     if error.kind() == std::io::ErrorKind::UnexpectedEof {
-        eprintln!("{}", end_of_stream_whine(bytes_received, role));
-        return remote_exit_error(ExitCode::StreamIo, role);
+        return connection_unexpectedly_closed_error(bytes_received, ExitCode::StreamIo, role);
     }
     invalid_argument_error(&format!("transfer failed: {error}"), 23)
-}
-
-/// The line upstream prints when the peer closes the stream mid-transfer.
-///
-/// upstream: io.c:298-300 - `rprintf(FERROR, RSYNC_NAME ": connection
-/// unexpectedly closed (%s bytes received so far) [%s]\n",
-/// big_num(stats.total_read), who_am_i());`
-fn end_of_stream_whine(bytes_received: u64, role: Role) -> String {
-    format!(
-        "rsync: connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
-        role.as_str()
-    )
 }
 
 /// Walks the source chain of an `io::Error` looking for a
@@ -619,8 +606,8 @@ mod map_server_transfer_error_tests {
             "{rendered}"
         );
         assert_eq!(
-            end_of_stream_whine(112, Role::Receiver),
-            "rsync: connection unexpectedly closed (112 bytes received so far) [receiver]"
+            err.program_line(),
+            Some("connection unexpectedly closed (112 bytes received so far) [receiver]")
         );
     }
 }
