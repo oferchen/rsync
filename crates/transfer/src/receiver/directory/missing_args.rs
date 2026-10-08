@@ -20,6 +20,7 @@ use std::path::Path;
 
 use logging::{debug_log, info_log};
 
+use super::obstacle::is_not_empty;
 use crate::receiver::ReceiverContext;
 
 impl ReceiverContext {
@@ -30,9 +31,11 @@ impl ReceiverContext {
     /// destination path relative to `dest_dir` and remove it if it exists.
     /// Mode-0 entries carry no usable file type bits (the sender writes a
     /// raw zero), so we dispatch on the destination filesystem's symlink
-    /// metadata: directories are removed recursively, everything else
-    /// is unlinked. Missing destinations are a no-op, matching upstream's
-    /// `statret == 0` guard.
+    /// metadata: a directory is emptied first only under `DEL_RECURSE`
+    /// (`--delete` or `--force`), otherwise a populated one is kept with
+    /// `cannot delete non-empty directory: %s`; everything else is unlinked.
+    /// Missing destinations are a no-op, matching upstream's `statret == 0`
+    /// guard.
     ///
     /// All filesystem mutations route through the sandbox helpers
     /// ([`fast_io::unlink_via_sandbox_or_fallback`],
@@ -54,27 +57,38 @@ impl ReceiverContext {
     /// - `generator.c:1360-1366` - `missing_args == 2 && file->mode == 0`
     ///   branch that calls `delete_item()` for an existing destination
     ///   and falls through (no creation) for a missing destination.
-    pub(in crate::receiver) fn process_missing_args_sentinels(
+    /// - `generator.c:1629` - `del_opts` carries `DEL_RECURSE` only for
+    ///   `delete_mode || force_delete`.
+    /// - `delete.c:115-118`, `delete.c:178-181` - without `DEL_RECURSE` a
+    ///   populated directory is `DR_NOT_EMPTY`, reported at `FINFO` and kept.
+    pub(in crate::receiver) fn process_missing_args_sentinels<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
     ) -> io::Result<()> {
         self.process_missing_args_sentinels_in_range(
             0..self.file_list.len(),
             dest_dir,
             #[cfg(unix)]
             sandbox,
+            writer,
         )
     }
 
     /// [`process_missing_args_sentinels`](Self::process_missing_args_sentinels)
     /// restricted to the flat-index range `[range.start, range.end)`. Upstream
     /// handles each sentinel inline in `recv_generator()` (generator.c:1749-1755).
-    pub(in crate::receiver) fn process_missing_args_sentinels_in_range(
+    pub(in crate::receiver) fn process_missing_args_sentinels_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
         range: std::ops::Range<usize>,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
     ) -> io::Result<()> {
         if !self.config.file_selection.delete_missing_args {
             return Ok(());
@@ -119,7 +133,27 @@ impl ReceiverContext {
             let sandbox_ref = sandbox;
 
             let is_dir = metadata.is_dir();
-            let result = if is_dir {
+            let result = if is_dir && !self.del_recurse() {
+                // upstream: generator.c:1749-1753 hands the sentinel to
+                // `delete_item(fname, mode, del_opts)`, and without
+                // `DEL_RECURSE` (generator.c:1629) `delete_dir_contents()`
+                // refuses any populated directory (delete.c:115-118). A plain
+                // rmdir gives the same answer: it fails ENOTEMPTY exactly then.
+                #[cfg(unix)]
+                {
+                    fast_io::unlink_via_sandbox_or_fallback(
+                        sandbox_ref,
+                        dest_dir,
+                        relative,
+                        &target,
+                        fast_io::UnlinkFlags::Dir,
+                    )
+                }
+                #[cfg(not(unix))]
+                {
+                    std::fs::remove_dir(&target)
+                }
+            } else if is_dir {
                 #[cfg(unix)]
                 {
                     fast_io::recursive_unlinkat_via_sandbox_or_fallback(
@@ -163,6 +197,17 @@ impl ReceiverContext {
                     }
                 }
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(err) if is_dir && is_not_empty(&err) => {
+                    // upstream: delete.c:178-181 - FINFO, the directory is
+                    // kept and the exit code is left alone.
+                    let _ = self.emit_info_line(
+                        writer,
+                        &format!(
+                            "cannot delete non-empty directory: {}\n",
+                            relative.display()
+                        ),
+                    );
+                }
                 Err(err) => {
                     debug_log!(
                         Del,

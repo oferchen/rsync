@@ -48,7 +48,7 @@ pub(crate) use iconv::{
 };
 pub(crate) use obstacle::{
     MakeWayFor, clear_device_obstacle, clear_directory_obstacle,
-    device_destination_blocks_regular_file,
+    device_destination_blocks_regular_file, refuse_populated_directory,
 };
 pub(crate) use reference::{
     ReferenceDecision, ReferenceQuery, find_compare_dest_symlink, find_copy_dest_basis,
