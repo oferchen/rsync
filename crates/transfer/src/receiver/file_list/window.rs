@@ -117,11 +117,6 @@ impl FileListWindow {
         self.live().iter()
     }
 
-    /// Iterates the live entries mutably, oldest first.
-    pub(in crate::receiver) fn iter_mut(&mut self) -> std::slice::IterMut<'_, FileEntry> {
-        self.into_iter()
-    }
-
     /// Iterates the live entries with their absolute flat indices.
     pub(in crate::receiver) fn iter_indexed(
         &self,
