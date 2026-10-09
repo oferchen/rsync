@@ -425,6 +425,41 @@ fn permission_bits(mode: u32) -> String {
     String::from_utf8_lossy(&perms).into_owned()
 }
 
+/// Renders a `%f` name: `dir` and `name` joined, cleaned, and stripped of a
+/// leading slash.
+///
+/// upstream: log.c `case 'f'` - `pathjoin(buf2, .., dir, c)` then
+/// `clean_fname(buf2, 0)` and `if (*n == '/') n++`, where `dir` is the
+/// sender's `F_PATHNAME(file)` or the daemon receiver's
+/// `curr_dir + module_dirlen`. `clean_fname()` without flags (util1.c:1134)
+/// squeezes repeated slashes, drops every `.` component that a slash follows
+/// and a trailing slash, and keeps `..` and a final `.`.
+fn log_fname(dir: &str, name: &str) -> String {
+    // upstream: util1.c:1064 pathjoin() - one '/' unless `dir` already ends in one.
+    let mut joined = String::with_capacity(dir.len() + name.len() + 1);
+    joined.push_str(dir);
+    if !joined.ends_with('/') {
+        joined.push('/');
+    }
+    joined.push_str(name);
+
+    let anchored = joined.starts_with('/');
+    let parts: Vec<&str> = joined.split('/').collect();
+    let last = parts.len() - 1;
+    let kept: Vec<&str> = parts
+        .iter()
+        .enumerate()
+        .filter(|&(i, part)| !part.is_empty() && (*part != "." || i == last))
+        .map(|(_, part)| *part)
+        .collect();
+    let cleaned = kept.join("/");
+    if anchored || !cleaned.is_empty() {
+        cleaned
+    } else {
+        ".".to_owned()
+    }
+}
+
 /// Renders an mtime the way log.c `case 'M'` does: `timestring()` with its
 /// space turned into `-`.
 fn format_log_mtime(mtime: i64) -> String {
@@ -996,5 +1031,29 @@ mod log_format_tests {
     #[test]
     fn log_mtime_dashes_the_out_of_range_literal() {
         assert_eq!(format_log_mtime(i64::MAX), "(time-out-of-range)");
+    }
+
+    /// upstream: log.c `case 'f'` - measured against rsync 3.5.1: a daemon
+    /// logs every name below its module-relative directory, and the root
+    /// (an empty directory) adds nothing.
+    #[test]
+    fn log_fname_joins_the_module_relative_directory() {
+        let cases = [
+            ("", "f", "f"),
+            ("", ".", "."),
+            ("", "e/g", "e/g"),
+            ("a", "f", "a/f"),
+            ("a", ".", "a/."),
+            ("a/b", "d/e/g", "a/b/d/e/g"),
+            ("a/ex", "xd/old", "a/ex/xd/old"),
+            ("p/sub", "g", "p/sub/g"),
+            ("a/", "f", "a/f"),
+            ("a/./b", "f", "a/b/f"),
+            ("a//b", "./f", "a/b/f"),
+            ("a", "../f", "a/../f"),
+        ];
+        for (dir, name, expected) in cases {
+            assert_eq!(log_fname(dir, name), expected, "dir={dir:?} name={name:?}");
+        }
     }
 }

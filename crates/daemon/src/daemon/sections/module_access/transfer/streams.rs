@@ -422,6 +422,7 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             (None, Some(target)) => Some((" -> ", target.as_ref())),
             (None, None) => None,
         };
+        let path = log_fname(&row.dir.to_string_lossy(), &filename);
         let mtime = format_log_mtime(row.mtime);
         let permissions = permission_bits(row.mode);
         let log_ctx = LogFormatContext {
@@ -430,7 +431,7 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             remote_addr: &self.remote_addr,
             module_name: &self.module_name,
             username: &self.username,
-            filename: &filename,
+            filename: &path,
             file_length: row.size,
             pid: self.pid,
             module_path: &self.module_path,
