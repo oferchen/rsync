@@ -30,6 +30,9 @@ pub struct ServerReader<R: Read> {
     /// Sender acceptance of `MSG_BLOCK_STATS`, applied to the
     /// `MultiplexReader` on multiplex activation. upstream: io.c:1721-1732.
     pending_block_stats_accept: bool,
+    /// Daemon-receiver routing of peer log frames, applied to the
+    /// `MultiplexReader` on multiplex activation. upstream: log.c:292-301.
+    pending_forward_peer_log: bool,
     /// Payload bytes delivered to the caller, in every mode.
     /// upstream: io.c:2166,2185 `total_data_read` in `read_buf()`.
     data_read: u64,
@@ -56,6 +59,7 @@ impl<R: Read> ServerReader<R> {
             pending_io_timeout_adoption: None,
             pending_deleted_render: None,
             pending_block_stats_accept: false,
+            pending_forward_peer_log: false,
             data_read: 0,
         }
     }
@@ -88,6 +92,22 @@ impl<R: Read> ServerReader<R> {
             ServerReaderInner::Multiplex(mux) => mux.accept_block_stats(),
             ServerReaderInner::Compressed(compressed) => compressed.get_mut().accept_block_stats(),
             ServerReaderInner::Plain(_) => self.pending_block_stats_accept = true,
+        }
+    }
+
+    /// Routes a peer's `MSG_INFO`/`MSG_ERROR`/`MSG_ERROR_XFER`/`MSG_WARNING`
+    /// frames to the daemon's log channel once multiplexing is active.
+    ///
+    /// Called only by a daemon's receiver; every other reader renders those
+    /// frames on its own stdout/stderr.
+    ///
+    /// upstream: log.c:292-301 - the receiver's `rwrite()` passes the bytes to
+    /// its generator, whose `rwrite()` logs them (log.c:312-330).
+    pub(crate) fn forward_peer_log(&mut self) {
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.forward_peer_log(),
+            ServerReaderInner::Compressed(compressed) => compressed.get_mut().forward_peer_log(),
+            ServerReaderInner::Plain(_) => self.pending_forward_peer_log = true,
         }
     }
 
@@ -168,12 +188,16 @@ impl<R: Read> ServerReader<R> {
                 if self.pending_block_stats_accept {
                     mux.accept_block_stats();
                 }
+                if self.pending_forward_peer_log {
+                    mux.forward_peer_log();
+                }
                 Ok(Self {
                     inner: ServerReaderInner::Multiplex(mux),
                     pending_batch_recorder: None,
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
                     pending_block_stats_accept: false,
+                    pending_forward_peer_log: false,
                     data_read: self.data_read,
                 })
             }
@@ -215,6 +239,7 @@ impl<R: Read> ServerReader<R> {
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
                     pending_block_stats_accept: false,
+                    pending_forward_peer_log: false,
                     data_read: self.data_read,
                 })
             }
