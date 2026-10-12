@@ -445,7 +445,7 @@ jobs:
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-nextest
 
@@ -489,7 +489,7 @@ jobs:
 
       - name: Upload build artifacts
         if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-linux-${{ matrix.toolchain }}
           path: |
@@ -570,7 +570,7 @@ jobs:
           key: linux-quic
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-nextest
 
@@ -686,7 +686,7 @@ jobs:
 
       - name: Upload build artifacts
         if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-windows-${{ matrix.toolchain }}
           path: |
@@ -1011,7 +1011,7 @@ jobs:
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-nextest
 
@@ -1075,7 +1075,7 @@ jobs:
 
       - name: Upload build artifacts
         if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-macos-${{ matrix.toolchain }}
           path: |
@@ -1156,7 +1156,7 @@ jobs:
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-nextest
 
@@ -1277,7 +1277,7 @@ jobs:
 
       - name: Install cargo-nextest (Unix)
         if: runner.os != 'Windows'
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-nextest
 
