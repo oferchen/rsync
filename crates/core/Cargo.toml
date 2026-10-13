@@ -108,8 +108,9 @@ async-ssh = ["dep:tokio", "rsync_io/async-ssh"]
 # Native QUIC daemon transport (oc extension, off by default). Makes the
 # `Transport::Quic` selection representable on a daemon target and pulls in the
 # `rsync_io::quic` primitive it dials in a follow-up. Default builds are
-# unaffected. Design: docs/design/quic-transport-policy.md.
-quic = ["rsync_io/quic"]
+# unaffected. It also turns on the `test-support` cert helpers the QUIC connect
+# tests mint their fixtures with. Design: docs/design/quic-transport-policy.md.
+quic = ["rsync_io/quic", "test-support/quic"]
 
 # systemd sd-notify integration
 sd-notify = []

@@ -86,11 +86,7 @@ pub use error::{
 };
 pub use quinn_proto::{ConnectError, ConnectionError, TransportError, TransportErrorCode, VarInt};
 
-pub use trust::{
-    AcceptNewVerifier, ClientAuth, Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier,
-    TrustPolicy, default_known_hosts_path, load_cert_chain_and_key, load_private_ca,
-    private_ca_file, resolve, system_roots, tofu, tofu_file,
-};
+pub use trust::{ClientAuth, load_cert_chain_and_key, load_private_ca, private_ca_file, resolve};
 
 /// ALPN protocol identifier advertised on every QUIC connection.
 pub const ALPN_RSYNC: &[u8] = b"rsync";
@@ -743,27 +739,20 @@ impl std::fmt::Debug for QuicAcceptor {
 ///
 /// The connector's connect path is identical for every variant - the trust
 /// source only shapes the rustls [`rustls::ClientConfig`] the handshake runs
-/// against. This is the seam the client-verification ladder (policy B) plugs
-/// into: `--quic-ca` supplies [`QuicTrust::Roots`] built from a private CA
-/// bundle, system-root verification supplies [`QuicTrust::Roots`] built from
-/// the platform store, and TOFU `quic_known_hosts` supplies a
-/// [`QuicTrust::Verifier`] that pins the server's SPKI. Tests and the
-/// exact-pin escape hatch use [`QuicTrust::Pinned`].
+/// against. The client connect path supplies [`QuicTrust::Roots`] built from
+/// the `--quic-ca` bundle (see [`resolve`]); there is no default trust source.
+/// Tests use [`QuicTrust::Pinned`] and [`QuicTrust::Verifier`].
 ///
-/// See `docs/design/quic-transport-policy.md` (Decision B) and
-/// `docs/design/quic-transport-integration.md` (Phase 3).
+/// See `docs/design/quic-security-model.md` (section 7.1).
 pub enum QuicTrust {
     /// Trust exactly one certificate, verifying the chain against it as the
     /// sole trust anchor. The zero-dependency escape hatch and the shape the
     /// loopback tests use.
     Pinned(CertificateDer<'static>),
     /// Verify the server's certificate chain against a root store - the
-    /// platform trust store (system-roots default) or a private CA bundle
-    /// supplied via `--quic-ca`.
+    /// private CA bundle supplied via `--quic-ca`.
     Roots(RootCertStore),
-    /// Delegate the trust decision to a custom rustls verifier - the
-    /// accept-new default ([`AcceptNewVerifier`], CA/system-root layer plus a
-    /// `quic_known_hosts` TOFU fallback) or a bare TOFU verifier.
+    /// Delegate the trust decision to a custom rustls verifier.
     Verifier(Arc<dyn ServerCertVerifier>),
 }
 
@@ -824,7 +813,7 @@ impl QuicConnector {
     ///
     /// Every trust variant produces a TLS 1.3, ALPN-`rsync` client config
     /// through the one shared builder below; only the verifier stage differs.
-    /// This is the constructor the CA/system-root/TOFU resolution feeds.
+    /// This is the constructor the `--quic-ca` resolution feeds.
     ///
     /// # Errors
     ///
@@ -1252,10 +1241,9 @@ mod tests {
     use super::*;
 
     /// Test-only verifier that accepts any certificate identity while still
-    /// checking handshake signatures against the crypto provider. It stands in
-    /// for the shape a real TOFU/SPKI-pinning verifier (QUIC-5c/5d) will take:
-    /// the trust *decision* is custom, the TLS mechanics are unchanged. Its
-    /// existence proves [`QuicConnector`] can drive an arbitrary
+    /// checking handshake signatures against the crypto provider: the trust
+    /// *decision* is custom, the TLS mechanics are unchanged. Its existence
+    /// proves [`QuicConnector`] can drive an arbitrary
     /// [`ServerCertVerifier`] through the same `connect` path.
     #[derive(Debug)]
     struct AcceptAnyCert {
@@ -1311,9 +1299,9 @@ mod tests {
 
     /// A [`QuicTrust::Roots`] store built from the server certificate yields a
     /// working connector without touching `connect`. Encodes WHY the trust
-    /// source is pluggable: `--quic-ca` and system-roots verification (policy
-    /// B) both arrive as a `RootCertStore`, and the connector must accept one
-    /// without any change to the pin-based path the loopback tests exercise.
+    /// source is pluggable: `--quic-ca` arrives as a `RootCertStore`, and the
+    /// connector must accept one without any change to the pin-based path the
+    /// loopback tests exercise.
     #[test]
     fn roots_trust_source_builds_connector() {
         let acceptor =
@@ -1340,9 +1328,9 @@ mod tests {
 
     /// A custom [`ServerCertVerifier`] drives a full round trip over the same
     /// `connect`/`QuicStream` path as the pinned form. Encodes WHY the trust
-    /// source is pluggable: the future TOFU verifier is a `dyn
-    /// ServerCertVerifier`, and swapping the trust decision must not perturb
-    /// the connect path or the byte pipe below it.
+    /// source is pluggable: swapping the trust decision for a `dyn
+    /// ServerCertVerifier` must not perturb the connect path or the byte pipe
+    /// below it.
     #[test]
     fn custom_verifier_trust_source_round_trips() {
         let acceptor =

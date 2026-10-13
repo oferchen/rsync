@@ -111,10 +111,8 @@ fn server_first_round_trip() {
 /// The same round trip as `round_trip_and_eof`, but the connector is built
 /// from a [`QuicTrust::Roots`] store instead of an exact pin. Both tests drive
 /// the identical `connect`/`QuicStream` path; passing both proves the trust
-/// source is pluggable - a `RootCertStore` (the shape `--quic-ca` and the
-/// system-roots default deliver) reaches the server without any change to the
-/// connect path, so QUIC-5b/5c/5d can supply CA/system/TOFU trust without
-/// touching the transport.
+/// source is pluggable - a `RootCertStore` (the shape `--quic-ca` delivers)
+/// reaches the server without any change to the connect path.
 #[test]
 fn round_trip_via_roots_trust() {
     let acceptor =

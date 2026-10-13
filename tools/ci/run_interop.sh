@@ -12094,13 +12094,11 @@ run_comprehensive_interop_case() {
 # refuse. A negative cell passes only when the client exits non-zero, names
 # the failure, and no file reached the destination. The modes, as the code
 # implements them:
-#   - accept-new default: no --quic-ca. A chain that verifies against the
-#     platform roots wins, otherwise the certificate is pinned on first use
-#     in $XDG_CONFIG_HOME/oc-rsync/quic_known_hosts and must match after that
-#     (rsync_io/src/quic/trust.rs AcceptNewVerifier/TofuVerifier).
-#   - --quic-ca <pem>: a chain that verifies against the bundle, hostname
-#     included, is trusted without pinning. It is layered over accept-new,
-#     not in place of it (trust.rs resolve()).
+#   - no --quic-ca: refused before any packet is sent. There is no default
+#     trust (rsync_io/src/quic/trust.rs resolve()).
+#   - --quic-ca <pem>: the chain must verify against the bundle - issuer,
+#     hostname and validity period - or the handshake fails. It is the only
+#     trust source.
 #   - mutual TLS: daemon `quic client ca file`, client --quic-cert/--quic-key
 #     (rsync_io/src/quic/mod.rs QuicServerSetup::build, WebPkiClientVerifier).
 #   - `auth users` / `secrets file` inside the tunnel, unchanged from TCP.
@@ -12210,13 +12208,6 @@ CNF
     -out "${dir}/${name}.pem" 2>/dev/null
 }
 
-# The `SHA256:<unpadded base64>` token quic_known_hosts stores for a PEM
-# certificate: a digest of the whole DER certificate (trust.rs Fingerprint).
-quic_fingerprint() {
-  printf 'SHA256:%s' "$(openssl x509 -in "$1" -outform DER | openssl dgst -sha256 -binary \
-    | base64 | tr -d '=\n')"
-}
-
 # Mints every certificate the cells use into $1.
 quic_mint_pki() {
   local dir=$1
@@ -12278,20 +12269,17 @@ write_quic_daemon_conf() {
   } >"$path"
 }
 
-# Writes a client wrapper: the quic binary with a private XDG_CONFIG_HOME (so
-# quic_known_hosts never touches the runner's home and never leaks between
-# modes) plus the mode's flags. comp_run_scenario takes the wrapper as its
+# Writes a client wrapper: the quic binary plus the mode's flags.
+# comp_run_scenario takes the wrapper as its
 # client, so the scenario flags stay exactly those of the TCP cells. A
 # QUIC_PASSWORD set for the call becomes the wrapper's RSYNC_PASSWORD. At run
 # time the wrapper adds --quic-cipher from QUIC_CELL_CIPHER when that is set,
 # and always asks for the connect/proto diagnostics quic_check_session reads.
 quic_write_client() {
-  local path=$1 xdg=$2 password=${QUIC_PASSWORD:-}
-  shift 2
-  mkdir -p "$xdg"
+  local path=$1 password=${QUIC_PASSWORD:-}
+  shift
   {
     printf '#!/usr/bin/env bash\n'
-    printf 'export XDG_CONFIG_HOME=%q\n' "$xdg"
     [[ -n "$password" ]] && printf 'export RSYNC_PASSWORD=%q\n' "$password"
     printf 'exec %q' "$oc_quic_binary"
     [[ $# -gt 0 ]] && printf ' %q' "$@"
@@ -12538,7 +12526,7 @@ run_quic_interop_tests() {
   fi
 
   # Mode --quic-ca: the scenario set of the TCP cells rides this mode.
-  quic_write_client "${c}/ca" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem"
+  quic_write_client "${c}/ca" --quic-ca "${pki}/ca.pem"
   local spec
   for spec in \
       "archive|-av|basic" \
@@ -12552,19 +12540,10 @@ run_quic_interop_tests() {
     quic_scenario_both "quic-ca" "${c}/ca" "$spec" "${url}/interop" "$dest" "${url}/src/" \
       "$src" "$pull_dest" "$log"
   done
-  # The chain verified against --quic-ca, so accept-new never pinned it.
-  echo "  [oc→oc quic quic-ca] CA-verified session pins nothing"
-  if [[ -e "${q}/xdg-ca/oc-rsync/quic_known_hosts" ]]; then
-    echo "    known_hosts was written, so the CA layer did not verify the chain:"
-    sed 's/^/      /' "${q}/xdg-ca/oc-rsync/quic_known_hosts"
-    quic_record "quic-ca/no-pin" 1
-  else
-    quic_record "quic-ca/no-pin" 0
-  fi
 
   # Transport selection by the --quic modifier on an rsync:// target instead of
   # a quic:// URL. The port in the URL is the UDP port, so TCP reaches nothing.
-  quic_write_client "${c}/modifier" "${q}/xdg-ca" --quic --quic-ca "${pki}/ca.pem"
+  quic_write_client "${c}/modifier" --quic --quic-ca "${pki}/ca.pem"
   quic_scenario_both "quic-modifier" "${c}/modifier" "archive|-av|basic" \
     "rsync://127.0.0.1:${qport}/interop" "$dest" "rsync://127.0.0.1:${qport}/src/" \
     "$src" "$pull_dest" "$log"
@@ -12575,48 +12554,29 @@ run_quic_interop_tests() {
     "$pull_dest" "$log"
 
   # A cipher family the client does not know is refused before any dial.
-  quic_write_client "${c}/cipher-unknown" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+  quic_write_client "${c}/cipher-unknown" --quic-ca "${pki}/ca.pem" \
     --quic-cipher des
   quic_expect_refusal "cipher/unknown-family" "${c}/cipher-unknown" push "${url}/interop" \
     "$dest" "unrecognized QUIC cipher|invalid value" "$src" "$log"
 
-  # Mode accept-new (no --quic-ca): the first contact pins the daemon's exact
-  # certificate, later contacts must present it again.
-  quic_write_client "${c}/tofu" "${q}/xdg-tofu"
-  quic_scenario_both "accept-new" "${c}/tofu" "archive|-av|basic" "${url}/interop" "$dest" \
-    "${url}/src/" "$src" "$pull_dest" "$log"
-  echo "  [oc→oc quic accept-new] pin names the daemon certificate"
-  local want got
-  want="127.0.0.1:${qport} $(quic_fingerprint "${pki}/server.pem")"
-  got=$(cat "${q}/xdg-tofu/oc-rsync/quic_known_hosts" 2>/dev/null || true)
-  if [[ "$got" == "$want" ]]; then
-    quic_record "accept-new/pin" 0
-  else
-    echo "    want: ${want}"
-    echo "    got:  ${got:-<no known_hosts>}"
-    quic_record "accept-new/pin" 1
-  fi
-  # A pin for another certificate at this authority must refuse the session.
-  mkdir -p "${q}/xdg-mismatch/oc-rsync"
-  printf '127.0.0.1:%s %s\n' "$qport" "$(quic_fingerprint "${pki}/server-rogue.pem")" \
-    >"${q}/xdg-mismatch/oc-rsync/quic_known_hosts"
-  quic_write_client "${c}/mismatch" "${q}/xdg-mismatch"
-  quic_expect_refusal "accept-new/changed-key" "${c}/mismatch" push "${url}/interop" \
-    "$dest" "host key mismatch" "$src" "$log"
-  quic_expect_refusal "accept-new/changed-key" "${c}/mismatch" pull "${url}/src/" \
-    "$neg_dest" "host key mismatch" "$src" "$log"
+  # No --quic-ca: there is no default trust, so the client refuses before
+  # dialing even though the daemon's certificate is CA-valid.
+  quic_write_client "${c}/no-ca"
+  quic_expect_refusal "no-ca/refused" "${c}/no-ca" push "${url}/interop" \
+    "$dest" "no trust anchor configured" "$src" "$log"
+  quic_expect_refusal "no-ca/refused" "${c}/no-ca" pull "${url}/src/" \
+    "$neg_dest" "no trust anchor configured" "$src" "$log"
 
   # --quic-ca naming a CA that did not sign the daemon certificate.
-  quic_write_client "${c}/rogue-ca" "${q}/xdg-rogue-ca" --quic-ca "${pki}/rogue-ca.pem"
+  quic_write_client "${c}/rogue-ca" --quic-ca "${pki}/rogue-ca.pem"
   quic_expect_refusal "quic-ca/untrusted-ca" "${c}/rogue-ca" push "${url}/interop" \
     "$dest" "QUIC connection to .* failed" "$src" "$log"
-  rm -rf "${q}/xdg-rogue-ca"
   quic_expect_refusal "quic-ca/untrusted-ca" "${c}/rogue-ca" pull "${url}/src/" \
     "$neg_dest" "QUIC connection to .* failed" "$src" "$log"
 
   # Mode auth users over QUIC: the daemon's own authentication, in the tunnel.
-  QUIC_PASSWORD=quicpass quic_write_client "${c}/auth" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem"
-  QUIC_PASSWORD=wrongpass quic_write_client "${c}/auth-wrong" "${q}/xdg-ca" \
+  QUIC_PASSWORD=quicpass quic_write_client "${c}/auth" --quic-ca "${pki}/ca.pem"
+  QUIC_PASSWORD=wrongpass quic_write_client "${c}/auth-wrong" \
     --quic-ca "${pki}/ca.pem"
   quic_scenario_both "auth-users" "${c}/auth" "archive|-av|basic" \
     "quic://quicuser@127.0.0.1:${qport}/secure" "$secure" \
@@ -12641,10 +12601,10 @@ run_quic_interop_tests() {
       quic_record "quic-ca/${variant}/daemon-start" 1
       continue
     fi
-    quic_write_client "${c}/${variant}" "${q}/xdg-${variant}-push" --quic-ca "${pki}/ca.pem"
+    quic_write_client "${c}/${variant}" --quic-ca "${pki}/ca.pem"
     quic_expect_refusal "quic-ca/${variant}" "${c}/${variant}" push "${url}/interop" \
       "$dest" "QUIC connection to .* failed" "$src" "$log"
-    quic_write_client "${c}/${variant}" "${q}/xdg-${variant}-pull" --quic-ca "${pki}/ca.pem"
+    quic_write_client "${c}/${variant}" --quic-ca "${pki}/ca.pem"
     quic_expect_refusal "quic-ca/${variant}" "${c}/${variant}" pull "${url}/src/" \
       "$neg_dest" "QUIC connection to .* failed" "$src" "$log"
     stop_oc_daemon
@@ -12658,16 +12618,16 @@ run_quic_interop_tests() {
   write_quic_daemon_conf "$conf" "$pidf" "$port" "$qport" "$dest" "$src" "$big" \
     "$secure" "$secrets" "${pki}/server.pem" "${pki}/server.key" "${pki}/ca.pem"
   if start_oc_daemon_with_retry "$conf" "$log" "" "$pidf" "$port"; then
-    quic_write_client "${c}/mtls" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+    quic_write_client "${c}/mtls" --quic-ca "${pki}/ca.pem" \
       --quic-cert "${pki}/client.pem" --quic-key "${pki}/client.key"
     quic_scenario_both "mtls" "${c}/mtls" "archive|-av|basic" "${url}/interop" "$dest" \
       "${url}/src/" "$src" "$pull_dest" "$log"
-    quic_write_client "${c}/mtls-none" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem"
-    quic_write_client "${c}/mtls-rogue" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+    quic_write_client "${c}/mtls-none" --quic-ca "${pki}/ca.pem"
+    quic_write_client "${c}/mtls-rogue" --quic-ca "${pki}/ca.pem" \
       --quic-cert "${pki}/client-rogue.pem" --quic-key "${pki}/client-rogue.key"
-    quic_write_client "${c}/mtls-keymismatch" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+    quic_write_client "${c}/mtls-keymismatch" --quic-ca "${pki}/ca.pem" \
       --quic-cert "${pki}/client.pem" --quic-key "${pki}/client-rogue.key"
-    quic_write_client "${c}/mtls-nokey" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+    quic_write_client "${c}/mtls-nokey" --quic-ca "${pki}/ca.pem" \
       --quic-cert "${pki}/client.pem"
     local neg dir
     for neg in none rogue keymismatch nokey; do
@@ -12720,7 +12680,7 @@ run_quic_interop_tests() {
   write_quic_daemon_conf "$conf" "$pidf" "$port" "$qport" "$dest" "$src" "$big" \
     "$secure" "$secrets" "${pki}/server.pem" "${pki}/client.key"
   if start_oc_daemon_with_retry "$conf" "$log" "" "$pidf" "$port"; then
-    quic_write_client "${c}/badkey" "${q}/xdg-badkey" --quic-ca "${pki}/ca.pem"
+    quic_write_client "${c}/badkey" --quic-ca "${pki}/ca.pem"
     quic_expect_refusal "daemon/key-mismatch" "${c}/badkey" push "${url}/interop" \
       "$dest" "QUIC connection to .* failed" "$src" "$log"
     echo "  [oc quic daemon] key-mismatch is logged"

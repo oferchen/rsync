@@ -175,7 +175,7 @@ pub struct ModuleListOptions {
     remote_shell: Option<Vec<OsString>>,
     rsync_path: Option<OsString>,
     /// `--quic-ca <PATH>` private CA bundle for verifying a QUIC daemon's
-    /// certificate (policy B). `None` uses the system-roots default. Only
+    /// certificate, the only QUIC trust anchor. `None` refuses the dial. Only
     /// present under the `quic` feature.
     #[cfg(feature = "quic")]
     quic_ca: Option<std::path::PathBuf>,

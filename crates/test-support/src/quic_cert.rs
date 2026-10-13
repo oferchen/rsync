@@ -41,6 +41,57 @@ pub fn localhost_self_signed() -> SelfSignedPem {
     }
 }
 
+/// A `localhost` leaf certificate signed by a freshly minted private CA, with
+/// the CA certificate kept separate - the shape of a daemon behind an internal
+/// CA, as opposed to [`localhost_self_signed`]'s self-anchored leaf.
+pub struct CaSignedPem {
+    /// PEM certificate of the issuing CA, for the client `--quic-ca`.
+    pub ca_pem: String,
+    /// PEM leaf certificate (SAN `localhost`, `serverAuth`), for the daemon.
+    pub cert_pem: String,
+    /// PEM PKCS#8 private key of the leaf, for the daemon.
+    pub key_pem: String,
+}
+
+/// Mints a private CA and a `localhost` server leaf it signs.
+///
+/// Each call creates a new CA, so two calls give two unrelated trust anchors:
+/// one fixture's CA does not verify the other fixture's leaf.
+///
+/// # Panics
+///
+/// Panics if `rcgen` cannot generate a key or certificate, which in a test
+/// context is an environment failure the caller cannot recover from.
+#[must_use]
+pub fn localhost_ca_signed() -> CaSignedPem {
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+        KeyUsagePurpose,
+    };
+
+    let ca_key = KeyPair::generate().expect("rcgen: generate CA key");
+    let mut ca_params =
+        CertificateParams::new(vec!["oc-rsync test ca".to_owned()]).expect("rcgen: CA params");
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let ca_cert = ca_params.self_signed(&ca_key).expect("rcgen: self-sign CA");
+    let issuer = Issuer::new(ca_params, ca_key);
+
+    let leaf_key = KeyPair::generate().expect("rcgen: generate leaf key");
+    let mut leaf_params =
+        CertificateParams::new(vec!["localhost".to_owned()]).expect("rcgen: leaf params");
+    leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let leaf = leaf_params
+        .signed_by(&leaf_key, &issuer)
+        .expect("rcgen: sign leaf");
+
+    CaSignedPem {
+        ca_pem: pem_block("CERTIFICATE", ca_cert.der()),
+        cert_pem: pem_block("CERTIFICATE", leaf.der()),
+        key_pem: pem_block("PRIVATE KEY", &leaf_key.serialize_der()),
+    }
+}
+
 /// Wraps DER bytes in a PEM block with `label` (e.g. `CERTIFICATE`,
 /// `PRIVATE KEY`), 64-character base64 lines. `serialize_der` emits a PKCS#8
 /// key, so `PRIVATE KEY` is the correct label for the key block.
