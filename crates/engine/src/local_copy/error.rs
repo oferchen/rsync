@@ -10,7 +10,7 @@ use super::filter_program::{
 };
 
 /// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
-/// `"<strerror> (<errno>)"` (upstream `log.c:473` `": %s (%d)"`), rather than
+/// `"<strerror> (<errno>)"` (upstream `log.c:500` `": %s (%d)"`), rather than
 /// Rust's `std::io::Error` `Display`, which renders `" (os error <errno>)"`.
 /// Errors without an OS errno fall back to the `Display` string verbatim.
 ///
@@ -151,7 +151,7 @@ impl LocalCopyError {
     /// is emitted at the skip site; this error only carries the exit code and
     /// the summary message.
     ///
-    /// upstream: `main.c:1356-1363` `log_exit()` maps `io_error &
+    /// upstream: `cleanup.c:217-218` `_exit_cleanup()` maps `io_error &
     /// IOERR_GENERAL` to `RERR_PARTIAL`.
     #[must_use]
     pub const fn partial_transfer() -> Self {
@@ -172,7 +172,7 @@ impl LocalCopyError {
 
     /// Constructs a filter syntax error (exit code 1, `RERR_SYNTAX`).
     ///
-    /// upstream: exclude.c:1212 - unrecognised filter rules exit with
+    /// upstream: exclude.c:133-137 `filter_rule_err()` - unrecognised filter rules exit with
     /// `RERR_SYNTAX` (1), not `RERR_PARTIAL` (23).
     #[must_use]
     pub fn filter_syntax(message: impl Into<String>) -> Self {
@@ -190,7 +190,7 @@ impl LocalCopyError {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1356-1363`: `log_exit()` maps `io_error` flags to exit codes
+    /// - `cleanup.c:210-219`: `_exit_cleanup()` maps `io_error` flags to exit codes
     #[must_use]
     pub fn exit_code(&self) -> i32 {
         match &self.kind {
@@ -271,7 +271,7 @@ impl LocalCopyError {
     ///
     /// Upstream rsync does not abort the transfer when the limit is hit: it
     /// stops performing further deletions, finishes the transfer, and only
-    /// reports the limit at cleanup (`main.c:1374`, exit code 25). The
+    /// reports the limit at cleanup (`cleanup.c:213-214`, exit code 25). The
     /// delete-during path defers this error to the end of the directory so a
     /// mid-transfer `--delete-during` sweep does not skip pending copies.
     #[must_use]
@@ -358,7 +358,7 @@ pub enum LocalCopyErrorKind {
         duration: Duration,
     },
     /// Deletions were halted because the configured limit was exceeded.
-    // upstream: generator.c:2431 - `Deletions stopped due to --max-delete
+    // upstream: generator.c:2906 - `Deletions stopped due to --max-delete
     // limit (%d skipped)` with no pluralized noun.
     #[error("Deletions stopped due to --max-delete limit ({skipped} skipped)")]
     DeleteLimitExceeded {
@@ -373,7 +373,7 @@ pub enum LocalCopyErrorKind {
     },
     /// A filter rule could not be parsed.
     ///
-    /// upstream: exclude.c:1212 - `Unknown filter rule: \`%s'` exits with
+    /// upstream: exclude.c:1363 - `Unknown filter rule: <rule>` exits with
     /// `RERR_SYNTAX` (1).
     #[error("{message}")]
     FilterSyntax {
@@ -384,8 +384,8 @@ pub enum LocalCopyErrorKind {
     /// `RERR_PARTIAL` (exit 23). The per-entry cause was already reported at
     /// the skip site (e.g. an unconvertible `--iconv` filename).
     ///
-    /// upstream: `main.c:1374` prints `some files/attrs were not transferred
-    /// (see previous errors)` when `io_error` is set at exit.
+    /// upstream: `log.c:98` maps `RERR_PARTIAL` to `some files/attrs were not transferred
+    /// (see previous errors)`, selected when `io_error` is set at exit (`cleanup.c:217`).
     #[error("some files/attrs were not transferred (see previous errors)")]
     PartialTransfer,
     /// The transfer was aborted by an interrupt signal (SIGINT/SIGTERM/SIGHUP),
@@ -464,7 +464,7 @@ mod tests {
     use super::*;
     use std::io::ErrorKind;
 
-    /// upstream `rsyserr()` prints `"%s (%d)"` (log.c:473). An `io::Error`
+    /// upstream `rsyserr()` prints `"%s (%d)"` (log.c:500). An `io::Error`
     /// built around a custom payload reports no `raw_os_error()`, so the errno
     /// must still be recovered from the rendered text - otherwise wrapping an
     /// error anywhere in the I/O stack silently drops it from the message.
@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn local_copy_error_delete_limit_exceeded_message_matches_upstream() {
-        // upstream: generator.c:2431 emits `Deletions stopped due to
+        // upstream: generator.c:2906 emits `Deletions stopped due to
         // --max-delete limit (%d skipped)` verbatim with no `entry`/`entries`
         // noun, so the count renders identically for one or many skips.
         let one = LocalCopyError::delete_limit_exceeded(1).to_string();

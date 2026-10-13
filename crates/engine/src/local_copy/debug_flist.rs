@@ -86,7 +86,7 @@ pub fn trace_send_file_list_end(_count: usize, _total_size: u64, _elapsed: Durat
 /// Traces the start of a file list receive operation.
 ///
 /// Emits a tracing span for tracking receive duration. In upstream rsync,
-/// this corresponds to the entry point of `receive_file_list()`.
+/// this corresponds to the entry point of `flist.c:recv_file_list()`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_recv_file_list_start() {

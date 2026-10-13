@@ -26,9 +26,11 @@ pub struct SkipCompressList {
 impl SkipCompressList {
     /// Parses a user-supplied `--skip-compress` specification.
     ///
-    /// Upstream rsync treats both `/` and `,` as separators between suffix
-    /// patterns, so the implementation mirrors that behaviour to remain
-    /// interoperable with existing configurations.
+    /// Splits on `/` like upstream `token.c:add_nocompress_suffixes()`.
+    ///
+    /// Deviation from upstream: `,` is also accepted as a separator, each
+    /// segment is trimmed, and non-ASCII bytes or malformed `[...]` classes are
+    /// rejected instead of being stored verbatim.
     pub fn parse(spec: &str) -> Result<Self, SkipCompressParseError> {
         if spec.is_empty() {
             return Ok(Self {
@@ -96,10 +98,9 @@ impl SkipCompressPattern {
             match ch {
                 '.' if tokens.is_empty() => {
                     // Ignore optional leading dots so patterns such as ".gz" match
-                    // extensions without requiring the dot to be present. Upstream
-                    // rsync treats the suffixes as dot-less regardless of the
-                    // caller's notation, making the parsing tolerant to the
-                    // commonly documented form.
+                    // extensions without requiring the dot to be present.
+                    // Deviation from upstream: token.c:add_nocompress_suffixes()
+                    // stores a leading `.` verbatim.
                     continue;
                 }
                 '[' => {

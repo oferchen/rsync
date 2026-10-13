@@ -54,7 +54,8 @@ impl fmt::Display for DeletePhase {
 
 /// Traces the start of a deletion phase.
 ///
-/// In upstream rsync, this corresponds to entering `delete_files()`.
+/// In upstream rsync, this corresponds to entering `generator.c:do_delete_pass()`
+/// (before/after) or `generator.c:delete_in_dir()` (during).
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delete_phase_start(phase: DeletePhase) {
