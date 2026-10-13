@@ -222,6 +222,20 @@ impl ReceiverContext {
     /// - `uidlist.c:483-494` - `recv_id_list()` remap loop
     /// - `uidlist.c:255-282` - `recv_add_id()` map-then-name precedence
     pub(crate) fn remap_flist_ownership_from_id_lists(&mut self) {
+        self.remap_ownership(0..self.file_list.len());
+    }
+
+    /// Maps the ownership of the entries in `range` - the same rules as
+    /// [`Self::remap_flist_ownership_from_id_lists`], for one INC_RECURSE
+    /// segment as it arrives.
+    ///
+    /// Under INC_RECURSE no trailing id list is sent, so upstream maps each
+    /// entry while decoding it: `recv_file_entry()` calls `recv_user_name()` /
+    /// `match_uid()` and `recv_group_name()` / `match_gid()`, which run the
+    /// `--usermap` / `--groupmap` rules (flist.c:1223-1245, uidlist.c:243-282).
+    /// A mapped entry keeps only the local id, as upstream does; its wire name
+    /// is dropped so the metadata apply does not map it a second time.
+    pub(crate) fn remap_ownership(&mut self, range: std::ops::Range<usize>) {
         if !self.config.flags.numeric_ids.is_off() {
             return;
         }
@@ -231,7 +245,7 @@ impl ReceiverContext {
             let names = self.uid_list.names_snapshot();
             let has_rules = mapping.as_ref().is_some_and(|m| !m.is_empty());
             if !uid_map.is_empty() || has_rules {
-                for entry in self.file_list.iter_mut() {
+                for entry in self.file_list[range.clone()].iter_mut() {
                     if let Some(uid) = entry.uid() {
                         let mapped = mapping.as_ref().and_then(|m| {
                             m.map_uid_named(uid, names.get(&uid).map(Vec::as_slice), false)
@@ -240,6 +254,7 @@ impl ReceiverContext {
                         });
                         let resolved = mapped.unwrap_or_else(|| *uid_map.get(&uid).unwrap_or(&uid));
                         entry.set_uid(resolved);
+                        entry.clear_user_name();
                     }
                 }
             }
@@ -250,7 +265,7 @@ impl ReceiverContext {
             let names = self.gid_list.names_snapshot();
             let has_rules = mapping.as_ref().is_some_and(|m| !m.is_empty());
             if !gid_map.is_empty() || has_rules {
-                for entry in self.file_list.iter_mut() {
+                for entry in self.file_list[range.clone()].iter_mut() {
                     if let Some(gid) = entry.gid() {
                         let mapped = mapping.as_ref().and_then(|m| {
                             m.map_gid_named(gid, names.get(&gid).map(Vec::as_slice), false)
@@ -259,6 +274,7 @@ impl ReceiverContext {
                         });
                         let resolved = mapped.unwrap_or_else(|| *gid_map.get(&gid).unwrap_or(&gid));
                         entry.set_gid(resolved);
+                        entry.clear_group_name();
                     }
                 }
             }

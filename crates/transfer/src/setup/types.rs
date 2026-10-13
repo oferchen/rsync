@@ -141,9 +141,9 @@ pub struct ProtocolSetupConfig<'a> {
     /// Whether this side's options permit incremental recursion
     /// (`ServerConfig::allows_inc_recurse`).
     ///
-    /// Distinct from `allow_inc_recurse`, which additionally carries oc's
-    /// never-advertise-from-a-receiver restriction: this one decides whether a
-    /// peer-set `CF_INC_RECURSE` is accepted.
+    /// Distinct from `allow_inc_recurse`, which decides whether this side
+    /// advertises it: this one decides whether a peer-set `CF_INC_RECURSE` is
+    /// accepted.
     ///
     /// upstream: compat.c:780-785 - `inc_recurse && !allow_inc_recurse`
     /// aborts with `RERR_SYNTAX`.

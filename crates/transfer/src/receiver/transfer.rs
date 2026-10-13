@@ -732,8 +732,14 @@ impl ReceiverContext {
             budget_used,
         )?;
         stats.io_error |= io_bits;
-        // upstream: generator.c:352-353 remember_delete() for --delete-delay.
-        self.delayed_delete_victims.extend(victims);
+        if collect_only {
+            // upstream: generator.c:352-353 remember_delete() for --delete-delay.
+            self.delayed_delete_victims.extend(victims);
+        } else {
+            // upstream: delete.c:delete_item() -> log.c:924 log_delete() writes
+            // each removal to the module log as delete_in_dir() makes it.
+            self.record_daemon_log_deletions(DeletePassPhase::Early, &victims);
+        }
         // upstream: delete.c:241-256 - one global stats.deleted_* tally feeds
         // the single NDX_DEL_STATS frame (main.c:228-240).
         self.pending_del_stats.merge(&delete_stats);
@@ -1368,6 +1374,96 @@ mod tests {
         );
         assert_eq!(sender.flist_buildtime_ms, Some(44));
         assert_eq!(sender.flist_xfertime_ms, Some(55));
+    }
+
+    /// A recorded itemize row on a list's gap NDX (`ndx_start - 1`) names the
+    /// directory that list expands, and the replay must itemize it.
+    ///
+    /// WHY: under INC_RECURSE the record-time generator itemizes a directory
+    /// only as the parent of its list, on `ndx = cur_flist->ndx_start - 1`
+    /// (generator.c:2780-2787); for the first list rooted at `.` that is NDX 0
+    /// (flist.c:3314-3326). Upstream's replaying receiver resolves it to
+    /// `dir_flist->files[cur_flist->parent_ndx]` (receiver.c:880-887). The gap
+    /// NDX lies outside every segment, so a replay that only maps in-segment
+    /// NDXs drops the row: `--read-batch` of an upstream push into an
+    /// INC_RECURSE receiver lost the root's `.d..t...... ./` line.
+    #[test]
+    fn run_local_replay_itemizes_list_parent_on_gap_ndx() {
+        use protocol::CompatibilityFlags;
+        use protocol::codec::{
+            NDX_DONE, NDX_FLIST_EOF, NdxCodec, ProtocolCodec, create_ndx_codec,
+            create_protocol_codec,
+        };
+        use protocol::flist::FileEntry;
+
+        use crate::generator::ItemFlags;
+
+        let dest = test_support::create_tempdir();
+        let proto = ProtocolVersion::try_from(32u8).unwrap();
+        let handshake = HandshakeResult {
+            protocol: proto,
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: Some(CompatibilityFlags::INC_RECURSE),
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: proto,
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![dest.path().as_os_str().to_owned()],
+            ..Default::default()
+        };
+        config.connection.client_mode = true;
+        config.flags.times = true;
+        config.flags.info_flags.itemize = true;
+        config.flags.info_flags.out_format_active = true;
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        // One list rooted at `.`: `.` is NDX 1 and dir_flist 0, so the
+        // list's parent row goes out on gap NDX 0.
+        let mut recorded = Vec::new();
+        let mut flist_writer = FileListWriter::new(proto);
+        let mut root = FileEntry::new_directory(".".into(), 0o755);
+        root.set_mtime(1_600_000_000, 0);
+        let mut inner = FileEntry::new_file("inner.txt".into(), 8, 0o644);
+        inner.set_mtime(1_700_000_000, 0);
+        for entry in [&root, &inner] {
+            flist_writer.write_entry(&mut recorded, entry).unwrap();
+        }
+        flist_writer.write_end(&mut recorded, None).unwrap();
+        let mut row_codec = create_ndx_codec(proto.as_u8());
+        row_codec.write_ndx(&mut recorded, NDX_FLIST_EOF).unwrap();
+
+        // The parent row, then the segment-free echo that falls through to
+        // phase 1, and the two remaining phase markers.
+        row_codec.write_ndx(&mut recorded, 0).unwrap();
+        recorded.extend_from_slice(&(ItemFlags::ITEM_REPORT_TIME as u16).to_le_bytes());
+        for _ in 0..3 {
+            row_codec.write_ndx(&mut recorded, NDX_DONE).unwrap();
+        }
+        let stats_codec = create_protocol_codec(proto.as_u8());
+        for _ in 0..5 {
+            stats_codec.write_stat(&mut recorded, 0).unwrap();
+        }
+        recorded.push(0x00);
+
+        ctx.run_local_replay(Cursor::new(recorded), None)
+            .expect("a gap-NDX parent row must replay to completion");
+
+        let rows: Vec<_> = ctx
+            .drain_event_rows()
+            .into_iter()
+            .map(|row| (row.name, row.itemize))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![(PathBuf::from("."), ".d..t......".to_owned())],
+            "the recorded gap-NDX row must itemize the list's parent directory"
+        );
     }
 
     /// Verifies the delayed rename sweep moves files from staging paths to

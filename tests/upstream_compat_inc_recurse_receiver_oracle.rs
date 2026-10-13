@@ -9,18 +9,14 @@
 //! recursive tree INTO oc as the server-receiver over both real transports
 //! (remote-shell wrapper and daemon) and the upstream binary is the judge.
 //!
-//! # What this oracle proves today (the baseline)
+//! # What this oracle proves
 //!
-//! oc's server-receiver never advertises CF_INC_RECURSE:
-//! `compute_allow_inc_recurse` (`crates/transfer/src/lib.rs:428`) returns
-//! `recursive && !qsort && role == ServerRole::Generator`, and a PUSH into
-//! oc runs the Receiver role, so the bit is written 0 unconditionally
-//! (`docs/design/receiver-inc-recurse-conversion.md` Section 3.2, merged as
-//! #7050/#204). This test ENCODES that current non-negotiation as its
-//! baseline so the RS chain (#205 flips the bit, #206 the RSS win, #207 the
-//! wire capture) has a truthful regression floor. It does NOT change
-//! production negotiation; when #205 lands, the negotiation assertion here
-//! flips from "marker absent" to "marker present".
+//! oc's server-receiver grants CF_INC_RECURSE exactly as upstream's does:
+//! `set_allow_inc_recurse()` has no role term beyond the receiver
+//! delete/delay/prune clauses (`// upstream: compat.c:161-179`), so a plain
+//! recursive push that offered `i` gets the bit back. The tree must still
+//! arrive byte-identical, so the oracle also proves the incremental receive
+//! path end to end against a real upstream sender.
 //!
 //! # How the negotiation is observed
 //!
@@ -43,22 +39,18 @@
 //! `-v` (which sets `INFO_FLIST = 1`, `// upstream: options.c:250
 //! info_verbosity[1]`) the pushing sender prints the literal
 //! `sending incremental file list` IF AND ONLY IF the receiving server
-//! negotiated CF_INC_RECURSE. Against oc today the marker is ABSENT; the
-//! positive control below drives the same client against a real upstream
-//! server-receiver and asserts the marker PRESENT, so the absence in the oc
-//! legs is discriminating, never a vacuous pass.
+//! negotiated CF_INC_RECURSE. The control below drives the same client
+//! against a real upstream server-receiver, so the oc legs are held to the
+//! same marker upstream itself produces.
 //!
 //! On the remote-shell leg the wrapper also captures the compact `-e.` flags
 //! the upstream client hands oc's `--server`: the client always advertises
 //! the `i` capability for a `-r` push (`// upstream: compat.c:163-169`,
-//! condition 4 of the receiver gate). Asserting `i` is present there proves
-//! the client OFFERED incremental recursion and oc declined it - not that
-//! the client simply never asked.
+//! condition 4 of the receiver gate).
 //!
 //! The fixture holds more than `MIN_FILECNT_LOOKAHEAD = 1000` files
-//! (`// upstream: rsync.h:151`) across three directory levels so that once
-//! #205 flips the bit this same tree exercises real multi-segment reception,
-//! not just the marker.
+//! (`// upstream: rsync.h:151`) across three directory levels, so the tree
+//! exercises real multi-segment reception, not just the marker.
 //!
 //! # Gating
 //!
@@ -175,7 +167,7 @@ fn write_rsh_wrapper(dir: &Path, argv_log: &Path) -> PathBuf {
 
 /// Run an upstream rsync client push and capture its output. `receiver_path`
 /// is the `--rsync-path` binary the wrapper execs as the server-receiver
-/// (oc for the baseline legs, upstream for the positive control).
+/// (oc for the oc legs, upstream for the positive control).
 fn run_upstream_push_via_rsh(
     upstream: &test_support::UpstreamRsync,
     wrapper: &Path,
@@ -251,13 +243,12 @@ fn assert_success(output: &Output, context: &str) {
     );
 }
 
-/// Remote-shell baseline: a real upstream 3.4.4 sender pushes the
+/// Remote-shell leg: a real upstream 3.4.4 sender pushes the
 /// 1080-file tree into oc as the ssh-style server-receiver. Asserts the
 /// transfer succeeds, the tree is byte-identical, the client OFFERED the `i`
-/// capability, and oc DECLINED it (no incremental marker) - the current
-/// non-negotiation baseline.
+/// capability, and oc granted it (the incremental marker).
 #[test]
-fn rsh_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
+fn rsh_push_into_oc_receiver_negotiates_inc_recurse() {
     let Some(upstream) = upstream_or_skip() else {
         return;
     };
@@ -279,8 +270,7 @@ fn rsh_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
 
     // The upstream client offered incremental recursion: a `-r` push always
     // advertises the `i` capability (upstream compat.c:163-169, receiver gate
-    // condition 4). So a non-incremental transfer proves oc DECLINED, not
-    // that the client never asked.
+    // condition 4).
     let caps = server_capabilities(&argv_log);
     assert!(
         caps.contains('i'),
@@ -288,15 +278,13 @@ fn rsh_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
          (capabilities: e.{caps})"
     );
 
-    // Baseline: oc's server-receiver writes CF_INC_RECURSE = 0
-    // (compute_allow_inc_recurse, crates/transfer/src/lib.rs:428, Receiver
-    // role), so the pushing sender never prints the incremental marker.
-    // When #205 flips the bit, this assertion flips to `assert!(contains)`.
+    // upstream: compat.c:161-179 - the server-receiver grants it, so the
+    // pushing sender prints the incremental marker (flist.c:2488).
     let out = combined_output(&output);
     assert!(
-        !out.contains(INC_MARKER),
-        "oc receiver must NOT negotiate CF_INC_RECURSE today, yet the upstream sender \
-         printed {INC_MARKER:?} (flist.c:2488) - the baseline changed, see #205\n{out}"
+        out.contains(INC_MARKER),
+        "oc receiver must negotiate CF_INC_RECURSE like an upstream receiver, so the \
+         upstream sender must print {INC_MARKER:?} (flist.c:2488)\n{out}"
     );
 
     assert_trees_equal(&src, &dest);
@@ -305,7 +293,7 @@ fn rsh_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
 /// Positive control (discriminating power): the SAME upstream client pushes
 /// into a real upstream 3.4.4 server-receiver, which DOES negotiate
 /// CF_INC_RECURSE, so the marker MUST appear. If this control ever loses the
-/// marker, the baseline's "marker absent" assertion proves nothing.
+/// marker, the oc legs' "marker present" assertions prove nothing.
 #[test]
 fn rsh_push_into_upstream_receiver_negotiates_inc_recurse_control() {
     let Some(upstream) = upstream_or_skip() else {
@@ -332,7 +320,7 @@ fn rsh_push_into_upstream_receiver_negotiates_inc_recurse_control() {
         out.contains(INC_MARKER),
         "an upstream server-receiver negotiates CF_INC_RECURSE, so the pushing sender \
          must print {INC_MARKER:?} (flist.c:2488); its absence would void the oc \
-         baseline's discriminating power\n{out}"
+         legs' discriminating power\n{out}"
     );
 
     assert_trees_equal(&src, &dest);
@@ -401,11 +389,11 @@ impl OcDaemon {
     }
 }
 
-/// Daemon baseline: a real upstream 3.4.4 sender pushes the >1000-file tree
+/// Daemon leg: a real upstream 3.4.4 sender pushes the >1000-file tree
 /// into an oc daemon module. No argv capture exists on this transport, so
 /// the client's incremental marker carries the whole negotiation proof.
 #[test]
-fn daemon_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
+fn daemon_push_into_oc_receiver_negotiates_inc_recurse() {
     let Some(upstream) = upstream_or_skip() else {
         return;
     };
@@ -428,14 +416,12 @@ fn daemon_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
         .expect("spawn upstream rsync daemon push");
     assert_success(&output, "upstream 3.4.4 push into oc daemon");
 
-    // Baseline: an oc daemon receiver writes CF_INC_RECURSE = 0, so the
-    // upstream sender never prints the incremental marker. This is the path
-    // #102/#205 will flip; the assertion is what proves the change then.
+    // upstream: compat.c:161-179 - an oc daemon receiver grants it too.
     let out = combined_output(&output);
     assert!(
-        !out.contains(INC_MARKER),
-        "oc daemon receiver must NOT negotiate CF_INC_RECURSE today, yet the upstream \
-         sender printed {INC_MARKER:?} (flist.c:2488) - baseline changed, see #205\n{out}"
+        out.contains(INC_MARKER),
+        "oc daemon receiver must negotiate CF_INC_RECURSE like an upstream receiver, so \
+         the upstream sender must print {INC_MARKER:?} (flist.c:2488)\n{out}"
     );
 
     assert_trees_equal(&src, &daemon.module_root);

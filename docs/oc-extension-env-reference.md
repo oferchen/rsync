@@ -342,15 +342,6 @@ still disables it. Delete modes follow upstream: `--delete`, `--delete-during`,
 `--delete-delay` and `--delete-excluded` delete per directory as each sub-list
 is walked, while `--delete-before` and `--delete-after` keep `i` withheld.
 Default: off - pulls run without incremental recursion, as in earlier releases.
-### OC_RSYNC_TEST_SERVER_RECV_INC_RECURSE
-Test-only switch for incremental recursion on a server receiver. Truthy values
-(`1`, `true`, `yes`, `on`) in the environment of an `oc-rsync --server`
-receiver let it accept the `i` capability a pushing client advertises, under
-upstream's own conditions (`compat.c:162-181`), so the push runs per-directory
-sub-lists. It exists so the testsuite and the end-to-end tests can drive the
-server receiver's incremental path before the production gate opens.
-Default: off - a server receiver withholds INC_RECURSE, as in earlier releases.
-
 ## Negotiated oc-to-oc optimizations
 
 Unlike every tuning knob above, the variable in this section is **not**
