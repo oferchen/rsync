@@ -295,7 +295,7 @@ impl DeflateSink for Lz4Deflate {
         Ok(())
     }
 
-    fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
+    fn decompress_step(&mut self, output: &mut Vec<u8>) -> io::Result<bool> {
         // upstream: token.c line 1008 - LZ4_decompress_safe
         let decompressed_len =
             block::decompress_into(&self.compressed_input_buf, &mut self.scratch).map_err(|e| {
@@ -305,7 +305,7 @@ impl DeflateSink for Lz4Deflate {
                 )
             })?;
         output.extend_from_slice(&self.scratch[..decompressed_len]);
-        Ok(())
+        Ok(true)
     }
 }
 
