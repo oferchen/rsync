@@ -9,12 +9,11 @@ use super::constants::{NDX_DONE, NDX_FLIST_EOF};
 
 /// State tracker for NDX delta encoding (protocol 30+).
 ///
-/// This is the original implementation, kept for backward compatibility.
-/// For new code, prefer using [`super::create_ndx_codec`] with the Strategy pattern.
+/// For version-dispatched encoding prefer [`super::create_ndx_codec`].
 ///
 /// # Upstream Reference
 ///
-/// `io.c:2283` - `static int32 prev_positive = -1, prev_negative = 1;`
+/// `io.c:2543` - `static int32 prev_positive = -1, prev_negative = 1;`
 #[derive(Debug, Clone)]
 pub struct NdxState {
     /// Previous positive index value for delta encoding.
