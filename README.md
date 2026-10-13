@@ -3,7 +3,7 @@
 
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/oferchen/rsync/actions/workflows/ci.yml?query=branch%3Amaster)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
-[![Upstream Rsync Testsuite 3.5.1](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&event=push&label=Upstream%20Rsync%20Testsuite%203.5.1)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml?query=branch%3Amaster+event%3Apush)
+[![Upstream Rsync Testsuite 3.5.1](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&event=schedule&label=Upstream%20Rsync%20Testsuite%203.5.1)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml?query=branch%3Amaster+event%3Aschedule)
 
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
@@ -42,7 +42,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 ### Upstream testsuite
 
-Upstream's own 3.5.1 test suite runs against `oc-rsync` as `$RSYNC` on every pull request and every push to master, in **eight legs**: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. The pipe legs run the whole 360-test corpus. The TCP legs add `--daemon-tests-only` and run the 161 tests that start a daemon. The legs run from [`upstream-testsuite-3.5.1.yml`](./.github/workflows/upstream-testsuite-3.5.1.yml), behind the 3.5.1 badge at the top.
+Upstream's own 3.5.1 test suite runs against `oc-rsync` as `$RSYNC` on every pull request and nightly on master, in **eight legs**: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. The pipe legs run the whole 360-test corpus. The TCP legs add `--daemon-tests-only` and run the 161 tests that start a daemon. The legs run from [`upstream-testsuite-3.5.1.yml`](./.github/workflows/upstream-testsuite-3.5.1.yml), behind the 3.5.1 badge at the top.
 
 The four Linux legs are required status checks. The four macOS legs gate on their own manifests but are not required contexts.
 

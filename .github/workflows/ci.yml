@@ -1,5 +1,14 @@
 name: CI
 
+# Trigger policy. A push to master runs ONLY the jobs behind required contexts
+# (fmt + clippy, and the stable cells of nextest, Windows, macOS and Linux
+# musl, plus interop) and the `changes` classifier they need. The matrix jobs
+# drop their beta/nightly cells on push; every other job carries
+# `github.event_name != 'push'` (or a narrower event test) in its `if:`. Pull
+# requests, the nightly schedule and workflow_dispatch run the rest as before.
+# The upstream testsuite gate
+# (upstream-testsuite-3.5.1.yml) has no push trigger at all.
+
 on:
   push:
     branches: [ master, main ]
@@ -195,7 +204,7 @@ jobs:
   fuzz-workspace-check:
     name: fuzz workspaces check
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -240,7 +249,7 @@ jobs:
     name: unsafe-safety-comment-audit
     runs-on: ubuntu-latest
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && (github.event_name == 'pull_request' || github.event_name == 'push') }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name == 'pull_request' }}
     timeout-minutes: 5
 
     steps:
@@ -274,7 +283,7 @@ jobs:
   rustdoc-links:
     name: rustdoc links
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -323,6 +332,7 @@ jobs:
   # ===========================================================================
   tools-tests:
     name: tools unit tests
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -374,7 +384,7 @@ jobs:
   surface-diff:
     name: surface diff (upstream 3.5.0)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -414,6 +424,11 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
+        # Master pushes run the required stable cell only. An exclude value of
+        # '' matches no cell, so other events keep all three.
+        exclude:
+          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
 
     steps:
       - name: Free disk space
@@ -504,6 +519,7 @@ jobs:
   feature-flags:
     name: Feature flag combinations
     needs: lint
+    if: github.event_name != 'push'
     uses: ./.github/workflows/_test-features.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
@@ -540,6 +556,7 @@ jobs:
     name: Linux QUIC (--features quic)
     runs-on: ubuntu-latest
     needs: lint
+    if: github.event_name != 'push'
     timeout-minutes: 30
 
     env:
@@ -602,6 +619,11 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
+        # Master pushes run the required stable cell only. An exclude value of
+        # '' matches no cell, so other events keep all three.
+        exclude:
+          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
 
     steps:
       - name: Checkout
@@ -709,6 +731,7 @@ jobs:
     name: Windows IOCP (--features iocp)
     runs-on: windows-latest
     needs: lint
+    if: github.event_name != 'push'
     timeout-minutes: 30
 
     steps:
@@ -776,6 +799,7 @@ jobs:
     name: Windows ACL/xattr
     runs-on: windows-latest
     needs: lint
+    if: github.event_name != 'push'
     timeout-minutes: 30
 
     steps:
@@ -845,6 +869,7 @@ jobs:
     name: Windows daemon
     runs-on: windows-latest
     needs: lint
+    if: github.event_name != 'push'
     timeout-minutes: 30
 
     steps:
@@ -889,6 +914,7 @@ jobs:
     name: Windows GNU cross-check
     runs-on: ubuntu-latest
     needs: lint
+    if: github.event_name != 'push'
     timeout-minutes: 20
 
     steps:
@@ -991,6 +1017,11 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
+        # Master pushes run the required stable cell only. An exclude value of
+        # '' matches no cell, so other events keep all three.
+        exclude:
+          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
 
     steps:
       - name: Checkout
@@ -1098,6 +1129,11 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
+        # Master pushes run the required stable cell only. An exclude value of
+        # '' matches no cell, so other events keep all three.
+        exclude:
+          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
 
     steps:
       - name: Checkout
@@ -1212,6 +1248,7 @@ jobs:
   interop-upstream-macos:
     name: interop (macOS)
     needs: lint
+    if: github.event_name != 'push'
     uses: ./.github/workflows/_interop-macos.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
@@ -1228,6 +1265,7 @@ jobs:
   interop-upstream-windows:
     name: interop (Windows, best-effort)
     needs: lint
+    if: github.event_name != 'push'
     uses: ./.github/workflows/_interop-windows.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
@@ -1248,10 +1286,10 @@ jobs:
   dg3-stress:
     name: DG-3 stress (${{ matrix.os }}, non-required)
     needs: lint
-    # Master pushes and the nightly schedule only, not pull requests: three
-    # extra jobs per PR bought no gate (the cell is non-required), and a
-    # regression still surfaces on the next merge.
-    if: github.event_name != 'pull_request'
+    # The nightly schedule and manual dispatch only: three extra jobs per PR
+    # bought no gate (the cell is non-required), and master pushes run only the
+    # required jobs (see the trigger comment at the top of this file).
+    if: github.event_name != 'pull_request' && github.event_name != 'push'
     timeout-minutes: 30
     continue-on-error: true
     strategy:

@@ -318,8 +318,8 @@ xattr/ACL/hardlinks/symlinks (NTFS semantics differ), SSH loopback.
 
 ## Interop Validation Workflow
 
-The dedicated `interop-validation.yml` workflow runs on push, PR, and nightly
-schedule. It validates:
+The dedicated `interop-validation.yml` workflow runs on pull requests and on a
+nightly schedule. It validates:
 
 | Job | Scope |
 |-----|-------|

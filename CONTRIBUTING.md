@@ -12,7 +12,7 @@ for security disclosures see [`SECURITY.md`](./SECURITY.md).
 
 oc-rsync uses a **push-and-let-CI-verify** workflow. Local builds are kept to
 the minimum needed for a fast, lock-free edit/push cycle; the full validation
-matrix runs in CI on every push.
+matrix runs in CI on every pull request.
 
 ### Required local commands (lock-free, fast)
 
@@ -30,8 +30,9 @@ hangs on shared workstations:
 - `cargo nextest run --workspace --all-features`
 - `cargo build` / `cargo check` against the full workspace
 
-CI runs the full matrix (fmt + clippy, nextest on stable, Windows, macOS,
-Linux musl) on every push. If you need to reproduce a failure locally, scope
+CI runs the full matrix on every pull request and nightly. A push to master
+runs only the jobs behind the required contexts (fmt + clippy, nextest on
+stable, Windows, macOS, Linux musl, interop). If you need to reproduce a failure locally, scope
 the run to a single crate and test pattern:
 
 ```sh
