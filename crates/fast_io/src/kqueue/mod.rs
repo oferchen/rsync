@@ -3,7 +3,7 @@
 //! This module provides a thin, safe wrapper over the `kqueue(2)` /
 //! `kevent(2)` syscall pair. It is the foundation primitive for the
 //! kqueue-driven `AsyncFileWriter` backend described in
-//! `docs/design/macos-kqueue-fast-io.md` (#1385). Consumer migrations
+//! `docs/design/macos-kqueue-fast-io.md`. Consumer migrations
 //! (the disk-commit thread, daemon accept loop) land in later PRs and
 //! reuse [`KqueueLoop`] as their event surface.
 //!

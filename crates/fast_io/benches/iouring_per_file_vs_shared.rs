@@ -1,7 +1,7 @@
 //! Per-file vs shared io_uring ring on a 100K small-file workload.
 //!
 //! Synthesises the two ring lifecycles that the audit
-//! `docs/audits/per-file-vs-shared-uring-ring.md` (task #1410) called out as
+//! `docs/audits/per-file-vs-shared-uring-ring.md` called out as
 //! the candidates for the receiver hot path:
 //!
 //! - `per_file`: today's default. Allocate a fresh `IoUring` for every

@@ -79,6 +79,10 @@ impl RioFunctions {
 }
 
 /// Always returns `Ok(None)` on this platform: RIO is Windows-only.
+///
+/// # Errors
+///
+/// Never fails on this platform.
 pub fn try_init_rio() -> io::Result<Option<RioFunctions>> {
     Ok(None)
 }
@@ -92,6 +96,10 @@ pub struct RioBufferPool {
 
 impl RioBufferPool {
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn new(_rio: &RioFunctions) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -100,6 +108,10 @@ impl RioBufferPool {
     }
 
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn with_capacity(
         _rio: &RioFunctions,
         _total_bytes: usize,
@@ -150,6 +162,10 @@ pub struct RioCompletionQueue {
 
 impl RioCompletionQueue {
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn new(_rio: &RioFunctions, _depth: u32) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,

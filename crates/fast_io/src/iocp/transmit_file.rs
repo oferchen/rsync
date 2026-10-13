@@ -1,4 +1,4 @@
-//! Windows `TransmitFile()` zero-copy file-to-socket primitive (#2301).
+//! Windows `TransmitFile()` zero-copy file-to-socket primitive.
 //!
 //! `TransmitFile` lets the kernel DMA file bytes from the system file cache
 //! straight to a TCP socket's send queue, eliminating the two user-space

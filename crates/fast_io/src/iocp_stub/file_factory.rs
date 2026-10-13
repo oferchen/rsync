@@ -229,6 +229,10 @@ impl FileWriterFactory for IocpWriterFactory {
 ///
 /// On non-Windows platforms, `Enabled` returns an error since IOCP is unavailable.
 /// `Auto` and `Disabled` both use standard buffered I/O.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the policy is `Enabled`.
 pub fn writer_from_file(
     file: std::fs::File,
     buffer_capacity: usize,
@@ -249,6 +253,11 @@ pub fn writer_from_file(
 ///
 /// On non-Windows platforms, `Enabled` returns an error since IOCP is unavailable.
 /// `Auto` and `Disabled` both use standard buffered I/O.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the policy is `Enabled`, or the error from opening
+/// the file.
 pub fn reader_from_path<P: AsRef<Path>>(
     path: P,
     policy: crate::IocpPolicy,

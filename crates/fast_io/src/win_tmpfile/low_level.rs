@@ -476,6 +476,10 @@ pub fn delete_on_close_available(_dir: &std::path::Path) -> bool {
 }
 
 /// Stub: delete-on-close temp files are only available on Windows.
+///
+/// # Errors
+///
+/// Always returns an `io::ErrorKind::Unsupported` error on this platform.
 #[cfg(not(target_os = "windows"))]
 pub fn open_delete_on_close_tmpfile(
     _dir: &std::path::Path,
@@ -487,6 +491,10 @@ pub fn open_delete_on_close_tmpfile(
 }
 
 /// Stub: delete-on-close temp files are only available on Windows.
+///
+/// # Errors
+///
+/// Always returns an `io::ErrorKind::Unsupported` error on this platform.
 #[cfg(not(target_os = "windows"))]
 pub fn set_delete_on_close(_file: &std::fs::File) -> std::io::Result<()> {
     Err(std::io::Error::new(
@@ -496,6 +504,10 @@ pub fn set_delete_on_close(_file: &std::fs::File) -> std::io::Result<()> {
 }
 
 /// Stub: delete-on-close temp files are only available on Windows.
+///
+/// # Errors
+///
+/// Always returns an `io::ErrorKind::Unsupported` error on this platform.
 #[cfg(not(target_os = "windows"))]
 pub fn clear_delete_on_close(_file: &std::fs::File) -> std::io::Result<()> {
     Err(std::io::Error::new(
@@ -505,6 +517,10 @@ pub fn clear_delete_on_close(_file: &std::fs::File) -> std::io::Result<()> {
 }
 
 /// Stub: delete-on-close temp files are only available on Windows.
+///
+/// # Errors
+///
+/// Always returns an `io::ErrorKind::Unsupported` error on this platform.
 #[cfg(not(target_os = "windows"))]
 pub fn rename_temp_to_dest(
     _temp_path: &std::path::Path,
@@ -517,6 +533,10 @@ pub fn rename_temp_to_dest(
 }
 
 /// Stub: delete-on-close temp files are only available on Windows.
+///
+/// # Errors
+///
+/// Always returns an `io::ErrorKind::Unsupported` error on this platform.
 #[cfg(not(target_os = "windows"))]
 pub fn commit_delete_on_close(
     _file: std::fs::File,

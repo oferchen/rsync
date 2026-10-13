@@ -61,6 +61,10 @@ pub struct CqeResult {
 impl CqeResult {
     /// Returns the byte count on success, or maps the negative result to an
     /// [`io::Error`] on failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the OS error encoded by a negative CQE result.
     pub fn into_io_result(self) -> io::Result<u32> {
         if self.result < 0 {
             Err(io::Error::from_raw_os_error(-self.result))
@@ -304,6 +308,11 @@ fn build_entry(op: &StagedOp<'_>, user_data: u64) -> squeue::Entry {
 /// touching the write because of `IOSQE_IO_LINK`, so the two SQEs never
 /// observe the buffer concurrently. We stage the ops as raw pointers so the
 /// borrow checker is not asked to reason about that ordering.
+///
+/// # Errors
+///
+/// Returns an error when either SQE cannot be queued, the submit fails, or either half of the
+/// chain completes with an error.
 pub fn read_then_write(
     mut lease: RingLease<'_>,
     src_fd: RawFd,

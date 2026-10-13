@@ -4,8 +4,8 @@
 //! `docs/design/iouring-async-cancel.md`. The classical synchronous
 //! `submit + wait + drain` helpers in this crate never leave an SQE
 //! in-flight across a function return, so they have nothing to cancel. The
-//! async daemon listener (#4278), the session ring pool (#4275), and the
-//! per-thread rings (#4288) all keep SQEs in-flight across abort decision
+//! async daemon listener, the session ring pool, and the
+//! per-thread rings all keep SQEs in-flight across abort decision
 //! points and therefore need a cancel primitive to release the kernel
 //! resources owned by an abandoned op.
 //!

@@ -33,9 +33,9 @@
 //!
 //! # Upstream reference
 //!
-//! Upstream rsync 3.5.0 (`target/interop/upstream-src/rsync-3.5.0/`) does
+//! Upstream rsync 3.5.1 (`target/interop/upstream-src/rsync-3.5.1/`) does
 //! not use IOCP; the design space for the pump surface is open. The pump
-//! is intentionally minimal so #1898 can layer a batched-write API on top
+//! is intentionally minimal so a later change can layer a batched-write API on top
 //! that mirrors `IoUringDiskBatch` (`crates/fast_io/src/io_uring/disk_batch.rs`).
 //!
 //! # Cross-platform
@@ -78,13 +78,13 @@ const SHUTDOWN_KEY: usize = usize::MAX;
 /// `super::config::MAX_CONCURRENT_OPS` ceiling used by the auto-sized
 /// `IocpConfig::concurrent_ops`. Kept fixed rather than CPU-scaled because
 /// the drain buffer grows on demand up to [`MAX_BATCH_SIZE`] whenever the
-/// kernel signals `ERROR_INSUFFICIENT_BUFFER` (issue #1930), so wide hosts
+/// kernel signals `ERROR_INSUFFICIENT_BUFFER`, so wide hosts
 /// reach a higher steady-state depth without paying a larger initial
 /// allocation per pump.
 const DEFAULT_BATCH_SIZE: usize = 64;
 
 /// Hard cap on dynamic batch growth when the drain loop encounters
-/// [`ERROR_INSUFFICIENT_BUFFER`] (issue #1930).
+/// [`ERROR_INSUFFICIENT_BUFFER`].
 ///
 /// The drain buffer doubles in size each time the kernel signals that more
 /// completions are available than fit in the current array, up to this cap.
@@ -349,7 +349,7 @@ impl Drop for CompletionPump {
 fn drain_loop(inner: Arc<PumpInner>) -> io::Result<()> {
     let initial_batch_size = inner.config.batch_size.max(1).min(MAX_BATCH_SIZE);
     // The batch buffer can grow at runtime if the kernel reports
-    // ERROR_INSUFFICIENT_BUFFER (issue #1930). It never shrinks; a single
+    // ERROR_INSUFFICIENT_BUFFER. It never shrinks; a single
     // burst of completions warrants keeping the larger buffer alive for the
     // remainder of the pump's lifetime.
     let mut entries: Vec<OVERLAPPED_ENTRY> = vec![zeroed_entry(); initial_batch_size];
@@ -382,7 +382,7 @@ fn drain_loop(inner: Arc<PumpInner>) -> io::Result<()> {
                 // The port handle was closed while we were waiting; treat as
                 // graceful shutdown.
                 Some(c) if c as u32 == ERROR_ABANDONED_WAIT_0 => break,
-                // Issue #1930: the kernel signalled that more completions
+                // the kernel signalled that more completions
                 // were available than our array could hold. Double the buffer
                 // (capped at MAX_BATCH_SIZE) and retry on the next iteration
                 // - completions remain queued on the port until drained.
@@ -507,7 +507,7 @@ fn zeroed_entry() -> OVERLAPPED_ENTRY {
 
 /// Posts a manual completion event to the pump.
 ///
-/// Used primarily by tests and by future batched-write APIs (#1898) that
+/// Used primarily by tests and by future batched-write APIs that
 /// need to inject a synthetic completion (e.g. for cancellation). The
 /// `bytes_transferred`, `key`, and `overlapped_ptr` are passed through to
 /// the worker exactly as the kernel would deliver them.
@@ -728,7 +728,7 @@ mod tests {
         }
     }
 
-    /// Issue #1930: posting more completions than the initial batch size must
+    /// posting more completions than the initial batch size must
     /// be handled by the drain loop without losing any. With the dynamic
     /// growth introduced for ERROR_INSUFFICIENT_BUFFER, the kernel can never
     /// surface that error to user code at the default batch size; verifying

@@ -213,6 +213,11 @@ thread_local! {
 ///   `with_thread_lease` is not supported; the inner call must release
 ///   the outer borrow before nesting).
 /// - Any error returned by `f` itself.
+///
+/// # Panics
+///
+/// Panics if the thread-local lease slot is empty right after being populated, which would be
+/// an internal invariant violation.
 pub fn with_thread_lease<F, R>(f: F) -> io::Result<R>
 where
     F: FnOnce(&mut BgidLease) -> io::Result<R>,

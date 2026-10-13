@@ -5,7 +5,7 @@
 //! parent flipped between the two, so the names must come from a descriptor
 //! the confined walk produced.
 //!
-//! upstream: `rsync-3.5.0/flist.c` `send_directory()` enumerates the
+//! upstream: `rsync-3.5.1/flist.c` `send_directory()` enumerates the
 //! descriptor its confined open produced; `syscall.c:3032` `ds_descend()` is
 //! the walk being anchored on.
 

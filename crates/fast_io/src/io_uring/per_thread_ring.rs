@@ -132,6 +132,11 @@ thread_local! {
 ///   submit/reap is not supported; the caller must release the outer
 ///   borrow before nesting).
 /// - Any error returned by `f` itself.
+///
+/// # Panics
+///
+/// Panics if the thread-local ring slot is empty right after being populated, which would be an
+/// internal invariant violation.
 pub fn with_ring<F, R>(f: F) -> io::Result<R>
 where
     F: FnOnce(&mut IoUring) -> io::Result<R>,

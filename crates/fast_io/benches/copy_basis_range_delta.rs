@@ -1,5 +1,5 @@
 //! Criterion benchmark for `copy_basis_range` vs standard read+write in the
-//! delta-apply COPY-token path (IUD-11 #2609).
+//! delta-apply COPY-token path.
 //!
 //! Measures the throughput gain from using `copy_file_range(2)` (Linux) or
 //! `ReadFile`/`WriteFile` with `OVERLAPPED` offsets (Windows) instead of the

@@ -43,7 +43,7 @@
 //! - **Windows IOCP** for overlapped async file I/O (optional, `iocp` feature)
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
 //! - **macOS optimized writes** using `F_NOCACHE` (cache bypass) and `writev` (scatter-gather)
-//! - **macOS event loop** using `kqueue` / `kevent` for readiness-driven I/O (#1385)
+//! - **macOS event loop** using `kqueue` / `kevent` for readiness-driven I/O
 //! - **Platform copy trait** abstracting `copy_file_range`, `clonefile`, `CopyFileExW`
 //! - **Cached sorting** with Schwartzian transform
 //!
@@ -341,8 +341,8 @@ pub mod landlock;
 /// macOS `kqueue`-based event loop primitive.
 ///
 /// Exposes a thin safe wrapper over `kqueue(2)` / `kevent(2)` used as
-/// the foundation for the kqueue-driven `AsyncFileWriter` backend
-/// (#1385). On macOS the real implementation is compiled in. On every
+/// the foundation for the kqueue-driven `AsyncFileWriter` backend.
+/// On macOS the real implementation is compiled in. On every
 /// other platform a stub module provides the same public API with
 /// constructors returning `io::ErrorKind::Unsupported`, so callers can
 /// probe availability at runtime without `#[cfg]` branching.
@@ -465,7 +465,7 @@ pub use source_roots::SourceRoots;
 // Non-unix `send_file_to_fd_with_policy` stub silently routes bytes to
 // `io::sink` (data-loss footgun for any future caller). Gate the public
 // re-export on unix; the stub stays available in-crate for symbol parity.
-// See WIN-S.LAND.1.a audit (#5552) confirming zero external callers.
+// See WIN-S.LAND.1.a audit confirming zero external callers.
 #[cfg(unix)]
 pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::{

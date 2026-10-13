@@ -62,7 +62,7 @@
 //!
 //! - `io_uring_register(2)` - `IORING_REGISTER_PBUF_RING` / `IORING_UNREGISTER_PBUF_RING`
 //! - kernel source: `io_uring/kbuf.c` - `io_register_pbuf_ring()`
-//! - audit: `docs/audits/iouring-pbuf-ring.md` (task #2043)
+//! - audit: `docs/audits/iouring-pbuf-ring.md`
 
 use std::io;
 use std::os::unix::io::AsRawFd;

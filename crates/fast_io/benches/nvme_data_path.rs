@@ -1,7 +1,7 @@
 //! NVMe data-path benchmark: stdlib write vs io_uring `WRITE_FIXED`.
 //!
-//! Tracking task: oc-rsync IUD-4 (#2364). Companion design:
-//! `docs/design/iouring-receive-data-path.md` (#4349). Audit precedent:
+//! Tracking task: oc-rsync IUD-4. Companion design:
+//! `docs/design/iouring-receive-data-path.md`. Audit precedent:
 //! `docs/audits/iouring-data-path-audit.md` confirmed that real receive
 //! data already flows through io_uring on most paths; this bench
 //! quantifies the headroom left for the `WRITE_FIXED` cutover that the

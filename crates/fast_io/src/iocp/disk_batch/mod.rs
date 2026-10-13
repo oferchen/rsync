@@ -40,9 +40,9 @@
 //!
 //! # Upstream Reference
 //!
-//! Upstream rsync 3.4.1 has no IOCP code path; the batched-write surface is
+//! Upstream rsync 3.5.1 has no IOCP code path; the batched-write surface is
 //! defined for parity with `crates/fast_io/src/io_uring/disk_batch.rs`
-//! (PR #1086) so the disk-commit thread can use one calling convention on
+//! so the disk-commit thread can use one calling convention on
 //! both platforms.
 
 mod buffer;
@@ -70,7 +70,7 @@ pub use completion::{
 };
 
 /// Default write buffer capacity matching upstream's `wf_writeBufSize`
-/// (`fileio.c:165` -> `WRITE_SIZE * 8` = 256 KB).
+/// (`fileio.c:263` -> `WRITE_SIZE * 8` = 256 KB).
 const DEFAULT_BUFFER_CAPACITY: usize = 256 * 1024;
 
 /// Batched IOCP disk writer for the disk commit phase.

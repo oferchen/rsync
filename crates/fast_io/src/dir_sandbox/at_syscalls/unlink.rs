@@ -327,7 +327,7 @@ fn residue_to_legacy_result(residue: UnlinkResidue) -> io::Result<()> {
 /// Tries the plain `remove_dir_all` first so the common (already-writable)
 /// case pays no extra syscalls. On `EACCES` - which upstream avoids by
 /// proactively chmodding `DEL_NO_UID_WRITE` candidates before ever
-/// attempting the unlink (`delete.c:100-101`/`141-142`) - this walks the
+/// attempting the unlink (`delete.c:155-156`) - this walks the
 /// subtree once, grants owner-write on every directory this process owns
 /// but cannot write to, and retries exactly once. Best-effort: a failed
 /// chmod during the walk is swallowed and surfaces later as the retry's
@@ -439,9 +439,9 @@ fn effective_uid() -> u32 {
 ///
 /// # Upstream Reference
 ///
-/// - `delete.c:100` / `generator.c:342` -
+/// - `delete.c:155` / `generator.c:348` -
 ///   `!(fp->mode & S_IWUSR) && !am_root && fp->flags & FLAG_OWNED_BY_US`
-/// - `flist.c:1738-1739` - `FLAG_OWNED_BY_US` is set when
+/// - `flist.c:1899-1900` - `FLAG_OWNED_BY_US` is set when
 ///   `am_generator && st.st_uid == our_uid`.
 fn needs_uid_write_fix(meta: &AtMetadata) -> bool {
     meta.mode() & S_IWUSR == 0 && effective_uid() != 0 && meta.uid() == effective_uid()

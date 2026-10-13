@@ -21,6 +21,10 @@ pub struct IocpWriter {
 
 impl IocpWriter {
     /// Always returns an `Unsupported` error on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn create<P: AsRef<Path>>(_path: P, _config: &IocpConfig) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -29,6 +33,10 @@ impl IocpWriter {
     }
 
     /// Creates a file with preallocated space (always fails on this platform).
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn create_with_size<P: AsRef<Path>>(
         _path: P,
         _size: u64,

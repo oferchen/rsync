@@ -229,6 +229,10 @@ impl IoBackend for LinuxIoUringBackend {
 /// Reads an entire file using io_uring if available, falling back to standard I/O.
 ///
 /// This is a convenience function for one-off file reads.
+///
+/// # Errors
+///
+/// Returns any error from opening or reading the file.
 pub fn read_file<P: AsRef<std::path::Path>>(path: P) -> io::Result<Vec<u8>> {
     let factory = IoUringReaderFactory::default();
     let mut reader = factory.open(path.as_ref())?;
@@ -245,6 +249,11 @@ pub fn read_file<P: AsRef<std::path::Path>>(path: P) -> io::Result<Vec<u8>> {
 /// - `Auto`: use io_uring when available, fall back to standard I/O
 /// - `Enabled`: require io_uring, return error if unavailable
 /// - `Disabled`: always use standard buffered I/O
+///
+/// # Errors
+///
+/// Returns an error when the policy requires io_uring and it is unavailable, or when the writer
+/// cannot be built.
 pub fn writer_from_file(
     file: File,
     buffer_capacity: usize,
@@ -259,6 +268,11 @@ pub fn writer_from_file(
 /// `depth` corresponds to the `--io-uring-depth=N` CLI flag and overrides
 /// [`IoUringConfig::sq_entries`] when `Some`. The value should already be
 /// validated via [`crate::validate_io_uring_depth`].
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the policy requires io_uring and it is
+/// unavailable, or the ring construction error.
 pub fn writer_from_file_with_depth(
     file: File,
     buffer_capacity: usize,
@@ -333,6 +347,11 @@ pub fn writer_from_file_with_depth(
 /// - `Auto`: use io_uring when available, fall back to standard buffered I/O
 /// - `Enabled`: require io_uring, return error if unavailable
 /// - `Disabled`: always use standard buffered I/O
+///
+/// # Errors
+///
+/// Returns an error when the policy requires io_uring and it is unavailable, or when the file
+/// cannot be opened.
 pub fn reader_from_path<P: AsRef<std::path::Path>>(
     path: P,
     policy: crate::IoUringPolicy,
@@ -346,6 +365,11 @@ pub fn reader_from_path<P: AsRef<std::path::Path>>(
 /// `depth` corresponds to the `--io-uring-depth=N` CLI flag and overrides
 /// [`IoUringConfig::sq_entries`] when `Some`. The value should already be
 /// validated via [`crate::validate_io_uring_depth`].
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the policy requires io_uring and it is
+/// unavailable, or the error from opening the file.
 pub fn reader_from_path_with_depth<P: AsRef<std::path::Path>>(
     path: P,
     policy: crate::IoUringPolicy,
@@ -398,6 +422,10 @@ pub fn reader_from_path_with_depth<P: AsRef<std::path::Path>>(
 /// Writes data to a file using io_uring if available, falling back to standard I/O.
 ///
 /// This is a convenience function for one-off file writes.
+///
+/// # Errors
+///
+/// Returns any error from creating, writing or flushing the file.
 pub fn write_file<P: AsRef<std::path::Path>>(path: P, data: &[u8]) -> io::Result<()> {
     let factory = IoUringWriterFactory::default();
     let mut writer = factory.create(path.as_ref())?;
