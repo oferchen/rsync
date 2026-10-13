@@ -103,6 +103,26 @@ impl<F: FnMut(&str)> ItemizeCallback for F {
 pub trait DaemonFileLog {
     /// Renders and writes one daemon-log line for a processed entry.
     fn on_entry(&mut self, row: &DaemonLogRow);
+
+    /// Writes one diagnostic line the transfer sent to the client.
+    ///
+    /// upstream: log.c:312-331 `rwrite()` - a daemon passes every `FINFO`,
+    /// `FWARNING`, `FERROR` and `FERROR_XFER` message to `logit()` before the
+    /// server frames it for the peer; only `FCLIENT` skips the log.
+    ///
+    /// `line` is raw bytes without its trailing newline, so a file name that
+    /// is not valid UTF-8 reaches the log exactly as upstream writes it.
+    fn on_message(&mut self, line: &[u8]);
+}
+
+/// One line a server receiver queued for the daemon's module log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DaemonLogEntry {
+    /// A per-entry `log_item()` / `log_delete()` row.
+    Row(DaemonLogRow),
+    /// A diagnostic `rwrite()` also logs, as raw bytes without its trailing
+    /// newline.
+    Message(Vec<u8>),
 }
 
 /// The per-file fields one daemon transfer-log line renders.

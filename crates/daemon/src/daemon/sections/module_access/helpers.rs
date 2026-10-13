@@ -183,6 +183,23 @@ fn log_message(log: &SharedLogSink, message: &Message) {
     }
 }
 
+/// Writes one raw message line to the shared log sink with proper locking.
+///
+/// upstream: log.c:125-141 logit() hands the bytes to `filtered_fwrite()`
+/// unchanged, so a file name that is not valid UTF-8 is logged as-is; the
+/// sink's writer applies the same control-character escaping.
+fn log_raw_line(log: &SharedLogSink, line: &[u8]) {
+    let Ok(mut sink) = log.lock() else {
+        return;
+    };
+    let mut record = Vec::with_capacity(line.len() + 1);
+    record.extend_from_slice(line);
+    record.push(b'\n');
+    if sink.writer_mut().write_all(&record).is_ok() {
+        let _ = sink.flush();
+    }
+}
+
 /// Returns a sanitised view of a module identifier suitable for diagnostics.
 ///
 /// Module names originate from user input (daemon operands) or configuration
