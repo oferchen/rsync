@@ -725,6 +725,36 @@ impl ReceiverContext {
             .collect()
     }
 
+    /// Maps each INC_RECURSE list's gap NDX (`ndx_start - 1`) to the flat index
+    /// of the directory it expands. Empty without INC_RECURSE. The first list
+    /// rooted at `.` has `.` as its parent, on gap NDX 0 (flist.c:3314-3326).
+    ///
+    /// upstream: generator.c:2780-2787 sends a list's parent directory row on
+    /// `ndx = cur_flist->ndx_start - 1`, and receiver.c:880-887 resolves an NDX
+    /// below `ndx_start` to `dir_flist->files[cur_flist->parent_ndx]`.
+    pub(in crate::receiver) fn gap_ndx_heads(&self) -> std::collections::HashMap<i32, usize> {
+        use super::file_list::DirSlot;
+        if self.segment_parent_dir_ndx.iter().all(Option::is_none) {
+            return std::collections::HashMap::new();
+        }
+        let dirs: std::collections::HashMap<&std::path::Path, usize> = self
+            .dir_entries_indexed()
+            .map(|(idx, entry)| (entry.path().as_path(), idx))
+            .collect();
+        self.segment_parent_dir_ndx
+            .iter()
+            .zip(&self.ndx_segments)
+            .filter_map(
+                |(parent, &(_, ndx_start))| match self.dir_flist.resolve((*parent)?)? {
+                    DirSlot::Active { name, .. } => {
+                        dirs.get(name.as_path()).map(|&idx| (ndx_start - 1, idx))
+                    }
+                    DirSlot::Cleared => None,
+                },
+            )
+            .collect()
+    }
+
     /// Reorders `(flat index, item)` pairs, given in flat order, into the order
     /// upstream's generator reaches them: a directory heading a sub-list moves to
     /// just before that sub-list's first entry (see [`Self::sub_list_heads`]).
