@@ -1481,4 +1481,67 @@ mod tests {
             "the --delete --backup-dir subdir must inherit the dest dir mode"
         );
     }
+    /// A `--backup-dir` component the session already validated is not checked
+    /// again (upstream: backup.c:94-99 `copy_valid_path()`), so a later swap of
+    /// that component for an attacker-owned symlink to outside the tree must be
+    /// refused by the confined backup operation itself: `ELOOP`, nothing written
+    /// through, and the destination entry left in place. Planting a symlink
+    /// owned by another uid needs root; as any other user the cell reports the
+    /// skip.
+    #[test]
+    fn swapped_cached_backup_subdir_is_refused_not_written_through() {
+        if !rustix::process::geteuid().is_root() {
+            eprintln!("skipped: planting a symlink owned by another uid needs root");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        let backup_dir = dir.path().join("backup");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(dest.join("sub")).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(dest.join("sub/first"), b"first").unwrap();
+        fs::write(dest.join("sub/file"), b"old").unwrap();
+        std::os::unix::fs::symlink("old-target", dest.join("sub/link")).unwrap();
+        let session = engine::BackupDirCache::default();
+        let backup = |name: &str| {
+            place_existing_backup(
+                &dest.join("sub").join(name),
+                &backup_dir.join("sub").join(name),
+                false,
+                &dest,
+                Some(&backup_dir),
+                &MetadataOptions::default(),
+                &session,
+            )
+        };
+        backup("first").expect("the first backup validates backup/sub");
+        let sub = backup_dir.join("sub");
+        fs::rename(&sub, backup_dir.join(".real")).unwrap();
+        std::os::unix::fs::symlink(&outside, &sub).unwrap();
+        std::os::unix::fs::lchown(&sub, Some(65534), Some(65534)).unwrap();
+        for name in ["file", "link"] {
+            let Err(error) = backup(name) else {
+                panic!("{name}: a swapped backup parent must be refused");
+            };
+            // A regular file's ladder ends in the copy tier, which reports the
+            // type as unsupported rather than the ELOOP of the tiers before it.
+            if name == "link" {
+                assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+            }
+            assert!(
+                fs::symlink_metadata(dest.join("sub").join(name)).is_ok(),
+                "{name}: a refused backup must leave the destination entry"
+            );
+        }
+        assert!(
+            fs::symlink_metadata(&sub).unwrap().file_type().is_symlink(),
+            "the cached component is not revalidated, so the swap is still in place"
+        );
+        assert_eq!(
+            fs::read_dir(&outside).unwrap().count(),
+            0,
+            "nothing may be written through the swapped symlink"
+        );
+    }
 }
