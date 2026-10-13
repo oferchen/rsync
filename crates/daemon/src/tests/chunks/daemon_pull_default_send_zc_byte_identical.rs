@@ -50,17 +50,21 @@ fn daemon_pull_default_send_zc_byte_identical() {
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // Serve as the user that owns the fixture, so a root run (which would
-    // otherwise drop to `nobody`) can still read the 0700 tempdir.
+    // A root daemon drops to `nobody` by default, which cannot read the 0700
+    // tempdir, so a root run serves as root. A non-root daemon cannot setgid,
+    // so the lines are omitted there.
     let owner = fs::metadata(temp.path()).expect("tempdir metadata");
+    let ids = if std::os::unix::fs::MetadataExt::uid(&owner) == 0 {
+        "uid = 0\ngid = 0\n"
+    } else {
+        ""
+    };
     let config_file = temp.path().join("rsyncd.conf");
     fs::write(
         &config_file,
         format!(
-            "[mod]\npath = {}\nread only = true\nuse chroot = false\nuid = {}\ngid = {}\n",
+            "[mod]\npath = {}\nread only = true\nuse chroot = false\n{ids}",
             module_dir.display(),
-            std::os::unix::fs::MetadataExt::uid(&owner),
-            std::os::unix::fs::MetadataExt::gid(&owner),
         ),
     )
     .expect("write daemon config");
