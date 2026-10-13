@@ -393,7 +393,7 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
         } else {
             (self.fmt.as_str(), self.operation)
         };
-        // upstream: log.c:664 `%t` renders timestring(time(NULL)) at the moment
+        // upstream: log.c:695 `%t` renders timestring(time(NULL)) at the moment
         // the line is written; per-file lines flush right after the transfer.
         let timestamp = logging_sink::logfile::format_log_timestamp(SystemTime::now());
         let filename = row.name.to_string_lossy();
@@ -471,8 +471,8 @@ fn execute_transfer(
 ) -> i32 {
     if let Some(log) = ctx.log_sink {
         // upstream: the daemon sender announces the walk with the FLOG-only
-        // `building file list` (flist.c:2484) and the daemon receiver mirrors
-        // it with `receiving file list` (flist.c:2848); both land in the
+        // `building file list` (flist.c:2760) and the daemon receiver mirrors
+        // it with `receiving file list` (flist.c:3123); both land in the
         // daemon log via rwrite()'s am_daemon branch (log.c:290-303).
         let banner = match role {
             ServerRole::Generator => "building file list",
@@ -566,13 +566,13 @@ fn execute_transfer(
                 // The per-file transfer-log lines are written by the transfer
                 // engine's daemon-log hook (see `DaemonFileLogWriter`), one row
                 // per processed entry in flist-index order - mirroring upstream's
-                // per-file `log_item(FLOG)` (receiver.c:1290 / sender.c:462).
+                // per-file `log_item(FLOG)` (receiver.c:1290 / sender.c:787).
                 // Only the totals trailer is emitted here.
                 //
                 // upstream: cleanup.c:222-226 - `am_daemon` always runs
                 // log_exit(), whose FLOG totals trailer
                 // `sent %s bytes  received %s bytes  total size %s`
-                // (log.c:894-899, plain `big_num()` digits) closes every
+                // (log.c:942, plain `big_num()` digits) closes every
                 // daemon transfer in the log.
                 let (sent, received, total_size) = match &server_stats {
                     ServerStats::Generator(stats) => {

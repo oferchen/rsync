@@ -5,9 +5,9 @@
 // SSH-mode server invocation). The daemon parses these to configure the
 // transfer engine with the correct flags, paths, and options.
 //
-// upstream: io.c:1334 - `read_args()` reads null/newline-terminated arguments.
-// options.c:2765-3008 - `server_options()` emits the long-form options.
-// clientserver.c:1073-1087 - two-phase secluded-args reading.
+// upstream: io.c:1480 `read_args()` reads null/newline-terminated arguments;
+// options.c:2778 `server_options()` emits the long-form options;
+// clientserver.c:1154-1168 `rsync_module()` does the two-phase secluded-args read.
 //
 // This file is `include!`d into the `crate::daemon` scope (see
 // `module_access.rs`), so the sub-parts below are textually included rather

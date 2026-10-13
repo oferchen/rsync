@@ -27,7 +27,7 @@ pub(crate) fn open_daemon_log_sink(
 ) -> Result<SharedLogSink, LogFileFallback> {
     open_log_file(path)
         .map(|file| {
-            // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] `
+            // upstream: log.c:125-141 logit() stamps `%Y/%m/%d %H:%M:%S [pid] `
             // on every log-file line; the wrapper applies the same shared
             // formatter used by the client `--log-file` sink.
             Arc::new(Mutex::new(MessageSink::with_brand(
@@ -87,7 +87,7 @@ impl LogFileFallback {
 /// Mode applied when the log file is created.
 ///
 /// upstream: log.c:170 passes `0644`. The surrounding `umask(022 | orig_umask)`
-/// (log.c:163) is what forbids a group- or world-writable log file under a
+/// (log.c:164) is what forbids a group- or world-writable log file under a
 /// permissive umask; passing `0644` here reaches the same fixed point without
 /// the dance, because `0644` has no group or other write bit for a umask to
 /// need to clear.
@@ -111,8 +111,8 @@ fn open_log_file(path: &Path) -> io::Result<std::fs::File> {
 
 /// Reopens the connection's log sink to the selected module's `log file`.
 ///
-/// upstream: log.c:169-204 `log_init(1)` reopens the daemon logfile to
-/// `lp_log_file(module_id)` at module selection (clientserver.c:897). A module's
+/// upstream: log.c:186-205 `log_init(1)` reopens the daemon logfile to
+/// `lp_log_file(module_id)` at module selection (clientserver.c:956). A module's
 /// resolved `log file` already inherits the global-section default (finish.rs),
 /// so [`ModuleDefinition::module_log_file`] is exactly upstream's
 /// `lp_log_file(module_id)`.
@@ -122,7 +122,7 @@ fn open_log_file(path: &Path) -> io::Result<std::fs::File> {
 /// fresh per-connection sink pointing at the module's log file; the caller uses
 /// it for the remainder of the connection. A module with no `log file` returns
 /// `None`, keeping the startup sink. A failed reopen is non-fatal - upstream
-/// (log.c:158-166) logs the failure and keeps serving rather than dropping the
+/// (log.c:175-183) logs the failure and keeps serving rather than dropping the
 /// connection - so this returns `None` and the caller retains the startup sink.
 fn reopen_module_log_sink(
     module: &ModuleDefinition,
@@ -164,9 +164,9 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
 
 /// Writes a message to the shared log sink with proper locking.
 ///
-/// upstream: log.c:122-132 logit() writes the raw `rwrite()` buffer after the
+/// upstream: log.c:125-141 logit() writes the raw `rwrite()` buffer after the
 /// timestamp prefix. FINFO/FLOG bodies carry no severity tag (e.g.
-/// `connect from host (addr)`, clientserver.c:1393), so info messages are
+/// `connect from host (addr)`, clientserver.c:1526), so info messages are
 /// written as bare text; error and warning bodies already embed their
 /// `rsync error:`-style text upstream, so they keep the sink's rendering.
 fn log_message(log: &SharedLogSink, message: &Message) {
@@ -234,7 +234,7 @@ pub(crate) fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
 ///
 /// # Upstream Reference
 ///
-/// - `token.c:206-211`: `init_set_compression()` optimises a `*` match-string,
+/// - `token.c:213-218`: `init_set_compression()` optimises a `*` match-string,
 ///   setting `per_file_default_level = skip_compression_level` and clearing the
 ///   per-file suffix tree.
 fn dont_compress_is_match_all(value: &str) -> bool {
@@ -2037,7 +2037,7 @@ fn rule_pattern(run: &str, used: usize, xflags: RuleXflags) -> &str {
 /// applies the `XFLG_DIR2WILD3` transformation: the trailing `/` is replaced
 /// with `/***` to recursively exclude the directory and all its contents.
 ///
-/// upstream: exclude.c:211-217 - when `XFLG_DIR2WILD3` is set and the rule is
+/// upstream: exclude.c:308-314 - when `XFLG_DIR2WILD3` is set and the rule is
 /// a directory-only exclude (not include), the `FILTRULE_DIRECTORY` flag is
 /// cleared and `/***` is appended to the pattern.
 ///
@@ -2045,14 +2045,14 @@ fn rule_pattern(run: &str, used: usize, xflags: RuleXflags) -> &str {
 /// carry `XFLG_FATAL_ERRORS` alone, so neither the embedded-slash anchoring nor
 /// the `/***` suffix applies to them.
 fn build_pattern_rule(pattern: &str, is_include: bool, xflags: RuleXflags) -> FilterRuleWireFormat {
-    // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH sets FILTRULE_ABS_PATH
+    // upstream: exclude.c:297-306 - XFLG_ABS_IF_SLASH sets FILTRULE_ABS_PATH
     // when the pattern starts with '/' or contains any embedded '/'. Patterns
     // like "subdir/file.txt" are anchored relative to the module root.
     //
     // A pattern that starts with `**` is an exception: upstream sets
-    // FILTRULE_WILD2_PREFIX independently of FILTRULE_ABS_PATH (exclude.c:241-242
+    // FILTRULE_WILD2_PREFIX independently of FILTRULE_ABS_PATH (exclude.c:335-339
     // checks the raw pattern's leading `**`), and the WILD2_PREFIX prepend
-    // (exclude.c:929-931) is what lets `**/*.o` match a root-level `build.o`.
+    // (exclude.c:1028-1030) is what lets `**/*.o` match a root-level `build.o`.
     // oc-rsync encodes anchoring by prepending `/` to the pattern, which would
     // turn `**/*.o` into `/**/*.o` and destroy the leading-`**` that WILD2_PREFIX
     // depends on. Since root-anchoring of a `**`-prefixed pattern is already
@@ -2068,7 +2068,7 @@ fn build_pattern_rule(pattern: &str, is_include: bool, xflags: RuleXflags) -> Fi
         && (pattern.starts_with('/') || (xflags == RuleXflags::Daemon && pattern.contains('/')));
     let directory_only = pattern.ends_with('/');
 
-    // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to
+    // upstream: exclude.c:309-310 - XFLG_DIR2WILD3 applies only to
     // directory-only exclude rules (BITS_SETnUNSET(FILTRULE_DIRECTORY, FILTRULE_INCLUDE)).
     if directory_only && !is_include && xflags == RuleXflags::Daemon {
         let wild3_pattern = format!("{pattern}***");
