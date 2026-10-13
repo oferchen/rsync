@@ -353,42 +353,21 @@ impl SecretsFile {
         self.entries.get(username).map(|s| s.as_str())
     }
 
-    /// Checks that the secrets file has correct permissions.
+    /// Checks the secrets file against upstream's strict-modes rules.
     ///
-    /// On Unix: File must not be accessible to others (no group requirement,
-    /// so mode 0640 is allowed). On Windows: No checks performed.
+    /// On Unix the file must not be accessible to others (mode 0640 is
+    /// allowed), and a daemon running as root refuses a file that root does
+    /// not own. On other platforms no check is performed, as upstream.
+    ///
+    /// upstream: authenticate.c:172-177 check_secret(). Delegates to
+    /// `platform::secrets::check_secrets_file_permissions`, the same rule the
+    /// daemon's authentication path applies.
     ///
     /// # Errors
     ///
-    /// Returns an error if the file is other-readable or other-writable on Unix.
-    #[cfg(unix)]
+    /// Returns an error if the file cannot be inspected or breaks either rule.
     pub fn check_permissions(path: &Path) -> io::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let metadata = std::fs::metadata(path)?;
-        let permissions = metadata.permissions();
-        let mode = permissions.mode();
-
-        // upstream: authenticate.c:120 check_secret() rejects only when OTHER
-        // has access ((st.st_mode & 06) != 0); group-readable (0640) is allowed.
-        if (mode & 0o6) != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!(
-                    "secrets file '{}' must not be other-accessible (mode {:o})",
-                    path.display(),
-                    mode & 0o777
-                ),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// No-op permission check on Windows (matching upstream rsync).
-    #[cfg(not(unix))]
-    pub fn check_permissions(_path: &Path) -> io::Result<()> {
-        Ok(())
+        platform::secrets::check_secrets_file_permissions(path)
     }
 
     /// Returns the number of username/password entries.
@@ -430,6 +409,25 @@ mod tests {
             SecretsFile::check_permissions(file.path()).is_ok(),
             "Windows deliberately accepts any-permission secrets files"
         );
+    }
+
+    /// upstream: authenticate.c:175-177 - a root daemon refuses a secrets file
+    /// root does not own. Only observable when the test itself runs as root;
+    /// the rule is unit-tested without root in `platform::secrets`.
+    #[cfg(unix)]
+    #[test]
+    fn check_permissions_refuses_a_non_root_owned_file_when_root() {
+        use std::os::unix::fs::PermissionsExt;
+        if platform::privilege::effective_uid() != 0 {
+            return;
+        }
+        let file = tempfile::NamedTempFile::new().expect("temp secrets file");
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600))
+            .expect("chmod secrets");
+        std::os::unix::fs::chown(file.path(), Some(65534), None).expect("chown to nobody");
+        let err = SecretsFile::check_permissions(file.path())
+            .expect_err("root must refuse a secrets file it does not own");
+        assert!(err.to_string().contains("must be owned by root"));
     }
 
     #[test]
