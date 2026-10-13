@@ -29,7 +29,7 @@ fn big_num(value: u64) -> String {
 
 /// Traces hash-bucket creation for a new device (level 3).
 ///
-/// upstream: hlink.c:77 - `"[%s] created hashtable for dev %s"`.
+/// upstream: hlink.c:78 - `"[%s] created hashtable for dev %s"`.
 #[inline]
 pub fn trace_hashtable_for_dev(role: ProcessRole, dev: u64) {
     debug_log!(
@@ -43,7 +43,7 @@ pub fn trace_hashtable_for_dev(role: ProcessRole, dev: u64) {
 
 /// Traces a follower whose prior leader was skipped (level 2).
 ///
-/// upstream: hlink.c:305 - `"hlink for %d (%s,%d): virtual first"`.
+/// upstream: hlink.c:320 - `"hlink for %d (%s,%d): virtual first"`.
 #[inline]
 pub fn trace_virtual_first(ndx: i32, name: &str, gnum: i32) {
     debug_log!(
@@ -58,7 +58,7 @@ pub fn trace_virtual_first(ndx: i32, name: &str, gnum: i32) {
 
 /// Traces a follower deferred while the leader transfer is in flight (level 2).
 ///
-/// upstream: hlink.c:325 - `"hlink for %d (%s,%d): waiting for %d"`.
+/// upstream: hlink.c:340 - `"hlink for %d (%s,%d): waiting for %d"`.
 #[inline]
 pub fn trace_waiting_for(ndx: i32, name: &str, gnum: i32, prev_ndx: i32) {
     debug_log!(
@@ -74,7 +74,7 @@ pub fn trace_waiting_for(ndx: i32, name: &str, gnum: i32, prev_ndx: i32) {
 
 /// Traces a follower searching for an unassigned leader (level 2).
 ///
-/// upstream: hlink.c:331 - `"hlink for %d (%s,%d): looking for a leader"`.
+/// upstream: hlink.c:346 - `"hlink for %d (%s,%d): looking for a leader"`.
 #[inline]
 pub fn trace_looking_for_leader(ndx: i32, name: &str, gnum: i32) {
     debug_log!(
@@ -89,7 +89,7 @@ pub fn trace_looking_for_leader(ndx: i32, name: &str, gnum: i32) {
 
 /// Traces a follower matched against an alt-dest file (level 2).
 ///
-/// upstream: hlink.c:353 - `"hlink for %d (%s,%d): found flist match (alt %d)"`.
+/// upstream: hlink.c:368 - `"hlink for %d (%s,%d): found flist match (alt %d)"`.
 #[inline]
 pub fn trace_found_flist_match(ndx: i32, name: &str, gnum: i32, alt_dest: i32) {
     debug_log!(
@@ -105,7 +105,7 @@ pub fn trace_found_flist_match(ndx: i32, name: &str, gnum: i32, alt_dest: i32) {
 
 /// Traces final leader resolution for a follower (level 2).
 ///
-/// upstream: hlink.c:370 - `"hlink for %d (%s,%d): leader is %d (%s)"`.
+/// upstream: hlink.c:385 - `"hlink for %d (%s,%d): leader is %d (%s)"`.
 #[inline]
 pub fn trace_leader_is(ndx: i32, name: &str, gnum: i32, prev_ndx: i32, prev_name: &str) {
     debug_log!(
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn upstream_wire_shapes() {
-        // upstream: hlink.c:78,306,326,332,354,371 - each HLINK debug emission.
+        // upstream: hlink.c:78,320,340,346,368,385 - each HLINK debug emission.
         assert_eq!(big_num(2_049_000_000), "2,049,000,000");
 
         init_at(3);

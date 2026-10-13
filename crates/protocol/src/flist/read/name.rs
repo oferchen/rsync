@@ -7,7 +7,7 @@
 //! # Upstream Reference
 //!
 //! - `flist.c:recv_file_entry()` lines 843-883 for name reading
-//! - `util1.c:1040`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
+//! - `util1.c:1134`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
 //! - `flist.c:1076-1080`: pathname safety check
 
 use std::io::{self, Read};
@@ -161,7 +161,7 @@ impl FileListReader {
     ///
     /// # Upstream Reference
     ///
-    /// - `util1.c:1040`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
+    /// - `util1.c:1134`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
     /// - `flist.c:1076-1080`: pathname safety check after `clean_fname`
     pub(super) fn clean_and_validate_name(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
         if name.is_empty() {
@@ -225,7 +225,7 @@ impl FileListReader {
                     continue;
                 }
                 // `..` component: always reject
-                // upstream: util1.c:1079-1082 CFN_REFUSE_DOT_DOT_DIRS
+                // upstream: util1.c:1173-1178 CFN_REFUSE_DOT_DOT_DIRS
                 if next == Some(b'.') {
                     let after = name.get(i + 2).copied();
                     if after == Some(b'/') || after.is_none() {
@@ -254,7 +254,7 @@ impl FileListReader {
             }
         }
 
-        // upstream: util1.c:1101-1102 - empty result becomes "."
+        // upstream: util1.c:1204-1205 - empty result becomes "."
         if out.is_empty() {
             out.push(b'.');
         }

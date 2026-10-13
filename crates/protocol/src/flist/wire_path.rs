@@ -15,10 +15,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:759-795` `send_file_entry()` filename emission - the wire bytes
+//! - `flist.c:854-890` `send_file_entry()` filename emission - the wire bytes
 //!   are written verbatim with no separator normalisation.
-//! - `util1.c:1052-1058` `__CYGWIN__` block - the only `\` handling in upstream
-//!   lives on the Cygwin POSIX boundary, which oc-rsync does not run under.
+//! - `util1.c:1146-1152` `clean_fname()` - upstream's only `__CYGWIN__` path
+//!   code preserves a leading `//`; upstream never translates `\`.
+//!
+//! Deviation from upstream: the native Windows build rewrites `\` to `/` on the
+//! sender because it does not run under Cygwin's POSIX layer.
 
 use std::borrow::Cow;
 use std::path::Path;

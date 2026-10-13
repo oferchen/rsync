@@ -215,7 +215,7 @@ impl DualFileList {
     /// # Sender skip
     ///
     /// A non-incremental sender (`am_sender && !inc_recurse`) must NOT remove
-    /// duplicates: upstream skips the clean loop entirely (`flist.c:3282-3285`)
+    /// duplicates: upstream skips the clean loop entirely (`flist.c:3584-3587`)
     /// and transmits every entry as-is, so the receiver's in-place tombstones
     /// keep both sides' NDX numbering aligned. This method returns immediately in
     /// that case, leaving the list (and `parallel`) untouched.
@@ -225,11 +225,11 @@ impl DualFileList {
     /// `flist_sort_and_clean()`:
     ///
     /// - **Top-level duplicates are kept alive.** Upstream gates `clear_file()`
-    ///   on `!am_sender` (flist.c:3326-3333), so the sender never removes a
+    ///   on `!am_sender` (flist.c:3628-3635), so the sender never removes a
     ///   duplicate; a repeated top-level source arg (e.g. `rsync -r foo foo
     ///   dest`) stays on the wire and the receiver tombstones it, keeping both
     ///   sides' NDX aligned. A duplicate top-level directory is additionally
-    ///   marked FLAG_DUPLICATE (flist.c:3316) so the sub-list scheduler batches
+    ///   marked FLAG_DUPLICATE (flist.c:3618) so the sub-list scheduler batches
     ///   the same-named dirs into one sub-list.
     /// - **Nested duplicates are collapsed.** oc walks the whole tree eagerly, so
     ///   a repeated source dir yields duplicate *nested* entries that upstream -
@@ -243,10 +243,10 @@ impl DualFileList {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2784` - `flist_sort_and_clean(flist, 0)` runs in
+    /// - `flist.c:3059` - `flist_sort_and_clean(flist, 0)` runs in
     ///   `send_file_list()`; the sender passes `strip_root = 0`.
-    /// - `flist.c:3282-3285` - `am_sender && !inc_recurse` skips the clean loop.
-    /// - `flist.c:3289-3325` - the duplicate-removal tie-break this mirrors.
+    /// - `flist.c:3584-3587` - `am_sender && !inc_recurse` skips the clean loop.
+    /// - `flist.c:3591-3627` - the duplicate-removal tie-break this mirrors.
     pub fn dedup_with_parallel<P>(
         &mut self,
         parallel: &mut Vec<P>,
@@ -258,7 +258,7 @@ impl DualFileList {
         if len == 0 {
             return stats;
         }
-        // upstream: flist.c:3282-3285 - a non-incremental sender transmits
+        // upstream: flist.c:3584-3587 - a non-incremental sender transmits
         // duplicates as-is (skips the clean loop) so the receiver's tombstones
         // keep both sides' NDX numbering aligned. A sender cannot tombstone-skip
         // a slot without transmitting fewer entries than its array holds, which
@@ -285,13 +285,13 @@ impl DualFileList {
                 continue;
             }
 
-            // upstream: flist.c:3315-3333 - `clear_file()` is gated on
+            // upstream: flist.c:3617-3635 - `clear_file()` is gated on
             // `!am_sender`, so the sender NEVER removes a duplicate; a duplicate
             // top-level source arg stays alive and the receiver's own clean pass
             // tombstones it, keeping both sides' NDX aligned. Under INC_RECURSE a
             // duplicate directory is additionally marked FLAG_DUPLICATE so the
             // sub-list scheduler batches the same-named dirs into one sub-list
-            // (flist.c:2398-2404). oc walks the whole tree eagerly, so a repeated
+            // (flist.c:2671-2681). oc walks the whole tree eagerly, so a repeated
             // source dir also yields duplicate *nested* entries that upstream -
             // which scans each physical dir once - never produces; those nested
             // duplicates are collapsed below. Only top-level duplicates (the
@@ -305,7 +305,7 @@ impl DualFileList {
                     self.legacy.swap(w, r);
                     parallel.swap(w, r);
                 }
-                // upstream: flist.c:3315-3316 - FLAG_DUPLICATE marks the later
+                // upstream: flist.c:3617-3618 - FLAG_DUPLICATE marks the later
                 // directory (only when both entries are dirs) so
                 // `send_extra_file_list()` batches the duplicate-named dirs into a
                 // single sub-list. The later entry now sits at index `w`.
@@ -338,7 +338,7 @@ impl DualFileList {
     /// This mirrors upstream rsync's `flist_free()` which deallocates
     /// completed INC_RECURSE segments during the transfer loop. Directories
     /// are kept: upstream allocates them from `dir_flist`'s pool
-    /// (flist.c:1748-1755), which `flist_free()` of a sub-list never releases
+    /// (flist.c:1748-1757), which `flist_free()` of a sub-list never releases
     /// (flist.c:3548-3551), because a sub-list's gap NDX still names its
     /// directory long after the segment that listed it (sender.c:552-558).
     ///
@@ -591,7 +591,7 @@ mod tests {
     fn dedup_with_parallel_sender_noninc_transmits_duplicates() {
         // WHY: a non-incremental sender must NOT remove duplicates - it transmits
         // every entry so the receiver's in-place tombstones keep the wire NDX
-        // aligned. upstream: flist.c:3282-3285.
+        // aligned. upstream: flist.c:3584-3587.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn dedup_with_parallel_sender_inc_keeps_top_level_dups_alive() {
-        // WHY: upstream gates clear_file() on !am_sender (flist.c:3326-3333), so
+        // WHY: upstream gates clear_file() on !am_sender (flist.c:3628-3635), so
         // a sender NEVER removes a duplicate - even under INC_RECURSE. A repeated
         // top-level source arg stays on the wire; the receiver's own clean pass
         // tombstones it, keeping both sides' NDX numbering aligned. Truncating it
@@ -624,7 +624,7 @@ mod tests {
         // Bases stay aligned 1:1 with the (unremoved) entries.
         assert_eq!(bases, ["first", "second", "zbase"]);
         // Plain files are never marked FLAG_DUPLICATE - only dirs, for sub-list
-        // batching (flist.c:3315-3316 sets it inside the both-dirs branch).
+        // batching (flist.c:3617-3618 sets it inside the both-dirs branch).
         assert!(!list[1].duplicate());
     }
 
@@ -633,7 +633,7 @@ mod tests {
         // WHY: `rsync -r foo foo dest` under INC_RECURSE. Upstream keeps BOTH
         // top-level `foo` dirs (clear_file gated on !am_sender) and marks the
         // later FLAG_DUPLICATE so send_extra_file_list batches them into one
-        // sub-list (flist.c:3316, 2398-2404). oc walks the tree eagerly, so
+        // sub-list (flist.c:3618, 2671-2681). oc walks the tree eagerly, so
         // `foo`'s children appear twice; those NESTED duplicates are collapsed
         // (upstream scans each physical dir once), but the two top-level `foo`
         // entries stay - matching upstream's wire entry count and NDX numbering
@@ -655,7 +655,7 @@ mod tests {
     }
 
     /// Distinct non-UTF-8 directory names are not duplicates. Upstream compares
-    /// raw bytes (flist.c:3295 `f_name_cmp()`); a lossy comparison would see
+    /// raw bytes (flist.c:3595 `f_name_cmp()`); a lossy comparison would see
     /// equal names, flag the later dir FLAG_DUPLICATE and batch two unrelated
     /// directories into one sub-list.
     #[cfg(unix)]
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn dedup_with_parallel_keeps_directory_over_file() {
         // WHY: a NESTED same-named dir must win over a same-named file "because
-        // it might have contents in the list" (flist.c:3308); its base must
+        // it might have contents in the list" (flist.c:3610); its base must
         // travel with it. Nested duplicates are oc double-walk artifacts
         // (upstream scans each physical dir once) and ARE collapsed, unlike the
         // top-level source-arg dups kept above.
@@ -705,7 +705,7 @@ mod tests {
         // WHY: the non-incremental sender transmits duplicates as-is; the
         // receiver's flist_clean then TOMBSTONES the duplicate in place, keeping
         // the array length (and every NDX slot) so both sides stay aligned (no
-        // RERR_PROTOCOL desync). upstream: flist.c:3282-3285 + 3089.
+        // RERR_PROTOCOL desync). upstream: flist.c:3584-3587 + 3089.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("a".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
@@ -752,7 +752,7 @@ mod tests {
     }
 
     /// Directories outlive their segment like upstream's `dir_flist` entries
-    /// (flist.c:1748-1755): a later gap NDX still names them.
+    /// (flist.c:1748-1757): a later gap NDX still names them.
     #[test]
     fn reclaim_segment_keeps_directories() {
         let mut list = DualFileList::new();

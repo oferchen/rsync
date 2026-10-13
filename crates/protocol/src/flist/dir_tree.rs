@@ -445,7 +445,7 @@ mod tests {
         assert!(!tree.is_empty());
     }
 
-    // CVE-2026-43620 regression coverage (SEC-4).
+    // CVE-2026-43620 regression coverage.
     //
     // Upstream rsync 3.4.3 fixed an OOB read in `recv_files` triggered by a
     // malformed `parent_ndx` arriving in a file-list segment. The equivalent

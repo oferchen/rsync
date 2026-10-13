@@ -8,15 +8,18 @@
 //!
 //! # Wire Format Overview
 //!
-//! Each file entry is encoded as:
-//! 1. A flags byte (or extended flags for protocol 28+) indicating which fields follow
+//! Each file entry is encoded in the order of upstream `flist.c:send_file_entry()`:
+//! 1. Transmit flags (one byte, a 16-bit value for protocol 28+ with
+//!    `XMIT_EXTENDED_FLAGS`, or a varint when `xfer_flags_as_varint` is negotiated)
 //! 2. Path bytes with common prefix compression (reuses prefix from previous entry)
-//! 3. File size (varint encoded)
-//! 4. Modification time (conditionally, based on flags)
-//! 5. Mode bits (conditionally, based on flags)
-//! 6. UID/GID (conditionally, based on flags and protocol options)
-//! 7. Device/rdev for special files (conditionally)
-//! 8. Symlink target (for symlinks)
+//! 3. Hard-link leader index (protocol 30+ followers; an abbreviated follower ends here)
+//! 4. File size (`varlong30`)
+//! 5. Modification time, nanoseconds and creation time (conditionally, based on flags)
+//! 6. Mode bits, then access time (conditionally, based on flags)
+//! 7. UID/GID, with optional names (conditionally, based on flags and protocol options)
+//! 8. Device/rdev for devices and, before protocol 31, specials (conditionally)
+//! 9. Symlink target (for symlinks)
+//! 10. Hard-link dev/ino (protocol < 30) and the file checksum (`--checksum`)
 //!
 //! # Example
 //!

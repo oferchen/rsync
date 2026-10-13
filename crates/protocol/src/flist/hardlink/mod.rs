@@ -8,9 +8,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `hlink.c:match_hlinkinfo()` - Hardlink matching logic
-//! - `hlink.c:init_hard_links()` - Hardlink table initialization
-//! - Protocol 30+ uses indices into a hardlink list
+//! - `hlink.c:idev_find()` - per-device (dev, ino) lookup used by the sender
+//! - `hlink.c:init_hard_links()` - hardlink table initialization
+//! - `flist.c:send_file_entry()` - protocol 30+ sends the follower's leader as a
+//!   file-list index (`first_hlink_ndx`)
 
 mod table;
 #[cfg(test)]
