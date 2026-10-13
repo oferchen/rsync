@@ -14,6 +14,11 @@ pub struct MessageFrame {
 
 impl MessageFrame {
     /// Constructs a frame from a message code and owned payload bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] when the payload exceeds
+    /// [`crate::MAX_PAYLOAD_LENGTH`].
     pub fn new(code: MessageCode, payload: Vec<u8>) -> Result<Self, io::Error> {
         let payload_len = ensure_payload_length(payload.len())?;
         MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
@@ -31,8 +36,8 @@ impl MessageFrame {
     ///
     /// # Errors
     ///
-    /// Returns [`io::ErrorKind::InvalidInput`] when the payload length exceeds the 24-bit limit
-    /// enforced by upstream rsync, mirroring the error that [`crate::send_msg`] would produce in the same
+    /// Returns [`io::ErrorKind::InvalidInput`] when the payload length exceeds the 24-bit header
+    /// length field, mirroring the error that [`crate::send_msg`] would produce in the same
     /// situation.
     ///
     /// # Examples
@@ -71,21 +76,18 @@ impl MessageFrame {
 
     /// Returns a mutable view into the payload bytes carried by the frame.
     ///
-    /// Upstream rsync occasionally rewrites multiplexed payloads in place (for
-    /// example when decrypting or decompressing data blocks) before handing the
-    /// buffer to the next pipeline stage. Exposing a mutable slice allows the
-    /// Rust implementation to mirror that style without cloning the payload,
-    /// keeping buffer reuse intact for larger transfers.
+    /// Allows in-place rewriting without cloning the payload. The length cannot
+    /// change through this view; [`MessageFrame::header`] re-validates it.
     #[must_use]
     #[inline]
     pub fn payload_mut(&mut self) -> &mut [u8] {
         &mut self.payload
     }
 
-    /// Returns the length of the payload in bytes without exposing the
-    /// underlying buffer. Upstream rsync frequently inspects the payload size
-    /// when routing multiplexed messages, so providing this accessor helps
-    /// mirror those call-sites without allocating or cloning.
+    /// Returns the length of the payload in bytes.
+    ///
+    /// This is the value `io.c:read_a_msg()` tracks as `msg_bytes` when it
+    /// validates and routes an inbound frame.
     #[must_use]
     #[inline]
     pub const fn payload_len(&self) -> usize {
@@ -100,11 +102,6 @@ impl MessageFrame {
     }
 
     /// Consumes the frame and returns the message code together with the owned payload bytes.
-    ///
-    /// Upstream rsync frequently pattern matches on both the multiplexed tag and the data that
-    /// follows. Providing a zero-copy destructor mirrors that style while keeping the Rust
-    /// implementation efficient by avoiding payload cloning when the caller needs ownership of
-    /// both values.
     #[must_use]
     #[inline]
     pub fn into_parts(self) -> (MessageCode, Vec<u8>) {
@@ -157,7 +154,7 @@ impl MessageFrame {
     /// The helper mirrors [`crate::send_frame`] but lives on [`MessageFrame`] so callers that already own
     /// the decoded frame do not need to split it manually into tag and payload slices. The payload
     /// length is revalidated to guard against mutations performed through [`DerefMut`], and the
-    /// upstream vectored-write strategy is reused via [`crate::send_msg`].
+    /// header and payload go out through the same vectored write as [`crate::send_msg`].
     ///
     /// # Examples
     ///
@@ -188,6 +185,11 @@ impl MessageFrame {
     /// to parse exactly one frame can invoke [`TryFrom<&[u8]>`] to receive an error when extra
     /// trailing data is present. Use [`crate::BorrowedMessageFrame::decode_from_slice`] to parse without
     /// allocating a new buffer when a borrowed view suffices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::UnexpectedEof`] when `bytes` is shorter than the header plus the
+    /// declared payload, and [`io::ErrorKind::InvalidData`] when the header tag is invalid.
     pub fn decode_from_slice(bytes: &[u8]) -> io::Result<(Self, &[u8])> {
         let (header, payload, remainder) = super::helpers::decode_frame_parts(bytes)?;
         let frame = MessageFrame::new(header.code(), payload.to_vec())?;

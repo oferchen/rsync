@@ -21,11 +21,15 @@ use crate::envelope::{MAX_PAYLOAD_LENGTH, MessageCode};
 ///
 /// # Protocol Details
 ///
-/// The rsync multiplex protocol wraps all data in 4-byte headers:
-/// - Byte 0: Tag (message code + MPLEX_BASE=7)
-/// - Bytes 1-3: Payload length (24-bit little-endian)
+/// The rsync multiplex protocol wraps all data in 4-byte little-endian headers:
+/// - Bits 24-31 (last byte on the wire): tag (message code + `MPLEX_BASE` = 7)
+/// - Bits 0-23 (first three bytes): payload length
 ///
-/// Maximum frame size is 8192 bytes for data, matching upstream rsync's behavior.
+/// Deviation from upstream: `io.c:perform_io()` wraps everything buffered in
+/// `iobuf.out` (a 64 KiB buffer) in a single `MSG_DATA` frame at flush time; this
+/// writer caps each `MSG_DATA` frame at `max_frame_size` (8192 bytes by default).
+/// Peers accept any frame length up to 24 bits, so the bytes on the wire stay
+/// compatible.
 ///
 /// # Examples
 ///
@@ -69,28 +73,31 @@ use crate::envelope::{MAX_PAYLOAD_LENGTH, MessageCode};
 /// ```
 pub struct MplexWriter<W> {
     inner: W,
-    /// Buffer for accumulating writes before framing
+    /// Buffer for accumulating writes before framing.
     buffer: Vec<u8>,
-    /// Maximum buffer size before flushing (default: 32KB)
+    /// Maximum buffer size before flushing (default: 32 KiB).
     buffer_size: usize,
-    /// Maximum frame size for data messages (default: 8192)
+    /// Maximum frame size for data messages (default: 8192).
     max_frame_size: usize,
 }
 
 impl<W> MplexWriter<W> {
-    /// Default buffer size matching upstream rsync's IO_BUFFER_SIZE (32KB).
+    /// Default buffer size, equal to upstream `IO_BUFFER_SIZE` (32 KiB, `rsync.h:160`).
+    ///
+    /// Upstream allocates its output buffer at twice that size (`io.c:1567`
+    /// `io_start_buffering_out()`).
     pub const DEFAULT_BUFFER_SIZE: usize = 32 * 1024;
 
     /// Default maximum frame size for data messages (8192 bytes).
     ///
-    /// This matches upstream rsync's maximum message size for data frames.
-    /// Larger writes are split into multiple frames.
+    /// Larger writes are split into multiple frames. This cap is oc's own;
+    /// upstream sizes `MSG_DATA` frames by how much output is buffered.
     pub const DEFAULT_MAX_FRAME_SIZE: usize = 8192;
 
     /// Creates a new multiplexed writer with default buffer and frame sizes.
     ///
-    /// - Buffer size: 32KB (matches upstream rsync)
-    /// - Max frame size: 8192 bytes (matches upstream rsync)
+    /// - Buffer size: [`Self::DEFAULT_BUFFER_SIZE`] (32 KiB)
+    /// - Max frame size: [`Self::DEFAULT_MAX_FRAME_SIZE`] (8192 bytes)
     #[inline]
     pub fn new(inner: W) -> Self {
         Self::with_capacity(inner, Self::DEFAULT_BUFFER_SIZE)
@@ -202,10 +209,10 @@ impl<W: Write> MplexWriter<W> {
     ///
     /// Batchable message codes (`MSG_INFO`, `MSG_WARNING`) skip the
     /// immediate flush, letting the write buffer coalesce multiple
-    /// control frames into fewer TCP segments. This matches upstream
-    /// rsync's `send_msg()` in `io.c` which appends to `iobuf.msg`
-    /// without flushing. Latency-sensitive codes (ERROR, REDO, etc.)
-    /// still flush immediately.
+    /// control frames into fewer TCP segments, as upstream `io.c:send_msg()`
+    /// does by appending to `iobuf.msg`. Deviation from upstream: every other
+    /// code (see [`MessageCode::requires_immediate_flush`]) flushes the inner
+    /// writer at once, whereas upstream `send_msg()` never flushes.
     ///
     /// # Errors
     ///
@@ -235,7 +242,7 @@ impl<W: Write> MplexWriter<W> {
         // before data the caller has already written.
         self.flush_buffer()?;
         send_msg(&mut self.inner, code, payload)?;
-        // upstream: io.c:983 send_msg() appends to iobuf.msg without flushing.
+        // upstream: io.c:1088 send_msg() appends to iobuf.msg without flushing.
         // Only latency-sensitive codes need an immediate flush.
         if code.requires_immediate_flush() {
             self.inner.flush()?;
@@ -320,8 +327,8 @@ impl<W: Write> MplexWriter<W> {
     /// the peer, so it needs no forwarding and works with every rsync version.
     /// Any buffered DATA is flushed first to maintain proper message ordering.
     ///
-    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1479-1507) sends
-    /// `send_msg(MSG_DATA, "", 0, 0)`; see the comment at io.c:1472-1478.
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1639-1667) sends
+    /// `send_msg(MSG_DATA, "", 0, 0)`; see the comment at io.c:1632-1638.
     ///
     /// # Examples
     ///

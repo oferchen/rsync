@@ -1,11 +1,8 @@
 //! Async multiplex read leaf, gated on the `tokio-transfer` feature.
 //!
 //! This is the `.await`-driven counterpart to the blocking
-//! [`recv_msg_into`](super::recv::recv_msg_into) leaf. It exists because the
-//! ASY-7 scoping result (`docs/design/asy-7-receiver-tokio-prototype.md`)
-//! established that the receiver's real socket-read leaf is
-//! `protocol::recv_msg_into`, and a genuine receiver-side `.await` needs an
-//! async variant there rather than in `transfer` alone.
+//! [`recv_msg_into`](super::recv::recv_msg_into) leaf, which is the receiver's
+//! socket-read leaf (see `docs/design/asy-7-receiver-tokio-prototype.md`).
 //!
 //! The variant shares the header decode and payload buffer preparation with the
 //! sync leaf via `super::super::helpers`, so the two can never diverge on
@@ -13,8 +10,8 @@
 //! only difference is how bytes are pulled off the wire: `.await` on
 //! [`AsyncRead`] here versus a blocking `read` in the sync leaf.
 //!
-//! Additive and unwired: this leaf is not connected to `MultiplexReader` or the
-//! receiver pipeline. Wiring is a later rung (the coupled ASY-7 redo).
+//! No production caller uses this leaf yet: neither
+//! [`MplexReader`](crate::MplexReader) nor the receiver pipeline calls it.
 
 use std::io;
 
