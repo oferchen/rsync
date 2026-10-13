@@ -1,4 +1,4 @@
-//! Byte-budget cap tests (#2245): retention by bytes, not by buffer count.
+//! Byte-budget cap tests: retention by bytes, not by buffer count.
 
 use super::super::*;
 use std::sync::Arc;

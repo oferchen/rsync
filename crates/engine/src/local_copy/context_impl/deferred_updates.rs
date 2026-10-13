@@ -33,7 +33,7 @@ impl<'a> CopyContext<'a> {
         // out of it. The guard reports it only for a RELATIVE `--partial-dir`;
         // an absolute one is a reserved location upstream never removes.
         //
-        // upstream: receiver.c:734 handle_partial_dir(partialptr, PDIR_DELETE)
+        // upstream: receiver.c:732 handle_partial_dir(partialptr, PDIR_DELETE)
         // after the delayed rename succeeds.
         if let Some(dir) = update.guard.partial_dir_to_remove() {
             self.deferred_ops
@@ -122,9 +122,9 @@ impl<'a> CopyContext<'a> {
                     file_type: path_context.file_type,
                     destination_previously_existed: path_context.destination_previously_existed,
                 },
-                // upstream: receiver.c:980 - deferred updates have already
-                // committed the rename + applied dest_mode at the original
-                // commit site, so there is no pre-transfer stat to recover
+                // upstream: receiver.c:701 handle_delayed_updates() - deferred
+                // updates have already committed the rename + applied dest_mode
+                // at the original commit site, so there is no pre-transfer stat to recover
                 // here.
                 pre_transfer_meta: None,
                 #[cfg(unix)]

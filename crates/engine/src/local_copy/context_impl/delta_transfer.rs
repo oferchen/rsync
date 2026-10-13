@@ -198,19 +198,19 @@ impl<'a> CopyContext<'a> {
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
-        // upstream: match.c:363-366 match_sums() zeroes the per-file counters
+        // upstream: match.c:395 match_sums() zeroes the per-file counters
         // before scanning; the loop tallies confirmed matches inline and
         // hash_hits/false_alarms through the counted probe, folded into the run
-        // totals at the end for the `-vv` `total:` line (match.c:439
+        // totals at the end for the `-vv` `total:` line (match.c:480
         // match_report()).
         let mut probe = ProbeCounters::default();
         let mut file_matches = 0u64;
         // Accumulated where matches are produced, never derived from
-        // `total_size - literal_bytes`. upstream: match.c:121 `matched()` is the
+        // `total_size - literal_bytes`. upstream: match.c:144 `matched()` is the
         // only place `stats.matched_data` grows, so a byte counts as matched
         // exactly when a block match emitted it - bytes that are neither
         // literal nor matched (the prefix an append skips over) count as
-        // neither. upstream: match.c:389-390 sets `last_match = s->flength;
+        // neither. upstream: match.c:430-431 sets `last_match = s->flength;
         // s->count = 0;` so append mode never reaches `matched()` at all.
         let mut matched_bytes = 0u64;
         let mut sparse_state = SparseWriteState::default();
@@ -455,13 +455,13 @@ impl<'a> CopyContext<'a> {
         //
         // Upstream reaches this block by shrinking the rolling window: once
         // `offset + k >= len` there is no next byte to add, so `more` is false
-        // and `k` decrements on every step (`match.c:321`, `match.c:331`). Its
+        // and `k` decrements on every step (`match.c:354`, `match.c:364`). Its
         // scan runs to `end = len + 1 - s->sums[s->count-1].len`
-        // (`match.c:174`) - bounded by the LAST block's length, not by
+        // (`match.c:197`) - bounded by the LAST block's length, not by
         // `blength` - so the window keeps narrowing until it is exactly as long
         // as that final short block. Only then does the candidate pass
         // `l = MIN(blength, len-offset); if (l != s->sums[i].len) continue;`
-        // (`match.c:222-224`), because a short block is the only one whose
+        // (`match.c:254-256`), because a short block is the only one whose
         // recorded length is below `blength`.
         //
         // Probing whatever the loop happened to leave behind fails twice over.
@@ -755,7 +755,7 @@ impl<'a> CopyContext<'a> {
             file_matches,
         );
 
-        // upstream: match.c:433-435 folds the per-file counters into the run
+        // upstream: match.c:474-476 folds the per-file counters into the run
         // totals after match_sums() returns; do the same so the end-of-run
         // `-vv` `total:` line reports cumulative figures.
         self.summary.record_delta_probe(file_matches, probe);
@@ -844,7 +844,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// Mirrors upstream `token.c:simple_send_token()` which encodes a block
     /// reference as `write_int(-(token+1))`. Under `-z` the compressed encoder
-    /// additionally needs the matched bytes: `token.c:471-484` feeds them into
+    /// additionally needs the matched bytes: `token.c:475-510` feeds them into
     /// the deflate history so the receiver's dictionary stays in sync, so the
     /// block is read back from `existing` (the basis) for that call only.
     fn capture_batch_block_match(
@@ -861,7 +861,7 @@ impl<'a> CopyContext<'a> {
 
         // The token references a basis block by index, so the sum_head this
         // file reserved must already describe that block. Anything else is the
-        // stream upstream aborts on at receiver.c:427.
+        // stream upstream aborts on at receiver.c:587-589.
         self.check_batch_block_index(block_index)?;
 
         let mut see_data = Vec::new();

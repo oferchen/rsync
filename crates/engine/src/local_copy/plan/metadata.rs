@@ -125,7 +125,7 @@ impl LocalCopyMetadata {
         #[cfg(not(unix))]
         let (mode, uid, gid, nlink) = (None, None, None, None);
 
-        // upstream: log.c:643-654 - `%L` renders ` -> %s` for symlinks
+        // upstream: log.c:675-686 - `%L` renders ` -> %s` for symlinks
         // (`F_SYMLINK(file)`) and ` => %s` for hardlink aliases (`hlink`).
         // Both reuse this `symlink_target` slot; keep the caller-supplied
         // reference target for files and special files (devices/FIFOs/sockets)
@@ -163,7 +163,7 @@ impl LocalCopyMetadata {
     ///
     /// # Upstream Reference
     ///
-    /// - `xattrs.c:1135 get_stat_xattr()` - overrides `st_mode`/`st_rdev` from
+    /// - `xattrs.c:1216 get_stat_xattr()` - overrides `st_mode`/`st_rdev` from
     ///   the `%stat` xattr on the sender when `am_root < 0` (fake-super).
     #[must_use]
     #[cfg_attr(not(all(unix, feature = "xattr")), allow(unused_mut))]
@@ -194,7 +194,7 @@ impl LocalCopyMetadata {
     /// reporting, so `--list-only` and itemized output show `-rw-...` with the
     /// device's readable byte length instead of `brw-...`/`crw-...` and `0`.
     ///
-    /// Mirrors upstream `flist.c:1676-1685 make_file()`, which rewrites the
+    /// Mirrors upstream `flist.c:1790-1799 make_file()`, which rewrites the
     /// device stat to `S_IFREG | (mode & ACCESSPERMS)` with `get_device_size()`
     /// before the entry is ever itemized. A no-op for non-device kinds.
     #[must_use]
@@ -371,7 +371,7 @@ mod tests {
     // placeholder file whose `user.rsync.%stat` xattr encodes the real
     // st_mode. The reporting override must map those mode bits back to the
     // virtual kind (so the itemized type char matches upstream's
-    // get_stat_xattr sender override, xattrs.c:1135) while leaving a %stat
+    // get_stat_xattr sender override, xattrs.c:1216) while leaving a %stat
     // that still describes a regular file untouched.
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(snapshot.mode(), Some(0o020644));
     }
 
-    // upstream: flist.c:1644-1653 - `--copy-devices` reports a device as a
+    // upstream: flist.c:1790-1799 - `--copy-devices` reports a device as a
     // regular file. The virtualisation must flip the kind to `File`, adopt the
     // supplied device size, and rewrite the mode's type bits to `S_IFREG` while
     // preserving the permission bits, so `--list-only` renders `-rw-...` with

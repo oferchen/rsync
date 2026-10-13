@@ -118,10 +118,10 @@ impl LocalCopyOptions {
     /// receiver's phase-2 `MSG_DONE`, by which point `handle_delayed_updates()`
     /// has renamed everything and dropped each staging directory.
     ///
-    /// upstream: compat.c:672-677 - `delete_mode` with no `--delete-WHEN`
+    /// upstream: compat.c:683-688 - `delete_mode` with no `--delete-WHEN`
     /// resolves to `delete_during = 1` at protocol >= 30, and `delay_updates`
-    /// is not consulted; generator.c:2409-2419 is the barrier and 2425-2428
-    /// the late passes it guards; generator.c:1532-1535 is the during sweep.
+    /// is not consulted; generator.c:2873-2893 is the barrier and 2899-2902
+    /// the late passes it guards; generator.c:1924-1928 is the during sweep.
     pub const fn delete_timing(&self) -> Option<DeleteTiming> {
         if self.delete_extraneous() {
             Some(self.delete_timing)
@@ -327,7 +327,7 @@ mod tests {
     /// `--delay-updates` must not change the delete schedule.
     ///
     /// Upstream resolves a bare `--delete` to delete-during without consulting
-    /// `delay_updates` (compat.c:672-677), so `--delete --delay-updates` sweeps
+    /// `delay_updates` (compat.c:683-688), so `--delete --delay-updates` sweeps
     /// exactly like `--delete`. Promoting it to `After` here would silently
     /// give the user `--delete-after` semantics they did not ask for, which is
     /// observable: the `deleting` lines move to the end of the output.
