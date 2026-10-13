@@ -413,7 +413,7 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
     }
 
     if skipped > 0 {
-        // upstream: generator.c:2905 emits one warning after the pass with
+        // upstream: generator.c:2904-2907 emits one warning after the pass with
         // the total number of entries skipped because of the limit; the run
         // then exits RERR_DEL_LIMIT (25).
         info_log!(
@@ -548,9 +548,9 @@ fn remove_entry_capped(
 
         if !all_children_removed {
             // Contents survived because the cap was reached, so the directory
-            // cannot be removed. upstream: delete.c:178 prints this once per
+            // cannot be removed. upstream: delete.c:179 prints this once per
             // non-empty directory without flagging an I/O error. upstream
-            // delete.c:178 prints the transfer-relative name (`f_name`), not the
+            // delete.c:179 prints the transfer-relative name (`f_name`), not the
             // absolute destination path.
             info_log!(
                 Nonreg,
@@ -639,7 +639,7 @@ fn delete_leaf(
     // A directory can survive its own delete when in-place suffix backups
     // (`--backup` without `--backup-dir`) renamed its contents to `name~`,
     // leaving it non-empty. Upstream `delete_dir_contents` reports this as the
-    // benign `DR_NOT_EMPTY` (delete.c:178): print the notice, keep the
+    // benign `DR_NOT_EMPTY` (delete.c:179): print the notice, keep the
     // directory, do not flag an I/O error or count a deletion. The rmdir must
     // therefore run before the deletion is recorded so the `*deleting` event is
     // only emitted for a directory that is actually removed.
@@ -649,7 +649,7 @@ fn delete_leaf(
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) if is_dir_not_empty(&error) => {
-                    // upstream delete.c:178 prints the transfer-relative name
+                    // upstream delete.c:179 prints the transfer-relative name
                     // (`f_name`), not the absolute destination path.
                     info_log!(
                         Nonreg,
@@ -1400,7 +1400,7 @@ mod mount_boundary_tests {
                     "a same-device directory must remain deletable",
                 );
                 // A non-directory on a foreign device is not a mount point:
-                // upstream restricts FLAG_MOUNT_DIR to S_ISDIR (flist.c:1712).
+                // upstream restricts FLAG_MOUNT_DIR to S_ISDIR (flist.c:1725).
                 assert!(
                     !is_delete_mount_point(Some(ROOT_DEV), &foreign_file, file_ft),
                     "only directories can be mount points",

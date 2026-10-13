@@ -141,7 +141,7 @@ pub(super) fn try_clone(
     // hypothetical one: it is what made the upstream `symlink-race-source`
     // cell leak on macOS while the confined open refused the same shape.
     //
-    // upstream: `rsync-3.5.1/sender.c:209-251` `sender_open_confined()` - the
+    // upstream: `rsync-3.5.1/sender.c:215-252` `sender_open_confined()` - the
     // sender's content read is confined, and this CoW fast path is an oc
     // extension that must not weaken that invariant.
     #[cfg(unix)]
@@ -341,7 +341,7 @@ fn normalize_cloned_metadata(
     // Without the atime reset, a `--no-atimes` copy (the default, including `-a`)
     // would keep the clonefile-inherited source atime instead of the fresh
     // access time upstream produces (rsync opens a new file; atime is the write
-    // time). upstream: rsync.c:588-589 - atime is written from source only when
+    // time). upstream: rsync.c:725-726 - atime is written from source only when
     // atimes_ndx is set; otherwise the destination keeps its own (fresh) atime.
     //
     // Use utimensat via rustix so a read-only clone (e.g. source mode 0o444)

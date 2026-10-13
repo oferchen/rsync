@@ -144,7 +144,7 @@ fn decide_entry_action(
     // (i.e., --copy-links did NOT resolve it to the referent).  When
     // --copy-links is active and the target is a FIFO or device, we must
     // fall through to the FIFO / device branches below.
-    // upstream: generator.c:1155 list_file_entry() lists every flist entry, so
+    // upstream: generator.c:1642 list_file_entry() lists every flist entry, so
     // `--list-only` records symlinks, FIFOs, and devices (dry-run only reports
     // them) even without `--links`/`--specials`/`--devices`; a real transfer
     // without those flags still skips the non-regular entry.
@@ -286,7 +286,7 @@ pub(crate) fn plan_directory_entries<'a>(
             PathBuf::from(Path::new(&file_name))
         };
 
-        // upstream: flist.c:1839-1863 send_file1() - a name that cannot be
+        // upstream: flist.c:2000-2023 send_file_name() - a name that cannot be
         // strictly transcoded under --iconv is dropped from the flist with a
         // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
         // sets io_error before this directory's delete pass runs, so deletions
@@ -365,7 +365,7 @@ pub(crate) fn plan_directory_entries<'a>(
                                 }
                             }
                             Err(_) => {
-                                // upstream: flist.c:1502-1507 - dangling symlink
+                                // upstream: flist.c:1676-1681 - dangling symlink
                                 // whose target was to be dereferenced by
                                 // --copy-unsafe-links; log and skip.
                                 eprintln!("symlink has no referent: {}", entry.path.display());
@@ -399,14 +399,14 @@ pub(crate) fn plan_directory_entries<'a>(
         }
 
         if deletion_enabled && keep_name {
-            // upstream: generator.c:340 delete_in_dir() keeps any destination
+            // upstream: generator.c:346 delete_in_dir() keeps any destination
             // entry found in the source file list via
             // flist_find_ignore_dirness(), regardless of file type or delete
             // timing. --delete-before shares that keep decision with
             // --delete-during/-after (all drive delete_in_dir), so an in-source
             // regular file must stay in the keep-set. Restricting
             // --delete-before to directories deleted then re-transferred every
-            // in-source file. upstream: flist.c:1804-1828 + flist.c:963-979 -
+            // in-source file. upstream: flist.c:2000-2023 + flist.c:1058-1072 -
             // the receiver hits the filesystem with the iconv-converted name;
             // align the keep-list so deletion does not wipe freshly-written
             // entries when --iconv is configured.
@@ -441,9 +441,9 @@ pub(crate) fn plan_directory_entries<'a>(
 /// upstream: `hlink.c:match_gnums()` sorts a cohort by group number then by
 /// name-sorted index and links the members into a list "from last to first",
 /// tagging the highest-index (last name-sorted) member `FLAG_HLINK_LAST`.
-/// `generator.c:1803-1806` then defers every non-last member whose destination
+/// `generator.c:2214-2215` then defers every non-last member whose destination
 /// is absent (`statret != 0 && F_HLINK_NOT_LAST`) and only transfers the last
-/// member; `finish_hard_link()` (`hlink.c:474-521`) walks the `F_HL_PREV` chain
+/// member; `finish_hard_link()` (`hlink.c:496-565`) walks the `F_HL_PREV` chain
 /// (last -> ... -> first) creating the aliases, so the itemize stream emits the
 /// holder first (`>f`) followed by the remaining members in descending name
 /// order, each pointing at the holder (`hf ... => <holder>`).
@@ -460,7 +460,7 @@ pub(crate) fn plan_directory_entries<'a>(
 ///
 /// The reorder is skipped entirely when a `--link-dest`/`--copy-dest`/
 /// `--compare-dest` basis is configured. Upstream's LAST-member deferral lives
-/// at `generator.c:1803`, *after* the alt-dest handling (`generator.c:1007-1064`
+/// at `generator.c:1944`, *after* the alt-dest handling (`generator.c:1073-1198`
 /// try_dests_reg); a cohort member satisfied from a basis is placed in name
 /// order and never reaches the deferral, so the FIRST name-sorted member stays
 /// the holder (e.g. `hf f1` / `hf f2 => f1`). Reordering those would swap the
@@ -486,10 +486,10 @@ pub(crate) fn reorder_hardlink_group_holders(
     // preserving the name-sorted index order the planner already produced.
     //
     // The LAST-member data-holder rule only applies to regular files: upstream
-    // defers the last name-sorted member at generator.c:1803 gated on
+    // defers the last name-sorted member at generator.c:2214 gated on
     // `F_HLINK_NOT_LAST`, while non-regular cohorts (devices/FIFOs/sockets) are
     // created FIRST-member-concrete via the `F_HLINK_NOT_FIRST` path
-    // (generator.c:1551). Under `--fake-super` a special file is stored as a
+    // (generator.c:1943). Under `--fake-super` a special file is stored as a
     // regular on-disk placeholder, so its `fs::Metadata` reports a regular
     // file; resolve the effective type from the `%stat`-encoded mode
     // (upstream x_lstat -> get_stat_xattr) so a fake-super device cohort keeps
@@ -703,7 +703,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             PathBuf::from(Path::new(&file_name))
         };
 
-        // upstream: flist.c:1839-1863 send_file1() - a name that cannot be
+        // upstream: flist.c:2000-2023 send_file_name() - a name that cannot be
         // strictly transcoded under --iconv is dropped from the flist with a
         // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
         // sets io_error before this directory's delete pass runs, so deletions
@@ -798,7 +798,7 @@ fn plan_directory_entries_with_prefetch<'a>(
                                 metadata_override = None;
                             }
                         } else {
-                            // upstream: flist.c:1502-1507 - dangling symlink
+                            // upstream: flist.c:1676-1681 - dangling symlink
                             // whose target was to be dereferenced by
                             // --copy-unsafe-links; log and skip.
                             eprintln!("symlink has no referent: {}", entry.path.display());
@@ -842,14 +842,14 @@ fn plan_directory_entries_with_prefetch<'a>(
         }
 
         if deletion_enabled && keep_name {
-            // upstream: generator.c:340 delete_in_dir() keeps any destination
+            // upstream: generator.c:346 delete_in_dir() keeps any destination
             // entry found in the source file list via
             // flist_find_ignore_dirness(), regardless of file type or delete
             // timing. --delete-before shares that keep decision with
             // --delete-during/-after (all drive delete_in_dir), so an in-source
             // regular file must stay in the keep-set. Restricting
             // --delete-before to directories deleted then re-transferred every
-            // in-source file. upstream: flist.c:1804-1828 + flist.c:963-979 -
+            // in-source file. upstream: flist.c:2000-2023 + flist.c:1058-1072 -
             // the receiver hits the filesystem with the iconv-converted name;
             // align the keep-list so deletion does not wipe freshly-written
             // entries when --iconv is configured.
@@ -1017,10 +1017,10 @@ mod tests {
 
     /// Regular-file hard-link cohorts must reorder so the *last* name-sorted
     /// member is the data-holder, mirroring upstream's `F_HLINK_NOT_LAST`
-    /// deferral (generator.c:1803). This is the unchanged control for the
+    /// deferral (generator.c:2214). This is the unchanged control for the
     /// fake-super fix below.
     ///
-    /// upstream: hlink.c:match_gnums / generator.c:1803-1806
+    /// upstream: hlink.c:match_gnums / generator.c:2214-2215
     #[cfg(unix)]
     #[test]
     fn reorder_regular_hardlink_group_uses_last_member_holder() {
@@ -1054,7 +1054,7 @@ mod tests {
     /// as the concrete node (like a real device), NOT reorder to last-concrete.
     ///
     /// upstream: hlink.c non-regular cohorts are FIRST-member-concrete
-    /// (generator.c:1551 `F_HLINK_NOT_FIRST`); x_lstat layers get_stat_xattr.
+    /// (generator.c:1943 `F_HLINK_NOT_FIRST`); x_lstat layers get_stat_xattr.
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn reorder_fake_super_device_hardlink_group_keeps_first_member_holder() {

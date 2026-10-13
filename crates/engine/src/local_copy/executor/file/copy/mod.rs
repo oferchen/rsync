@@ -57,7 +57,7 @@ pub(crate) fn copy_file(
                 .map(PathBuf::from)
                 .unwrap_or_default()
         });
-    // upstream: flist.c:1644-1649 - `--copy-devices` streams a device as a
+    // upstream: flist.c:1790-1796 - `--copy-devices` streams a device as a
     // regular file, so its readable length (not the zero stat size) drives the
     // size checks, stats, and the copy byte count.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
@@ -215,9 +215,9 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    // upstream: generator.c:1704-1719 recv_generator() - the max-size/min-size
+    // upstream: generator.c:2118-2133 recv_generator() - the max-size/min-size
     // filter runs after the "not creating new" (--existing) check at
-    // generator.c:1380, so an out-of-range file absent from the destination
+    // generator.c:1769, so an out-of-range file absent from the destination
     // reports "not creating new file" rather than a size skip.
     //
     // Record the skip as a client event rather than emitting it via `info_log!`
@@ -291,7 +291,7 @@ pub(crate) fn copy_file(
     // preallocated / existing extent (guided by preallocated_len) instead of
     // seeking, so those modes still produce sparse output. Append mode is the
     // exception - upstream flips `sparse_files` off during the append pass
-    // (receiver.c:777,787) so the pre-existing prefix is never hole-punched.
+    // (receiver.c:953-954,963-964) so the pre-existing prefix is never hole-punched.
     let use_sparse_writes = context.sparse_enabled() && !context.append_enabled();
     let partial_enabled = context.partial_enabled();
     let inplace_enabled = context.inplace_enabled();
@@ -333,7 +333,7 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    // upstream: generator.c:566-572 - itemize() lights ITEM_REPORT_XATTR only
+    // upstream: generator.c:571-576 - itemize() lights ITEM_REPORT_XATTR only
     // when xattr_diff() finds the destination's attributes differ from the
     // sender's. Capture that here, before the transfer or the metadata apply
     // can write the source attributes onto the destination; comparing after the

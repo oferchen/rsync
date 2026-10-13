@@ -20,7 +20,7 @@ use protocol::ProtocolVersion;
 /// Returns `true` when a source and destination are the same rsync file type
 /// for the purposes of the `--update` skip decision.
 ///
-/// Mirrors upstream `generator.c:608 get_file_type()`, which buckets modes into
+/// Mirrors upstream `generator.c:614 get_file_type()`, which buckets modes into
 /// regular / symlink / directory / special / device / unsupported. The
 /// `--update` skip only fires when both sides land in the same bucket
 /// (`stype == ftype`), so e.g. a regular-file source over a symlink destination
@@ -53,7 +53,7 @@ fn same_file_type(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
 /// Returns `true` when `--update` should skip this file because the
 /// destination is not older than the source by more than `modify_window`.
 ///
-/// Mirrors upstream `generator.c:1721`:
+/// Mirrors upstream `generator.c:2136`:
 /// ```c
 /// if (update_only > 0 && statret == 0 && stype == ftype
 ///     && file->modtime - sx.st.st_mtime < modify_window)
@@ -90,7 +90,7 @@ pub(crate) fn destination_is_newer(
     }
     match (source.modified(), destination.modified()) {
         (Ok(src), Ok(dst)) => {
-            // upstream: generator.c:1721
+            // upstream: generator.c:2136
             //   file->modtime - sx.st.st_mtime < modify_window
             // Both operands are whole-second `time_t` values and the signed
             // `int modify_window` is used directly, so the destination counts as
@@ -233,7 +233,7 @@ pub(crate) struct CopyComparison<'a> {
 /// Under `--fake-super` a device/FIFO/socket is stored as a regular
 /// placeholder whose `user.rsync.%stat` xattr carries the real mode and rdev.
 /// The placeholder contents (and hence size/mtime) can be identical while the
-/// encoded device numbers differ, so upstream's `unchanged_file()` compares
+/// encoded device numbers differ, so upstream's `quick_check_ok()` compares
 /// the virtualised `st_mode`/`st_rdev` rather than the on-disk file. This
 /// helper reproduces that comparison so the quick-check and itemize columns
 /// react to an rdev/type change. Regular `%stat` shims fall back to the normal
@@ -241,8 +241,8 @@ pub(crate) struct CopyComparison<'a> {
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:unchanged_file()` - compares `st_rdev` for `IS_DEVICE`.
-/// - `xattrs.c:1135 get_stat_xattr()` - source of the virtualised stat.
+/// - `generator.c:quick_check_ok()` - compares `st_rdev` for `IS_DEVICE`.
+/// - `xattrs.c:1216 get_stat_xattr()` - source of the virtualised stat.
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) fn fake_super_stat_differs(source: &Path, destination: &Path) -> bool {
     let Ok(Some(src)) = ::metadata::load_fake_super(source) else {
@@ -291,7 +291,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
         });
     }
 
-    // Upstream: generator.c:unchanged_file() checks size_only before ignore_times.
+    // Upstream: generator.c:quick_check_ok() checks size_only before ignore_times.
     // When both flags are set, size_only wins (skip if sizes match).
     if size_only {
         return true;
@@ -345,7 +345,7 @@ fn unix_sec_nsec(time: SystemTime) -> (i64, u32) {
 /// Returns `true` when two timestamps are the "same" under `--modify-window`.
 ///
 /// This is a direct port of upstream `util1.c:same_time()`, which the generator
-/// consults through `unchanged_file()` for the quick-check skip decision. Both
+/// consults through `quick_check_ok()` for the quick-check skip decision. Both
 /// timestamps are first truncated to whole seconds (mirroring the `time_t`
 /// storage of `st_mtime` / `file->modtime`), then:
 ///
@@ -358,7 +358,7 @@ fn unix_sec_nsec(time: SystemTime) -> (i64, u32) {
 /// - `window < 0`: a nanosecond-exact comparison applies - the seconds AND the
 ///   nanoseconds must match (upstream `modify_window < 0`, util1.c:1748).
 ///
-/// upstream: util1.c:1573 same_time() (via generator.c unchanged_file()).
+/// upstream: util1.c:1744 same_time() (via generator.c quick_check_ok()).
 pub(crate) fn system_time_within_window(
     a: SystemTime,
     b: SystemTime,
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn system_time_within_zero_window_ignores_subsecond_difference() {
-        // upstream: generator.c:unchanged_file() -> same_time() reduces to
+        // upstream: generator.c:quick_check_ok() -> same_time() reduces to
         // `f1_sec == f2_sec` when modify_window == 0, so a destination written
         // without `-t` that lands in the same second as the source (but with a
         // different fractional part) is still treated as up-to-date. Without
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn system_time_window_is_symmetric_on_whole_seconds() {
-        // WHY: upstream util1.c:1573 same_time() treats two mtimes as equal when
+        // WHY: upstream util1.c:1744 same_time() treats two mtimes as equal when
         // their whole-second delta is within `--modify-window`, and the window is
         // SYMMETRIC (|a_sec - b_sec| <= window) regardless of which side is newer.
         // A window of 2 must treat mtimes exactly 2s apart as the same file in
@@ -600,7 +600,7 @@ mod tests {
         assert!(system_time_within_window(minus_two, base, window));
 
         // Sub-second parts must not tip a within-window pair over the edge:
-        // upstream ignores nanoseconds for the window check (util1.c:1579). Source
+        // upstream ignores nanoseconds for the window check (util1.c:1750). Source
         // at .0s vs destination at +2.9s is a whole-second delta of 2 -> same.
         let base_frac = base + Duration::from_millis(0);
         let plus_two_frac = base + Duration::new(2, 900_000_000);
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn system_time_negative_window_requires_nanosecond_exactness() {
-        // WHY: upstream util1.c:1577 - a negative `modify_window` compares the
+        // WHY: upstream util1.c:1748-1749 - a negative `modify_window` compares the
         // nanosecond component too (`f1_sec == f2_sec && f1_nsec == f2_nsec`).
         // Two mtimes in the same second but a different fraction are therefore
         // DIFFERENT and the local copy must proceed, whereas any non-negative
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn should_skip_copy_size_only_wins_over_ignore_times() {
-        // Upstream: generator.c:unchanged_file() checks size_only before
+        // Upstream: generator.c:quick_check_ok() checks size_only before
         // ignore_times. When both are set and sizes match, size_only wins.
         let (_temp, source, destination, source_meta, dest_meta) =
             setup_matched_mtime_files(b"fresh", b"stale");
@@ -722,13 +722,13 @@ mod tests {
 
     #[test]
     fn destination_is_not_newer_when_dest_subsecond_newer_same_second() {
-        // WHY: upstream generator.c:1721 gates the `--update` skip on
+        // WHY: upstream generator.c:2136 gates the `--update` skip on
         // `file->modtime - sx.st.st_mtime < modify_window`, where both operands
         // are whole-second `time_t` values. A destination that is newer only in
         // its fractional second (same whole second as the source) collapses to a
         // zero-second delta, so at the default zero window it is NOT "newer" and
         // `--update` must not skip it. The generator then falls through to the
-        // quick check, whose same_time() (util1.c:1573) also compares seconds and
+        // quick check, whose same_time() (util1.c:1744) also compares seconds and
         // reports the file unchanged -> itemized `.f`.
         //
         // This is the exclude testsuite `same-newness` case: up1/up2 are touched

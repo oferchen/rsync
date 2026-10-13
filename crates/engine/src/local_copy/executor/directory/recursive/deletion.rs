@@ -56,7 +56,7 @@ fn delay_decides_during(context: &CopyContext) -> bool {
 /// Deletes extraneous destination entries for `--delete-during` before the
 /// directory's own children are transferred.
 ///
-/// upstream: generator.c:1532-1537 - for a non-INC_RECURSE `delete_during`
+/// upstream: generator.c:1924-1927 - for a non-INC_RECURSE `delete_during`
 /// run, the generator calls `delete_in_dir()` while itemizing the directory
 /// entry itself, i.e. immediately before it recurses into and processes that
 /// directory's children. The extraneous-entry `*deleting` rows therefore

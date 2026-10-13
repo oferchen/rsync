@@ -142,7 +142,7 @@ pub(super) fn link_special_from_link_dest(
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
         // The hard-linked node shares the basis inode, so it matches the source
-        // exactly: no `with_creation`, empty change-set, so log.c:735-744
+        // exactly: no `with_creation`, empty change-set, so log.c:773-782
         // collapses the attribute slots to spaces (`hD`/`hS` + blank).
         context.record(LocalCopyRecord::new(
             path.to_path_buf(),

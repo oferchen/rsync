@@ -62,7 +62,7 @@
 //! - `delete.c:221-226` - the `rmdir` arm
 //! - `delete.c:259-268` - the `ENOTEMPTY` / `rsyserr` / `ENOENT` split
 //! - `delete.c:272-286` - `could not make way for %s %s: %s` at `FERROR_XFER`
-//! - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`
+//! - `log.c:337-338` - `case FERROR_XFER: got_xfer_error = 1;`
 //! - `cleanup.c:217-218` - `got_xfer_error` lifts a zero exit to `RERR_PARTIAL`
 
 use std::ffi::OsStr;

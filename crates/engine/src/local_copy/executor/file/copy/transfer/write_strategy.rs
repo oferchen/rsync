@@ -107,12 +107,12 @@ pub(in crate::local_copy) enum WriteStrategy {
 /// partial-dir entry is the update target it IS the target, whichever other
 /// in-place mode is also on. `--inplace`/`--append` and `--partial-dir` are in
 /// fact rejected together during config validation
-/// (`core/src/client/config/builder`, upstream `options.c:2433-2441`), so the
+/// (`core/src/client/config/builder`, upstream `options.c:2575-2582`), so the
 /// precedence is not observable through the CLI; it is written this way so it
 /// stays upstream's if the two are ever wired together.
 ///
 /// ⚠ **Append is the one exception, and it is deliberate.** Upstream's ternary
-/// picks the *target*; the append seek (`receiver.c:385-386`) is a separate
+/// picks the *target*; the append seek (`receiver.c:524-545`) is a separate
 /// decision that upstream applies to whichever fd it opened, and its offset
 /// comes from `sx.st`, which the generator has already replaced with
 /// `partial_st` (`generator.c:2271`) - i.e. from the PARTIAL file's length. This
