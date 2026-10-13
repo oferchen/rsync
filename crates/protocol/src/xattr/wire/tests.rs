@@ -1526,3 +1526,65 @@ fn send_xattr_literal_wire_is_protocol_independent_golden() {
         "literal xattr wire bytes drifted from golden"
     );
 }
+
+/// Builds a literal xattr entry whose wire `name_len` (NUL included) is `name_len`.
+fn literal_entry_with_name_len(name_len: usize) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap();
+    write_varint(&mut buf, name_len as i32).unwrap();
+    write_varint(&mut buf, 0).unwrap();
+    buf.extend(std::iter::repeat_n(b'n', name_len - 1));
+    buf.push(0);
+    buf
+}
+
+#[test]
+fn read_definitions_name_len_boundary_matches_upstream() {
+    use crate::xattr::MAX_WIRE_XATTR_NAME_LEN;
+
+    // WHY: upstream read_varint_size (io.c:2125) refuses only `v > max`, with
+    // max = MAX_WIRE_XATTR_NAMELEN = 4096 (rsync.h:177). A name of exactly 4096
+    // wire bytes must be accepted or oc rejects xattrs an upstream sender ships;
+    // 4097 must be refused as RERR_PROTOCOL.
+    assert_eq!(MAX_WIRE_XATTR_NAME_LEN, 4096);
+    let set = read_xattr_definitions(&mut Cursor::new(literal_entry_with_name_len(
+        MAX_WIRE_XATTR_NAME_LEN,
+    )))
+    .expect("name_len == MAX_WIRE_XATTR_NAMELEN must be accepted");
+    assert_eq!(set.entries[0].name.len(), MAX_WIRE_XATTR_NAME_LEN - 1);
+
+    let err = read_xattr_definitions(&mut Cursor::new(literal_entry_with_name_len(
+        MAX_WIRE_XATTR_NAME_LEN + 1,
+    )))
+    .unwrap_err();
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "name_len == MAX_WIRE_XATTR_NAMELEN + 1 must be refused as RERR_PROTOCOL"
+    );
+}
+
+#[test]
+fn recv_xattr_name_len_boundary_matches_upstream() {
+    use crate::xattr::MAX_WIRE_XATTR_NAME_LEN;
+
+    let frame = |name_len| {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0).unwrap();
+        buf.extend(literal_entry_with_name_len(name_len));
+        buf
+    };
+    match recv_xattr(&mut Cursor::new(frame(MAX_WIRE_XATTR_NAME_LEN)))
+        .expect("name_len == MAX_WIRE_XATTR_NAMELEN must be accepted")
+    {
+        RecvXattrResult::Literal(list) => assert_eq!(list.len(), 1),
+        RecvXattrResult::CacheHit(_) => panic!("expected literal xattr list"),
+    }
+
+    let err = recv_xattr(&mut Cursor::new(frame(MAX_WIRE_XATTR_NAME_LEN + 1))).unwrap_err();
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "name_len == MAX_WIRE_XATTR_NAMELEN + 1 must be refused as RERR_PROTOCOL"
+    );
+}

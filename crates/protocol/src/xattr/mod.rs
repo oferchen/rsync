@@ -113,14 +113,15 @@ pub const RSYNC_PREFIX: &str = "rsync.";
 /// a lower cap would refuse lists upstream accepts.
 pub const MAX_WIRE_XATTR_COUNT: usize = 65536;
 
-/// Defence-in-depth cap on a single xattr name length from the wire.
+/// Upper bound on a single xattr name length (including its trailing NUL)
+/// read from the wire.
 ///
-/// Linux `XATTR_NAME_MAX` is 255 bytes. We allow 1024 to accommodate
-/// non-Linux platforms with longer names while still bounding allocation.
-///
-/// upstream: xattrs.c checks `name_len < 1` and NUL terminator but has
-/// no upper bound beyond the overflow check against `SIZE_MAX`.
-pub const MAX_WIRE_XATTR_NAME_LEN: usize = 1024;
+/// upstream: rsync.h:177 `MAX_WIRE_XATTR_NAMELEN`, enforced by
+/// `read_varint_size(f, MAX_WIRE_XATTR_NAMELEN, "xattr name_len")` at
+/// xattrs.c:835. The bound is inclusive: a length above 4096 (or negative)
+/// is a protocol error (exit 2); a lower cap would refuse names upstream
+/// accepts.
+pub const MAX_WIRE_XATTR_NAME_LEN: usize = 4096;
 
 /// Default per-value allocation ceiling before `--max-alloc` is negotiated
 /// (1 GiB, equal to [`crate::max_alloc::DEFAULT_MAX_ALLOC`]).
