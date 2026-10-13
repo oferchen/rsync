@@ -628,6 +628,8 @@ fn apply_global_directive(
         // its own list (loadparm.c init_section/copy_section). Modules that omit
         // `auth users` must then still authenticate (authenticate.c:228
         // auth_server reads lp_auth_users), so store the list as the default.
+        // upstream: authenticate.c:302-303 - an empty list means no restriction.
+        "authusers" if value.is_empty() => state.module_defaults.auth_users = Some(Vec::new()),
         "authusers" => {
             let users = parse_auth_user_list(value).map_err(|error| {
                 config_parse_error(
