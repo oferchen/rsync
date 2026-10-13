@@ -596,7 +596,7 @@ impl FileListReader {
 
         // Hardlink index must come immediately after name on wire.
         // upstream: flist.c:recv_file_entry() "goto create_object" for followers.
-        let hardlink_idx = self.read_hardlink_idx(reader, flags)?;
+        let hardlink_idx = self.read_hardlink_idx(reader, flags, segment_entries.len())?;
 
         // Abbreviated followers (leader in same flist segment) have metadata
         // copied from the leader; unabbreviated followers carry full metadata.

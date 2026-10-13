@@ -22,11 +22,12 @@ use std::hash::Hasher;
 use std::io::{self, Read};
 
 use crate::max_alloc::effective_max_alloc;
-use crate::varint::read_varint;
+use crate::protocol_violation::protocol_violation;
+use crate::varint::{read_varint, read_varint_bounded};
 use crate::xattr::prefix::wire_to_local;
 use crate::xattr::{
-    MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, MAX_XATTR_LIST_BYTES, MAX_XATTR_VALUE_BYTES,
-    RSYNC_PREFIX, XattrEntry, XattrList,
+    MAX_FULL_DATUM, MAX_WIRE_XATTR_COUNT, MAX_XATTR_DIGEST_LEN, MAX_XATTR_LIST_BYTES,
+    MAX_XATTR_VALUE_BYTES, RSYNC_PREFIX, XattrEntry, XattrList,
 };
 
 /// Converts a peer-supplied wire length to a `usize`, rejecting the values
@@ -41,10 +42,9 @@ use crate::xattr::{
 fn checked_wire_len(raw: i32, what: &str) -> io::Result<usize> {
     let max = effective_max_alloc();
     if raw < 0 || raw as usize > max {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{what} {raw} out of range (maximum {max})"),
-        ));
+        return Err(protocol_violation(format!(
+            "{what} {raw} out of range (maximum {max})"
+        )));
     }
     Ok(raw as usize)
 }
@@ -257,15 +257,10 @@ impl XattrCache {
             return Ok((ndx - 1) as u32);
         }
 
-        // Literal xattr data follows
-        let count = read_varint(reader)?;
-        if count < 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("negative xattr count: {count}"),
-            ));
-        }
-        let count = count as usize;
+        // upstream: xattrs.c:826 - a literal list's count is bounded to
+        // [0, MAX_WIRE_XATTR_COUNT] before any entry is read.
+        let count =
+            read_varint_bounded(reader, 0, MAX_WIRE_XATTR_COUNT as i32, "xattr count")? as usize;
 
         let mut list = XattrList::new();
         // upstream: xattrs.c:863 - need_sort is set whenever name
@@ -301,8 +296,7 @@ impl XattrCache {
             // would refuse the header correctly and still fail the cell.
             // Upstream reports neither number here.
             if datum_len > MAX_XATTR_VALUE_BYTES {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
+                return Err(protocol_violation(
                     "xattr datum_len exceeds per-value limit",
                 ));
             }
@@ -319,13 +313,10 @@ impl XattrCache {
                         "xattr list byte total overflowed",
                     )
                 })?;
+            // upstream: xattrs.c:849-850 prints this literal and exits
+            // RERR_PROTOCOL.
             if total_xattr_bytes > MAX_XATTR_LIST_BYTES {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "xattr list total {total_xattr_bytes} exceeds per-file limit {MAX_XATTR_LIST_BYTES}"
-                    ),
-                ));
+                return Err(protocol_violation("xattr list exceeds per-file limit"));
             }
 
             // upstream: dget_len = datum_len > MAX_FULL_DATUM ? 1 + xattr_sum_len : datum_len
@@ -758,7 +749,14 @@ mod tests {
                 1,
             )
             .expect_err("a list past the per-file cap must be refused");
-        assert!(err.to_string().contains("per-file limit"), "{err}");
+        // upstream: xattrs.c:849-850 prints this literal and exits
+        // RERR_PROTOCOL.
+        assert_eq!(err.to_string(), "xattr list exceeds per-file limit");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+            "the per-file refusal must be tagged RERR_PROTOCOL",
+        );
     }
 
     /// The boundary must not be off by one in the rejecting direction.
@@ -1247,6 +1245,84 @@ mod tests {
 
         assert_eq!(err.to_string(), "xattr datum_len exceeds per-value limit");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        // upstream: xattrs.c:841 exit_cleanup(RERR_PROTOCOL) - exit 2, not the
+        // RERR_STREAMIO (12) an untagged InvalidData maps to.
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+            "the per-value refusal must be tagged RERR_PROTOCOL",
+        );
+    }
+
+    use crate::xattr::MAX_WIRE_XATTR_COUNT;
+
+    fn literal_frame_with_count(count: i32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 0).unwrap(); // ndx = 0: a literal list follows
+        write_varint(&mut buf, count).unwrap();
+        buf
+    }
+
+    /// upstream: xattrs.c:826 reads the count with
+    /// `read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT, "xattr count")`
+    /// (rsync.h:176 = 65536), which prints
+    /// `wire value xattr count out of range: %ld not in [%ld,%ld] [%s]` and
+    /// exits RERR_PROTOCOL. Without the bound a peer declares billions of
+    /// entries and the receiver loops reading them; a negative count is the
+    /// same refusal, not a stream error.
+    #[test]
+    fn a_count_outside_upstreams_wire_bound_is_a_protocol_violation() {
+        for count in [MAX_WIRE_XATTR_COUNT as i32 + 1, i32::MAX, -1] {
+            let mut cache = XattrCache::new();
+            let err = cache
+                .receive_xattr(&mut Cursor::new(literal_frame_with_count(count)), false, 1)
+                .expect_err("a count outside [0, MAX_WIRE_XATTR_COUNT] must be refused");
+            assert_eq!(
+                err.to_string(),
+                format!("wire value xattr count out of range: {count} not in [0,65536]"),
+            );
+            assert!(
+                err.get_ref()
+                    .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+                "the count refusal must be tagged RERR_PROTOCOL",
+            );
+        }
+    }
+
+    /// upstream: xattrs.c:835-836 reads name_len and datum_len with
+    /// read_varint_size(), which exits RERR_PROTOCOL on a negative length.
+    #[test]
+    fn a_negative_wire_length_is_a_protocol_violation() {
+        let mut buf = literal_frame_with_count(1);
+        write_varint(&mut buf, -1).unwrap();
+        let err = XattrCache::new()
+            .receive_xattr(&mut Cursor::new(buf), false, 1)
+            .expect_err("a negative name_len must be refused");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+            "a negative wire length must be tagged RERR_PROTOCOL, got: {err}",
+        );
+    }
+
+    /// Non-vacuity companion: exactly MAX_WIRE_XATTR_COUNT entries is legal
+    /// upstream (the bound is inclusive), so the receiver must decode it.
+    #[test]
+    fn a_count_at_upstreams_wire_bound_is_accepted() {
+        assert_eq!(MAX_WIRE_XATTR_COUNT, 65536, "rsync.h:176");
+        let mut buf = literal_frame_with_count(MAX_WIRE_XATTR_COUNT as i32);
+        for i in 0..MAX_WIRE_XATTR_COUNT {
+            let name = format!("user.{i:05}");
+            write_varint(&mut buf, (name.len() + 1) as i32).unwrap();
+            write_varint(&mut buf, 0).unwrap();
+            buf.extend_from_slice(name.as_bytes());
+            buf.push(0);
+        }
+        let mut cache = XattrCache::new();
+        let idx = cache
+            .receive_xattr(&mut Cursor::new(buf), false, 1)
+            .expect("a count at the bound is legal");
+        assert_eq!(cache.get(idx as usize).unwrap().len(), MAX_WIRE_XATTR_COUNT);
     }
 
     /// Non-vacuity companion for the pin above: at EXACTLY the ceiling the

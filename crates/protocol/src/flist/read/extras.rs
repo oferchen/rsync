@@ -177,10 +177,14 @@ impl FileListReader {
     /// local flag would leave the varint on the wire and desync the flist stream.
     /// The disk-linking semantics (receiver transfer set) stay gated on
     /// `preserve_hard_links` elsewhere; this read only keeps the stream in sync.
+    ///
+    /// `used` is the number of entries already received in the current
+    /// segment; it only feeds the refusal diagnostic.
     pub(super) fn read_hardlink_idx<R: Read + ?Sized>(
         &self,
         reader: &mut R,
         flags: FileFlags,
+        used: usize,
     ) -> io::Result<Option<u32>> {
         if self.protocol.as_u8() < 30 {
             return Ok(None);
@@ -196,8 +200,20 @@ impl FileListReader {
             return Ok(Some(u32::MAX));
         }
 
-        let idx = read_varint(reader)? as u32;
-        Ok(Some(idx))
+        let idx = read_varint(reader)?;
+        // upstream: flist.c:1101-1105 - a negative reference is refused with
+        // "hard-link reference out of range" and exit_cleanup(RERR_PROTOCOL).
+        // Cast unchecked, it would pass as an unabbreviated follower (below
+        // ndx_start), and -1 would alias the u32::MAX leader sentinel. The
+        // upper bound is enforced where an abbreviated follower's leader is
+        // looked up in the segment.
+        if idx < 0 {
+            return Err(crate::protocol_violation::protocol_violation(format!(
+                "hard-link reference out of range: {idx} ({})",
+                self.ndx_start as i64 + used as i64
+            )));
+        }
+        Ok(Some(idx as u32))
     }
 
     /// Reads hardlink device and inode for protocol 28-29.
