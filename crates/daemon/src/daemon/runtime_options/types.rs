@@ -1,3 +1,4 @@
+/// Daemon settings merged from the command line and the config file's globals.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeOptions {
     brand: Brand,
@@ -12,8 +13,10 @@ pub(crate) struct RuntimeOptions {
     /// and closed without dispatching a session, while the accept loop keeps
     /// running. Distinct from `max_sessions`, which caps total served sessions.
     ///
-    /// upstream: clientserver.c:746-758 - `claim_connection()` enforces the
-    /// per-module `max connections` directive and emits the same error.
+    /// Deviation from upstream: upstream has no daemon-wide cap; its only
+    /// limit is the per-module `max connections` that `rsync_module()` enforces
+    /// via `claim_connection()` (clientserver.c:791-800), whose error text this
+    /// reuses.
     max_connections: Option<NonZeroUsize>,
     pub(crate) modules: Vec<ModuleDefinition>,
     motd_lines: Vec<String>,
@@ -62,9 +65,8 @@ pub(crate) struct RuntimeOptions {
     /// `quic cert file` / `quic key file` global directives (oc extension).
     ///
     /// Per-listener identity, so both are global-only (a module-scoped use is a
-    /// config error). Stored here for the later QUIC listener build-out; the
-    /// listener and certificate loading are not wired at this stage. See
-    /// docs/design/quic-transport-policy.md (decision A).
+    /// config error). Consumed through `resolve_quic_identity` when the accept
+    /// loop starts the QUIC listener. See docs/design/quic-transport-policy.md.
     #[cfg(feature = "quic")]
     quic_cert_file: Option<PathBuf>,
     #[cfg(feature = "quic")]
@@ -93,24 +95,26 @@ pub(crate) struct RuntimeOptions {
     syslog_tag_from_config: bool,
     /// Resolved numeric uid the daemon process should drop to after binding.
     ///
-    /// upstream: loadparm.c - global `uid` parameter. Resolved from username
-    /// or numeric string at config load time.
+    /// upstream: daemon-parm.txt:6 `daemon uid`, resolved and applied per
+    /// connection in `start_daemon()` (clientserver.c:1509-1522). Deviation from
+    /// upstream: resolved from a username or numeric string at config load time.
     daemon_uid: Option<u32>,
     /// Resolved numeric gid the daemon process should drop to after binding.
     ///
-    /// upstream: loadparm.c - global `gid` parameter. Resolved from groupname
-    /// or numeric string at config load time.
+    /// upstream: daemon-parm.txt:5 `daemon gid`, resolved and applied per
+    /// connection in `start_daemon()` (clientserver.c:1496-1508). Deviation from
+    /// upstream: resolved from a group name or numeric string at config load time.
     daemon_gid: Option<u32>,
     listen_backlog: Option<u32>,
     listen_backlog_from_config: bool,
     /// TCP port from the `port` global config parameter.
     ///
-    /// upstream: daemon-parm.txt - `port` INTEGER, P_GLOBAL, default 0.
+    /// upstream: daemon-parm.txt:13 `INTEGER rsync_port|port 0`, a global.
     /// When set, overrides the default listening port unless CLI `--port` was given.
     rsync_port: Option<u16>,
     /// Raw socket options string from the `socket options` global parameter.
     ///
-    /// upstream: daemon-parm.txt - `socket options` STRING. Comma-separated list
+    /// upstream: daemon-parm.txt:10 `socket options` STRING. Comma-separated list
     /// of TCP/IP socket options (e.g., `TCP_NODELAY`, `SO_KEEPALIVE`,
     /// `SO_SNDBUF=65536`) applied to the daemon listener socket.
     socket_options: Option<String>,
@@ -127,17 +131,18 @@ pub(crate) struct RuntimeOptions {
     tcp_fastopen: TcpFastOpenMode,
     /// Whether incoming connections require a PROXY protocol header.
     ///
-    /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
+    /// upstream: daemon-parm.txt:15 `BOOL proxy_protocol False`, a global.
     proxy_protocol: bool,
     /// Addresses whose PROXY protocol header the daemon is willing to believe.
     ///
-    /// upstream: daemon-parm.h - `proxy_protocol_hosts` STRING, P_GLOBAL,
-    /// default "". Empty means trust nobody, not trust everybody
-    /// (access.c:313-314).
+    /// upstream: daemon-parm.txt:9 `STRING proxy_protocol_hosts NULL`, a global.
+    /// Empty means trust nobody, not trust everybody (access.c:313-314).
     proxy_protocol_hosts: Vec<HostPattern>,
-    /// Directory the daemon chroots into before forking children.
+    /// Directory the daemon chroots into before serving connections.
     ///
-    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
+    /// upstream: daemon-parm.txt:4 `STRING daemon_chroot NULL`, applied per
+    /// connection by `start_daemon()` (clientserver.c:1470-1495). Deviation from
+    /// upstream: oc chroots once, before the accept loop.
     daemon_chroot: Option<PathBuf>,
     detach: bool,
     /// Path to the config file loaded at startup, retained for SIGHUP reload.
@@ -149,13 +154,13 @@ pub(crate) struct RuntimeOptions {
     /// `--dparam`/`-M` overrides (`name=value`), applied to every config file
     /// this daemon parses, including a SIGHUP reload.
     ///
-    /// upstream: options.c:1556-1566 collects them into `dparam_list`.
+    /// upstream: options.c:1558-1568 collects them into `dparam_list`.
     dparams: Vec<String>,
     /// CLI verbosity counter incremented per `-v` / `--verbose` flag.
     ///
-    /// upstream: options.c:877 - `{"verbose", 'v', POPT_ARG_NONE, 0, 'v', 0, 0}`
+    /// upstream: options.c:891 - `{"verbose", 'v', POPT_ARG_NONE, 0, 'v', 0, 0}`
     /// in `long_daemon_options`. Stacked `-vv` / `-vvv` increment the same
-    /// counter, mirrored by `--no-verbose` / `--no-v` reset to zero.
+    /// counter; `--no-verbose` / `--no-v` (options.c:892-893) reset it to zero.
     pub(crate) verbosity: u8,
 }
 

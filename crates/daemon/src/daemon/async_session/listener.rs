@@ -38,13 +38,13 @@ pub struct ListenerConfig {
     pub bind_address: SocketAddr,
     /// Maximum number of concurrent connections.
     pub max_connections: usize,
-    /// Connection acceptance timeout.
+    /// Connection acceptance timeout. Stored only; the listener does not apply it.
     pub connection_timeout: Duration,
     /// Read timeout for session I/O.
     pub read_timeout: Duration,
-    /// Whether to enable TCP keepalive.
+    /// Whether to enable TCP keepalive. Stored only; the listener does not apply it.
     pub tcp_keepalive: bool,
-    /// TCP keepalive interval in seconds.
+    /// TCP keepalive interval in seconds. Stored only; the listener does not apply it.
     pub keepalive_interval: u64,
 }
 
@@ -78,7 +78,7 @@ impl ListenerConfig {
         self
     }
 
-    /// Sets the maximum number of concurrent connections.
+    /// Sets the maximum number of concurrent connections, clamped to at least 1.
     #[must_use]
     pub fn max_connections(mut self, max: usize) -> Self {
         self.max_connections = max.max(1);
@@ -174,7 +174,8 @@ impl AsyncDaemonListener {
 
     /// Serves connections until shutdown is requested.
     ///
-    /// This method spawns a new task for each accepted connection.
+    /// Spawns a task per accepted connection. A connection arriving while all
+    /// `max_connections` permits are held is closed immediately, not queued.
     ///
     /// # Errors
     ///
@@ -190,7 +191,6 @@ impl AsyncDaemonListener {
                     let permit = match self.connection_semaphore.clone().try_acquire_owned() {
                         Ok(permit) => permit,
                         Err(_) => {
-                            // Connection cap reached: close immediately rather than queue.
                             drop(stream);
                             continue;
                         }
@@ -207,10 +207,10 @@ impl AsyncDaemonListener {
                     #[cfg(feature = "concurrent-sessions")]
                     let pool = self.connection_pool.clone();
 
-                    // Tokio captures panics in spawned tasks (returning
-                    // Err(JoinError) from the JoinHandle); we log them explicitly
-                    // so a panic in one connection never tears down the daemon,
-                    // matching upstream rsync's fork-per-connection isolation.
+                    // Tokio contains a panic inside the spawned task (it surfaces
+                    // as a JoinError on the discarded handle), so a panic in one
+                    // connection never tears down the daemon - the in-process
+                    // counterpart of upstream's fork-per-connection isolation.
                     tokio::spawn(async move {
                         let result = handle_async_session(
                             stream,
@@ -252,11 +252,14 @@ impl AsyncDaemonListener {
         }
     }
 
-    /// Accepts a single connection and handles it.
+    /// Accepts a single connection and returns it unhandled as an `AsyncSession`.
+    ///
+    /// The connection permit is released when this returns, so the returned
+    /// session does not count against `max_connections`.
     ///
     /// # Errors
     ///
-    /// Returns an error if accepting or handling the connection fails.
+    /// Returns an error if the semaphore is closed or accepting fails.
     pub async fn accept_one(&self) -> Result<AsyncSession, AsyncDaemonError> {
         let _permit = self
             .connection_semaphore

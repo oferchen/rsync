@@ -34,9 +34,7 @@ pub(in crate::daemon) const UNKNOWN_HOSTNAME: &str = "UNKNOWN";
 /// The two sentinels are NOT interchangeable and the distinction is the whole
 /// point: `UNDETERMINED` means nobody asked, `UNKNOWN` means we asked and the
 /// answer was unusable. Collapsing them - as a bare `Option<&str>` does - loses
-/// the reason, which is why oc previously printed one lowercase `unknown` for
-/// both, the bare IP in one log line, and an empty string in
-/// `RSYNC_HOST_NAME`.
+/// the reason.
 ///
 /// Access control consumes the same string through [`PeerHost`], which keeps
 /// the resolved/sentinel distinction the ACL rules need.
@@ -61,11 +59,11 @@ pub(in crate::daemon) fn peer_host_display(resolved: Option<&str>, reverse_looku
 /// `Option<&str>` made both sentinels unmatchable, so `hosts allow =
 /// UNDETERMINED` refused every peer.
 ///
-/// The variant is still needed because oc keeps one rule upstream does not: a
-/// hostname-based DENY rule fails closed when no name was resolved. Upstream
-/// can rely on reverse DNS being available (it resolves before `daemon chroot`,
-/// so the result is cached); oc resolves per connection after a process-wide
-/// chroot, where a chroot without NSS configuration silently yields no name.
+/// Deviation from upstream: a hostname-based DENY rule fails closed when no
+/// name was resolved, which is why the variant is still needed. Upstream can
+/// rely on reverse DNS being available (it resolves before its per-connection
+/// `daemon chroot`, so the result is cached); oc applies `daemon chroot` once at
+/// startup, where a chroot without NSS configuration silently yields no name.
 /// Keying that guard on the sentinel rather than on `Option::is_none` is what
 /// lets the allow-side sentinels match without disarming it. The guard matches
 /// this enum EXHAUSTIVELY rather than calling a helper, so a third variant is a
@@ -185,7 +183,7 @@ fn forward_confirms(name: &str, peer_ip: IpAddr) -> bool {
 /// with an empty or non-matching set. Upstream draws exactly this line and the
 /// two sides differ: a NULL `gethostbyname` returns the caller's `deny` flag
 /// (access.c:68-74), while a successful lookup whose records do not include the
-/// peer falls out of the loop and returns 0 (access.c:77-84). Collapsing both
+/// peer falls out of the loop and returns 0 (access.c:77-87). Collapsing both
 /// into "no records" - as an empty `Vec` did - makes an unresolvable `hosts
 /// deny` token fail OPEN.
 ///
@@ -279,8 +277,8 @@ pub(crate) fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
 /// Sets a test override for the forward (A/AAAA) resolution of `name`.
 ///
 /// The normalized `name` resolves to `addrs`; forward-confirmation succeeds
-/// only when the peer IP is among them. A name with no override forward-
-/// resolves to an empty set, so confirmation fails closed.
+/// only when the peer IP is among them. A name with no override models a
+/// failed lookup, so confirmation fails closed.
 #[cfg(test)]
 #[allow(dead_code)]
 pub(crate) fn set_test_forward_override(name: &str, addrs: &[IpAddr]) {

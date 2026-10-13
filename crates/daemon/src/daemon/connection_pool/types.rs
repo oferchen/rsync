@@ -49,16 +49,16 @@ impl ConnectionInfo {
     }
 }
 
-/// Per-IP address statistics for rate limiting.
+/// Per-IP address connection statistics.
 #[derive(Clone, Debug)]
 pub struct IpStats {
-    /// Number of active connections from this IP.
+    /// Number of registered connections from this IP.
     pub active_connections: u32,
     /// Total connections ever made from this IP.
     pub total_connections: u64,
-    /// Total bytes received from this IP.
+    /// Bytes received from this IP's unregistered connections.
     pub bytes_received: u64,
-    /// Total bytes sent to this IP.
+    /// Bytes sent to this IP's unregistered connections.
     pub bytes_sent: u64,
     /// Time of first connection from this IP.
     pub first_seen: Instant,
@@ -87,7 +87,7 @@ pub struct AggregateStats {
     pub total_connections: usize,
     /// Number of currently active connections.
     pub active_connections: usize,
-    /// Number of unique IP addresses with active connections.
+    /// Number of unique IP addresses with registered connections.
     pub unique_ips: usize,
     /// Total bytes received across all connections.
     pub total_bytes_received: u64,

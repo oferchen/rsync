@@ -67,7 +67,7 @@ impl RuntimeOptions {
                 options.sockopts = Some(value.to_string_lossy().into_owned());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
-                // upstream: clientserver.c:1573 - `--port 0` is treated as
+                // upstream: clientserver.c:1784 - `--port 0` is treated as
                 // "unspecified": it does not override a config `port` directive
                 // and falls through to the 873 default below. Only a non-zero
                 // CLI port suppresses the config value.
@@ -109,8 +109,8 @@ impl RuntimeOptions {
                 let max = parse_max_connections(&value)?;
                 options.set_max_connections(max)?;
             } else if argument == "--ipv4" || argument == "-4" {
-                // upstream: help-rsyncd.h lists `--ipv4, -4` / `--ipv6, -6`, so
-                // both spellings must reach the same address-family decision.
+                // upstream: options.c:880-881 `long_daemon_options` maps both
+                // `--ipv4`/`-4` and `--ipv6`/`-6` onto `default_af_hint`.
                 options.force_address_family(AddressFamily::Ipv4)?;
             } else if argument == "--ipv6" || argument == "-6" {
                 options.force_address_family(AddressFamily::Ipv6)?;
@@ -170,7 +170,7 @@ impl RuntimeOptions {
             module.zero_copy_policy = options.zero_copy_policy;
         }
 
-        // upstream: clientserver.c:1573-1574 -
+        // upstream: clientserver.c:1784-1785 `daemon_main()` -
         //   `if (rsync_port == 0 && (rsync_port = lp_rsync_port()) == 0)
         //        rsync_port = RSYNC_PORT;`
         // After CLI and config resolution, a still-zero port coerces to the
@@ -181,10 +181,10 @@ impl RuntimeOptions {
             options.port = DEFAULT_PORT;
         }
 
-        // upstream: daemon-parm.h:178 pairs `lock_file` with DEFAULT_LOCK_FILE,
+        // upstream: daemon-parm.txt:34 pairs `lock_file` with DEFAULT_LOCK_FILE,
         // which rsync.h:33 defines as "/var/run/rsyncd.lock", so a daemon whose
         // configuration names no `lock file` still coordinates `max connections`
-        // slots through that path (connection.c:26-46 claim_connection). Unix
+        // slots through that path (connection.c:26-49 claim_connection). Unix
         // only: sessions fork per connection here, matching upstream, so the
         // lock file is the only cross-process slot ledger. The Windows daemon
         // serves sessions on threads and enforces the cap with its in-process
@@ -226,8 +226,8 @@ impl RuntimeOptions {
 /// Returns `true` when `arg` is `-v`, `-vv`, `-vvv`, ... (a hyphen followed
 /// by one or more `v` characters and nothing else).
 ///
-/// upstream: options.c stacks short flags so `-vvv` increments `verbose` by
-/// three. The daemon accepts the same stacked form via popt's short-option
+/// upstream: options.c:1570-1572 - popt delivers each stacked `v` as its own
+/// `'v'` option, so `-vvv` increments `verbose` by three. The daemon accepts the same stacked form via popt's short-option
 /// dispatch.
 fn is_stacked_short_verbose(arg: &OsString) -> bool {
     let bytes = arg.as_encoded_bytes();
@@ -236,7 +236,7 @@ fn is_stacked_short_verbose(arg: &OsString) -> bool {
 
 /// Collects the `--dparam`/`-M` overrides from the daemon's arguments.
 ///
-/// upstream: options.c:1556-1566 - each value must contain `=`, otherwise
+/// upstream: options.c:1558-1568 - each value must contain `=`, otherwise
 /// "--dparam value is missing an '='" ends the parse (`RERR_SYNTAX`); after
 /// the whole command line is read, options.c:1583 set_dparams(1) refuses a
 /// name that is not a daemon parameter with `Unknown parameter "<name>"`. The

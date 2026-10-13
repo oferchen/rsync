@@ -66,7 +66,7 @@ fn module_definition_permits_respects_hosts_deny() {
 
 #[test]
 fn module_definition_allow_match_short_circuits_deny() {
-    // upstream: access.c:288-290 - "If we match an allow-list item, we
+    // upstream: access.c:293-296 - "If we match an allow-list item, we
     // always allow access." A peer matching any allow pattern is admitted
     // before the deny list is consulted, even when a deny pattern would
     // otherwise match.
@@ -84,10 +84,10 @@ fn module_definition_allow_match_short_circuits_deny() {
 
 #[test]
 fn module_definition_deny_applies_when_allow_does_not_match() {
-    // upstream: access.c:292-302 - when the allow list is non-empty but
+    // upstream: access.c:297-308 - when the allow list is non-empty but
     // the peer matches none of its entries, fall through to the deny list.
     // A deny-list match here refuses the connection; a non-match admits
-    // (access.c:301-302 "Allow all other access").
+    // (access.c:307-308 "Allow all other access").
     let def = ModuleDefinition {
         hosts_allow: vec![HostPattern::Ipv4 {
             network: Ipv4Addr::new(192, 168, 0, 0),
@@ -102,17 +102,17 @@ fn module_definition_deny_applies_when_allow_does_not_match() {
     let denied = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
     assert!(!def.permits(denied, PeerHost::new(None, true)));
 
-    // Peer outside both allow and deny: admitted because access.c:298
-    // returns 0 only on a deny-list match; otherwise access.c:302 allows.
+    // Peer outside both allow and deny: admitted because access.c:304-305
+    // returns 0 only on a deny-list match; otherwise access.c:308 allows.
     // The allow-list non-match short-circuits to refuse only when the
-    // deny list is empty (access.c:292-293).
+    // deny list is empty (access.c:298-299).
     let outside_both = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
     assert!(def.permits(outside_both, PeerHost::new(None, true)));
 }
 
 #[test]
 fn module_definition_allow_short_circuit_skips_dns_fail_closed_guard() {
-    // upstream: access.c:288-294 - an allow-list match returns 1 before
+    // upstream: access.c:293-299 - an allow-list match returns 1 before
     // the deny list is consulted. A hostname-pattern deny rule combined
     // with unresolvable reverse DNS must not refuse a peer that already
     // matched an IP-based allow rule, because upstream never reaches the
@@ -136,9 +136,10 @@ fn module_definition_allow_short_circuit_skips_dns_fail_closed_guard() {
 
 #[test]
 fn module_definition_matches_upstream_rsync_fns_allow_list() {
-    // upstream: testsuite/rsync.fns:381 - the testsuite's standard daemon
-    // config carries `hosts allow = localhost 127.0.0.0/24 192.168.0.0/16
-    // 10.0.0.0/8 $hostname` with no `hosts deny`. Every IPv4 in those
+    // upstream: testsuite/rsync.fns (rsync 3.4.x and earlier) - the standard
+    // daemon config carried `hosts allow = localhost 127.0.0.0/24 192.168.0.0/16
+    // 10.0.0.0/8 $hostname` with no `hosts deny`; 3.5.1's
+    // testsuite/rsyncfns.py:1313 narrows it to `localhost 127.0.0.0/8`. Every IPv4 in those
     // ranges must be admitted; every IPv4 outside must be refused. This
     // pins the CIDR matcher against upstream's testsuite expectations.
     let def = ModuleDefinition {
@@ -278,8 +279,8 @@ fn module_definition_max_connections() {
 
 #[test]
 fn module_definition_max_connections_defaults_to_unlimited() {
-    // upstream: loadparm.c gives `max connections` a default of 0, and
-    // connection.c:claim_connection:27 returns success for 0 without taking a
+    // upstream: daemon-parm.txt:50 gives `max connections` a default of 0, and
+    // connection.c:30-31 `claim_connection()` returns success for 0 without taking a
     // lock, so a module that never sets the directive is unlimited.
     assert_eq!(
         ModuleDefinition::default().max_connections(),
@@ -289,9 +290,9 @@ fn module_definition_max_connections_defaults_to_unlimited() {
 
 #[test]
 fn negative_max_connections_refuses_every_connection() {
-    // upstream: connection.c:33 `for (i = 0; i < max_connections; i++)` cannot
+    // upstream: connection.c:39 `for (i = 0; i < max_connections; i++)` cannot
     // run for a negative limit, so claim_connection falls through to
-    // `errno = 0; return 0` and clientserver.c:746-757 refuses with the
+    // `errno = 0; return 0` and clientserver.c:797-800 refuses with the
     // configured number echoed verbatim. rsyncd.conf.5: "A negative value
     // disables the module". Clamping the sign to zero would invert this into
     // "serve the module with no limit at all", so the refusal - and the sign
@@ -318,9 +319,9 @@ fn negative_max_connections_refuses_every_connection() {
 
 #[test]
 fn negative_max_connections_still_opens_the_lock_file_first() {
-    // upstream: connection.c:31 opens the lock file for every non-zero limit
+    // upstream: connection.c:35 opens the lock file for every non-zero limit
     // and only reaches the "max connections (%d) reached" fall-through at
-    // connection.c:44-46 afterwards. The two failures are distinguishable on
+    // connection.c:44-48 afterwards. The two failures are distinguishable on
     // the wire - an unopenable lock file reports "failed to open lock file" -
     // so a disabled module must not short-circuit ahead of the open.
     //
@@ -420,15 +421,12 @@ fn module_connection_guard_unlimited() {
 
 #[test]
 fn aborted_transfer_releases_connection_slot() {
-    // Regression for #504 (the deadlock-holds-slot symptom of #503).
-    //
     // A daemon transfer holds its connection slot via the RAII
     // `ModuleConnectionGuard` acquired in `process_approved_module`. When a
     // transfer fails or aborts, the guard drops on unwind and must release the
-    // slot so the module keeps accepting new connections. Before #503 was
-    // fixed, a deadlocked connection thread never unwound, so its guard never
-    // dropped: four wedged connections exhausted a `max connections = 4`
-    // module. This test pins the invariant that a slot acquired and then
+    // slot so the module keeps accepting new connections. A connection thread
+    // that never unwinds never drops its guard, so four wedged connections
+    // would exhaust a `max connections = 4` module. This test pins the invariant that a slot acquired and then
     // released (the drop that a failed/aborted transfer performs) frees the
     // module for a fresh connection - so even N aborted transfers never wedge
     // the module at its limit.
@@ -542,10 +540,9 @@ fn module_peer_hostname_uses_cache() {
 
 // WHY: every daemon entry point - the accept loop, the async listener, the
 // `--server` stdio session and the inetd session - builds its module table
-// through this one helper. Three of them previously hand-rolled the same two
-// steps and passed a hardcoded `None`, silently disabling `max connections`
-// on those transports. Opening the daemon-wide lock file inside the helper is
-// what makes that spelling unavailable to a future entry point.
+// through this one helper. Opening the daemon-wide lock file inside the helper
+// means no entry point can hand-roll a `None` limiter and silently disable
+// `max connections` on its transport.
 //
 // The second assertion is the one that discriminates: an implementation that
 // ignores `lock_file` and returns `None` still satisfies the first arm.
@@ -586,7 +583,7 @@ fn build_module_runtimes_with_lock_file_shares_the_daemon_wide_limiter() {
     assert!(lock.exists(), "the daemon-wide lock file must be created");
 }
 
-// upstream: clientserver.c:746 `claim_connection(lp_lock_file(i), ...)` - the
+// upstream: clientserver.c:791 `claim_connection(lp_lock_file(i), ...)` - the
 // lock file is P_LOCAL, so a module that sets its own `lock file` claims slots
 // in that file while modules without an override share the daemon-wide file.
 #[test]
@@ -645,7 +642,7 @@ fn build_module_runtimes_honours_per_module_lock_file() {
     ));
 }
 
-// upstream: clientserver.c:723 - when the global default disables reverse
+// upstream: clientserver.c:766-769 - when the global default disables reverse
 // lookup (host stays undetermined), a module that enables it resolves the peer
 // via `lp_reverse_lookup(i)`. The call site computes the effective value as
 // `global || module.reverse_lookup`; this proves the module override reaches
@@ -694,7 +691,7 @@ fn per_module_reverse_lookup_gates_resolution_when_global_disabled() {
 // WHY: only a module that carries a resolved syslog tag/facility should reopen
 // the process-wide syslog handle for its connection; a module inheriting the
 // daemon-global logger must leave it untouched (returns None) so the startup
-// tag/facility keep serving. upstream: log.c:169 log_init reopens per module.
+// tag/facility keep serving. upstream: log.c:186-205 log_init(1) reopens per module.
 #[cfg(unix)]
 #[test]
 fn reconfigure_syslog_only_when_module_sets_a_value() {
