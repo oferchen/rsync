@@ -1106,3 +1106,59 @@ fn existing_combined_with_ignore_existing_and_update() {
     );
     assert!(!dest_root.join("new.txt").exists());
 }
+
+/// upstream: generator.c:1757 - `--existing` skips only a destination whose
+/// lstat failed with ENOENT. A non-directory where a directory arrives EXISTS,
+/// so the entry is not skipped: the obstacle is replaced by the directory
+/// (generator.c:1840 delete_item(DEL_FOR_DIR)). Skipping after the removal
+/// would destroy the file and create nothing.
+#[test]
+fn existing_replaces_file_obstacle_with_directory() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(ctx.source.join("dir")).expect("source dir");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("dest root");
+    fs::write(dest_root.join("dir"), b"obstacle").expect("dest file");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().existing_only(true),
+    )
+    .expect("copy succeeds");
+
+    assert!(
+        fs::symlink_metadata(dest_root.join("dir"))
+            .expect("directory created")
+            .is_dir()
+    );
+}
+
+/// upstream: generator.c:1757 - `--existing` never creates an absent FIFO.
+#[cfg(unix)]
+#[test]
+fn existing_skips_new_fifo() {
+    let ctx = test_helpers::setup_copy_test();
+    mkfifo_for_tests(&ctx.source.join("fifo"), 0o644).expect("source fifo");
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("dest root");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .specials(true)
+            .existing_only(true),
+    )
+    .expect("copy succeeds");
+
+    assert!(fs::symlink_metadata(dest_root.join("fifo")).is_err());
+}

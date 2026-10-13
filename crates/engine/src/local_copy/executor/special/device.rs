@@ -104,17 +104,19 @@ pub(crate) fn copy_device(
 
     let destination_previously_existed = existing_metadata.is_some();
 
+    if super::skip_by_existence_gate(
+        context,
+        existing_metadata.as_ref(),
+        record_path.as_deref(),
+        || LocalCopyMetadata::from_metadata(metadata, None),
+    ) {
+        return Ok(());
+    }
+
     if existing_metadata
         .as_ref()
         .is_some_and(|existing| existing.file_type().is_dir())
     {
-        // upstream: generator.c:1780-1804 - the `ignore_existing` skip is tested
-        // at `statret == 0` and `goto cleanup`s BEFORE either make-way removal
-        // (generator.c:2149 / 2477-2483), so `--ignore-existing` leaves the
-        // directory standing rather than clearing it.
-        if context.ignore_existing_enabled() {
-            return Ok(());
-        }
         // upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way`
         // forces `skip_atomic`, so a directory obstacle takes the
         // `delete_item()` arm whether or not --backup is set, and `del_opts`
@@ -136,26 +138,6 @@ pub(crate) fn copy_device(
             return Ok(());
         }
         existing_metadata = None;
-    }
-
-    // upstream: generator.c:1758-1766 - `ignore_non_existing` (`--existing`)
-    // is tested at `statret == -1 && stat_errno == ENOENT`, so it asks whether
-    // the destination existed BEFORE the make-way removal. Reading the
-    // post-removal `None` instead would skip the very entry the removal just
-    // cleared the way for, leaving neither the directory nor the file.
-    if context.existing_only_enabled() && !destination_previously_existed {
-        if let Some(path) = &record_path {
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-            context.record(LocalCopyRecord::new(
-                path.clone(),
-                LocalCopyAction::SkippedMissingDestination,
-                0,
-                Some(metadata_snapshot.len()),
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
-        }
-        return Ok(());
     }
 
     // upstream: generator.c:1639-1642 - a device whose destination already

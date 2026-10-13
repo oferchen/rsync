@@ -101,6 +101,18 @@ impl ReceiverContext {
             let flist_idx = start + i;
             let is_device = entry.is_device();
             let is_special = entry.is_special();
+            // upstream: generator.c:1757-1806 - the existence gate precedes
+            // both the device/special branch and the non-regular skip.
+            if (is_device || is_special)
+                && self.skip_non_regular_by_existence_gate(
+                    &mut *writer,
+                    entry,
+                    dest_dir,
+                    &dest_dir.join(entry.path()),
+                )
+            {
+                continue;
+            }
             if is_device {
                 if !self.config.flags.devices {
                     continue;

@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use logging::debug_log;
 
+use crate::existence_gate::DestinationEntry;
 use crate::local_copy::{
     CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
 };
@@ -95,17 +96,19 @@ pub(crate) fn copy_file(
     };
 
     let mut destination_previously_existed = existing_metadata.is_some();
-    let destination_had_entry = destination_previously_existed;
 
-    // upstream: generator.c:1780-1804 - the `ignore_existing` skip is tested at
-    // `statret == 0` and `goto cleanup`s BEFORE either make-way removal
-    // (generator.c:2149 / 2477-2483), so `--ignore-existing` leaves the
-    // directory standing rather than clearing it; the skip itself is recorded
-    // by `handle_existing_skips` further down, which still sees the directory.
+    // upstream: generator.c:1757-1806 - the `--existing` / `--ignore-existing`
+    // gate reads the lstat taken BEFORE either make-way removal
+    // (generator.c:2149 / 2477-2483), so a skipped entry leaves any obstacle
+    // standing. The skip itself is recorded once the batch iflags are settled.
+    let existence_skip = context.existence_skip(
+        false,
+        DestinationEntry::from_optional(existing_metadata.as_ref()),
+    );
     if existing_metadata
         .as_ref()
         .is_some_and(|existing| existing.file_type().is_dir())
-        && !context.ignore_existing_enabled()
+        && existence_skip.is_none()
     {
         // upstream: generator.c:2148-2153 recv_generator() - a regular file is
         // arriving over a destination directory. Upstream calls
@@ -167,15 +170,15 @@ pub(crate) fn copy_file(
     // entry reports a creation (`>f+++++++++`, "created files: 1") rather than
     // an update against the node that is no longer there.
     //
-    // `--ignore-existing` is tested at generator.c:1780, ahead of the removal,
-    // so it leaves the device standing - the same ordering the directory arm
-    // above relies on.
+    // The existence gate runs ahead of the removal, so a skipped entry leaves
+    // the device standing - the same ordering the directory arm above relies
+    // on.
     if existing_metadata.as_ref().is_some_and(|existing| {
         crate::local_copy::device_destination_blocks_regular_file(
             existing,
             context.options().write_devices_enabled(),
         )
-    }) && !context.ignore_existing_enabled()
+    }) && existence_skip.is_none()
     {
         let device_type = existing_metadata
             .as_ref()
@@ -199,24 +202,16 @@ pub(crate) fn copy_file(
     // batch mode is inactive.
     context.record_batch_is_new(!destination_previously_existed);
 
-    // upstream: generator.c:1758-1766 - `ignore_non_existing` (`--existing`)
-    // is tested at `statret == -1 && stat_errno == ENOENT`, so it asks whether
-    // the destination existed BEFORE the make-way removal. Reading the
-    // post-removal `None` instead would skip the very entry the removal just
-    // cleared the way for, leaving neither the directory nor the file.
-    if context.existing_only_enabled() && !destination_had_entry {
-        context.summary_mut().record_regular_file_skipped_missing();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
-        let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            record_path.clone(),
-            LocalCopyAction::SkippedMissingDestination,
-            0,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
+    if let Some(skip) = existence_skip {
+        existing::record_existence_skip(
+            context,
+            skip,
+            source,
+            destination,
+            metadata,
+            record_path.as_path(),
+            metadata_options.fake_super_enabled(),
+        );
         return Ok(true);
     }
 
@@ -281,7 +276,7 @@ pub(crate) fn copy_file(
         context.prepare_parent_directory(parent)?;
     }
 
-    if existing::handle_existing_skips(
+    if existing::handle_update_skip(
         context,
         destination,
         metadata,

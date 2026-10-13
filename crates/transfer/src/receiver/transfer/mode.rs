@@ -176,7 +176,12 @@ impl ReceiverContext {
                 // batch fd (sender.c:220) - while a pull receiver drains the
                 // remote sender's delta via discard_receive_data()
                 // (receiver.c:829-830).
-                let plan = self.plan_dry_run_in_range(range, &setup.dest_dir, files_to_transfer);
+                let plan = self.plan_dry_run_in_range(
+                    &mut *writer,
+                    range,
+                    &setup.dest_dir,
+                    files_to_transfer,
+                );
                 stats.directories_created += self.new_dir_count(&plan);
                 self.run_only_write_batch_loop(
                     reader,
@@ -195,7 +200,12 @@ impl ReceiverContext {
                 // The directory, symlink, and candidate passes early-return
                 // under skip_dest_writes(), so plan_dry_run_in_range is the one place the
                 // rows and created-file counts are produced.
-                let plan = self.plan_dry_run_in_range(range, &setup.dest_dir, files_to_transfer);
+                let plan = self.plan_dry_run_in_range(
+                    &mut *writer,
+                    range,
+                    &setup.dest_dir,
+                    files_to_transfer,
+                );
                 stats.directories_created += self.new_dir_count(&plan);
                 self.run_dry_run_loop(reader, writer, &plan, ndx_write_codec, ndx_read_codec)
             }

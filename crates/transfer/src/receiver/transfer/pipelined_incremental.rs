@@ -152,6 +152,7 @@ impl ReceiverContext {
                 let result = self.create_directory_incremental(
                     &setup.dest_dir,
                     file_entry,
+                    &mut *writer,
                     &setup.metadata_opts,
                     &mut failed_dirs,
                     setup.acl_cache.as_deref(),
@@ -717,6 +718,7 @@ impl ReceiverContext {
                 let result = self.create_directory_incremental(
                     &setup.dest_dir,
                     file_entry,
+                    &mut *writer,
                     &setup.metadata_opts,
                     &mut failed_dirs,
                     setup.acl_cache.as_deref(),
@@ -1257,6 +1259,7 @@ mod itemize_order_tests {
                 .create_directory_incremental(
                     dest,
                     file_entry,
+                    &mut writer,
                     &opts,
                     &mut failed_dirs,
                     None,
@@ -1373,6 +1376,7 @@ mod itemize_order_tests {
                 .create_directory_incremental(
                     dest,
                     file_entry,
+                    &mut writer,
                     &opts,
                     &mut failed_dirs,
                     None,

@@ -31,6 +31,8 @@ mod create_specials;
 mod delta_apply;
 mod dry_run_pre29;
 mod errors_and_timeouts;
+#[cfg(unix)]
+mod existence_gate;
 mod file_list;
 mod generator_keepalive;
 mod hard_links;

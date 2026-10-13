@@ -1259,14 +1259,21 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedMissingDestination => {
-                // upstream: generator.c:1379-1382 - `rprintf(FINFO,
-                // "not creating new %s \"%s\"\n", "file", fname)` for an
-                // --existing / --ignore-non-existing skip, gated on
-                // INFO_GTE(SKIP, 1).
+                // upstream: generator.c:1768-1771 - `rprintf(FINFO,
+                // "not creating new %s \"%s\"\n", is_dir ? "directory" :
+                // "file", fname)` for an --existing / --ignore-non-existing
+                // skip, gated on INFO_GTE(SKIP, 1).
                 if info_gte(InfoFlag::Skip, 1) {
+                    let is_dir = event
+                        .metadata()
+                        .is_some_and(|metadata| metadata.kind().is_directory());
                     writeln_wrapped(
                         stdout,
-                        "not creating new file \"",
+                        if is_dir {
+                            "not creating new directory \""
+                        } else {
+                            "not creating new file \""
+                        },
                         event.relative_path(),
                         escape,
                         "\"",
