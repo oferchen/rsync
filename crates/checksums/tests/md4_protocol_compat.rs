@@ -2,7 +2,7 @@
 //!
 //! This test suite validates that MD4 works correctly as the strong checksum
 //! algorithm for rsync protocol versions < 30, ensuring backward compatibility
-//! with upstream rsync 3.4.1.
+//! with upstream rsync 3.5.1.
 //!
 //! # Protocol Context
 //!

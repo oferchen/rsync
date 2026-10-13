@@ -55,9 +55,7 @@ fn create_temp_file(dir: &std::path::Path, name: &str, size: usize) -> PathBuf {
     path
 }
 
-// ---------------------------------------------------------------------------
 // Tier 1: Pure hash throughput (in-memory, no I/O)
-// ---------------------------------------------------------------------------
 
 /// Compare XXH3/128 vs MD5 vs XXH3/64 pure digest throughput.
 ///
@@ -89,9 +87,7 @@ fn bench_whole_file_hash_throughput(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Tier 2: File-backed whole-file hashing (realistic I/O path)
-// ---------------------------------------------------------------------------
 
 /// Benchmark single-file whole-file hash with disk I/O.
 ///
@@ -134,9 +130,7 @@ fn bench_whole_file_hash_with_io(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Tier 3: Multi-file parallel hashing (batch --checksum workload)
-// ---------------------------------------------------------------------------
 
 /// Benchmark parallel whole-file hashing of many files.
 ///
@@ -179,9 +173,7 @@ fn bench_parallel_whole_file_hash(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Tier 4: Overhead per byte measurement
-// ---------------------------------------------------------------------------
 
 /// Measure checksum overhead per byte at the file sizes used by --checksum mode.
 ///
