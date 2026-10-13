@@ -7,7 +7,8 @@ fn run_daemon_rejects_unknown_argument() {
 
     let error = run_daemon(config).expect_err("unknown argument should fail");
     assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
-    let rendered = error.message().to_string();
+    // The cause line is a preamble printed before the trailer (options.c:1576).
+    let rendered = error.to_string();
     assert!(
         rendered.contains("unknown option"),
         "diagnostic should classify unknown daemon flags"

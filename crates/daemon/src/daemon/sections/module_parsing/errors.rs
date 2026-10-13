@@ -41,7 +41,7 @@ fn runtime_bwlimit_error(value: &str) -> DaemonError {
 fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     let option = option.to_string_lossy();
     let program = brand.daemon_program_name();
-    config_error(format!(
+    daemon_syntax_error(format!(
         "rsync: {option}: unknown option (in daemon mode)\n(Type \"{program} --daemon --help\" for assistance with daemon mode.)"
     ))
 }
@@ -50,10 +50,33 @@ fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
 /// options.c:1594-1596.
 fn dparam_missing_equals(value: &str, brand: Brand) -> DaemonError {
     let program = brand.daemon_program_name();
-    config_error(format!(
+    daemon_syntax_error(format!(
         "--dparam value is missing an '=': {value}\n(Type \"{program} --daemon --help\" for assistance with daemon mode.)"
     ))
 }
+
+/// Refuses a daemon command line the way upstream's option parser does.
+///
+/// upstream: options.c:1583-1596 - the cause is printed bare, then
+/// `exit_cleanup(RERR_SYNTAX)` adds its own trailer. `am_daemon` is not yet
+/// set, so the trailer names the client role.
+fn daemon_syntax_error(cause: String) -> DaemonError {
+    DaemonError::with_code(
+        ExitCode::Syntax,
+        SYNTAX_ERROR_TRAILER
+            .to_message()
+            .with_role(Role::Client)
+            .with_source(core::tracked_message_source!()),
+    )
+    .with_preamble(cause)
+}
+
+/// The `syntax or usage error` trailer (upstream: errcode.h RERR_SYNTAX).
+const SYNTAX_ERROR_TRAILER: core::message::strings::ExitCodeMessage =
+    match core::message::strings::exit_code_message(1) {
+        Some(template) => template,
+        None => panic!("exit code missing from the exit-code table"),
+    };
 
 fn config_error(text: String) -> DaemonError {
     DaemonError::new(
