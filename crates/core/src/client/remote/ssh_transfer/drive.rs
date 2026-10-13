@@ -28,7 +28,7 @@ use super::super::batch_support::{BatchContext, build_batch_context, build_batch
 use super::super::files_from_forwarding::read_local_files_from_for_forwarding;
 use super::super::flags;
 use super::super::implied_source::implied_source_args_for_pull;
-use super::super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
+use super::super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 use super::super::itemize_sink::ItemizeEventSink;
 use super::super::operand_split::split_transfer_operands;
 use super::connection::build_ssh_connection;
@@ -142,10 +142,6 @@ pub fn run_ssh_transfer(
                 batch_writer,
             )
         }
-        TransferSpec::Proxy {
-            remote_sources,
-            remote_dest,
-        } => run_proxy_transfer(config, remote_sources, remote_dest, observer),
     }
 }
 
@@ -267,25 +263,6 @@ fn run_push_transfer(
     }
     summary.set_protocol_version(negotiated_protocol);
     Ok(summary)
-}
-
-/// Executes a proxy transfer (remote → remote via local).
-///
-/// In a proxy transfer, the local machine relays protocol messages between
-/// two remote hosts. We spawn two SSH connections:
-/// 1. To the source with `rsync --server --sender` (acts as generator)
-/// 2. To the destination with `rsync --server` (acts as receiver)
-///
-/// Data flows: source → local (relay) → destination
-fn run_proxy_transfer(
-    config: &ClientConfig,
-    remote_sources: RemoteOperands,
-    remote_dest: OsString,
-    _observer: Option<&mut dyn ClientProgressObserver>,
-) -> Result<ClientSummary, ClientError> {
-    use super::super::remote_to_remote::run_remote_to_remote_transfer;
-
-    run_remote_to_remote_transfer(config, remote_sources, remote_dest)
 }
 
 /// Runs server over an SSH connection using split read/write halves.

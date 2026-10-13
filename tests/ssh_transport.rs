@@ -331,11 +331,10 @@ fn test_transfer_role_detection() {
         _ => panic!("Expected Push transfer"),
     }
 
-    // Test remote-to-remote (proxy) - now returns Proxy instead of error
+    // Remote source and remote destination: upstream main.c:1486-1489 refuses
     let sources = vec![OsString::from("host1:file")];
     let destination = OsString::from("host2:file");
-    let result = determine_transfer_role(&sources, &destination).expect("Should detect proxy");
-    assert_eq!(result.role(), RemoteRole::Proxy);
+    assert!(determine_transfer_role(&sources, &destination).is_err());
 
     // Neither remote (should use local copy)
     let sources = vec![OsString::from("file1.txt")];

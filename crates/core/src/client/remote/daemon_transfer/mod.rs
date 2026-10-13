@@ -141,12 +141,6 @@ pub fn run_daemon_transfer(
     let local_paths: Vec<std::ffi::OsString> = match &transfer_spec {
         TransferSpec::Push { local_sources, .. } => local_sources.clone(),
         TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
-        TransferSpec::Proxy { .. } => {
-            return Err(invalid_argument_error(
-                "remote-to-remote transfers via rsync daemon are not supported",
-                1,
-            ));
-        }
     };
 
     #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
@@ -305,9 +299,6 @@ pub fn run_daemon_transfer(
             buffered,
             observer,
         ),
-        RemoteRole::Proxy => {
-            unreachable!("Proxy transfers via daemon are rejected earlier")
-        }
     };
     close_then_reap(reader_half, writer_half, guard);
     outcome
@@ -369,12 +360,6 @@ pub fn run_daemon_over_remote_shell(
     let local_paths: Vec<std::ffi::OsString> = match &transfer_spec {
         TransferSpec::Push { local_sources, .. } => local_sources.clone(),
         TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
-        TransferSpec::Proxy { .. } => {
-            return Err(invalid_argument_error(
-                "remote-to-remote transfers via daemon-over-remote-shell are not supported",
-                1,
-            ));
-        }
     };
 
     // upstream: main.c:1650 - a daemon-over-remote-shell connection carries the
@@ -493,9 +478,6 @@ pub fn run_daemon_over_remote_shell(
             buffered,
             observer,
         ),
-        RemoteRole::Proxy => {
-            unreachable!("Proxy transfers via daemon-over-remote-shell are rejected earlier")
-        }
     };
     close_then_reap(reader_half, writer_half, guard);
     outcome
