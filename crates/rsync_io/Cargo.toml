@@ -55,6 +55,8 @@ embedded-ssh = [
     "dep:sha1",
     "dep:rand",
     "dep:base64",
+    # Zero-copy hand-off of russh channel chunks across the sync bridge.
+    "dep:bytes",
 ]
 # QUIC transport: quinn-proto (sans-IO) + rustls (ring provider) behind an
 # off-by-default gate, driven by a dedicated I/O thread - no async runtime.
