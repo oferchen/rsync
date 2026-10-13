@@ -47,17 +47,21 @@ impl IoUringSocketReader {
         })
     }
 
-    /// Fills the internal buffer by submitting a single `IORING_OP_RECV` SQE.
-    fn fill_buffer(&mut self) -> io::Result<usize> {
+    /// Receives up to `len` bytes into `ptr` with one `IORING_OP_RECV` SQE.
+    ///
+    /// The SQE is submitted exactly once. A signal that interrupts the wait
+    /// resumes the wait rather than resubmitting, so a second RECV never
+    /// races the first into the same buffer; `io_uring_enter(2)` may also
+    /// return after submitting without a CQE, which the loop absorbs too.
+    fn recv(&mut self, ptr: *mut u8, len: usize) -> io::Result<usize> {
         let fd = sqe_fd(self.fd, self.fixed_fd_slot);
-        let entry = opcode::Recv::new(fd, self.buffer.as_mut_ptr(), self.buffer_size as u32)
-            .build()
-            .user_data(0);
+        let entry = opcode::Recv::new(fd, ptr, len as u32).build().user_data(0);
         let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
-        // SAFETY: `entry` references `self.buffer` and the socket fd; both
-        // remain valid across `submit_and_wait`, so the kernel can write
-        // into the buffer before we observe completion.
+        // SAFETY: `entry` references `len` writable bytes at `ptr` (the
+        // caller's slice or `self.buffer`) and the socket fd; both remain
+        // valid until the CQE is reaped below, so the kernel can write into
+        // the buffer before we observe completion.
         unsafe {
             self.ring
                 .submission()
@@ -65,20 +69,26 @@ impl IoUringSocketReader {
                 .map_err(|_| io::Error::other("submission queue full"))?;
         }
 
-        self.ring.submit_and_wait(1)?;
-
-        let cqe = self
-            .ring
-            .completion()
-            .next()
-            .ok_or_else(|| io::Error::other("missing CQE"))?;
-
-        let result = cqe.result();
+        let result = loop {
+            if let Some(cqe) = self.ring.completion().next() {
+                break cqe.result();
+            }
+            match self.ring.submit_and_wait(1) {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        };
         if result < 0 {
             return Err(io::Error::from_raw_os_error(-result));
         }
+        Ok(result as usize)
+    }
 
-        let n = result as usize;
+    /// Refills the internal buffer from the socket.
+    fn fill_buffer(&mut self) -> io::Result<usize> {
+        let ptr = self.buffer.as_mut_ptr();
+        let n = self.recv(ptr, self.buffer_size)?;
         self.pos = 0;
         self.len = n;
         Ok(n)
@@ -90,34 +100,7 @@ impl Read for IoUringSocketReader {
         if self.pos >= self.len {
             if buf.len() >= self.buffer_size {
                 // Large read: bypass internal buffer, recv directly into caller's buffer.
-                let fd = sqe_fd(self.fd, self.fixed_fd_slot);
-                let entry = opcode::Recv::new(fd, buf.as_mut_ptr(), buf.len() as u32)
-                    .build()
-                    .user_data(0);
-                let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
-
-                // SAFETY: `entry` references the caller's `buf` and the
-                // socket fd; both remain valid across `submit_and_wait`,
-                // letting the kernel fill the buffer directly.
-                unsafe {
-                    self.ring
-                        .submission()
-                        .push(&entry)
-                        .map_err(|_| io::Error::other("submission queue full"))?;
-                }
-                self.ring.submit_and_wait(1)?;
-
-                let cqe = self
-                    .ring
-                    .completion()
-                    .next()
-                    .ok_or_else(|| io::Error::other("missing CQE"))?;
-
-                let result = cqe.result();
-                if result < 0 {
-                    return Err(io::Error::from_raw_os_error(-result));
-                }
-                return Ok(result as usize);
+                return self.recv(buf.as_mut_ptr(), buf.len());
             }
 
             let n = self.fill_buffer()?;

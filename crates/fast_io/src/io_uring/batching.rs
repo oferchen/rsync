@@ -229,7 +229,7 @@ pub(super) fn submit_write_batch(
 /// Sentinel user_data tag for a `PollAdd(POLLOUT)` gating CQE.
 ///
 /// Picked far above any plausible SEND/WRITE batch index so it cannot collide
-/// with a slot index in [`submit_send_batch`].
+/// with the SEND tag in [`submit_send_batch`].
 const POLL_OUT_USER_DATA: u64 = u64::MAX;
 
 /// Sentinel user_data tag for the linked-timeout CQE that cancels a pending
@@ -337,15 +337,20 @@ fn poll_writable(
     }
 }
 
-/// Submits a batch of send SQEs from contiguous `data` and collects completions.
+/// Sends all of `data` on a stream socket with `IORING_OP_SEND`, one SQE at a
+/// time, and returns the byte count.
 ///
-/// Analogous to [`submit_write_batch`] but uses `opcode::Send` instead of
-/// `opcode::Write` and omits file offsets (stream sockets have no position).
+/// Analogous to [`submit_write_batch`] but uses `opcode::Send` and has no
+/// file offsets. Unlike positional writes, sends on a stream socket must not
+/// overlap: a stream has no offsets, so two SENDs in flight on one socket can
+/// complete short and out of order, and resubmitting the first one's tail
+/// after the second one landed reorders the stream. Each SEND therefore
+/// carries at most `chunk_size` bytes and the next one is submitted only
+/// after the previous completion was reaped, exactly like a `write(2)` loop.
 ///
 /// To prevent the receive side from starving when the kernel send buffer is
-/// full, each batch is gated by a `IORING_OP_POLL_ADD(POLLOUT)`
-/// SQE. The SEND SQEs are only submitted once the socket reports writable,
-/// mirroring the bidirectional `select()` strategy in upstream rsync's
+/// full (issue #1872), each SEND is gated by a `IORING_OP_POLL_ADD(POLLOUT)`
+/// SQE, mirroring the bidirectional `select()` strategy in upstream rsync's
 /// `perform_io()`. This keeps `submit_and_wait` from being held hostage by a
 /// back-pressured SEND that would otherwise leave concurrent RECV CQEs
 /// un-reaped.
@@ -356,111 +361,72 @@ pub(super) fn submit_send_batch(
     fd: types::Fd,
     data: &[u8],
     chunk_size: usize,
-    max_sqes: usize,
     fixed_fd_slot: i32,
 ) -> io::Result<usize> {
-    if data.is_empty() {
-        return Ok(0);
-    }
-
     // Per-iteration readiness ceiling. Re-armed each loop pass; a back-
     // pressured but progressing peer never trips it. 30 s matches the
     // default upstream `select_timeout`.
     let timeout = types::Timespec::new().sec(30).nsec(0);
-    let total = data.len();
-    let mut global_done = 0usize;
+    let mut done = 0usize;
 
-    while global_done < total {
-        let remaining = total - global_done;
-        let n_chunks = remaining.div_ceil(chunk_size).min(max_sqes);
-        let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(n_chunks);
-        for i in 0..n_chunks {
-            let start = global_done + i * chunk_size;
-            let len = chunk_size.min(total - start);
-            slots.push((start, len, 0));
+    while done < data.len() {
+        // Gate on POLLOUT. Transient backpressure surfaces as WouldBlock;
+        // we re-arm and continue without escalating to the caller.
+        match poll_writable(ring, fd, fixed_fd_slot, &timeout) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
         }
 
-        let mut batch_complete = false;
-        while !batch_complete {
-            // Gate on POLLOUT. Transient backpressure surfaces as WouldBlock;
-            // we re-arm and continue without escalating to the caller.
-            match poll_writable(ring, fd, fixed_fd_slot, &timeout) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+        let want = (data.len() - done).min(chunk_size);
+        let entry = opcode::Send::new(
+            sqe_fd(fd.0, fixed_fd_slot),
+            data[done..].as_ptr(),
+            want as u32,
+        )
+        .build()
+        .user_data(0);
+        let entry = maybe_fixed_file(entry, fixed_fd_slot);
+
+        // SAFETY: `entry` references `data` and the socket fd; the borrow is
+        // held until the CQE is reaped below, after which the kernel no
+        // longer reads from the submitted buffer.
+        unsafe {
+            ring.submission()
+                .push(&entry)
+                .map_err(|_| io::Error::other("submission queue full"))?;
+        }
+
+        let result = loop {
+            if let Some(cqe) = ring.completion().next() {
+                break cqe.result();
+            }
+            match ring.submit_and_wait(1) {
+                Ok(_) => {}
+                // A signal interrupted the wait; the SEND is still in flight.
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
+        };
 
-            let mut submitted = 0u32;
-            for (idx, &(start, len, done)) in slots.iter().enumerate() {
-                let want = len - done;
-                if want == 0 {
-                    continue;
-                }
-                let entry = opcode::Send::new(
-                    sqe_fd(fd.0, fixed_fd_slot),
-                    data[start + done..].as_ptr(),
-                    want as u32,
-                )
-                .build()
-                .user_data(idx as u64);
-                let entry = maybe_fixed_file(entry, fixed_fd_slot);
-
-                // SAFETY: `entry` references `data` and the socket fd; the
-                // borrow is held until `submit_and_wait` returns, after which
-                // the kernel no longer reads from the submitted buffer.
-                unsafe {
-                    ring.submission()
-                        .push(&entry)
-                        .map_err(|_| io::Error::other("submission queue full"))?;
-                }
-                submitted += 1;
+        if result < 0 {
+            let err = io::Error::from_raw_os_error(-result);
+            // EAGAIN/EWOULDBLOCK on a non-blocking-style send: rearm the
+            // readiness poll rather than failing. EWOULDBLOCK == EAGAIN on
+            // Linux per POSIX, so a single arm covers both names.
+            if err.raw_os_error() == Some(libc::EAGAIN) {
+                continue;
             }
-
-            if submitted == 0 {
-                break;
-            }
-
-            ring.submit_and_wait(submitted as usize)?;
-
-            let mut completed = 0u32;
-            while completed < submitted {
-                let cqe = ring
-                    .completion()
-                    .next()
-                    .ok_or_else(|| io::Error::other("missing CQE"))?;
-
-                let idx = cqe.user_data() as usize;
-                let result = cqe.result();
-
-                if result < 0 {
-                    let err = io::Error::from_raw_os_error(-result);
-                    // EAGAIN/EWOULDBLOCK on a non-blocking-style send: rearm
-                    // the readiness poll on the next outer loop iteration
-                    // rather than failing. EWOULDBLOCK == EAGAIN on Linux per
-                    // POSIX, so a single arm covers both names.
-                    if err.raw_os_error() == Some(libc::EAGAIN) {
-                        completed += 1;
-                        continue;
-                    }
-                    return Err(err);
-                }
-                if result == 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::WriteZero,
-                        "send returned 0 bytes",
-                    ));
-                }
-
-                slots[idx].2 += result as usize;
-                completed += 1;
-            }
-
-            batch_complete = slots.iter().all(|&(_, len, done)| done >= len);
+            return Err(err);
         }
-
-        let batch_sent: usize = slots.iter().map(|&(_, _, done)| done).sum();
-        global_done += batch_sent;
+        if result == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "send returned 0 bytes",
+            ));
+        }
+        done += result as usize;
     }
 
-    Ok(global_done)
+    Ok(done)
 }

@@ -198,16 +198,46 @@ pub fn try_send_zc(
             "IORING_OP_SEND_ZC is not supported on this kernel",
         ));
     }
+    submit_and_drain(ring, fd, buf.as_ptr(), buf.len(), user_data)
+}
 
+/// Asks the kernel whether socket `fd` accepts `IORING_OP_SEND_ZC`.
+///
+/// The opcode probe in [`is_supported`] only says the kernel knows the
+/// opcode; whether a given socket can carry it is a per-protocol property
+/// (`SOCK_SUPPORT_ZC`, set by TCP and UDP but not by `AF_UNIX`). The kernel
+/// checks that flag before it touches the payload, so a zero-length
+/// submission answers the question without putting a byte on the wire.
+///
+/// Returns `Ok(())` when the socket accepted the probe and the OS error the
+/// transfer CQE carried otherwise - `EOPNOTSUPP` for a socket family without
+/// zero-copy support.
+pub(super) fn probe_socket(ring: &mut RawIoUring, fd: RawFd) -> io::Result<()> {
+    submit_and_drain(ring, fd, std::ptr::NonNull::<u8>::dangling().as_ptr(), 0, 0).map(|_| ())
+}
+
+/// Submits one `IORING_OP_SEND_ZC` SQE over `len` bytes at `ptr` and drains
+/// both its CQEs.
+///
+/// The caller guarantees `ptr..ptr + len` stays valid for the duration of the
+/// call; a zero `len` never dereferences `ptr`.
+fn submit_and_drain(
+    ring: &mut RawIoUring,
+    fd: RawFd,
+    ptr: *const u8,
+    len: usize,
+    user_data: u64,
+) -> io::Result<usize> {
     let tagged = user_data & USER_DATA_MASK;
-    let entry = opcode::SendZc::new(types::Fd(fd), buf.as_ptr(), buf.len() as u32)
+    let entry = opcode::SendZc::new(types::Fd(fd), ptr, len as u32)
         .build()
         .user_data(tagged);
 
-    // SAFETY: `buf` is borrowed for the full lifetime of this call. We drain
-    // both CQEs (transfer + notification) below before returning, so the
-    // kernel is guaranteed to have released the page reference by the time
-    // the caller regains control. The SQE references no other memory.
+    // SAFETY: the caller keeps `ptr..ptr + len` valid for the full lifetime
+    // of this call. We drain both CQEs (transfer + notification) below before
+    // returning, so the kernel is guaranteed to have released the page
+    // reference by the time the caller regains control. The SQE references
+    // no other memory.
     unsafe {
         ring.submission()
             .push(&entry)
@@ -221,7 +251,12 @@ pub fn try_send_zc(
         // Block for at least one CQE if the queue is empty; otherwise drain
         // what's already queued before re-entering the kernel.
         if ring.completion().is_empty() {
-            ring.submit_and_wait(1)?;
+            match ring.submit_and_wait(1) {
+                Ok(_) => {}
+                // A signal interrupted the wait; the CQEs are still coming.
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
         }
 
         while let Some(cqe) = ring.completion().next() {
@@ -560,6 +595,58 @@ mod tests {
         };
         let err = try_send_zc(&mut ring, 0, &[], 0).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    /// Builds a ring for the per-socket probe tests, or `None` when the host
+    /// lacks io_uring or the SEND_ZC opcode (the probe has nothing to ask).
+    fn send_zc_probe_ring() -> Option<RawIoUring> {
+        if !super::super::config::is_io_uring_available() || !is_supported() {
+            println!("skipping: io_uring or IORING_OP_SEND_ZC unavailable on this host");
+            return None;
+        }
+        IoUringConfig::default().build_ring().ok()
+    }
+
+    /// The ssh wire is an `AF_UNIX` socketpair. The kernel sets
+    /// `SOCK_SUPPORT_ZC` only for TCP and UDP, so the probe must report the
+    /// refusal as `EOPNOTSUPP` - which is what lets the socket writer drop to
+    /// plain SEND once at setup instead of failing a transfer mid-stream.
+    #[test]
+    fn probe_socket_reports_eopnotsupp_for_unix_socketpair() {
+        let Some(mut ring) = send_zc_probe_ring() else {
+            return;
+        };
+        let (a, mut b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let err = probe_socket(&mut ring, a.as_raw_fd()).expect_err("AF_UNIX refuses SEND_ZC");
+        assert_eq!(err.raw_os_error(), Some(libc::EOPNOTSUPP), "got {err}");
+
+        // The refused probe must not have put anything on the wire.
+        b.set_nonblocking(true).unwrap();
+        let mut byte = [0u8; 1];
+        let read = b.read(&mut byte).unwrap_err();
+        assert_eq!(read.kind(), io::ErrorKind::WouldBlock);
+    }
+
+    /// A TCP socket supports SEND_ZC, so the zero-length probe succeeds and
+    /// sends nothing: the peer must see EOF as the first event, not a byte.
+    #[test]
+    fn probe_socket_accepts_tcp_without_sending_bytes() {
+        let Some(mut ring) = send_zc_probe_ring() else {
+            return;
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sender = TcpStream::connect(addr).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+
+        probe_socket(&mut ring, sender.as_raw_fd()).expect("TCP accepts SEND_ZC");
+        drop(sender);
+
+        peer.set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).unwrap();
+        assert!(received.is_empty(), "probe leaked {} bytes", received.len());
     }
 
     /// Round-trips 64 KiB over a loopback TCP pair via `try_send_zc` and
