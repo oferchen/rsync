@@ -1,12 +1,12 @@
 //! Integration tests for the `ZeroCopySender` zero-copy socket sender.
 //!
-//! Sends 1 MiB of pseudo-random bytes over a `socketpair(AF_UNIX,
-//! SOCK_STREAM, 0)` and asserts that the receive end observes the exact
-//! same bytes. The test runs only on Linux with both the `io_uring` and
-//! `iouring-send-zc` cargo features enabled and skips gracefully when the
-//! running kernel does not advertise `IORING_OP_SEND_ZC` (kernel < 6.0,
-//! seccomp-restricted environments, container runtimes that block the
-//! opcode).
+//! Sends 1 MiB of pseudo-random bytes over a TCP loopback pair and asserts
+//! that the receive end observes the exact same bytes, and drives the
+//! default `Auto` socket writer the daemon uses. The tests run only on Linux
+//! with both the `io_uring` and `iouring-send-zc` cargo features enabled and
+//! state on stderr why they skip when the running kernel does not advertise
+//! `IORING_OP_SEND_ZC` (kernel < 6.0, seccomp-restricted environments,
+//! container runtimes that block the opcode).
 
 #![cfg(all(target_os = "linux", feature = "iouring-send-zc"))]
 
@@ -16,9 +16,8 @@ use std::os::unix::io::{AsRawFd, OwnedFd, RawFd};
 use std::thread;
 use std::time::Duration;
 
-// `FromRawFd` is still required by the OwnedFd reconstruction inside
-// `socketpair_unix_stream`; the test-level `UnixStream::from(OwnedFd)`
-// conversion is a separate path that does not need the raw fd import.
+// `FromRawFd` is required by the OwnedFd reconstruction inside
+// `socketpair_unix_stream`.
 
 use fast_io::ZeroCopySender;
 use fast_io::io_uring::{is_io_uring_available, send_zc};
@@ -60,19 +59,20 @@ fn socketpair_unix_stream() -> std::io::Result<(OwnedFd, OwnedFd)> {
 }
 
 #[test]
-fn zero_copy_sender_roundtrips_1mib_over_socketpair() {
-    const TEST: &str = "zero_copy_sender_roundtrips_1mib_over_socketpair";
+fn zero_copy_sender_roundtrips_1mib_over_tcp_loopback() {
+    const TEST: &str = "zero_copy_sender_roundtrips_1mib_over_tcp_loopback";
     if !send_zc_runnable(TEST) {
         return;
     }
 
-    let (send_fd, recv_fd) = match socketpair_unix_stream() {
-        Ok(pair) => pair,
-        Err(e) => {
-            eprintln!("[send_zc env] SKIP {TEST}: socketpair() unavailable ({e})");
-            return;
-        }
-    };
+    // SEND_ZC's notification path is wired for TCP/UDP, not AF_UNIX (a
+    // socketpair answers EOPNOTSUPP), so the round-trip needs a TCP pair.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let send_fd = OwnedFd::from(
+        std::net::TcpStream::connect(listener.local_addr().expect("loopback addr"))
+            .expect("connect"),
+    );
+    let (mut recv_stream, _) = listener.accept().expect("accept");
 
     // Generate a deterministic 1 MiB pseudo-random payload. We avoid a
     // crate dependency on `rand` for this single byte-fill by using a
@@ -91,19 +91,16 @@ fn zero_copy_sender_roundtrips_1mib_over_socketpair() {
     };
 
     // Spawn the receive thread before we start sending so the kernel
-    // socket buffer cannot fill and block the sender. `OwnedFd` ->
-    // `UnixStream` is a safe `From` conversion that hands the fd's
-    // ownership across without going through raw fds.
+    // socket buffer cannot fill and block the sender.
     let expected_len = payload.len();
     let reader = thread::spawn(move || {
-        let mut stream = std::os::unix::net::UnixStream::from(recv_fd);
-        stream
+        recv_stream
             .set_read_timeout(Some(Duration::from_secs(30)))
             .expect("set_read_timeout");
         let mut received: Vec<u8> = Vec::with_capacity(expected_len);
         let mut scratch = [0u8; 32 * 1024];
         while received.len() < expected_len {
-            match stream.read(&mut scratch) {
+            match recv_stream.read(&mut scratch) {
                 Ok(0) => break,
                 Ok(n) => received.extend_from_slice(&scratch[..n]),
                 Err(e) => panic!("receive failed: {e}"),
@@ -123,21 +120,12 @@ fn zero_copy_sender_roundtrips_1mib_over_socketpair() {
     let mut sent_total = 0usize;
     while sent_total < payload.len() {
         let chunk = &payload[sent_total..];
-        // Some sandboxes advertise IORING_OP_SEND_ZC via the probe ring but
-        // fail the actual submission (seccomp, container runtime policy,
-        // unprivileged user namespace). Treat that as a runtime-skip rather
-        // than a hard failure so CI environments without working SEND_ZC do
-        // not block the queue.
-        let n = match sender.send_zc(chunk) {
-            Ok(n) => n,
-            Err(e) => {
-                report_setup_failure(TEST, "ZeroCopySender::send_zc", &e);
-                drop(sender);
-                drop(send_fd);
-                let _ = reader.join();
-                return;
-            }
-        };
+        // The environment probe said SEND_ZC runs here, so a rejected
+        // submission is a real failure, not a skip. (Over a socketpair this
+        // used to be EOPNOTSUPP on every kernel and the test never ran.)
+        let n = sender
+            .send_zc(chunk)
+            .unwrap_or_else(|e| panic!("SEND_ZC rejected on a SEND_ZC-capable host: {e}"));
         assert!(n > 0, "kernel reported zero bytes sent");
         sent_total += n;
     }
