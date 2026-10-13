@@ -48,6 +48,10 @@ pub(crate) fn record_send(bytes: usize) {
 }
 
 /// Records one SEND_ZC-permitted writer that ended up on a plain send.
+///
+/// Unix only: the raw-fd socket writer factories that call it do not exist
+/// on Windows.
+#[cfg(unix)]
 pub(crate) fn record_fallback() {
     FALLBACKS.fetch_add(1, Ordering::Relaxed);
 }
