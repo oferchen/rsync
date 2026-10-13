@@ -25,9 +25,9 @@
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
+/// - `clientserver.c:1070-1071` - daemon resolves `munge_symlinks` from
 ///   `lp_munge_symlinks()` for sender and receiver alike.
-/// - `flist.c:224-228` - sender strips `SYMLINK_PREFIX` after `readlink()`
+/// - `flist.c:499-502` - sender strips `SYMLINK_PREFIX` after `readlink()`
 ///   so the wire bytes match what a non-munge daemon would send.
 /// - `rsync.h:36` - `SYMLINK_PREFIX "/rsyncd-munged/"` (trailing slash kept).
 #[cfg(unix)]
@@ -57,7 +57,7 @@ fn daemon_munge_symlinks_pull_strips_prefix() {
     unix_fs::symlink("/rsyncd-munged/../escape", source_dir.join("parent_link"))
         .expect("create parent_link");
 
-    // upstream: flist.c:455 - targets that lack the prefix pass through
+    // upstream: flist.c:499-500 - targets that lack the prefix pass through
     // unchanged via the `llen > SYMLINK_PREFIX_LEN && strncmp(...) == 0`
     // guard. Cover that branch alongside the strip path.
     unix_fs::symlink("already_unmunged", source_dir.join("bare_link")).expect("create bare_link");

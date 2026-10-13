@@ -1,6 +1,6 @@
 /// End-to-end test for `--delete` stats emission during a daemon pull.
 ///
-/// Pull-direction regression for URV-6: ensure that wiring the upload-direction
+/// Pull-direction regression: ensure that wiring the upload-direction
 /// delete pass does not break the previously-working pull case. On a pull the
 /// local client runs the receiver and performs the sweep itself; the per-type
 /// counters must surface via `ClientSummary::items_deleted()` from the

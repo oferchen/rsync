@@ -1,10 +1,10 @@
-// DMC-3 regression test: pins the exact wire bytes emitted when the
+// Regression test: pins the exact wire bytes emitted when the
 // daemon refuses a connection because the `max connections` cap (per
 // module or global `--max-connections`) is exceeded.
 //
-// Upstream rsync 3.4.1 emits the literal string
+// Upstream rsync 3.5.1 emits the literal string
 // `@ERROR: max connections (%d) reached -- try again later\n` via
-// `io_printf(f_out, ...)` in `clientserver.c:752`. Backup tools, log
+// `io_printf(f_out, ...)` in `clientserver.c:799`. Backup tools, log
 // aggregators and rsync client parsers match this exact byte sequence,
 // so any drift in template, substitution, or trailing newline is a
 // breaking change for downstream consumers.
@@ -33,8 +33,8 @@ fn daemon_max_connections_wire_bytes_match_upstream() {
     //   - per-module: `send_error` writes `payload` then `\n`.
     //   - global cap: `format!("... ({limit}) ... later\n")`.
     //
-    // The limit is the configured integer, which loadparm.c:431-433 reads with
-    // `atoi()` and clientserver.c:752 prints with `%d`, so the domain is signed
+    // The limit is the configured integer, which loadparm.c:550-551 reads with
+    // `atoi()` and clientserver.c:799 prints with `%d`, so the domain is signed
     // and a module disabled by a negative value keeps its minus sign on the
     // wire.
     let cases: &[(i32, &[u8])] = &[

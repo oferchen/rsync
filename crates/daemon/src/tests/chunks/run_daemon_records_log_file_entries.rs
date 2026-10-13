@@ -73,9 +73,9 @@ fn run_daemon_records_log_file_entries() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: log.c:122-132 logit() writes the raw rwrite() buffer after
+    // upstream: log.c:125-135 logit() writes the raw rwrite() buffer after
     // the `%Y/%m/%d %H:%M:%S [pid] ` prefix; FLOG/FINFO bodies carry no
-    // severity tag (e.g. `rsyncd version %s starting`, clientserver.c:1580).
+    // severity tag (e.g. `rsyncd version %s starting`, clientserver.c:1791).
     assert!(
         log_contents
             .lines()

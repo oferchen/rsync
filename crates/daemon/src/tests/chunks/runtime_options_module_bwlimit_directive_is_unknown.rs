@@ -3,7 +3,7 @@
 /// applied to the module, and never a parse error.
 ///
 /// upstream: daemon-parm.txt has no `bwlimit` module parameter (it is only the
-/// daemon command-line `--bwlimit`, options.c:862). loadparm.c's do_parameter
+/// daemon command-line `--bwlimit`, options.c:876). loadparm.c's do_parameter
 /// reports and skips a name it does not recognise inside a module section.
 #[test]
 fn runtime_options_module_bwlimit_directive_is_unknown() {

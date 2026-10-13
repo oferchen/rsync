@@ -117,7 +117,7 @@ fn daemon_filter_merge_applies_the_named_files_rules() {
 /// A merge file the daemon cannot read REFUSES the module.
 ///
 /// upstream: `XFLG_FATAL_ERRORS` makes the failed open `exit_cleanup(RERR_FILEIO)`
-/// (exclude.c:1714-1719). oc served the module with the operator's rules
+/// (exclude.c:1703-1719). oc served the module with the operator's rules
 /// silently absent, which is the same exposure as the row above with no
 /// configuration error to notice.
 #[cfg(unix)]

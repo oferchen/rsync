@@ -68,7 +68,7 @@ fn daemon_protocol_28_forced_client_greeting_accepted() {
 
 #[test]
 fn daemon_protocol_28_forced_greeting_carries_the_full_digest_list() {
-    // upstream: compat.c:838-842 - `output_daemon_greeting()` never filters the
+    // upstream: compat.c:844-853 - `output_daemon_greeting()` never filters the
     // list by protocol, so forcing the daemon down to 28 changes only the
     // version number. Verified against rsync 3.4.4, whose `--daemon
     // --protocol=28` banner is `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
@@ -267,7 +267,7 @@ fn daemon_protocol_28_forced_client_api_push() {
 /// End-to-end test using the client API with forced protocol 28 against a
 /// daemon performing a pull. Mirrors `daemon_protocol_28_forced_client_api_push`
 /// but exercises the receiver-direction code path through the daemon, locking
-/// in the protocol 28 fixes from PRs #1604, #1606, #1670, #1700, #1704.
+/// in the protocol 28 receiver fixes.
 ///
 /// The push case alone is insufficient because pull/push exercise opposite
 /// roles: pull makes the daemon the sender, so the legacy file-list encoder

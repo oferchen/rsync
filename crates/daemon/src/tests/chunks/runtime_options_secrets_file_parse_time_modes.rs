@@ -95,7 +95,7 @@ fn runtime_options_accepts_other_writable_secrets_file_at_parse_time() {
 }
 
 /// A secrets path that is not a regular file is still stored: upstream only
-/// opens it when a client authenticates (authenticate.c:143-160), so the
+/// opens it when a client authenticates (authenticate.c:155-165), so the
 /// failure is a refused login, not a config error.
 #[test]
 fn runtime_options_stores_a_secrets_path_that_is_not_a_regular_file() {

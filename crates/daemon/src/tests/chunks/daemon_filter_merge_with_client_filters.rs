@@ -7,9 +7,9 @@
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:874-893` - daemon parses `filter`, `include from`, `include`,
+/// - `clientserver.c:933-952` - daemon parses `filter`, `include from`, `include`,
 ///   `exclude from`, `exclude` directives and builds `daemon_filter_list`
-/// - `exclude.c:1010-1025` - the receiver consults `daemon_filter_list` BEFORE
+/// - `exclude.c:1108-1121` - `name_is_excluded()` consults `daemon_filter_list` BEFORE
 ///   the user's `filter_list`, with first-match-wins semantics
 /// - oc-rsync mirror: `crates/transfer/src/generator/filters.rs:66-75` (daemon
 ///   rules prepended to client wire rules)

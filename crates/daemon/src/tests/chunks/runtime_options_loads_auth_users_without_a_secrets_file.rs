@@ -1,6 +1,6 @@
 /// A module that requires authentication but has no secrets file still loads.
 ///
-/// upstream: authenticate.c:143-146 check_secret() - every login to it fails
+/// upstream: authenticate.c:155-157 check_secret() - every login to it fails
 /// with "no secrets file", but the config itself is valid.
 #[test]
 fn runtime_options_loads_auth_users_without_a_secrets_file() {

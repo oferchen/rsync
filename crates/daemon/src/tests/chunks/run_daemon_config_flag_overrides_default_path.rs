@@ -55,7 +55,7 @@ fn run_daemon_config_flag_overrides_default_path() {
 
     // upstream: no @RSYNCD: OK or CAP lines before module listing
 
-    // upstream: clientserver.c:1254 uses %-15s\t%s\n format
+    // upstream: clientserver.c:1381 uses %-15s\t%s\n format
     line.clear();
     reader.read_line(&mut line).expect("module listing");
     assert_eq!(

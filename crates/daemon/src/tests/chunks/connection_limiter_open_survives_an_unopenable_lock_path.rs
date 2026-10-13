@@ -1,7 +1,7 @@
 /// Constructing a limiter over an unopenable `lock file` cannot fail.
 ///
 /// upstream has no build-time open at all: the lock file is opened inside
-/// `claim_connection()` (connection.c:33) and a failed open there is
+/// `claim_connection()` (connection.c:35-36) and a failed open there is
 /// `return 0` - that one connection is refused while the daemon keeps
 /// listening. Making construction fallible turned an operator-named path the
 /// daemon could not open into a daemon that never reached `listen()`.

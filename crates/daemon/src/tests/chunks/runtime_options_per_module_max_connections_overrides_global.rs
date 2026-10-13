@@ -1,9 +1,9 @@
-// DMC-6: verifies a per-module `max connections = N` directive coexists
+// Verifies a per-module `max connections = N` directive coexists
 // with the daemon-global `--max-connections` CLI flag and that the
 // per-module value is what `ModuleRuntime` enforces for connections to
 // that module, regardless of the higher global cap.
 //
-// upstream: target/interop/upstream-src/rsync-3.5.0/loadparm.c associates
+// upstream: target/interop/upstream-src/rsync-3.5.1/loadparm.c associates
 // `max connections` with each `[modulename]` section (Locals: in
 // `daemon-parm.txt:50`). Upstream has no daemon-global cap; oc-rsync's
 // `--max-connections` is an additional daemon-level admission limit and

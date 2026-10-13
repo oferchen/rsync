@@ -67,7 +67,7 @@ fn run_daemon_rejects_push_to_default_read_only_module() {
         .expect("send client args");
     stream.flush().expect("flush client args");
 
-    // #227: the default `read only = true` push rejection is post-`@RSYNCD:
+    // The default `read only = true` push rejection is post-`@RSYNCD:
     // OK`, so it must be framed as MSG_ERROR_XFER + MSG_ERROR_EXIT rather than
     // written as a raw line. Shared decoder mirrors upstream
     // `do_server_recv()` (main.c:1201-1205).

@@ -1,7 +1,7 @@
 /// An unreadable `motd file` leaves the daemon startable with no motd content.
 ///
 /// upstream opens the motd per CONNECTION and keeps every failure local to the
-/// greeting (clientserver.c:188-197): `open_no_attacker_symlinks` returning
+/// greeting (clientserver.c:188-198): `open_no_attacker_symlinks` returning
 /// `< 0` yields a NULL `FILE *`, the read loop is skipped, and the connection
 /// proceeds. Config parsing has no motd open at all, so an unopenable motd
 /// cannot stop the daemon from reaching `listen()`.

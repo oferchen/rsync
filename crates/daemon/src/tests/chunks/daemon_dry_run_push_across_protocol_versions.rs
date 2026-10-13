@@ -12,7 +12,7 @@
 // Upstream reference:
 // - clientserver.c - daemon closes socket early during dry-run push
 // - options.c - dry_run sets !do_xfers
-// - compat.c:211-227 - protocol version negotiation via --protocol
+// - compat.c:576 setup_protocol() - protocol version negotiation via --protocol
 
 /// Runs a single dry-run push at a given protocol version and asserts no files
 /// are written while the summary reports the expected count.

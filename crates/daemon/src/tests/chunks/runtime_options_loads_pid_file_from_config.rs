@@ -1,6 +1,6 @@
 /// A relative `pid file` reaches the runtime verbatim.
 ///
-/// upstream: clientserver.c:1584 `create_pid_file()` opens the string
+/// upstream: clientserver.c:1582 `create_pid_file()` opens the string
 /// `lp_pid_file()` returns - loadparm.c stores parameter values as written -
 /// so a relative value names a path under the daemon's working directory.
 /// This test previously asserted the config file's directory as the prefix,

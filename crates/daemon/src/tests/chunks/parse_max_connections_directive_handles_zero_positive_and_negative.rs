@@ -1,8 +1,8 @@
 #[test]
 fn parse_max_connections_directive_handles_zero_positive_and_negative() {
     // upstream: `max connections` is a P_INTEGER directive read via atoi()
-    // (loadparm.c:431-433). atoi maps an empty, whitespace-only or non-numeric
-    // value to 0, and connection.c:claim_connection:27 returns success for 0
+    // (loadparm.c:550-551). atoi maps an empty, whitespace-only or non-numeric
+    // value to 0, and connection.c:30-31 claim_connection() returns success for 0
     // without taking a lock - that is the unlimited case.
     assert_eq!(
         parse_max_connections_directive(""),
@@ -21,7 +21,7 @@ fn parse_max_connections_directive_handles_zero_positive_and_negative() {
         Some(MaxConnections::Unlimited)
     );
 
-    // A positive value bounds the slot scan at connection.c:33.
+    // A positive value bounds the slot scan at connection.c:39.
     let expected = NonZeroU32::new(25).expect("non-zero");
     assert_eq!(
         parse_max_connections_directive("25"),
@@ -31,7 +31,7 @@ fn parse_max_connections_directive_handles_zero_positive_and_negative() {
     // A negative value can never satisfy `i < max_connections`, so the slot
     // scan is empty and every connection is refused. rsyncd.conf.5: "A negative
     // value disables the module". The sign must survive parsing because
-    // clientserver.c:746-757 echoes the configured number verbatim.
+    // clientserver.c:797-800 echoes the configured number verbatim.
     assert_eq!(
         parse_max_connections_directive("-1"),
         Some(MaxConnections::Disabled(-1))

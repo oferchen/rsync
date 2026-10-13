@@ -1,4 +1,4 @@
-/// upstream: daemon-parm.h:178 installs DEFAULT_LOCK_FILE - rsync.h:33
+/// upstream: daemon-parm.txt:34 installs DEFAULT_LOCK_FILE - rsync.h:33
 /// `"/var/run/rsyncd.lock"` - as the `lock file` default, and
 /// connection.c:26-46 claims every `max connections` slot through that file.
 /// Sessions fork per connection on Unix, so without this default a module cap

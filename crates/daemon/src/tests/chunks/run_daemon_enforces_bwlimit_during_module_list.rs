@@ -9,8 +9,8 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     let comment = "x".repeat(4096);
     // Forward-slash-normalised env::temp_dir() so the daemon module-arg
     // parser doesn't swallow the comma separator via backslash escapes on
-    // Windows (see PR #4560), and so the paths actually exist on Windows
-    // where /srv/docs and /var/log don't (see PR #4559).
+    // Windows, and so the paths actually exist on Windows where /srv/docs
+    // and /var/log don't.
     let module_path = std::env::temp_dir()
         .display()
         .to_string()

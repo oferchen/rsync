@@ -1,6 +1,6 @@
 /// The advertised digest list is the same at every protocol version.
 ///
-/// upstream: compat.c:838-842 `output_daemon_greeting()` renders
+/// upstream: compat.c:844-853 `output_daemon_greeting()` renders
 /// `get_default_nno_list(&valid_auth_checksums, tmpbuf, ...)` and prints it
 /// straight into `@RSYNCD: %d.%d %s\n`. `get_default_nno_list()` (compat.c:462)
 /// walks `valid_auth_checksums_items[]` in table order and never consults

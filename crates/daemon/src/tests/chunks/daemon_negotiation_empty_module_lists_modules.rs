@@ -1,6 +1,6 @@
 /// Regression test for upstream `daemon` testsuite: an empty module name
 /// must be treated as a module-list request, matching upstream
-/// `clientserver.c:1373` (`if (!*line || strcmp(line, "#list") == 0)`).
+/// `clientserver.c:1554` (`if (!*line || strcmp(line, "#list") == 0)`).
 ///
 /// The runtests harness drives this path via `rsync host::` and the
 /// `lsh.sh` stand-in: the client connects, performs the version exchange,
@@ -40,7 +40,7 @@ fn daemon_negotiation_empty_module_lists_modules() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
-    // Send only a bare newline. upstream: clientserver.c:1423 treats this
+    // Send only a bare newline. upstream: clientserver.c:1554 treats this
     // as equivalent to `#list`.
     send_client_greeting(&mut stream);
     stream.write_all(b"\n").expect("send empty request");

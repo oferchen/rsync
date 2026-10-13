@@ -12,7 +12,7 @@
 /// }
 /// ```
 ///
-/// The flag is threaded per call - 0 for the allow list (access.c:295), 1 for
+/// The flag is threaded per call - 0 for the allow list (access.c:294), 1 for
 /// the deny list (access.c:304) - so ONE branch produces opposite answers for
 /// the two lists. Sibling of CVE-2026-70452, which fixed the reverse-lookup
 /// path only. oc previously returned "no match" for both, so a `hosts deny`

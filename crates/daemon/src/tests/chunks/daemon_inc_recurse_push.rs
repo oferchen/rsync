@@ -29,9 +29,9 @@
 ///
 /// # Upstream Reference
 ///
-/// - compat.c:720 set_allow_inc_recurse() - enables incremental recursion
+/// - compat.c:162 set_allow_inc_recurse() - enables incremental recursion
 /// - flist.c:send_directory() - sends sub-list entries as directories are opened
-/// - options.c:2717-2723 - capability string with 'i' for INC_RECURSE
+/// - options.c:3220-3221 - capability string with 'i' for INC_RECURSE
 #[cfg(unix)]
 #[test]
 fn daemon_inc_recurse_push_nested_directories() {
