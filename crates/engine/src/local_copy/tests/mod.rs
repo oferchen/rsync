@@ -1063,3 +1063,4 @@ include!("execute_direct_write.rs");
 include!("execute_dry_run.rs");
 include!("files_from_vanished.rs");
 include!("link_stat_operand_name.rs");
+include!("change_dir_operand.rs");

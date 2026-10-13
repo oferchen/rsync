@@ -211,6 +211,31 @@ impl GeneratorContext {
         self.try_walk_source_entry_dedup(base, path, None, xfer_dirs, is_dotdir, remember_root)
     }
 
+    /// Reports a source operand whose DOTDIR `dir` half cannot be entered.
+    ///
+    /// `change_pathname()` first resets `curr_dir` to the starting (module)
+    /// directory, so the name renders against that, not the previous operand.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:661-662` - `change_dir(orig_dir, CD_SKIP_CHDIR)` for a
+    ///   relative `dir`
+    /// - `flist.c:686-689` - `io_error |= IOERR_GENERAL` and
+    ///   `rsyserr(FERROR_XFER, errno, "change_dir %s failed", full_fname(dir))`
+    pub(in crate::generator) fn report_change_dir_failure(
+        &mut self,
+        dir: &Path,
+        error: &io::Error,
+    ) {
+        self.curr_dir = None;
+        let text = format!(
+            "rsync: [sender] change_dir {} failed: {}\n",
+            full_fname_path(dir, self.full_fname_paths()),
+            engine::local_copy::upstream_io_error(error),
+        );
+        self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
+        self.add_io_error(io_error_flags::IOERR_GENERAL);
+    }
     /// Upstream's `xfer_dirs` gate on a top-level directory argument.
     ///
     /// Without `-r`, `-d`, or a `--list-only`/`--files-from` equivalent,

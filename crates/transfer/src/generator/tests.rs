@@ -4602,6 +4602,49 @@ mod files_from {
     }
 
     #[test]
+    fn build_file_list_trailing_slash_missing_source_fails_change_dir_not_missing_args() {
+        // upstream: flist.c:2914-2921 + 686-694 - without --relative, `nope/`
+        // is entered as a directory before anything is stat'd. The chdir
+        // failure reports `change_dir`, sets IOERR_GENERAL (which also stops
+        // the receiver's deletions) and skips the operand, so the mode-0
+        // sentinel that would delete the destination is never sent.
+        let temp_dir = TempDir::new().unwrap();
+        let mut missing = temp_dir.path().join("nope").into_os_string();
+        missing.push("/");
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.delete_missing_args = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        let count = ctx.build_file_list(&[PathBuf::from(missing)]).unwrap();
+        assert_eq!(
+            count,
+            0,
+            "no mode-0 deletion sentinel: {:?}",
+            ctx.file_list()
+        );
+        assert_eq!(
+            ctx.io_error() & io_error_flags::IOERR_GENERAL,
+            io_error_flags::IOERR_GENERAL,
+            "change_pathname() sets IOERR_GENERAL, unlike a missing link_stat"
+        );
+        let mut buf = Vec::new();
+        {
+            let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
+                .activate_multiplex()
+                .unwrap();
+            ctx.flush_flist_diagnostics(&mut writer).unwrap();
+        }
+        let frames = decode_mux_frames(&buf);
+        assert_eq!(frames.len(), 1, "one change_dir diagnostic: {frames:?}");
+        assert_eq!(frames[0].0, protocol::MessageCode::ErrorXfer);
+        let text = String::from_utf8_lossy(&frames[0].1);
+        let expected = format!(
+            "rsync: [sender] change_dir \"{}\" failed: ",
+            temp_dir.path().join("nope").display()
+        );
+        assert!(text.starts_with(&expected), "got {text:?}");
+    }
+    #[test]
     fn build_file_list_default_missing_source_reports_via_error_xfer_only() {
         // upstream: flist.c:2668-2676 - a top-level source that never existed
         // takes the `errno == ENOENT` path, which reports FERROR_XFER but skips
