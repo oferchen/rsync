@@ -10,8 +10,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:3259 flist_sort_and_clean()` - the combined sort+dedup+prune pass
-//!   run by `recv_file_list()` at `flist.c:3014`.
+//! - `flist.c:3561 flist_sort_and_clean()` - the combined sort+dedup+prune pass
+//!   run by `recv_file_list()`.
 
 use std::io::Cursor;
 

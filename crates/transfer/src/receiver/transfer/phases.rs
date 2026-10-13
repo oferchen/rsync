@@ -6,8 +6,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:906-937` - `read_final_goodbye()` with extended goodbye
-//! - `main.c:356-384` - `handle_stats()` sends/receives statistics
+//! - `main.c:921-952` - `read_final_goodbye()` with extended goodbye
+//! - `main.c:329-389` - `handle_stats()` sends/receives statistics
 //! - `io.c:read_ndx()` / `write_ndx()` - NDX wire encoding
 
 use std::io::{self, Read, Write};
@@ -51,7 +51,7 @@ impl ReceiverContext {
 
         if inc_recurse {
             let num_segments = self.ndx_segments.len();
-            // RS-3b: the streaming driver may already have emitted some
+            // The streaming driver may already have emitted some
             // per-segment NDX_DONEs mid-walk to free the sender's window
             // (`segments_released_mid_walk`). Emit only the remainder here so the
             // TOTAL per-segment NDX_DONE count on the wire is exactly
@@ -94,7 +94,7 @@ impl ReceiverContext {
             ndx_write_codec.write_ndx_done(&mut *writer)?;
             writer.flush()?;
 
-            // upstream: generator.c:2391-2394 - protocol >= 29 emits a final
+            // upstream: generator.c:2882-2887 - protocol >= 29 emits a final
             // phase=3 for the delay-updates pass. INC_RECURSE implies
             // protocol >= 30, so this always fires once on this branch.
             if self.protocol.supports_multi_phase() {
@@ -112,7 +112,7 @@ impl ReceiverContext {
                 phase += 1;
                 // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files phase={}", phase);
-                // upstream: generator.c:2372-2374, 2366-2368, 2392-2394
+                // upstream: generator.c:2846-2848, 2366-2368, 2392-2394
                 // "generate_files phase=%d" emitted after each phase++.
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
                 if phase > max_phase {
@@ -132,7 +132,7 @@ impl ReceiverContext {
     ///
     /// A server-mode push forwards `NDX + iflags + xname` for each hardlink
     /// follower (see `emit_server_hardlink_follower_itemize`); the peer's sender
-    /// echoes every non-transfer item back (upstream `sender.c:289-295`), yet the
+    /// echoes every non-transfer item back (upstream `sender.c:581-587`), yet the
     /// request-count-driven pipeline response loop never reads them. The sender
     /// buffers those echoes until it reads the receiver's NDX_DONE, so this runs
     /// on the first NDX_DONE read - once the sender has flushed - consuming each
@@ -171,7 +171,7 @@ impl ReceiverContext {
     /// Routed through the shared marker-aware reader
     /// ([`read_marker_aware_ndx`]), which drains an `NDX_DEL_STATS` frame ahead
     /// of the check exactly as upstream does (`rsync.c:336-342`, evaluated
-    /// before the `rsync.c:343` gate). A phase boundary is outside the lazy
+    /// before the `rsync.c:344` gate). A phase boundary is outside the lazy
     /// file-list window, so the sink refuses to grow the list.
     pub(in crate::receiver) fn read_expected_ndx_done<R: Read>(
         &self,
@@ -190,7 +190,7 @@ impl ReceiverContext {
         }
         match read_marker_aware_ndx(reader, ndx_read_codec, &mut sink)? {
             NdxFrame::Done => Ok(()),
-            // upstream: io.c read_ndx / rsync.c:818 - a wire index that is not
+            // upstream: io.c read_ndx / rsync.c:982 - a wire index that is not
             // the expected NDX_DONE (-1) is "File-list index N not in ..." and
             // aborts with exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so
             // the core exit-code mapper yields RERR_PROTOCOL, not RERR_STREAMIO.
@@ -277,12 +277,12 @@ impl ReceiverContext {
         writer.flush()?;
 
         if self.protocol.supports_extended_goodbye() {
-            // upstream: main.c:917 read_final_goodbye() calls read_ndx_and_attrs(),
+            // upstream: main.c:930 read_final_goodbye() calls read_ndx_and_attrs(),
             // which is where the sender's NDX_DEL_STATS frame gets drained
             // (rsync.c:336-342) before NDX_DONE surfaces.
             match read_marker_aware_ndx(reader, ndx_read_codec, &mut self.no_lazy_flist_sink())? {
                 NdxFrame::Done => {}
-                // upstream: main.c:935 exit_cleanup(RERR_PROTOCOL) (exit 2) - a
+                // upstream: main.c:948 exit_cleanup(RERR_PROTOCOL) (exit 2) - a
                 // non-NDX_DONE goodbye echo is a protocol violation, tagged so
                 // the core exit-code mapper yields 2 rather than RERR_STREAMIO(12).
                 NdxFrame::File(ndx) => {
@@ -405,7 +405,7 @@ impl ReceiverContext {
         self.exchange_phase_done(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;
 
         if self.config.connection.client_mode {
-            // upstream: main.c:365-372 - the client receiver reads the sender's
+            // upstream: main.c:366-373 - the client receiver reads the sender's
             // cached raw descriptor counters here and reports them (with read/write
             // swapped) as "Total bytes sent/received". Retain them for the summary
             // instead of discarding, so the figures match the sender exactly rather
@@ -415,7 +415,7 @@ impl ReceiverContext {
 
         after_phases(self, reader, writer)?;
 
-        // upstream: receiver.c:699 - flist_free() of each completed segment.
+        // upstream: receiver.c:863 - flist_free() of each completed segment.
         // Deferred past `after_phases`, whose directory touch-up still reads
         // the entries' names.
         while self.first_segment_idx + 1 < self.ndx_segments.len() {
@@ -424,7 +424,7 @@ impl ReceiverContext {
 
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;
 
-        // upstream: main.c:1098 do_recv() child path and main.c:1153/1141
+        // upstream: main.c:1103 do_recv() child path and main.c:1170/1176
         // do_recv() parent path both call io_flush(FULL_FLUSH) immediately
         // after the final NDX_DONE write so the kernel ships the goodbye
         // frame (and any trailing multiplexed MSG_INFO frames) before the
@@ -446,14 +446,14 @@ impl ReceiverContext {
             return Err(e);
         }
 
-        // upstream: receiver.c:1130-1131 DEBUG_GTE(RECV, 1)
+        // upstream: receiver.c:1393-1394 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files finished");
 
         // upstream: generator.c:2928-2929 - "generate_files finished" emitted at
         // the bottom of generate_files() after the final goodbye handshake.
         debug_log!(Genr, 1, "generate_files finished");
 
-        // INC_RECURSE diagnostic I4 (#2199): emit cumulative NDX conversion
+        // INC_RECURSE diagnostic: emit cumulative NDX conversion
         // call count and partition_point comparison depth from the receiver
         // side. Aggregated across all receiver transfers in this process.
         let (ndx_calls, ndx_cmps) = crate::receiver::ndx_convert_totals();
@@ -543,7 +543,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generate_files_phase_matches_upstream() {
-        // upstream: generator.c:2372-2374, 2366-2368, 2392-2394
+        // upstream: generator.c:2846-2848, 2366-2368, 2392-2394
         // "generate_files phase=%d" - the phase counter advances 1 -> 2 -> 3
         // across the regular, redo, and protocol-29+ delay-updates phases.
         init_genr_level1();
@@ -611,7 +611,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn delta_transmission_enabled_matches_upstream() {
-        // upstream: generator.c:2290-2295 - "delta-transmission enabled" when
+        // upstream: generator.c:2763-2768 - "delta-transmission enabled" when
         // whole_file is off (the rolling-checksum delta path is used).
         init_flist_level1();
         debug_log!(Flist, 1, "delta-transmission {}", "enabled");
@@ -624,7 +624,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn delta_transmission_disabled_matches_upstream() {
-        // upstream: generator.c:2290-2295 - "delta-transmission disabled for
+        // upstream: generator.c:2763-2768 - "delta-transmission disabled for
         // local transfer or --whole-file" when whole_file is on.
         init_flist_level1();
         debug_log!(

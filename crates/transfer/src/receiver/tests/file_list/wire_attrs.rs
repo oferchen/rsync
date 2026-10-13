@@ -186,9 +186,9 @@ fn sender_attrs_read_protocol_28_returns_default_iflags() {
     //
     // The value is a bare ITEM_TRANSFER, deliberately NOT upstream's
     // `ITEM_TRANSFER | ITEM_MISSING_DATA` (rsync.c:383-384). ITEM_MISSING_DATA
-    // is `1<<16` (rsync.h:254), a log-only bit that does not fit this u16 and
+    // is `1<<16` (rsync.h:261), a log-only bit that does not fit this u16 and
     // that upstream itself masks off before the wire (`iflags &= 0xffff`,
-    // generator.c:581). These attrs only select which trailing wire fields to
+    // generator.c:587). These attrs only select which trailing wire fields to
     // parse and are echoed back - they never reach a renderer - so the display
     // bit would be dead state here. The generator's decode-to-display path
     // (ItemFlags::read) is the one that carries it.

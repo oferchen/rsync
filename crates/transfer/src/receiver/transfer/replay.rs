@@ -43,7 +43,7 @@ impl ReceiverContext {
     /// without `ITEM_TRANSFER` is a metadata-only itemize record and is
     /// skipped (`receiver.c:920-941`); a transfer row names the flist entry,
     /// and its recorded sum head describes the block layout the recorded
-    /// `COPY` tokens reference (`receiver.c:295 read_sum_head` inside
+    /// `COPY` tokens reference (`receiver.c:510 read_sum_head` inside
     /// `receive_data`).
     ///
     /// The generator half still runs locally, exactly as upstream's forked
@@ -69,7 +69,7 @@ impl ReceiverContext {
         let (mut reader, file_count, setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
-        // upstream: main.c:1401-1410 - a client handed an empty list skips
+        // upstream: main.c:1438-1446 - a client handed an empty list skips
         // do_recv() entirely; same gate as the network drivers.
         if self.is_empty_client_flist(file_count) {
             return self.finish_empty_client_flist(reader, writer);
@@ -78,7 +78,7 @@ impl ReceiverContext {
         // Materialize any INC_RECURSE sub-list segments up front so the
         // generator-half passes below see the complete list. The recorded
         // stream carries the segments exactly where the tee captured them,
-        // ahead of the delta rows. upstream: generator.c:2299-2368.
+        // ahead of the delta rows. upstream: generator.c:2770-2841.
         let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
         self.ensure_all_segments_loaded(reader, &mut flist_ndx_codec)?;
 
@@ -157,7 +157,7 @@ impl ReceiverContext {
         }
 
         // Quick-check walk for its side effects only (metadata-only fixes,
-        // upstream generator.c:1900 set_file_attrs for identical files). The
+        // upstream generator.c:2246 set_file_attrs for identical files). The
         // returned request list is discarded: the recorded stream, not the
         // local plan, decides what is transferred.
         drop(self.build_files_to_transfer(
@@ -186,7 +186,7 @@ impl ReceiverContext {
 
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
-        // upstream: compat.c:414 getenv_nstr() pins every batch to the zlib
+        // upstream: compat.c:413-415 getenv_nstr() pins every batch to the zlib
         // codec, carried on the compact `-z` flag; there is no negotiated
         // vstring on a replay (compat.c:797 do_negotiated_strings = 0).
         let compression = if self.config.flags.compress {
@@ -208,13 +208,13 @@ impl ReceiverContext {
         let mut literal_data = 0u64;
         let mut matched_data = 0u64;
 
-        // upstream: receiver.c:662 - max_phase = protocol >= 29 ? 2 : 1.
+        // upstream: receiver.c:825 - max_phase = protocol >= 29 ? 2 : 1.
         let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
         let mut phase: i32 = 0;
 
-        // upstream: receiver.c:695-705 - with INC_RECURSE the recorded stream
+        // upstream: receiver.c:875-886 - with INC_RECURSE the recorded stream
         // carries one NDX_DONE per flist segment ahead of the phase markers
-        // (the recording sender echoed each, sender.c:249-257). The receiver
+        // (the recording sender echoed each, sender.c:534-542). The receiver
         // consumes each by freeing first_flist and, while more segments
         // remain, continues WITHOUT advancing the phase; the DONE that frees
         // the last segment falls through to the phase transition. Every
@@ -242,7 +242,7 @@ impl ReceiverContext {
             )?;
 
             let Some((ndx, attrs)) = row else {
-                // upstream: receiver.c:695-705 - free one INC_RECURSE segment
+                // upstream: receiver.c:875-886 - free one INC_RECURSE segment
                 // per NDX_DONE; while more remain the marker does not advance
                 // the phase.
                 if flists_pending > 0 {
@@ -251,7 +251,7 @@ impl ReceiverContext {
                         continue;
                     }
                 }
-                // upstream: receiver.c:706-712 - NDX_DONE advances the phase;
+                // upstream: receiver.c:870-875 - NDX_DONE advances the phase;
                 // the loop ends once phase > max_phase.
                 phase += 1;
                 if phase > max_phase {
@@ -319,7 +319,7 @@ impl ReceiverContext {
             };
             debug_log!(Recv, 1, "recv_files({})", relative_path.display());
 
-            // upstream: receiver.c:295 receive_data() begins with
+            // upstream: receiver.c:474 receive_data() begins with
             // read_sum_head(f_in) - the recorded head describes the block
             // layout the recorded COPY tokens reference.
             let sum_head = SumHead::read(reader)?;
@@ -480,7 +480,7 @@ impl ReceiverContext {
             // Commit: rename the temp file over the destination. Mirrors the
             // SEC-1.j routing of sync.rs (the sandbox-anchored renameat with
             // the io_uring fast path first). A `--temp-dir` on another
-            // filesystem takes robust_rename's copy fallback (util1.c:596).
+            // filesystem takes robust_rename's copy fallback (util1.c:599).
             #[cfg(unix)]
             crate::robust_rename::robust_rename(
                 crate::robust_rename::CommitAnchor {
@@ -558,7 +558,7 @@ impl ReceiverContext {
 
             // upstream: receiver.c:1290 - `log_item(log_code, file, iflags,
             // NULL)` itemizes every transferred row locally, regardless of
-            // read_batch (generator.c:589's `!read_batch` guards only the wire
+            // read_batch (generator.c:602's `!read_batch` guards only the wire
             // itemize header, not the per-file local log). The recorded iflags
             // carry the generator's itemize decision (ITEM_IS_NEW /
             // ITEM_REPORT_* / ITEM_TRANSFER), so reuse them through the same
@@ -568,7 +568,7 @@ impl ReceiverContext {
             let iflags = crate::generator::ItemFlags::from_raw(u32::from(attrs.iflags));
             self.emit_or_record_itemize(writer, flat_idx, &iflags, &file_entry)?;
 
-            // upstream: rsync.c:672-676 - name the updated file under -v. Under
+            // upstream: rsync.c:824-829 - name the updated file under -v. Under
             // `-i`/`--out-format` the itemize row above carries the name, so the
             // bare name is suppressed (should_emit_itemize()).
             if self.config.flags.verbose
@@ -600,7 +600,7 @@ impl ReceiverContext {
             transferred_file_size += file_entry.size();
         }
 
-        // upstream: generator.c:2169 finish_hard_link() itemizes each follower
+        // upstream: generator.c:2641 finish_hard_link() itemizes each follower
         // before the phase's NDX_DONE, then the followers are linked.
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         #[cfg(unix)]
@@ -632,7 +632,7 @@ impl ReceiverContext {
         // double-counting.
         stats.io_error |= reader.take_io_error();
 
-        // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
+        // upstream: generator.c:2899-2902 - --delete-after / --delete-delay run
         // the sweep only after every file has landed. Runs before touch_up_dirs
         // so deletion-induced parent mtime changes are re-tidied, matching the
         // network drivers and upstream's touch_up_dirs-after-late-delete order.
@@ -647,7 +647,7 @@ impl ReceiverContext {
             )?;
         }
 
-        // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
+        // upstream: generator.c:2565-2618 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&dest_dir, writer);
 
@@ -690,7 +690,7 @@ impl ReceiverContext {
     /// `exchange_phase_done` writes and reads the phase boundary markers
     /// itself, but a sender-driven loop has already consumed them, exactly as
     /// upstream's `recv_files()` does before `handle_stats()` runs
-    /// (`main.c:1098-1109`, `main.c:362-373`).
+    /// (`main.c:1102-1109`, `main.c:366-373`).
     ///
     /// No goodbye read follows the stats: upstream's replay receiver ends at
     /// `handle_stats(f_in)` - `read_final_goodbye()` is sender-only

@@ -29,8 +29,8 @@ use super::apply_acls_from_receiver_cache;
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:1551` - `F_HLINK_NOT_FIRST(file)` check
-/// - `hlink.c:284` - `hard_link_check()` called for non-first entries
+/// - `generator.c:1943` - `F_HLINK_NOT_FIRST(file)` check
+/// - `hlink.c:300` - `hard_link_check()` called for non-first entries
 pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
     entry.hlinked() && !entry.hlink_first()
 }
@@ -39,7 +39,7 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
 ///
 /// Returns `true` when the destination file matches the source entry (skip transfer).
 ///
-/// Follows upstream `generator.c:624 quick_check_ok()` evaluation order:
+/// Follows upstream `generator.c:630 quick_check_ok()` evaluation order:
 /// 1. Size mismatch - always needs transfer
 /// 2. `always_checksum` - compute file checksum and compare (ignores mtime)
 /// 3. `size_only` - size matched, skip transfer
@@ -48,7 +48,7 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
 ///
 /// Note: `-t`/`--times` affects only whether mtime is *applied* to the
 /// destination, never whether this quick-check compares it (upstream
-/// `generator.c:642` gates solely on `ignore_times`).
+/// `generator.c:648` gates solely on `ignore_times`).
 pub(super) fn quick_check_matches(
     entry: &FileEntry,
     dest_path: &Path,
@@ -58,11 +58,11 @@ pub(super) fn quick_check_matches(
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
 ) -> bool {
-    // upstream: generator.c:621 - size check first
+    // upstream: generator.c:634 - size check first
     if dest_meta.len() != entry.size() {
         return false;
     }
-    // upstream: generator.c:633 - always_checksum compares file checksums
+    // upstream: generator.c:639-643 - always_checksum compares file checksums
     // instead of relying on mtime. Takes priority over size_only and ignore_times.
     if let Some(algorithm) = always_checksum {
         return match entry.checksum() {
@@ -72,17 +72,17 @@ pub(super) fn quick_check_matches(
             None => false,
         };
     }
-    // upstream: generator.c:639 - `if (size_only) return 1;` after size match
+    // upstream: generator.c:645-646 - `if (size_only) return 1;` after size match
     if size_only {
         return true;
     }
-    // upstream: generator.c:642 - `if (ignore_times) return 0;` forces transfer
+    // upstream: generator.c:648-649 - `if (ignore_times) return 0;` forces transfer
     if ignore_times {
         return false;
     }
-    // upstream: generator.c:645 - `mtime_differs()` -> `same_time()` applies the
+    // upstream: generator.c:651 - `mtime_differs()` -> `same_time()` applies the
     // `--modify-window` tolerance. A negative window compares nanoseconds too
-    // (util1.c:1577), so pass the sub-second component from both sides.
+    // (util1.c:1748), so pass the sub-second component from both sides.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -154,7 +154,7 @@ pub(super) fn dest_mtime_newer(
 /// devices both count as `FT_DEVICE` and fifo vs socket both count as
 /// `FT_SPECIAL`.
 ///
-/// upstream: generator.c:608 - `get_file_type()`.
+/// upstream: generator.c:614 - `get_file_type()`.
 fn file_type_category(mode: u32) -> Option<u8> {
     use protocol::flist::FileType;
     FileType::from_mode(mode).map(|ft| match ft {
@@ -176,7 +176,7 @@ fn file_type_category(mode: u32) -> Option<u8> {
 /// source; a type mismatch (e.g. dest symlink vs source regular file) always
 /// transfers.
 ///
-/// upstream: generator.c:1721 - `update_only > 0 && statret == 0
+/// upstream: generator.c:2135-2136 - `update_only > 0 && statret == 0
 /// && stype == ftype && file->modtime - sx.st.st_mtime < modify_window`.
 pub(super) fn dest_type_matches_source(dest_path: &Path, source_entry: &FileEntry) -> bool {
     let Some(source_category) = file_type_category(source_entry.mode()) else {
@@ -219,7 +219,7 @@ fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
 
 /// The strength of an alternate-basis match, mirroring upstream's `match_level`.
 ///
-/// Upstream `try_dests_reg` (generator.c:960) tracks a `match_level` while
+/// Upstream `try_dests_reg` (generator.c:1073) tracks a `match_level` while
 /// scanning `basis_dir[]`. Levels 0 (nothing found) and 1 (a regular file that
 /// fails `quick_check_ok`, usable only as a delta basis) are not handled
 /// locally by oc, so this enum models only the two levels that produce a
@@ -236,7 +236,7 @@ fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:960-983` - the `match_level` state machine and `best_match`
+/// - `generator.c:1082-1102` - the `match_level` state machine and `best_match`
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum MatchLevel {
     /// upstream match_level 2: quick-check passes, preserved attrs differ.
@@ -286,7 +286,7 @@ pub(super) enum BasisTrust {
     NonChrootedDaemon,
     /// A daemon serving a module inside a per-module `chroot()`.
     ///
-    /// upstream: `generator.c:1046` selects `secure_relative_open()` for a
+    /// upstream: `generator.c:1046` selects `secure_relative_dirfd()` for a
     /// RELATIVE basis here, and `generator.c:1064` the plain `link_stat()` for
     /// an absolute one. oc models only the latter; see [`BasisArm::PlainStat`].
     ChrootedDaemon,
@@ -596,7 +596,7 @@ fn basis_stat(path: &Path, _trust: BasisTrust) -> Option<fs::Metadata> {
 ///
 /// Upstream keeps the FIRST directory that reaches the highest `match_level`: a
 /// later directory only wins by strictly exceeding the current level, and a
-/// level-3 (attrs-exact) match ends the scan immediately (generator.c:979-995).
+/// level-3 (attrs-exact) match ends the scan immediately (generator.c:1096-1099).
 /// Directories whose basis file is missing, non-regular, or fails
 /// `quick_check_ok` contribute at most match_level 1 and are ignored here.
 ///
@@ -604,18 +604,18 @@ fn basis_stat(path: &Path, _trust: BasisTrust) -> Option<fs::Metadata> {
 /// never followed - not even under `--copy-links`. `basis_link_stat()` does
 /// call `link_stat_at()`, which dispatches to `stat` when `copy_links` is set,
 /// but it only ever runs on the receiving side, and `do_recv()` clears
-/// `copy_links` before forking the generator (main.c:1022-1024). The flag is
+/// `copy_links` before forking the generator (main.c:1024). The flag is
 /// therefore unobservable here: a basis symlink makes the basis look absent and
 /// the file transfers normally, which is also what keeps a peer-named entry
 /// from turning an operator's basis dir into a read oracle.
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:963-983` - the `do { ... } while (basis_dir[++j])` scan
-/// - `generator.c:965` - `link_stat` + `!S_ISREG` filter
-/// - `generator.c:971` - `quick_check_ok` gate (below it stays match_level 1)
-/// - `generator.c:977` - `unchanged_attrs()` promotes to match_level 3
-/// - `main.c:1022-1024` - `do_recv()` zeroes `copy_links` for the receiving side
+/// - `generator.c:1082-1102` - the `do { ... } while (basis_dir[++j])` scan
+/// - `generator.c:1084` - `basis_link_stat()` + `!S_ISREG` filter
+/// - `generator.c:1090` - `quick_check_ok` gate (below it stays match_level 1)
+/// - `generator.c:1096` - `unchanged_attrs()` promotes to match_level 3
+/// - `main.c:1024` - `do_recv()` zeroes `copy_links` for the receiving side
 #[allow(clippy::too_many_arguments)]
 fn best_reference_match<'a>(
     entry: &FileEntry,
@@ -636,7 +636,7 @@ fn best_reference_match<'a>(
             _ => continue,
         };
 
-        // upstream: generator.c:971 - a basis that fails quick_check_ok is at
+        // upstream: generator.c:1090 - a basis that fails quick_check_ok is at
         // most match_level 1 (a delta basis), which oc does not consume locally.
         if !quick_check_matches(
             entry,
@@ -650,7 +650,7 @@ fn best_reference_match<'a>(
             continue;
         }
 
-        // upstream: generator.c:977 - unchanged_attrs() distinguishes level 3
+        // upstream: generator.c:1096 - unchanged_attrs() distinguishes level 3
         // (every preserved attr equal) from level 2 (content matches, attrs
         // differ). `metadata_unchanged` is oc's `unchanged_attrs` equivalent.
         let level = if metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
@@ -659,7 +659,7 @@ fn best_reference_match<'a>(
             MatchLevel::Content
         };
 
-        // upstream: generator.c:967-981 - best_match keeps the first dir at the
+        // upstream: generator.c:1086-1099 - best_match keeps the first dir at the
         // highest level; only a strictly higher level replaces it.
         if best.as_ref().is_none_or(|b| level > b.level) {
             let exact = level == MatchLevel::Exact;
@@ -668,7 +668,7 @@ fn best_reference_match<'a>(
                 ref_path,
                 level,
             });
-            // upstream: generator.c:980 - break as soon as a level-3 match is found.
+            // upstream: generator.c:1099 - break as soon as a level-3 match is found.
             if exact {
                 break;
             }
@@ -699,11 +699,11 @@ fn best_reference_match<'a>(
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:954` - `try_dests_reg()` iterates `basis_dir[]`
-/// - `generator.c:995` - match_level 3 (non-`COPY_DEST`): link-dest hard-links,
+/// - `generator.c:1073` - `try_dests_reg()` iterates `basis_dir[]`
+/// - `generator.c:1114` - match_level 3 (non-`COPY_DEST`): link-dest hard-links,
 ///   compare-dest skips; `COPY_DEST` falls through to the copy path
-/// - `generator.c:1004-1005` - hard-link failure does `goto try_a_copy`
-/// - `generator.c:1029-1051` - match_level >= 2 copies via `copy_altdest_file()`
+/// - `generator.c:1136-1137` - hard-link failure does `goto try_a_copy`
+/// - `generator.c:1161-1190` - match_level >= 2 copies via `copy_altdest_file()`
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_reference_dest(
     entry: &FileEntry,
@@ -741,7 +741,7 @@ pub(super) fn try_reference_dest(
     let dest_path = dest_dir.join(relative_path);
     match best.ref_dir.kind {
         ReferenceDirectoryKind::Compare => {
-            // upstream: generator.c:1007-1035 - a COMPARE_DEST match at level 3 is
+            // upstream: generator.c:1149-1155 - a COMPARE_DEST match at level 3 is
             // already correct, so the file finishes with no local copy and the
             // destination stays absent. At level 2 (attrs differ) it falls
             // through to copy_altdest_file so the destination reflects the
@@ -761,9 +761,9 @@ pub(super) fn try_reference_dest(
             }
         }
         ReferenceDirectoryKind::Link => {
-            // upstream: generator.c:995-1014 - LINK_DEST hard-links only at
+            // upstream: generator.c:1114-1146 - LINK_DEST hard-links only at
             // level 3 (unchanged_attrs). A level-2 match, or a hard-link that
-            // fails, copies instead (generator.c:1004-1005 `goto try_a_copy`),
+            // fails, copies instead (generator.c:1136-1137 `goto try_a_copy`),
             // leaving the read-only reference inode untouched.
             if best.level == MatchLevel::Exact
                 && link_reference_file(
@@ -790,8 +790,8 @@ pub(super) fn try_reference_dest(
             }
         }
         ReferenceDirectoryKind::Copy => {
-            // upstream: generator.c:995 (COPY_DEST bypasses the level-3 skip)
-            // + 1029 - COPY_DEST copies the basis file at both level 2 and 3.
+            // upstream: generator.c:1114 (COPY_DEST bypasses the level-3 skip)
+            // + 1161 - COPY_DEST copies the basis file at both level 2 and 3.
             copy_reference_file(
                 entry,
                 &best.ref_path,
@@ -810,11 +810,11 @@ pub(super) fn try_reference_dest(
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:648-657` - `FT_SYMLINK`: `do_readlink()` then `strcmp()`
+/// - `generator.c:656-665` - `FT_SYMLINK`: `do_readlink()` then `strcmp()`
 ///   against `F_SYMLINK(file)`.
-/// - `generator.c:665-667` - `FT_SPECIAL`: `BITS_EQUAL(file->mode, st_mode,
+/// - `generator.c:670-673` - `FT_SPECIAL`: `BITS_EQUAL(file->mode, st_mode,
 ///   _S_IFMT)` distinguishes fifo from socket.
-/// - `generator.c:669-673` - `FT_DEVICE`: `st_rdev == MAKEDEV(major, minor)`.
+/// - `generator.c:674-679` - `FT_DEVICE`: `st_rdev == MAKEDEV(major, minor)`.
 #[cfg(unix)]
 pub(super) enum NonRegularBasis<'a> {
     /// A symlink entry: identical when the basis link resolves to `target`.
@@ -838,7 +838,7 @@ pub(super) enum NonRegularBasis<'a> {
 /// source non-regular entry, mirroring upstream `quick_check_ok` for the
 /// matching `filetype` plus the preceding `get_file_type()` category test.
 ///
-/// The category test (`generator.c:1087` - `ftype != get_file_type(st_mode)`)
+/// The category test (`generator.c:1229` - `ftype != get_file_type(st_mode)`)
 /// requires the basis be the same coarse type; `quick_check_ok` then applies the
 /// per-type identity comparison. Any read failure (missing basis, unreadable
 /// link) reports `false`.
@@ -852,7 +852,7 @@ fn nonregular_identity_matches(
 
     let ft = ref_meta.file_type();
     match *basis {
-        // upstream: generator.c:648-657 - a symlink basis must itself be a
+        // upstream: generator.c:656-665 - a symlink basis must itself be a
         // symlink whose target string equals the source link's target.
         NonRegularBasis::Symlink { target } => {
             ft.is_symlink()
@@ -860,7 +860,7 @@ fn nonregular_identity_matches(
                     .map(|t| t == target)
                     .unwrap_or(false)
         }
-        // upstream: generator.c:665-667 - fifo vs socket is distinguished by the
+        // upstream: generator.c:670-673 - fifo vs socket is distinguished by the
         // S_IFMT bits, so a socket source never matches a fifo basis (or vice
         // versa) even though both collapse to FT_SPECIAL.
         NonRegularBasis::Special { is_socket } => {
@@ -870,7 +870,7 @@ fn nonregular_identity_matches(
                 ft.is_fifo()
             }
         }
-        // upstream: generator.c:669-673 - a device basis matches on rdev alone;
+        // upstream: generator.c:674-679 - a device basis matches on rdev alone;
         // both block and char nodes share the FT_DEVICE category, so the type
         // test only requires the basis be some device node.
         NonRegularBasis::Device { rdev } => {
@@ -905,12 +905,12 @@ fn nonregular_identity_matches(
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:1063-1153` - `try_dests_non()`
-/// - `generator.c:1083-1102` - the `basis_dir[]` match_level scan and `-2`
+/// - `generator.c:1205-1316` - `try_dests_non()`
+/// - `generator.c:1225-1315` - the `basis_dir[]` match_level scan and `-2`
 ///   (compare-dest skip / link-dest done) versus `>= 0` return
-/// - `generator.c:1118-1136` - `do_link_at()` hard-links the basis node at
+/// - `generator.c:1261-1293` - `do_link_at()` hard-links the basis node at
 ///   match_level 3 then `goto cleanup` (no `set_file_attrs`, attrs already equal)
-/// - `generator.c:1586` (symlinks), `1667` (specials/devices) - the
+/// - `generator.c:1979` (symlinks), `2065` (specials/devices) - the
 ///   `else if (basis_dir[0] != NULL)` call site, reached only when the
 ///   destination is absent (`statret != 0`)
 #[cfg(unix)]
@@ -927,19 +927,19 @@ pub(super) fn try_reference_dest_non(
     }
 
     let relative_path = entry.path();
-    // upstream: generator.c:1083-1102 - scan basis_dir[] and keep the strongest
+    // upstream: generator.c:1225-1246 - scan basis_dir[] and keep the strongest
     // match. For a non-regular file only match_level 3 (identity + every
     // preserved attribute equal) alters the on-disk result, so find the first
     // basis dir reaching it. Levels 1 and 2 fall through to normal creation.
     let matched = reference_directories.iter().find_map(|ref_dir| {
         let ref_path = ref_dir.path.join(relative_path);
-        // upstream: generator.c:1085 - link_stat(cmpbuf, &sxp->st, 0) lstats the
+        // upstream: generator.c:1227 - basis_link_stat(cmpbuf, &sxp->st) lstats the
         // basis so a basis symlink is inspected, not its target.
         let ref_meta = fs::symlink_metadata(&ref_path).ok()?;
         if !nonregular_identity_matches(basis, &ref_path, &ref_meta) {
             return None;
         }
-        // upstream: generator.c:1100 - unchanged_attrs() promotes to match_level
+        // upstream: generator.c:1241 - unchanged_attrs() promotes to match_level
         // 3; `metadata_unchanged` is oc's equivalent.
         if !metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
             return None;
@@ -952,13 +952,13 @@ pub(super) fn try_reference_dest_non(
 
     let dest_path = dest_dir.join(relative_path);
     match kind {
-        // upstream: generator.c:1102 - a COMPARE_DEST level-3 match returns -2;
+        // upstream: generator.c:1312 - a COMPARE_DEST level-3 match returns -2;
         // `if (alt_dest_type != COPY_DEST) goto cleanup` leaves the destination
         // absent because the file is already correct in the reference tree.
         ReferenceDirectoryKind::Compare => true,
-        // upstream: generator.c:1118-1136 - LINK_DEST hard-links the basis node.
+        // upstream: generator.c:1261-1293 - LINK_DEST hard-links the basis node.
         ReferenceDirectoryKind::Link => hard_link_reference_non(&ref_path, &dest_path),
-        // upstream: generator.c:1603/1667 - COPY_DEST (and any non-level-3 match)
+        // upstream: generator.c:1979/2065 - COPY_DEST (and any non-level-3 match)
         // falls through to atomic_create, which materialises the node from the
         // flist entry. There is no payload to copy for a non-regular file.
         ReferenceDirectoryKind::Copy => false,
@@ -1023,7 +1023,7 @@ fn apply_altdest_metadata(
 /// cannot corrupt the reference tree. A failed link returns `false` so the
 /// caller can fall back to copying (upstream `goto try_a_copy`).
 ///
-/// upstream: generator.c:1003-1014 - `hard_link_one()` then `set_file_attrs()`
+/// upstream: generator.c:1133-1139 - `hard_link_one()` then `set_file_attrs()`
 fn link_reference_file(
     entry: &FileEntry,
     ref_path: &Path,
@@ -1057,7 +1057,7 @@ fn link_reference_file(
 /// On failure it emits the upstream `INFO_GTE(COPY, 1)` notice and returns
 /// `false` so the caller requests a normal transfer.
 ///
-/// upstream: generator.c:912-946 - `copy_altdest_file()`
+/// upstream: generator.c:917-953 - `copy_altdest_file()`
 fn copy_reference_file(
     entry: &FileEntry,
     ref_path: &Path,
@@ -1083,10 +1083,10 @@ fn copy_reference_file(
             true
         }
         Err(error) => {
-            // upstream: generator.c:931 - rsyserr(FINFO, errno,
+            // upstream: generator.c:937 - rsyserr(FINFO, errno,
             // "copy_file %s => %s", full_fname(src), copy_to) under
             // INFO_GTE(COPY, 1). The flag is part of info_verbosity[1]
-            // (options.c:251) so this fires at `-v` or `--info=COPY`. Wording
+            // (options.c:257) so this fires at `-v` or `--info=COPY`. Wording
             // mirrors upstream's rsyserr format: `copy_file SRC => DST: ERRSTR (ERRNO)`.
             let errno = error.raw_os_error().unwrap_or(0);
             info_log!(
@@ -1122,7 +1122,7 @@ fn io_error_message(error: &std::io::Error) -> String {
 /// Used by `--checksum` (`-c`) mode to compare file contents instead of
 /// mtime+size quick-check. Returns `true` when checksums match (skip transfer).
 ///
-/// upstream: checksum.c:402 `file_checksum()` - plain hash, no seed
+/// upstream: checksum.c:419 `file_checksum()` - plain hash, no seed
 fn file_checksum_matches(
     path: &Path,
     file_size: u64,
@@ -1202,7 +1202,7 @@ mod io_uring_linkat_tests {
 /// upstream: generator.c:936 - `INFO_GTE(COPY, 1)` gates an `rsyserr` call in
 /// `copy_altdest_file()` whose wording reads:
 ///   `copy_file SRC => DST: STRERROR (ERRNO)`
-/// COPY sits in `info_verbosity[1]` (options.c:251) so the flag is enabled at
+/// COPY sits in `info_verbosity[1]` (options.c:257) so the flag is enabled at
 /// `-v` and any explicit `--info=COPY`.
 #[cfg(unix)]
 #[cfg(test)]
@@ -1358,11 +1358,11 @@ mod info_copy_emission_tests {
 /// Regression tests for symlink handling in basis-dir lookups under
 /// `--copy-dest` / `--link-dest` / `--compare-dest`.
 ///
-/// upstream: `generator.c:965` — `link_stat(cmpbuf, &sxp->st, 0)` followed by
+/// upstream: `generator.c:1084` - `basis_link_stat(cmpbuf, &sxp->st)` followed by
 /// `!S_ISREG(sxp->st.st_mode)` filters out a basis-dir entry that is itself a
 /// symlink. `--copy-links` does not lift the filter: `link_stat_at()` honours
 /// `copy_links`, but `do_recv()` zeroes that flag before the generator runs
-/// (main.c:1022-1024), so on the receiving side it is always clear. Without
+/// (main.c:1024), so on the receiving side it is always clear. Without
 /// this gate the receiver would silently copy or hard-link from a symlink
 /// target it should not have consumed, diverging from upstream over
 /// remote-shell transports where the upstream `alt-dest.test` exercises the
@@ -1790,7 +1790,7 @@ mod daemon_module_confined_basis_tests {
 
 /// Regression tests pinning the `--update` (`-u`) same-type skip guard.
 ///
-/// upstream: generator.c:1721 - the "newer dest -> skip" logic is guarded by
+/// upstream: generator.c:2135-2138 - the "newer dest -> skip" logic is guarded by
 /// `stype == ftype`, so a newer destination only suppresses the transfer when
 /// it is the SAME file type as the source. A type mismatch (e.g. a newer dest
 /// symlink over a source regular file) always transfers regardless of mtime.
@@ -1875,7 +1875,7 @@ mod update_type_guard_tests {
 /// Regression tests pinning `--modify-window` in the receiver quick-check.
 ///
 /// upstream: generator.c:quick_check_ok() consults `mtime_differs()` ->
-/// `util1.c:1573 same_time()` for EVERY transfer, so a remote/daemon pull or
+/// `util1.c:1744 same_time()` for EVERY transfer, so a remote/daemon pull or
 /// push must tolerate `--modify-window` seconds of whole-second mtime drift
 /// exactly like the local-copy path. Without threading the window into the
 /// receiver, a content-identical file whose mtime differs by <= window is
@@ -2012,7 +2012,7 @@ mod modify_window_tests {
 /// Regression tests pinning `--modify-window` in the `--update` (`-u`) skip on
 /// the remote/daemon receiver path.
 ///
-/// upstream: generator.c:1721-1722 - the "%s is newer" skip is guarded by
+/// upstream: generator.c:2135-2138 - the "%s is newer" skip is guarded by
 /// `file->modtime - sx.st.st_mtime < modify_window` (source mtime minus dest
 /// mtime, strict `<`). With `--modify-window` the destination is still treated
 /// as newer (and the transfer skipped) even when its whole-second mtime is up to
@@ -2109,7 +2109,7 @@ mod update_modify_window_tests {
 }
 
 /// Regression tests pinning upstream's `try_dests_reg` match-level matrix for
-/// regular files (`generator.c:954-1054`).
+/// regular files (`generator.c:1073-1198`).
 ///
 /// The core data-integrity invariant: `--link-dest` may only hard-link a basis
 /// file when EVERY preserved attribute matches (match_level 3). When the content
@@ -2269,7 +2269,7 @@ mod alt_dest_match_level_tests {
     }
 
     /// `-U --link-dest` on a basis that differs from the source only in atime
-    /// must still hard-link. upstream: generator.c:474-512 unchanged_attrs()
+    /// must still hard-link. upstream: generator.c:474-515 unchanged_attrs()
     /// compares mtime, perms, ownership, ACLs and xattrs but never atime, so the
     /// basis reaches match_level 3 (generator.c:1096). Treating atime as an
     /// attribute demotes it to level 2 and copies, wasting the space
@@ -2432,11 +2432,11 @@ mod alt_dest_match_level_tests {
 
 /// Regression tests pinning upstream's `try_dests_non` alternate-basis matrix
 /// for non-regular files - symlinks, fifos/sockets, and devices
-/// (`generator.c:1063-1153`).
+/// (`generator.c:1205-1316`).
 ///
 /// The core fidelity invariant: alt-dest applies to non-regular files too, not
 /// just regular files. Upstream `try_dests_non` is called for symlinks
-/// (generator.c:1586), devices, and specials (generator.c:1667). Only a full
+/// (generator.c:1979), devices, and specials (generator.c:2065). Only a full
 /// match_level-3 basis (identity plus every preserved attribute equal) changes
 /// what reaches disk:
 ///

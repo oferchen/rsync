@@ -15,7 +15,7 @@ use protocol::stats::{CreatedStats, DeleteStats};
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:1249` - `list_file_entry()` renders one line per flist entry
+/// - `generator.c:1318` - `list_file_entry()` renders one line per flist entry
 #[derive(Debug, Clone)]
 pub struct ListOnlyEntry {
     /// Relative path of the entry within the transferred tree.
@@ -77,8 +77,8 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:647-663` / `flist.c:2939-2952` - `stats.num_dirs++` etc.
-    /// - `main.c:387-411` - `output_itemized_counts()` derives `reg` as the
+    /// - `flist.c:730-746` / `flist.c:3243-3249` - `stats.num_dirs++` etc.
+    /// - `main.c:391-398` - `output_itemized_counts()` derives `reg` as the
     ///   total minus the other four categories.
     pub num_dirs: u64,
     /// Symbolic links in the received file list (upstream `stats.num_symlinks`).
@@ -93,7 +93,7 @@ pub struct TransferStats {
     pub files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).
     ///
-    /// On a pull the local receiver computes this itself (`receiver.c:800`
+    /// On a pull the local receiver computes this itself (`receiver.c:976`
     /// `stats.total_transferred_size += F_LENGTH(file)`); upstream never sends
     /// it over the wire in `handle_stats()`, so the pulling client reports it
     /// straight from this locally accumulated total.
@@ -104,7 +104,7 @@ pub struct TransferStats {
     ///
     /// This tracks data sent back during the transfer, such as signature blocks
     /// for delta generation and file index requests. Mirrors upstream rsync's
-    /// `stats.total_written` tracking in io.c:877.
+    /// `stats.total_written` tracking in `io.c:977`.
     pub bytes_sent: u64,
     /// Total size of all source files in the file list.
     ///
@@ -117,12 +117,12 @@ pub struct TransferStats {
     /// `recv_file_list` span (initial list plus INC_RECURSE sub-lists), so it
     /// includes multiplex frame headers, the id lists, and the pre-30 io_error
     /// int - exactly the raw-descriptor span upstream measures. Never sent over
-    /// the wire; each role prints its own local figure (`main.c:445`).
+    /// the wire; each role prints its own local figure (`main.c:451`).
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2855` - `start_read = stats.total_read;`
-    /// - `flist.c:3032` - `stats.flist_size += stats.total_read - start_read;`
+    /// - `flist.c:3130` - `start_read = stats.total_read;`
+    /// - `flist.c:3334` - `stats.flist_size += stats.total_read - start_read;`
     pub flist_size: u64,
     /// Sender's `flist_buildtime` in milliseconds, as read from its stats
     /// trailer; 0 when absent (protocol < 29, or no trailer).
@@ -144,20 +144,20 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2793`: `write_int(f, ignore_errors ? 0 : io_error);`
+    /// - `flist.c:3068`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub io_error: i32,
     /// Upstream's `got_xfer_error`: at least one `MSG_ERROR_XFER` frame arrived
     /// from the peer.
     ///
     /// This is the only thing that reports a missing source argument: upstream
-    /// deliberately leaves `io_error` clear for `ENOENT` (`flist.c:2671`), so
+    /// deliberately leaves `io_error` clear for `ENOENT` (`flist.c:2940-2944`), so
     /// the sender's `FERROR_XFER` frame is the sole carrier of the failure and
     /// this flag is what turns it into exit 23.
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1686`: `MSG_ERROR_XFER` -> `rwrite(FERROR_XFER, ...)`
-    /// - `log.c:310-311`: `case FERROR_XFER: got_xfer_error = 1;`
+    /// - `io.c:1868`: `MSG_ERROR_XFER` -> `rwrite(FERROR_XFER, ...)`
+    /// - `log.c:337-338`: `case FERROR_XFER: got_xfer_error = 1;`
     /// - `cleanup.c:217-218`: `io_error & IOERR_GENERAL || got_xfer_error` -> 23
     pub got_xfer_error: bool,
 
@@ -182,7 +182,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:749-762` - `stats.created_*++` under `ITEM_IS_NEW`.
+    /// - `receiver.c:925-939` - `stats.created_*++` under `ITEM_IS_NEW`.
     pub created_stats: CreatedStats,
 
     /// Whether deletion was stopped due to `--max-delete` limit.
@@ -191,7 +191,8 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1385` - `deletion_count >= max_delete` triggers exit 25
+    /// - `generator.c:2904-2908` - skipped deletions set `IOERR_DEL_LIMIT`
+    /// - `cleanup.c:213-214` - `IOERR_DEL_LIMIT` maps to exit 25
     pub delete_limit_exceeded: bool,
 
     /// Total literal (new) data bytes written during delta application.
@@ -201,7 +202,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `match.c:330` - `stats.literal_data += s->sums[j].len`
+    /// - `match.c:477` - `stats.literal_data += data_transfer`
     pub literal_data: u64,
 
     /// Total matched (reused) data bytes during delta application.
@@ -211,7 +212,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `match.c:118` - `stats.matched_data += s2length`
+    /// - `match.c:144` - `stats.matched_data += s->sums[i].len`
     pub matched_data: u64,
 
     /// Distinct 4 KiB logical blocks written across every received file.
@@ -222,7 +223,7 @@ pub struct TransferStats {
     /// # Upstream Reference
     ///
     /// - `fileio.c:218-243` - `track_block_touches()` accumulates it
-    /// - `main.c:1112-1117` - `do_recv()` sends it after `NDX_DONE`
+    /// - `main.c:1113-1117` - `do_recv()` sends it after `NDX_DONE`
     pub touched_blocks_4k: u64,
 
     /// Number of files that were retransmitted due to checksum verification failure.
@@ -233,8 +234,9 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1109-1113` - `send_msg_int(MSG_REDO, ndx)` queues for redo
-    /// - `generator.c:2160-2199` - generator processes redo queue in phase 2
+    /// - `receiver.c:1375` - `send_msg_int(MSG_REDO, ndx)` queues for redo
+    /// - `generator.c:2647-2689` - `check_for_finished_files()` processes the
+    ///   redo queue in phase 2
     pub redo_count: usize,
 
     /// Sub-list segments the INC_RECURSE streaming driver released mid-walk.
@@ -246,7 +248,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2219-2239` - `check_for_finished_files` writes `NDX_DONE`
+    /// - `generator.c:2691-2698` - `check_for_finished_files()` writes `NDX_DONE`
     ///   for each completed flist while the walk is still running.
     pub segments_released_mid_walk: usize,
 
@@ -257,7 +259,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1249` - `list_file_entry()` per-entry render
+    /// - `generator.c:1318` - `list_file_entry()` per-entry render
     pub list_only_entries: Vec<ListOnlyEntry>,
 }
 

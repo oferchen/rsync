@@ -4,7 +4,7 @@
 //! so regular files, directories, symlinks, devices and specials skip under
 //! exactly the same conditions.
 //!
-//! upstream: generator.c:1757-1806 recv_generator()
+//! upstream: generator.c:1757-1805 recv_generator()
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -74,10 +74,10 @@ impl ReceiverContext {
     /// Emits upstream's SKIP notice for an entry the existence gate skipped.
     ///
     /// upstream: generator.c:1767-1771 - `not creating new %s "%s"` names the
-    /// entry a "directory" or a "file"; generator.c:1785-1799 - `%s exists%s`
+    /// entry a "directory" or a "file"; generator.c:1784-1799 - `%s exists%s`
     /// gains a parenthesised reason at `INFO_GTE(SKIP, 2)`. Both are gated on
     /// `INFO_GTE(SKIP, 1)`. A skipped directory becomes `skip_dir`
-    /// (generator.c:1762), so nothing below it is reported; its descendants are
+    /// (generator.c:1761), so nothing below it is reported; its descendants are
     /// recognised by their absent parent.
     pub(in crate::receiver) fn emit_existence_skip_notice<
         W: crate::writer::MsgInfoSender + ?Sized,
@@ -126,7 +126,7 @@ fn parent_present(dest_dir: &Path, relative: &Path) -> bool {
 /// The `INFO_GTE(SKIP, 2)` reason for a non-regular entry left standing by
 /// `--ignore-existing`.
 ///
-/// upstream: generator.c:1788-1797 - `(type change)` when the `FT_*` class
+/// upstream: generator.c:1788-1796 - `(type change)` when the `FT_*` class
 /// differs, `(file change)` when `quick_check_ok()` fails (another symlink
 /// target, device rdev or special `S_IFMT`), `(attr change)` when
 /// `unchanged_attrs()` fails, else `(uptodate)`.

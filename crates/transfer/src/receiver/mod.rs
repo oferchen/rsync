@@ -9,9 +9,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:353` - `receive_data()` - Delta application logic
-//! - `receiver.c:736` - `recv_files()` - Main file reception loop
-//! - `generator.c:1450` - `recv_generator()` - Signature generation
+//! - `receiver.c:474` - `receive_data()` - Delta application logic
+//! - `receiver.c:811` - `recv_files()` - Main file reception loop
+//! - `generator.c:1608` - `recv_generator()` - Signature generation
 //!
 //! Mirrors upstream rsync's receiver behavior with block-by-block delta
 //! application and atomic file updates via temporary files.
@@ -78,7 +78,8 @@ pub use self::wire::{
 /// signature wire size. The `derive_strong_sum_length()` heuristic computes
 /// a dynamic length between 2-16 bytes based on file and block sizes.
 ///
-/// (upstream: generator.c:2677 `csum_length = SHORT_SUM_LENGTH`)
+/// (upstream: io.c:82 `int csum_length = SHORT_SUM_LENGTH`, restored after each
+/// redo at generator.c:2677 `check_for_finished_files()`)
 const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::SHORT_SUM_LENGTH).unwrap();
 
@@ -87,13 +88,13 @@ const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
 /// Upstream rsync switches to `SUM_LENGTH` (16) for phase 2 redo to ensure
 /// maximum integrity after a whole-file checksum failure.
 ///
-/// (upstream: generator.c:2650 `csum_length = SUM_LENGTH`)
+/// (upstream: generator.c:2650 `check_for_finished_files()` - `csum_length = SUM_LENGTH`)
 const REDO_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
 
 /// Total invocations of [`ReceiverContext::flat_to_wire_ndx`] across all
 /// receiver transfers in this process. Diagnostic counter for receiver-side
-/// INC_RECURSE (#2199, I4) - quantifies how often the wire/flat conversion
+/// INC_RECURSE - quantifies how often the wire/flat conversion
 /// hot path fires per transfer relative to the file count.
 ///
 /// Sampled at end-of-transfer in the receiver finalize path via
@@ -102,7 +103,7 @@ static NDX_CONVERT_CALLS: AtomicU64 = AtomicU64::new(0);
 
 /// Cumulative `partition_point` comparison depth (approximated as
 /// `floor(log2(len)) + 1`) summed across every NDX conversion call.
-/// Diagnostic counter for receiver-side INC_RECURSE (#2199, I4) - lets
+/// Diagnostic counter for receiver-side INC_RECURSE - lets
 /// operators see when the segment table grows large enough for the
 /// binary-search cost to matter.
 static NDX_CONVERT_CMPS: AtomicU64 = AtomicU64::new(0);

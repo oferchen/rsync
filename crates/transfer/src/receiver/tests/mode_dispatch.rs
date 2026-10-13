@@ -21,12 +21,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1866` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
+//! - `main.c:1946-1947` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
 //! - `sender.c:768-769` - `write_ndx_and_attrs(f_out)` then
 //!   `write_sum_head(f_xfer)`: the sender reads a sum head per file whenever
 //!   `do_xfers` is set, so `--only-write-batch` must send one and `--dry-run`
 //!   must not.
-//! - `generator.c:1249` - `--list-only` sends no per-file request at all.
+//! - `generator.c:1638` - `--list-only` sends no per-file request at all.
 
 use std::io::Cursor;
 use std::num::NonZeroU8;
@@ -54,7 +54,7 @@ fn receiver(flags: ParsedServerFlags) -> ReceiverContext {
     ReceiverContext::new_for_test(&handshake, config)
 }
 
-/// `--only-write-batch` implies `--dry-run` upstream (`main.c:1866` sets
+/// `--only-write-batch` implies `--dry-run` upstream (`main.c:1946-1947` sets
 /// `dry_run = 1` while leaving `do_xfers = 1`), so the two flags are always
 /// seen together and only the check ORDER tells them apart.
 ///
@@ -80,7 +80,7 @@ fn only_write_batch_outranks_the_dry_run_it_implies() {
 }
 
 /// `--list-only` renders every entry via `list_file_entry()` and sends no
-/// per-file NDX request at all (`generator.c:1249`), so it must outrank every
+/// per-file NDX request at all (`generator.c:1638`), so it must outrank every
 /// mode that does send one - including a `-n --list-only` combination.
 #[test]
 fn list_only_outranks_every_requesting_mode() {
@@ -123,7 +123,7 @@ fn no_mode_flag_selects_the_full_transfer() {
 /// `NDX + iflags` response per request.
 ///
 /// `client_mode = false` keeps `run_only_write_batch_loop` off the
-/// `discard_receive_data()` path (`receiver.c:829` gates it on `!am_server`),
+/// `discard_receive_data()` path (`receiver.c:1162` gates it on `!am_server`),
 /// so the scripted response is exactly the echo and nothing more.
 fn echo_response(ndx: i32) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -210,7 +210,7 @@ fn skip_request_header(bytes: &[u8]) -> &[u8] {
 /// WHY assert the wire and not just the enum: the enum is only a label. What
 /// the sender actually blocks on is `write_sum_head(f_xfer)`
 /// (`sender.c:768-769`), which it reads whenever `do_xfers` is set - and
-/// `--only-write-batch` leaves `do_xfers = 1` (`main.c:1866`). A receiver that
+/// `--only-write-batch` leaves `do_xfers = 1` (`main.c:1946-1947`). A receiver that
 /// took the dry-run body under `--only-write-batch` produced a byte-correct
 /// prefix and then hung, which no assertion over flags or exit codes catches.
 ///
@@ -252,7 +252,7 @@ fn only_write_batch_sends_a_sum_head_and_dry_run_does_not() {
 }
 
 /// `--list-only` puts no per-file request on the wire at all, and reports its
-/// entries through `stats.list_only_entries` instead (`generator.c:1249`).
+/// entries through `stats.list_only_entries` instead (`generator.c:1638`).
 #[test]
 fn list_only_sends_no_per_file_request() {
     let dir = tempfile::tempdir().expect("tempdir");

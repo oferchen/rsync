@@ -1,5 +1,5 @@
 //! Regression: the plain-`-v` directory NAME lines on a remote pull must be
-//! gated exactly like upstream `generator.c:1503-1505` - a directory is named
+//! gated exactly like upstream `generator.c:1895-1897` - a directory is named
 //! only when `set_file_attrs()` changed it (newly created, or a pre-transfer
 //! attribute differs). Previously the pipelined receiver named every directory
 //! in the file list unconditionally, printing a spurious `./` for the unchanged
@@ -88,9 +88,9 @@ fn names_only_created_or_changed_dirs() {
 /// A dry run against a missing destination root still names `./`, on both
 /// receiver drivers (this helper is shared; the CI feature matrix runs it with
 /// `incremental-flist` on and off). Upstream "creates" the missing root even
-/// under `-n` (`main.c:809-821`; `do_mkdir` is a dry-run no-op), and
-/// `FLAG_DIR_CREATED` then forces the NAME row (`generator.c:1465-1466`,
-/// `generator.c:1503-1505`; `rsync.c:498-499` returns 1 for the missing dest
+/// under `-n` (`main.c:822-834`; `do_mkdir` is a dry-run no-op), and
+/// `FLAG_DIR_CREATED` then forces the NAME row (`generator.c:1854-1855`,
+/// `generator.c:1895-1897`; `rsync.c:524-525` returns 1 for the missing dest
 /// under dry-run). `--list-only` never reaches that mkdir (`main.c:756`), so
 /// the root stays silent there.
 #[test]

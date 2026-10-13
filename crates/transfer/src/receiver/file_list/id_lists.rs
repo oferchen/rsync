@@ -31,11 +31,11 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `uidlist.c:460-479` - `recv_id_list()`
+    /// - `uidlist.c:462-497` - `recv_id_list()`
     /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
     #[cfg(unix)]
     pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
-        // upstream: uidlist.c:465,473 - the name-list is read for `numeric_ids
+        // upstream: uidlist.c:467,475 - the name-list is read for `numeric_ids
         // <= 0`. Only an explicit client --numeric-ids (`> 0`) skips the read;
         // daemon-forced numeric-ids (-1) still consumes the list from the wire
         // (the sender's own numeric_ids may be 0), so guarding on the bare bool
@@ -50,7 +50,7 @@ impl ReceiverContext {
 
         let protocol_version = self.protocol.as_u8();
 
-        // upstream: uidlist.c:465 - read the uid list when preserving ownership
+        // upstream: uidlist.c:467 - read the uid list when preserving ownership
         // OR ACLs (`preserve_uid || preserve_acls`). The sender injects named
         // ACL-entry ids into this list so the receiver can remap them.
         if self.config.flags.owner || self.config.flags.acls {
@@ -59,10 +59,10 @@ impl ReceiverContext {
                 id0_names,
                 protocol_version,
                 Some(protocol::idlist::IdKind::Uid),
-                // upstream: uidlist.c:273-282 `recv_add_id()` - an unresolved
+                // upstream: uidlist.c:272-281 `recv_add_id()` - an unresolved
                 // name keeps the sender's numeric id, but only because
                 // `user_to_uid()` got an answer. A name converter that could
-                // not answer ends the session instead (clientserver.c:1333):
+                // not answer ends the session instead (clientserver.c:1331-1332):
                 // mapping a name the operator's converter never approved onto
                 // the sender's own id is the failure `name converter` exists
                 // to prevent.
@@ -70,14 +70,14 @@ impl ReceiverContext {
             )?;
         }
 
-        // upstream: uidlist.c:473 - read the gid list under the same condition.
+        // upstream: uidlist.c:475 - read the gid list under the same condition.
         if self.config.flags.group || self.config.flags.acls {
             self.gid_list.read_with_kind(
                 reader,
                 id0_names,
                 protocol_version,
                 Some(protocol::idlist::IdKind::Gid),
-                // upstream: uidlist.c:273-282 - as for uids above.
+                // upstream: uidlist.c:272-281 - as for uids above.
                 |name| no_id_unless_converter_failed(lookup_group_by_name(name)),
             )?;
         }
@@ -90,7 +90,7 @@ impl ReceiverContext {
     /// At protocol >= 30 the sender may describe ownership on the entry itself
     /// (`XMIT_USER_NAME_FOLLOWS` / `XMIT_GROUP_NAME_FOLLOWS`) instead of, or as
     /// well as, in the trailing id list. Upstream resolves those names as it
-    /// decodes the entry - `flist.c:1229` calls `recv_user_name()`, which is
+    /// decodes the entry - `flist.c:1230` calls `recv_user_name()`, which is
     /// the same `recv_add_id()` path `recv_id_list()` uses - so the mapping (and
     /// any `name converter` refusal it triggers) happens even when no trailing
     /// list follows.
@@ -102,13 +102,13 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `flist.c:1223-1245` - `recv_file_entry()` inline name arms
-    /// - `uidlist.c:418-449` - `recv_user_name()` / `recv_group_name()`
+    /// - `uidlist.c:418-457` - `recv_user_name()` / `recv_group_name()`
     #[cfg(unix)]
     pub(crate) fn register_inline_id_names(
         &mut self,
         entry: &protocol::flist::FileEntry,
     ) -> io::Result<()> {
-        // upstream: uidlist.c:465,473 - the same `numeric_ids <= 0` gate the
+        // upstream: uidlist.c:467,475 - the same `numeric_ids <= 0` gate the
         // trailing list is read under. An explicit client --numeric-ids means
         // the names are not consulted at all.
         if self.config.flags.numeric_ids.is_explicit() {
@@ -150,11 +150,11 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `uidlist.c:460-479` - `recv_id_list()`
+    /// - `uidlist.c:462-497` - `recv_id_list()`
     /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
     #[cfg(not(unix))]
     pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
-        // upstream: uidlist.c:465,473 - read for `numeric_ids <= 0`; only an
+        // upstream: uidlist.c:467,475 - read for `numeric_ids <= 0`; only an
         // explicit client --numeric-ids (`> 0`) skips the wire read.
         if self.config.flags.numeric_ids.is_explicit() {
             return Ok(());
@@ -166,7 +166,7 @@ impl ReceiverContext {
 
         let protocol_version = self.protocol.as_u8();
 
-        // upstream: uidlist.c:465,473 - `preserve_uid || preserve_acls` /
+        // upstream: uidlist.c:467,475 - `preserve_uid || preserve_acls` /
         // `preserve_gid || preserve_acls`.
         if self.config.flags.owner || self.config.flags.acls {
             self.uid_list.read_with_kind(
@@ -194,17 +194,17 @@ impl ReceiverContext {
     /// Remaps every file-list entry's uid/gid from the sender's raw ids to the
     /// local ids chosen by upstream `match_uid`/`match_gid`.
     ///
-    /// Mirrors upstream `recv_id_list()` (uidlist.c:483-494), which rewrites
+    /// Mirrors upstream `recv_id_list()` (uidlist.c:484-496), which rewrites
     /// `F_OWNER`/`F_GROUP` for every flist entry after the name lists are read.
-    /// For each entry this applies `recv_add_id`'s precedence (uidlist.c:255-282)
+    /// For each entry this applies `recv_add_id`'s precedence (uidlist.c:243-286)
     /// on the RAW sender id and its transmitted name:
     ///
     /// 1. Scan the `--usermap`/`--groupmap` rules FIRST - numeric rules keyed on
     ///    the raw sender id, name/wildcard rules on the transmitted wire name
-    ///    (uidlist.c:255-268). The map result wins.
+    ///    (uidlist.c:255-271). The map result wins.
     /// 2. Otherwise fall back to `user_to_uid(name)` - the id-list's
-    ///    name-resolved local id (uidlist.c:273-280).
-    /// 3. Otherwise keep the raw id (uidlist.c:281-282 / `recv_add_id(.., NULL)`).
+    ///    name-resolved local id (uidlist.c:272-279).
+    /// 3. Otherwise keep the raw id (uidlist.c:280-281 / `recv_add_id(.., NULL)`).
     ///
     /// The map is keyed on the raw sender id and the wire name here, before
     /// `F_OWNER` is overwritten: a numeric rule (`--usermap=1000:5000`) keys on
@@ -219,8 +219,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `uidlist.c:483-494` - `recv_id_list()` remap loop
-    /// - `uidlist.c:255-282` - `recv_add_id()` map-then-name precedence
+    /// - `uidlist.c:484-496` - `recv_id_list()` remap loop
+    /// - `uidlist.c:243-286` - `recv_add_id()` map-then-name precedence
     pub(crate) fn remap_flist_ownership_from_id_lists(&mut self) {
         self.remap_ownership(0..self.file_list.len());
     }
@@ -232,7 +232,7 @@ impl ReceiverContext {
     /// Under INC_RECURSE no trailing id list is sent, so upstream maps each
     /// entry while decoding it: `recv_file_entry()` calls `recv_user_name()` /
     /// `match_uid()` and `recv_group_name()` / `match_gid()`, which run the
-    /// `--usermap` / `--groupmap` rules (flist.c:1223-1245, uidlist.c:243-282).
+    /// `--usermap` / `--groupmap` rules (flist.c:1223-1245, uidlist.c:243-286).
     /// A mapped entry keeps only the local id, as upstream does; its wire name
     /// is dropped so the metadata apply does not map it a second time.
     pub(crate) fn remap_ownership(&mut self, range: std::ops::Range<usize>) {

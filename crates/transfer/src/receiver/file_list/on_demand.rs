@@ -1,7 +1,7 @@
 //! Lazy, on-demand INC_RECURSE flist-segment fetch for the receiver.
 //!
 //! Upstream's generator fetches sub-list segments on demand: it reads one frame
-//! at a time off the sender's stream (`io.c:read_ndx_and_attrs`), appending a
+//! at a time off the sender's stream (`rsync.c:read_ndx_and_attrs()`), appending a
 //! new segment whenever a `NDX_FLIST_OFFSET` marker arrives and stopping at
 //! `NDX_FLIST_EOF`. The receiver never drains the whole list up front; it pulls
 //! the next segment only when it needs an index the current list does not yet
@@ -25,13 +25,13 @@
 //!
 //! When INC_RECURSE is not negotiated, `flist_eof` is already set once
 //! `receive_file_list` returns, so every method here is an immediate no-op that
-//! performs no wire read - the transfer behaves exactly as before.
+//! performs no wire read.
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.c:318-429` - `read_ndx_and_attrs()` frame dispatch
-//! - `io.c:1788-1824` - `wait_for_receiver()` one-frame fetch
-//! - `generator.c:2316-2385` - `generate_files()` on-demand fetch loop
+//! - `rsync.c:323-448` - `read_ndx_and_attrs()` frame dispatch
+//! - `io.c:1958-1994` - `wait_for_receiver()` one-frame fetch
+//! - `generator.c:2772-2841` - `generate_files()` on-demand fetch loop
 
 use std::io::{self, Read};
 
@@ -51,7 +51,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:329-381` - the `read_loop` this steps through
+    /// - `rsync.c:330-391` - the `read_loop` this steps through
     pub(in crate::receiver) fn read_next_frame<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -74,7 +74,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2299-2368` - fetch the next segment when the cursor
+    /// - `generator.c:2835-2841` - fetch the next segment when the cursor
     ///   reaches the end of the current one and `!flist_eof`.
     pub(in crate::receiver) fn ensure_flat_idx<R: Read + ?Sized>(
         &mut self,
@@ -134,7 +134,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2300-2305` - `preserve_hard_links && inc_recurse`
+    /// - `generator.c:2774-2777` - `preserve_hard_links && inc_recurse`
     ///   pre-reads until `file_total < MIN_FILECNT_LOOKAHEAD / 2`.
     pub(in crate::receiver) fn prefetch_for_hardlinks<R: Read + ?Sized>(
         &mut self,
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(reader.position(), pos_eof, "reads occurred past flist_eof");
     }
 
-    /// Regression (#55): the receiver must read the sub-list markers through the
+    /// Regression: the receiver must read the sub-list markers through the
     /// SAME inbound codec it reads transfer echoes with. Upstream io.c keeps one
     /// `read_ndx` state per `f_in`; each `NDX_FLIST_OFFSET` marker is diff-encoded
     /// against a running `prev_negative`, so a codec that did not see the earlier
@@ -448,8 +448,8 @@ mod tests {
     /// `0xFF` `NDX_FLIST_OFFSET` marker as a varint entry-flags byte (which trips
     /// `overflow in read_varint`, since `int_byte_extra[0xFF >> 2] = 5 > 4`).
     ///
-    /// upstream: flist.c:2388 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
-    /// io.c:2356 `write_ndx()`, flist.c:2348 `write_end_of_flist()`.
+    /// upstream: flist.c:2664 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
+    /// io.c:2541 `write_ndx()`, flist.c:2624 `write_end_of_flist()`.
     #[rustfmt::skip]
     const UPSTREAM_INC_RECURSE_FRAME: &[u8] = &[
         0xac, 0x01, 0x01, 0x2e, 0x00, 0x00, 0x10, 0x6a, 0x66, 0x1f, 0x52, 0xf0,
@@ -612,9 +612,9 @@ mod tests {
 
     /// `--debug=flist2` emissions across the REAL upstream multi-segment
     /// stream above: the initial list prints one `recv_file_name(%s)` per
-    /// entry (flist.c:3255), `received %d names` (flist.c:3262) and
-    /// `recv_file_list done` (flist.c:3331); each sub-list adds
-    /// `[receiver] receiving flist for dir %d` (rsync.c:373) plus its own
+    /// entry (flist.c:3257), `received %d names` (flist.c:3263) and
+    /// `recv_file_list done` (flist.c:3332); each sub-list adds
+    /// `[receiver] receiving flist for dir %d` (rsync.c:374) plus its own
     /// name/count/done set. Verbosity is installed through the same
     /// `apply_debug_flag` funnel the CLI's `--debug=` parser uses. Exact
     /// sequence, so a silenced or duplicated site cannot pass.
@@ -773,10 +773,10 @@ mod tests {
     /// A sub-list follower whose gnum precedes the sub-list's NDX start, with no
     /// leader in any earlier list, is refused with `RERR_PROTOCOL`.
     ///
-    /// WHY: upstream `hlink.c:125-137 match_gnums()` aborts on it; accepting it
+    /// WHY: upstream `hlink.c:128-141 match_gnums()` aborts on it; accepting it
     /// would let a hostile sender promote an undeclared back-reference to a
     /// group leader. With an empty initial list the first sub-list starts at
-    /// NDX 2 (`flist.c:3209` - `prev->ndx_start + prev->used + 1`).
+    /// NDX 2 (`flist.c:3511` - `prev->ndx_start + prev->used + 1`).
     #[test]
     fn sublist_hardlink_gnum_before_flist_start_is_refused() {
         let wire = encode_hardlink_segments(&[(0, 2, vec![hlinked("dir0/b.txt", 0)])]);
@@ -819,7 +819,7 @@ mod tests {
     /// A `dir_ndx` equal to, past, or absurdly beyond `dir_flist.used()` is
     /// untrusted wire data that references a directory the receiver never saw.
     ///
-    /// WHY: upstream `flist.c:2862-2866` aborts with `exit_cleanup(RERR_PROTOCOL)`
+    /// WHY: upstream `flist.c:3149-3152` aborts with `exit_cleanup(RERR_PROTOCOL)`
     /// on `dir_ndx >= dir_flist->used`. oc must fail closed - reject with a
     /// `ProtocolViolation` (RERR_PROTOCOL) and append nothing - rather than trust
     /// the sender's index or (for a huge value) panic on the framing arithmetic.
@@ -854,7 +854,7 @@ mod tests {
 
     /// A second sub-list for a directory already served is a malicious duplicate.
     ///
-    /// WHY: upstream `flist.c:2867-2872` sets `FLAG_GOT_DIR_FLIST` and aborts with
+    /// WHY: upstream `flist.c:3165-3169` sets `FLAG_GOT_DIR_FLIST` and aborts with
     /// `RERR_PROTOCOL` on the second sub-list; without the guard a sender could
     /// replay sub-lists to grow `file_list` without bound. The first sub-list for
     /// dir_ndx 0 is accepted, the second is refused.
@@ -913,9 +913,9 @@ mod tests {
     /// in place, preserving the slot count so NDX stays aligned.
     ///
     /// WHY: upstream runs `flist_sort_and_clean()` on EACH INC_RECURSE sub-list
-    /// (send `flist.c:2426`, recv `flist.c:3014`), whose clean pass
-    /// (`flist.c:3274`, active for the receiver) drops duplicate names by
-    /// `clear_file()` (`flist.c:3332`) - a tombstone that keeps the entry's
+    /// (send `flist.c:2702`, recv `flist.c:3308`), whose clean pass
+    /// (`flist.c:3576`, active for the receiver) drops duplicate names by
+    /// `clear_file()` (`flist.c:3634`) - a tombstone that keeps the entry's
     /// array slot so following NDX values are unaffected. The receiver must NOT
     /// compact or renumber, or its numbering desyncs from the sender's full
     /// un-deduped array. The legitimate sender ships un-deduped sub-lists (a
@@ -961,7 +961,7 @@ mod tests {
     /// tombstoned directory.
     ///
     /// Upstream keeps the slot: the receiver appends every directory to
-    /// `dir_flist` as it READS it (`flist.c:3239-3241`, before any clean), and
+    /// `dir_flist` as it READS it (`flist.c:3239-3242`, before any clean), and
     /// `dir_flist->files[]` holds POINTERS into the same `file_struct`s as the
     /// transfer list. When `flist_sort_and_clean()` later `clear_file()`s the
     /// duplicate, the shared struct is zeroed but the `dir_flist` slot remains,
@@ -1059,13 +1059,13 @@ mod tests {
 
     /// A sub-list entry whose dirname escapes its declared parent must be rejected.
     ///
-    /// WHY: upstream `flist.c:2959-2973` compares every sub-list entry's dirname
+    /// WHY: upstream `flist.c:3219-3234` compares every sub-list entry's dirname
     /// against `f_name(dir_flist->files[dir_ndx])` and, on a mismatch, aborts with
     /// `exit_cleanup(RERR_UNSUPPORTED)` ("ABORTING due to invalid path from
     /// sender"). Without this check a hostile sender could frame a sub-list for a
     /// legitimate parent (`dir_ndx` 0 = "x") but fill it with an entry that lands
     /// outside that tree ("y/evil.txt"), escaping the intended directory. The
-    /// range/duplicate guards (#28) do not catch this because `dir_ndx` itself is
+    /// range/duplicate guards do not catch this because `dir_ndx` itself is
     /// valid; only the path-belongs check does.
     #[test]
     fn sublist_entry_escaping_parent_is_rejected() {
@@ -1122,7 +1122,7 @@ mod tests {
     /// the receiver sink and returns the real echo NDX. Both arms run the SAME
     /// bytes, so the contrast is the whole point.
     ///
-    /// upstream: rsync.c:322-431 `read_ndx_and_attrs()` - the marker loop the
+    /// upstream: rsync.c:323-448 `read_ndx_and_attrs()` - the marker loop the
     /// positional helper lacks.
     #[test]
     fn no_transfer_echo_read_absorbs_an_interleaved_segment_marker() {

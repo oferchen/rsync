@@ -1,7 +1,7 @@
 //! Which receivers route a peer's log frames to the daemon's log channel.
 //!
 //! upstream: log.c:292-301 - every receiver child passes a peer `MSG_INFO`/
-//! `MSG_ERROR` to its generator; log.c:312-330 - only a daemon's generator
+//! `MSG_ERROR` to its generator; log.c:339-357 - only a daemon's generator
 //! writes it to the log file.
 
 use std::ffi::OsString;

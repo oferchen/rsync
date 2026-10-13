@@ -106,7 +106,7 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
     // create_directory_incremental cannot observe the pre-flight mkdir
     // performed by `ensure_dest_root_exists`. When that pre-flight actually
     // created the root (`dest_root_created == true`), mirror upstream
-    // main.c:816-818 FLAG_DIR_CREATED by forcing the created-directory glyph.
+    // main.c:829-831 FLAG_DIR_CREATED by forcing the created-directory glyph.
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
@@ -123,7 +123,7 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
 
 #[test]
 fn render_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
-    // upstream main.c:816-818 only sets FLAG_DIR_CREATED when the receiver
+    // upstream main.c:829-831 only sets FLAG_DIR_CREATED when the receiver
     // had to mkdir the destination root. When the root already existed
     // (e.g. `up1/ -> up2/` where up2 is present), the flag stays clear and
     // the root reports a metadata-only row that the significance gate drops
@@ -157,9 +157,9 @@ fn render_itemize_up_to_date_file() {
 
 #[test]
 fn emit_itemize_server_mode_does_not_forward_msg_info() {
-    // upstream: log.c:822 gates the FCLIENT itemize write on `!am_server`, and
-    // generator.c:583-599 writes the iflags over the wire so the client's
-    // SENDER prints the push row (sender.c:462). A server-mode receiver (the
+    // upstream: log.c:869 gates the FCLIENT itemize write on `!am_server`, and
+    // generator.c:589-605 writes the iflags over the wire so the client's
+    // SENDER prints the push row (sender.c:775). A server-mode receiver (the
     // remote end of a push) must therefore forward NO pre-rendered MSG_INFO
     // row, or every pushed file would itemize twice against the sender's own
     // row.
@@ -263,7 +263,7 @@ fn out_format_collects_symlink() {
     // Under a custom `--out-format` the index is carried into the collect buffer
     // instead of suppressing the row, so a pulling client renders the template for
     // the symlink in flist order alongside regular files - matching upstream's
-    // single generate_files walk (generator.c:2329).
+    // single generate_files walk (generator.c:2803).
     let handshake = test_handshake();
     let mut config = test_config();
     config.flags.info_flags.itemize = false;
@@ -331,10 +331,10 @@ fn out_format_collects_special() {
 #[test]
 fn out_format_pull_hardlink_follower_carries_leader() {
     // upstream: hlink.c:232-234 - create_hardlinks itemizes each follower with the
-    // leader's transfer-relative name (`xname`), which log.c:643-646 renders as the
+    // leader's transfer-relative name (`xname`), which log.c:678 renders as the
     // `%L` ` => <leader>` suffix. On a pull under a custom `--out-format` the row is
     // collected as an event rather than written as a string; the xname must ride
-    // into `hardlink_leader` so `%L` is not empty (#256). This asserts the receiver
+    // into `hardlink_leader` so `%L` is not empty. This asserts the receiver
     // populates that field from the same xname `emit_itemize_indexed` receives.
     let handshake = test_handshake();
     let mut config = test_config();
@@ -368,7 +368,7 @@ fn out_format_pull_hardlink_follower_carries_leader() {
 #[test]
 fn out_format_pull_empty_xname_carries_no_leader() {
     // upstream: log.c:676 gates the ` => hlink` suffix on `hlink && *hlink`, so an
-    // already-correct hard-link alias itemized with the empty xname (hlink.c:218-222)
+    // already-correct hard-link alias itemized with the empty xname (hlink.c:232-236)
     // carries no leader and `%L` stays empty. An empty xname must not populate
     // `hardlink_leader`.
     let handshake = test_handshake();
@@ -419,7 +419,7 @@ fn default_i_symlink_defers_into_flist_order_on_pull() {
     // flushes them in flist-index order. A symlink created in the create_symlinks
     // pass must join that deferred buffer keyed by its flist index - not emit
     // immediately - so it interleaves with regular files exactly as upstream's
-    // single generate_files walk does (generator.c:2329). Regression for the bug
+    // single generate_files walk does (generator.c:2803). Regression for the bug
     // where symlinks/specials printed before all regular files under `-i`.
     let handshake = test_handshake();
     let mut config = test_config();
@@ -533,7 +533,7 @@ fn msg_info_sender_default_noop() {
 
 /// With `--backup`, replacing an existing destination symlink must preserve the
 /// old link (its target intact) at the backup path before the new one is
-/// created. upstream: generator.c:2018-2020 - `atomic_create` calls
+/// created. upstream: generator.c:2477-2479 - `atomic_create` calls
 /// `make_backup` before removing the obstacle; without this the receiver would
 /// unlink the old symlink and lose the user's prior target silently.
 #[test]
@@ -593,14 +593,14 @@ fn repointed_symlink_ctx(file_list: Vec<FileEntry>) -> ReceiverContext {
     ctx
 }
 
-/// #241/#248: replacing a destination symlink that points elsewhere must
+/// Replacing a destination symlink that points elsewhere must
 /// itemize as a CHANGE against the pre-replace lstat - `cLc........` - and
 /// must NOT bump the created-symlinks tally.
 ///
-/// upstream: generator.c:1604-1610 - after `atomic_create`, `itemize()` runs
+/// upstream: generator.c:2003-2009 - after `atomic_create`, `itemize()` runs
 /// with `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0` (the old
 /// destination entry IS a symlink), so ITEM_IS_NEW never fires and the row
-/// carries attribute dots, not `+++++++++`. receiver.c:749-757 counts creates
+/// carries attribute dots, not `+++++++++`. receiver.c:925-938 counts creates
 /// only from ITEM_IS_NEW.
 #[test]
 #[cfg(unix)]
@@ -614,7 +614,7 @@ fn replaced_symlink_itemizes_as_change_not_create() {
 
     let mut entry = FileEntry::new_symlink("mylink".into(), 0o777, "new-target".into());
     // Same whole second as the on-disk link: `t` must stay dark (same_time()
-    // compares whole seconds at modify_window 0, util1.c:1573).
+    // compares whole seconds at modify_window 0, util1.c:1746-1747).
     entry.set_mtime(old_meta.mtime(), 0);
     let ctx = repointed_symlink_ctx(vec![entry]);
 
@@ -642,11 +642,11 @@ fn replaced_symlink_itemizes_as_change_not_create() {
     );
 }
 
-/// Control for #241/#248: a genuinely absent destination symlink still renders
+/// Control: a genuinely absent destination symlink still renders
 /// the all-new row (`cL+++++++++`) and bumps the created tally.
 ///
-/// upstream: generator.c:1608 with `statret < 0` -> itemize() adds ITEM_IS_NEW
-/// (generator.c:578); receiver.c:749-757 counts it.
+/// upstream: generator.c:2007 with `statret < 0` -> itemize() adds ITEM_IS_NEW
+/// (generator.c:584); receiver.c:925-938 counts it.
 #[test]
 #[cfg(unix)]
 fn absent_symlink_still_itemizes_as_all_new() {
@@ -672,8 +672,8 @@ fn absent_symlink_still_itemizes_as_all_new() {
 
 /// A non-symlink obstacle replaced by a symlink renders all-new AND counts as
 /// a creation: upstream forces `statret = -1` when `stype != FT_SYMLINK`
-/// (generator.c:1606-1607), so the wire carries ITEM_IS_NEW and
-/// receiver.c:749-757 bumps created_symlinks.
+/// (generator.c:2005-2006), so the wire carries ITEM_IS_NEW and
+/// receiver.c:925-938 bumps created_symlinks.
 #[test]
 #[cfg(unix)]
 fn non_symlink_obstacle_replacement_itemizes_as_all_new() {

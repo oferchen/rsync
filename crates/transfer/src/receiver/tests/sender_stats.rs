@@ -1,9 +1,9 @@
 //! `Total bytes sent` / `Total bytes received` accounting on a client pull.
 //!
 //! Upstream's `handle_stats()` makes the sender authoritative: it caches the
-//! raw descriptor counters `stats.total_read` (io.c:838) and
-//! `stats.total_written` (io.c:877) and, when it is a server sender, writes them
-//! over the wire (main.c:349-350). The client receiver reads them back and
+//! raw descriptor counters `stats.total_read` (io.c:938) and
+//! `stats.total_written` (io.c:977) and, when it is a server sender, writes them
+//! over the wire (main.c:353-354). The client receiver reads them back and
 //! swaps their meaning (main.c:365-372): it prints the sender's `total_read` as
 //! `Total bytes sent` and the sender's `total_written` as `Total bytes
 //! received`. These tests pin that the receiver captures the transmitted trailer

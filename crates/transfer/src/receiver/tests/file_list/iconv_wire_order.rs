@@ -11,9 +11,9 @@
 //!
 //! - `options.c:2196-2201` - sets `need_unsorted_flist = 1` when `--iconv`
 //!   is in effect (and not disabled by `--iconv=-`).
-//! - `flist.c:2736-2738` - "both sides keep an unsorted file-list array
+//! - `flist.c:3046-3047` - "both sides keep an unsorted file-list array
 //!   because the names will differ on the sending and receiving sides".
-//! - `flist.c:2420-2424` - allocates a separate `flist->sorted[]` pointer
+//! - `flist.c:2660-2664` - allocates a separate `flist->sorted[]` pointer
 //!   array so `flist->files[]` (NDX-addressed) stays in scan order.
 
 use std::ffi::OsString;

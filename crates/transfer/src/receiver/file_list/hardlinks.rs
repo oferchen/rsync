@@ -40,10 +40,10 @@ use protocol::flist::FileEntry;
 ///
 /// # Upstream Reference
 ///
-/// - `hlink.c:match_gnums()` - post-sort leader/follower assignment with
+/// - `hlink.c:113 match_gnums()` - post-sort leader/follower assignment with
 ///   `prior_hlinks` hashtable for cross-segment state
-/// - `hlink.c:125-137` - the gnum-before-`ndx_start` `RERR_PROTOCOL` abort
-/// - `hlink.c:idev_find()` - two-level (dev, ino) hashtable lookup
+/// - `hlink.c:128-141` - the gnum-before-`ndx_start` `RERR_PROTOCOL` abort
+/// - `hlink.c:67 idev_find()` - two-level (dev, ino) hashtable lookup
 pub(in crate::receiver) fn match_hard_links(
     entries: &mut [FileEntry],
     prior_hlinks: &mut HashMap<u32, bool>,
@@ -68,7 +68,7 @@ pub(in crate::receiver) fn match_hard_links(
             let seen_before = prior_hlinks.contains_key(&gnum);
 
             if is_first_in_segment && !seen_before {
-                // upstream: hlink.c:125-137 match_gnums() - an unrecorded gnum
+                // upstream: hlink.c:128-141 match_gnums() - an unrecorded gnum
                 // before this sub-list's start was never declared a leader.
                 if let Some(ndx_start) = inc_recurse_ndx_start
                     && i64::from(gnum) < i64::from(ndx_start)
@@ -109,13 +109,14 @@ pub(in crate::receiver) fn match_hard_links(
 ///
 /// # Upstream Reference
 ///
-/// - `hlink.c:init_hard_links()` - builds hardlink table from (dev, ino) pairs
-/// - `hlink.c:match_hard_links()` - assigns leader/follower after sorting
+/// - `hlink.c:59 init_hard_links()` and `flist.c:1574-1586` - (dev, ino) pairs
+///   mapped to a gnum through `idev_find()`
+/// - `hlink.c:200 match_hard_links()` - assigns leader/follower after sorting
 pub(in crate::receiver) fn normalize_pre30_hardlinks(entries: &mut [FileEntry]) {
     // Group entries by (dev, ino) pairs. Key: (dev, ino), Value: list of indices.
     let mut groups: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
 
-    // upstream: flist.c:1560-1582 - every XMIT_HLINKED entry gets a gnum,
+    // upstream: flist.c:1560-1586 - every XMIT_HLINKED entry gets a gnum,
     // whatever its type; the sender flags any non-directory with st_nlink > 1
     // (flist.c:1853-1856), so FIFOs, devices and symlinks group too.
     for (i, entry) in entries.iter().enumerate() {
@@ -243,7 +244,7 @@ mod tests {
     /// leader recorded by an earlier segment, references an entry the sender
     /// never declared `XMIT_HLINK_FIRST`.
     ///
-    /// WHY: upstream `hlink.c:125-137 match_gnums()` aborts with
+    /// WHY: upstream `hlink.c:128-141 match_gnums()` aborts with
     /// `RERR_PROTOCOL`; promoting the entry to leader instead would make the
     /// receiver trust a hostile back-reference and link against nothing.
     #[test]
@@ -397,7 +398,7 @@ mod tests {
 
     /// upstream: flist.c:1853-1856 - at protocol 28-29 the sender sends a
     /// (dev, ino) pair for every non-directory with `st_nlink > 1`, and
-    /// flist.c:1560-1582 gives each one a gnum whatever its type.
+    /// flist.c:1560-1586 gives each one a gnum whatever its type.
     ///
     /// Why it matters: a hard-linked FIFO, device, or symlink group left
     /// ungrouped is materialised as independent nodes, so an `-aH` pull at

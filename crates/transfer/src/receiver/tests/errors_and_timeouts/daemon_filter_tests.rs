@@ -136,7 +136,7 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
 
 /// Upstream reports a refused directory once and then sets `skip_dir`, so every
 /// entry below it leaves `recv_generator()` before the filter check is reached
-/// (`generator.c:1258-1266`). The ancestor probe reproduces that: it is what
+/// (`generator.c:1647-1655`). The ancestor probe reproduces that: it is what
 /// keeps oc from emitting a second "daemon refused" line - one upstream never
 /// prints - for each file inside an already-refused directory.
 #[test]
@@ -200,7 +200,7 @@ fn refusal(ctx: &ReceiverContext, dest: &str) -> Option<String> {
         .map(|e| e.to_string())
 }
 
-/// THE ESCAPE (task 819): on a `path = /` module the daemon `exclude` is the
+/// THE ESCAPE: on a `path = /` module the daemon `exclude` is the
 /// only thing stopping a peer-supplied `..` traversal, because upstream's
 /// `abspath_outside_confinement` short-circuits at `rootlen <= 1`
 /// (`syscall.c:255-257`). The name check must therefore run on the collapsed
@@ -271,7 +271,7 @@ fn daemon_excluded_destination_honours_dir_only_rules() {
 /// the given `--temp-dir` / `--backup-dir` values.
 ///
 /// Both are given as the module-rooted paths oc stores, because that is what
-/// upstream matches: `options.c:2409-2416` sanitises both options IN PLACE
+/// upstream matches: `options.c:2418-2425` sanitises both options IN PLACE
 /// (rootdir `NULL` = `module_dir`) BEFORE the filter block at `:2409-2436`
 /// re-cleans them for the check. Unlike a basis directory there is no
 /// "requested" form to preserve.
