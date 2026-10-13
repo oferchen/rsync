@@ -57,11 +57,11 @@ pub(super) const DEFAULT_WINDOW: u64 = 64 * 1024 * 1024;
 /// Selectable QUIC congestion-control algorithm.
 ///
 /// The `quinn-proto` factory types are opaque trait objects that cannot be
-/// compared, so parsing resolves to this enum first; [`Self::factory`] then
+/// compared, so parsing resolves to this enum first; `Self::factory` then
 /// maps it to the controller factory. This keeps the string-to-algorithm
 /// mapping unit-testable independently of the transport. Public so the CLI
 /// (`--quic-cc`) and core can carry a resolved choice down to
-/// [`build_transport_config`].
+/// `build_transport_config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CongestionAlgorithm {
     /// BBR - model-based, the high-BDP default.
@@ -80,6 +80,11 @@ impl CongestionAlgorithm {
     /// Parses a controller name (`OC_RSYNC_QUIC_CC` or `--quic-cc`), failing
     /// loudly on anything but the three recognized names (repo policy: never
     /// silently fall back on a bad argument).
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::ErrorKind::InvalidInput` for any name other than `bbr`, `cubic` or
+    /// `newreno`.
     pub fn parse(value: &str) -> io::Result<Self> {
         match value.trim() {
             "bbr" => Ok(Self::Bbr),
@@ -155,7 +160,7 @@ fn window_from_env() -> io::Result<u64> {
 ///
 /// A `None` field defers to the environment variable and then the built-in
 /// default, so the resolution order is CLI flag > environment variable >
-/// default, all resolved in the single [`build_transport_config`] owner.
+/// default, all resolved in the single `build_transport_config` owner.
 /// [`Default`] (both fields `None`) is the env/default-only path used by the
 /// daemon's own endpoint, which no client CLI flag configures.
 #[derive(Debug, Clone, Copy, Default)]
@@ -164,7 +169,7 @@ pub struct QuicTransportTuning {
     /// `OC_RSYNC_QUIC_CC` then default to BBR.
     pub congestion: Option<CongestionAlgorithm>,
     /// `--quic-window`: the flow-control window in bytes, or `None` to consult
-    /// `OC_RSYNC_QUIC_WINDOW` then default to [`DEFAULT_WINDOW`].
+    /// `OC_RSYNC_QUIC_WINDOW` then default to `DEFAULT_WINDOW`.
     pub window: Option<u64>,
 }
 

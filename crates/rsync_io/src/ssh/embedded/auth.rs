@@ -459,7 +459,7 @@ fn plan_auth_methods(config: &SshConfig) -> Vec<AuthMethod> {
 
 /// Authenticate an SSH session using the methods the transport supports.
 ///
-/// The method order and selection follow [`plan_auth_methods`], which honours
+/// The method order and selection follow `plan_auth_methods`, which honours
 /// `PreferredAuthentications` and the `PubkeyAuthentication` /
 /// `PasswordAuthentication` enable gates. Within the public-key method the
 /// SSH agent is tried first (when `config.use_agent` is set;
@@ -469,6 +469,11 @@ fn plan_auth_methods(config: &SshConfig) -> Vec<AuthMethod> {
 ///
 /// Returns `Ok(())` on the first successful authentication. Returns
 /// `SshError::AuthenticationFailed` if every planned method is exhausted.
+///
+/// # Errors
+///
+/// Returns `SshError` when no username can be determined, an auth attempt fails at the
+/// transport level, or every method is rejected.
 pub async fn authenticate(
     session: &mut russh::client::Handle<SshClientHandler>,
     config: &SshConfig,

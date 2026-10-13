@@ -304,7 +304,7 @@ fn fixture_file(dir: &tempfile::TempDir, name: &str, text: &str, check_perm: boo
     }
 }
 
-// -- file load order (task 237e) --------------------------------------
+// file load order
 //
 // upstream: openssh/ssh.c:561-592 `process_config_files()` reads the
 // user file, then the system file, into ONE options struct, so

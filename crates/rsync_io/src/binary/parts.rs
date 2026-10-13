@@ -310,6 +310,11 @@ impl<R> BinaryHandshakeParts<R> {
     /// let restored = err.into_original().into_handshake();
     /// assert_eq!(restored.remote_protocol(), remote);
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryMapInnerError` carrying the closure's error and the original value when
+    /// `map` fails.
     pub fn try_map_stream_inner<F, T, E>(
         self,
         map: F,

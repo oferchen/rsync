@@ -19,7 +19,7 @@
 //!   platform store.
 //!
 //! [`AcceptNewVerifier`] composes the CA/system-root layer with the TOFU
-//! fallback into the zero-config **default** (task 134): a chain that validates
+//! fallback into the zero-config **default**: a chain that validates
 //! against a `--quic-ca` bundle or the platform trust store is trusted outright
 //! and takes precedence, otherwise the decision falls to trust-on-first-use.
 //! This mirrors `ssh(1)` with `StrictHostKeyChecking=accept-new` - a CA-signed
@@ -108,11 +108,19 @@ impl fmt::Debug for Fingerprint {
 pub trait KnownHostsStore: fmt::Debug + Send + Sync {
     /// Returns the fingerprint pinned for `authority`, or `None` on first
     /// contact.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from reading the pin store.
     fn pinned(&self, authority: &str) -> io::Result<Option<Fingerprint>>;
 
     /// Records `fingerprint` as the pin for `authority`. Called once, on first
     /// contact; never overwrites a differing pin (that is the caller's abort
     /// path).
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from writing the pin store.
     fn pin(&self, authority: &str, fingerprint: &Fingerprint) -> io::Result<()>;
 }
 
@@ -328,7 +336,7 @@ impl ServerCertVerifier for TofuVerifier {
 }
 
 /// A rustls [`ServerCertVerifier`] implementing SSH-style accept-new trust, the
-/// zero-config QUIC client default (task 134).
+/// zero-config QUIC client default.
 ///
 /// Composes two layers into one trust-decision owner, mirroring `ssh(1)` with
 /// `StrictHostKeyChecking=accept-new`:
@@ -485,6 +493,10 @@ fn emit_key_changed_warning(authority: &str, pinned: &Fingerprint, presented: &F
 /// `RSYNC_SSL_CA_CERT`-unset behaviour ("default CA set AND verify"). Errors if
 /// the platform store yields no usable certificate, so a broken trust store
 /// fails loudly rather than silently trusting nothing.
+///
+/// # Errors
+///
+/// Returns an error when the platform trust store cannot be loaded or is empty.
 pub fn system_roots() -> io::Result<QuicTrust> {
     let loaded = rustls_native_certs::load_native_certs();
     let mut roots = RootCertStore::empty();
@@ -515,6 +527,11 @@ pub fn system_roots() -> io::Result<QuicTrust> {
 /// PEM certificate, a certificate rustls rejects, or a file with no
 /// certificate at all each returns a distinct error naming `path`. Callers map
 /// the [`io::Error`] to the appropriate exit code at the CLI boundary.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read, contains no certificates, or a certificate is
+/// rejected.
 pub fn load_private_ca(path: &Path) -> io::Result<RootCertStore> {
     let pem = fs::read(path).map_err(|err| {
         io_err(format!(
@@ -556,6 +573,10 @@ pub fn load_private_ca(path: &Path) -> io::Result<RootCertStore> {
 /// [`system_roots`]: it yields the [`QuicTrust::Roots`] the connector consumes,
 /// so the CLI wiring feeds `--quic-ca` through the same connect path as the
 /// system-roots default.
+///
+/// # Errors
+///
+/// Returns the error from `load_private_ca`.
 pub fn private_ca_file(path: &Path) -> io::Result<QuicTrust> {
     Ok(QuicTrust::Roots(load_private_ca(path)?))
 }
@@ -572,6 +593,10 @@ pub fn private_ca_file(path: &Path) -> io::Result<QuicTrust> {
 /// certificate, a chain with no certificate, or an unreadable key each return an
 /// [`io::Error`] naming the offending path - rather than yielding an empty chain
 /// that would fail opaquely later in the handshake.
+///
+/// # Errors
+///
+/// Returns an error when either PEM file cannot be read or parsed, or the chain is empty.
 pub fn load_cert_chain_and_key(
     cert: &Path,
     key: &Path,
@@ -611,6 +636,10 @@ impl ClientAuth {
     /// Delegates to [`load_cert_chain_and_key`], so a missing file, a malformed
     /// certificate, or an unreadable key fails loudly with a path-naming error
     /// rather than silently presenting no certificate.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from `load_cert_chain_and_key`.
     pub fn from_pem_files(cert: &Path, key: &Path) -> io::Result<Self> {
         let (chain, key) = load_cert_chain_and_key(cert, key)?;
         Ok(Self { chain, key })
@@ -688,7 +717,7 @@ pub enum TrustPolicy {
         /// Explicit known-hosts path, or `None` for [`default_known_hosts_path`].
         known_hosts: Option<PathBuf>,
     },
-    /// SSH-style accept-new (task 134): verify against a CA/system-root layer,
+    /// SSH-style accept-new: verify against a CA/system-root layer,
     /// falling back to trust-on-first-use. The zero-config client default.
     AcceptNew {
         /// A `--quic-ca` bundle to anchor the daemon chain, or `None` to use the
@@ -703,6 +732,10 @@ pub enum TrustPolicy {
 
 impl TrustPolicy {
     /// Materializes the trust source into a [`QuicTrust`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a verifier cannot be built from the configured roots.
     pub fn into_trust(self) -> io::Result<QuicTrust> {
         match self {
             Self::PrivateCa(roots) => Ok(QuicTrust::Roots(roots)),
@@ -744,7 +777,7 @@ impl TrustPolicy {
     }
 }
 
-/// Builds the client trust source - the SSH-style accept-new default (task 134)
+/// Builds the client trust source - the SSH-style accept-new default
 /// - and materializes it into a [`QuicTrust`].
 ///
 /// The QUIC client trusts a daemon the way `ssh(1)` does with
@@ -758,6 +791,10 @@ impl TrustPolicy {
 /// works zero-config while a CA-anchored one still verifies against its CA. This
 /// is the composition seam for the CLI wiring: it supplies `ca`/`authority` from
 /// the parsed target and receives one ready trust source.
+///
+/// # Errors
+///
+/// Returns an error when the trust source cannot be materialized.
 pub fn resolve(
     ca: Option<RootCertStore>,
     authority: impl Into<String>,
@@ -981,7 +1018,7 @@ mod tests {
         )
     }
 
-    /// The accept-new DEFAULT (task 134), mirroring `ssh` `accept-new`: on first
+    /// The accept-new DEFAULT, mirroring `ssh` `accept-new`: on first
     /// contact an unknown self-signed cert is LEARNED (pinned + persisted) and
     /// accepted, the SAME cert VERIFIES against the pin on a later contact, and a
     /// CHANGED cert for the known authority is REFUSED. `roots = None` isolates
@@ -1028,7 +1065,7 @@ mod tests {
         assert_eq!(recorded, after, "a refused key must never repin the host");
     }
 
-    /// CA precedence over TOFU (task 134), mirroring `ssh` trusting a CA-signed
+    /// CA precedence over TOFU, mirroring `ssh` trusting a CA-signed
     /// host key without a `known_hosts` entry: a leaf that chains to the
     /// configured CA is accepted OUTRIGHT and the known-hosts store is NEVER
     /// consulted. Proven discriminatingly by PRE-PINNING a DIFFERENT fingerprint

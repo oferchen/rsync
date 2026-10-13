@@ -29,6 +29,10 @@ pub fn sniff_negotiation_stream<R: Read>(reader: R) -> io::Result<NegotiatedStre
 /// higher layer already maintains a pool of reusable sniffers. The sniffer is
 /// reset to guarantee stale state from previous sessions is discarded before
 /// the new transport is observed.
+///
+/// # Errors
+///
+/// Returns the I/O error from reading the prologue.
 pub fn sniff_negotiation_stream_with_sniffer<R: Read>(
     mut reader: R,
     sniffer: &mut NegotiationPrologueSniffer,
