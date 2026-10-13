@@ -18,7 +18,7 @@ pub(super) fn parse_filter_shorthand(
     let trimmed = line.text();
     let mut chars = trimmed.chars();
     let first = chars.next()?;
-    // upstream: exclude.c:1137-1178 - the single-char rule prefixes H/S/P/R are
+    // upstream: exclude.c:1288-1330 - the single-char rule prefixes H/S/P/R are
     // matched case-sensitively (they reach the `switch (*s)` default arm). A
     // lowercase `h`/`s`/`p`/`r` is instead the first byte of a long keyword and,
     // when it is not one, raises "Unknown filter rule". Match the prefix exactly
@@ -32,7 +32,7 @@ pub(super) fn parse_filter_shorthand(
         return Some(Err(unexpected_end_of_filter_rule(line)));
     }
 
-    // upstream: exclude.c:1330-1445 - the modifier loop runs for EVERY rule
+    // upstream: exclude.c:1365-1443 - the modifier loop runs for EVERY rule
     // prefix, `H`/`S`/`P`/`R` included, so these accept a modifier run before
     // the separator exactly as `+`/`-` do. Character validity is left to
     // `parse_rule_modifiers`, matching `split_short_rule_modifiers`' contract,
@@ -85,7 +85,7 @@ mod tests {
     fn no_separator_reports_an_invalid_modifier() {
         // MEASURED against rsync 3.5.0: `Ppattern` -> "invalid modifier 'a' at
         // position 2". With no separator the whole remainder is scanned as
-        // modifiers (helpers.rs scan_modifiers, upstream exclude.c:1214-1287),
+        // modifiers (helpers.rs scan_modifiers, upstream exclude.c:1365-1443),
         // so the first non-modifier byte is reported - it is NOT an unknown
         // rule, and it must not fall through to the keyword parser.
         let result = parse_filter_shorthand(arg("epattern"), 'e', mock_builder);
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn case_sensitive_no_match_on_wrong_case() {
-        // upstream: exclude.c:1137-1178 - single-char rule prefixes are
+        // upstream: exclude.c:1288-1330 - single-char rule prefixes are
         // case-sensitive, so an uppercase char never matches a lowercase prefix
         // (and vice versa). This parser must return None so the caller can reject
         // the line as an unknown rule.

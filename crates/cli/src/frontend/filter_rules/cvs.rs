@@ -27,7 +27,7 @@ pub(crate) fn append_cvs_exclude_rules(
         .allow_list_clearing(true);
     cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options));
 
-    // upstream: exclude.c:1652-1668 send_filter_list() - the `-C` built-in
+    // upstream: exclude.c:1944-1969 send_filter_list() - the `-C` built-in
     // excludes and the `:C` per-directory merge stay local on a receiving client
     // and (for `:C`) only cross the wire on protocol >= 29. Tag every rule this
     // path produces so the wire projection can honor that gating; the `-C` flag
@@ -44,25 +44,25 @@ pub(crate) fn append_cvs_exclude_rules(
 /// per-directory `.cvsignore` dir-merge - that layer is contributed
 /// separately by a `:C` filter rule.
 ///
-/// upstream: exclude.c:1340 get_cvs_excludes() - the `-C` convenience filter
+/// upstream: exclude.c:1489 get_cvs_excludes() - the `-C` convenience filter
 /// rule (FILTRULE_CVS_IGNORE without a merge flag) populates the global cvs
 /// list from these three sources only; the per-directory merge is the
 /// separate `:C` rule.
 pub(crate) fn cvs_default_exclude_rules() -> Result<Vec<FilterRuleSpec>, Message> {
-    // upstream: exclude.c:1350 get_cvs_excludes() - the built-in default_cvsignore()
+    // upstream: exclude.c:1498-1500 get_cvs_excludes() - the built-in default_cvsignore()
     // list is parsed with the perishable template only when `protocol_version >= 30`.
     // The `-C` rules are assembled at argument-parse time (before negotiation), so
-    // key the gate on the newest protocol oc negotiates with a modern peer
-    // (SUPPORTED_PROTOCOL_BOUNDS.1 == 32), which is always >= 30.
+    // key the gate on the newest protocol oc supports (SUPPORTED_PROTOCOL_BOUNDS.1,
+    // currently 33), which is always >= 30.
     let perishable = SUPPORTED_PROTOCOL_BOUNDS.1 >= 30;
     let mut cvs_rules: Vec<FilterRuleSpec> = CVS_EXCLUDE_PATTERNS
         .iter()
         .map(|pattern| FilterRuleSpec::exclude((*pattern).to_owned()).with_perishable(perishable))
         .collect();
 
-    // upstream: exclude.c:1340-1358 get_cvs_excludes() parses default_cvsignore(),
+    // upstream: exclude.c:1489-1507 get_cvs_excludes() parses default_cvsignore(),
     // $HOME/.cvsignore, and $CVSIGNORE into ONE shared cvs_filter_list. A bare
-    // '!' token keeps FILTRULE_CLEAR_LIST and pop_filter_list (exclude.c:1399)
+    // '!' token keeps FILTRULE_CLEAR_LIST and pop_filter_list (exclude.c:1548)
     // wipes the WHOLE list, including the built-in defaults collected before it.
     // Parse both sources into the shared accumulator (not per-source buffers) so
     // clearing semantics match upstream.
@@ -99,7 +99,7 @@ where
     for token in tokens {
         let trimmed = token.trim();
         // upstream: exclude.c:parse_filter_file word_split - the CVS ignore
-        // sources are parsed in word_split mode, so line 1514's comment check
+        // sources are parsed in word_split mode, so line 1806's comment check
         // (`word_split || (*line != ';' && *line != '#')`) short-circuits: only
         // empty tokens are skipped. A '#'-prefixed token is a LITERAL exclude of
         // a file named '#foo', never a comment.
@@ -107,10 +107,10 @@ where
             continue;
         }
 
-        // upstream: exclude.c:1122-1124 parse_rule_tok tentatively sets
+        // upstream: exclude.c:1273-1275 parse_rule_tok tentatively sets
         // FILTRULE_CLEAR_LIST for a leading '!' in a NO_PREFIXES CVS list, but
-        // exclude.c:1322-1323 clears it again once len > 1. So a bare "!"
-        // (len == 1) keeps CLEAR_LIST and pop_filter_list (exclude.c:1399) wipes
+        // exclude.c:1472-1473 clears it again once len > 1. So a bare "!"
+        // (len == 1) keeps CLEAR_LIST and pop_filter_list (exclude.c:1548) wipes
         // the whole shared cvs list, including the built-in defaults, whereas
         // "!foo" (len > 1) is a LITERAL exclude of a file named "!foo" - the '!'
         // stays in the pattern because NO_PREFIXES never advances past it.
@@ -120,8 +120,8 @@ where
         }
 
         // The `$HOME/.cvsignore` and `$CVSIGNORE` sources are parsed with a plain
-        // rule_template (exclude.c:1355-1357), NOT the perishable template; only
-        // the built-in default_cvsignore() list (exclude.c:1350) is perishable,
+        // rule_template (exclude.c:1502-1506), NOT the perishable template; only
+        // the built-in default_cvsignore() list (exclude.c:1498-1500) is perishable,
         // so these literal excludes must not be perishable.
         destination.push(FilterRuleSpec::exclude(trimmed.to_owned()));
     }
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn append_cvs_exclude_rules_marks_every_rule_cvs_origin() {
-        // upstream: exclude.c:1652-1668 send_filter_list() - the `-C` built-in
+        // upstream: exclude.c:1944-1969 send_filter_list() - the `-C` built-in
         // excludes and the `:C` per-directory merge follow the CVS send gate
         // (local on a receiving client, `:C` only on protocol >= 29). Every rule
         // this path produces must carry the origin marker so build_wire_format_rules
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn append_cvsignore_tokens_hash_is_literal_not_comment() {
         // upstream: exclude.c:parse_filter_file word_split - CVS ignore sources
-        // parse in word_split mode, so line 1514's `word_split ||` short-circuits
+        // parse in word_split mode, so line 1806's `word_split ||` short-circuits
         // the comment check and '#' is NEVER a comment leader there. A "#foo"
         // token is a literal exclude of a file named "#foo"; only empty tokens
         // are dropped. Treating '#' as a comment (as line-parsed filter files do)
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn append_cvsignore_tokens_bare_bang_wipes_builtin_defaults() {
-        // upstream: exclude.c:1399 pop_filter_list - a bare "!" (len == 1 keeps
+        // upstream: exclude.c:1548 pop_filter_list - a bare "!" (len == 1 keeps
         // FILTRULE_CLEAR_LIST) clears the ENTIRE shared cvs_filter_list. The
         // built-in default_cvsignore() patterns collected before it MUST also be
         // wiped, so a '!' in ~/.cvsignore or $CVSIGNORE removes the defaults too.
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn append_cvsignore_tokens_literal_bang_is_exclude_not_removal() {
-        // upstream: exclude.c:1322-1323 - "!foo" has len > 1, so the tentative
+        // upstream: exclude.c:1472-1473 - "!foo" has len > 1, so the tentative
         // FILTRULE_CLEAR_LIST is cleared and the token becomes a LITERAL exclude
         // of a file named "!foo". It must NOT remove a prior exclude of "*.o".
         let mut rules = Vec::new();
