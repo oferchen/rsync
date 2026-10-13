@@ -1,7 +1,8 @@
 /// Default transfer log format matching upstream rsync's `rsyncd.conf(5)`.
 ///
-/// Upstream: `log.c` -- `lp_log_format()` returns `"%o %h [%a] %m (%u) %f %l"` when
-/// `transfer logging` is enabled but no explicit `log format` is configured.
+/// upstream: daemon-parm.txt:36 - the `log format` default that
+/// `lp_log_format()` returns, used when `transfer logging` is enabled and no
+/// explicit `log format` is configured (clientserver.c:823-824).
 const DEFAULT_LOG_FORMAT: &str = "%o %h [%a] %m (%u) %f %l";
 
 /// Direction of a daemon transfer operation.
@@ -22,8 +23,8 @@ enum TransferOperation {
 impl TransferOperation {
     /// Returns the upstream-compatible string representation.
     ///
-    /// Upstream: `log.c` -- `am_sender ? "send" : "recv"`, and `"del."` for
-    /// the rows `log_delete()` writes (log.c:928).
+    /// upstream: log.c:867 `log_item()` - `am_sender ? "send" : "recv"`, and
+    /// `"del."` for the rows `log_delete()` writes (log.c:928).
     const fn as_str(self) -> &'static str {
         match self {
             Self::Send => "send",
@@ -45,7 +46,7 @@ impl fmt::Display for TransferOperation {
 /// populated from the active module definition and connection state at the
 /// time of the transfer.
 ///
-/// Upstream: `log.c:log_formatted()` -- walks the format string and expands
+/// upstream: log.c:535 `log_formatted()` - walks the format string and expands
 /// escapes using global state and function-local parameters.
 struct LogFormatContext<'a> {
     /// Transfer direction (`%o`).
@@ -252,8 +253,10 @@ fn render_num(value: u64, humanize: LogFmtHumanize) -> String {
 
 /// Groups a value's digits in threes with a comma separator.
 ///
-/// upstream: `lib/compat.c:230-238` inserts `number_separator` every third
-/// digit; the CLI renderer hard-codes `,`, so the daemon matches it.
+/// upstream: `lib/compat.c:230-240` inserts `number_separator` every third
+/// digit. Deviation from upstream: upstream takes the separator from the
+/// locale (`get_number_separator()`); oc hard-codes `,`, matching its CLI
+/// renderer.
 fn group_thousands(value: u64) -> String {
     use std::fmt::Write as _;
 
@@ -281,7 +284,7 @@ fn group_thousands(value: u64) -> String {
 
 /// Renders a value with K/M/G/T/P unit suffixes, or `None` below `base`.
 ///
-/// upstream: `lib/compat.c:181-204` divides by the multiplier until the
+/// upstream: `lib/compat.c:182-204` divides by the multiplier until the
 /// magnitude fits, formatting with two fractional digits.
 fn humanize_units(value: u64, base: u64) -> Option<String> {
     if value < base {
@@ -309,7 +312,7 @@ fn humanize_units(value: u64, base: u64) -> Option<String> {
 /// through verbatim, together with any modifiers scanned before them. A literal
 /// `%%` produces a single `%` in the output.
 ///
-/// Upstream: `log.c:log_formatted()` -- iterates over the format string,
+/// upstream: log.c:535-824 `log_formatted()` - iterates over the format string,
 /// scanning the `'`/`-`/digit modifier run (log.c:558-576) before expanding
 /// each percent-escape from global and per-file state.
 fn expand_log_format(format: &str, ctx: &LogFormatContext<'_>) -> String {
@@ -358,7 +361,7 @@ fn expand_log_format(format: &str, ctx: &LogFormatContext<'_>) -> String {
                 &render_num(ctx.bytes_checksumed, spec.humanize),
                 &spec,
             ),
-            // upstream renders `%p` with a plain `%d` (log.c:617), so the pid is
+            // upstream renders `%p` with a plain `%d` (log.c:616-618), so the pid is
             // width/alignment-formatted but never unit-humanized.
             'p' => pad_field(&mut result, &ctx.pid.to_string(), &spec),
             'n' => pad_field(&mut result, ctx.name, &spec),
@@ -383,7 +386,7 @@ fn expand_log_format(format: &str, ctx: &LogFormatContext<'_>) -> String {
 
 /// Appends the `%L` expansion.
 ///
-/// upstream: log.c `case 'L'` - the ` => ` or ` -> ` connector is emitted
+/// upstream: log.c:675-691 `case 'L'` - the ` => ` or ` -> ` connector is emitted
 /// verbatim and only the target takes the width. Without a link the escape
 /// is empty unless a modifier is present, in which case four spaces precede
 /// the formatted empty string so the column lines up with linked rows.
@@ -466,10 +469,9 @@ fn format_log_mtime(mtime: i64) -> String {
     logging_sink::logfile::format_timestring(mtime).replace(' ', "-")
 }
 
-/// Expands the transfer log format and writes the result to the log sink.
+/// Expands `format` against `ctx` and writes the result to the log sink.
 ///
-/// Uses the module's configured `log_format`, falling back to
-/// `DEFAULT_LOG_FORMAT` when none is specified.
+/// Callers obtain `format` from `transfer_log_format`.
 fn log_transfer(format: &str, ctx: &LogFormatContext<'_>, log_sink: &SharedLogSink) {
     let expanded = expand_log_format(format, ctx);
     let message = rsync_info!(expanded).with_role(Role::Daemon);
@@ -494,7 +496,7 @@ fn transfer_log_format(module: &ModuleDefinition) -> Option<&str> {
 
 /// Returns whether the format string contains a `%<escape>` escape.
 ///
-/// Mirrors upstream `log_format_has()` (`log.c:829-846`), which sets
+/// Mirrors upstream `log_format_has()` (`log.c:828-860`), which sets
 /// `logfile_format_has_i` and `logfile_format_has_o_or_i`
 /// (`clientserver.c:825-828`): the daemon logs non-transfer per-file rows only
 /// when its `log format` carries `%i`, and renders deletions with that format
@@ -830,7 +832,7 @@ mod log_format_tests {
         assert_eq!(transfer_log_format(&module), Some(""));
     }
 
-    // --- Modifier scan (upstream log.c:558-576) --------------------------
+    // Modifier scan (upstream log.c:558-576).
     //
     // These pin WHY the daemon must scan the `'`/`-`/width run: upstream's
     // `log_formatted()` renders `%-15m` as a left-justified field, so a daemon
@@ -875,7 +877,7 @@ mod log_format_tests {
         assert_eq!(expand_log_format("%m", &ctx), "backup");
     }
 
-    // --- Humanize scan (upstream log.c:562-573 -> do_big_num) -------------
+    // Humanize scan (upstream log.c:562-573 -> do_big_num).
 
     #[test]
     fn single_apostrophe_groups_thousands() {
@@ -921,7 +923,7 @@ mod log_format_tests {
     fn pid_is_width_formatted_but_never_unit_humanized() {
         let mut ctx = sample_context();
         ctx.pid = 12345;
-        // upstream renders %p with `%d` (log.c:617): width applies, units do not.
+        // upstream renders %p with `%d` (log.c:618): width applies, units do not.
         assert_eq!(expand_log_format("%8p", &ctx), "   12345");
         assert_eq!(expand_log_format("%''p", &ctx), "12345");
     }

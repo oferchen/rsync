@@ -5,7 +5,9 @@
 // `@RSYNCD:` greeting. This allows load balancers and proxies (e.g.,
 // HAProxy) to convey the original client address.
 //
-// upstream: clientserver.c:1298 - `if (lp_proxy_protocol() && !read_proxy_protocol_header(f_in))`
+// upstream: clientserver.c:1442-1445 `start_daemon()` - `if (lp_proxy_protocol())`
+// then `proxy_peer_allowed(f_in)` and `read_proxy_protocol_header(f_in)`
+// (clientname.c:160).
 //
 // References:
 // - PROXY protocol v1: <https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt>
@@ -124,6 +126,8 @@ fn parse_v2_address(fam: u8, payload: &[u8]) -> io::Result<Option<SocketAddr>> {
         }
         _ => {
             // Unknown family (e.g., AF_UNIX) - treat as transparent pass-through.
+            // upstream: clientname.c:224-229 accepts the connection and keeps
+            // the socket's own peer address.
             Ok(None)
         }
     }
@@ -209,7 +213,7 @@ fn parse_v1_header<R: Read>(prefix: &[u8; 12], reader: &mut R) -> io::Result<Opt
 /// Returns the original client address when a proxied header is present,
 /// or `None` for health-check / LOCAL connections.
 ///
-/// upstream: clientserver.c:1298 - `read_proxy_protocol_header()` is called
+/// upstream: clientserver.c:1442-1445 - `read_proxy_protocol_header()` is called
 /// before any rsync protocol data when `proxy protocol = true` in the config.
 ///
 /// ⚠ The stream is passed through **unbuffered, deliberately**. The PROXY

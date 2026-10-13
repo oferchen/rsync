@@ -1,35 +1,28 @@
-/// Linux process-capability defense-in-depth helpers (LSM-CAP series).
-///
-/// This section composes with the LSM startup hardening section (`hardening.rs`,
-/// PR #5581 - PR_SET_NO_NEW_PRIVS + active LSM detection) and the seccomp BPF
-/// filter section (PR #5589) to form a three-layer defense:
-///
-/// 1. `PR_SET_NO_NEW_PRIVS` makes any subsequent `execve()` ineligible for
-///    privilege escalation (PR #5581).
-/// 2. **Capability dropping (this section)** strips the daemon process of every
-///    Linux capability it does not require. Even if a worker is compromised,
-///    the remaining attack surface is bounded by the leftover capabilities.
-/// 3. The seccomp BPF filter narrows the syscall surface itself (PR #5589).
-///
-/// Capabilities targeted (per `docs/design/lsm-cap-required-capabilities.md`):
-///
-/// - `CAP_NET_BIND_SERVICE`: required only to bind ports below 1024. Dropped
-///   once the listener is bound so a compromised worker cannot rebind a
-///   privileged port (`drop_cap_net_bind_service`).
-/// - `CAP_CHOWN`: required by `--chown`, `--owner`, `--group`, or any module
-///   that runs as `uid = root` and would invoke `fchown(2)`. The pre-flight
-///   check (`preflight_chown_requirement`) verifies the capability is present
-///   when configuration demands it and fails loud at startup instead of
-///   producing per-transfer errors later.
-/// - Non-required capabilities at the worker fork point are dropped wholesale
-///   by `drop_worker_capabilities`, leaving only the per-module requirement set
-///   (typically empty, or `{CAP_CHOWN}` when the module needs ownership writes).
-///
-/// On non-Linux targets every helper short-circuits to a no-op so the wire-in
-/// at the daemon entry points does not need `#[cfg]` branching.
-///
-/// Reference: kernel `capabilities(7)`; `caps` crate exposes the underlying
-/// `prctl(PR_CAPBSET_DROP)` / `capset(2)` calls via a safe wrapper.
+// Linux process-capability defense-in-depth helpers.
+//
+// Deviation from upstream: rsync never touches Linux capabilities. This
+// section is one of three oc-only hardening layers:
+//
+// 1. `PR_SET_NO_NEW_PRIVS` (`hardening.rs`) makes any later `execve()`
+//    ineligible for privilege escalation.
+// 2. Capability dropping (this section) strips the daemon of every Linux
+//    capability it does not need.
+// 3. The seccomp BPF filter (`seccomp.rs`) narrows the syscall surface.
+//
+// Capabilities handled (see `docs/design/lsm-cap-required-capabilities.md`):
+//
+// - `CAP_NET_BIND_SERVICE`: needed only to bind ports below 1024. Dropped once
+//   the listener is bound (`drop_cap_net_bind_service`).
+// - `CAP_CHOWN`: needed by a module with `uid = 0`. The startup check
+//   (`preflight_required_capabilities`) fails loudly when it is missing
+//   instead of producing per-file `chown` errors later.
+// - Everything else is dropped before a non-root worker serves a module
+//   (`drop_worker_capabilities`). A root worker keeps its full set.
+//
+// On non-Linux targets every helper is a no-op, so call sites need no `#[cfg]`.
+// The `caps` crate wraps `prctl(PR_CAPBSET_DROP)` and `capset(2)`.
+
+/// Whether Linux capability support is compiled in.
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]
 const CAP_FEATURE_AVAILABLE: bool = true;
@@ -42,17 +35,10 @@ const CAP_FEATURE_AVAILABLE: bool = false;
 /// Pre-flight check: verify the daemon holds the capabilities its configuration
 /// requires.
 ///
-/// Called once at daemon startup before the listener binds. Inspects every
-/// loaded module and the daemon-level `uid = root` directive to determine the
-/// required-capability set, then verifies each capability is present in the
-/// effective set. Missing capabilities exit with an explicit error rather than
-/// failing per-transfer later.
-///
-/// Currently focuses on `CAP_CHOWN`, the highest-impact case: a module
-/// configured with `uid = root` will be unable to honour `--chown` /
-/// `--owner` / `--group` if the binary was launched without that capability.
-/// The original failure surfaces as a confusing per-file `chown failed`
-/// rather than a clean startup error.
+/// Called once at daemon startup, before the listener binds. Only `CAP_CHOWN`
+/// is checked: when any loaded module has `uid = 0` the capability must be in
+/// the effective set. Without it `--owner` / `--group` / `--chown` would fail
+/// later as confusing per-file `chown` errors instead of a clean startup error.
 ///
 /// Returns `Ok(())` when the daemon either does not need elevated
 /// capabilities or holds every capability it needs. Returns `Err(reason)` with
@@ -99,21 +85,14 @@ fn preflight_required_capabilities(_modules: &[ModuleRuntime]) -> Result<(), Str
     Ok(())
 }
 
-/// Returns true when at least one configured module would invoke `fchown(2)`
-/// on transferred files and therefore requires `CAP_CHOWN` when the daemon
-/// process is not already running as `uid = 0`.
+/// Returns true when at least one configured module requires `CAP_CHOWN`.
 #[cfg(target_os = "linux")]
 fn requires_chown_capability(modules: &[ModuleRuntime]) -> bool {
     modules.iter().any(module_requires_chown)
 }
 
-/// Returns true when the per-module configuration implies the worker will
-/// attempt ownership changes that need `CAP_CHOWN` on a non-root daemon.
-///
-/// The heuristic mirrors upstream rsync's preserve-owner / preserve-group
-/// semantics: a module that explicitly switches to `uid = 0` after chroot, or
-/// that operators have wired with privileged hook scripts, can issue
-/// ownership-changing syscalls during the transfer.
+/// Returns true when the module is configured with `uid = 0`, so its worker
+/// may change file ownership and therefore needs `CAP_CHOWN`.
 #[cfg(target_os = "linux")]
 fn module_requires_chown(module: &ModuleRuntime) -> bool {
     matches!(module.uid, Some(0))
@@ -182,17 +161,17 @@ fn drop_cap_net_bind_service(_log_sink: Option<&SharedLogSink>) {}
 /// Drops every capability not in the per-module required set for the worker
 /// path.
 ///
-/// Called at the per-worker fork point - the same lifecycle phase as Landlock
-/// engagement, immediately before `engage_landlock_sandbox` in
-/// `module_access/transfer.rs`. Any capability not in `required` is dropped
-/// from the effective, permitted, and bounding sets so a compromised worker
-/// cannot reacquire it via `capset(2)` or via a setcap `execve()`.
+/// Called once per session after the privilege drop and before
+/// `engage_landlock_sandbox` (`module_access/transfer/orchestration.rs`).
+/// Every permitted capability not in the required set is dropped from the
+/// effective, permitted and bounding sets, so the worker cannot reacquire it
+/// via `capset(2)` or a setcap `execve()`.
 ///
-/// Currently the required set is always either empty or `{CAP_CHOWN}`,
-/// depending on whether the module needs to honour ownership writes. The
-/// inventory in `docs/design/lsm-cap-required-capabilities.md` tracks every
-/// capability the daemon code path can ever request and the gating condition
-/// for each one; this helper enforces that inventory at runtime.
+/// A root worker (module `uid = 0`, or no module `uid` with a root daemon)
+/// skips the drop entirely, so in practice the required set is empty
+/// whenever a drop happens. The inventory in
+/// `docs/design/lsm-cap-required-capabilities.md` lists every capability the
+/// daemon can request and its gating condition.
 ///
 /// Failures are logged at warning level but do not abort the connection.
 ///
@@ -209,7 +188,7 @@ fn drop_worker_capabilities(module: &ModuleRuntime, log_sink: Option<&SharedLogS
     // them here would strip CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH /
     // CAP_FOWNER / CAP_FSETID and leave a root worker EACCES-ing module
     // trees that live under unprivileged user homedirs (the runtests.py
-    // scratch under `/home/<user>/...` with mode 750 was the smoke gun).
+    // scratch under `/home/<user>/...` with mode 750 was the smoking gun).
     // Upstream rsync does not drop capabilities from a root daemon, so
     // skipping the drop here preserves behavioural parity. LSM-CAP is a
     // defense-in-depth layer for the unprivileged-uid case; for uid=0
@@ -234,9 +213,9 @@ fn drop_worker_capabilities(module: &ModuleRuntime, log_sink: Option<&SharedLogS
 
     let required = required_capabilities_for_module(module);
 
-    // Iterate all known capabilities and drop the ones not in the required
-    // set. Using `caps::all()` rather than enumerating manually means new
-    // kernel capabilities are dropped automatically without code changes.
+    // Drop every capability in the permitted set that is not required. Reading
+    // the live set rather than enumerating names means capabilities added by
+    // newer kernels are dropped without code changes.
     let all_caps = match caps::read(None, CapSet::Permitted) {
         Ok(caps) => caps,
         Err(err) => {
@@ -286,17 +265,14 @@ fn drop_worker_capabilities(_module: &ModuleRuntime, _log_sink: Option<&SharedLo
 /// Returns the set of capabilities the worker process needs to retain after
 /// the per-worker drop.
 ///
-/// The inventory is intentionally minimal: workers run inside the post-chroot
-/// post-setuid environment where most operations need no capability at all.
-/// When the module is configured with `uid = 0` the worker continues as root,
-/// so the file-system bypass set the kernel grants root implicitly must be
-/// retained here too: dropping CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH would
-/// leave a root worker unable to read or write into directories owned by
-/// unprivileged users (the common runtests.py scratch under
-/// `/home/<user>/...` was the smoke gun: every push into a 750-mode user
-/// homedir returned EACCES even though the worker UID was 0). Upstream rsync
-/// does not drop these capabilities for a root daemon, so retaining them
-/// keeps LSM-CAP a defense-in-depth layer rather than a behavioural break.
+/// Workers run after chroot and setuid, where most operations need no
+/// capability, so the set is empty for a non-root module. A `uid = 0` module
+/// keeps the file-system bypass set the kernel grants root implicitly:
+/// dropping `CAP_DAC_OVERRIDE` / `CAP_DAC_READ_SEARCH` would leave a root
+/// worker unable to write into directories owned by unprivileged users (every
+/// push into a 750-mode home directory returned EACCES even though the worker
+/// uid was 0). Upstream rsync drops no capabilities, so retaining them keeps
+/// this a defense-in-depth layer rather than a behavioural break.
 ///
 /// `CAP_FOWNER` covers `chmod` / `utime` against files the worker did not
 /// create (mirroring upstream's metadata-restore path), and `CAP_FSETID` is

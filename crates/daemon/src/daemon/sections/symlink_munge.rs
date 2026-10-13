@@ -2,7 +2,8 @@
 // The canonical implementation lives in `metadata::symlink_munge` so that
 // both the daemon and the client-side transfer path share the same logic.
 //
-// upstream: clientserver.c - `munge_symlinks` defaults to `!use_chroot`.
+// upstream: clientserver.c:1070-1071 - `munge_symlinks` defaults to
+// `!use_chroot || module_dirlen`.
 // When enabled, symlink targets are prefixed with `/rsyncd-munged/` on send
 // and the prefix is stripped on receive, preventing symlinks from escaping
 // the module root on non-chrooted modules.

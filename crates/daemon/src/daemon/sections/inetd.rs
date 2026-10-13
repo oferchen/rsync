@@ -1,6 +1,6 @@
 // Inetd stdin detection for standalone daemon mode.
 //
-// upstream: clientserver.c:1746-1757 - `daemon_main()` checks
+// upstream: clientserver.c:1746-1760 - `daemon_main()` checks
 // `is_inetd_socket(STDIN_FILENO)` before entering the TCP accept loop. When
 // stdin is a connected IP stream (inetd invocation, or `RSYNC_CONNECT_PROG`,
 // whose `sock_exec()` hands the program a loopback TCP pair), the daemon
@@ -19,7 +19,7 @@
 /// On non-Unix platforms this always returns `false` since inetd-style
 /// invocation does not apply.
 ///
-/// upstream: clientserver.c:1725-1744 - `is_inetd_socket()`.
+/// upstream: clientserver.c:1726-1743 - `is_inetd_socket()`.
 #[cfg(unix)]
 fn is_stdin_socket() -> bool {
     is_inetd_socket(&io::stdin())
@@ -51,8 +51,8 @@ fn is_stdin_socket() -> bool {
 /// descriptors, then exits. No TCP binding, signal registration, or
 /// daemonization occurs.
 ///
-/// upstream: clientserver.c:1548-1559 - when `is_a_socket(STDIN_FILENO)` is
-/// true, `daemon_main()` redirects stdout/stderr to `/dev/null` and calls
+/// upstream: clientserver.c:1748-1759 - when `is_inetd_socket(STDIN_FILENO)`
+/// is true, `daemon_main()` redirects stdout/stderr to `/dev/null` and calls
 /// `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
 fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     let brand = options.brand;
@@ -95,8 +95,8 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     // only mechanism that can enforce `max connections` across them.
     let (modules, _connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
 
-    // LSM-CAP.5: verify required Linux capabilities are present before serving
-    // the inetd session. Mirrors the standalone path so per-module
+    // Verify required Linux capabilities are present before serving the inetd
+    // session. Mirrors the standalone path so per-module
     // `uid = root` modules fail loud at startup instead of producing a
     // confusing per-file `chown failed` mid-transfer. No-op on non-Linux.
     if let Err(reason) = preflight_required_capabilities(&modules) {
@@ -110,10 +110,9 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         ));
     }
 
-    // Build a DaemonStream::Stdio from process stdin/stdout.
     // upstream: clientserver.c:1759 - start_daemon(STDIN_FILENO, STDIN_FILENO)
-    // passes the same fd for both read and write. We use separate stdin/stdout
-    // handles since Rust's std::io separates them.
+    // passes the same fd for both read and write; oc uses separate stdin and
+    // stdout handles because `std::io` separates them.
     let stdin = io::stdin();
     let stdout = io::stdout();
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
@@ -122,15 +121,11 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     // upstream: clientserver.c:1759 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
     // environment arm entirely and `client_sockaddr()` reads the real peer via
-    // `getpeername` (clientname.c:37-45).
-    //
-    // This site previously fabricated `127.0.0.1` on the stated premise that
-    // "there is no TCP socket to query" - which is simply untrue here, and is
-    // why the hole survived review. Every `hosts allow` / `hosts deny` rule was
-    // evaluated against a synthetic localhost instead of the real client.
+    // `getpeername` (clientname.c:319-327). A fabricated address here would
+    // evaluate every `hosts allow` / `hosts deny` rule against the wrong peer.
     let peer_addr = match crate::daemon::peer_address::inherited_socket_peer_addr() {
         Ok(addr) => addr,
-        // upstream: clientname.c:41-45 - `getpeername` failure is fatal
+        // upstream: clientname.c:323-326 - `getpeername` failure is fatal
         // (`exit_cleanup(RERR_SOCKETIO)`), never a fallback address. Serving a
         // session whose peer cannot be named would evaluate the ACL against
         // nothing.
@@ -147,7 +142,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         }
     };
 
-    // upstream: clientserver.c:1443-1446 - the inetd child runs the same
+    // upstream: clientserver.c:1442-1445 - the inetd child runs the same
     // `proxy protocol` gate as a forked listener child: start_daemon() is the
     // shared entry point (daemon_main() calls it for an inetd socket at :1759).
     let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
@@ -231,7 +226,7 @@ mod inetd_tests {
     /// A local socket on stdin (an ADB shell without a PTY) is the launcher's
     /// own I/O channel, not a client connection. Treating it as inetd leaves
     /// the daemon's port unbound and logs `connect from UNKNOWN`.
-    /// upstream: clientserver.c:1740-1743 accepts only AF_INET/AF_INET6.
+    /// upstream: clientserver.c:1738-1742 accepts only AF_INET/AF_INET6.
     #[cfg(unix)]
     #[test]
     fn unix_socketpair_is_not_an_inetd_socket() {
@@ -241,7 +236,7 @@ mod inetd_tests {
 
     /// An IP peer alone is not enough: inetd supplies a stream, and a
     /// connected datagram socket must not be served as one.
-    /// upstream: clientserver.c:1735 `type != SOCK_STREAM`.
+    /// upstream: clientserver.c:1734 `type != SOCK_STREAM`.
     #[cfg(unix)]
     #[test]
     fn connected_udp_socket_is_not_an_inetd_socket() {
