@@ -145,6 +145,7 @@ One CVE is partially fixed and not listed. CVE-2026-53796 (destination chdir): e
 
 ### Added
 
+- On Windows, wildcard source operands (`*`, `?`, `[...]`) are expanded as a POSIX shell would, since `cmd.exe` and PowerShell do not glob
 - Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
