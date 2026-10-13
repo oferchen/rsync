@@ -237,7 +237,6 @@ members = [
     "crates/compress",
     "crates/metadata",
     "crates/protocol",
-    "crates/flist",
     "crates/rsync_io",
     "crates/signature",
     "crates/transfer",
