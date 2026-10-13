@@ -363,7 +363,7 @@ jobs:
       # shipped in RP28.e.1, PR #4928). Reuses the 2.6.9 binary built
       # by the earlier `Build upstream rsync` step under
       # `target/interop/upstream-install/2.6.9/bin/rsync`; if absent we
-      # build it inline via the RP28.b.1 helper to keep the cell
+      # rebuild it via `run_interop.sh build-only` to keep the cell
       # self-sufficient. The harness exits 77 when either binary is
       # missing so the cell becomes a no-op rather than a false failure.
       # Blocking: the pre-30 daemon-sender end-of-transfer stats deadlock is
@@ -374,9 +374,12 @@ jobs:
           set -euo pipefail
           RSYNC_269="target/interop/upstream-install/2.6.9/bin/rsync"
           if [[ ! -x "$RSYNC_269" ]]; then
-            echo "rsync 2.6.9 binary missing at $RSYNC_269; building via RP28.b.1 helper" >&2
-            sudo bash scripts/build_rsync_2_6_9.sh
-            RSYNC_269="/usr/local/bin/rsync-2.6.9"
+            echo "rsync 2.6.9 binary missing at $RSYNC_269; building via run_interop.sh build-only" >&2
+            bash tools/ci/run_interop.sh build-only
+            if [[ ! -x "$RSYNC_269" ]]; then
+              echo "rsync 2.6.9 build did not produce $RSYNC_269" >&2
+              exit 1
+            fi
           fi
 
           OC_RSYNC="target/release/oc-rsync"
@@ -414,7 +417,7 @@ jobs:
       # (spec shipped in RP28.f.1, PR #4929). Reuses the cached 2.6.9
       # binary published by the RP28.b.3 cache step (PR #4947) under
       # `target/interop/upstream-install/2.6.9/bin/rsync`; falls back to
-      # the RP28.b.1 build helper if the cache is cold. The harness
+      # `run_interop.sh build-only` if the cache is cold. The harness
       # exits 77 when either binary is missing so the cell becomes a
       # no-op rather than a false failure. Blocking: the pre-30 stats
       # deadlock that stalled the proto-29 legs is fixed, so the full
@@ -424,9 +427,12 @@ jobs:
           set -euo pipefail
           RSYNC_269="target/interop/upstream-install/2.6.9/bin/rsync"
           if [[ ! -x "$RSYNC_269" ]]; then
-            echo "rsync 2.6.9 binary missing at $RSYNC_269; building via RP28.b.1 helper" >&2
-            sudo bash scripts/build_rsync_2_6_9.sh
-            RSYNC_269="/usr/local/bin/rsync-2.6.9"
+            echo "rsync 2.6.9 binary missing at $RSYNC_269; building via run_interop.sh build-only" >&2
+            bash tools/ci/run_interop.sh build-only
+            if [[ ! -x "$RSYNC_269" ]]; then
+              echo "rsync 2.6.9 build did not produce $RSYNC_269" >&2
+              exit 1
+            fi
           fi
 
           OC_RSYNC="target/release/oc-rsync"

@@ -2,9 +2,8 @@
 #
 # The DPC series tracks the drain_parallel restructure (Arc<Mutex<Vec>>
 # -> per-worker channels). This cell exercises the existing
-# `drain_parallel_benchmark` criterion harness on every push that
-# touches `crates/engine/src/concurrent_delta/**`, nightly, and on
-# demand. Throughput is published as a bench artifact and a step
+# `drain_parallel_benchmark` criterion harness on every release tag and
+# on demand. Throughput is published as a bench artifact and a step
 # summary so reviewers can spot regressions without re-running the
 # bench locally.
 #
@@ -19,17 +18,10 @@
 name: Bench drain throughput
 
 on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
-  schedule:
-    # Nightly at 05:47 UTC. Offset from cold-start (03:17) and daemon
-    # concurrency (04:37) so the three bench cells do not contend on a
-    # single runner pool slot.
-    - cron: '47 5 * * *'
-  pull_request:
-    paths:
-      - 'crates/engine/src/concurrent_delta/**'
-      - 'crates/engine/benches/drain_parallel_benchmark.rs'
-      - '.github/workflows/bench-drain-throughput.yml'
 
 concurrency:
   group: bench-drain-throughput-${{ github.ref }}

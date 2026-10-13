@@ -1,23 +1,17 @@
-# io_uring kernel version compatibility matrix (IKV-7, IKV-8, IKV-9).
+# io_uring compatibility on the ubuntu-22.04 userspace (IKV-7, IKV-8).
 #
-# Exercises io_uring runtime probe and fallback on different Linux LTS
-# kernel versions available via GitHub Actions runners. Each tier tests
-# a progressively richer set of io_uring opcodes:
+# Exercises the io_uring runtime probe and fallback against the older
+# Jammy userspace (glibc 2.35). The required nextest job already covers
+# ubuntu-latest, so this is the only extra cell.
 #
-#   ubuntu-22.04 - kernel ~5.15 (IKV-7/8): basic ring + most ops
-#   ubuntu-24.04 - kernel ~6.8  (IKV-9):   full perf tier (PBUF_RING,
-#                                           SEND_ZC, all metadata ops)
-#
-# IKV-7 (Linux 5.10 LTS) note: GitHub Actions does not offer a runner
-# with a 5.10 kernel. Container images use the host kernel for syscalls,
-# so running a Debian 11 container on a 5.15+ host does not exercise
-# 5.10 kernel behaviour. The ubuntu-22.04 cell covers the ~5.15 floor
-# which is the closest available approximation. A dedicated 5.10 cell
-# would require a self-hosted runner or VM-based CI and is not included.
+# Kernel note: GitHub-hosted runners do not ship old kernels. The
+# ubuntu-22.04 image runs a 6.8 azure kernel, not the stock Jammy 5.15,
+# and containers share the host kernel. No hosted cell exercises 5.10 or
+# 5.15 kernel behaviour; that needs a self-hosted runner or VM-based CI.
 #
 # Status: non-required (informational). Do not add to branch protection.
-# These cells validate graceful fallback across kernel tiers, not
-# correctness - the main CI nextest job covers that.
+# This cell validates graceful fallback, not correctness - the main CI
+# nextest job covers that.
 name: io_uring kernel compat
 
 on:
@@ -65,23 +59,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # IKV-7/8: ubuntu-22.04 ships kernel ~5.15 (Jammy).
-          # Covers the basic io_uring ring and most metadata ops (statx,
-          # rename, linkat). PBUF_RING may or may not be available
-          # depending on exact kernel patch level.
+          # IKV-7/8: Jammy userspace on the runner's 6.8 kernel.
           - runner: ubuntu-22.04
-            label: "kernel ~5.15 (ubuntu-22.04)"
+            label: "ubuntu-22.04 userspace (runner kernel 6.8)"
             ikv: "IKV-7/8"
             expect_iouring: true
             expect_full_tier: false
-
-          # IKV-9: ubuntu-24.04 ships kernel ~6.8 (Noble).
-          # Full perf tier: all metadata ops, PBUF_RING, SEND_ZC opcode.
-          - runner: ubuntu-24.04
-            label: "kernel ~6.8 (ubuntu-24.04)"
-            ikv: "IKV-9"
-            expect_iouring: true
-            expect_full_tier: true
 
     steps:
       - name: Checkout
@@ -141,6 +124,19 @@ jobs:
           echo "iouring_status<<EOF" >> "$GITHUB_OUTPUT"
           echo "$IOURING_LINE" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Verify iouring-send-zc is compiled in
+        run: |
+          set -euo pipefail
+          # The `--io-uring-status` capability matrix is the canonical report
+          # of which io_uring cargo features the binary was built with (the
+          # plain `--version` banner only carries a one-line io_uring summary).
+          STATUS_OUTPUT=$(cargo run --locked --all-features -- --io-uring-status 2>&1 || true)
+          printf '%s\n' "$STATUS_OUTPUT"
+          if ! printf '%s\n' "$STATUS_OUTPUT" | grep -q "iouring-send-zc:.*on"; then
+            echo "::error::iouring-send-zc feature not reported as 'on' in --io-uring-status output"
+            exit 1
+          fi
 
       - name: Validate io_uring expectations
         env:

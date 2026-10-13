@@ -27,7 +27,9 @@ permissions:
 
 concurrency:
   group: upstream-tarballs-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer push to the same pull request supersedes the old warm-up. Master
+  # and dispatch runs are never cancelled, so the shared entry always lands.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   warm:
