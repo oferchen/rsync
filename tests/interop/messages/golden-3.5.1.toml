@@ -48,11 +48,11 @@ text = "hardlink-symlinks, IPv6, atimes, batchfiles, inplace, append, ACLs,"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "ACL-at, ACL-libacl-at, xattrs, optional secluded-args, iconv, prealloc,"
+text = "ACL-at, xattrs, optional secluded-args, iconv, prealloc, stop-at,"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "stop-at, no crtimes, IDN"
+text = "no crtimes, IDN"
 scenario = "conflicting_options"
 
 [[messages]]
