@@ -122,9 +122,10 @@ impl DryRunSummary {
 
     /// Formats the summary line that appears at the end of a dry run.
     ///
-    /// Produces output matching upstream rsync's dry-run footer:
+    /// Produces output in the shape of upstream rsync's dry-run footer, with the
+    /// byte counters fixed at zero:
     /// ```text
-    /// sent 0 bytes  received 1,234 bytes  0.00 bytes/sec
+    /// sent 0 bytes  received 0 bytes  0.00 bytes/sec
     /// total size is 1,234  speedup is 0.00 (DRY RUN)
     /// ```
     #[must_use]
