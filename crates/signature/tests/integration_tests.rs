@@ -33,7 +33,7 @@
 //! The signature layout calculation mirrors upstream rsync's behavior from:
 //! - `generator.c:sum_sizes_sqroot()` - Block sizing heuristics
 //! - `match.c` - Checksum usage patterns
-//! - Protocol documentation for checksum negotiation
+//! - `checksum.c:parse_checksum_choice()` - Checksum negotiation
 
 use checksums::RollingDigest;
 use checksums::strong::Md5Seed;
@@ -1188,7 +1188,7 @@ mod upstream_compatibility {
     /// upstream: generator.c:sum_sizes_sqroot()
     #[test]
     fn block_size_matches_upstream_heuristic() {
-        // Golden block sizes taken from upstream rsync 3.4.1.
+        // Golden block sizes from upstream generator.c:sum_sizes_sqroot().
         let test_cases = [
             (32u64, 700u32),          // Small file: default block size
             (1000, 700),              // Still small: default
@@ -1223,7 +1223,7 @@ mod upstream_compatibility {
 
     /// Protocol version 30+ caps block size at 131072.
     ///
-    /// upstream: generator.c MAX_BLOCK_SIZE constant
+    /// upstream: rsync.h:161 `MAX_BLOCK_SIZE`
     #[test]
     fn protocol_30_max_block_size() {
         let huge_file = 1u64 << 40; // 1 TB
@@ -1236,7 +1236,7 @@ mod upstream_compatibility {
 
     /// Legacy protocols (< 30) allow larger blocks.
     ///
-    /// upstream: generator.c OLD_MAX_BLOCK_SIZE constant (2^29)
+    /// upstream: rsync.h:164 `OLD_MAX_BLOCK_SIZE` (2^29)
     #[test]
     fn legacy_protocol_max_block_size() {
         let huge_file = 1u64 << 34;

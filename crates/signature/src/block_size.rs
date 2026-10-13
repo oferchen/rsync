@@ -1,8 +1,8 @@
-//! Block size calculation algorithm matching upstream rsync 3.4.1.
+//! Block size calculation algorithm matching upstream rsync 3.5.1.
 //!
 //! This module provides standalone functions for calculating block sizes and checksum
 //! lengths used in rsync's delta transfer algorithm. The implementation mirrors the
-//! C reference code in `rsync.c:block_len()` and `generator.c:sum_sizes_sqroot()`.
+//! block-length half of upstream `generator.c:sum_sizes_sqroot()`.
 //!
 //! # Overview
 //!
@@ -40,39 +40,41 @@
 
 /// Default block length used by rsync for small files.
 ///
-/// Files smaller than `DEFAULT_BLOCK_SIZE * DEFAULT_BLOCK_SIZE` (490,000 bytes)
-/// use this as their block size.
+/// Files no larger than `DEFAULT_BLOCK_SIZE * DEFAULT_BLOCK_SIZE` (490,000 bytes)
+/// use this as their block size (upstream: rsync.h:25 `BLOCK_SIZE`).
 pub const DEFAULT_BLOCK_SIZE: u32 = 700;
 
 /// Maximum block size for protocol version 30 and newer.
 ///
-/// This is 128 KB (131,072 bytes), corresponding to `1 << 17`.
+/// This is 128 KB (131,072 bytes), corresponding to `1 << 17`
+/// (upstream: rsync.h:161 `MAX_BLOCK_SIZE`).
 pub const MAX_BLOCK_SIZE_V30: u32 = 1 << 17;
 
 /// Maximum block size for legacy protocol versions (< 30).
 ///
-/// This is 512 MB (536,870,912 bytes), corresponding to `1 << 29`.
-/// In practice, files rarely reach this limit.
+/// This is 512 MB (536,870,912 bytes), corresponding to `1 << 29`
+/// (upstream: rsync.h:164 `OLD_MAX_BLOCK_SIZE`).
 pub const MAX_BLOCK_SIZE_OLD: u32 = 1 << 29;
 
 /// Minimum practical block size.
 ///
-/// While rsync doesn't enforce this minimum in the protocol, blocks smaller
-/// than 64 bytes are impractical due to overhead.
+/// Upstream has no such constant and the block-size functions here do not
+/// apply it; blocks smaller than 64 bytes are impractical due to overhead.
 pub const MIN_BLOCK_SIZE: u32 = 64;
 
 /// Abbreviated strong checksum length used during phase 1 of the transfer.
 ///
-/// Upstream rsync uses 2-byte checksums in the initial phase to reduce
-/// signature size, then switches to full `MAX_SUM_LENGTH` (16 bytes) for
-/// phase 2 redo passes where correctness is critical.
-/// (upstream: rsync.h:715-716 `SHORT_SUM_LENGTH`)
+/// Upstream starts `csum_length` at this value (io.c:82) and
+/// `sum_sizes_sqroot()` uses it as the per-file floor; the phase 2 redo pass
+/// switches to `MAX_SUM_LENGTH` (generator.c:2650).
+/// (upstream: rsync.h:758 `SHORT_SUM_LENGTH`)
 pub const SHORT_SUM_LENGTH: u8 = 2;
 
 /// Maximum strong checksum length supported by the protocol.
 ///
 /// This is 16 bytes (128 bits), matching MD4/MD5 digest size.
-/// Used as the full checksum length in phase 2 redo passes.
+/// Used as the full checksum length in phase 2 redo passes
+/// (upstream: rsync.h:757 `SUM_LENGTH`).
 pub const MAX_SUM_LENGTH: u8 = 16;
 
 /// Calculates the block length for a given file size and protocol version.
@@ -93,8 +95,9 @@ pub const MAX_SUM_LENGTH: u8 = 16;
 ///
 /// # Returns
 ///
-/// Block length in bytes. Always returns a value >= 64 (practical minimum)
-/// and <= the protocol-specific maximum.
+/// Block length in bytes, never above the protocol-specific maximum. Without
+/// an override the result is at least `DEFAULT_BLOCK_SIZE`; an override is
+/// returned as given apart from that clamp.
 ///
 /// # Examples
 ///
@@ -194,7 +197,7 @@ pub fn calculate_checksum_count(file_size: u64, block_length: u32) -> u64 {
 /// 3. Set bits that keep `block_length² ≤ file_size`
 /// 4. Round down to multiples of 8 bytes
 ///
-/// This mirrors `generator.c:sum_sizes_sqroot()` from upstream rsync.
+/// This mirrors upstream `generator.c:sum_sizes_sqroot()` (generator.c:722-740).
 fn derive_block_length_sqrt(file_size: u64, protocol_version: u8) -> u32 {
     if file_size <= u64::from(DEFAULT_BLOCK_SIZE) * u64::from(DEFAULT_BLOCK_SIZE) {
         return DEFAULT_BLOCK_SIZE;
@@ -420,17 +423,17 @@ mod tests {
 
     #[test]
     fn sum_length_constants_match_upstream() {
-        // upstream: rsync.h:715 `#define SHORT_SUM_LENGTH 2`
+        // upstream: rsync.h:758 `#define SHORT_SUM_LENGTH 2`
         assert_eq!(SHORT_SUM_LENGTH, 2);
-        // upstream: rsync.h:716 `#define SUM_LENGTH 16`
+        // upstream: rsync.h:757 `#define SUM_LENGTH 16`
         assert_eq!(MAX_SUM_LENGTH, 16);
         assert!(usize::from(SHORT_SUM_LENGTH) < usize::from(MAX_SUM_LENGTH));
     }
 
     #[test]
     fn specific_upstream_compatibility_values() {
-        // Golden values lifted from upstream rsync 3.4.1
-        // (generator.c:sum_sizes_sqroot) for protocol 31.
+        // Golden values from upstream generator.c:sum_sizes_sqroot() for
+        // protocol 31.
         assert_eq!(calculate_block_length(1_048_576, 31, None), 1024);
         assert_eq!(calculate_block_length(10_485_760, 31, None), 3232);
         assert_eq!(calculate_block_length(104_857_600, 31, None), 10_240);
