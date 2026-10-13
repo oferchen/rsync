@@ -8,7 +8,7 @@
 //   rsync warning: <text> (code N) at <basename>(<line>) [<role>=<version>]
 //   rsync info: <text> at <basename>(<line>) [<role>=<version>]
 //
-// Reference: upstream rsync log.c, errcode.h (rsync 3.4.1)
+// Reference: upstream rsync log.c, errcode.h (rsync 3.5.1)
 
 #[test]
 fn error_prefix_matches_upstream_format() {
@@ -143,7 +143,7 @@ fn all_roles_produce_bracketed_trailers() {
 
 #[test]
 fn partial_transfer_error_matches_upstream_summary_format() {
-    // Upstream: rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1337) [sender=3.4.1]
+    // Upstream: rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(NNN) [sender=3.5.1]
     let msg = Message::from_exit_code(23)
         .expect("exit code 23 is defined")
         .with_role(Role::Sender);
@@ -170,7 +170,7 @@ fn partial_transfer_error_matches_upstream_summary_format() {
 
 #[test]
 fn vanished_files_warning_matches_upstream_format() {
-    // Upstream: rsync warning: some files vanished before they could be transferred (code 24) at main.c(1889) [sender=3.4.1]
+    // Upstream: rsync warning: some files vanished before they could be transferred (code 24) at main.c(NNN) [sender=3.5.1]
     let msg = Message::from_exit_code(24)
         .expect("exit code 24 is defined")
         .with_role(Role::Sender);
@@ -192,7 +192,7 @@ fn vanished_files_warning_matches_upstream_format() {
 
 #[test]
 fn socket_io_error_matches_upstream_format() {
-    // Upstream: rsync error: error in socket IO (code 10) at io.c(NNN) [sender=3.4.1]
+    // Upstream: rsync error: error in socket IO (code 10) at io.c(NNN) [sender=3.5.1]
     let msg = Message::from_exit_code(10)
         .expect("exit code 10 is defined")
         .with_role(Role::Sender);
@@ -205,7 +205,7 @@ fn socket_io_error_matches_upstream_format() {
 
 #[test]
 fn file_io_error_matches_upstream_format() {
-    // Upstream: rsync error: error in file IO (code 11) at receiver.c(NNN) [receiver=3.4.1]
+    // Upstream: rsync error: error in file IO (code 11) at receiver.c(NNN) [receiver=3.5.1]
     let msg = Message::from_exit_code(11)
         .expect("exit code 11 is defined")
         .with_role(Role::Receiver);
@@ -218,7 +218,7 @@ fn file_io_error_matches_upstream_format() {
 
 #[test]
 fn protocol_data_stream_error_matches_upstream_format() {
-    // Upstream: rsync error: error in rsync protocol data stream (code 12) at io.c(NNN) [sender=3.4.1]
+    // Upstream: rsync error: error in rsync protocol data stream (code 12) at io.c(NNN) [sender=3.5.1]
     let msg = Message::from_exit_code(12)
         .expect("exit code 12 is defined")
         .with_role(Role::Sender);
@@ -231,7 +231,7 @@ fn protocol_data_stream_error_matches_upstream_format() {
 
 #[test]
 fn timeout_error_matches_upstream_format() {
-    // Upstream: rsync error: timeout in data send/receive (code 30) at io.c(NNN) [sender=3.4.1]
+    // Upstream: rsync error: timeout in data send/receive (code 30) at io.c(NNN) [sender=3.5.1]
     let msg = Message::from_exit_code(30)
         .expect("exit code 30 is defined")
         .with_role(Role::Sender);
@@ -566,8 +566,8 @@ fn all_exit_code_messages_render_with_correct_prefix_and_code() {
 
 #[test]
 fn source_location_uses_basename_and_parens_matching_upstream() {
-    // Upstream `log.c:rwrite()` emits `at <basename>(<line>)`, e.g.
-    //   rsync error: error in file IO (code 11) at receiver.c(842) [receiver=3.4.1]
+    // Upstream `log.c:log_exit()` emits `at <basename>(<line>)`, e.g.
+    //   rsync error: error in file IO (code 11) at receiver.c(842) [receiver=3.5.1]
     // Verify rendered output uses the same basename + parens style instead of
     // exposing the full workspace path.
     let msg = Message::error(11, "error in file IO")

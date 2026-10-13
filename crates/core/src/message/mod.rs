@@ -7,8 +7,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `log.c` - Error and info message formatting
-//! - `errcode.h` - Exit code to message mapping
+//! - `log.c` - error and info message formatting; `rerr_names` maps exit codes to text
+//! - `errcode.h` - exit code values
 
 pub mod strings;
 

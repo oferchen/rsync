@@ -33,8 +33,7 @@ impl CopyToSliceError {
     /// The calculation uses saturating subtraction so that callers can report the missing capacity
     /// directly in diagnostics even if the error was created with inconsistent inputs. When the
     /// error originates from [`MessageSegments::copy_to_slice`][super::MessageSegments::copy_to_slice],
-    /// the result matches `required - provided`, mirroring upstream rsync's messaging when a scratch
-    /// buffer is too small to hold the fully rendered diagnostic.
+    /// the result matches `required - provided`.
     #[must_use]
     pub const fn missing(self) -> usize {
         self.required.saturating_sub(self.provided)
