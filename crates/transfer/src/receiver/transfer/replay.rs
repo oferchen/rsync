@@ -125,6 +125,7 @@ impl ReceiverContext {
             &dest_dir,
             #[cfg(unix)]
             sandbox.as_deref(),
+            writer,
         )?;
 
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();

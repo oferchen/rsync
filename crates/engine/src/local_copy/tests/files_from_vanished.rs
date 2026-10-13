@@ -292,60 +292,75 @@ fn delete_missing_args_no_destination_entry_succeeds() {
     );
 }
 
-// FFV-7 (directory vanished): When a directory source vanishes and
-// --delete-missing-args is active, the corresponding destination
-// directory should be removed.
-#[test]
-fn delete_missing_args_removes_destination_directory_for_vanished_source() {
+// FFV-7 (directory vanished): a vanished directory operand reaches upstream's
+// `delete_item(fname, mode, del_opts)` (generator.c:1749-1753), and `del_opts`
+// carries `DEL_RECURSE` only for `--delete` or `--force` (generator.c:1629).
+/// Copies `vanish_dir` (removed from the source after planning) and `keep.txt`
+/// into a destination that already holds a populated `vanish_dir/`.
+fn copy_with_vanished_populated_dir(
+    options: LocalCopyOptions,
+) -> (tempfile::TempDir, PathBuf, LocalCopySummary) {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
-
     let vanish_dir = source_root.join("vanish_dir");
     fs::create_dir_all(&vanish_dir).expect("create vanish_dir");
     fs::write(vanish_dir.join("inner.txt"), b"inner").expect("write inner");
-
     fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
-
     let dest_root = temp.path().join("dest");
-    fs::create_dir_all(&dest_root).expect("create dest");
-
-    // Pre-populate destination with the directory that should be deleted.
     let dest_vanish_dir = dest_root.join("vanish_dir");
     fs::create_dir_all(&dest_vanish_dir).expect("create dest vanish_dir");
     fs::write(dest_vanish_dir.join("inner.txt"), b"old inner").expect("write dest inner");
-
-    // Use individual operands (not trailing separator) so each source
-    // is a separate operand - the directory is one, keep.txt is another.
+    // Individual operands (no trailing separator), so the directory is one
+    // operand and keep.txt another.
     let operands = vec![
         vanish_dir.clone().into_os_string(),
         source_root.join("keep.txt").into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    // Remove the entire source directory after the plan is built.
     fs::remove_dir_all(&vanish_dir).expect("delete vanish_dir from source");
-
     let summary = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().delete_missing_args(true),
-        )
+        .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("delete-missing-args for directory should succeed");
-
-    // The vanished directory should be removed from the destination.
-    assert!(
-        !dest_root.join("vanish_dir").exists(),
-        "vanish_dir should be deleted from destination"
-    );
-    // The file source should still be transferred.
     assert!(
         dest_root.join("keep.txt").exists(),
         "keep.txt should be present in destination"
     );
+    (temp, dest_root, summary)
+}
+
+#[test]
+fn delete_missing_args_removes_destination_directory_under_delete() {
+    let (_temp, dest_root, summary) = copy_with_vanished_populated_dir(
+        LocalCopyOptions::default()
+            .delete_missing_args(true)
+            .delete(true),
+    );
+    assert!(
+        !dest_root.join("vanish_dir").exists(),
+        "--delete sets DEL_RECURSE, so vanish_dir and its contents go"
+    );
     assert!(
         summary.items_deleted() >= 1,
         "at least one item should be recorded as deleted"
+    );
+}
+
+// Without DEL_RECURSE `delete_dir_contents()` refuses a populated directory
+// (delete.c:115-118) and only reports it (delete.c:178-181). Removing it
+// anyway destroys a tree the user never asked to delete.
+#[test]
+fn delete_missing_args_keeps_populated_destination_directory_without_delete() {
+    let (_temp, dest_root, summary) =
+        copy_with_vanished_populated_dir(LocalCopyOptions::default().delete_missing_args(true));
+    assert!(
+        dest_root.join("vanish_dir/inner.txt").is_file(),
+        "a populated directory must survive without --delete or --force"
+    );
+    assert_eq!(
+        summary.items_deleted(),
+        0,
+        "nothing may be counted as deleted"
     );
 }
