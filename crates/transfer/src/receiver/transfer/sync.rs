@@ -507,7 +507,7 @@ impl ReceiverContext {
                     true,
                     Some(&file_path),
                     filter_ref,
-                    None,
+                    Some(dest_dir.as_path()),
                 ) {
                     metadata_errors.push((file_path.clone(), e.to_string()));
                 }
