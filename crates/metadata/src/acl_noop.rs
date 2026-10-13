@@ -100,7 +100,7 @@ pub fn store_acls_via_fake_super(
 /// Platforms without POSIX default-ACL support fall straight through to the
 /// `ACCESSPERMS & ~umask` baseline; no `--debug=ACL` line is emitted because
 /// upstream guards `default_perms_for_dir` behind `#ifdef SUPPORT_ACLS`
-/// (`generator.c:1337-1340`).
+/// (`generator.c:1738-1741`).
 #[allow(clippy::module_name_repetitions)]
 #[must_use]
 pub fn default_perms_for_dir(_dir: &Path, orig_umask: u32) -> u32 {

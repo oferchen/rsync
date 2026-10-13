@@ -11,10 +11,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `uidlist.c:481-484` `recv_id_list()` calls `match_acl_ids()` after the
+//! - `uidlist.c:483-487` `recv_id_list()` calls `match_acl_ids()` after the
 //!   uid/gid lists have been read so ACL ids are converted with the same table
 //!   as file owners.
-//! - `acls.c:1059-1081` `match_racl_ids()`/`match_acl_ids()` walk every named
+//! - `acls.c:1430-1451` `match_racl_ids()`/`match_acl_ids()` walk every named
 //!   entry and replace `ida->id` with `match_uid(id)`/`match_gid(id)`.
 
 use std::collections::HashMap;
@@ -139,7 +139,7 @@ mod tests {
         // the receiver applied it verbatim the ACL would land on whatever user
         // owns uid 1000 locally. The id-list (built from the wire uid list where
         // "alice" resolved to 2000) must remap 1000 -> 2000, mirroring upstream
-        // match_acl_ids/match_uid (acls.c:1070, uidlist.c:297).
+        // match_acl_ids/match_uid (acls.c:1439, uidlist.c:297).
         let mut uid = HashMap::new();
         uid.insert(1000u32, 2000u32);
         let m = mapper(uid, HashMap::new(), false);

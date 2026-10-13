@@ -1151,8 +1151,8 @@ mod apply_acls_from_cache_tests {
         assert!(result.is_ok());
     }
 
-    // upstream: acls.c:994-997 (set_rsync_acl reports sys_acl_set_file
-    // failures via rsyserr(FERROR_XFER, ...)) and lib/sysacls.c:2778-2799
+    // upstream: acls.c:1352-1355 (set_rsync_acl reports sys_acl_set_file
+    // failures via rsyserr(FERROR_XFER, ...)) and lib/sysacls.c:2922-2944
     // (no_acl_syscall_error swallows only ENOSYS/ENOTSUP/EINVAL, never
     // EPERM). The wire id is preserved through `recv_add_id` at
     // `uidlist.c:282` (`id2 = id`) and `pack_smb_acl` at `acls.c:404` hands
@@ -1239,9 +1239,9 @@ mod noop_apply_acls_tests {
 /// Before this change, oc-rsync routed `EPERM` through `is_unsupported_error`
 /// and silently dropped the entire ACL apply when a non-root receiver hit a
 /// UID/GID it could not manage. Upstream rsync 3.4.2 surfaces the same
-/// `EPERM` via `rsyserr(FERROR_XFER, ...)` (`acls.c:994-997`) and the
+/// `EPERM` via `rsyserr(FERROR_XFER, ...)` (`acls.c:1352-1355`) and the
 /// receiver always passes the raw wire id straight to `sys_acl_set_info()`
-/// (`acls.c:404`). The receiver-side `recv_add_id()` fallback at
+/// (`acls.c:405-408`). The receiver-side `recv_add_id()` fallback at
 /// `uidlist.c:282` keeps `id2 = id` whenever the wire name does not resolve.
 #[cfg(all(unix, feature = "acl", any(target_os = "linux", target_os = "freebsd")))]
 mod unmappable_id_remap_tests {
@@ -1285,7 +1285,7 @@ mod unmappable_id_remap_tests {
 
     #[test]
     fn apply_named_user_with_unmappable_uid_does_not_drop_entry() {
-        // upstream: acls.c:395-405 - pack_smb_acl forwards ida->id verbatim
+        // upstream: acls.c:399-409 - pack_smb_acl forwards ida->id verbatim
         // to sys_acl_set_info. The receiver must not pre-filter the entry
         // even when getpwnam_r returns no match for the wire name.
         let temp = create_tempdir();

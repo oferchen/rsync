@@ -45,8 +45,8 @@ pub fn sync_acls(
         return Ok(());
     }
 
-    // Pre-check existence - ENOENT from getfacl would be masked by
-    // is_unsupported_error() which treats NotFound as "no ACL support".
+    // Pre-check existence - on macOS, ENOENT from getfacl would be masked by
+    // is_unsupported_error(), which treats it as "no ACL support".
     if !source.exists() {
         return Err(MetadataError::new(
             "read ACL",
@@ -58,7 +58,8 @@ pub fn sync_acls(
     let source_acl = match getfacl(source, None) {
         Ok(acl) => acl,
         Err(e) => {
-            // upstream: acls.c - unsupported fs treated as empty ACL
+            // upstream: acls.c:get_rsync_acl() - no_acl_syscall_error() falls back
+            // to the mode bits, which an empty ACL plus reset_acl_from_mode() mirrors.
             if is_unsupported_error(&e) {
                 Vec::new()
             } else {
@@ -108,7 +109,7 @@ pub fn sync_acls(
         reset_acl_from_mode(destination)?;
     }
 
-    // upstream: acls.c:924-932 + rsync.c:659-660 - applying the access ACL
+    // upstream: acls.c:change_sacl_perms() + rsync.c:806-820 - applying the access ACL
     // clears setuid/setgid/sticky, which are not representable in a POSIX ACL.
     // Restore them from the source mode so setgid/setuid binaries and sticky
     // dirs survive a local copy.
@@ -165,8 +166,9 @@ pub fn sync_acls(
 ///
 /// # Upstream Reference
 ///
-/// Mirrors the `am_root < 0` branches of `get_rsync_acl()` (`acls.c` lines
-/// 472-509) and `set_rsync_acl()` (`acls.c` lines 933-971).
+/// Mirrors the `am_root < 0` branches of `get_rsync_acl()` (`acls.c:599-635`)
+/// and `set_rsync_acl()` (`acls.c:1176-1182` default delete, `acls.c:1228-1251`
+/// store).
 #[allow(clippy::module_name_repetitions)]
 pub fn sync_acls_via_fake_super(
     source: &Path,
@@ -214,7 +216,7 @@ pub fn sync_acls_via_fake_super(
                 .flatten()
                 .unwrap_or_else(|| super::read::get_rsync_acl(source, source_mode, true));
 
-            // upstream: acls.c:934-935 - user_obj == NO_ENTRY means "no default
+            // upstream: acls.c:1176-1177 - user_obj == NO_ENTRY means "no default
             // ACL", so the xattr is removed rather than storing an empty ACL.
             if default_acl.has_user_obj() {
                 crate::fake_super::store_fake_super_acl(

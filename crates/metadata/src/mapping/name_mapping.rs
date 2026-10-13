@@ -74,7 +74,7 @@ impl NameMapping {
             rules.push(MappingRule { matcher, target });
         }
 
-        // upstream: uidlist.c:547-561 parse_name_map - each rule's target name is
+        // upstream: uidlist.c:550-564 parse_name_map - each rule's target name is
         // resolved on the receiver at parse time via user_to_uid/group_to_gid and
         // stored as a concrete id in the idmap list. An unknown name prints
         // "Unknown --usermap name on receiver: NAME" (FERROR) and the rule is
@@ -97,7 +97,7 @@ impl NameMapping {
     /// is. A name target is looked up on the receiver via the kind-appropriate
     /// NSS call; on success the target is rewritten to the resolved id, on
     /// failure the upstream warning is printed and the caller drops the rule.
-    /// upstream: uidlist.c:547-561 - user_to_uid/group_to_gid, drop on failure.
+    /// upstream: uidlist.c:550-564 - user_to_uid/group_to_gid, drop on failure.
     fn resolve_target(kind: MappingKind, target: &mut MappingTarget) -> bool {
         let MappingTarget::Name(name) = target else {
             return true;
@@ -182,7 +182,7 @@ impl NameMapping {
     /// against `name` - the user/group name the sender carried on the id-list
     /// wire (or inline under INC_RECURSE) - rather than a name re-derived from
     /// the raw id via the receiver's `getpwuid`/`getgrgid`. This mirrors
-    /// upstream `recv_add_id` (uidlist.c:255-268), whose `uidmap`/`gidmap` scan
+    /// upstream `recv_add_id` (uidlist.c:255-270), whose `uidmap`/`gidmap` scan
     /// does `wildmatch(node->u.name, name)` / `strcmp(node->u.name, name)`
     /// against the transmitted `name`, not a receiver-local reverse lookup. A
     /// missing name is normalized to `""` (upstream: `if (!name) name = ""`), so

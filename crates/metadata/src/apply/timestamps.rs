@@ -29,8 +29,8 @@ use std::os::fd::BorrowedFd;
 /// When `--keep-dirlinks` is active the user opted into following dest-side
 /// symlinked directories, so the sandbox refusal is wrong: fall back to an
 /// open-free `utimensat(AT_FDCWD, ...)` that resolves symlinked parents
-/// through the ambient namespace like upstream `generator.c:1344`'s
-/// `link_stat`. The syscall never opens the node, so a peerless FIFO cannot
+/// through the ambient namespace like upstream `generator.c:1745`'s
+/// `gen_entry_stat()`. The syscall never opens the node, so a peerless FIFO cannot
 /// block it.
 /// upstream: rsync.c:set_file_attrs()/util1.c:set_times() apply times through
 /// utimensat on the path (never opening the node); rsync 3.4.3+ resolves under
@@ -132,17 +132,17 @@ pub(super) fn set_timestamp_like(
 ) -> Result<(), MetadataError> {
     let modified = FileTime::from_last_modification_time(metadata);
 
-    // upstream: rsync.c:588-589 - atime is written only when `--atimes`/`-U`
+    // upstream: rsync.c:725-726 - atime is written only when `--atimes`/`-U`
     // is active AND the node is not a directory (`!atimes_ndx || S_ISDIR`
     // sets ATTRS_SKIP_ATIME). Otherwise the destination's access time is left
-    // unchanged. upstream: rsync.c:609 - when atime IS applied its nanosecond
+    // unchanged. upstream: rsync.c:745 - when atime IS applied its nanosecond
     // field is forced to zero.
     let apply_atime = options.is_some_and(|o| o.atimes()) && !metadata.file_type().is_dir();
     let accessed = apply_atime.then(|| {
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0)
     });
 
-    // upstream: rsync.c:597-612 - mtime and atime are checked independently;
+    // upstream: rsync.c:733-749 - mtime and atime are checked independently;
     // the utimensat is only skipped when ALL relevant timestamps match.
     if let Some(existing) = existing {
         let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
@@ -239,14 +239,14 @@ pub(super) fn set_timestamp_with_fd(
 ) -> Result<(), MetadataError> {
     let modified = FileTime::from_last_modification_time(metadata);
 
-    // upstream: rsync.c:588-589 - atime is written only under `--atimes`/`-U`
-    // and never for directories; rsync.c:609 - the applied atime nsec is 0.
+    // upstream: rsync.c:725-726 - atime is written only under `--atimes`/`-U`
+    // and never for directories; rsync.c:745 - the applied atime nsec is 0.
     let apply_atime = options.is_some_and(|o| o.atimes()) && !metadata.file_type().is_dir();
     let accessed = apply_atime.then(|| {
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0)
     });
 
-    // upstream: rsync.c:597-612 - mtime and atime are checked independently
+    // upstream: rsync.c:733-749 - mtime and atime are checked independently
     if let Some(existing) = existing {
         let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
         let atime_matches = match accessed {
@@ -258,7 +258,7 @@ pub(super) fn set_timestamp_with_fd(
         }
     }
 
-    // upstream: rsync.c:588-589,609 - omit the access time (UTIME_OMIT) when
+    // upstream: rsync.c:725-726,745 - omit the access time (UTIME_OMIT) when
     // it must not be written; otherwise set it with a zeroed nanosecond field.
     let last_access = match accessed {
         Some(accessed) => rustix::fs::Timespec {
@@ -291,14 +291,14 @@ pub(super) fn set_timestamp_with_fd(
 /// Used in the local copy path when `--atimes` is active but `--times` is not,
 /// mirroring upstream's `set_file_attrs()` behavior where atime and mtime are
 /// governed independently by `ATTRS_SKIP_ATIME` / `ATTRS_SKIP_MTIME`.
-/// upstream: rsync.c:604-612 - atime applied independently of mtime
+/// upstream: rsync.c:740-749 - atime applied independently of mtime
 pub(super) fn apply_atime_only_from_metadata(
     metadata: &fs::Metadata,
     destination: &Path,
     existing: Option<&fs::Metadata>,
     parent_walk: super::ParentWalk<'_>,
 ) -> Result<(), MetadataError> {
-    // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
+    // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
     let source_atime =
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
@@ -336,7 +336,7 @@ pub(super) fn apply_atime_only_from_metadata(
 ///
 /// Uses `futimens` on the open fd to set only the atime while preserving the
 /// destination's existing mtime.
-/// upstream: rsync.c:604-612 - atime applied independently of mtime
+/// upstream: rsync.c:740-749 - atime applied independently of mtime
 #[cfg(unix)]
 pub(super) fn apply_atime_only_from_metadata_with_fd(
     metadata: &fs::Metadata,
@@ -344,7 +344,7 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
     fd: BorrowedFd<'_>,
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
+    // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
     let source_atime =
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
@@ -387,9 +387,9 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
 /// write it, `None` to leave the destination's atime alone (UTIME_OMIT).
 ///
 /// Without a cached stat there is nothing to compare, so the atime is written.
-/// upstream: rsync.c:741 - `flags & ATTRS_ACCURATE_TIME ||
+/// upstream: rsync.c:742 - `flags & ATTRS_ACCURATE_TIME ||
 /// !same_time(sxp->st.st_atime, 0, file_atime, 0)`; the nanoseconds never
-/// figure, and the written value has `ST_ATIME_NSEC = 0` (rsync.c:744).
+/// figure, and the written value has `ST_ATIME_NSEC = 0` (rsync.c:745).
 fn entry_atime_to_set(
     entry: &protocol::flist::FileEntry,
     cached_meta: Option<&fs::Metadata>,
@@ -405,7 +405,7 @@ fn entry_atime_to_set(
 /// Skips the syscall when neither timestamp needs writing. `accurate` is
 /// upstream's `ATTRS_ACCURATE_TIME`: it forces the atime stamp even when
 /// `cached_meta` already matched.
-/// upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
+/// upstream: rsync.c:733 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
 pub(super) fn apply_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -416,7 +416,7 @@ pub(super) fn apply_timestamps_from_entry(
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync.c:731 - the access time is written only under
+    // upstream: rsync.c:725-726 - the access time is written only under
     // `--atimes`/`-U` and never for directories (`!atimes_ndx || S_ISDIR`
     // sets ATTRS_SKIP_ATIME); otherwise it is left unchanged (UTIME_OMIT)
     // rather than being clobbered with the mtime value.
@@ -480,7 +480,7 @@ fn set_entry_times(
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
     let is_special = entry.is_device() || entry.is_special();
-    // upstream: rsync.c:588-589 - `atime = None` reproduces ATTRS_SKIP_ATIME,
+    // upstream: rsync.c:725-726 - `atime = None` reproduces ATTRS_SKIP_ATIME,
     // leaving the destination's access time untouched (UTIME_OMIT). Special
     // files take the `AT_SYMLINK_NOFOLLOW` leaf (open-free node timestamping).
     let result = set_times_via(
@@ -519,7 +519,7 @@ pub(super) fn apply_symlink_timestamps_from_entry(
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync.c:588-589 - a symlink is never a directory, so its atime
+    // upstream: rsync.c:725-726 - a symlink is never a directory, so its atime
     // is written only under `--atimes`/`-U`; otherwise it is left unchanged
     // (UTIME_OMIT) rather than being clobbered with the mtime value.
     let atime = if options.atimes() {
@@ -533,7 +533,7 @@ pub(super) fn apply_symlink_timestamps_from_entry(
         || cached_meta.is_none_or(|meta| FileTime::from_last_modification_time(meta) != mtime);
 
     if needs_utime {
-        // upstream: rsync.c:set_times() uses lutimes/utimensat(AT_SYMLINK_NOFOLLOW)
+        // upstream: util1.c:set_times() uses lutimes/utimensat(AT_SYMLINK_NOFOLLOW)
         // on the symlink itself. `follow_symlinks = false` selects that variant.
         set_times_via(
             destination,
@@ -556,7 +556,7 @@ pub(super) fn apply_symlink_timestamps_from_entry(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:604-612` - atime is applied independently of mtime when
+/// - `rsync.c:740-749` - atime is applied independently of mtime when
 ///   `!(flags & ATTRS_SKIP_ATIME)` but `(flags & ATTRS_SKIP_MTIME)`.
 pub(super) fn apply_atime_only_from_entry(
     destination: &Path,
@@ -566,7 +566,7 @@ pub(super) fn apply_atime_only_from_entry(
     parent_walk: super::ParentWalk<'_>,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
-    // upstream: rsync.c:731 - `S_ISDIR` sets ATTRS_SKIP_ATIME.
+    // upstream: rsync.c:725-726 - `S_ISDIR` sets ATTRS_SKIP_ATIME.
     if entry.file_type().is_dir() {
         return Ok(());
     }
@@ -599,7 +599,7 @@ pub(super) fn apply_atime_only_from_entry(
 ///
 /// Reads the birth time via `metadata.created()` and applies it using
 /// `set_crtime`. On platforms where `created()` is unavailable, this is a no-op.
-/// upstream: rsync.c:615 - crtime application after file transfer
+/// upstream: rsync.c:750-767 - crtime application after file transfer
 pub(super) fn apply_crtime_from_source_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -649,10 +649,10 @@ fn unix_secs_to_filetime_ticks(secs: i64) -> Option<u64> {
 /// Decides whether upstream would actually issue a crtime-setting syscall,
 /// mirroring the two guards in `set_file_attrs()`.
 ///
-/// - `rsync.c:591-593`: the root directory of an HFS+ volume has inode 2 and
+/// - `rsync.c:727-729`: the root directory of an HFS+ volume has inode 2 and
 ///   rejects a creation-time update, so upstream sets `ATTRS_SKIP_CRTIME` for
 ///   it. We refuse the set for any directory whose destination inode is 2.
-/// - `rsync.c:617-619`: `if (!same_time(sxp->crtime, 0L, file_crtime, 0L))` -
+/// - `rsync.c:755`: `if (!same_time(sxp->crtime, 0L, file_crtime, 0L))` -
 ///   upstream reads the destination's current crtime (`get_create_time`) and
 ///   only writes when it differs. `same_time` with the default `modify_window`
 ///   (0) compares whole seconds, and both crtime arguments carry `nsec == 0`.
@@ -668,12 +668,12 @@ fn crtime_needs_update(
     dest_ino: u64,
     dest_is_dir: bool,
 ) -> bool {
-    // upstream: rsync.c:591-593 - never touch the HFS+ volume root.
+    // upstream: rsync.c:727-729 - never touch the HFS+ volume root.
     if dest_is_dir && dest_ino == 2 {
         return false;
     }
     match existing_secs {
-        // upstream: rsync.c:619 - skip when same_time() reports equality.
+        // upstream: rsync.c:755 - skip when same_time() reports equality.
         Some(existing) => !crate::ModifyWindow::ZERO.same_time(existing, 0, incoming_secs, 0),
         None => true,
     }
@@ -688,7 +688,7 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
 
-    // upstream: rsync.c:591-593 + 617-619 - read the destination's current
+    // upstream: rsync.c:727-729 + 753-755 - read the destination's current
     // crtime and inode, then skip the setattrlist(2) when the value already
     // matches (same_time) or the target is the HFS+ volume root (inode 2),
     // which would reject the update. The stat mirrors upstream's
@@ -979,7 +979,7 @@ mod crtime_skip_tests {
 
     #[test]
     fn skips_when_existing_crtime_equals_incoming() {
-        // Why: upstream rsync.c:619 guards the setattrlist with
+        // Why: upstream rsync.c:755 guards the setattrlist with
         // `!same_time(sxp->crtime, 0, file_crtime, 0)`, so an already-correct
         // crtime must not trigger a redundant creation-time write.
         assert!(!crtime_needs_update(
@@ -993,7 +993,7 @@ mod crtime_skip_tests {
     #[test]
     fn sets_when_existing_crtime_differs() {
         // Why: a genuinely different destination crtime must be updated to
-        // preserve the source's creation time (rsync.c:615-624).
+        // preserve the source's creation time (rsync.c:750-767).
         assert!(crtime_needs_update(
             Some(1_000_000_000),
             1_000_000_001,
@@ -1020,7 +1020,7 @@ mod crtime_skip_tests {
 
     #[test]
     fn hfs_plus_volume_root_directory_is_skipped() {
-        // Why: upstream rsync.c:591-593 sets ATTRS_SKIP_CRTIME when
+        // Why: upstream rsync.c:727-729 sets ATTRS_SKIP_CRTIME when
         // `st_ino == 2 && S_ISDIR`, because the HFS+ volume root rejects a
         // creation-time update. The guard must win even when the crtime differs.
         assert!(!crtime_needs_update(Some(1), 999, 2, true));
@@ -1042,7 +1042,7 @@ mod crtime_macos_tests {
     #[test]
     fn setting_crtime_to_its_current_value_is_a_noop_success() {
         // Why: on a real macOS filesystem, re-applying the destination's
-        // existing crtime must hit the same_time skip (rsync.c:619) and return
+        // existing crtime must hit the same_time skip (rsync.c:755) and return
         // Ok without erroring, proving the redundant-write guard is live where
         // crtime is actually settable.
         use std::os::unix::fs::MetadataExt;

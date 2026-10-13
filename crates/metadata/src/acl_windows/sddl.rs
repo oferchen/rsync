@@ -62,9 +62,9 @@ fn sddl_security_info(include_sacl: bool) -> OBJECT_SECURITY_INFORMATION {
 /// support security descriptors (FAT32, network mounts) propagate the
 /// underlying error.
 ///
-/// # Upstream Reference
+/// # Platform Reference
 ///
-/// `GetNamedSecurityInfoW` plus
+/// No upstream counterpart. `GetNamedSecurityInfoW` plus
 /// `ConvertSecurityDescriptorToStringSecurityDescriptorW`; see
 /// `docs/design/windows-ntfs-acl-support.md` section 4.2.
 pub fn read_dacl_sddl(path: &Path) -> io::Result<String> {
@@ -162,9 +162,9 @@ fn read_sddl_internal(path: &Path, include_sacl: bool) -> io::Result<String> {
 /// Returns [`io::Error`] for SDDL parse failures or Win32 failures while
 /// applying the descriptor.
 ///
-/// # Upstream Reference
+/// # Platform Reference
 ///
-/// `ConvertStringSecurityDescriptorToSecurityDescriptorW` plus
+/// No upstream counterpart. `ConvertStringSecurityDescriptorToSecurityDescriptorW` plus
 /// `SetNamedSecurityInfoW`; see `docs/design/windows-ntfs-acl-support.md`
 /// section 4.2.
 pub fn write_dacl_sddl(path: &Path, sddl: &str) -> io::Result<()> {
