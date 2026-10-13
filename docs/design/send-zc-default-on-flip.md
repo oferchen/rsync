@@ -3,17 +3,21 @@
 Date: 2026-06-01
 Scope: implementation plan for promoting `iouring-send-zc` from opt-in to
 the default Cargo feature set, contingent on SZC.f promote decision.
-Status: **executed 2026-10-13** for the daemon-sender write side.
+Status: **executed 2026-10-13** for the daemon-sender write side; the
+runtime default was then turned back off (see below).
 
 > **Update 2026-10-13.** The project owner decided default-on directly,
 > without waiting for the SZC.c numbers. What shipped differs from the plan
 > below in three places:
 >
-> - `Auto` on a kernel without the opcode keeps the plain socket write path
->   (`TcpStream` in the daemon), not io_uring `IORING_OP_SEND`, so pre-6.0
->   kernels run exactly the pre-flip code.
-> - There is no `OC_RSYNC_NO_SEND_ZC` variable; `--no-zero-copy` is the
->   runtime off switch.
+> - The feature is compiled in by default, but the runtime default is off.
+>   A benchmark measured runtime default-on at +44% wall time on a 2 GiB
+>   daemon pull, so `Auto` keeps the plain socket write path (`TcpStream` in
+>   the daemon) on every kernel and only an explicit `--zero-copy` dispatches
+>   SEND_ZC. An oc client forwards `--zero-copy` / `--no-zero-copy` to an oc
+>   daemon; an upstream peer never sees them.
+> - There is no `OC_RSYNC_NO_SEND_ZC` variable; `--zero-copy` is the
+>   runtime on switch and `--no-zero-copy` a hard off.
 > - `fast_io::send_zc_stats()` counts SEND_ZC sends, bytes and fallbacks,
 >   and `--io-uring-status` prints the opcode probe and the counters.
 >

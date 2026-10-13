@@ -1230,29 +1230,15 @@ mod module_access_tests {
         );
     }
 
-    // SEND_ZC is on by default: the daemon-sender's socket writer under the
-    // policy every client arrives with (`Auto`) must put the payload through
-    // `IORING_OP_SEND_ZC` wherever the kernel can run it, and keep the plain
-    // `TcpStream` path - with no SEND_ZC counted - wherever it cannot. The
-    // process-wide counters are what tell the two apart; the bytes match
-    // either way. Gated on the (default-on) feature that makes `Auto` permit it.
-    #[cfg(all(unix, feature = "daemon-zero-copy"))]
-    #[test]
-    fn daemon_socket_writer_dispatches_send_zc_by_default() {
+    /// Writes 1 MiB through `daemon_socket_writer` under `policy` over TCP
+    /// loopback, asserts the peer got the exact bytes, and returns the
+    /// SEND_ZC counters before and after.
+    #[cfg(unix)]
+    fn daemon_writer_loopback(
+        policy: fast_io::ZeroCopyPolicy,
+    ) -> (fast_io::SendZcStats, fast_io::SendZcStats) {
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
-
-        let io_uring = fast_io::io_uring::is_io_uring_available();
-        let opcode = fast_io::io_uring::send_zc_supported();
-        let runnable = io_uring && opcode;
-        eprintln!(
-            "[send_zc env] daemon_socket_writer_dispatches_send_zc_by_default: {}",
-            match (io_uring, opcode) {
-                (false, _) => "io_uring unavailable - SEND_ZC not exercised",
-                (true, false) => "SEND_ZC opcode unsupported (kernel < 6.0) - SEND_ZC not exercised",
-                (true, true) => "ok - exercising IORING_OP_SEND_ZC",
-            }
-        );
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
@@ -1262,8 +1248,7 @@ mod module_access_tests {
         let before = fast_io::send_zc_stats();
         let sender = std::thread::spawn(move || {
             let write_stream = TcpStream::connect(addr).expect("connect");
-            let mut writer =
-                daemon_socket_writer(write_stream, fast_io::ZeroCopyPolicy::default());
+            let mut writer = daemon_socket_writer(write_stream, policy);
             writer.write_all(&payload_owned).expect("write payload");
             writer.flush().expect("flush");
         });
@@ -1274,10 +1259,54 @@ mod module_access_tests {
         let after = fast_io::send_zc_stats();
 
         assert_eq!(received, payload, "transcript must equal the payload");
+        (before, after)
+    }
+
+    /// Prints whether this host can run SEND_ZC and returns `true` if so.
+    #[cfg(unix)]
+    fn send_zc_runnable(test: &str) -> bool {
+        let io_uring = fast_io::io_uring::is_io_uring_available();
+        let opcode = fast_io::io_uring::send_zc_supported();
+        eprintln!(
+            "[send_zc env] {test}: {}",
+            match (io_uring, opcode) {
+                (false, _) => "io_uring unavailable - SEND_ZC not exercised",
+                (true, false) => "SEND_ZC opcode unsupported (kernel < 6.0) - SEND_ZC not exercised",
+                (true, true) => "ok - SEND_ZC can run",
+            }
+        );
+        io_uring && opcode
+    }
+
+    // SEND_ZC is compiled in by default but runtime opt-in: default-on measured
+    // +44% wall time on a 2 GiB daemon pull. Under the policy a client arrives
+    // with when it sends no `--zero-copy` (`Auto`), the daemon-sender's writer
+    // must stay on the plain `TcpStream` path even where the kernel could run
+    // SEND_ZC, and leave every counter untouched.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_socket_writer_default_never_dispatches_send_zc() {
+        send_zc_runnable("daemon_socket_writer_default_never_dispatches_send_zc");
+        let (before, after) = daemon_writer_loopback(fast_io::ZeroCopyPolicy::default());
+        assert_eq!(
+            after, before,
+            "the default daemon writer must not touch SEND_ZC: {before:?} -> {after:?}"
+        );
+    }
+
+    // A client `--zero-copy` (forwarded to an oc daemon as `--zero-copy`) puts
+    // the daemon-sender's payload through `IORING_OP_SEND_ZC` wherever the
+    // kernel can run it. Where it cannot, the bytes still match and no SEND_ZC
+    // send is counted. Gated on the (default-on) feature that builds SEND_ZC.
+    #[cfg(all(unix, feature = "daemon-zero-copy"))]
+    #[test]
+    fn daemon_socket_writer_dispatches_send_zc_on_request() {
+        let runnable = send_zc_runnable("daemon_socket_writer_dispatches_send_zc_on_request");
+        let (before, after) = daemon_writer_loopback(fast_io::ZeroCopyPolicy::Enabled);
         if runnable {
             assert!(
                 after.sends > before.sends && after.bytes > before.bytes,
-                "the default daemon writer did not use SEND_ZC: {before:?} -> {after:?}"
+                "--zero-copy did not reach SEND_ZC: {before:?} -> {after:?}"
             );
         } else {
             assert_eq!(

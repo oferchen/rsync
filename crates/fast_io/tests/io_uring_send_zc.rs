@@ -2,7 +2,8 @@
 //!
 //! Sends 1 MiB of pseudo-random bytes over a TCP loopback pair and asserts
 //! that the receive end observes the exact same bytes, and drives the
-//! default `Auto` socket writer the daemon uses. The tests run only on Linux
+//! daemon's socket writer under the default `Auto` policy (never SEND_ZC)
+//! and under an explicit `--zero-copy`. The tests run only on Linux
 //! with both the `io_uring` and `iouring-send-zc` cargo features enabled and
 //! state on stderr why they skip when the running kernel does not advertise
 //! `IORING_OP_SEND_ZC` (kernel < 6.0, seccomp-restricted environments,
@@ -193,21 +194,15 @@ fn zero_copy_sender_reports_raw_fd() {
     assert!(sender.slot_bytes() >= 4 * 1024);
 }
 
-/// The default build's daemon-sender path: `socket_writer_from_fd_zero_copy`
-/// under the default `Auto` policy over a real TCP loopback pair.
-///
-/// Where SEND_ZC can run, the writer must engage it, the peer must receive the
-/// exact bytes, and the process counters must show the payload went through
-/// `IORING_OP_SEND_ZC` - a writer that silently fell back to plain sends would
-/// pass a byte comparison alone. Where it cannot run, the factory must keep the
-/// plain writer, still deliver the exact bytes, and count one fallback.
-#[test]
-fn default_auto_writer_sends_through_send_zc_over_tcp_loopback() {
+/// Drives `socket_writer_from_fd_zero_copy` under `policy` over a real TCP
+/// loopback pair with a 2 MiB payload. Asserts the peer received the exact
+/// bytes and returns whether the writer claimed SEND_ZC plus the counter
+/// snapshots taken around the write.
+fn loopback_write(
+    policy: fast_io::ZeroCopyPolicy,
+) -> (bool, fast_io::SendZcStats, fast_io::SendZcStats, usize) {
     use std::io::Write;
     use std::net::{TcpListener, TcpStream};
-
-    const TEST: &str = "default_auto_writer_sends_through_send_zc_over_tcp_loopback";
-    let runnable = send_zc_runnable(TEST);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
     let addr = listener.local_addr().expect("loopback addr");
@@ -224,12 +219,9 @@ fn default_auto_writer_sends_through_send_zc_over_tcp_loopback() {
 
     let sender = TcpStream::connect(addr).expect("connect");
     let before = fast_io::send_zc_stats();
-    let mut writer = fast_io::socket_writer_from_fd_zero_copy(
-        sender.as_raw_fd(),
-        64 * 1024,
-        fast_io::ZeroCopyPolicy::Auto,
-    )
-    .expect("factory never errors");
+    let mut writer =
+        fast_io::socket_writer_from_fd_zero_copy(sender.as_raw_fd(), 64 * 1024, policy)
+            .expect("factory never errors");
     let engaged = matches!(
         writer,
         fast_io::IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active()
@@ -245,18 +237,48 @@ fn default_auto_writer_sends_through_send_zc_over_tcp_loopback() {
         received, payload,
         "loopback transcript must equal the payload"
     );
+    (engaged, before, after, expected_len)
+}
+
+/// The default daemon-sender path: no `--zero-copy`, so the `Auto` policy.
+///
+/// SEND_ZC is compiled in but runtime opt-in, because default-on measured
+/// +44% wall time on a 2 GiB daemon pull. Even on a kernel that advertises
+/// the opcode the default writer must stay on plain sends: no SEND_ZC
+/// completion and no fallback (none was requested) may be counted.
+#[test]
+fn default_auto_writer_never_sends_through_send_zc() {
+    const TEST: &str = "default_auto_writer_never_sends_through_send_zc";
+    send_zc_runnable(TEST);
+    let (engaged, before, after, _) = loopback_write(fast_io::ZeroCopyPolicy::Auto);
+    assert!(!engaged, "the default Auto policy must not engage SEND_ZC");
+    assert_eq!(
+        after, before,
+        "the default path must leave every SEND_ZC counter untouched"
+    );
+}
+
+/// An explicit `--zero-copy` (`Enabled`) over a real TCP loopback pair.
+///
+/// Where SEND_ZC can run, the writer must engage it and the process counters
+/// must show the payload went through `IORING_OP_SEND_ZC` - a writer that
+/// silently fell back to plain sends would pass a byte comparison alone.
+/// Where it cannot (no io_uring, pre-6.0 kernel), the bytes must still arrive
+/// and exactly one fallback must be counted.
+#[test]
+fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
+    const TEST: &str = "explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback";
+    let runnable = send_zc_runnable(TEST);
+    let (engaged, before, after, len) = loopback_write(fast_io::ZeroCopyPolicy::Enabled);
 
     if runnable {
-        assert!(
-            engaged,
-            "the default Auto policy must engage SEND_ZC on this kernel"
-        );
+        assert!(engaged, "--zero-copy must engage SEND_ZC on this kernel");
         assert!(
             after.sends > before.sends,
             "no IORING_OP_SEND_ZC completion was counted: {before:?} -> {after:?}"
         );
         assert!(
-            after.bytes - before.bytes >= payload.len() as u64 / 2,
+            after.bytes - before.bytes >= len as u64 / 2,
             "most of the payload must travel through SEND_ZC: {before:?} -> {after:?}"
         );
     } else {
@@ -268,7 +290,7 @@ fn default_auto_writer_sends_through_send_zc_over_tcp_loopback() {
         assert_eq!(
             after.fallbacks - before.fallbacks,
             1,
-            "the permitted-but-unavailable SEND_ZC must be counted as one fallback"
+            "the requested-but-unavailable SEND_ZC must be counted as one fallback"
         );
     }
 }

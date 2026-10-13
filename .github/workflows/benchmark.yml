@@ -248,7 +248,8 @@ jobs:
           # fast_io features, so the cargo invocation above is the only place
           # this is knowable. Change it in step with the build, not
           # independently.
-          OC_RSYNC_SEND_ZC_DISPATCH: enabled
+          OC_RSYNC_SEND_ZC_DISPATCH: >-
+            compiled in, runtime opt-in (dispatched only under --zero-copy)
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results.json

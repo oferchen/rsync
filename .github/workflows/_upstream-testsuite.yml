@@ -396,7 +396,8 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" target/interop 2>/dev/null || true
           exit "$rc"
 
-      # SEND_ZC is on by default; its tests self-classify the environment
+      # SEND_ZC is compiled in by default (runtime opt-in via --zero-copy);
+      # its tests self-classify the environment
       # (io_uring unavailable / opcode unsupported / memlock-limited / ok).
       # Root lifts RLIMIT_MEMLOCK and any root-only io_uring sysctl, so this
       # leg proves the root path asserts rather than skips. One transport

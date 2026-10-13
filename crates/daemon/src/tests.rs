@@ -441,7 +441,7 @@ include!("tests/chunks/daemon_checksum_push.rs");
 include!("tests/chunks/daemon_compress_push.rs");
 // Daemon compress pull goodbye-drain regression (UTS-v3 Cluster A)
 include!("tests/chunks/daemon_compress_pull_drains_peer_goodbye.rs");
-// Default (SEND_ZC-capable) daemon pull stays byte-identical
+// Default daemon pull with SEND_ZC compiled in stays byte-identical
 include!("tests/chunks/daemon_pull_default_send_zc_byte_identical.rs");
 // Daemon delete push end-to-end test
 include!("tests/chunks/daemon_delete_push.rs");

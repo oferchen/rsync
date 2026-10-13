@@ -81,11 +81,11 @@ fn should_arm_delta_drain(_client_args: &[String]) -> bool {
 /// kept alive alongside an io_uring writer (the factory borrows the fd but does
 /// not take ownership), so the fd stays valid for the transfer's lifetime.
 ///
-/// `Disabled` (`--no-zero-copy`) never reaches the factory. `Auto` - the
-/// default every client arrives with, since the oc-invented `--zero-copy` flag
-/// is deliberately never forwarded to a peer argv - reaches it in builds with
-/// the `iouring-send-zc` cargo feature, which is on by default. On non-Unix
-/// there is no raw-fd path at all.
+/// Only `Enabled` - an oc client's forwarded `--zero-copy` - reaches the
+/// factory. `Disabled` (`--no-zero-copy`) and the default `Auto` keep the
+/// `TcpStream` writer: SEND_ZC is compiled in by default but runtime opt-in,
+/// since default-on measured +44% wall time on a 2 GiB daemon pull. On
+/// non-Unix there is no raw-fd path at all.
 #[cfg(unix)]
 fn daemon_socket_writer(
     write_stream: TcpStream,
@@ -147,11 +147,10 @@ impl Write for ZeroCopyTcpWriter {
 
 /// `zero_copy_policy` opts the daemon-sender's socket write side into the
 /// io_uring `IORING_OP_SEND_ZC` transport when the write side is a plaintext
-/// TCP socket and [`daemon_socket_writer`] finds SEND_ZC usable (the default
-/// `Auto` policy on a Linux 6.0+ kernel, or `--zero-copy`). The zero-copy
-/// writer substitutes the socket write of the same framed buffer, so the wire
-/// bytes are identical; only the syscall path changes. `Disabled` - and every
-/// stdio transport, and any kernel or build without SEND_ZC - keeps the
+/// TCP socket and the client asked for `--zero-copy`. The zero-copy writer
+/// substitutes the socket write of the same framed buffer, so the wire bytes
+/// are identical; only the syscall path changes. `Auto` and `Disabled` - and
+/// every stdio transport, and any kernel or build without SEND_ZC - keep the
 /// current `TcpStream` writer unchanged.
 ///
 /// Returns the transfer streams on success, or sends an error and returns `None`.

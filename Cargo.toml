@@ -86,8 +86,9 @@ parallel = ["cli/parallel", "checksums/parallel"]
 io_uring = ["transfer/io_uring", "fast_io/io_uring"]
 
 # SEND_ZC dispatch for io_uring sockets (Linux 6.0+) - IORING_OP_SEND_ZC.
-# Default on. Requirements: Linux kernel 6.0+ (runtime probe; older kernels
-# keep the plain socket write path). See SZP-3 / send-zc-5-15-lts.yml.
+# Compiled in by default; dispatched only under an explicit `--zero-copy`.
+# Requirements: Linux kernel 6.0+ (runtime probe; older kernels keep the
+# plain socket write path). See SZP-3 / send-zc-5-15-lts.yml.
 # Forwards to fast_io's iouring-send-zc feature, which implicitly enables
 # io_uring as well.
 iouring-send-zc = ["fast_io/iouring-send-zc"]

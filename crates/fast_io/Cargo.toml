@@ -163,13 +163,12 @@ macos-gcd = ["dep:block2"]
 adaptive-basis-dispatch = []
 
 # iouring-send-zc: Linux-only dispatch for IORING_OP_SEND_ZC on the
-# socket-send path. Requires the `io_uring` feature. Default ON (decided
-# 2026-10-13, see docs/design/send-zc-default-on-flip.md). The feature is the
-# policy gate for the DEFAULT `ZeroCopyPolicy::Auto`: with it on, `Auto`
-# permits SEND_ZC when the running kernel advertises the opcode (Linux 6.0+)
-# and the dispatch threshold drops from 16 KiB to 4 KiB; on an older kernel
-# `Auto` keeps the plain socket write path. `--no-zero-copy` (`Disabled`) is
-# a hard off. An explicit `--zero-copy` (`Enabled`) is honoured either way.
+# socket-send path. Requires the `io_uring` feature. Compiled in by default
+# (decided 2026-10-13, see docs/design/send-zc-default-on-flip.md) but
+# runtime opt-in: only an explicit `--zero-copy` (`ZeroCopyPolicy::Enabled`)
+# dispatches SEND_ZC, subject to the kernel opcode probe (Linux 6.0+). The
+# default `Auto` and `--no-zero-copy` (`Disabled`) keep the plain socket write
+# path. With the feature on, the dispatch threshold drops from 16 KiB to 4 KiB.
 # It also exposes `ZeroCopySender`, the registered-buffer-pool wrapper that
 # lets the kernel DMA pages directly without a userspace copy. Build without
 # it via `default-features = false`. See docs/design/iouring-send-zc.md for

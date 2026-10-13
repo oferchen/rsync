@@ -1084,41 +1084,31 @@ fn zero_copy_disabled_yields_std_writer() {
     close_fd(fd_b);
 }
 
-// `Auto` (the default policy) reaches the io_uring writer only when SEND_ZC can
-// actually run: the `iouring-send-zc` feature is compiled in (default on),
-// io_uring works, and the kernel advertises the opcode. Anywhere else it keeps
-// the plain `Std` writer - the pre-SEND_ZC path - and counts a fallback when
-// the policy had permitted SEND_ZC.
-//
-// A socketpair is AF_UNIX, where SEND_ZC's notification path is not wired, so
-// this asserts only which writer the factory picked - the loopback-TCP tests
-// cover the opcode itself.
+// SEND_ZC is compiled in by default but runtime opt-in. `Auto` - the policy
+// with no `--zero-copy` flag - must keep the plain `Std` writer on every host,
+// even one whose kernel advertises the opcode, and must not count a fallback
+// (nothing was asked for). Widening `Auto` would reintroduce the measured +44%
+// wall-time regression on default daemon pulls.
 #[test]
-fn zero_copy_auto_engages_only_where_send_zc_can_run() {
+fn zero_copy_auto_never_engages_send_zc() {
     use super::send_zc_test_env::{classify, report};
 
-    let env = report(
-        "zero_copy_auto_engages_only_where_send_zc_can_run",
+    report(
+        "zero_copy_auto_never_engages_send_zc",
         classify(is_io_uring_available(), super::send_zc::is_supported()),
     );
-    let can_run =
-        cfg!(feature = "iouring-send-zc") && env == super::send_zc_test_env::SendZcEnv::Ok;
     let (fd_a, fd_b) = make_socket_pair();
     let before = crate::send_zc_stats();
     let writer =
         socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, crate::ZeroCopyPolicy::Auto).unwrap();
     let after = crate::send_zc_stats();
-    let picked_io_uring =
-        matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active());
-    assert_eq!(
-        picked_io_uring, can_run,
-        "Auto must engage SEND_ZC exactly when the feature, io_uring and the opcode all allow it"
+    assert!(
+        matches!(writer, IoUringOrStdSocketWriter::Std(_)),
+        "Auto must keep the plain fd writer; SEND_ZC needs an explicit --zero-copy"
     );
-    let expected_fallbacks = u64::from(cfg!(feature = "iouring-send-zc") && !can_run);
     assert_eq!(
-        after.fallbacks - before.fallbacks,
-        expected_fallbacks,
-        "a permitted-but-unavailable SEND_ZC must be counted as one fallback"
+        after, before,
+        "Auto requested no SEND_ZC, so no send or fallback may be counted"
     );
     drop(writer);
     close_fd(fd_a);

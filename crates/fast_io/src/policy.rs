@@ -259,20 +259,18 @@ pub type ZeroCopyPolicy = BackendPolicy;
 /// - [`ZeroCopyPolicy::Disabled`] - never. `--no-zero-copy` is a hard off.
 /// - [`ZeroCopyPolicy::Enabled`] - always attempt; an unsupported kernel
 ///   still degrades to plain `IORING_OP_SEND` inside the writer.
-/// - [`ZeroCopyPolicy::Auto`] - attempt in builds carrying the
-///   `iouring-send-zc` cargo feature, which is in the default feature set.
-///   The writer factory still keeps `Auto` on the plain socket write path
-///   when the kernel lacks the opcode, and a build without the feature never
-///   attempts it.
+/// - [`ZeroCopyPolicy::Auto`] - never. SEND_ZC is compiled in by default
+///   (the `iouring-send-zc` cargo feature) but runs only when asked for:
+///   on a 2 GiB daemon pull it cost +44% wall time, so the default path
+///   (`--zero-copy=auto` or no flag) keeps plain socket writes.
 ///
 /// Mirrors the shape of `is_splice_enabled`, which applies the same
 /// policy gate to `splice(2)`.
 #[must_use]
 pub const fn send_zc_policy_permits(policy: ZeroCopyPolicy) -> bool {
     match policy {
-        ZeroCopyPolicy::Disabled => false,
+        ZeroCopyPolicy::Disabled | ZeroCopyPolicy::Auto => false,
         ZeroCopyPolicy::Enabled => true,
-        ZeroCopyPolicy::Auto => cfg!(feature = "iouring-send-zc"),
     }
 }
 
@@ -511,28 +509,18 @@ mod tests {
         assert!(send_zc_policy_permits(ZeroCopyPolicy::Enabled));
     }
 
-    /// `Auto` permits SEND_ZC exactly when the build carries
-    /// `iouring-send-zc`, so dropping the feature restores the plain path.
+    /// SEND_ZC is compiled in by default but is runtime opt-in: the default
+    /// `Auto` policy must never dispatch it, feature or not. Widening the
+    /// `Auto` arm would silently put every default daemon pull on SEND_ZC,
+    /// which measured +44% wall time on a 2 GiB pull.
     #[test]
-    fn send_zc_policy_permits_auto_follows_the_feature_gate() {
-        assert_eq!(
-            send_zc_policy_permits(ZeroCopyPolicy::Auto),
-            cfg!(feature = "iouring-send-zc")
-        );
+    fn send_zc_policy_never_permits_the_default_auto() {
+        assert_eq!(ZeroCopyPolicy::default(), ZeroCopyPolicy::Auto);
+        assert!(!send_zc_policy_permits(ZeroCopyPolicy::default()));
     }
 
-    /// SEND_ZC is on by default: the default `Auto` policy must dispatch it
-    /// whenever the feature is compiled in. Re-narrowing the `Auto` arm would
-    /// silently put the daemon back on plain sends.
-    #[cfg(feature = "iouring-send-zc")]
-    #[test]
-    fn send_zc_policy_permits_auto_in_default_builds() {
-        assert!(send_zc_policy_permits(ZeroCopyPolicy::default()));
-        assert!(!send_zc_policy_permits(ZeroCopyPolicy::Disabled));
-    }
-
-    /// The feature gate above only bites if the feature is actually in the
-    /// default set. Checked against the manifest so it holds whatever
+    /// SEND_ZC stays compiled into default builds so `--zero-copy` works
+    /// without a rebuild. Checked against the manifest so it holds whatever
     /// feature set this test binary was compiled with.
     #[test]
     fn iouring_send_zc_is_a_default_feature() {
