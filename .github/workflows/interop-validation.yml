@@ -1,16 +1,8 @@
 name: Interop Validation
 
+# No push trigger: a commit reaching master already ran this workflow on its
+# pull request, and the nightly schedule covers master itself.
 on:
-  push:
-    branches: [ master, main ]
-    paths:
-      - 'crates/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/ci/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/interop-validation.yml'
   pull_request:
     paths:
       - 'crates/**'

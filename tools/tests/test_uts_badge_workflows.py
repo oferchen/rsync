@@ -23,6 +23,7 @@ WORKFLOWS_DIR = REPO / ".github" / "workflows"
 GATE = WORKFLOWS_DIR / "upstream-testsuite-3.5.1.yml"
 CI_YML = WORKFLOWS_DIR / "ci.yml"
 TESTING_MD = REPO / "docs" / "contributing" / "TESTING.md"
+README_MD = REPO / "README.md"
 TESTSUITE_REUSABLES = ("_upstream-testsuite.yml", "_upstream-testsuite-macos.yml")
 
 # The branch ruleset's required contexts. docs/contributing/TESTING.md lists
@@ -112,11 +113,19 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
 
     def test_triggers(self) -> None:
         # The gate must run on every pull request, unfiltered, or a required
-        # check never arrives; master pushes feed its badge.
+        # check never arrives. It has no push trigger - the pull request already
+        # ran it - so the nightly schedule is what feeds its badge.
         gate = _triggers(_load(GATE))
-        self.assertEqual(set(gate), {"push", "pull_request", "workflow_dispatch"})
+        self.assertEqual(set(gate), {"pull_request", "schedule", "workflow_dispatch"})
         self.assertIsNone(gate["pull_request"])
-        self.assertEqual(gate["push"], {"branches": ["master"]})
+        self.assertTrue(gate["schedule"], "the gate has no nightly cron")
+
+    def test_the_badge_reads_the_scheduled_runs(self) -> None:
+        # A badge filtered on an event the workflow never runs on shows no
+        # status at all, so the badge's event must be one of the gate's.
+        badge = re.search(r"upstream-testsuite-3\.5\.1\.yml\?[^)]*", README_MD.read_text())
+        self.assertIsNotNone(badge, "README carries no 3.5.1 testsuite badge")
+        self.assertIn("event=schedule", badge.group(0))
 
     def test_the_gate_cancels_like_ci(self) -> None:
         # A newer push to a pull request supersedes the older run, but every
