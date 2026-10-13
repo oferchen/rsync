@@ -58,7 +58,7 @@ fn from_i32_returns_none_for_unknown() {
 
 #[test]
 fn from_raw_preserves_unknown_codes() {
-    // upstream: main.c:221 wait_process_with_flush() returns WEXITSTATUS raw.
+    // upstream: main.c:226 wait_process_with_flush() returns WEXITSTATUS raw.
     // A recognized code keeps its named variant; anything else round-trips
     // verbatim through ExitCode::Other so the raw value survives to
     // process::exit and worst-wins comparisons.
@@ -73,7 +73,7 @@ fn from_raw_preserves_unknown_codes() {
 
 #[test]
 fn other_renders_as_unexplained_error() {
-    // upstream: log.c:905 log_exit() - a code with no RERR_* name renders as
+    // upstream: log.c:951-952 log_exit() - a code with no RERR_* name renders as
     // "unexplained error" while keeping its raw value in the "(code N)" suffix.
     assert_eq!(ExitCode::Other(42).description(), "unexplained error");
     assert_eq!(ExitCode::Other(42).as_i32(), 42);
@@ -260,8 +260,8 @@ fn from_io_error_maps_stream_errors() {
 fn from_io_error_maps_tagged_protocol_violation_to_protocol() {
     // WHY: upstream distinguishes RERR_PROTOCOL(2) from RERR_STREAMIO(12) at
     // the call site (errcode.h). A ProtocolViolation-tagged InvalidData error
-    // is oc's carrier for the RERR_PROTOCOL sites (e.g. sender.c:317 phase-2
-    // transfer request, io.c:2070-2103 malformed sum_head); it must map to
+    // is oc's carrier for the RERR_PROTOCOL sites (e.g. sender.c:604-608 phase-2
+    // transfer request, io.c:2233-2275 read_sum_head() malformed sum_head); it must map to
     // ExitCode::Protocol, while a plain InvalidData/UnexpectedEof stays
     // StreamIo. Regressing this collapses exit 2 back into exit 12.
     let err = protocol::protocol_violation("got transfer request in phase 2 [sender]");
@@ -346,7 +346,7 @@ fn exit_code_description_handles_unknown() {
 
 #[test]
 fn all_upstream_exit_codes_present() {
-    // upstream: errcode.h - verify all codes from rsync 3.4.1
+    // upstream: errcode.h - verify all codes from rsync 3.5.1
     assert_eq!(ExitCode::Ok.as_i32(), 0, "Success");
     assert_eq!(ExitCode::Syntax.as_i32(), 1, "Syntax or usage error");
     assert_eq!(ExitCode::Protocol.as_i32(), 2, "Protocol incompatibility");
