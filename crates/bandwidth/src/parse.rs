@@ -5,6 +5,7 @@
 //! suffixes (`K`, `M`, `G`, `T`, `P`, `B`, `iB`), fractional values with
 //! dot or comma separators, leading `+`/`-` signs, and optional `+1`/`-1`
 //! adjustment modifiers. Scientific notation is rejected, matching upstream.
+//! The leading sign and the unconditional comma separator are oc extensions.
 
 use std::num::NonZeroU64;
 
@@ -46,15 +47,16 @@ impl From<SizeArgError> for BandwidthParseError {
 /// whitespace. `Ok(None)` denotes an unlimited transfer rate (users may specify
 /// `0` for this effect). Successful parses return the rounded byte-per-second
 /// limit as [`NonZeroU64`].
-/// upstream: options.c:parse_size_arg() - suffix/multiplier/adjust parsing
+/// upstream: options.c:1169 parse_size_arg() - suffix/multiplier/adjust parsing
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
     if text.as_bytes().iter().all(u8::is_ascii_whitespace) {
         return Err(BandwidthParseError::Invalid);
     }
 
-    // oc's --bwlimit historically accepts a leading '+'/'-'; a negative rate is
-    // rejected once the magnitude is known. Everything after the sign is a plain
+    // Deviation from upstream: a leading '+'/'-' is accepted here (a negative
+    // rate is rejected once the magnitude is known); upstream's parse_size_arg()
+    // fails on any sign before the digits. Everything after the sign is a plain
     // size argument with a default suffix of 'K', matching upstream's
     // `parse_size_arg(bwlimit_arg, 'K', ...)`.
     let mut start = 0usize;
@@ -91,7 +93,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 
     // upstream: options.c:1831 `bwlimit = (size + 512) / 1024` rounds the parsed
     // byte rate to whole KiB, and every pacing calculation then uses that KiB
-    // value (io.c:2153,2158,2171). Quantize identically so a byte or decimal
+    // value (io.c:2338,2343,2356). Quantize identically so a byte or decimal
     // suffix paces at the same rate as upstream rather than at its exact parsed
     // byte count: `1500B` -> 1 KiB (1024 B/s), `1MB` -> 977 KiB (1000448 B/s). A
     // default `K` suffix is already a whole-KiB multiple, so it is unaffected.
@@ -116,7 +118,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 /// configuration. Surrounding whitespace is rejected to match upstream rsync's
 /// strict parsing. Upstream has no `:BURST` component, so a colon is rejected as
 /// invalid size syntax.
-/// upstream: options.c:1720 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+/// upstream: options.c:1827 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());

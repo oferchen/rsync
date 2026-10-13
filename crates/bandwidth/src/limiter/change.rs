@@ -1,8 +1,8 @@
 //! Limiter configuration change tracking and daemon-module override logic.
 //!
 //! [`apply_effective_limit`] merges daemon-imposed caps with an existing
-//! limiter, mirroring upstream rsync's precedence rules in
-//! `options.c:server_options()`. The returned [`LimiterChange`] describes
+//! limiter, mirroring upstream rsync's precedence rule in
+//! `options.c:parse_arguments()` (options.c:2543). The returned [`LimiterChange`] describes
 //! the transition so callers can log or skip follow-up work.
 
 use super::core::BandwidthLimiter;
@@ -105,8 +105,13 @@ impl FromIterator<LimiterChange> for LimiterChange {
 /// byte-per-second rate wins. If `limit` is `None` and `limit_specified` is
 /// `true`, throttling is disabled entirely.
 ///
+/// Deviation from upstream: upstream's `daemon_bwlimit` is the daemon-wide
+/// `--daemon --bwlimit` value and `0` there means "no cap", so it never
+/// lifts a client limit; this helper disables throttling for an explicit
+/// unlimited override.
+///
 /// Returns a [`LimiterChange`] describing the transition that occurred.
-/// upstream: options.c:2401 - daemon_bwlimit override: strictest rate wins
+/// upstream: options.c:2543-2544 - `daemon_bwlimit` override: strictest rate wins
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
@@ -362,7 +367,7 @@ mod tests {
 
     #[test]
     fn apply_effective_limit_updates_existing_limiter_limit_lower() {
-        // upstream: options.c:2401 - min(client, daemon) wins.
+        // upstream: options.c:2543 - min(client, daemon) wins.
         let mut limiter = Some(BandwidthLimiter::new(nz(2000)));
         let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true);
         assert_eq!(result, LimiterChange::Updated);

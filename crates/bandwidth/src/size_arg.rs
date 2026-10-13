@@ -35,7 +35,7 @@ pub struct ParsedSize {
 }
 
 /// Checked integer exponentiation used to build the suffix multiplier.
-/// upstream: options.c:parse_size_arg() - `while (reps--) size *= mult`
+/// upstream: options.c:1211 parse_size_arg() - `while (reps--)` multiplies `size` by `mult`
 pub fn pow_u128(base: u32, exponent: u32) -> Result<u128, SizeArgError> {
     let mut result = 1u128;
     let mut factor = u128::from(base);
@@ -69,6 +69,13 @@ pub fn pow_u128(base: u32, exponent: u32) -> Result<u128, SizeArgError> {
 ///
 /// Returns [`SizeArgError::Invalid`] for malformed input or an unrecognised
 /// suffix, and [`SizeArgError::TooLarge`] on overflow or a negative result.
+///
+/// Deviation from upstream: `,` is always accepted as the separator, whereas
+/// upstream accepts `.` plus the `LC_NUMERIC` decimal point; and a mantissa
+/// with no digits (`K`, `.`) is rejected, whereas upstream's `strtod()` reads
+/// it as zero. Range limits (`min_value`/`max_value`) are left to callers.
+///
+/// upstream: options.c:1169 parse_size_arg()
 pub fn parse_size_arg(text: &str, def_suf: u8) -> Result<ParsedSize, SizeArgError> {
     // upstream: for (arg = size_arg; isDigit(arg); arg++); one '.'/',' fraction.
     let bytes = text.as_bytes();
@@ -166,7 +173,7 @@ pub fn parse_size_arg(text: &str, def_suf: u8) -> Result<ParsedSize, SizeArgErro
     let product = numerator.checked_mul(scale).ok_or(SizeArgError::TooLarge)?;
     let value = product / denominator;
 
-    // upstream: size += atoi(arg); if (size < 0) reports "too large".
+    // upstream: `size++` / `size--`; a negative result reports "too large".
     let bytes = match adjust {
         1 => value.checked_add(1).ok_or(SizeArgError::TooLarge)?,
         -1 => value.checked_sub(1).ok_or(SizeArgError::TooLarge)?,
