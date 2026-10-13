@@ -5,15 +5,14 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
-//! Thin command-line frontend that orchestrates argument parsing and execution
-//! for the single `oc-rsync` binary.
+//! Command-line frontend that orchestrates argument parsing and execution for
+//! the single `oc-rsync` binary.
 //!
 //! This crate exposes [`run`] as the primary entry point so all binaries can
 //! share the same parsing and dispatch logic. The actual implementation lives in
 //! the internal `frontend` module, which keeps the majority of the code
 //! organised away from the crate root. Only the surface API is re-exported here
-//! to keep the entry point concise while satisfying the repository's file-size
-//! hygiene policy.
+//! to keep the entry point concise.
 
 mod frontend;
 mod platform;
