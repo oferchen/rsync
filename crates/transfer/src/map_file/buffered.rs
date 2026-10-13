@@ -118,7 +118,7 @@ impl BufferedMap {
     /// Loads a new window, reusing overlapping bytes from the current window
     /// when the slide is forward (sequential access pattern).
     ///
-    /// Mirrors upstream rsync's `map_ptr()` (fileio.c:310-321) which uses
+    /// Mirrors upstream rsync's `map_ptr()` (fileio.c:370-376) which uses
     /// `memmove()` to retain bytes that overlap between the old and new window
     /// positions, avoiding redundant disk reads.
     fn load_window(&mut self, offset: u64, min_len: usize) -> io::Result<()> {
@@ -136,13 +136,13 @@ impl BufferedMap {
             ));
         }
 
-        // upstream: fileio.c:310-321 - reuse overlapping bytes when sliding
+        // upstream: fileio.c:370-376 - reuse overlapping bytes when sliding
         // forward. The new window starts at `aligned_start`; if the old window
         // overlaps the beginning of the new window AND the new window extends
         // past the old window's end, shift the overlap via copy_within and
         // only read the new portion from disk.
         //
-        // upstream: fileio.c:278 `realloc_array` only grows the backing buffer;
+        // upstream: fileio.c:365-368 `realloc_array` only grows the backing buffer;
         // it never shrinks. Mirror that invariant: when a smaller window is
         // requested (e.g., the new window is near EOF after a full-size load),
         // `Vec::resize` would otherwise truncate the bytes the overlap branch
@@ -391,7 +391,7 @@ mod tests {
     /// `window_len` must clamp to the file's remaining bytes (48128), not
     /// inherit the requested `max_window` (262144). A subsequent full-file
     /// `map_ptr` must return `Ok` with all 48128 bytes - never the
-    /// "exceeds buffer length" Err that PR #5566's guards surface when state
+    /// "exceeds buffer length" Err that the in-window guards surface when state
     /// is inconsistent.
     #[test]
     fn load_window_clamps_window_len_to_remaining_file_bytes() {
@@ -432,7 +432,7 @@ mod tests {
         );
 
         // A repeat full-file slice must hit the cached window and return
-        // the same bytes - the path PR #5566's guard would reject if
+        // the same bytes - the path the in-window guard would reject if
         // `window_len` lied about buffer extent.
         let again = MapStrategy::map_ptr(&mut map, 0, FILE_SIZE).expect("cached map_ptr must Ok");
         assert_eq!(again, &payload[..]);
