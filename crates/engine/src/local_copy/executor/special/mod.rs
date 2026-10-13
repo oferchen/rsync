@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::existence_gate::{DestinationEntry, ExistenceSkip};
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyError, LocalCopyMetadata,
     LocalCopyRecord, overrides::create_hard_link, remove_existing_destination,
@@ -23,6 +24,42 @@ pub(crate) use symlink::{copy_symlink, symlink_target_is_safe};
 // operator-path spelling (`fast_io::operator_symlink_confined`) instead.
 #[cfg(not(unix))]
 pub(crate) use symlink::create_symlink;
+
+/// Applies the `--existing` / `--ignore-existing` gate to a symlink, FIFO,
+/// socket or device node and records the skip, returning `true` when the entry
+/// is skipped.
+///
+/// upstream: generator.c:1757-1806 recv_generator() - both gates read the
+/// destination `lstat` taken before any obstacle removal, so an
+/// `--ignore-existing` skip leaves a destination of any type standing and an
+/// `--existing` skip never follows a removal.
+fn skip_by_existence_gate(
+    context: &mut CopyContext,
+    existing: Option<&fs::Metadata>,
+    record_path: Option<&Path>,
+    snapshot: impl FnOnce() -> LocalCopyMetadata,
+) -> bool {
+    let Some(skip) = context.existence_skip(false, DestinationEntry::from_optional(existing))
+    else {
+        return false;
+    };
+    if let Some(path) = record_path {
+        let snapshot = snapshot();
+        let action = match skip {
+            ExistenceSkip::NotCreatingNew => LocalCopyAction::SkippedMissingDestination,
+            ExistenceSkip::Exists => LocalCopyAction::SkippedExisting,
+        };
+        context.record(LocalCopyRecord::new(
+            path.to_path_buf(),
+            action,
+            0,
+            Some(snapshot.len()),
+            Duration::default(),
+            Some(snapshot),
+        ));
+    }
+    true
+}
 
 /// Attempts a `--link-dest` basis hard link, reporting whether it succeeded.
 ///

@@ -198,6 +198,21 @@ impl<'a> CopyContext<'a> {
         self.options.existing_only_enabled()
     }
 
+    /// Applies the shared `--existing` / `--ignore-existing` gate to an entry
+    /// whose source is a directory iff `source_is_dir`.
+    pub(super) const fn existence_skip(
+        &self,
+        source_is_dir: bool,
+        destination: crate::existence_gate::DestinationEntry,
+    ) -> Option<crate::existence_gate::ExistenceSkip> {
+        crate::existence_gate::existence_skip(
+            self.existing_only_enabled(),
+            self.ignore_existing_enabled(),
+            source_is_dir,
+            destination,
+        )
+    }
+
     pub(super) const fn ignore_missing_args_enabled(&self) -> bool {
         self.options.ignore_missing_args_enabled()
     }

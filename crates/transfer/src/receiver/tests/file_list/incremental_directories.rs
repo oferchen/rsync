@@ -217,6 +217,7 @@ mod create_directory_incremental_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,
@@ -256,6 +257,7 @@ mod create_directory_incremental_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,
@@ -297,6 +299,7 @@ mod create_directory_incremental_tests {
                 .create_directory_incremental(
                     dest,
                     &entry,
+                    &mut crate::writer::ServerWriter::new_plain(Vec::new()),
                     &opts,
                     &mut failed,
                     None,
@@ -337,6 +340,7 @@ mod create_directory_incremental_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,
@@ -379,8 +383,17 @@ mod create_directory_incremental_tests {
 
         let mut create = |name: &OsStr| {
             let entry = FileEntry::new_directory(name.into(), 0o755);
-            ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None, None, None)
-                .expect("create_directory_incremental succeeds")
+            ctx.create_directory_incremental(
+                dest,
+                &entry,
+                &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+                &opts,
+                &mut failed,
+                None,
+                None,
+                None,
+            )
+            .expect("create_directory_incremental succeeds")
         };
 
         assert_eq!(
@@ -438,6 +451,7 @@ mod create_directory_incremental_tests {
             .create_directory_incremental(
                 dest,
                 &entry,
+                &mut crate::writer::ServerWriter::new_plain(Vec::new()),
                 &opts,
                 &mut failed,
                 None,
@@ -486,6 +500,7 @@ mod create_directory_incremental_tests {
             .create_directory_incremental(
                 dest,
                 &entry,
+                &mut crate::writer::ServerWriter::new_plain(Vec::new()),
                 &opts,
                 &mut failed,
                 None,
@@ -521,6 +536,7 @@ mod create_directory_incremental_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,
@@ -575,6 +591,7 @@ mod create_directory_incremental_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,
@@ -634,6 +651,7 @@ mod create_directory_incremental_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,
@@ -692,6 +710,7 @@ mod create_directory_incremental_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,
@@ -791,6 +810,7 @@ mod incremental_mode_tests {
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
             &opts,
             &mut failed,
             None,

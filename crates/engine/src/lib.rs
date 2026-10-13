@@ -134,6 +134,7 @@ pub mod concurrent_delta;
 pub mod delete;
 pub mod delta;
 pub mod error;
+pub mod existence_gate;
 pub mod local_copy;
 pub mod operand;
 pub mod throughput;

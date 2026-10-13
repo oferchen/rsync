@@ -186,17 +186,19 @@ pub(crate) fn copy_symlink(
 
     let destination_previously_existed = destination_metadata.is_some();
 
+    if super::skip_by_existence_gate(
+        context,
+        destination_metadata.as_ref(),
+        record_path.as_deref(),
+        || LocalCopyMetadata::from_metadata(metadata, Some(target.clone())),
+    ) {
+        return Ok(());
+    }
+
     if destination_metadata
         .as_ref()
         .is_some_and(|existing| existing.file_type().is_dir())
     {
-        // upstream: generator.c:1780-1804 - the `ignore_existing` skip is tested
-        // at `statret == 0` and `goto cleanup`s BEFORE either make-way removal
-        // (generator.c:2149 / 2477-2483), so `--ignore-existing` leaves the
-        // directory standing rather than clearing it.
-        if context.ignore_existing_enabled() {
-            return Ok(());
-        }
         // upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way`
         // forces `skip_atomic`, so a directory obstacle takes the
         // `delete_item()` arm whether or not --backup is set, and `del_opts`
@@ -218,26 +220,6 @@ pub(crate) fn copy_symlink(
             return Ok(());
         }
         destination_metadata = None;
-    }
-
-    // upstream: generator.c:1758-1766 - `ignore_non_existing` (`--existing`)
-    // is tested at `statret == -1 && stat_errno == ENOENT`, so it asks whether
-    // the destination existed BEFORE the make-way removal. Reading the
-    // post-removal `None` instead would skip the very entry the removal just
-    // cleared the way for, leaving neither the directory nor the file.
-    if context.existing_only_enabled() && !destination_previously_existed {
-        if let Some(relative_path) = record_path.as_ref() {
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
-            context.record(LocalCopyRecord::new(
-                relative_path.clone(),
-                LocalCopyAction::SkippedMissingDestination,
-                0,
-                Some(metadata_snapshot.len()),
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
-        }
-        return Ok(());
     }
 
     // When copying a directory without a trailing slash, the `relative` path
