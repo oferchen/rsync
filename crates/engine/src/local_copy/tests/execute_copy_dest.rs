@@ -759,7 +759,7 @@ fn copy_dest_copies_zero_length_file() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// upstream: generator.c:1033-1039 - a `--copy-dest` file that matches the
+// upstream: generator.c:1161-1178 - a `--copy-dest` file that matches the
 // source is reconstructed locally and itemized with ITEM_LOCAL_CHANGE (`c`),
 // NOT ITEM_TRANSFER / ITEM_IS_NEW (`>f+++++++++`). The record must therefore be
 // `ReferenceCopied`, not created, with no attribute drift against the basis.
@@ -818,7 +818,7 @@ fn copy_dest_identical_file_records_reference_copy_with_blank_attrs() {
     );
 }
 
-// upstream: generator.c:1469-1483 / 1117-1148 - a directory and symlink present
+// upstream: generator.c:1205-1316 try_dests_non() - a directory and symlink present
 // in a `--copy-dest` basis but absent from the destination itemize as local
 // changes (`cd`/`cL` + blank) against the basis, never `cd+++++++++`.
 #[cfg(unix)]

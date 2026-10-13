@@ -248,7 +248,7 @@ fn delete_without_delete_excluded_preserves_filtered_tmp_files() {
 /// the same files, expecting `--delete-excluded` to sweep every one of them
 /// because the merge-expanded `:C .cvsignore` rules AND the built-in `-C`
 /// CVS-exclude patterns acquire the implicit `FILTRULE_SENDER_SIDE` flag
-/// upstream's `exclude.c:1324-1332 parse_rule_tok` ORs onto every per-token
+/// upstream's `exclude.c:1478-1480 parse_rule_tok` ORs onto every per-token
 /// rule under `--delete-excluded`.
 ///
 /// Without the per-token flip, the receiver's delete-pass sees the

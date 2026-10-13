@@ -1,5 +1,5 @@
 // Isolated destination delete-filter chain used by the local-copy delete DECIDE
-// pass (bug #273).
+// pass.
 //
 // The delete pass loads each destination directory's per-dir merge files
 // (`.rsync-filter` / `dir-merge` / per-dir `:s`) onto a SEPARATE chain from the
@@ -20,10 +20,10 @@
 // an ancestor's guard is held while a descendant's is entered, so the descendant
 // inherits the ancestor's rules.
 //
-// upstream: delete.c:65-115 delete_in_dir pushes the destination per-dir filters
+// upstream: generator.c:285-360 delete_in_dir pushes the destination per-dir filters
 // onto a separate delete_filt chain (change_local_filter_dir pops filters at
 // depth > current, then push_local_filters loads this dir's rules) and never
-// perturbs the sender filter_list; exclude.c:801 push_local_filters keeps
+// perturbs the sender filter_list; exclude.c:858 push_local_filters keeps
 // inherited rules in lp->head an arbitrary number of indices deep.
 
 use crate::local_copy::context::{DirectoryFilterGuard, FILTER_FILE_LOAD_COUNT};

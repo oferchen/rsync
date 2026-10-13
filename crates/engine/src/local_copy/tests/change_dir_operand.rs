@@ -1,6 +1,6 @@
 // A non-`--relative` operand that ends in a DOTDIR marker (`dir/`, `dir/.`,
 // `dir/..`) names a directory upstream must `chdir` into before it stats
-// anything (flist.c:2847-2858, 2914-2921). When that fails it reports
+// anything (flist.c:2850-2861, 2916-2926). When that fails it reports
 // `change_dir "<dir>" failed`, sets IOERR_GENERAL and skips the operand - the
 // `--missing-args` handling never runs, because it only follows a failed
 // `link_stat` of the `.` half.
