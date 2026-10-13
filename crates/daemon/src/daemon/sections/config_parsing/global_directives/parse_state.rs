@@ -19,7 +19,7 @@ struct GlobalParseState {
     reverse_lookup: Option<(bool, ConfigDirectiveOrigin)>,
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     /// Global `log file` path, kept separately from the per-module default it
-    /// also seeds. Upstream's `log file` is `P_LOCAL` (daemon-parm.h:289) but
+    /// also seeds. Upstream's `log file` is `P_LOCAL` (daemon-parm.txt:35) but
     /// `FN_LOCAL_STRING(lp_log_file, log_file)` falls back to the global value
     /// at `module_id < 0`, and `daemon_main` calls `log_init(0)`
     /// (clientserver.c:1789) at STARTUP - so the global value opens a
@@ -27,7 +27,7 @@ struct GlobalParseState {
     /// module default would lose every pre-module diagnostic.
     log_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     /// Daemon-wide `timeout`, kept separately from the per-module default it
-    /// also seeds. `timeout` is `P_LOCAL` (daemon-parm.h), but
+    /// also seeds. `timeout` is `P_LOCAL` (daemon-parm.txt:52), but
     /// `daemon_handshake_timeout(-1)` reads `lp_timeout(-1)`, the GLOBAL value,
     /// at clientserver.c:1441, before any module has been selected, to bound the
     /// pre-module handshake. Recording it only as a module default leaves that
@@ -116,7 +116,7 @@ impl GlobalParseState {
     ///
     /// upstream: loadparm.c:347-348 - `FN_LOCAL_STRING` falls back to
     /// `Vars.l.<param>` when the section's own copy is NULL, and
-    /// clientserver.c:781-783 performs that lookup when a client picks the
+    /// clientserver.c:739 `rsync_module()` performs that lookup when a client picks the
     /// module, i.e. after `lp_load()` has read the whole file. A global
     /// declared below a `[section]` therefore still supplies a string the
     /// section never had, but never replaces one the section copied or set.
