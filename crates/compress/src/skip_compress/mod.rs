@@ -3,8 +3,12 @@
 //! This module mirrors upstream rsync's `--skip-compress` default suffix set,
 //! which lists file extensions that typically don't benefit from compression
 //! during transfer. The per-file gate that consumes this list lives in the
-//! engine (`local_copy::options::should_skip_compress`), matching upstream's
-//! last-suffix comparison in `token.c:init_set_compression()`.
+//! engine (`local_copy::options::should_skip_compress`) and mirrors upstream's
+//! last-suffix comparison in token.c:232 `set_compression()`.
+//!
+//! Deviation from upstream: 3.5.1 compiles that per-file comparison out
+//! (`#if 0`, no codec allows a mid-stream level change), so upstream never
+//! skips compression per file; oc's local-copy gate does.
 
 mod defaults;
 

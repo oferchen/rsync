@@ -571,7 +571,6 @@ fn compression_overhead_for_small_data() {
 
 #[test]
 fn rsync_protocol_36_default_level() {
-    // upstream: compat.c - protocol 36 negotiates zstd with do_compression_level default.
     let data = MEDIUM_DATA;
     let compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
     let decompressed = decompress_to_vec(&compressed).unwrap();

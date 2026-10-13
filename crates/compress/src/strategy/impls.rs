@@ -119,7 +119,7 @@ impl ZstdStrategy {
     }
 
     /// Applies a `--compress-threads=N` request, forwarded to
-    /// `ZSTD_c_nbWorkers`. upstream: `token.c:701`.
+    /// `ZSTD_c_nbWorkers`. upstream: token.c:752 `send_zstd_token()`.
     #[must_use]
     pub const fn with_workers(mut self, workers: Option<std::num::NonZeroU8>) -> Self {
         self.workers = workers;
@@ -158,7 +158,7 @@ impl CompressionStrategy for ZstdStrategy {
 /// LZ4 compression strategy using raw block format for wire compatibility.
 ///
 /// Uses raw LZ4 blocks with rsync's 2-byte wire protocol header, matching
-/// upstream rsync 3.4.1's `token.c` implementation. This differs from the
+/// upstream rsync's `token.c` implementation. This differs from the
 /// frame format (which includes magic bytes and checksums) - raw blocks are
 /// required for interoperability with upstream rsync.
 ///
@@ -166,7 +166,8 @@ impl CompressionStrategy for ZstdStrategy {
 ///
 /// # Upstream Reference
 ///
-/// `token.c:send_deflated_token()` - wire format definition.
+/// upstream: token.c:928 `send_compressed_token()` - LZ4 wire format; the
+/// `DEFLATED_DATA` header layout is shared with `send_deflated_token()`.
 #[cfg(feature = "lz4")]
 #[derive(Clone, Copy, Debug)]
 pub struct Lz4Strategy {

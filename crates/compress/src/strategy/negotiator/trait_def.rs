@@ -12,10 +12,12 @@
 ///
 /// # Upstream reference
 ///
-/// upstream: compat.c:332-363 `parse_negotiate_str()` - both sides converge
-/// on the first entry in the client's list that also appears in the server's
-/// list. Server iterates the remote (client) list; client iterates the local
-/// list.
+/// upstream: compat.c:333-364 `parse_negotiate_str()` - each side walks the
+/// peer's list and keeps the entry ranked highest in its own list.
+///
+/// Deviation from upstream: implementations here use the 3.4.x rule, where the
+/// server stops at the first client entry it supports (`|| am_server`), so both
+/// sides converge on the client's preference. 3.5.1 dropped that clause.
 pub trait CompressionNegotiator: Send + Sync {
     /// Returns the ordered list of supported compression algorithm names.
     ///
@@ -24,12 +26,12 @@ pub trait CompressionNegotiator: Send + Sync {
     ///
     /// # Upstream reference
     ///
-    /// upstream: compat.c:100-112 `valid_compressions_items[]`
+    /// upstream: compat.c:101-112 `valid_compressions_items[]`
     fn supported_algorithms(&self) -> Vec<&'static str>;
 
     /// Selects the best mutual algorithm given the remote peer's advertised list.
     ///
-    /// Uses upstream rsync's asymmetric selection rule:
+    /// Uses the asymmetric selection rule of upstream rsync 3.4.x:
     /// - Server (`is_server=true`): iterates the remote (client's) list, returns
     ///   the first entry that also appears in the local list.
     /// - Client (`is_server=false`): iterates the local list, returns the first
@@ -39,6 +41,6 @@ pub trait CompressionNegotiator: Send + Sync {
     ///
     /// # Upstream reference
     ///
-    /// upstream: compat.c:332-363 `parse_negotiate_str()`
+    /// upstream: compat.c:333-364 `parse_negotiate_str()`
     fn select_algorithm(&self, remote_list: &[&str], is_server: bool) -> &'static str;
 }
