@@ -34,13 +34,13 @@ pub enum NegotiationError {
     },
     /// The peer advertised a protocol version outside the upstream supported range.
     ///
-    /// The Display rendering is byte-identical to upstream rsync 3.4.4's two
-    /// `FERROR` lines emitted from `compat.c:620-621` when `remote_protocol`
+    /// The Display rendering is byte-identical to upstream rsync 3.5.1's two
+    /// `FERROR` lines emitted from `compat.c:623-624` when `remote_protocol`
     /// falls outside `[MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]`. Backup
     /// monitoring tools grep for this exact wording, so changing it would
     /// break interop. The offending version is preserved on the variant and
     /// reachable via [`NegotiationError::unsupported_version`].
-    // upstream: compat.c:618-623 (start_protocol)
+    // upstream: compat.c:621-626 (setup_protocol)
     #[error(
         "protocol version mismatch -- is your shell clean?\n(see the rsync manpage for an explanation)"
     )]
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn display_matches_upstream_verbatim_for_unsupported_versions() {
-        // upstream: compat.c:620-621 emits these two FERROR lines verbatim
+        // upstream: compat.c:623-624 emits these two FERROR lines verbatim
         // (`protocol version mismatch -- is your shell clean?\n` followed by
         // `(see the rsync manpage for an explanation)\n`). Backup monitoring
         // tools grep for this exact wording.

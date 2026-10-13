@@ -29,7 +29,7 @@
 //! - `io.c:forward_filesfrom_data()` - reads from local fd and writes to socket
 //! - `io.c:start_filesfrom_forwarding()` - initializes forwarding state
 //! - `io.c:read_line()` (RL_CONVERT branch) - reader-side iconv
-//! - `compat.c:799-806` - `filesfrom_convert` gating (`protect_args && files_from`)
+//! - `compat.c:812-817` - `filesfrom_convert` gating (`protect_args && files_from`)
 //! - `flist.c:send_file_list()` - sender reads filenames from `filesfrom_fd`
 //! - `options.c:server_options()` - sends `--files-from` args to server
 
@@ -55,7 +55,7 @@ use crate::iconv::FilenameConverter;
 /// # Upstream Reference
 ///
 /// - `io.c:forward_filesfrom_data()` - the core forwarding loop
-/// - `compat.c:799-806` - `filesfrom_convert` gating predicate
+/// - `compat.c:812-817` - `filesfrom_convert` gating predicate
 pub fn forward_files_from<R: Read, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -76,7 +76,7 @@ pub fn forward_files_from<R: Read, W: Write>(
 
         let chunk = &mut buf[..n];
 
-        // upstream: io.c:415-421 - transform CR and/or LF into '\0'.
+        // upstream: io.c:482-489 - transform CR and/or LF into '\0'.
         if !eol_nulls {
             for byte in chunk.iter_mut() {
                 if *byte == b'\n' || *byte == b'\r' {
@@ -92,7 +92,7 @@ pub fn forward_files_from<R: Read, W: Write>(
                     current_entry.clear();
                     last_emitted_nul = true;
                 }
-                // upstream: io.c:474-500 - collapse runs of consecutive '\0'.
+                // upstream: io.c:491-556 - collapse runs of consecutive '\0'.
             } else {
                 current_entry.push(byte);
             }
@@ -106,7 +106,7 @@ pub fn forward_files_from<R: Read, W: Write>(
         last_emitted_nul = true;
     }
 
-    // upstream: io.c:397 - write_buf(iobuf.out_fd, "\0\0", ff_lastchar ? 2 : 1).
+    // upstream: io.c:464 - write_buf(iobuf.out_fd, "\0\0", ff_lastchar ? 2 : 1).
     if last_emitted_nul {
         writer.write_all(b"\0")?;
     } else {
@@ -159,10 +159,10 @@ fn write_filesfrom_entry<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2537` - `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
+/// - `flist.c:2809` - `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
 ///   with `RL_EOL_NULLS` set when `reading_remotely`
 /// - `io.c:read_line()` (RL_CONVERT branch) - `iconvbufs(ic_recv, ...)`
-/// - `compat.c:799-806` - `filesfrom_convert` gating predicate
+/// - `compat.c:812-817` - `filesfrom_convert` gating predicate
 pub fn read_files_from_stream<R: Read>(
     reader: &mut R,
     iconv: Option<&FilenameConverter>,
