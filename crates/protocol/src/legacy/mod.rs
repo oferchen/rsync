@@ -9,16 +9,15 @@
 //! parsers that mirror upstream rsync's wire formatting for greetings, error
 //! banners, and warning lines.
 //!
-//! upstream: clientserver.c:read_line / start_inband_exchange (rsync 3.4.1)
+//! upstream: clientserver.c:176-261 `exchange_protocols()`, called from
+//! `start_inband_exchange()` (client) and `start_daemon()` (daemon).
 
 use crate::error::NegotiationError;
 
 /// Canonical ASCII prefix that identifies the legacy `@RSYNCD:` negotiation style.
 ///
-/// Upstream rsync emits this exact marker (including the trailing colon) before sending
-/// the daemon greeting when a peer is limited to protocols older than 30. Exposing the
-/// constant allows higher layers to reference the prefix without duplicating the literal,
-/// keeping diagnostics and buffer sizing in sync with the canonical value.
+/// Upstream rsync starts every daemon greeting and control line with this exact marker,
+/// including the trailing colon (`compat.c:853` writes `"@RSYNCD: %d.%d %s\n"`).
 pub const LEGACY_DAEMON_PREFIX: &str = "@RSYNCD:";
 
 /// Number of bytes in [`LEGACY_DAEMON_PREFIX`].
@@ -41,7 +40,7 @@ pub const LEGACY_DAEMON_PREFIX_BYTES: &[u8; LEGACY_DAEMON_PREFIX_LEN] = b"@RSYNC
 /// the same prefix when parsing the first non-`@RSYNCD:` line. Both sides
 /// share this constant so the wire literal cannot drift.
 ///
-/// upstream: clientserver.c - `#define EARLY_INPUT_CMD "#early_input="`
+/// upstream: clientserver.c:84 - `#define EARLY_INPUT_CMD "#early_input="`
 pub const EARLY_INPUT_CMD: &str = "#early_input=";
 
 /// Maximum early-input payload size in bytes for the legacy daemon handshake.
@@ -51,8 +50,8 @@ pub const EARLY_INPUT_CMD: &str = "#early_input=";
 /// file to this size before sending and the daemon rejects announced lengths
 /// above it, so both crates must agree on the exact value.
 ///
-/// upstream: rsync.h - `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` (`4096 + 1024`
-/// = 5120 on systems where `MAXPATHLEN >= 4096`).
+/// upstream: rsync.h:766-770 - `BIGPATHBUFLEN` is `4096 + 1024` when
+/// `MAXPATHLEN < 4096`, else `MAXPATHLEN + 1024` (5120 when `MAXPATHLEN` is 4096).
 pub const EARLY_INPUT_MAX_SIZE: usize = 5120;
 
 mod bytes;
@@ -84,11 +83,11 @@ pub use lines::{
 
 /// Builds a [`NegotiationError::MalformedLegacyGreeting`] from a trimmed legacy line.
 ///
-/// Captures the offending input verbatim so diagnostics can echo what the daemon sent,
-/// matching upstream rsync's `@ERROR: protocol startup error` flow that includes the
-/// greeting bytes verbatim.
+/// Captures the offending input verbatim so diagnostics can echo what the peer sent,
+/// as upstream's client does with `rsync: server sent \"%s\" rather than greeting`.
 ///
-/// upstream: clientserver.c:read_line (`@ERROR: protocol startup error`)
+/// upstream: clientserver.c:208-215 - the client echoes the line; the daemon answers
+/// `@ERROR: protocol startup error` without echoing it.
 pub(super) fn malformed_legacy_greeting(trimmed: &str) -> NegotiationError {
     NegotiationError::MalformedLegacyGreeting {
         input: trimmed.to_owned(),
