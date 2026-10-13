@@ -2,10 +2,10 @@
 //!
 //! macOS exposes the resource fork and the 32-byte Finder info block as
 //! ordinary extended attributes named `com.apple.ResourceFork` and
-//! `com.apple.FinderInfo`. Upstream rsync 3.4.1 reads and writes them via
-//! the standard `getxattr(2)` / `setxattr(2)` syscalls (see `xattrs.c`,
-//! `rsync_xal_get` and `rsync_xal_set`); there is no dedicated resource-fork
-//! pathway. This module mirrors that approach by delegating to the
+//! `com.apple.FinderInfo`. Upstream rsync 3.5.1 reads and writes them as
+//! ordinary xattrs (`xattrs.c:243` rsync_xal_get(), `xattrs.c:994`
+//! rsync_xal_set(), via `lib/sysxattrs.c`); there is no dedicated
+//! resource-fork pathway. This module mirrors that approach by delegating to the
 //! third-party `xattr` crate, which is the same safe wrapper already used
 //! by `crates/metadata`.
 //!
