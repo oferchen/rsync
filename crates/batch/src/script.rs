@@ -16,7 +16,7 @@ use std::io::{self, Write};
 ///
 /// # Upstream Reference
 ///
-/// - `batch.c:255-312`: `write_batch_shell_file()` writes the raw command
+/// - `batch.c:291-348`: `write_batch_shell_file()` writes the raw command
 ///   without a shebang line. The `.sh` file is opened with mode `S_IRUSR |
 ///   S_IWUSR | S_IXUSR` (0o700).
 pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
@@ -33,16 +33,16 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 /// When `destination` is `Some`, it is embedded as the fallback in the
 /// `${1:-<dest>}` placeholder so that `./BATCH.sh` (invoked without
 /// arguments) writes to the destination that was used when the batch was
-/// captured. Mirrors upstream `batch.c:300-304` which writes
+/// captured. Mirrors upstream `batch.c:336-340` which writes
 /// `${1:-<cooked_argv[argc-1]>}`. When `None`, a bare `.` is used (legacy
 /// behavior, only suitable when no destination is known).
 ///
 /// # Upstream Reference
 ///
-/// - `batch.c:205-222`: `write_filter_rules()` embeds filter rules in the
+/// - `batch.c:213-240`: `write_filter_rules()` embeds filter rules in the
 ///   shell script using a `<<'#E#'` heredoc.
-/// - `batch.c:262-267`: filter option selection based on protocol version.
-/// - `batch.c:300-304`: destination placeholder `${1:-<dest>}`.
+/// - `batch.c:298-303`: filter option selection based on protocol version.
+/// - `batch.c:336-340`: destination placeholder `${1:-<dest>}`.
 pub fn generate_script_with_filters(
     config: &BatchConfig,
     filter_rules: Option<&str>,
@@ -65,26 +65,26 @@ pub fn generate_script_with_filters(
         ))
     })?;
 
-    // upstream: batch.c:259 - write_arg(raw_argv[0]) - the exact binary the
+    // upstream: batch.c:297 - write_arg(raw_argv[0]) - the exact binary the
     // user invoked. Without this, the generated BATCH.sh fails with
     // "command not found" when oc-rsync is not on PATH (e.g. test harnesses
     // and CI that invoke via absolute path).
     write!(file, "{}", shell_quote(&config.invoker))?;
 
-    // upstream: batch.c:262-267 - embed filter option before --read-batch
+    // upstream: batch.c:298-303 - embed filter option before --read-batch
     // so the heredoc at the end of the script feeds rules into stdin
     if filter_rules.is_some() {
         if config.protocol_version >= 29 {
-            // upstream: batch.c:263-264 write_opt("--filter", "._-") - the value
+            // upstream: batch.c:299-300 write_opt("--filter", "._-") - the value
             // goes through write_arg(), so it is quoted like any other.
             write!(file, " --filter={}", shell_quote("._-"))?;
         } else {
-            // upstream: batch.c:265-266 write_opt("--exclude-from", "-")
+            // upstream: batch.c:301-302 write_opt("--exclude-from", "-")
             write!(file, " --exclude-from={}", shell_quote("-"))?;
         }
     }
 
-    // upstream: batch.c:269-298 - reconstruct the pass-through options from
+    // upstream: batch.c:305-335 - reconstruct the pass-through options from
     // the original invocation (transfer-affecting flags like -a/-z/
     // --numeric-ids) and convert --write-batch to --read-batch. When the raw
     // argv was not captured (legacy callers), fall back to emitting just the
@@ -95,7 +95,7 @@ pub fn generate_script_with_filters(
         write_replay_options(&mut file, &config.replay_args, &config.operands)?;
     }
 
-    // upstream: batch.c:300-304 - destination placeholder
+    // upstream: batch.c:336-340 - destination placeholder
     // write_opt("${1:-", NULL) + write_arg(dest) + "}". The operand is passed
     // through check_for_hostspec so only the local path (not any host: prefix)
     // lands in the ${1:-<dest>} default.
@@ -106,7 +106,7 @@ pub fn generate_script_with_filters(
     }
     write!(file, "}}")?;
 
-    // upstream: batch.c:305-306 - append filter rules as heredoc
+    // upstream: batch.c:341-342 - append filter rules as heredoc
     if let Some(rules) = filter_rules {
         write_filter_heredoc(&mut file, rules, config.eol_nulls)?;
     }
@@ -120,7 +120,7 @@ pub fn generate_script_with_filters(
 
 /// Write the trailing filter-rule heredoc into the replay script.
 ///
-/// Mirrors upstream `batch.c:205-222 write_filter_rules()`. Rules arrive
+/// Mirrors upstream `batch.c:213-240 write_filter_rules()`. Rules arrive
 /// newline-terminated; when `eol_nulls` is set (`--from0` / `-0`) each rule is
 /// instead terminated by a NUL byte and the whole block is followed by a
 /// trailing `;\n`, matching upstream's `eol_nulls` branch byte-for-byte so the
@@ -128,20 +128,20 @@ pub fn generate_script_with_filters(
 ///
 /// # Upstream Reference
 ///
-/// - `batch.c:209`: `write_sbuf(fd, " <<'#E#'\n")`.
-/// - `batch.c:212-217`: per-rule terminator (`0` when `eol_nulls`, else `\n`).
-/// - `batch.c:219-220`: trailing `";\n"` after NUL-terminated rules.
-/// - `batch.c:221`: closing `#E#` delimiter.
+/// - `batch.c:217`: `write_sbuf(fd, " <<'#E#'\n")`.
+/// - `batch.c:231-235`: per-rule terminator (`0` when `eol_nulls`, else `\n`).
+/// - `batch.c:237-238`: trailing `";\n"` after NUL-terminated rules.
+/// - `batch.c:239`: closing `#E#` delimiter.
 fn write_filter_heredoc(file: &mut File, rules: &str, eol_nulls: bool) -> io::Result<()> {
-    // upstream: batch.c:209 write_sbuf(fd, " <<'#E#'\n")
+    // upstream: batch.c:217 write_sbuf(fd, " <<'#E#'\n")
     writeln!(file, " <<'#E#'")?;
     if eol_nulls {
-        // upstream: batch.c:212-217 - NUL terminates each rule under eol_nulls.
+        // upstream: batch.c:231-235 - NUL terminates each rule under eol_nulls.
         for rule in rules.strip_suffix('\n').unwrap_or(rules).split('\n') {
             file.write_all(rule.as_bytes())?;
             file.write_all(&[0])?;
         }
-        // upstream: batch.c:219-220 write_sbuf(fd, ";\n")
+        // upstream: batch.c:237-238 write_sbuf(fd, ";\n")
         file.write_all(b";\n")?;
     } else {
         write!(file, "{rules}")?;
@@ -149,7 +149,7 @@ fn write_filter_heredoc(file: &mut File, rules: &str, eol_nulls: bool) -> io::Re
             writeln!(file)?;
         }
     }
-    // upstream: batch.c:221 write_sbuf(fd, "#E#")
+    // upstream: batch.c:239 write_sbuf(fd, "#E#")
     write!(file, "#E#")?;
     Ok(())
 }
@@ -158,26 +158,26 @@ fn write_filter_heredoc(file: &mut File, rules: &str, eol_nulls: bool) -> io::Re
 ///
 /// This is the single source of truth for which options a batch replay must
 /// re-apply. It mirrors the argument-reconstruction loop in upstream rsync's
-/// `batch.c:write_batch_shell_file()` (batch.c:269-298):
+/// `batch.c:write_batch_shell_file()` (batch.c:305-335):
 ///
 /// - Elides the positional filename operands (`operands`) by reverse-matching
 ///   them against `replay_args`, exactly as upstream nulls out the trailing
-///   `cooked_argv` filenames (batch.c:269-275). The destination is re-supplied
+///   `cooked_argv` filenames (batch.c:305-311). The destination is re-supplied
 ///   by the caller through the `${1:-<dest>}` placeholder.
 /// - Strips `--files-from`, `--filter`, `--include`, `--exclude`, and `-f`
 ///   together with their value arguments; their rules are replayed via the
-///   heredoc instead (batch.c:280-291).
+///   heredoc instead (batch.c:316-327).
 /// - Converts `--write-batch`/`--only-write-batch` to `--read-batch`
-///   (batch.c:292-294).
+///   (batch.c:328-330).
 /// - Passes through every remaining transfer-affecting flag verbatim (`-a`,
 ///   `-z`, `--numeric-ids`, ...) so the replay applies identical options
-///   (batch.c:295-298).
+///   (batch.c:331-334).
 fn write_replay_options(
     file: &mut File,
     replay_args: &[String],
     operands: &[String],
 ) -> io::Result<()> {
-    // upstream: batch.c:269-275 - null out the trailing filename operands so
+    // upstream: batch.c:305-311 - null out the trailing filename operands so
     // they are not re-emitted; the destination returns via ${1:-<dest>}.
     let mut elide = vec![false; replay_args.len()];
     let mut oi = operands.len();
@@ -190,7 +190,7 @@ fn write_replay_options(
         }
     }
 
-    // upstream: batch.c:277-298 - emit the surviving options.
+    // upstream: batch.c:313-335 - emit the surviving options.
     let mut i = 1;
     while i < replay_args.len() {
         if elide[i] {
@@ -198,7 +198,7 @@ fn write_replay_options(
             continue;
         }
         let p = replay_args[i].as_str();
-        // upstream: batch.c:280-286 - skip filter/include/exclude/files-from
+        // upstream: batch.c:316-323 - skip filter/include/exclude/files-from
         // options and their value argument (unless attached with '=').
         if p.starts_with("--files-from")
             || p.starts_with("--filter")
@@ -211,12 +211,12 @@ fn write_replay_options(
             i += 1;
             continue;
         }
-        // upstream: batch.c:288-290 - skip -f and its value argument.
+        // upstream: batch.c:324-327 - skip -f and its value argument.
         if p == "-f" {
             i += 2;
             continue;
         }
-        // upstream: batch.c:292-294 - convert write-batch to read-batch.
+        // upstream: batch.c:328-330 - convert write-batch to read-batch.
         if let Some(name) = p.strip_prefix("--write-batch=") {
             write!(file, " --read-batch={}", shell_quote(name))?;
         } else if let Some(name) = p.strip_prefix("--only-write-batch=") {
@@ -227,7 +227,7 @@ fn write_replay_options(
             // write_opt("--read-batch", NULL).
             write!(file, " --read-batch")?;
         } else {
-            // upstream: batch.c:295-298 - pass through all other arguments.
+            // upstream: batch.c:331-334 - pass through all other arguments.
             write!(file, " {}", shell_quote(p))?;
         }
         i += 1;
@@ -270,7 +270,7 @@ fn shell_quote(s: &str) -> String {
         arg = &arg[eq + 1..];
     }
 
-    // upstream: batch.c:187-195 - unconditional single-quote wrap.
+    // upstream: batch.c:188-195 - unconditional single-quote wrap.
     result.push('\'');
     for ch in arg.chars() {
         if ch == '\'' {
@@ -302,10 +302,10 @@ fn is_plain_option_byte(b: u8) -> bool {
 /// - `rsync://host/path` -> `path`
 /// - `/local/path`, `rel/path`, `dest` -> unchanged
 ///
-/// upstream: options.c:check_for_hostspec / batch.c:300
+/// upstream: options.c:check_for_hostspec / batch.c:336
 fn strip_hostspec(dest: &str) -> &str {
     const URL_PREFIX: &str = "rsync://";
-    // upstream: options.c:3144 - an rsync:// URL is matched case-insensitively.
+    // upstream: options.c:3315 - an rsync:// URL is matched case-insensitively.
     if dest.len() >= URL_PREFIX.len()
         && dest.as_bytes()[..URL_PREFIX.len()].eq_ignore_ascii_case(URL_PREFIX.as_bytes())
     {
@@ -314,10 +314,10 @@ fn strip_hostspec(dest: &str) -> &str {
             return &rest[off..];
         }
     }
-    // upstream: options.c:3153 - parse_hostspec(s, &path, NULL).
+    // upstream: options.c:3324 - parse_hostspec(s, &path, NULL).
     match parse_hostspec_path(dest, false) {
         Some(off) => {
-            // upstream: options.c:3156-3157 - a leading ':' (the daemon '::'
+            // upstream: options.c:3328-3331 - a leading ':' (the daemon '::'
             // separator) is stripped from the returned path.
             let path = &dest[off..];
             path.strip_prefix(':').unwrap_or(path)
@@ -327,7 +327,7 @@ fn strip_hostspec(dest: &str) -> &str {
 }
 
 /// Locate the path portion of a `[user@]host[:port]` spec, mirroring upstream
-/// `parse_hostspec` (options.c:3083). Returns the byte offset in `s` where the
+/// `parse_hostspec` (options.c:3254). Returns the byte offset in `s` where the
 /// path begins when `s` starts with a valid host, or `None` otherwise.
 /// `is_url` mirrors upstream's non-NULL `port_ptr` (parsing an `rsync://` host).
 fn parse_hostspec_path(s: &str, is_url: bool) -> Option<usize> {
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_shell_quote() {
-        // Quoting is unconditional (batch.c:187-195): even an argument with no
+        // Quoting is unconditional (batch.c:188-195): even an argument with no
         // metacharacter at all comes back wrapped.
         assert_eq!(shell_quote("simple"), "'simple'");
         assert_eq!(shell_quote("with-dash"), "'with-dash'");
@@ -480,7 +480,7 @@ mod tests {
     /// Verify `strip_hostspec` mirrors upstream `check_for_hostspec`, writing
     /// only the local path into the generated `.sh` `${1:-<dest>}` default.
     ///
-    /// upstream: batch.c:300 passes the last operand through check_for_hostspec
+    /// upstream: batch.c:336 passes the last operand through check_for_hostspec
     /// so a batch captured against a remote destination does not embed the
     /// `host:` prefix in the replay script.
     #[test]
@@ -512,7 +512,7 @@ mod tests {
     /// Verify a batch written against a remote destination operand strips the
     /// `host:` prefix from the generated `${1:-<dest>}` default.
     ///
-    /// upstream: batch.c:300-304 write_batch_shell_file passes the destination
+    /// upstream: batch.c:336-340 write_batch_shell_file passes the destination
     /// through check_for_hostspec before writing it.
     #[test]
     fn test_generate_script_strips_remote_destination() {
@@ -567,7 +567,7 @@ mod tests {
 
     /// Verify the script embeds an absolute invoker path verbatim.
     ///
-    /// Upstream `batch.c:259` writes `raw_argv[0]` literally so the replay
+    /// Upstream `batch.c:297` writes `raw_argv[0]` literally so the replay
     /// script works regardless of `PATH`. The CI testsuite invokes oc-rsync
     /// by absolute path, so the generated BATCH.sh must also use the
     /// absolute path - otherwise the wrapper script fails with
@@ -642,7 +642,7 @@ mod tests {
     /// Verify that a bare `--write-batch NAME` pair becomes `--read-batch NAME`
     /// on the production replay path, with the name emitted exactly once.
     ///
-    /// upstream: batch.c:292-294 write_opt("--read-batch", NULL) - the bare form
+    /// upstream: batch.c:328-330 write_opt("--read-batch", NULL) - the bare form
     /// leaves the following argument to be passed through as its own token.
     #[test]
     fn test_generate_script_bare_write_batch() {
@@ -681,7 +681,7 @@ mod tests {
     /// Verify that `--exclude X`, `-f X` and `--include=` are stripped together
     /// with their value arguments on the production replay path.
     ///
-    /// upstream: batch.c:280-289 skips --filter, --include, --exclude, -f args.
+    /// upstream: batch.c:316-327 skips --filter, --include, --exclude, -f args.
     #[test]
     fn test_generate_script_strips_filter_args() {
         let temp_dir = test_support::create_tempdir();
@@ -722,7 +722,7 @@ mod tests {
     /// Verify that `generate_script_with_filters` embeds filter rules via heredoc
     /// and adds --filter=._- for protocol >= 29.
     ///
-    /// upstream: batch.c:205-222 write_filter_rules() + batch.c:262-267 option.
+    /// upstream: batch.c:213-240 write_filter_rules() + batch.c:298-303 option.
     #[test]
     fn test_generate_script_with_filters_embeds_heredoc() {
         let temp_dir = test_support::create_tempdir();
@@ -789,7 +789,7 @@ mod tests {
 
     /// Verify that protocol < 29 uses --exclude-from=- instead of --filter=._-.
     ///
-    /// upstream: batch.c:265-266 write_opt("--exclude-from", "-")
+    /// upstream: batch.c:301-302 write_opt("--exclude-from", "-")
     #[test]
     fn test_generate_script_with_filters_protocol_28_exclude_from() {
         let temp_dir = test_support::create_tempdir();
@@ -823,7 +823,7 @@ mod tests {
 
     /// Verify that `generate_script_with_filters` embeds the supplied
     /// destination as the `${1:-<dest>}` fallback, matching upstream
-    /// `batch.c:300-304` (`write_opt("${1:-", NULL) + write_arg(dest) + "}"`).
+    /// `batch.c:336-340` (`write_opt("${1:-", NULL) + write_arg(dest) + "}"`).
     ///
     /// Without this, `./BATCH.sh` invoked with no argument falls back to `.`
     /// (the current working directory) instead of the original destination,
@@ -858,7 +858,7 @@ mod tests {
 
     /// Verify that destinations containing shell-unsafe characters are
     /// single-quoted in the `${1:-<dest>}` placeholder, matching upstream
-    /// `batch.c:303` which calls `write_arg(p)` (single-quotes when needed).
+    /// `batch.c:339` which calls `write_arg(p)` (always single-quoted).
     #[test]
     fn test_generate_script_with_filters_quotes_destination_with_spaces() {
         let temp_dir = test_support::create_tempdir();
@@ -914,7 +914,7 @@ mod tests {
     /// recorded with (`-a`, `-z`, `--numeric-ids`, ...); otherwise replaying
     /// the batch applies a different set of transfer semantics than the capture
     /// used, diverging from upstream `batch.c:write_batch_shell_file()`
-    /// (batch.c:269-298). Filename operands and filter options must be elided
+    /// (batch.c:305-335). Filename operands and filter options must be elided
     /// (the destination returns via `${1:-<dest>}`; filter rules via the
     /// heredoc).
     #[test]
@@ -1008,7 +1008,7 @@ mod tests {
     /// Verify the filter heredoc NUL-terminates each rule and appends a
     /// trailing `;\n` when `eol_nulls` (`--from0`) is set.
     ///
-    /// WHY: upstream `batch.c:212-220` swaps the per-rule `\n` terminator for a
+    /// WHY: upstream `batch.c:235-238` swaps the per-rule `\n` terminator for a
     /// NUL and writes `";\n"` after the last rule under `eol_nulls`. The
     /// replayed `--read-batch` reads its rules with the same NUL separator, so
     /// a newline-terminated heredoc would mis-parse a `--from0` batch.
@@ -1049,7 +1049,7 @@ mod tests {
     /// and never emits the `;\n` terminator or NUL bytes.
     ///
     /// WHY: the `;\n` trailer and NUL separators are exclusive to upstream's
-    /// `eol_nulls` branch (`batch.c:219`); a default (`--from0`-less) batch
+    /// `eol_nulls` branch (`batch.c:237`); a default (`--from0`-less) batch
     /// must reproduce the newline-terminated form exactly.
     #[test]
     fn test_filter_heredoc_default_uses_newlines() {

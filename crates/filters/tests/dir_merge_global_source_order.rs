@@ -1,6 +1,6 @@
 //! Source-order interleaving of global rules and a `dir-merge` scope.
 //!
-//! upstream: exclude.c:1043-1064 `check_filter()` walks ONE rule list and,
+//! upstream: exclude.c:1187-1214 `check_filter()` walks ONE rule list and,
 //! on reaching a `FILTRULE_PERDIR_MERGE` entry, recurses into that entry's
 //! mergelist AT THAT POSITION, returning on the first match. A global rule
 //! defined BEFORE the `dir-merge` directive therefore wins over rules loaded

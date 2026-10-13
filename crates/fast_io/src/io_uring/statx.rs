@@ -49,9 +49,9 @@
 //!
 //! # Upstream rsync reference
 //!
-//! Upstream rsync uses synchronous `stat(2)` / `lstat(2)` (and `statx(2)` on
-//! newer glibc) for file metadata retrieval during file list building
-//! (`flist.c:receive_file_entry()`, `generator.c`). The io_uring fast path
+//! Upstream rsync uses synchronous `stat(2)` / `lstat(2)` for file metadata
+//! retrieval during file list building (`flist.c:make_file()`) and in the
+//! generator (`generator.c:recv_generator()`). The io_uring fast path
 //! is an optimisation: when the kernel exposes `IORING_OP_STATX`, the
 //! generator can submit batched stat calls alongside other ring operations,
 //! reducing per-file syscall overhead during directory traversal.
@@ -157,6 +157,10 @@ fn probe_statx_support() -> bool {
 ///
 /// The `args` struct must outlive the submission so the kernel can read
 /// the borrowed `CStr` path and write the statx buffer.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the kernel lacks `IORING_OP_STATX`.
 pub fn build_statx_sqe(args: &mut StatxArgs<'_>) -> io::Result<squeue::Entry> {
     if !statx_supported() {
         return Err(io::Error::new(
@@ -200,6 +204,11 @@ pub fn build_statx_sqe_unchecked(args: &mut StatxArgs<'_>) -> squeue::Entry {
 ///
 /// `args` borrows the `CStr` path and the statx buffer; the function keeps
 /// them alive for the duration of the syscall.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` without kernel support, an error when the ring or SQE
+/// cannot be set up, or the OS error from the `statx` completion.
 #[allow(unsafe_code)]
 pub fn submit_statx_blocking(
     dirfd: i32,

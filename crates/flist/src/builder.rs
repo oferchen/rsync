@@ -46,12 +46,12 @@ impl FileListBuilder {
     /// When enabled, the walker uses `stat()` (follows symlinks) instead of
     /// `lstat()` for every entry, so symlinks appear as whatever they point to
     /// (regular files, directories, etc.). This mirrors upstream rsync's
-    /// `--copy-links` (`-L`) behaviour where `make_file()` calls `do_stat()`
-    /// instead of `do_lstat()`.
+    /// `--copy-links` (`-L`) behaviour.
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:207-234` - `readlink_stat()` uses `do_stat()` when
+    /// - `flist.c:511` - `link_stat()` (reached from `make_file()` via
+    ///   `readlink_stat()`) returns `x_stat()` instead of `x_lstat()` when
     ///   `copy_links` is set.
     #[must_use]
     pub const fn copy_links(mut self, copy: bool) -> Self {
@@ -72,7 +72,7 @@ impl FileListBuilder {
     ///
     /// Note there is no `--safe-links` option here: upstream's sender
     /// transmits every symlink, and the option is evaluated on the
-    /// receiving side only (generator.c:1951).
+    /// receiving side only (`generator.c:1951`, `recv_generator()`).
     pub fn build(self) -> Result<FileListWalker, FileListError> {
         FileListWalker::new(
             self.root,

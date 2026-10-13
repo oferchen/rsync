@@ -16,10 +16,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:888-919` - `read_final_goodbye()`
-//! - `main.c:896` - protocol < 29 uses `read_int(f_in)` for goodbye
-//! - `main.c:898-899` - protocol >= 29 uses `read_ndx_and_attrs()`
-//! - `io.c:2281-2325` - `write_ndx()` (modern encoding)
+//! - `main.c:921-950` - `read_final_goodbye()`
+//! - `main.c:929-930` - protocol < 29 uses `read_int(f_in)` for goodbye
+//! - `main.c:931-932` - protocol >= 29 uses `read_ndx_and_attrs()`
+//! - `io.c:2541-2585` - `write_ndx()` (modern encoding)
 //! - `io.c` - `write_int()` / `read_int()` (legacy encoding)
 
 use protocol::ProtocolVersion;

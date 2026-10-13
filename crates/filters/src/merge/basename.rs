@@ -3,9 +3,9 @@
 //! upstream performs this same byte scan at TWO sites, and both need it for the
 //! same reason - a merge-file name is a NAME, not a path to join:
 //!
-//! - `exclude.c:359-361` in `add_rule`'s `FILTRULE_PERDIR_MERGE` branch, which
+//! - `exclude.c:354-357` in `add_rule`'s `FILTRULE_PERDIR_MERGE` branch, which
 //!   takes the basename for the mergelist dedup compare and the `[per-dir %s]`
-//!   debug label. `setup_merge_file` (`exclude.c:797-801`) then REWRITES
+//!   debug label. `setup_merge_file` (`exclude.c:799-801`) then REWRITES
 //!   `ex->pattern` to that basename, and the per-directory open at
 //!   `exclude.c:910` reads the rewritten value - so the basename is what each
 //!   directory is actually scanned for.
@@ -48,7 +48,7 @@
 /// Returns the basename of a merge-file name: the bytes after the last `/`.
 ///
 /// upstream scans back from the end of the pattern to the byte after the last
-/// `/` (`exclude.c:1568-1569` for the self-exclude, `exclude.c:359-361` via
+/// `/` (`exclude.c:1568-1569` for the self-exclude, `exclude.c:354-357` via
 /// `strrchr` for the per-directory name), so this is a byte split, not a path
 /// parse: a pattern ending in `/` yields the empty name and `..` yields `..`,
 /// both of which `Path::file_name` would instead report as absent. Mirroring

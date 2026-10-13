@@ -478,10 +478,11 @@ fn filter_chain_protect_in_scope() {
 /// the failing path that drives the upstream `exclude` / `exclude-lsh`
 /// testsuite checks.
 ///
-/// upstream: exclude.c:parse_rule_tok() (rsync-3.4.3) - the `:C` token
-/// expands to `:s n,e+ .cvsignore` (no-prefix, word-split, no-inherit,
-/// FILTRULE_CVS_IGNORE), and exclude.c:1419-1428 registers the resulting
-/// per-dir merge so the named file is read at the current scope.
+/// upstream: exclude.c:1402-1409 parse_rule_tok() - the `C` modifier sets
+/// no-prefix, word-split, no-inherit and FILTRULE_CVS_IGNORE, an empty merge
+/// pattern defaults to `.cvsignore` (exclude.c:1554-1557), and
+/// exclude.c:1573-1582 registers the resulting per-dir merge so the named file
+/// is read at the current scope.
 #[test]
 fn dir_merge_inline_colon_c_loads_cvsignore_no_inherit() {
     let parent = test_support::create_tempdir();
@@ -538,7 +539,7 @@ fn dir_merge_inline_colon_c_missing_cvsignore_is_noop() {
 /// transfer root recorded, `- /file1` inside `<root>/foo/.filt` must match
 /// `foo/file1` and leave a top-level `file1` untouched.
 ///
-/// upstream: exclude.c:200-228 add_rule under XFLG_ANCHORED2ABS prepends
+/// upstream: exclude.c:297-306 add_rule under XFLG_ANCHORED2ABS prepends
 /// the merge directory (relative to the module root) to a leading-`/`
 /// pattern. oc-rsync expresses root anchoring as a leading `/`, so the
 /// rewrite is `/file1` -> `/foo/file1`.
@@ -581,7 +582,7 @@ fn dir_merge_leading_slash_rule_reanchors_to_merge_dir() {
 /// descendant directory, not a one-shot read of the declaring directory.
 /// Sibling subtrees each load their own copy of the named file.
 ///
-/// upstream: exclude.c:294 appends a `dir-merge` parsed from a merge file
+/// upstream: exclude.c:391 appends a `dir-merge` parsed from a merge file
 /// to the global `mergelist_parents`, so `push_local_filters()` re-reads
 /// it at every directory below the declaration.
 #[test]
@@ -806,7 +807,7 @@ fn filter_chain_per_dir_deletion_does_not_block_via_synthetic_descendant() {
     );
 }
 
-// upstream: exclude.c:1116-1133 parse_rule_tok - when FILTRULE_NO_PREFIXES is
+// upstream: exclude.c:1273-1275 parse_rule_tok - when FILTRULE_NO_PREFIXES is
 // set on the template, every per-dir merge line is consumed as a literal
 // pattern. `+ foo`, `- bar`, `include baz` become LITERAL excludes - not
 // include/exclude rules - so paths matching those literal strings are blocked.
@@ -838,7 +839,7 @@ fn dir_merge_no_prefixes_minus_literal_excludes() {
     chain.leave_directory(guard);
 }
 
-// upstream: exclude.c:1116-1133 with FILTRULE_INCLUDE - the `+` variant of
+// upstream: exclude.c:1273-1275 with FILTRULE_INCLUDE - the `+` variant of
 // the no-prefixes modifier emits literal include rules instead of excludes.
 #[test]
 fn dir_merge_no_prefixes_plus_literal_includes() {
@@ -865,7 +866,7 @@ fn dir_merge_no_prefixes_plus_literal_includes() {
     chain.leave_directory(guard);
 }
 
-// upstream: exclude.c:1123-1124 - without FILTRULE_CVS_IGNORE the bare `!`
+// upstream: exclude.c:1273-1275 - without FILTRULE_CVS_IGNORE the bare `!`
 // line is just another literal pattern (no FILTRULE_CLEAR_LIST escape).
 #[test]
 fn dir_merge_no_prefixes_bang_is_literal_without_cvs() {
@@ -888,7 +889,7 @@ fn dir_merge_no_prefixes_bang_is_literal_without_cvs() {
     chain.leave_directory(guard);
 }
 
-// upstream: exclude.c:1123-1124 - with FILTRULE_CVS_IGNORE inherited from
+// upstream: exclude.c:1273-1275 - with FILTRULE_CVS_IGNORE inherited from
 // the template (`:-C` modifier combination), a bare `!` line tentatively
 // triggers FILTRULE_CLEAR_LIST and clears any previously parsed rules.
 #[test]
@@ -915,7 +916,7 @@ fn dir_merge_no_prefixes_bang_clears_list_with_cvs() {
     chain.leave_directory(guard);
 }
 
-/// upstream: exclude.c:1324-1332 parse_rule_tok - under --delete-excluded,
+/// upstream: exclude.c:1478-1481 parse_rule_tok - under --delete-excluded,
 /// tokens expanded from a `:C .cvsignore` per-directory merge acquire the
 /// implicit FILTRULE_SENDER_SIDE flag. The receiver's delete-pass then
 /// observes `applies_to_receiver=false`, so the receiver-side rule
@@ -977,7 +978,7 @@ fn cvs_dir_merge_preserves_both_sides_without_delete_excluded() {
     chain.leave_directory(guard);
 }
 
-// upstream: exclude.c:1279-1283, 1499 - a `:w` dir-merge (FILTRULE_WORD_SPLIT)
+// upstream: exclude.c:1433-1437, 1499 - a `:w` dir-merge (FILTRULE_WORD_SPLIT)
 // tokenises its merge file on any whitespace and parses each token as its own
 // rule. With the `_` separator standing in for the space between a rule's
 // prefix and its pattern, `-_*.log -_*.tmp -_*.bak` on one line becomes three
@@ -1005,7 +1006,7 @@ fn dir_merge_word_split_parses_whitespace_separated_rules() {
     chain.leave_directory(guard);
 }
 
-// upstream: exclude.c:1122-1133, 1499 - `:w-` combines FILTRULE_WORD_SPLIT with
+// upstream: exclude.c:1273-1275, 1499 - `:w-` combines FILTRULE_WORD_SPLIT with
 // FILTRULE_NO_PREFIXES: the file is tokenised on whitespace and each token is a
 // literal exclude pattern (no `-`/`+` prefix). `*.log *.tmp *.bak` becomes three
 // literal excludes.
@@ -1032,7 +1033,7 @@ fn dir_merge_word_split_no_prefixes_literal_excludes() {
     chain.leave_directory(guard);
 }
 
-// upstream: exclude.c:903-960 rule_matches with ABS_ANCHOR - a leading-`/`
+// upstream: exclude.c:1041-1044 rule_matches() anchored match - a leading-`/`
 // exclude anchors to the transfer root and must NOT match the same basename
 // nested in a subdirectory. This mirrors the remote-sender path where the rule
 // arrives over the wire and is compiled into the chain's global set.
@@ -1048,7 +1049,7 @@ fn anchored_root_exclude_does_not_match_nested_basename() {
     assert!(chain.allows(Path::new("keep.txt"), false));
 }
 
-// upstream: exclude.c:1393-1401 parse_filter_str() - a `!` (FILTRULE_CLEAR_LIST)
+// upstream: exclude.c:1542-1551 parse_filter_str() - a `!` (FILTRULE_CLEAR_LIST)
 // in a per-directory merge file runs `pop_filter_list(listp)` and THEN sets
 // `listp->head = NULL`, so it drops the mergelist's INHERITED ancestor rules,
 // not just the current directory's own section. Here a parent `.rsync-filter`

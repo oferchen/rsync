@@ -1,12 +1,13 @@
 //! Integration tests for file list sorting and comparison.
 //!
 //! These tests verify that [`FileListWalker`] produces entries in a
-//! deterministic, sorted order, matching upstream rsync's behavior.
-//! Upstream rsync sorts directory entries lexicographically before
-//! processing them (flist.c line 202: `entries.sort()`), ensuring
-//! consistent ordering across platforms.
+//! deterministic, sorted order: each directory's names are sorted by raw
+//! bytes before they are yielded, so ordering is stable across platforms.
+//! Upstream instead sorts the finished list with `f_name_cmp()`
+//! (`flist.c:3561` `flist_sort_and_clean()`), which compares directory
+//! names as if they ended in `/`, so the two orders can differ.
 //!
-//! Reference: rsync 3.4.1 flist.c
+//! Reference: rsync 3.5.1 flist.c
 
 use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::fs;

@@ -8,8 +8,9 @@
 //! Many file entries in a transfer share the same parent directory. The `dirname`
 //! field stores an `Arc<Path>` that can be shared across entries via
 //! [`super::intern::PathInterner`], reducing heap allocations for directory paths.
-//! This mirrors upstream rsync's `file_struct.dirname` which points into a shared
-//! string pool (upstream: flist.c:f_name()).
+//! This mirrors upstream rsync's `file_struct.dirname`, which every entry of one
+//! directory shares (upstream: flist.c:recv_file_entry() allocates `lastdir` once per
+//! directory change; flist.c:f_name() joins it with the basename).
 
 mod accessors;
 mod constructors;

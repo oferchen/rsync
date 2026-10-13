@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-/// Maximum chunk size for literal data (matches upstream CHUNK_SIZE).
+/// Maximum chunk size for literal data (upstream `rsync.h` `CHUNK_SIZE`).
 pub const CHUNK_SIZE: usize = 32 * 1024;
 
 /// Delta operation for file reconstruction.

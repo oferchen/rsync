@@ -45,7 +45,7 @@ impl IocpWriter {
     /// Reopens an existing file for overlapped writing via IOCP.
     ///
     /// Used by [`super::file_factory::writer_from_file`] when the caller hands
-    /// us a `std::fs::File` opened without `FILE_FLAG_OVERLAPPED` (issue #1929).
+    /// us a `std::fs::File` opened without `FILE_FLAG_OVERLAPPED`.
     /// Unlike [`Self::create`], this preserves the existing file contents and
     /// positions the writer at offset 0 - callers that need to append must
     /// seek to the desired offset before writing.
@@ -185,7 +185,7 @@ impl IocpWriter {
         let err = io::Error::last_os_error();
         // ERROR_IO_PENDING (997) means the write is queued; any other error is fatal.
         if err.raw_os_error() != Some(997) {
-            // Issue #1930: upgrade ERROR_INVALID_PARAMETER to a typed error
+            // upgrade ERROR_INVALID_PARAMETER to a typed error
             // pointing at the most likely cause - handle not opened with
             // FILE_FLAG_OVERLAPPED. Other errors pass through unchanged.
             return Err(classify_overlapped_error(err, "WriteFile"));

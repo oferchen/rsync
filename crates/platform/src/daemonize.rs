@@ -11,7 +11,7 @@
 //!
 //! # Upstream Reference
 //!
-//! `clientserver.c:1463` - `become_daemon()`
+//! `clientserver.c:1691` - `become_daemon()`
 
 use std::io;
 
@@ -24,11 +24,12 @@ use std::io;
 /// Must be called before spawning threads (fork is not async-signal-safe
 /// with threads).
 ///
-/// upstream: clientserver.c:1463 - `become_daemon()`
+/// upstream: clientserver.c:1691 - `become_daemon()`. Upstream writes the pid file
+/// from inside `become_daemon()` (clientserver.c:1705); here the caller does it.
 #[cfg(unix)]
 #[allow(unsafe_code)]
 pub fn become_daemon() -> io::Result<()> {
-    // upstream: clientserver.c:1466
+    // upstream: clientserver.c:1694
     // SAFETY: fork() is safe to call before threads are spawned.
     let pid = unsafe { libc::fork() };
     match pid {
@@ -37,10 +38,10 @@ pub fn become_daemon() -> io::Result<()> {
         _ => std::process::exit(0),
     }
 
-    // upstream: clientserver.c:1478
+    // upstream: clientserver.c:1709
     nix::unistd::setsid().map_err(|e| io::Error::from_raw_os_error(e as i32))?;
 
-    // upstream: clientserver.c:1490-1493
+    // upstream: clientserver.c:1719-1722
     redirect_stdio_to_devnull()
 }
 

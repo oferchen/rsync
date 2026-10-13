@@ -1,5 +1,5 @@
 //! Integration tests for the Windows IOCP write path under simulated memory
-//! pressure (task #1931).
+//! pressure.
 //!
 //! On Linux a `write(2)` may complete with fewer bytes than requested. On
 //! Windows the equivalent overlapped `WriteFile` call can also report a

@@ -28,7 +28,7 @@ use std::io::{self, Read, Write};
 /// assert_eq!(buf, [0x78, 0x56, 0x34, 0x12]);
 /// ```
 ///
-/// Reference: `io.c:write_int()` line ~2082
+/// upstream: `io.c:write_int()` line 2380
 #[inline]
 pub fn write_int<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
@@ -57,7 +57,7 @@ pub fn write_int<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
 /// assert_eq!(value, 0x12345678);
 /// ```
 ///
-/// Reference: `io.c:read_int()` line ~2091
+/// upstream: `io.c:read_int()` line 2003
 #[inline]
 pub fn read_int<R: Read>(reader: &mut R) -> io::Result<i32> {
     let mut buf = [0u8; 4];

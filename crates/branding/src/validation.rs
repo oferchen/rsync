@@ -146,7 +146,11 @@ pub fn validate_version(value: &str) -> Result<ParsedVersion, ValidationError> {
     })
 }
 
-/// Validates protocol version is in supported range.
+/// Validates that a protocol version lies in the accepted range 28 through 40.
+///
+/// # Errors
+///
+/// Returns [`ValidationError::OutOfRange`] for any other value.
 pub fn validate_protocol_version(version: u32) -> Result<(), ValidationError> {
     if (28..=40).contains(&version) {
         Ok(())

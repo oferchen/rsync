@@ -9,8 +9,8 @@
 //! # Protocol Version 27 Status
 //!
 //! Protocol version 27 is below the minimum supported version (28) and should be
-//! rejected during negotiation. This is consistent with upstream rsync 3.4.1
-//! behavior which also does not support protocol 27.
+//! rejected during negotiation. Deviation from upstream: rsync 3.5.1 accepts
+//! peers down to MIN_PROTOCOL_VERSION 20 (rsync.h:147); oc's floor is 28.
 //!
 //! # Test Coverage
 //!
@@ -22,8 +22,9 @@
 //!
 //! # Upstream Reference
 //!
-//! Protocol details are based on rsync 3.4.1 source code, which defines
-//! OLDEST_SUPPORTED_PROTOCOL as 28, explicitly excluding version 27.
+//! Upstream rsync 3.5.1 has no OLDEST_SUPPORTED_PROTOCOL; rsync.h:147-149
+//! defines MIN_PROTOCOL_VERSION 20 and MAX_PROTOCOL_VERSION 40. The floor of 28
+//! is oc's own `ProtocolVersion::OLDEST`.
 
 use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{
@@ -1188,10 +1189,10 @@ mod version_constants {
 mod upstream_compatibility {
     use super::*;
 
-    /// Upstream rsync 3.4.1 does not support v27.
+    /// oc's oldest supported protocol is 28. Deviation from upstream: rsync
+    /// 3.5.1 accepts down to MIN_PROTOCOL_VERSION 20 (rsync.h:147).
     #[test]
     fn upstream_rsync_341_excludes_v27() {
-        // rsync 3.4.1 defines OLDEST_SUPPORTED_PROTOCOL as 28
         assert_eq!(
             ProtocolVersion::OLDEST.as_u8(),
             28,
@@ -1199,10 +1200,10 @@ mod upstream_compatibility {
         );
     }
 
-    /// v27 rejection matches upstream behavior.
+    /// oc rejects a v27-only peer. Deviation from upstream: rsync 3.5.1 would
+    /// negotiate 27 (MIN_PROTOCOL_VERSION 20, rsync.h:147).
     #[test]
     fn v27_rejection_matches_upstream() {
-        // Upstream would also reject v27 during negotiation
         let result = select_highest_mutual([TestVersion(27)]);
         assert!(result.is_err());
     }

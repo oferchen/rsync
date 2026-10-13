@@ -3,9 +3,9 @@
 //! Perishable rules (`p` modifier) are excluded from transfer like any other
 //! rule and ALSO protect a matching destination entry from the top-level
 //! `--delete` scan. Upstream rsync only skips a perishable rule once
-//! `ignore_perishable` is set (exclude.c:1044), which happens exclusively
+//! `ignore_perishable` is set (exclude.c:1193-1194), which happens exclusively
 //! while removing the contents of a directory being deleted wholesale
-//! (delete.c:147); the top-level scan runs with it unset, so perishable rules
+//! (delete.c:208); the top-level scan runs with it unset, so perishable rules
 //! behave identically to non-perishable rules for the deletion decision.
 
 use filters::{FilterRule, FilterSet};
@@ -13,7 +13,7 @@ use std::path::Path;
 
 /// Verifies a perishable exclude protects a matching entry from deletion.
 ///
-/// upstream: exclude.c:1044 / delete.c:147 - a perishable rule is only skipped
+/// upstream: exclude.c:1193-1194 / delete.c:208 - a perishable rule is only skipped
 /// inside a wholly-deleted directory, never during the top-level scan.
 #[test]
 fn perishable_exclude_protects_during_top_level_deletion() {

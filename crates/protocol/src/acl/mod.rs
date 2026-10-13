@@ -26,9 +26,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `acls.c` lines 37-88: ACL data structures
-//! - `acls.c` lines 580-668: `send_ida_entries`, `send_rsync_acl`, `send_acl`
-//! - `acls.c` lines 670-800: `recv_acl_access`, `recv_ida_entries`, `recv_rsync_acl`
+//! - `acls.c` lines 42-89: wire flags and ACL data structures
+//! - `acls.c` lines 811-900: `send_ida_entries()`, `send_rsync_acl()`, `send_acl()`
+//! - `acls.c` lines 902-1022: `recv_acl_access()`, `recv_ida_entries()`, `recv_rsync_acl()`,
+//!   `receive_acl()`
 
 mod constants;
 mod definition;

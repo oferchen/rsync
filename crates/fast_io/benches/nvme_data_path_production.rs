@@ -1,7 +1,7 @@
 //! NVMe data-path benchmark, production wrappers: stdlib vs io_uring.
 //!
-//! Tracking task: oc-rsync IUD-9 (#2369). Companion bench:
-//! `nvme_data_path` (IUD-4, PR #4381) which used a hand-rolled
+//! Tracking task: oc-rsync IUD-9. Companion bench:
+//! `nvme_data_path` which used a hand-rolled
 //! io_uring prototype inline. This bench mirrors the same workload
 //! (10 x 1 GiB files) but exercises the *production* wrappers wired
 //! by IUD-5 ([`fast_io::write_file_with_io_uring`]) and IUD-6

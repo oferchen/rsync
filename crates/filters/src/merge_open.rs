@@ -15,8 +15,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/exclude.c:1464` - `parse_filter_file()` opens the merge file.
-//! - `rsync-3.5.1/exclude.c:811-814` - `push_local_filters()` calls it per
+//! - `rsync-3.5.1/exclude.c:1683` - `parse_filter_file()` opens the merge file.
+//! - `rsync-3.5.1/exclude.c:910-913` - `push_local_filters()` calls it per
 //!   scanned directory.
 //! - `rsync-3.5.1/exclude.c:1680-1684` - the `operator_path_resolve = 1` that
 //!   wraps that open.

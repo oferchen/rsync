@@ -21,7 +21,7 @@ use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrList};
 /// checksum computed via `compute_xattr_checksum`. For the MD5 default of
 /// protocol 30-32 this digest is unseeded, matching upstream's
 /// `sum_init(xattr_sum_nni, checksum_seed)` whose `CSUM_MD5` path ignores the
-/// seed (`checksum.c:588`).
+/// seed (`checksum.c:615-616`).
 ///
 /// # Wire Format
 ///
@@ -41,8 +41,13 @@ use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrList};
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c` - abbreviated values use `sum_init(xattr_sum_nni, checksum_seed)`
-/// to include the negotiated seed in the digest.
+/// Mirrors `send_xattr()` in `xattrs.c` lines 523-571. The digest itself is
+/// computed upstream when the list is read (`rsync_xal_get()`, `xattrs.c:286-295`);
+/// see `compute_xattr_checksum` for why the seed has no effect.
+///
+/// Deviation from upstream: names go out exactly as stored in `list`, with a
+/// trailing NUL appended; the `rsync.` prefix stripping and `user.` prefixing
+/// that upstream applies on the wire (`xattrs.c:536-555`) are not done here.
 pub fn send_xattr<W: Write>(
     writer: &mut W,
     list: &XattrList,
@@ -66,7 +71,7 @@ pub fn send_xattr<W: Write>(
             writer.write_all(&[0u8])?;
 
             if datum_len > MAX_FULL_DATUM {
-                // upstream: sum_init(xattr_sum_nni, checksum_seed)
+                // upstream: xattrs.c:289-295 sum_init(xattr_sum_nni, checksum_seed)
                 let checksum = compute_xattr_checksum(entry.datum(), checksum_seed);
                 writer.write_all(&checksum)?;
             } else {
@@ -97,8 +102,9 @@ pub fn send_xattr<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c:send_xattr_request()` - uses 1-based `rxa->num` with
-/// delta encoding: `write_varint(f_out, rxa->num - prior_req)`.
+/// Mirrors the generator path (`fname == NULL`) of `send_xattr_request()`,
+/// `xattrs.c` lines 651-703: 1-based `rxa->num` with delta encoding,
+/// `write_varint(f_out, rxa->num - prior_req)`, ended by a zero byte.
 pub fn send_xattr_request<W: Write>(writer: &mut W, indices: &[usize]) -> io::Result<()> {
     let mut prior_req = 0i32;
 
@@ -133,9 +139,11 @@ pub fn send_xattr_request<W: Write>(writer: &mut W, indices: &[usize]) -> io::Re
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c:send_xattr()` - the second pass over the xattr list emits
-/// values for entries flagged with the upstream pending-send state after
-/// the receiver replies to the abbreviated digest exchange.
+/// No direct upstream counterpart: upstream sends requested values only from
+/// the sender path of `send_xattr_request()` (`xattrs.c:684-698`), each
+/// preceded by its delta-encoded `num` (see `send_sender_xattr_response`).
+/// This function writes length and value only, with no `num` and no
+/// terminator.
 pub fn send_xattr_values<W: Write>(writer: &mut W, list: &XattrList) -> io::Result<()> {
     for entry in list.iter() {
         if entry.state().needs_send() {
@@ -171,9 +179,13 @@ pub fn send_xattr_values<W: Write>(writer: &mut W, list: &XattrList) -> io::Resu
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:623-675` - `send_xattr_request()` sender path (`fname != NULL`)
+/// - `xattrs.c:651-703` - `send_xattr_request()` sender path (`fname != NULL`)
 /// - `sender.c:469-486` - called from `write_ndx_and_attrs()` on the sender
 ///   when echoing iflags that include `ITEM_REPORT_XATTR`.
+///
+/// Deviation from upstream: the value written is the one held in `list`;
+/// upstream re-reads it from disk with `get_xattr_data()` and sends a zero
+/// length if that fails (`xattrs.c:688-697`).
 pub fn send_sender_xattr_response<W: Write>(
     writer: &mut W,
     list: &mut XattrList,
@@ -221,7 +233,7 @@ pub fn send_sender_xattr_response<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:287-293` - `sum_init(xattr_sum_nni, checksum_seed)` over the datum.
+/// - `xattrs.c:286-295` - `sum_init(xattr_sum_nni, checksum_seed)` over the datum.
 /// - `checksum.c:615-617` - `sum_init()` `CSUM_MD5` case: `md5_begin()`, no seed.
 /// - `compat.c:835-836` - `xattr_sum_nni` / `xattr_sum_len` fixed to md5 (16 bytes).
 pub fn compute_xattr_checksum(data: &[u8], checksum_seed: i32) -> [u8; MAX_XATTR_DIGEST_LEN] {

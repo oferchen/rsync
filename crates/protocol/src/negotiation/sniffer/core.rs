@@ -7,12 +7,12 @@ use super::super::{NegotiationPrologue, NegotiationPrologueDetector};
 /// Incrementally reads bytes from a [`Read`](std::io::Read) implementation until the
 /// negotiation style can be determined.
 ///
-/// Upstream rsync only needs to observe the very first octet to decide between
-/// the legacy ASCII negotiation (`@RSYNCD:`) and the modern binary handshake.
-/// Real transports, however, may deliver that byte in small fragments or after
-/// transient `EINTR` interruptions. This helper mirrors upstream behavior while
-/// providing a higher level interface that owns the buffered prefix so callers
-/// can replay the bytes into the legacy greeting parser without reallocating.
+/// The very first octet decides between the legacy ASCII negotiation
+/// (`@RSYNCD:`) and the binary handshake. Real transports may deliver bytes in
+/// small fragments or after transient `EINTR` interruptions, so this type owns
+/// the buffered prefix and lets callers replay it into the legacy greeting
+/// parser without reallocating. Deviation from upstream: upstream knows the
+/// transport up front and never sniffs the prologue.
 #[derive(Clone, Debug)]
 pub struct NegotiationPrologueSniffer {
     pub(super) detector: NegotiationPrologueDetector,
@@ -97,6 +97,10 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Attempts to reserve additional capacity for the buffered transcript.
+    ///
+    /// # Errors
+    ///
+    /// Returns the allocator's [`TryReserveError`] when the reservation fails.
     pub fn try_reserve_buffered(&mut self, additional: usize) -> Result<(), TryReserveError> {
         self.buffered.try_reserve(additional)
     }
@@ -126,6 +130,13 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Rehydrates the sniffer from a previously captured negotiation snapshot.
+    ///
+    /// The sniffer is reset first; `sniffed_prefix_len` is clamped to the
+    /// buffered length and to `LEGACY_DAEMON_PREFIX_LEN`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] when the buffer cannot grow to hold `buffered`.
     pub fn rehydrate_from_parts(
         &mut self,
         decision: NegotiationPrologue,

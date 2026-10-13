@@ -319,7 +319,7 @@ fn enter_through_symlink_to_outside_refuses() {
 ///
 /// Sibling of [`enter_through_symlink_to_outside_refuses`]: confirms that a
 /// real on-tree subdirectory is accepted so the audit's "refine error
-/// discrimination" rule (PR #5565) does not regress the happy path. A
+/// discrimination" rule does not regress the happy path. A
 /// receiver that fails closed on every error class must still let
 /// legitimate descents through.
 #[test]
@@ -348,7 +348,7 @@ fn enter_to_legitimate_subdir_returns_ok() {
 ///   tracked as the portable-fallback gap.
 ///
 /// ⚠ The fallback arm asserts a **known divergence from upstream, not intended
-/// behaviour**. Upstream 3.5.0 follows a relative in-tree target
+/// behaviour**. Upstream 3.5.1 follows a relative in-tree target
 /// (`ds_descend`, `syscall.c:3102`); oc refuses it wherever `openat2` is
 /// unavailable, so every non-Linux target is stricter than the reference
 /// implementation. Bringing the fallback to parity is task 551 (U350-4i,

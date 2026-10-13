@@ -25,9 +25,13 @@ type MessageHandler = Box<dyn FnMut(MessageCode, &[u8]) + Send>;
 ///
 /// # Protocol Details
 ///
-/// The rsync multiplex protocol wraps all data in 4-byte headers:
-/// - Byte 0: Tag (message code + MPLEX_BASE=7)
-/// - Bytes 1-3: Payload length (24-bit little-endian)
+/// The rsync multiplex protocol wraps all data in 4-byte little-endian headers:
+/// - Bits 24-31 (last byte on the wire): tag (message code + `MPLEX_BASE` = 7)
+/// - Bits 0-23 (first three bytes): payload length
+///
+/// Deviation from upstream: `io.c:read_a_msg()` validates each tag's length and
+/// the receiving role and acts on it inline; this reader hands every non-DATA
+/// frame to the message handler (or drops it when none is set) without checks.
 ///
 /// # Examples
 ///
@@ -228,7 +232,7 @@ impl<R: Read> Read for MplexReader<R> {
         // caller.
         //
         // An empty DATA frame (zero-length payload) is upstream rsync's lull
-        // keepalive (io.c:maybe_send_keepalive sends `send_msg(MSG_DATA, "", 0, 0)`).
+        // keepalive (io.c:1659 maybe_send_keepalive() sends `send_msg(MSG_DATA, "", 0, 0)`).
         // It carries no data, so it must be absorbed silently: returning the
         // resulting `Ok(0)` here would be read by callers as end-of-stream and
         // would truncate the transfer. Continue the loop instead so the next
@@ -385,7 +389,7 @@ mod tests {
 
     #[test]
     fn mplex_reader_absorbs_empty_data_keepalive() {
-        // An empty DATA frame is upstream's lull keepalive (io.c:1499
+        // An empty DATA frame is upstream's lull keepalive (io.c:1659
         // `send_msg(MSG_DATA, "", 0, 0)`). It must be absorbed silently: the
         // reader skips it and returns the following real frame's bytes, never a
         // premature `Ok(0)` that a caller would read as end-of-stream.

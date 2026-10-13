@@ -4,7 +4,7 @@
 //! characters that might cause issues in shell operations, protocol
 //! encoding, or path manipulation.
 //!
-//! Reference: rsync 3.4.1 flist.c, io.c for protocol encoding
+//! Reference: rsync 3.5.1 flist.c, io.c for protocol encoding
 //!
 //! The suite is unix-only: it builds non-UTF8 filenames via
 //! `OsStr::from_bytes` (a `std::os::unix::ffi::OsStrExt` extension) which

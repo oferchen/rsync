@@ -80,7 +80,7 @@ pub enum SignatureAlgorithm {
     /// versions when `checksum_seed` is zero.
     Md4,
     /// MD4 with rsync's checksum seed appended after the data, mirroring
-    /// upstream `get_checksum2()` (`checksum.c:358-396`).
+    /// upstream `get_checksum2()` (`checksum.c:322`, MD4 branch at 376-412).
     ///
     /// Used by protocol versions below 30 when `checksum_seed != 0`. The
     /// seed value is encoded as four little-endian bytes appended to the
@@ -89,12 +89,12 @@ pub enum SignatureAlgorithm {
         /// Checksum seed (`checksum_seed`) negotiated during protocol setup.
         seed: i32,
     },
-    /// MD5, negotiated when both peers enable the checksum.
+    /// MD5, the protocol 30+ default when no checksum name is negotiated.
     ///
     /// Supports optional seeded hashing with configurable ordering for protocol
     /// compatibility. The `seed_config` determines whether the seed is hashed
-    /// before or after the file data, controlled by the CHECKSUM_SEED_FIX
-    /// compatibility flag in protocol 30+.
+    /// before or after the file data, controlled by the `CF_CHKSUM_SEED_FIX`
+    /// compatibility flag (upstream: checksum.c:360 `proper_seed_order`).
     Md5 {
         /// Seed configuration for MD5 checksum calculation.
         seed_config: Md5Seed,
@@ -198,7 +198,7 @@ impl SignatureAlgorithm {
             _ => {
                 // Seeded MD4 cannot use the SIMD batch path because the per-block
                 // input includes a 4-byte LE seed suffix appended after the data.
-                // upstream: checksum.c:377-380.
+                // upstream: checksum.c:393-396 get_checksum2().
                 blocks
                     .iter()
                     .map(|data| self.compute_truncated(data, len))
@@ -229,7 +229,7 @@ impl SignatureAlgorithm {
                 let mut h = Md4::new();
                 h.update(a);
                 h.update(b);
-                // upstream: checksum.c:377-380 - append seed as 4 LE bytes
+                // upstream: checksum.c:393-396 - append seed as 4 LE bytes
                 if seed != 0 {
                     h.update(&seed.to_le_bytes());
                 }
@@ -389,7 +389,7 @@ mod tests {
     /// Verifies seeded MD4 matches upstream's "append 4 LE seed bytes after
     /// data" semantics for both the contiguous and split-slice paths.
     ///
-    /// upstream: `checksum.c:358-396` get_checksum2() MD4 branch.
+    /// upstream: `checksum.c:376-412` get_checksum2() MD4 branch.
     #[test]
     fn md4_seeded_signature_matches_upstream_format() {
         let data: &[u8] = b"two-block payload that splits across slices";

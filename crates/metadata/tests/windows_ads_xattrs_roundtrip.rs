@@ -65,7 +65,7 @@ const ZONE_IDENTIFIER_PAYLOAD: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
 /// returns bare stream names; the wire encoder
 /// (`protocol::xattr::local_to_wire`) prefixes them with `user.` on
 /// non-Linux peers so the bytes match what a Linux peer would emit.
-/// upstream: xattrs.c:518-530.
+/// upstream: xattrs.c:546-558.
 const ZONE_IDENTIFIER_WIRE: &[u8] = b"user.Zone.Identifier";
 
 /// Custom non-MOTW stream name used by the multi-stream scenario to
@@ -73,7 +73,7 @@ const ZONE_IDENTIFIER_WIRE: &[u8] = b"user.Zone.Identifier";
 const CUSTOM_STREAM: &str = "oc_rsync_test_stream";
 
 /// Wire-format counterpart of `CUSTOM_STREAM`. The non-Linux sender
-/// path prepends `user.` per upstream xattrs.c:518-530.
+/// path prepends `user.` per upstream xattrs.c:546-558.
 const CUSTOM_STREAM_WIRE: &[u8] = b"user.oc_rsync_test_stream";
 
 /// Custom stream payload, distinct from the MOTW payload so the
@@ -259,7 +259,7 @@ fn ads_multi_stream_round_trips() {
     // failure on the destination side can be attributed to the transfer
     // rather than the seeding step. Both names round-trip through
     // `local_to_wire`, which prepends `user.` on non-Linux peers per
-    // upstream xattrs.c:518-530.
+    // upstream xattrs.c:546-558.
     let src_wire = read_xattrs_for_wire(
         &src_file,
         &XattrSendOptions {

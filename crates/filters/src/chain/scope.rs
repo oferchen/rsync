@@ -41,7 +41,7 @@ pub(super) struct DirScope {
     /// global rule (compared by `CompiledRule::order`) is checked before or
     /// after this scope, mirroring upstream `check_filter()` consulting a
     /// `FILTRULE_PERDIR_MERGE` entry at its own list position
-    /// (exclude.c:1046-1050).
+    /// (exclude.c:1195-1200).
     pub(super) directive_order: usize,
 }
 

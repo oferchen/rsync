@@ -12,13 +12,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `exclude.c:379` `add_implied_include()` - turns each requested source arg
+//! - `exclude.c:476` `add_implied_include()` - turns each requested source arg
 //!   into one or more `FILTRULE_INCLUDE` rules (basename/relative handling,
 //!   parent-dir implication for `--relative`, a trailing `/**` (`--recursive`)
 //!   or `/*` (`--dirs`) rule, wildcard args producing `FILTRULE_WILD` rules).
-//! - `flist.c:1251` `recv_file_entry()` - rejects any received name for which
+//! - `flist.c:1368-1369` `recv_file_entry()` - rejects any received name for which
 //!   `check_filter(&implied_filter_list, ...) <= 0` (no include match).
-//! - `options.c:2519-2522` - `trust_sender_args` disables the mechanism for
+//! - `options.c:2675-2678` - `trust_sender_args` disables the mechanism for
 //!   local/`--trust-sender`/server/old-style/`files-from-host` transfers; the
 //!   caller reflects that by not building the list at all in those cases.
 
@@ -47,7 +47,7 @@ pub struct ImpliedIncludeOptions {
     /// The source arg is a daemon `module/path` spec: strip the leading module
     /// name (everything up to and including the first `/`).
     ///
-    /// upstream: `exclude.c:396-401` `skip_daemon_module`.
+    /// upstream: `exclude.c:494-499` `skip_daemon_module`.
     pub skip_daemon_module: bool,
 }
 
@@ -63,7 +63,7 @@ pub struct ImpliedIncludes {
     seen: HashSet<Vec<u8>>,
     /// Whether an arg contributed a rule accepting the transfer root's own
     /// contents (upstream: the `/**` / `/*` patterns `is_implied_parent_dir()`
-    /// scans for at `exclude.c:1153-1163`). Only the empty-arg branch of
+    /// scans for at `exclude.c:1155-1164`). Only the empty-arg branch of
     /// [`add_arg`](Self::add_arg) can produce them.
     root_content: bool,
 }
@@ -114,7 +114,7 @@ impl ImpliedIncludes {
     pub fn add_arg(&mut self, arg: &[u8]) -> Result<(), FilterError> {
         let mut arg = arg;
 
-        // upstream: exclude.c:396-401 - strip the daemon module name.
+        // upstream: exclude.c:494-499 - strip the daemon module name.
         if self.opts.skip_daemon_module {
             arg = arg
                 .iter()
@@ -122,7 +122,7 @@ impl ImpliedIncludes {
                 .map_or(b"", |idx| &arg[idx + 1..]);
         }
 
-        // upstream: exclude.c:403-408 - --relative keeps the path after a
+        // upstream: exclude.c:500-505 - --relative keeps the path after a
         // "/./" pivot; otherwise the arg is reduced to its basename.
         if self.opts.relative {
             if let Some(idx) = arg.windows(3).position(|w| w == b"/./") {
@@ -132,7 +132,7 @@ impl ImpliedIncludes {
             arg = &arg[idx + 1..];
         }
 
-        // upstream: exclude.c:410-411 - a bare "." arg contributes no name rule.
+        // upstream: exclude.c:506-507 - a bare "." arg contributes no name rule.
         if arg == b"." {
             arg = b"";
         }
@@ -142,7 +142,7 @@ impl ImpliedIncludes {
         // the module/basename strip and BEFORE the escaping transform.
         let saw_wild = arg.iter().any(|b| matches!(b, b'*' | b'[' | b'?'));
 
-        // upstream: exclude.c:412-491 - normalise the arg into an anchored
+        // upstream: exclude.c:509-574 - normalise the arg into an anchored
         // pattern, collapsing "//", "/./" and trailing "/" the way the C loop
         // does. Empty and "." segments are dropped.
         let segments: Vec<&[u8]> = arg
@@ -207,7 +207,7 @@ impl ImpliedIncludes {
             let suffix: &[u8] = if self.opts.recurse { b"**" } else { b"*" };
             let pattern = [base.as_slice(), b"/", suffix].concat();
             self.push_rule(&pattern, false)?;
-            // upstream: exclude.c:1153-1163 - `/**` / `/*` are the only implied
+            // upstream: exclude.c:1155-1164 - `/**` / `/*` are the only implied
             // patterns that accept the transfer root's own contents, and only an
             // empty (root) arg produces them.
             self.root_content |= segments.is_empty();
@@ -291,8 +291,8 @@ impl ImpliedIncludes {
     /// when a `[foo]` glob idiom failed to expand, so upstream adds both the
     /// wildcard rule and the escaped-literal rule.
     ///
-    /// upstream: `exclude.c:312` `maybe_add_literal_brackets_rule()`, invoked
-    /// after each implied rule with a live `[` (exclude.c:494, 526, 569).
+    /// upstream: `exclude.c:409` `maybe_add_literal_brackets_rule()`, invoked
+    /// after each implied rule with a live `[` (exclude.c:590-591, 622-623, 665-666).
     fn push_rule(&mut self, pattern: &[u8], directory_only: bool) -> Result<(), FilterError> {
         if self.seen.insert(pattern.to_vec()) {
             let compiled = CompiledRule::new(FilterRule::include(pattern.to_vec()))?;
@@ -385,7 +385,7 @@ fn drop_nonwild_bracket_escapes(bytes: &[u8]) -> Vec<u8> {
 /// Escapes every live (unescaped) `[` in `pattern` as `\[`, returning `None`
 /// when the pattern has no live `[`.
 ///
-/// upstream: `exclude.c:312` `maybe_add_literal_brackets_rule()` - a `\`
+/// upstream: `exclude.c:409` `maybe_add_literal_brackets_rule()` - a `\`
 /// consumes the following byte (so an already-escaped `\[` is left alone), and
 /// each remaining `[` is prefixed with a backslash so it matches literally.
 fn escape_live_brackets(pattern: &[u8]) -> Option<Vec<u8>> {
@@ -502,8 +502,8 @@ mod tests {
 
     #[test]
     fn wildcard_arg_stays_active_and_wildcard_aware() {
-        // upstream 3.4.4 does NOT disable the check for wildcard args: it emits
-        // a FILTRULE_WILD rule (exclude.c:415). A `d*` request admits matching
+        // upstream does NOT disable the check for wildcard args: it emits
+        // a FILTRULE_WILD rule (exclude.c:579). A `d*` request admits matching
         // names and still rejects non-matching injections.
         let opts = ImpliedIncludeOptions {
             recurse: true,
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn files_from_relative_entries_admit_requested_tree() {
         // --files-from implies --relative and disables recursion in favour of
-        // --dirs (options.c:2178-2182,2214-2215). `from/./` reduces to `/*`,
+        // --dirs (options.c:2313-2318, 2331-2332). `from/./` reduces to `/*`,
         // admitting every top-level name the whole-dir entry requested.
         let opts = ImpliedIncludeOptions {
             relative: true,
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn live_bracket_arg_also_admits_literal_name() {
-        // upstream: exclude.c:312 maybe_add_literal_brackets_rule() - an arg
+        // upstream: exclude.c:409 maybe_add_literal_brackets_rule() - an arg
         // with a live `[` gets an extra escaped-bracket rule so the literal
         // name is admitted when the glob idiom failed to expand remotely. It is
         // stricter than a wildcard, never more permissive.
@@ -646,7 +646,7 @@ mod tests {
         // A valid filename containing a literal backslash (an ordinary byte on
         // Unix) must be admitted by its own implied-include rule. upstream
         // records `back\slash.txt` as a NON-wild rule (no `*?[`) and matches it
-        // with a literal strcmp (exclude.c:967-978), so the `\` stays literal.
+        // with a literal strcmp (exclude.c:1064-1077), so the `\` stays literal.
         // Regression: oc's wildmatch treated `\s` as an escape, so the receiver
         // rejected the sender's own name as "unrequested file-list name",
         // aborting an oc<->oc SSH --files-from pull.

@@ -24,9 +24,7 @@ use protocol::{
     read_varlong, recv_msg, send_msg, write_varint, write_varlong,
 };
 
-// ---------------------------------------------------------------------------
 // Varint encode/decode
-// ---------------------------------------------------------------------------
 
 fn bench_varint_encode_single(c: &mut Criterion) {
     let mut group = c.benchmark_group("wire_varint_encode_single");
@@ -183,9 +181,7 @@ fn bench_varlong_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // File entry encode/decode
-// ---------------------------------------------------------------------------
 
 /// Generate a realistic file entry for benchmarking.
 fn make_file_entry(index: usize) -> FileEntry {
@@ -303,9 +299,7 @@ fn bench_file_entry_decode_batch(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Multiplex frame encode/decode (MessageHeader)
-// ---------------------------------------------------------------------------
 
 fn bench_message_header_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("wire_mplex_header_encode");
@@ -427,9 +421,7 @@ fn bench_mplex_frame_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Delta token encode/decode
-// ---------------------------------------------------------------------------
 
 /// Generate deterministic data for delta benchmarks.
 fn generate_data(size: usize) -> Vec<u8> {
@@ -589,9 +581,7 @@ fn bench_delta_op_batch(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Criterion harness
-// ---------------------------------------------------------------------------
 
 criterion_group!(
     name = wire_protocol_benchmarks;

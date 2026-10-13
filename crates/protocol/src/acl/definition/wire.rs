@@ -16,8 +16,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `acls.c` lines 610-647: `send_rsync_acl()`
-//! - `acls.c` lines 740-800: `recv_rsync_acl()`
+//! - `acls.c` lines 837-877: `send_rsync_acl()`
+//! - `acls.c` lines 961-1014: `recv_rsync_acl()`
 
 use std::io::{self, Read};
 
@@ -44,7 +44,12 @@ use super::types::{AclEntry, AclPerms, AclTag};
 /// # Upstream Reference
 ///
 /// Mirrors the literal-data branch of `recv_rsync_acl()` in `acls.c`
-/// lines 740-800.
+/// lines 978-1010.
+///
+/// Deviation from upstream: when named entries arrive without a mask, the
+/// mask is the union of the named-entry permissions. Upstream uses the mode's
+/// group bits for an access ACL and adds `group_obj` to the union for a
+/// default ACL (`acls.c:999-1008`).
 pub fn read_acl_definition<R: Read>(reader: &mut R) -> io::Result<AclDefinition> {
     let mut flags_buf = [0u8; 1];
     reader.read_exact(&mut flags_buf)?;
@@ -84,8 +89,8 @@ pub fn read_acl_definition<R: Read>(reader: &mut R) -> io::Result<AclDefinition>
             entries.push(AclEntry::new(tag, perms));
         }
 
-        // upstream: acls.c recv_rsync_acl() sets mask from computed value
-        // when named entries exist but no explicit mask was transmitted
+        // A POSIX ACL with named entries needs a mask; see the deviation
+        // note on this function for how this differs from upstream.
         if !ida_entries.is_empty() && !explicit_mask {
             entries.push(AclEntry::new(
                 AclTag::Mask,
@@ -109,7 +114,7 @@ pub fn read_acl_definition<R: Read>(reader: &mut R) -> io::Result<AclDefinition>
 /// # Upstream Reference
 ///
 /// Mirrors the literal-data branch of `send_rsync_acl()` in `acls.c`
-/// lines 610-647.
+/// lines 846-873. Named entries are sent without user/group names.
 pub fn write_acl_definition<W: io::Write>(
     writer: &mut W,
     definition: &AclDefinition,

@@ -463,6 +463,10 @@ impl QuicServerSetup {
     /// [`QuicAcceptor::from_socket_server_first`]). With `client_ca`, every
     /// client must present a certificate anchored by it (see
     /// [`QuicAcceptor::from_socket_server_first_mutual`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the server TLS configuration cannot be built.
     pub fn server_first(
         identity: &QuicServerIdentity,
         client_ca: Option<RootCertStore>,
@@ -553,6 +557,10 @@ impl QuicAcceptor {
     /// certificate. Callers that need dual-stack isolation
     /// (`IPV6_V6ONLY`) or an operator-supplied certificate build the socket
     /// themselves and call [`QuicAcceptor::from_socket`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the UDP socket cannot be bound or the endpoint cannot be built.
     pub fn bind(addr: SocketAddr) -> io::Result<Self> {
         let socket = UdpSocket::bind(addr)?;
         Self::from_socket(socket, &QuicServerIdentity::Ephemeral)
@@ -572,6 +580,10 @@ impl QuicAcceptor {
     /// bidirectional stream and speaks first. For the server-speaks-first rsync
     /// daemon (which writes the `@RSYNCD:` greeting before the client sends
     /// anything) use [`QuicAcceptor::from_socket_server_first`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the TLS configuration or endpoint cannot be built.
     pub fn from_socket(socket: UdpSocket, identity: &QuicServerIdentity) -> io::Result<Self> {
         Self::from_socket_with(socket, identity, false, None)
     }
@@ -584,6 +596,10 @@ impl QuicAcceptor {
     /// to its peer until a frame is sent on it, so the speaker must be the
     /// opener or both sides deadlock. The peer must connect with
     /// [`QuicConnector::connect_server_first`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the TLS configuration or endpoint cannot be built.
     pub fn from_socket_server_first(
         socket: UdpSocket,
         identity: &QuicServerIdentity,
@@ -602,6 +618,10 @@ impl QuicAcceptor {
     /// `@RSYNCD:` byte is exchanged. This is the daemon-side mirror of the
     /// client's `--quic-ca` server verification; the presented server identity
     /// (`identity`) is unchanged from the plain path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the TLS configuration or endpoint cannot be built.
     pub fn from_socket_server_first_mutual(
         socket: UdpSocket,
         identity: &QuicServerIdentity,
@@ -628,6 +648,11 @@ impl QuicAcceptor {
     /// A process that must give up filesystem access before its QUIC driver
     /// thread exists (the daemon's QUIC front process) builds the setup first,
     /// sandboxes itself, and only then calls this.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the socket address cannot be read or the endpoint or its I/O
+    /// driver cannot be started.
     pub fn from_setup(socket: UdpSocket, setup: &QuicServerSetup) -> io::Result<Self> {
         let local = socket.local_addr()?;
         let bound = bind_endpoint(socket, Some(Arc::clone(&setup.config)))?;
@@ -640,6 +665,10 @@ impl QuicAcceptor {
     }
 
     /// Returns the bound local address (useful with port 0).
+    ///
+    /// # Errors
+    ///
+    /// Returns the socket error.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         Ok(self.local)
     }
@@ -656,6 +685,10 @@ impl QuicAcceptor {
     /// May be called any number of times: each call yields the next
     /// connection, in the order their streams became ready. Fails once the
     /// driver thread has exited (a socket failure).
+    ///
+    /// # Errors
+    ///
+    /// Returns the endpoint's fault when the driver has stopped.
     pub fn accept(&self) -> io::Result<QuicStream> {
         let mut hub = self.hub.lock();
         loop {
@@ -755,11 +788,19 @@ impl QuicConnector {
     /// `server_certificate`. Convenience wrapper over
     /// [`QuicConnector::with_trust`] with [`QuicTrust::Pinned`], preserved as
     /// the exact-pin path used by the loopback tests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the client TLS configuration cannot be built.
     pub fn new(server_certificate: &CertificateDer<'_>) -> io::Result<Self> {
         Self::pinned(server_certificate.clone().into_owned())
     }
 
     /// Creates a connector that trusts exactly `server_certificate`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the client TLS configuration cannot be built.
     pub fn pinned(server_certificate: CertificateDer<'static>) -> io::Result<Self> {
         Self::with_trust(QuicTrust::Pinned(server_certificate))
     }
@@ -768,6 +809,10 @@ impl QuicConnector {
     /// congestion control and flow-control windows from the environment and
     /// built-in defaults. Convenience wrapper over
     /// [`QuicConnector::with_trust_tuned`] with default tuning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the client configuration cannot be built.
     pub fn with_trust(trust: QuicTrust) -> io::Result<Self> {
         Self::with_trust_tuned(trust, QuicTransportTuning::default())
     }
@@ -775,11 +820,15 @@ impl QuicConnector {
     /// Creates a connector whose trust decision is supplied by `trust` and
     /// whose transport tuning (congestion controller, flow-control windows) is
     /// resolved from `tuning` (CLI `--quic-cc`/`--quic-window`), falling back to
-    /// the environment and defaults inside [`build_transport_config`].
+    /// the environment and defaults inside `build_transport_config`.
     ///
     /// Every trust variant produces a TLS 1.3, ALPN-`rsync` client config
     /// through the one shared builder below; only the verifier stage differs.
     /// This is the constructor the CA/system-root/TOFU resolution feeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the client configuration cannot be built.
     pub fn with_trust_tuned(trust: QuicTrust, tuning: QuicTransportTuning) -> io::Result<Self> {
         Self::with_trust_tuned_client_auth(trust, tuning, None, None)
     }
@@ -793,10 +842,15 @@ impl QuicConnector {
     /// were supplied; `None` reproduces today's behaviour exactly - the client
     /// presents no certificate (rustls `with_no_client_auth`). `cipher` is
     /// `Some` only when `--quic-cipher` was supplied; `None` keeps the
-    /// CPU-adaptive default (see [`client_provider`]), byte-identical to the
+    /// CPU-adaptive default (see `client_provider`), byte-identical to the
     /// pre-`--quic-cipher` client on hosts with hardware AES. The server-trust
     /// decision (`trust`) and transport tuning are unaffected. The certificate
     /// is installed via rustls `with_client_auth_cert`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the TLS configuration, client certificate or cipher selection is
+    /// rejected.
     pub fn with_trust_tuned_client_auth(
         trust: QuicTrust,
         tuning: QuicTransportTuning,
@@ -841,6 +895,10 @@ impl QuicConnector {
     /// For the server-speaks-first rsync daemon - where the client must instead
     /// accept the stream the daemon opens and read its `@RSYNCD:` greeting
     /// first - use [`QuicConnector::connect_server_first`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection or stream cannot be established.
     pub fn connect(&self, addr: SocketAddr, server_name: &str) -> io::Result<QuicStream> {
         self.connect_with(addr, server_name, true)
     }
@@ -851,6 +909,11 @@ impl QuicConnector {
     /// This is the mode for connecting to the rsync daemon, whose acceptor is
     /// built with [`QuicAcceptor::from_socket_server_first`]; the daemon writes
     /// the `@RSYNCD:` greeting before the client sends anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection cannot be established or the server's stream does
+    /// not arrive.
     pub fn connect_server_first(
         &self,
         addr: SocketAddr,
@@ -910,6 +973,10 @@ impl QuicStream {
     /// blocking calls of its own. A clean connection close from the peer also
     /// counts as success, because the final ACK and a CONNECTION_CLOSE frame
     /// can race.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stream's terminal fault, or an error when the driver has gone away.
     pub fn finish(&mut self) -> io::Result<()> {
         let shared = &self.io.shared;
         let mut st = shared.lock();
@@ -978,7 +1045,7 @@ impl QuicStream {
     /// `None` on the receiver (or `--bwlimit=0`), where the wrapper is a
     /// zero-overhead passthrough. Because [`QuicStream`] is a byte pipe, the
     /// decorator paces the exact wire bytes handed to the driver, matching
-    /// upstream's `sleep_for_bwlimit` on the raw socket write (`io.c:864,879`).
+    /// upstream's `sleep_for_bwlimit` on the raw socket write (`io.c:980`).
     ///
     /// The returned writer owns this handle; obtain the read half first via
     /// [`QuicStream::try_clone`] when a split read/write pair is needed.

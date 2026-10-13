@@ -7,8 +7,8 @@
 //!
 //! - `checksum.c:get_checksum1()` - scalar rolling checksum this accelerates
 //! - `match.c:hash_search()` - consumer of rolling checksums during delta detection
-//! - `simd-checksum-x86_64.cpp:113-313` - upstream SSSE3/SSE2 vector-register loop
-//! - `simd-checksum-x86_64.cpp:338-432` - upstream AVX2 vector-register loop
+//! - `simd-checksum-x86_64.cpp:113-314` - upstream SSSE3/SSE2 vector-register loop
+//! - `simd-checksum-x86_64.cpp:353-448` - upstream AVX2 vector-register loop
 //!
 //! # Runtime Feature Detection
 //!
@@ -43,7 +43,7 @@
 //!
 //! AVX2 processes 32 bytes per iteration, SSE2 processes 16 bytes per iteration.
 //! Both keep the rolling `s1` and `s2` accumulators resident in vector registers
-//! across the full stripe (mirroring upstream `simd-checksum-x86_64.cpp:343-396`)
+//! across the full stripe (mirroring upstream `simd-checksum-x86_64.cpp:358-445`)
 //! and only extract once at the end of the loop. Remaining bytes fall back to
 //! the scalar implementation to ensure correctness for all input sizes.
 
@@ -148,8 +148,8 @@ pub(super) fn cpu_features_cached_for_tests() -> bool {
 /// the sum of all four input lanes (other lanes are unspecified).
 ///
 /// Two `_mm_shuffle_epi32 + _mm_add_epi32` pairs only - no memory round-trip.
-/// Mirrors the upstream `simd-checksum-x86_64.cpp:204` extraction style
-/// (collapse via shuffle then read lane 0).
+/// Upstream extracts lane 0 through a store to `x[]`
+/// (`simd-checksum-x86_64.cpp:204-207`); the shuffle avoids that memory round-trip.
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn fold_lane0_sse2(v: __m128i) -> __m128i {
@@ -250,7 +250,7 @@ unsafe fn accumulate_chunk_sse2(
 /// `schar *buf` interpretation in `checksum.c:get_checksum1()`.
 ///
 /// The `s1` and `s2` accumulators stay resident in `__m128i` lane 0 across
-/// the full stripe (upstream `simd-checksum-x86_64.cpp:343-396` pattern),
+/// the full stripe (upstream `simd-checksum-x86_64.cpp:358-445` pattern),
 /// folding per-iteration `block_sum` / `block_prefix` partial-sum vectors
 /// in-register. The final horizontal extraction happens once after the loop.
 #[target_feature(enable = "avx2")]
@@ -269,7 +269,7 @@ unsafe fn accumulate_chunk_avx2(
 
     if chunk.len() >= AVX2_BLOCK_LEN {
         // Keep s1/s2 in vector lane 0 across the stripe. Mirrors upstream
-        // `simd-checksum-x86_64.cpp:343-344 ss1 = _mm_cvtsi32_si128(*ps1)`.
+        // `simd-checksum-x86_64.cpp:358-359 ss1 = _mm_cvtsi32_si128(*ps1)`.
         let mut ss1 = _mm_cvtsi32_si128(s1 as i32);
         let mut ss2 = _mm_cvtsi32_si128(s2 as i32);
 
@@ -278,7 +278,7 @@ unsafe fn accumulate_chunk_avx2(
 
             // s2 += AVX2_BLOCK_LEN * s1, in-vector. Uses ss1 *before* the
             // byte-sum is folded in. Upstream:
-            // simd-checksum-x86_64.cpp:374 `ss2 = _mm_add_epi32(ss2, _mm_slli_epi32(ss1, 6))`
+            // simd-checksum-x86_64.cpp:388 `ss2 = _mm_add_epi32(ss2, _mm_slli_epi32(ss1, 6))`
             // (upstream stride is 64 -> shift 6; our stride is 32 -> shift 5).
             ss2 = _mm_add_epi32(ss2, _mm_slli_epi32::<AVX2_BLOCK_SHIFT>(ss1));
 

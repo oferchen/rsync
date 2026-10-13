@@ -55,8 +55,9 @@ impl DirectoryStatBatch {
     /// Stats a file relative to the directory using statx (Linux 4.11+).
     ///
     /// Returns a lightweight `StatxResult` directly from the statx syscall,
-    /// avoiding construction of `fs::Metadata`. Falls back to `stat_relative()`
-    /// on older kernels.
+    /// avoiding construction of `fs::Metadata`. There is no fallback: on a
+    /// kernel without statx the syscall error is returned, and callers should
+    /// use `stat_relative()` instead.
     ///
     /// # Errors
     ///

@@ -1794,7 +1794,7 @@ mod tests {
         assert!(resolved.identity_files.is_empty());
     }
 
-    // --- Proxy directives: ProxyCommand / ProxyJump / ProxyUseFdpass ---
+    // Proxy directives: ProxyCommand / ProxyJump / ProxyUseFdpass
 
     #[test]
     fn proxy_command_is_the_rest_of_the_line_verbatim() {
@@ -1877,7 +1877,7 @@ mod tests {
         assert!(resolved.proxy_use_fdpass.is_none());
     }
 
-    // --- Authentication-control family (task 237n) ---
+    // Authentication-control family
 
     #[test]
     fn pubkey_authentication_parses_the_multistate() {
@@ -2039,7 +2039,7 @@ mod tests {
         assert!(r.certificate_files.is_empty());
     }
 
-    // --- Match blocks + the two-pass model (task 237g) ---
+    // Match blocks + the two-pass model
     //
     // Oracle-independent counterparts to the `ssh -G` differential cells,
     // so the two-pass model is gated even where no `ssh` binary is present.
@@ -2582,7 +2582,7 @@ mod tests {
         );
     }
 
-    // -- the refusals ---------------------------------------------------
+    // the refusals
 
     /// The empty-token hard error, upstream's own wording.
     /// Oracle: `ssh -G` exits 255 with
@@ -2698,7 +2698,7 @@ mod tests {
         assert!(resolve("Host #x\n  Port 3333\n", "a").port.is_none());
     }
 
-    // -- ConnectTimeout ---------------------------------------------------
+    // ConnectTimeout
     //
     // Every cell below was measured against real `ssh -G` (OpenSSH_10.3p1)
     // before being written down; the differential harness pins the
@@ -2956,7 +2956,7 @@ mod tests {
         assert!(pattern_matches("ab", "??"));
     }
 
-    // -- file load order (task 237e) ----------------------------------
+    // file load order
     //
     // upstream: openssh/ssh.c:561-592 `process_config_files()` reads the
     // user file, then the system file, into ONE options struct. The
@@ -3079,7 +3079,7 @@ mod tests {
         assert_eq!(resolved.port, Some(2222));
     }
 
-    // -- Include (task 237f) ------------------------------------------
+    // Include
     //
     // upstream: the `oInclude` arm, openssh/readconf.c:2073-2150. The
     // anchors (`~/.ssh` vs `/etc/ssh`, `~`) are injected through
@@ -3413,7 +3413,7 @@ mod tests {
         );
     }
 
-    // --- Host-key verification family (task 237m) ---
+    // Host-key verification family
 
     #[test]
     fn user_known_hosts_file_accumulates_every_token_on_the_line() {

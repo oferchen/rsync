@@ -31,9 +31,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Returns `true` if the filesystem at `path` supports long paths (> 260).
 /// Falls back to `false` if detection fails.
@@ -81,9 +79,7 @@ fn can_create_junctions(dir: &Path) -> bool {
     ok
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.a: Long paths (> MAX_PATH / 260 characters)
-// ---------------------------------------------------------------------------
 
 /// The `\\?\` extended-length path prefix lets Win32 APIs access paths
 /// longer than 260 characters. The IOCP writer opens files via
@@ -161,9 +157,7 @@ fn very_long_path_via_extended_prefix() {
     assert_eq!(content, b"deep-data");
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.b: Case-insensitive filename matching
-// ---------------------------------------------------------------------------
 
 /// NTFS is case-preserving but case-insensitive. Writing to "File.TXT" and
 /// reading from "file.txt" must return the same content.
@@ -243,9 +237,7 @@ fn case_insensitive_overwrite() {
     assert_eq!(content, b"second-version");
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.c: Reparse points (directory junctions)
-// ---------------------------------------------------------------------------
 
 /// A directory junction is an NTFS reparse point that redirects path
 /// resolution to another directory. Files accessed through the junction
@@ -314,9 +306,7 @@ fn junction_metadata_reports_symlink() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.d: File attributes (read-only, hidden, system, archive)
-// ---------------------------------------------------------------------------
 
 /// Setting the read-only attribute must prevent writes and clearing it
 /// must restore write access.
@@ -407,9 +397,7 @@ fn hidden_file_is_still_readable() {
     assert_eq!(content, "hidden-content");
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.e: Unicode filenames
-// ---------------------------------------------------------------------------
 
 /// NTFS supports Unicode filenames. This test creates files with non-ASCII
 /// characters and verifies round-trip data integrity.
@@ -432,9 +420,7 @@ fn unicode_filename_roundtrip() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.f: Empty filename components and trailing dots/spaces
-// ---------------------------------------------------------------------------
 
 /// NTFS silently strips trailing dots and spaces from filenames. A file
 /// created as "test. " is stored as "test" (or "test." depending on API).
@@ -467,9 +453,7 @@ fn trailing_dots_and_spaces_normalized() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.g: Maximum filename length
-// ---------------------------------------------------------------------------
 
 /// NTFS supports filenames up to 255 characters (not bytes). This test
 /// creates a file at the limit and verifies it round-trips.
@@ -501,9 +485,7 @@ fn filename_over_255_chars_fails() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // WTD-3.h: Concurrent writers to the same file via sharing flags
-// ---------------------------------------------------------------------------
 
 /// Two writers with `FILE_SHARE_WRITE` can coexist. This test verifies
 /// that the IOCP writer's sharing flags allow a second handle to read

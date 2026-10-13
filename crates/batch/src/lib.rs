@@ -393,7 +393,7 @@ pub struct BatchConfig {
     /// Binary name or path written to the replay script as the executable
     /// to invoke for `--read-batch`.
     ///
-    /// Mirrors upstream rsync's `batch.c:259` which writes `raw_argv[0]`
+    /// Mirrors upstream rsync's `batch.c:297` which writes `raw_argv[0]`
     /// literally - the exact invocation path the user passed on the
     /// command line. Defaults to `"oc-rsync"` when not set, which only
     /// works if `oc-rsync` is resolvable on `PATH`. Callers that invoke
@@ -416,7 +416,7 @@ pub struct BatchConfig {
     ///
     /// These are elided from the reconstructed replay command, mirroring how
     /// upstream nulls out the `cooked_argv` filename args
-    /// (`batch.c:269-275`). The destination is re-supplied through the
+    /// (`batch.c:305-311`). The destination is re-supplied through the
     /// `${1:-<dest>}` placeholder instead.
     pub operands: Vec<String>,
 
@@ -443,8 +443,8 @@ pub struct BatchConfig {
     /// by the replay script's pass-through arguments, so it must be threaded in
     /// from the current invocation. It gates the post-flist uid/gid id-list
     /// region on both sides: the writer omits the id-lists and the reader must
-    /// not attempt to consume them, matching upstream `flist.c:2788`
-    /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:465,473`
+    /// not attempt to consume them, matching upstream `flist.c:3063`
+    /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:466,474`
     /// (`numeric_ids <= 0`).
     pub numeric_ids: bool,
 
@@ -455,7 +455,7 @@ pub struct BatchConfig {
     /// for it, because upstream's batch file is a byte tee of a real wire
     /// stream and the replaying receiver takes `preserve_atimes` from the
     /// replay script's argv. It gates the per-entry atime field, which the
-    /// flist writer emits under `preserve_atimes` (`flist.c:850`), so a reader
+    /// flist writer emits under `preserve_atimes` (`flist.c:915`), so a reader
     /// that does not know about it decodes the next entry's flag byte as an
     /// atime and desynchronises the stream.
     pub preserve_atimes: bool,
@@ -571,7 +571,7 @@ impl BatchConfig {
 
     /// Set the binary name or path to embed in the replay shell script.
     ///
-    /// Mirrors upstream rsync's `batch.c:259` which writes `raw_argv[0]`
+    /// Mirrors upstream rsync's `batch.c:297` which writes `raw_argv[0]`
     /// literally to the generated `BATCH.sh`. Pass the path the user
     /// originally invoked (`std::env::args_os().next()`) so the script
     /// runs without requiring `PATH` setup. When invoked by absolute
@@ -627,7 +627,7 @@ impl BatchConfig {
     /// These are the source and destination operands of the original
     /// invocation; the destination is re-supplied via the `${1:-<dest>}`
     /// placeholder. Mirrors upstream nulling of `cooked_argv` filenames
-    /// (`batch.c:269-275`).
+    /// (`batch.c:305-311`).
     ///
     /// # Examples
     ///
@@ -699,7 +699,7 @@ impl BatchConfig {
     /// Gates the post-flist uid/gid id-list region: under `--numeric-ids`
     /// upstream sends no id-lists (`flist.c:3063` requires `numeric_ids <= 0`),
     /// so the writer omits them and the reader must not consume them
-    /// (`uidlist.c:465,473`).
+    /// (`uidlist.c:466,474`).
     ///
     /// # Examples
     ///
@@ -719,7 +719,7 @@ impl BatchConfig {
     /// Set whether `--atimes` was active for the batch invocation.
     ///
     /// Gates the per-entry atime field, which the flist writer emits under
-    /// `preserve_atimes` (`flist.c:850`). Like `--numeric-ids`, this has no
+    /// `preserve_atimes` (`flist.c:915`). Like `--numeric-ids`, this has no
     /// `batch.c:59-76 flag_ptr[]` bit and must come from the replay
     /// invocation.
     ///

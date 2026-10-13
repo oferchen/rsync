@@ -5,6 +5,9 @@
 //! to a burst capacity equal to one second's worth of bytes. When a caller
 //! consumes more tokens than are available, the method sleeps until enough
 //! tokens have accumulated.
+//!
+//! Deviation from upstream: an oc-only token bucket with a one-second burst;
+//! upstream's only pacing model is the debt-based `io.c:sleep_for_bwlimit()`.
 
 use std::num::NonZeroU64;
 

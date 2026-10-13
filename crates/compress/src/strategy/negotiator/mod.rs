@@ -5,9 +5,8 @@
 //! This follows the Dependency Inversion principle - callers depend on the
 //! trait abstraction rather than concrete negotiation logic.
 //!
-//! The [`DefaultCompressionNegotiator`] wraps the upstream-compatible
-//! selection algorithm from `protocol::negotiation::capabilities::algorithms`,
-//! providing the default preference order: zstd > lz4 > zlibx > zlib > none.
+//! The [`DefaultCompressionNegotiator`] implements the vstring selection rule
+//! with the default preference order: zstd > lz4 > zlibx > zlib > none.
 
 mod default;
 mod fixed;

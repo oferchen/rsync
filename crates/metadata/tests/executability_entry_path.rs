@@ -2,7 +2,7 @@
 //! through `apply_metadata_from_file_entry` rather than the source-`Metadata`
 //! variant.
 //!
-//! upstream: rsync.c:457-465 `dest_mode()` - when `-E` is on without `-p`,
+//! upstream: rsync.c:472-479 `dest_mode()` - when `-E` is on without `-p`,
 //! the receiver transfers only the executability bits from source to
 //! destination: if source has no exec bits, clear them on dest; else if dest
 //! has no exec bits, grant exec to everyone who can already read

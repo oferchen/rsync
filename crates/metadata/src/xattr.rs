@@ -18,7 +18,7 @@
 //!
 //! - `xattrs.c:rsync_xal_get()` - read xattrs into the wire-list cache.
 //! - `xattrs.c:rsync_xal_set()` - apply received xattrs on the receiver.
-//! - `xattrs.c:64-68, 254-257` - permitted-namespace policy on Linux.
+//! - `xattrs.c:61-64, 268-269` - permitted-namespace policy on Linux.
 
 use crate::dest_pin::{DestPin, pin_destination};
 use crate::error::MetadataError;
@@ -64,13 +64,13 @@ fn receiver_user_only() -> bool {
 
 /// Checks whether an xattr name is permitted for the given `user_only` mode.
 ///
-/// Mirrors upstream rsync `xattrs.c:256` in `rsync_xal_get()`:
+/// Mirrors upstream rsync `xattrs.c:268` in `rsync_xal_get()`:
 /// `user_only ? !HAS_PREFIX(name, USER_PREFIX) : HAS_PREFIX(name, SYSTEM_PREFIX)`.
 /// - `user_only == false` (the sender, root or not; and root receivers): keep
 ///   every namespace except `system.*`, so `user.*`, `security.*` (e.g. SELinux
 ///   labels), and `trusted.*` are all transmitted.
 /// - `user_only == true` (a non-root receiver): keep only the `user.*` namespace,
-///   matching the non-root store restriction at `xattrs.c:830`.
+///   matching the non-root store restriction at `xattrs.c:876-879`.
 /// - On non-Linux platforms (macOS, FreeBSD, Windows): no namespace filtering,
 ///   since those systems use a single flat namespace (NTFS ADS, `com.apple.*`,
 ///   FreeBSD `user`-only, etc.).
@@ -79,7 +79,7 @@ fn is_xattr_permitted(name: &str, user_only: bool) -> bool {
     const USER_PREFIX: &str = "user.";
     const SYSTEM_PREFIX: &str = "system.";
 
-    // upstream: xattrs.c:256 rsync_xal_get() - the sender (user_only == false)
+    // upstream: xattrs.c:268 rsync_xal_get() - the sender (user_only == false)
     // skips only the system.* namespace, so a non-root sender still transmits
     // user.*, security.*, and trusted.*; a non-root receiver (user_only == true)
     // keeps only user.*.
@@ -104,7 +104,7 @@ fn map_xattr_error(context: &'static str, path: &Path, error: io::Error) -> Meta
 ///
 /// Upstream evaluates the namespace rule only as the `else` of the
 /// `x`-modifier filter rule, so the two are mutually exclusive
-/// (`xattrs.c:250-257`).
+/// (`xattrs.c:262-269`).
 #[derive(Clone, Copy)]
 enum NamespaceScreen {
     /// Apply upstream's namespace rule with the given `user_only` value.
@@ -137,7 +137,7 @@ fn list_attributes(
 
 /// Selects the namespace screen for one read.
 ///
-/// upstream: xattrs.c:250-257 (`rsync_xal_get`) and :375-382 (`copy_xattrs`) -
+/// upstream: xattrs.c:262-269 (`rsync_xal_get`) and :375-382 (`copy_xattrs`) -
 /// the namespace test is the `else` of the `saw_xattr_filter` branch, so an
 /// `x`-modifier filter REPLACES it rather than stacking with it. Both readers
 /// make that same decision, so the rule has a single owner.
@@ -185,10 +185,10 @@ fn remove_attribute(path: &Path, name: &[u8], follow_symlinks: bool) -> Result<(
 /// Per attribute the selection reproduces `rsync_xal_get()` in upstream order:
 ///
 /// 1. The `x`-modifier filter, if any, decides alone; otherwise the namespace
-///    rule applies. The two are mutually exclusive (`xattrs.c:250-257`). The
-///    namespace rule keys on `user_only` (`xattrs.c:237`), which is `0` for
+///    rule applies. The two are mutually exclusive (`xattrs.c:262-269`). The
+///    namespace rule keys on `user_only` (`xattrs.c:249`), which is `0` for
 ///    the sender and `!am_root` for the generator.
-/// 2. The `rsync.%FOO` internal-attribute gate (`xattrs.c:260-267`): a sender
+/// 2. The `rsync.%FOO` internal-attribute gate (`xattrs.c:273-279`): a sender
 ///    below `-XX` drops them all, and `--fake-super` additionally drops the
 ///    three store attributes at any level.
 /// 3. The surviving name is translated to wire format via `local_to_wire()`.
@@ -220,7 +220,7 @@ pub fn read_xattrs_for_wire(
     for name in &attrs {
         let name_str = String::from_utf8_lossy(name);
 
-        // upstream: xattrs.c:250-252 - name_is_excluded(name, NAME_IS_XATTR,
+        // upstream: xattrs.c:262-264 - name_is_excluded(name, NAME_IS_XATTR,
         // ALL_FILTERS) drops the attribute before it is ever read.
         if let Some(filter) = opts.filter
             && !filter(&name_str)
@@ -228,7 +228,7 @@ pub fn read_xattrs_for_wire(
             continue;
         }
 
-        // upstream: xattrs.c:260-267 - no rsync.%FOO attribute is copied
+        // upstream: xattrs.c:273-279 - no rsync.%FOO attribute is copied
         // without two -X options, and the fake-super store attributes are
         // never copied while --fake-super is active (am_root < 0), because
         // they describe this side's store rather than the file's metadata.
@@ -239,7 +239,7 @@ pub fn read_xattrs_for_wire(
             continue;
         }
 
-        // upstream: xattrs.c:509-528 - translate local name to wire format.
+        // upstream: xattrs.c:538-557 - translate local name to wire format.
         // `system.*` survives for a root sender, and also whenever a filter is
         // present, since upstream then skips the namespace test entirely.
         let wire_name = match local_to_wire(name, opts.am_root || opts.filter.is_some()) {
@@ -255,10 +255,10 @@ pub fn read_xattrs_for_wire(
         entries.push(XattrEntry::new(wire_name, value));
     }
 
-    // upstream: xattrs.c:296-297 - qsort by name
+    // upstream: xattrs.c:309 - qsort by name
     entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
 
-    // upstream: xattrs.c:297-299 - after the ascending qsort, upstream walks the
+    // upstream: xattrs.c:313-314 - after the ascending qsort, upstream walks the
     // array backwards assigning `rxa->num = count` down to 1, which lands
     // num = sorted_position + 1 (first name gets 1, last gets count). The
     // receiver re-derives the same 1-based ascending num in receive order
@@ -308,13 +308,13 @@ pub fn strip_source_xattrs(
 
 /// Reports whether the transferable extended attributes of `a` and `b` match.
 ///
-/// Mirrors upstream `xattrs.c:xattrs_differ()` (consumed by `unchanged_attrs`):
+/// Mirrors upstream `generator.c:xattrs_differ()` (consumed by `unchanged_attrs`):
 /// only the attributes that participate in an `-X` transfer are compared - the
 /// rsync-internal `rsync.%*` channel and namespaces the current privilege level
 /// cannot access are excluded (`list_attributes` already applies the namespace
 /// filter). Used by the `--link-dest` match-level check to decide whether a
 /// basis file's xattrs already equal the source's.
-/// upstream: xattrs.c xattrs_differ() via generator.c:468 unchanged_attrs()
+/// upstream: generator.c:461 xattrs_differ() via generator.c:474 unchanged_attrs()
 pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, MetadataError> {
     let mut a_map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> = std::collections::BTreeMap::new();
     for name in list_attributes(a, follow_symlinks, receiver_screen())? {
@@ -351,7 +351,7 @@ pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, M
 /// case, which never transfers them as -X data. Excluding them from the delete
 /// pass also protects the `%stat` that the fake-super metadata step writes on
 /// the destination independently of the xattr transfer.
-/// upstream: xattrs.c:259-267 rsync_xal_get() - rsync.%FOO skipped for the sender.
+/// upstream: xattrs.c:273-279 rsync_xal_get() - rsync.%FOO skipped for the sender.
 pub fn sync_xattrs(
     source: &Path,
     destination: &Path,
@@ -373,7 +373,7 @@ pub fn sync_xattrs(
 
     for name in &source_attrs {
         let name_str = String::from_utf8_lossy(name);
-        // upstream: xattrs.c:261 - rsync's own metadata channel is never copied.
+        // upstream: xattrs.c:273 - rsync's own metadata channel is never copied.
         if protocol::xattr::is_rsync_internal(&name_str) {
             retained.insert(name.clone());
             continue;
@@ -457,9 +457,9 @@ pub fn sync_xattrs(
 /// than `MAX_FULL_DATUM` carried only as a digest), upstream re-reads the value
 /// from `fnamecmp` via `get_xattr_data()` and confirms the length and
 /// `xattr_sum_nni` digest match before applying it; a mismatch takes the
-/// `still_abbrev` path (xattrs.c:964-1009). The `filter` argument mirrors the
-/// receive-side screening upstream performs in `receive_xattr()` (xattrs.c:822,
-/// drop an excluded received name) and `rsync_xal_set()` (xattrs.c:1026, keep an
+/// `still_abbrev` path (xattrs.c:1014-1061). The `filter` argument mirrors the
+/// receive-side screening upstream performs in `receive_xattr()` (xattrs.c:868-871,
+/// drop an excluded received name) and `rsync_xal_set()` (xattrs.c:1078-1080, keep an
 /// excluded destination name), both gated on `name_is_excluded(name,
 /// NAME_IS_XATTR, ALL_FILTERS)`.
 pub fn apply_xattrs_from_list(
@@ -498,7 +498,7 @@ pub fn apply_xattrs_from_list(
             continue;
         }
 
-        // upstream: xattrs.c:822 receive_xattr() drops a received xattr whose
+        // upstream: xattrs.c:868-871 receive_xattr() drops a received xattr whose
         // name is excluded by an `x`-modifier filter rule before it is stored,
         // so it is never applied to the destination.
         if !filter.is_none_or(|predicate| predicate(&name_str)) {
@@ -515,7 +515,7 @@ pub fn apply_xattrs_from_list(
 
         let name_bytes = entry.name().to_vec();
 
-        // upstream: xattrs.c:964-1009 rsync_xal_set() - an abbreviated entry
+        // upstream: xattrs.c:1014-1061 rsync_xal_set() - an abbreviated entry
         // carries only a digest of a value the sender expects the receiver to
         // already hold on the basis (fnamecmp) file. Resolve the full value
         // locally by re-reading the basis attribute and confirming its length
@@ -554,7 +554,7 @@ pub fn apply_xattrs_from_list(
     for name in &dest_attrs {
         if !applied_names.contains(name) {
             let name_str = String::from_utf8_lossy(name);
-            // upstream: xattrs.c:1026 rsync_xal_set() skips the removal of a
+            // upstream: xattrs.c:1078-1080 rsync_xal_set() skips the removal of a
             // destination xattr whose name is excluded by an `x`-modifier
             // filter rule, leaving the pre-existing value in place.
             if is_xattr_permitted(&name_str, receiver_user_only())
@@ -573,7 +573,7 @@ pub fn apply_xattrs_from_list(
 /// Upstream performs every destination-side xattr mutation inside
 /// `set_xattr()`, which grants a temporary `S_IWUSR` for the duration of the
 /// whole batch and restores the original mode once the batch ends
-/// (`xattrs.c:1090-1106`); the set loop and the removal loop beneath it in
+/// (`xattrs.c:1155-1181`); the set loop and the removal loop beneath it in
 /// `rsync_xal_set()` both run under that single grant.
 ///
 /// oc reaches the same destination state from three entry points
@@ -622,7 +622,7 @@ impl<'a> DestinationXattrs<'a> {
     }
 
     /// Removes one attribute. upstream: `sys_lremovexattr` in
-    /// `rsync_xal_set()` (`xattrs.c:1043`), with the same fd choice.
+    /// `rsync_xal_set()` (`xattrs.c:1095-1096`), with the same fd choice.
     fn remove(&self, name: &[u8]) -> Result<(), MetadataError> {
         match &self.sink {
             DestPin::Path => remove_attribute(self.path, name, self.follow_symlinks),
@@ -732,7 +732,7 @@ mod tests {
     /// Returns the local name of an `rsync.%<suffix>` internal attribute.
     ///
     /// Upstream's `RSYNC_PREFIX` is `user.rsync.` on Linux and `rsync.`
-    /// elsewhere (`xattrs.c:66-69`).
+    /// elsewhere (`xattrs.c:66-71`).
     fn internal_xattr_name(suffix: &str) -> Vec<u8> {
         #[cfg(target_os = "linux")]
         {
@@ -747,7 +747,7 @@ mod tests {
     /// Reports whether the collected list carries the local name `name`.
     ///
     /// A non-Linux sender emits `user.`-prefixed wire names for anything not
-    /// already under `RSYNC_PREFIX` (`xattrs.c:518-530`), so the local name has
+    /// already under `RSYNC_PREFIX` (`xattrs.c:540-544`), so the local name has
     /// to be translated before the lookup.
     fn wire_contains(list: &XattrList, name: &[u8]) -> bool {
         let expected = protocol::xattr::local_to_wire(name, true)
@@ -1047,7 +1047,7 @@ mod tests {
         );
     }
 
-    // upstream: xattrs.c:259-267 - the rsync.%stat fake-super channel is never
+    // upstream: xattrs.c:273-279 - the rsync.%stat fake-super channel is never
     // part of the -X data set. It must not be copied from the source, and a
     // fake-super-written %stat already on the destination must survive the
     // delete pass. Regression guard for the `xattrs` conformance test's
@@ -1106,7 +1106,7 @@ mod tests {
     /// be re-materialised later. Collapsing the level to a bool makes `-XX` a
     /// silent synonym for `-X` while the help text still advertises the store.
     ///
-    /// upstream: xattrs.c:261-263 - `if (name_len > RPRE_LEN && name[RPRE_LEN]
+    /// upstream: xattrs.c:273-274 - `if (name_len > RPRE_LEN && name[RPRE_LEN]
     /// == '%' && HAS_PREFIX(name, RSYNC_PREFIX)) { if ((am_sender &&
     /// preserve_xattrs < 2) ...) continue; }`
     #[test]
@@ -1168,7 +1168,7 @@ mod tests {
     /// so copying them onward would hand the peer a stale store. Other
     /// `rsync.%` names are unaffected and remain governed by the level alone.
     ///
-    /// upstream: xattrs.c:263-266 - `am_root < 0 && (strcmp(..., XSTAT_SUFFIX)
+    /// upstream: xattrs.c:275-278 - `am_root < 0 && (strcmp(..., XSTAT_SUFFIX)
     /// == 0 || ... XACC_ACL_SUFFIX ... || ... XDEF_ACL_SUFFIX ...)`, where
     /// `am_root < 0` is what `set_fake_super()` sets.
     #[test]
@@ -1226,7 +1226,7 @@ mod tests {
     /// sender list that carries it too. Dropping it on the generator side
     /// would make every `-XX` re-run report a phantom `x` change.
     ///
-    /// upstream: xattrs.c:262 - `if ((am_sender && preserve_xattrs < 2) ...)`
+    /// upstream: xattrs.c:274 - `if ((am_sender && preserve_xattrs < 2) ...)`
     #[test]
     fn generator_keeps_the_rsync_store_at_a_single_x() {
         let dir = test_support::create_tempdir();
@@ -1274,7 +1274,7 @@ mod tests {
     /// A non-root generator screens away every namespace it could not store.
     ///
     /// This is what keeps the itemize `x` column honest: upstream's non-root
-    /// receiver can only write `user.*` (`xattrs.c:830`), so comparing a
+    /// receiver can only write `user.*` (`xattrs.c:876-879`), so comparing a
     /// `security.*` or `trusted.*` name it will never touch would report a
     /// change that upstream does not report and that no transfer could ever
     /// settle. The sender is exempt at any privilege level, which is why the
@@ -1317,7 +1317,7 @@ mod tests {
 
     /// An `x`-modifier filter screens the names the sender collects.
     ///
-    /// upstream: xattrs.c:250-252 - `if (saw_xattr_filter) { if
+    /// upstream: xattrs.c:262-264 - `if (saw_xattr_filter) { if
     /// (name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)) continue; }`
     #[test]
     fn sender_applies_the_xattr_name_filter() {
@@ -1360,7 +1360,7 @@ mod tests {
     ///
     /// Upstream's two branches are mutually exclusive: `if (saw_xattr_filter)
     /// {...} else if (user_only ? ... : HAS_PREFIX(name, SYSTEM_PREFIX))
-    /// continue;` (xattrs.c:250-257). So with any `x`-modifier rule present a
+    /// continue;` (xattrs.c:262-269). So with any `x`-modifier rule present a
     /// `system.*` name that the namespace rule would have dropped is instead
     /// judged by the filter alone. Screening on both would silently ignore an
     /// admitting rule the user wrote.
@@ -1384,7 +1384,7 @@ mod tests {
             return;
         }
 
-        // Without a filter the namespace rule drops it (xattrs.c:256).
+        // Without a filter the namespace rule drops it (xattrs.c:268).
         let unfiltered = read_xattrs_for_wire(&file, &XattrSendOptions::new(XattrRole::Sender))
             .expect("read without filter");
         assert!(
@@ -1409,7 +1409,7 @@ mod tests {
         );
     }
 
-    // upstream: xattrs.c:297-299 assigns each xattr num = sorted_position + 1
+    // upstream: xattrs.c:313-314 assigns each xattr num = sorted_position + 1
     // (ascending). The receiver re-derives the identical 1-based ascending num
     // in receive order (protocol::xattr::cache `for num in 1..=count`). The
     // abbreviated (>MAX_FULL_DATUM) value request round-trip keys on num, so the
@@ -1505,7 +1505,7 @@ mod tests {
 
     /// An `x`-modifier filter REPLACES the namespace screen, it does not stack
     /// with it: upstream reaches the namespace test only through the `else` of
-    /// the `saw_xattr_filter` branch (xattrs.c:250-257, :375-382). Screening
+    /// the `saw_xattr_filter` branch (xattrs.c:262-269, :375-382). Screening
     /// first and filtering second made `--filter='+x trusted.foo'` inert for a
     /// non-root Linux receiver - the name was gone before its rule ran.
     ///
@@ -1559,7 +1559,7 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn is_xattr_permitted_sender_skips_only_system_namespace() {
-        // upstream: xattrs.c:256 rsync_xal_get() with user_only == false takes
+        // upstream: xattrs.c:268 rsync_xal_get() with user_only == false takes
         // the `HAS_PREFIX(name, SYSTEM_PREFIX)` branch: skip only system.*.
         assert!(is_xattr_permitted("user.foo", false));
         assert!(
@@ -1575,11 +1575,11 @@ mod tests {
 
     /// A non-root receiver (upstream `user_only == true`) keeps only the
     /// `user.*` namespace, matching upstream's non-root store restriction at
-    /// `xattrs.c:830`.
+    /// `xattrs.c:876-879`.
     #[test]
     #[cfg(target_os = "linux")]
     fn is_xattr_permitted_receiver_user_only_keeps_only_user_namespace() {
-        // upstream: xattrs.c:256 rsync_xal_get() with user_only == true takes
+        // upstream: xattrs.c:268 rsync_xal_get() with user_only == true takes
         // the `!HAS_PREFIX(name, USER_PREFIX)` branch: keep only user.*.
         assert!(is_xattr_permitted("user.foo", true));
         assert!(!is_xattr_permitted("security.selinux", true));
@@ -1976,7 +1976,7 @@ mod tests {
     // every one of them - covering only the entry that happened to be fixed
     // first is what let `sync_xattrs` and `strip_source_xattrs` ship without
     // the grant. A fourth entry point added without the batch fails here.
-    // upstream: xattrs.c:1090-1106 set_xattr.
+    // upstream: xattrs.c:1155-1181 set_xattr.
     #[cfg(unix)]
     #[test]
     fn every_destination_entry_point_mutates_a_read_only_file() {
@@ -2068,7 +2068,7 @@ mod tests {
     // Receive-side mirror of the send-side x-modifier filter (#128): a received
     // xattr whose name the filter excludes must never be applied to the
     // destination, even though the sender put it on the wire, while an allowed
-    // name IS applied. upstream: xattrs.c:822 receive_xattr() drops an excluded
+    // name IS applied. upstream: xattrs.c:868-871 receive_xattr() drops an excluded
     // received name via name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS).
     #[test]
     fn apply_xattrs_from_list_filter_drops_excluded_received() {
@@ -2112,7 +2112,7 @@ mod tests {
 
     // A destination xattr the filter excludes must be preserved even when it is
     // absent from the received list, while a non-excluded stale attr is still
-    // removed. upstream: xattrs.c:1026 rsync_xal_set() skips the removal of an
+    // removed. upstream: xattrs.c:1078-1080 rsync_xal_set() skips the removal of an
     // excluded destination name.
     #[test]
     fn apply_xattrs_from_list_filter_preserves_excluded_dest_attr() {
@@ -2204,7 +2204,7 @@ mod tests {
 
     /// Without a basis file an abbreviated entry cannot be resolved, so its
     /// value is not written - but a full entry in the same list still applies.
-    /// upstream: xattrs.c:970-975 rsync_xal_set() takes the `still_abbrev` path
+    /// upstream: xattrs.c:1014-1024 rsync_xal_set() takes the `still_abbrev` path
     /// when it cannot recover the value; a receiver with no local copy keeps the
     /// attribute unset rather than writing a checksum as if it were the datum.
     #[test]
@@ -2252,7 +2252,7 @@ mod tests {
     /// apply the full value to the destination - byte-identical to a transfer
     /// that carried the value in full. Losing this resolution silently drops
     /// every large (>32-byte) xattr on interop with an upstream sender that
-    /// abbreviates it. upstream: xattrs.c:964-1009 rsync_xal_set().
+    /// abbreviates it. upstream: xattrs.c:1014-1061 rsync_xal_set().
     #[test]
     fn apply_xattrs_from_list_resolves_abbreviated_against_basis() {
         use protocol::xattr::compute_xattr_checksum;
@@ -2406,7 +2406,7 @@ mod tests {
     ///
     /// A path-based `lsetxattr` follows parent symlinks (it declines only the
     /// leaf), so this is exactly the redirect upstream's held-fd model
-    /// closes. upstream: rsync.c:573-599 + xattrs.c:386-390.
+    /// closes. upstream: rsync.c:582-598 + xattrs.c:386-390.
     ///
     /// CVE-2026-53799 function guard: this pins the confined arm of
     /// `apply_xattrs_from_list`. It does not drive the receiver, so it

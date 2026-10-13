@@ -3,7 +3,7 @@
 //! Reads files in bounded-size chunks (default 4 MiB), capping peak RSS at
 //! `chunk_size + small constant` instead of `file_size`. Implements `Read + Seek`
 //! for drop-in compatibility with the 5 `mmap_reader_stub` call sites identified
-//! by the WIN-S.LAND.1.b.1 audit (PR #3771).
+//! by the WIN-S.LAND.1.b.1 audit.
 //!
 //! The legacy `mmap_reader_stub::MmapReader` slurps the entire file into a
 //! `Vec<u8>` at `open()` time; with 1 GiB basis files in delta-apply at

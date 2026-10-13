@@ -118,6 +118,10 @@ pub fn calculate_device_flags(
 
 /// Calculates hardlink-related extended flags.
 ///
+/// For protocols 28-29 this sets only `XMIT_SAME_DEV_PRE30`. Upstream also
+/// sets `XMIT_HLINKED` for every hard-linked entry at those protocols
+/// (`flist.c:843-850`), so a caller encoding a pre-30 entry must add it.
+///
 /// # Returns
 ///
 /// Extended flags (bits 8-15) as u8

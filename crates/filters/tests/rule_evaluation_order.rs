@@ -10,7 +10,7 @@
 //! - No rule matching defaults to include
 //! - Each rule type (include/exclude/protect/risk) follows the same order semantics
 //!
-//! Reference: rsync 3.4.1 exclude.c `check_filter()` function which iterates
+//! Reference: rsync 3.5.1 exclude.c `check_filter()` function which iterates
 //! rules in order and returns on first match.
 
 use filters::{FilterRule, FilterSet};
@@ -451,7 +451,7 @@ fn perishable_order_in_deletion() {
     assert!(!set.allows(Path::new("scratch.tmp"), false));
 
     // Deletion: the top-level scan honours perishable rules (upstream
-    // exclude.c:1044 / delete.c:147), so the perishable exclude matches first
+    // exclude.c:1193-1194 / delete.c:208), so the perishable exclude matches first
     // and protects the entry.
     assert!(!set.allows_deletion(Path::new("scratch.tmp"), false));
 }

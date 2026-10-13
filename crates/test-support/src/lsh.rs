@@ -84,7 +84,7 @@ mod tests {
     fn locate_finds_the_built_stub_or_reports_loudly() {
         // Why: resolution must yield the single profile-dir path and nothing
         // else, and a miss must be the dedicated StubNotFound variant rather
-        // than a silent None - Rule 12. The Err arm asserts that path really
+        // than a silent None. The Err arm asserts that path really
         // is absent, so the arm cannot pass vacuously.
         let expected = crate::bin_path::workspace_bin_path(LSH_STUB_BIN);
         match LshRunnerStub::locate() {

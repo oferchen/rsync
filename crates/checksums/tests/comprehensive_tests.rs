@@ -357,8 +357,8 @@ mod strong_truncation {
 
     #[test]
     fn truncating_strong_digest_manually() {
-        // Rsync block matching often truncates SHA-256 to 16 bytes; verify the
-        // truncation is stable across repeated digests.
+        // Block matching truncates strong digests to the negotiated sum length;
+        // verify the truncation is stable across repeated digests.
         let full_sha256 = Sha256::digest(b"block data");
         assert_eq!(full_sha256.len(), 32);
 
@@ -393,7 +393,7 @@ mod strong_truncation {
         let digest = Md5::digest(b"abc");
         assert_eq!(to_hex(&digest), "900150983cd24fb0d6963f7d28e17f72");
 
-        // Verify first 8 bytes (common truncation for rsync)
+        // Verify a truncated 8-byte prefix
         assert_eq!(to_hex(&digest[..8]), "900150983cd24fb0");
     }
 
@@ -432,7 +432,7 @@ mod seed_handling {
 
     #[test]
     fn md5_proper_seed_hashes_before_data() {
-        // Proper ordering (CHECKSUM_SEED_FIX, protocol >= 30): seed bytes first, then data.
+        // Proper ordering (CF_CHKSUM_SEED_FIX, protocol >= 30): seed bytes first, then data.
         let seed_value = 0x12345678i32;
         let data = b"test data";
 
@@ -450,7 +450,7 @@ mod seed_handling {
 
     #[test]
     fn md5_legacy_seed_hashes_after_data() {
-        // Legacy ordering (pre-CHECKSUM_SEED_FIX): data first, then seed bytes.
+        // Legacy ordering (pre-CF_CHKSUM_SEED_FIX): data first, then seed bytes.
         let seed_value = 0x12345678i32;
         let data = b"test data";
 

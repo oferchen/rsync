@@ -286,9 +286,8 @@ fn walk_detects_indirect_symlink_loop() {
     assert!(paths.contains(&PathBuf::from("b")));
     assert!(paths.contains(&PathBuf::from("c")));
 
-    // The walker should yield a/link_b and follow it into b
-    // Then yield b/link_c and follow it into c (but c is already visited, so skip)
-    // So we should see a/link_b but the loop detection prevents infinite recursion
+    // The walk enters b and c through a/link_b and a/link_b/link_c; then
+    // a/link_b/link_c/link_a resolves to the already-visited a and is not entered.
     assert!(paths.contains(&PathBuf::from("a/link_b")));
 
     // Due to loop detection, we may not see all symlinks traversed,

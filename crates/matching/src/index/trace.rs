@@ -5,9 +5,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `hashtable.c:45-53`  - created hashtable emission.
-//! - `hashtable.c:60-63`  - destroyed hashtable emission.
-//! - `hashtable.c:100-103` - growing hashtable emission.
+//! - `hashtable.c:55-63`  - created hashtable emission.
+//! - `hashtable.c:70-73`  - destroyed hashtable emission.
+//! - `hashtable.c:115-118` - growing hashtable emission.
+//!
+//! Deviation from upstream: 3.5.1 `match.c:build_hash_table()` uses a plain
+//! array, not `hashtable.c`, so upstream prints no HASH line for the delta
+//! table. These lines reuse `hashtable.c`'s format for oc's signature index.
 //!
 //! Upstream prepends a `[<role>]` prefix derived from `who_am_i()`. The
 //! [`HashtableRole`] enum exposes the same vocabulary so callers can pass
@@ -66,7 +70,7 @@ pub const HASH_KEY_BITS: u32 = 32;
 /// [sender] created hashtable 7f00aa00 (req: 50, size: 64, keys: 32-bit)
 /// ```
 ///
-/// upstream: hashtable.c:45-53.
+/// upstream: hashtable.c:55-63.
 #[inline]
 pub fn trace_created(role: HashtableRole, id: usize, requested: usize, size: usize) {
     if requested != size {
@@ -100,7 +104,7 @@ pub fn trace_created(role: HashtableRole, id: usize, requested: usize, size: usi
 /// [sender] destroyed hashtable 7f00aa00 (size: 4096, keys: 32-bit)
 /// ```
 ///
-/// upstream: hashtable.c:60-63.
+/// upstream: hashtable.c:70-73.
 #[inline]
 pub fn trace_destroyed(role: HashtableRole, id: usize, size: usize) {
     debug_log!(
@@ -121,7 +125,7 @@ pub fn trace_destroyed(role: HashtableRole, id: usize, size: usize) {
 /// [sender] growing hashtable 7f00aa00 (size: 8192, keys: 32-bit)
 /// ```
 ///
-/// upstream: hashtable.c:100-103.
+/// upstream: hashtable.c:115-118.
 #[inline]
 pub fn trace_growing(role: HashtableRole, id: usize, size: usize) {
     debug_log!(
@@ -164,7 +168,7 @@ mod tests {
     /// Pins the level 1 created emission to upstream's format byte-for-byte
     /// when the requested capacity matches the rounded-up size.
     ///
-    /// upstream: hashtable.c:45-53.
+    /// upstream: hashtable.c:55-63.
     #[test]
     fn created_matches_upstream_format_no_req() {
         setup_hash(1);
@@ -180,7 +184,7 @@ mod tests {
     /// Pins the level 1 created emission with the `req:` prefix when the
     /// requested capacity differs from the rounded-up size.
     ///
-    /// upstream: hashtable.c:46-50.
+    /// upstream: hashtable.c:56-60.
     #[test]
     fn created_matches_upstream_format_with_req() {
         setup_hash(1);
@@ -196,7 +200,7 @@ mod tests {
 
     /// Pins the level 1 destroyed emission to upstream's format.
     ///
-    /// upstream: hashtable.c:60-63.
+    /// upstream: hashtable.c:70-73.
     #[test]
     fn destroyed_matches_upstream_format() {
         setup_hash(1);
@@ -211,7 +215,7 @@ mod tests {
 
     /// Pins the level 1 growing emission to upstream's format.
     ///
-    /// upstream: hashtable.c:100-103.
+    /// upstream: hashtable.c:115-118.
     #[test]
     fn growing_matches_upstream_format() {
         setup_hash(1);

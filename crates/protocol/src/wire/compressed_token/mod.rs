@@ -32,9 +32,9 @@
 //!
 //! ## References
 //!
-//! - `token.c` lines 321-329: flag byte definitions
-//! - `token.c:send_deflated_token()` lines 357-485
-//! - `token.c:recv_deflated_token()` lines 500-630
+//! - `token.c:334-341`: flag byte definitions and `MAX_DATA_COUNT`
+//! - `token.c:send_deflated_token()` lines 369-512
+//! - `token.c:recv_deflated_token()` lines 570-682
 
 mod decoder;
 mod encoder;
@@ -64,8 +64,9 @@ pub const END_FLAG: u8 = 0x00;
 
 /// Token encoding: absolute block index follows.
 ///
-/// Followed by 32-bit token number (little-endian). Used when the relative
-/// encoding can't represent the offset (> 63 blocks from last token).
+/// Followed by 32-bit token number (little-endian). Used when the distance
+/// from the end of the previous run is outside `0..=63`, so the relative
+/// encoding cannot represent it (upstream: `token.c:400-405`).
 pub const TOKEN_LONG: u8 = 0x20;
 
 /// Token run encoding: absolute block index + run count follow.
@@ -83,13 +84,13 @@ pub const DEFLATED_DATA: u8 = 0x40;
 
 /// Token encoding: relative block index.
 ///
-/// The low 6 bits contain the relative offset from the last token.
+/// The low 6 bits contain the offset from the end of the previous run.
 /// Used for offsets 0-63.
 pub const TOKEN_REL: u8 = 0x80;
 
 /// Token run encoding: relative block index + run count follow.
 ///
-/// The low 6 bits contain the relative offset from the last token.
+/// The low 6 bits contain the offset from the end of the previous run.
 /// Followed by 16-bit run count (LE). Represents multiple consecutive
 /// block matches with relative addressing.
 pub const TOKENRUN_REL: u8 = 0xC0;
@@ -103,7 +104,7 @@ pub const MAX_DATA_COUNT: usize = 16383;
 /// Chunk size for compression input (32 KiB).
 ///
 /// Literal data is compressed in chunks of this size. Matches the
-/// CHUNK_SIZE constant used in upstream rsync's token.c.
+/// upstream `rsync.h` `CHUNK_SIZE (32*1024)` used by `token.c`.
 pub const CHUNK_SIZE: usize = 32 * 1024;
 
 /// A token received from a compressed stream.
@@ -156,7 +157,7 @@ pub enum CompressedToken {
 /// Encodes the length into a 2-byte header: first byte is `DEFLATED_DATA | (len >> 8)`,
 /// second byte is `len & 0xFF`. Maximum length is [`MAX_DATA_COUNT`] (14 bits).
 ///
-/// Reference: upstream token.c lines 451-453.
+/// upstream: `token.c:send_deflated_token()` lines 463-465.
 #[inline]
 fn write_deflated_data_header<W: Write>(writer: &mut W, len: usize) -> io::Result<()> {
     debug_assert!(len <= MAX_DATA_COUNT);
@@ -167,8 +168,8 @@ fn write_deflated_data_header<W: Write>(writer: &mut W, len: usize) -> io::Resul
 /// Writes compressed data as one or more DEFLATED_DATA blocks.
 ///
 /// Splits `data` into [`MAX_DATA_COUNT`]-sized pieces, each prefixed with
-/// a DEFLATED_DATA header. Upstream token.c writes output in the same
-/// chunked fashion (lines 440-455).
+/// a DEFLATED_DATA header. Upstream `token.c:send_deflated_token()` writes
+/// output in the same chunked fashion (lines 452-467).
 fn write_deflated_data_pieces<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
     let mut offset = 0;
     while offset < data.len() {

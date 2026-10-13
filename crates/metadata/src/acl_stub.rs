@@ -28,7 +28,7 @@ fn warn_acl_unsupported() {
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:1860`: "ACLs are not supported on this %s\n"
+/// - `options.c:1983`: "ACLs are not supported on this %s\n"
 #[allow(clippy::module_name_repetitions)]
 pub fn sync_acls(
     source: &Path,

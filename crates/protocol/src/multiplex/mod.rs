@@ -15,7 +15,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `io.c` - Multiplexed I/O routines (`mplex_read`, `mplex_write`)
+//! - `io.c:send_msg()` - frames an out-of-band message with its 4-byte header
+//! - `io.c:perform_io()` - wraps buffered output in `MSG_DATA` frames
+//! - `io.c:read_a_msg()` - decodes an inbound header and dispatches by tag
 
 mod borrowed;
 #[cfg(feature = "async")]

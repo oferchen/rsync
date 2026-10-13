@@ -42,7 +42,7 @@
 //!
 //! - upstream: exclude.c:parse_filter_str() - rule parsing from filter strings
 //! - upstream: exclude.c:parse_filter_file() - reading rules from merge files
-//! - upstream: exclude.c lines 1220-1288 - modifier character handling
+//! - upstream: exclude.c lines 1365-1443 - modifier character handling
 
 mod basename;
 mod depth;

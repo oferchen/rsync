@@ -8,7 +8,7 @@
 //! 3. Relative paths work correctly with deep nesting
 //! 4. Appropriate errors are generated for paths exceeding limits
 //!
-//! Reference: rsync 3.4.1 flist.c - path handling and buffer management
+//! Reference: rsync 3.5.1 flist.c - path handling and buffer management
 
 use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::fs;

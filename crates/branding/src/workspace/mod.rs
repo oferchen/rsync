@@ -3,7 +3,8 @@
 //! Workspace metadata exported as compile-time constants.
 //!
 //! The build script reads `[workspace.metadata.oc_rsync]` from the repository
-//! `Cargo.toml` and emits the values below as `cargo:rustc-env` pairs. Callers
+//! `Cargo.toml` and writes the values below into a generated Rust source file in
+//! `OUT_DIR`. Callers
 //! should prefer these helpers instead of hard-coding program names or
 //! configuration paths. Use [`metadata()`](crate::workspace::metadata) to
 //! obtain a snapshot of the full metadata set.

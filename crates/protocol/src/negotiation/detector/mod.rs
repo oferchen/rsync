@@ -1,9 +1,10 @@
 //! Incremental detector for the negotiation prologue style.
 //!
-//! Upstream rsync classifies the binary-vs-legacy ASCII decision from the very
-//! first byte read from the transport. Real transports often deliver data in
-//! small bursts, so the detector accumulates bytes across multiple calls until
-//! a definitive classification is available.
+//! The binary-vs-legacy ASCII decision is made from the very first byte read
+//! from the transport. Real transports often deliver data in small bursts, so
+//! the detector accumulates bytes across multiple calls until a definitive
+//! classification is available. Deviation from upstream: upstream knows the
+//! transport up front and never sniffs the prologue.
 
 mod buffer;
 mod observe;
@@ -18,8 +19,8 @@ use super::NegotiationPrologue;
 
 /// Incremental detector for the negotiation prologue style.
 ///
-/// The binary vs. legacy ASCII decision in upstream rsync is based on the very
-/// first byte read from the transport. However, real transports often deliver
+/// The binary vs. legacy ASCII decision is based on the very first byte read
+/// from the transport. However, real transports often deliver
 /// data in small bursts, meaning the caller may need to feed multiple chunks
 /// before a definitive answer is available. This helper maintains a small
 /// amount of state so that `detect_negotiation_prologue` parity can be achieved

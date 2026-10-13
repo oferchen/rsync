@@ -132,7 +132,7 @@ fn type_flip_file_to_dir_is_reported() {
 
 #[test]
 fn unsupported_options_error_instead_of_passing_silently() {
-    // Why: Rule 12 - a port that asks for xattr comparison must never
+    // Why: a port that asks for xattr comparison must never
     // believe it checked xattrs when the harness silently ignored them.
     let a = test_support::create_tempdir();
     let b = test_support::create_tempdir();

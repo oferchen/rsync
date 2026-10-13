@@ -20,7 +20,7 @@
 //!
 //! # Upstream Reference
 //!
-//! Protocol details are based on rsync 3.4.1 source code.
+//! Protocol details are based on rsync 3.5.1 source code.
 
 use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{

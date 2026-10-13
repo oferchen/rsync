@@ -8,12 +8,13 @@ daemon share identical validation and throttling behaviour.
 ## Features
 
 - Textual limit parsing with upstream-compatible syntax including
-  binary/decimal suffixes, fractional values, leading signs, and optional
-  `+1` / `-1` adjustments.
+  binary/decimal suffixes, fractional values, and optional `+1` / `-1`
+  adjustments. A leading sign and an unconditional `,` decimal separator are
+  accepted as oc extensions.
 - Token-bucket pacing that mirrors upstream rsync's shape, including
   minimum sleep intervals.
-- Deterministic testing support that records requested sleep durations in lieu
-  of touching the system clock, keeping unit tests fast and reproducible.
+- Deterministic testing support that records requested sleep durations so
+  tests can assert on the pacing schedule.
 
 ## Design Overview
 
@@ -22,12 +23,12 @@ daemon share identical validation and throttling behaviour.
 [`crate::parse::parse_bandwidth_argument`]
 accepts textual bandwidth specifications and returns either an optional byte
 limit or a [`crate::parse::BandwidthParseError`]. The
-helper trims ASCII whitespace, validates suffixes, applies the `+1` / `-1`
+helper rejects blank input, validates suffixes, applies the `+1` / `-1`
 adjustments accepted by upstream rsync, and rounds to the nearest 1024 bytes per
-second as the C implementation does.
+second as the C implementation does (`options.c:1831`).
 
 [`crate::parse::parse_bandwidth_limit`] wraps that
-behaviour and returns a [`crate::parse::BandwidthLimitComponents`]
+behaviour, rejects surrounding whitespace, and returns a [`crate::parse::BandwidthLimitComponents`]
 struct, which can be converted into a [`crate::BandwidthLimiter`] or stored for
 later negotiation.
 
@@ -44,9 +45,9 @@ whether throttling was enabled, updated, disabled, or left untouched.
 
 ### Test support
 
-Enabling the `test-support` feature exposes helpers that record sleep requests
-instead of calling [`std::thread::sleep`]. Tests obtain a `recorded_sleep_session`
-guard to serialise access to the captured durations, ensuring race-free
+Enabling the `test-support` feature exposes helpers that record sleep requests;
+the crate's own `#[cfg(test)]` build records them without sleeping. Tests obtain
+a `recorded_sleep_session` guard to serialise access to the captured durations, ensuring race-free
 assertions when scenarios run in parallel. The guard also implements
 [`Default`], making it easy to embed inside helper structs without additional
 boilerplate. Convenience accessors such as `snapshot`, `last_duration`, and

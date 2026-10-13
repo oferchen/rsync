@@ -1,7 +1,7 @@
 //! Raw LZ4 block compression for rsync wire protocol compatibility.
 //!
 //! This module implements LZ4 compression using raw blocks with rsync-specific
-//! framing, matching upstream rsync 3.4.1's `token.c` implementation.
+//! framing, matching upstream token.c:928 `send_compressed_token()`.
 //!
 //! # Wire Format
 //!
@@ -28,17 +28,18 @@ use lz4_flex::block::{compress_into, decompress_into, get_maximum_output_size};
 
 /// Flag byte indicating compressed data follows.
 ///
-/// upstream: `token.c:DEFLATED_DATA`.
+/// upstream: token.c:337 `DEFLATED_DATA`.
 pub const DEFLATED_DATA: u8 = 0x40;
 
 /// Maximum compressed block size in bytes (14-bit field).
 ///
-/// upstream: `token.c:MAX_DATA_COUNT`.
+/// upstream: token.c:341 `MAX_DATA_COUNT`.
 pub const MAX_BLOCK_SIZE: usize = 16383;
 
 /// Maximum decompressed size to prevent memory exhaustion attacks.
 /// Set to 64 MiB which is larger than any reasonable rsync block.
-/// Upstream rsync uses 128KB blocks max, but we allow for larger custom configs.
+/// Upstream caps a block at 128 KiB (rsync.h:161 `MAX_BLOCK_SIZE`); this
+/// bound is deliberately looser.
 pub const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
 
 /// Minimum header size for a compressed block.
@@ -99,7 +100,7 @@ pub enum RawLz4Error {
 ///
 /// # Upstream Reference
 ///
-/// See `token.c:send_deflated_token()` for the wire format definition.
+/// upstream: token.c:984-985 `send_compressed_token()` writes this header.
 #[inline]
 pub const fn encode_header(compressed_size: usize) -> [u8; 2] {
     [

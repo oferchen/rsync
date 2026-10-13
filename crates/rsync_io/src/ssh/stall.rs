@@ -77,7 +77,7 @@ pub(crate) fn stall_poll_interval(io_timeout: Duration) -> Duration {
 /// Both the read and write halves bump the same clock, so a keepalive write
 /// (emitted by the transfer layer's `maybe_send_keepalive`) resets it exactly
 /// like an inbound read - matching upstream's `MAX(last_io_out, last_io_in)`
-/// (io.c:213).
+/// (io.c:260).
 #[derive(Debug)]
 pub(crate) struct StallProgress {
     /// Monotonic base captured at construction. All offsets are measured from

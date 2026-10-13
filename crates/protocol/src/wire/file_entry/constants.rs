@@ -1,7 +1,7 @@
 //! XMIT flag constants for file entry wire format encoding.
 //!
 //! These constants define the wire format flags used in file entry
-//! transmission, matching upstream rsync's `flist.c` definitions.
+//! transmission, matching upstream rsync's `rsync.h` definitions (lines 47-73).
 
 // Primary flags (bits 0-7)
 
@@ -56,7 +56,7 @@ pub const XMIT_RDEV_MINOR_8_PRE30: u8 = 1 << 3;
 /// Extended flag: group name follows (bit 11, protocol 30+).
 pub const XMIT_GROUP_NAME_FOLLOWS: u8 = 1 << 3;
 
-/// Extended flag: hardlink first / I/O error end list (bit 12).
+/// Extended flag: first entry of a hard-link group (bit 12, protocol 30+).
 pub const XMIT_HLINK_FIRST: u8 = 1 << 4;
 
 /// Extended flag: I/O error end list marker (bit 12, protocol 31+).

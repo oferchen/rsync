@@ -7,7 +7,9 @@ use crate::xattr::MAX_FULL_DATUM;
 /// State of an xattr entry during wire protocol exchange.
 ///
 /// Used to track which xattr values need to be requested from the sender
-/// after the initial abbreviated transmission.
+/// after the initial abbreviated transmission. Discriminants match upstream's
+/// `XSTATE_ABBREV` / `XSTATE_DONE` / `XSTATE_TODO` (`xattrs.c:57-59`), which
+/// upstream keeps in `rxa->datum[0]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum XattrState {
@@ -48,7 +50,8 @@ pub struct XattrEntry {
     /// 1-based entry number within its xattr list.
     ///
     /// Used by the abbreviation request protocol to identify specific entries.
-    /// Mirrors upstream rsync's `rxa->num` field in `xattrs.c`.
+    /// Mirrors upstream rsync's `rsync_xa.num` field (`xattrs.c:85`), assigned in
+    /// `receive_xattr()` (`xattrs.c:914`).
     num: u32,
 }
 

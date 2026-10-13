@@ -3,9 +3,12 @@
 //! Abstracts the underlying sleep primitive so the limiter's pacing
 //! loop can use either [`std::thread::sleep`] or a platform-native
 //! high-resolution timer. The kqueue `EVFILT_TIMER` backend
-//! (`KQ-S.4`) reaches nanosecond resolution on macOS via Mach
+//! reaches nanosecond resolution on macOS via Mach
 //! absolute time, avoiding the ~1 ms granularity and CPU spin that
 //! `std::thread::sleep` exhibits for sub-millisecond throttles.
+//!
+//! Deviation from upstream: `io.c:sleep_for_bwlimit()` always sleeps with
+//! `select()`; the selectable backend is an oc extension.
 //!
 //! # Selection
 //!

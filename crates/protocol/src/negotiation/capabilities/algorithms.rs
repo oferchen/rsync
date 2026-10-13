@@ -2,7 +2,7 @@ use std::io;
 
 /// Supported checksum algorithms in preference order.
 ///
-/// This list mirrors upstream rsync 3.5.0's `valid_checksums_items[]`
+/// This list mirrors upstream rsync 3.5.1's `valid_checksums_items[]`
 /// (checksum.c:49-65) verbatim - names AND order - as a full-featured
 /// upstream build compiles it. `get_default_nno_list()` (compat.c:462-504)
 /// renders the default advertisement from it: the client drops the trailing
@@ -21,7 +21,7 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 /// Returns supported compression algorithms in preference order for negotiation.
 ///
 /// This list controls which algorithms are advertised during vstring
-/// negotiation (upstream compat.c:541-544). The order matches upstream's
+/// negotiation (upstream compat.c:547-548). The order matches upstream's
 /// `valid_compressions_items[]` preference: zstd > lz4 > zlibx > zlib > none.
 ///
 /// Both zstd and lz4 are included when their respective features are enabled -
@@ -35,16 +35,16 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 /// capability) is negotiated, which restricts lz4/zstd selection to peers new
 /// enough to send that flag (upstream 3.2.0+, protocol 31), mirroring upstream.
 /// Explicit `--compress-choice=lz4` still works independently of this list
-/// (upstream compat.c:543).
+/// (upstream compat.c:547).
 ///
 /// # Upstream reference
 ///
-/// upstream: compat.c:100-112 `valid_compressions_items[]` - preference-ordered
+/// upstream: compat.c:101-112 `valid_compressions_items[]` - preference-ordered
 /// list guarded by `SUPPORT_ZSTD` and `SUPPORT_LZ4` compile flags.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
     let mut list = Vec::with_capacity(5);
 
-    // upstream: compat.c:101-102 - zstd is first when SUPPORT_ZSTD is defined
+    // upstream: compat.c:102-104 - zstd is first when SUPPORT_ZSTD is defined
     #[cfg(feature = "zstd")]
     list.push("zstd");
 
@@ -93,14 +93,14 @@ pub(super) fn resolve_compression_name(name: &str) -> Option<&'static str> {
 /// Checksum algorithm negotiated between rsync peers.
 ///
 /// Protocol 30+ peers exchange space-separated lists of supported algorithms
-/// and each side selects the first mutually supported entry. For protocol
-/// versions below 30, [`MD4`](Self::MD4) is always used. The variants are
-/// ordered from strongest/newest to weakest/oldest, matching upstream rsync
-/// 3.5.0's preference order (checksum.c:49-65).
+/// and each side selects a mutually supported entry from the peer's list. For
+/// protocol versions below 30, [`MD4`](Self::MD4) is always used. Variant order
+/// carries no meaning; the preference order is `SUPPORTED_CHECKSUMS`, which
+/// mirrors upstream 3.5.1's `valid_checksums_items[]` (checksum.c:49-65).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChecksumAlgorithm {
-    /// No checksum - used for directory listings and dry-run modes.
+    /// No checksum (`none`).
     None,
     /// MD4 checksum - legacy default for protocol versions below 30.
     MD4,
@@ -110,7 +110,7 @@ pub enum ChecksumAlgorithm {
     SHA1,
     /// XXHash 64-bit - fast non-cryptographic hash with good distribution.
     XXH64,
-    /// XXHash 3 - fastest available hash, preferred for protocol 30+ with negotiation.
+    /// XXHash 3, 64-bit variant (`xxh3`).
     XXH3,
     /// XXHash 128-bit - strongest non-cryptographic hash, preferred when available.
     XXH128,
@@ -161,7 +161,7 @@ impl ChecksumAlgorithm {
     /// sum than this would make the reader consume more bytes per block than
     /// were written, desyncing the signature-block stream.
     ///
-    /// upstream: checksum.c:214 `csum_len_for_type()` (non-flist form).
+    /// upstream: checksum.c:232-268 `csum_len_for_type()` (non-flist form).
     #[must_use]
     pub const fn digest_len(self) -> usize {
         match self {
@@ -177,8 +177,8 @@ impl ChecksumAlgorithm {
 /// Compression algorithm negotiated between rsync peers.
 ///
 /// Protocol 30+ peers exchange space-separated lists of supported algorithms
-/// and each side selects the first mutually supported entry. For protocol
-/// versions below 30, [`Zlib`](Self::Zlib) is the default. Availability of
+/// and each side selects a mutually supported entry from the peer's list. For
+/// protocol versions below 30, [`Zlib`](Self::Zlib) is the default. Availability of
 /// [`LZ4`](Self::LZ4) and [`Zstd`](Self::Zstd) depends on compile-time
 /// feature flags (`lz4`, `zstd`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

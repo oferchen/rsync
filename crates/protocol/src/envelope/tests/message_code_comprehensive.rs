@@ -1,12 +1,12 @@
 //! Comprehensive tests for MessageCode and LogCode handling, covering wire
-//! format compatibility with upstream rsync 3.4.1, complete variant coverage,
+//! format compatibility with upstream rsync 3.5.1, complete variant coverage,
 //! parsing/conversion edge cases, and cross-component integration.
 
 use super::*;
 use std::collections::HashMap;
 
 /// Verifies that all message codes have the exact numeric values expected by
-/// upstream rsync 3.4.1. These values are defined in rsync.h and must match
+/// upstream rsync 3.5.1. These values are defined in rsync.h and must match
 /// exactly for protocol compatibility.
 #[test]
 fn message_code_wire_values_match_upstream_rsync_3_4_1() {
@@ -53,7 +53,7 @@ fn message_code_wire_values_match_upstream_rsync_3_4_1() {
 }
 
 /// Verifies that all log codes have the exact numeric values expected by
-/// upstream rsync 3.4.1. These values are defined in rsync.h enum logcode.
+/// upstream rsync 3.5.1. These values are defined in rsync.h enum logcode.
 #[test]
 fn log_code_wire_values_match_upstream_rsync_3_4_1() {
     // Values from upstream rsync.h enum logcode

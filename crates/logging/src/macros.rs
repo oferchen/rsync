@@ -3,14 +3,14 @@
 //! These macros gate message formatting behind a level check so that
 //! disabled messages incur zero allocation cost. They mirror upstream
 //! rsync's `DEBUG_GTE(flag, level)` and `INFO_GTE(flag, level)` macros
-//! (upstream: rsync.h).
+//! (upstream: rsync.h:1475-1477).
 
 /// Emit an info log message if the flag level is enabled.
 ///
 /// The message is only formatted when the current thread's
 /// [`VerbosityConfig`](crate::VerbosityConfig) has the given
 /// [`InfoFlag`](crate::InfoFlag) at or above `$level`. This mirrors
-/// upstream rsync's `INFO_GTE(flag, level)` guard (upstream: rsync.h).
+/// upstream rsync's `INFO_GTE(flag, level)` guard (upstream: rsync.h:1475).
 ///
 /// # Arguments
 ///
@@ -45,7 +45,7 @@ macro_rules! info_log {
 /// boundary intact rather than being lossily replaced with U+FFFD. This
 /// mirrors upstream `rwrite()`, whose message buffer is copied to the output
 /// fd verbatim and escaped once at the sink (upstream: log.c:425 `rwrite()`
-/// -> log.c:250 `filtered_fwrite`).
+/// -> log.c:242 `filtered_fwrite`).
 ///
 /// # Arguments
 ///
@@ -103,7 +103,7 @@ macro_rules! warn_log {
 /// The message is only formatted when the current thread's
 /// [`VerbosityConfig`](crate::VerbosityConfig) has the given
 /// [`DebugFlag`](crate::DebugFlag) at or above `$level`. This mirrors
-/// upstream rsync's `DEBUG_GTE(flag, level)` guard (upstream: rsync.h).
+/// upstream rsync's `DEBUG_GTE(flag, level)` guard (upstream: rsync.h:1477).
 ///
 /// Debug flags are activated starting at `-vv` (verbose level 2). Higher
 /// verbose levels increase individual flag levels, enabling progressively

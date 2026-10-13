@@ -64,7 +64,7 @@ pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
 ///
 /// The seeded `CSUM_MD4_OLD` variant is deliberately absent. It shares the `md4`
 /// token with plain MD4 and exists only as the sub-protocol-30 substitute for an
-/// *absent* list (compat.c:857-862), so advertising it would emit `md4` twice.
+/// *absent* list (compat.c:868-873), so advertising it would emit `md4` twice.
 pub const DAEMON_AUTH_DIGEST_NAMES: [&str; 5] = ["sha512", "sha256", "sha1", "md5", "md4"];
 
 /// Writes the advertised daemon-auth digest names, space separated, with no newline.
@@ -90,9 +90,9 @@ pub fn write_daemon_auth_digest_list<W: FmtWrite>(writer: &mut W) -> fmt::Result
 ///
 /// The list states *our own* capabilities and is never derived from the peer's
 /// greeting, on either side of the connection: `output_daemon_greeting()`
-/// (compat.c:838-842) renders `get_default_nno_list()` and is called before the
-/// peer's greeting has even been read (clientserver.c:157 precedes the
-/// `read_line_old()` at clientserver.c:174).
+/// (compat.c:844-857) renders `get_default_nno_list()` and is called before the
+/// peer's greeting has even been read (clientserver.c:181 precedes the
+/// `read_line_old()` at clientserver.c:201).
 ///
 /// It is likewise never filtered by protocol version. Verified against rsync
 /// 3.4.4: a client forced to `--protocol=28` still greets with

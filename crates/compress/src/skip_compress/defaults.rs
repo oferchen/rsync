@@ -6,9 +6,9 @@
 //! upstream: `default-dont-compress.h` defines `DEFAULT_DONT_COMPRESS`, which
 //! `token.c:init_set_compression()` loads into the suffix tree via
 //! `loadparm.c:lp_dont_compress()`. Each upstream entry is a `*.suffix` glob
-//! whose match key is the substring after the final `.` (upstream matches with
-//! `strrchr(fname, '.')`, i.e. the last suffix only - there is no compound
-//! `.tar.gz` handling).
+//! whose match key is the substring after the final `.` (token.c:232
+//! `set_compression()` matches with `strrchr(fname, '.')`, i.e. the last
+//! suffix only - there is no compound `.tar.gz` handling).
 
 /// Upstream default suffixes that skip compression.
 ///

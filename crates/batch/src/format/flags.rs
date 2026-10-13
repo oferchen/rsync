@@ -76,13 +76,13 @@ fn flag_bits(flags: &BatchFlags) -> [bool; 15] {
 ///
 /// # Upstream Reference
 ///
-/// - `batch.c:120-161`: `check_batch_flags()`.
+/// - `batch.c:121-162`: `check_batch_flags()`.
 pub fn check_batch_flags(
     recorded: BatchFlags,
     active: BatchFlags,
     protocol_version: i32,
 ) -> BatchResult<Vec<String>> {
-    // upstream: batch.c:124-127 - flag_ptr[] is truncated by protocol version
+    // upstream: batch.c:125-128 - flag_ptr[] is truncated by protocol version
     // (flag_ptr[7]=NULL below 29, flag_ptr[9]=NULL below 30), so the reconcile
     // loop only visits the bits the peer actually negotiated.
     let bit_count = if protocol_version < 29 {
@@ -148,7 +148,7 @@ pub struct BatchFlags {
     /// When true, the batch body carries compressed token data and the reader
     /// must decompress it. The codec is always zlib: upstream
     /// `compat.c:414 getenv_nstr()` pins the compression list to "zlib" while
-    /// `write_batch` is set, and `compat.c:194-195 parse_compress_choice()`
+    /// `write_batch` is set, and `compat.c:195-196 parse_compress_choice()`
     /// resolves a bare `do_compression` to CPRES_ZLIB on `--read-batch`.
     pub do_compression: bool,
     /// Bit 9: --iconv [protocol >= 30] - upstream: batch.c:69 `&tweaked_iconv`
@@ -387,7 +387,7 @@ mod check_flags_tests {
 
     #[test]
     fn iconv_bit_is_ignored_below_protocol_30() {
-        // WHY: batch.c:126-127 nulls flag_ptr[9] below protocol 30, so the
+        // WHY: batch.c:127-128 nulls flag_ptr[9] below protocol 30, so the
         // iconv bit must not be checked and must never abort a proto-29 replay.
         let recorded = BatchFlags {
             iconv: true,
@@ -402,7 +402,7 @@ mod check_flags_tests {
 
     #[test]
     fn proto28_ignores_dirs_and_compress_bits() {
-        // WHY: batch.c:124-125 nulls flag_ptr[7] below protocol 29, so -d/-z
+        // WHY: batch.c:125-126 nulls flag_ptr[7] below protocol 29, so -d/-z
         // (bits 7-8) and every later bit are outside the reconcile loop.
         let recorded = BatchFlags {
             xfer_dirs: true,

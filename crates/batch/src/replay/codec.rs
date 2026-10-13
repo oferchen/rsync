@@ -1,6 +1,6 @@
 //! Zlib decoder construction for the compressed batch token stream.
 //!
-//! upstream: compat.c:417-418 getenv_nstr() - when `write_batch` is set the
+//! upstream: compat.c:414-415 getenv_nstr() - when `write_batch` is set the
 //! negotiated compression list is forced to "zlib", so a batch file's token
 //! stream is ALWAYS zlib-compressed (never zstd or lz4). Batch replay therefore
 //! pins the codec to zlib; it never sniffs the compressed payload to pick a
@@ -13,8 +13,8 @@ use protocol::wire::CompressedTokenDecoder;
 /// The codec is fixed at construction - upstream pins batch compression to
 /// zlib, so replay never inspects the payload to choose an algorithm.
 ///
-/// upstream: compat.c:417-418 getenv_nstr() forces `write_batch` transfers to
-/// negotiate "zlib"; compat.c:195 - read-batch defaults `do_compression` to
+/// upstream: compat.c:414-415 getenv_nstr() forces `write_batch` transfers to
+/// negotiate "zlib"; compat.c:196 - read-batch defaults `do_compression` to
 /// CPRES_ZLIB.
 ///
 /// Sets `zlibx=false` so `see_token()` feeds matched block data into the
@@ -22,7 +22,7 @@ use protocol::wire::CompressedTokenDecoder;
 /// far back". `protocol_version` gates that dictionary advance to match the
 /// sender that produced the batch.
 ///
-/// upstream: token.c:710 see_deflate_token() `if (protocol_version >= 31) buf += blklen;`
+/// upstream: token.c:713 see_deflate_token() `if (protocol_version >= 31) buf += blklen;`
 pub(super) fn create_compressed_decoder(protocol_version: u32) -> CompressedTokenDecoder {
     let mut decoder = CompressedTokenDecoder::new();
     // Batch was recorded at this protocol version; gate see_token's dictionary

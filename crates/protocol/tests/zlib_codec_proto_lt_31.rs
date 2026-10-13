@@ -8,8 +8,8 @@
 //!
 //! # Upstream reference
 //!
-//! upstream: `token.c:send_deflated_token()` lines 475-511 in
-//! `target/interop/upstream-src/rsync-3.5.0/token.c`:
+//! upstream: `token.c:send_deflated_token()` lines 475-512 in
+//! `target/interop/upstream-src/rsync-3.5.1/token.c`:
 //!
 //! ```c
 //! } else if (token != -2 && do_compression == CPRES_ZLIB) {
@@ -44,9 +44,9 @@
 //! Two encoders are constructed with the same compression level
 //! ([`CompressionLevel::Default`]) and the same fixed input:
 //!
-//! 1. A 0x10001-byte `see_token` payload (`0x10001 == 65537`, one byte
-//!    past the 0xFFFF chunk boundary) so the inner loop iterates twice
-//!    and the protocol < 31 path re-inserts the first 0xFFFF bytes.
+//! 1. A `0xFFFF + 4`-byte `see_token` payload (four bytes past the 0xFFFF
+//!    chunk boundary) so the inner loop iterates twice and the protocol < 31
+//!    path re-inserts the first 4 bytes instead of the last 4.
 //! 2. A short trailing literal whose compressed encoding samples the
 //!    deflate dictionary state. The compressor uses Z_SYNC_FLUSH, so the
 //!    output of `send_literal` is deterministic for a fixed dictionary
@@ -81,23 +81,23 @@ use compress::zlib::CompressionLevel;
 
 /// Builds the fixture-encoded buffer for the given protocol version.
 ///
-/// Feeds `0x10001` bytes through `see_token` (one byte past the 0xFFFF
+/// Feeds `0xFFFF + 4` bytes through `see_token` (four bytes past the 0xFFFF
 /// chunk boundary so the upstream inner loop iterates twice) and then
 /// emits a trailing literal whose first bytes deliberately probe the
 /// deflate dictionary's most-recent positions.
 ///
 /// At `protocol_version >= 31`, the dictionary tail after see_token is
-/// `[.., 254, 255, 0]` (the offset cursor walks forward correctly, so
-/// the second iteration feeds `see_buf[0xFFFF..0x10001]`). At
-/// `protocol_version <= 30`, the dictionary tail is `[.., 254, 0, 1]`
+/// `[.., 254, 255, 0, 1, 2]` (the offset cursor walks forward correctly, so
+/// the second iteration feeds `see_buf[0xFFFF..0x10003]`). At
+/// `protocol_version <= 30`, the dictionary tail is `[.., 254, 0, 1, 2, 3]`
 /// because the offset cursor never advances and the second iteration
-/// re-feeds `see_buf[0..2]` (the upstream data-duplicating bug fixed at
-/// protocol 31, see `token.c:473`).
+/// re-feeds `see_buf[0..4]` (the upstream data-duplicating bug fixed at
+/// protocol 31, see `token.c:485`).
 ///
-/// The literal begins with `[0xFE, 0xFF, 0x00]`, which matches the
-/// `[254, 255, 0]` triple sitting at the very tail of the protocol-31
-/// dictionary at a small back-reference distance. At protocol <= 30 the
-/// same triple only occurs in the cyclic interior of the dictionary at
+/// The literal begins with `[0xFF, 0x00, 0x01, 0x02]`, which matches the
+/// sequence sitting at the very tail of the protocol-31 dictionary at a
+/// small back-reference distance. At protocol <= 30 the same sequence
+/// only occurs in the cyclic interior of the dictionary at
 /// a much larger distance. Deflate encodes the two distances with
 /// different bit lengths, so the compressed payload diverges between
 /// the two protocol families even though the outer framing is identical.
@@ -137,7 +137,7 @@ fn encode_fixture(protocol_version: u32) -> Vec<u8> {
 /// Returns `true` if `buf` contains at least one DEFLATED_DATA header byte.
 ///
 /// A DEFLATED_DATA header has its top two bits equal to `0b01`, matching
-/// the upstream wire constant defined in `token.c:329`.
+/// the upstream wire constant defined in `token.c:337`.
 fn contains_deflated_data(buf: &[u8]) -> bool {
     buf.iter().any(|&b| (b & 0xC0) == DEFLATED_DATA)
 }
@@ -149,7 +149,7 @@ fn contains_deflated_data(buf: &[u8]) -> bool {
 /// Both protocols share the outer DEFLATED_DATA framing and END_FLAG
 /// terminator. The difference is confined to the compressed payload
 /// inside DEFLATED_DATA blocks and reflects the data-duplicating bug
-/// fixed at protocol 31 (upstream `token.c:473`).
+/// fixed at protocol 31 (upstream `token.c:485`).
 #[test]
 fn rp28i_zlib_codec_protocol_30_diverges_from_protocol_31() {
     let buf_30 = encode_fixture(30);

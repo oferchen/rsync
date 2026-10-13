@@ -16,9 +16,10 @@
 //! load-bearing. `DirectoryStatBatch` holds a directory fd and issues `fstatat`
 //! against it, so it re-resolves a single component under a pinned inode.
 //! `BatchedStatCache` is keyed on a path string and never invalidates, so a hit
-//! can answer for a path that has since been swapped. Nothing reaches either
-//! type today; see the confinement constraint on `BatchedStatCache` before
-//! wiring it anywhere.
+//! can answer for a path that has since been swapped. No other workspace crate
+//! depends on `flist`, so neither type is on a transfer path; inside this crate
+//! only `parallel::collect_with_batched_stats` uses `BatchedStatCache`. See the
+//! confinement constraint on `BatchedStatCache` before wiring it anywhere.
 //!
 //! # Performance
 //!

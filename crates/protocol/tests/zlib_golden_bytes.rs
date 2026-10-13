@@ -7,7 +7,7 @@
 //! recv_deflated_token). Zlib uses Z_SYNC_FLUSH with trailing sync marker
 //! stripping (0x00 0x00 0xFF 0xFF removed from each flush output).
 //!
-//! ## Wire format (upstream token.c lines 321-329)
+//! ## Wire format (upstream token.c:333-341)
 //!
 //! ```text
 //! END_FLAG      = 0x00  - end of file marker
@@ -18,12 +18,12 @@
 //! TOKENRUN_REL  = 0xC0  - + 6-bit relative token + 16-bit LE run count
 //! ```
 //!
-//! ## Zlib-specific behavior (upstream token.c lines 357-485)
+//! ## Zlib-specific behavior (upstream token.c:send_deflated_token() lines 369-513)
 //!
 //! - Z_SYNC_FLUSH at every token boundary (block match or EOF)
 //! - Trailing sync marker (0x00 0x00 0xFF 0xFF) stripped from each flush
 //! - Decoder restores the sync marker before feeding data to inflate
-//! - Single persistent deflate stream per file transfer
+//! - One deflate stream per file, reset with deflateReset() at each file start
 //! - Z_NO_FLUSH for literal data between boundaries
 
 use std::io::{Cursor, Read};
@@ -34,9 +34,7 @@ use protocol::wire::{
     MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
 };
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Decodes all tokens from a zlib-encoded byte buffer.
 fn zlib_decode_all(data: &[u8]) -> (Vec<u8>, Vec<u32>) {
@@ -131,16 +129,14 @@ fn parse_wire_structure(data: &[u8]) -> (Vec<&'static str>, Vec<usize>) {
     (sequence, block_sizes)
 }
 
-// ===========================================================================
 // Section 1: Literal-only streams
-// ===========================================================================
 
 /// A literal-only zlib stream must produce: DEFLATED_DATA block(s) + END_FLAG.
 /// The DEFLATED_DATA header uses the same 14-bit length encoding shared by all
 /// compression codecs. The sync marker (0x00 0x00 0xFF 0xFF) must be stripped
 /// from the compressed output.
 ///
-/// upstream: token.c:send_deflated_token() lines 357-485
+/// upstream: token.c:send_deflated_token() lines 369-513
 #[test]
 fn golden_zlib_literal_only_wire_structure() {
     let encoded = zlib_encode(&[ZlibTestToken::Literal(
@@ -183,7 +179,7 @@ fn golden_zlib_literal_only_wire_structure() {
 /// Verify exact DEFLATED_DATA header bytes for a small zlib literal.
 /// The header format is: byte0 = DEFLATED_DATA | (len >> 8), byte1 = len & 0xFF.
 ///
-/// upstream: token.c lines 451-453
+/// upstream: token.c:463-465
 #[test]
 fn golden_zlib_deflated_data_header_exact_bytes() {
     let encoded = zlib_encode(&[ZlibTestToken::Literal(b"test".to_vec())]);
@@ -222,7 +218,7 @@ fn golden_zlib_deflated_data_header_exact_bytes() {
 /// Upstream strips this trailing marker after each Z_SYNC_FLUSH to save 4 bytes
 /// per flush. The decoder restores it before feeding data to inflate.
 ///
-/// upstream: token.c lines 441-445 - strips sync marker after Z_SYNC_FLUSH
+/// upstream: token.c:452-460 - trims the 4-byte sync marker after Z_SYNC_FLUSH
 #[test]
 fn golden_zlib_sync_marker_stripped_from_output() {
     let data = b"Data to compress with zlib - sync marker must be stripped from output";
@@ -246,7 +242,7 @@ fn golden_zlib_sync_marker_stripped_from_output() {
 /// The flate2 Compress is created with `false` for zlib_header parameter.
 /// Raw deflate streams do not start with the zlib header bytes (0x78 xx).
 ///
-/// upstream: token.c - uses raw deflate, not zlib wrapper
+/// upstream: token.c:381 - deflateInit2() with windowBits -15 (raw deflate, no zlib wrapper)
 #[test]
 fn golden_zlib_raw_deflate_no_zlib_header() {
     let input = b"Verify raw deflate without zlib header bytes";
@@ -282,14 +278,12 @@ fn golden_zlib_raw_deflate_no_zlib_header() {
     assert_eq!(literals, input.as_slice());
 }
 
-// ===========================================================================
 // Section 2: Block-match-only streams
-// ===========================================================================
 
 /// A single block match at index 0 produces TOKEN_REL | 0 + END_FLAG.
 /// Token encoding is shared across all compression algorithms.
 ///
-/// upstream: token.c lines 380-398 (zlib run encoding)
+/// upstream: token.c:396-412 (run encoding)
 #[test]
 fn golden_zlib_single_block_match_token_rel() {
     let encoded = zlib_encode(&[ZlibTestToken::BlockMatch(0)]);
@@ -325,7 +319,7 @@ fn golden_zlib_block_match_rel_max() {
 /// Block match at index 64 (just beyond relative range) requires TOKEN_LONG.
 /// r = 64 > 63, so TOKEN_LONG + 4-byte LE index.
 ///
-/// upstream: token.c line 391 TOKEN_LONG path
+/// upstream: token.c:403-404 TOKEN_LONG path
 #[test]
 fn golden_zlib_block_match_rel_boundary_64() {
     let encoded = zlib_encode(&[ZlibTestToken::BlockMatch(64)]);
@@ -340,7 +334,7 @@ fn golden_zlib_block_match_rel_boundary_64() {
 /// Block match at index 100 (> 63) requires TOKEN_LONG absolute encoding.
 /// r = 100 - 0 = 100 > 63, so TOKEN_LONG + 4-byte LE index.
 ///
-/// upstream: token.c line 391 TOKEN_LONG path
+/// upstream: token.c:403-404 TOKEN_LONG path
 #[test]
 fn golden_zlib_block_match_token_long() {
     let encoded = zlib_encode(&[ZlibTestToken::BlockMatch(100)]);
@@ -363,14 +357,12 @@ fn golden_zlib_non_consecutive_blocks_separate_tokens() {
     assert_eq!(encoded[2], END_FLAG);
 }
 
-// ===========================================================================
 // Section 3: Token run encoding (consecutive block matches)
-// ===========================================================================
 
 /// Consecutive blocks 0,1,2 use TOKENRUN_REL encoding.
 /// run_start=0, last_token=2, n=2, r=0. All fit in relative encoding.
 ///
-/// upstream: token.c lines 380-398 (zlib uses same run detection)
+/// upstream: token.c:396-412 (run encoding)
 #[test]
 fn golden_zlib_consecutive_blocks_tokenrun_rel() {
     let encoded = zlib_encode(&[
@@ -390,7 +382,7 @@ fn golden_zlib_consecutive_blocks_tokenrun_rel() {
 /// Consecutive blocks starting at 100 use TOKENRUN_LONG (r > 63).
 /// run_start=100, last_token=101, n=1, r=100 > 63.
 ///
-/// upstream: token.c lines 391-397
+/// upstream: token.c:403-409
 #[test]
 fn golden_zlib_consecutive_blocks_tokenrun_long() {
     let encoded = zlib_encode(&[
@@ -474,15 +466,13 @@ fn golden_zlib_two_separate_runs() {
     assert_eq!(encoded[6], END_FLAG);
 }
 
-// ===========================================================================
 // Section 4: Mixed literal + block match streams
-// ===========================================================================
 
 /// Literal data followed by a block match: DEFLATED_DATA + TOKEN_REL + END_FLAG.
 /// The Z_SYNC_FLUSH at the token boundary produces decompressible output before
 /// the token byte.
 ///
-/// upstream: token.c lines 400-430 - flush_all_literals before writing token
+/// upstream: token.c:416-470 - the literal is deflated and Z_SYNC_FLUSHed before the token
 #[test]
 fn golden_zlib_mixed_literal_then_block() {
     let encoded = zlib_encode(&[
@@ -540,7 +530,7 @@ fn golden_zlib_mixed_block_then_literal() {
 /// Interleaved pattern: lit, block, lit, block, lit, end.
 /// Each literal is flushed before its following token.
 ///
-/// upstream: token.c - has_literals triggers flush_all_literals
+/// upstream: token.c:416-470 - each literal span is deflated and flushed before its token
 #[test]
 fn golden_zlib_interleaved_literal_block_literal() {
     let encoded = zlib_encode(&[
@@ -607,14 +597,12 @@ fn golden_zlib_mixed_with_run_encoding() {
     assert_eq!(blocks, vec![0, 1, 2]);
 }
 
-// ===========================================================================
 // Section 5: DEFLATED_DATA framing and flush boundaries
-// ===========================================================================
 
 /// Small literals should produce exactly one DEFLATED_DATA block per flush.
 /// Upstream accumulates compressed output and writes DEFLATED_DATA blocks.
 ///
-/// upstream: token.c lines 440-455 - write_deflated_data_pieces
+/// upstream: token.c:452-467 - one DEFLATED_DATA block per filled or flushed output buffer
 #[test]
 fn golden_zlib_small_literal_single_deflated_block() {
     let encoded = zlib_encode(&[
@@ -638,7 +626,7 @@ fn golden_zlib_small_literal_single_deflated_block() {
 /// Large incompressible data must split into multiple DEFLATED_DATA blocks,
 /// each at most MAX_DATA_COUNT (16383) bytes.
 ///
-/// upstream: token.c lines 440-455 - write_deflated_data_pieces
+/// upstream: token.c:452-467 - one DEFLATED_DATA block per filled or flushed output buffer
 #[test]
 fn golden_zlib_large_literal_multiple_deflated_blocks() {
     // Generate incompressible data using xorshift64
@@ -680,7 +668,7 @@ fn golden_zlib_large_literal_multiple_deflated_blocks() {
 /// Verify END_FLAG is always a single 0x00 byte at the end of the stream.
 /// Shared across all compression algorithms.
 ///
-/// upstream: token.c line 462 write_byte(f, END_FLAG)
+/// upstream: token.c:474 write_byte(f, END_FLAG)
 #[test]
 fn golden_zlib_end_flag_single_zero_byte() {
     // Empty stream (no literals, no blocks)
@@ -705,9 +693,7 @@ fn golden_zlib_end_flag_not_confused_with_other_flags() {
     assert_ne!(END_FLAG & 0xC0, TOKENRUN_REL);
 }
 
-// ===========================================================================
 // Section 6: Zlib-specific compressed payload verification
-// ===========================================================================
 
 /// Verify the zlib compressed payload is valid raw deflate data.
 /// The first DEFLATED_DATA block should contain a deflate block header.
@@ -763,7 +749,7 @@ fn golden_zlib_output_is_compressed() {
 /// repeated patterns across multiple literals within the same file.
 /// Each literal builds on the same deflate dictionary.
 ///
-/// upstream: token.c - single compressor per file, not per-chunk
+/// upstream: token.c:390 - one deflate stream per file (deflateReset), not per chunk
 #[test]
 fn golden_zlib_persistent_stream_dictionary_effect() {
     // Send the same literal data twice - second should compress better
@@ -786,9 +772,7 @@ fn golden_zlib_persistent_stream_dictionary_effect() {
     assert_eq!(literals, expected);
 }
 
-// ===========================================================================
 // Section 7: Decoder golden byte tests - hand-crafted wire bytes
-// ===========================================================================
 
 /// Verify the zlib decoder handles a hand-crafted wire stream with
 /// only token bytes (no DEFLATED_DATA). Block-match-only streams have
@@ -926,9 +910,7 @@ fn golden_zlib_decoder_mixed_token_types() {
     assert_eq!(blocks, vec![5, 8, 9, 10, 1000, 2000, 2001, 2002]);
 }
 
-// ===========================================================================
 // Section 8: Encoder/decoder roundtrip with exact byte verification
-// ===========================================================================
 
 /// Verify that encoding then decoding a complex mixed stream preserves
 /// all data and block indices exactly.
@@ -957,7 +939,7 @@ fn golden_zlib_complex_roundtrip() {
 /// Verify encoder reset between files produces independent streams.
 /// Each file's stream must be self-contained - no cross-file state leaks.
 ///
-/// upstream: token.c - compressor reset on new file
+/// upstream: token.c:390 - deflateReset() on each new file
 #[test]
 fn golden_zlib_reset_produces_independent_streams() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
@@ -1073,9 +1055,7 @@ fn golden_zlib_single_byte_literal_roundtrip() {
     assert_eq!(*sequence.last().unwrap(), "END");
 }
 
-// ===========================================================================
 // Section 9: Sync marker restoration in decoder
-// ===========================================================================
 
 /// Verify the decoder correctly restores the stripped sync marker.
 /// The encoder strips 0x00 0x00 0xFF 0xFF from Z_SYNC_FLUSH output.
@@ -1084,7 +1064,7 @@ fn golden_zlib_single_byte_literal_roundtrip() {
 /// We verify this indirectly: if the decoder did NOT restore the marker,
 /// inflate would fail or produce garbage.
 ///
-/// upstream: token.c lines 590-600 - decoder restores sync marker
+/// upstream: token.c:641-650 - decoder restores the sync marker
 #[test]
 fn golden_zlib_decoder_restores_sync_marker() {
     // Encode a variety of literal patterns that exercise the sync flush path
@@ -1115,7 +1095,8 @@ fn golden_zlib_decoder_restores_sync_marker() {
 /// and restore the sync marker independently. The persistent deflate stream
 /// must remain coherent across multiple flush/restore cycles.
 ///
-/// upstream: token.c - encoder strips marker per flush, decoder restores per read
+/// upstream: token.c:452-460 (encoder trims the marker per flush) and 641-650
+/// (decoder restores it)
 #[test]
 fn golden_zlib_multiple_flush_restore_cycles() {
     let tokens = vec![

@@ -2,10 +2,10 @@
 //!
 //! These tests verify that [`FileListBuilder`] and [`FileListWalker`] correctly
 //! enumerate filesystem entries, matching upstream rsync's `flist.c` behavior
-//! for directory scanning (see `send_file_list()` at line 2192 and
-//! `send_file_name()` at line 1080).
+//! for directory scanning (see `send_file_list()` at line 2739 and
+//! `send_file_name()` at line 1956).
 //!
-//! Reference: rsync 3.4.1 flist.c
+//! Reference: rsync 3.5.1 flist.c
 
 use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::collections::BTreeSet;
@@ -72,8 +72,8 @@ fn single_file_in_directory() {
 
 /// Verifies that multiple files in a directory are discovered in sorted order.
 ///
-/// Upstream rsync sorts directory entries lexicographically (flist.c line 202:
-/// `entries.sort()`). This ensures deterministic output across platforms.
+/// The walker sorts each directory's names by raw bytes before yielding them,
+/// which keeps output deterministic across platforms.
 #[test]
 fn multiple_files_sorted_alphabetically() {
     let temp = test_support::create_tempdir();
@@ -101,9 +101,10 @@ fn multiple_files_sorted_alphabetically() {
 
 /// Verifies nested directory structures are traversed depth-first.
 ///
-/// Upstream rsync uses depth-first traversal for directory scanning. When
-/// entering a directory, all its contents are processed before moving to
-/// the next sibling.
+/// When entering a directory, the walker yields all its contents before
+/// moving to the next sibling. Upstream's `send_directory()` instead lists a
+/// directory's names first and then recurses into its subdirectories, and
+/// re-sorts the finished list.
 #[test]
 fn nested_directories_depth_first_traversal() {
     let temp = test_support::create_tempdir();

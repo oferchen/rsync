@@ -5,19 +5,19 @@
 //!
 //! # Upstream Reference
 //!
-//! - `acls.c:1083-1139` `default_perms_for_dir` - reads a parent directory's
+//! - `acls.c:1453-1508` `default_perms_for_dir` - reads a parent directory's
 //!   default ACL to derive `dest_mode()`'s `dflt_perms` argument when
-//!   `--perms` is off (`generator.c:1338-1339`, `receiver.c:862-863`).
-//! - `acls.c:1133-1134` (`DEBUG_GTE(ACL, 1)`) - `"got ACL-based default perms
+//!   `--perms` is off (`generator.c:1740`, `receiver.c:1204`).
+//! - `acls.c:1502-1503` (`DEBUG_GTE(ACL, 1)`) - `"got ACL-based default perms
 //!   %o for directory %s\n"` - the sole upstream ACL debug emission.
-//! - `options.c:290` - `DEBUG_WORD(ACL, W_SND|W_REC, "Debug extra ACL info")`
+//! - `options.c:306` - `DEBUG_WORD(ACL, W_SND|W_REC, "Debug extra ACL info")`
 //!   flag table entry, capping the useful level at 1.
 
 use logging::debug_log;
 
 /// Traces ACL-derived default permission bits for a parent directory (level 1).
 ///
-/// upstream: `acls.c:1133-1134` - `"got ACL-based default perms %o for
+/// upstream: `acls.c:1502-1503` - `"got ACL-based default perms %o for
 /// directory %s\n"`. Emitted by `default_perms_for_dir` after the directory's
 /// default POSIX ACL unpacked successfully and yielded a `user_obj` entry the
 /// caller can fold into `dest_mode()`. The `perms` value renders as upstream's
@@ -36,13 +36,13 @@ pub fn trace_default_perms_for_dir(perms: u32, dir: &str) {
 
 /// Traces a UID remap for a named ACL entry (level 2).
 ///
-/// upstream: `uidlist.c:287-291` - `"uid %u(%s) maps to %u\n"`, emitted by
+/// upstream: `uidlist.c:287-290` - `"uid %u(%s) maps to %u\n"`, emitted by
 /// `recv_add_id()` under `DEBUG_GTE(OWN, 2)` whenever an inbound ACL or file
 /// list entry's wire UID is resolved against the local NSS database. When
 /// `getpwnam_r` finds the wire name, `mapped` is the local UID; when it does
 /// not, upstream falls back to `id2 = id` at `uidlist.c:282`, so the
 /// emission still fires with `mapped == wire`. The receiver passes the
-/// resolved UID straight to `sys_acl_set_info()` (`acls.c:404`) without
+/// resolved UID straight to `sys_acl_set_info()` (`acls.c:405`) without
 /// dropping the entry.
 #[inline]
 pub fn trace_acl_uid_remap(wire: u32, name: &str, mapped: u32) {
@@ -51,7 +51,7 @@ pub fn trace_acl_uid_remap(wire: u32, name: &str, mapped: u32) {
 
 /// Traces a GID remap for a named ACL entry (level 2).
 ///
-/// upstream: `uidlist.c:287-291` - `"gid %u(%s) maps to %u\n"`, emitted by
+/// upstream: `uidlist.c:287-290` - `"gid %u(%s) maps to %u\n"`, emitted by
 /// `recv_add_id()` under `DEBUG_GTE(OWN, 2)` for inbound group entries.
 /// Mirrors the UID variant in [`trace_acl_uid_remap`].
 #[inline]
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn default_perms_wire_shape() {
-        // upstream: acls.c:1503-1504 - "got ACL-based default perms %o for directory %s"
+        // upstream: acls.c:1502-1503 - "got ACL-based default perms %o for directory %s"
         init_at(1);
         trace_default_perms_for_dir(0o755, "/tmp/dst");
         trace_default_perms_for_dir(0o700, ".");
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn acl_uid_remap_wire_shape() {
-        // upstream: uidlist.c:287-291 - "uid %u(%s) maps to %u"
+        // upstream: uidlist.c:287-290 - "uid %u(%s) maps to %u"
         init_own_at(2);
         trace_acl_uid_remap(1000, "alice", 1500);
         trace_acl_uid_remap(99999, "ghost", 99999);
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn acl_gid_remap_wire_shape() {
-        // upstream: uidlist.c:287-291 - "gid %u(%s) maps to %u"
+        // upstream: uidlist.c:287-290 - "gid %u(%s) maps to %u"
         init_own_at(2);
         trace_acl_gid_remap(100, "users", 200);
         let m = own_messages();

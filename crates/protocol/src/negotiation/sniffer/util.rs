@@ -3,6 +3,8 @@ use std::io::IoSliceMut;
 
 use super::super::BufferedPrefixTooSmall;
 
+/// Copies `source` across `targets` in order, failing without writing when
+/// their combined length is too small.
 pub(super) fn copy_into_vectored<'a>(
     source: &[u8],
     targets: &mut [IoSliceMut<'a>],
@@ -29,6 +31,8 @@ pub(super) fn copy_into_vectored<'a>(
     Ok(())
 }
 
+/// Grows `target` so it can hold `required` bytes, reserving exactly the
+/// shortfall.
 pub(super) fn ensure_vec_capacity(
     target: &mut Vec<u8>,
     required: usize,

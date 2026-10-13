@@ -13,18 +13,18 @@
 //!   - Large literals are chunked into CHUNK_SIZE (32KB) pieces
 //! - **Block match**: `write_int(-(token+1))` where token is the block index
 //!   - Example: block 0 = -1, block 1 = -2, etc.
-//! - **End marker**: `write_int(-1)` when sum_count=0 (whole-file transfer)
+//! - **End marker**: `write_int(0)`, i.e. `send_token()` with token -1
 //!
 //! References:
-//! - `token.c:simple_send_token()` line ~305
-//! - `io.c:write_int()` line ~2082
+//! - `token.c:simple_send_token()` lines 317-331
+//! - `io.c:write_int()` line 2380
 //!
 //! ## Submodules
 //!
 //! - `int_encoding` - Fundamental 4-byte LE integer read/write primitives
 //! - `sum_head` - Block geometry every token stream is read and written against
 //! - `token` - Upstream token-based wire format (literals, block matches, end markers)
-//! - `internal` - Internal opcode-based delta format for backward compatibility
+//! - `internal` - oc-only opcode-based delta format (not an upstream wire format)
 //! - `types` - Core types and constants (`DeltaOp`, `CHUNK_SIZE`)
 
 mod int_encoding;

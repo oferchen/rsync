@@ -6,14 +6,14 @@
 //! faithful port of upstream `generator.c:find_fuzzy()`:
 //!
 //! 1. An exact size + mtime match returns immediately (the "size/modtime"
-//!    fast-path). upstream: generator.c:842-866.
+//!    fast-path). upstream: generator.c:847-871.
 //! 2. Otherwise the candidate with the lowest Levenshtein-style
 //!    [`distance::fuzzy_distance`] (name plus 10x-weighted suffix) wins, provided
-//!    it is within [`MAX_FUZZY_DISTANCE`]. upstream: generator.c:868-908.
+//!    it is within [`MAX_FUZZY_DISTANCE`]. upstream: generator.c:873-913.
 //!
-//! Upstream additionally skips candidates whose source-flist entry carries
+//! Deviation from upstream: upstream also skips candidates whose source-flist entry carries
 //! `FLAG_FILE_SENT` (a file already generated in this same run must not become a
-//! future fuzzy basis; generator.c:855,883,1879). oc scans the live destination
+//! future fuzzy basis; generator.c:860,888,2309). oc scans the live destination
 //! filesystem rather than a persistent per-directory flist and has no runtime
 //! sent-flag reachable from this pure algorithm crate, so that screening is not
 //! reproduced here. The reconstructed file always stays correct (the whole-file
@@ -22,7 +22,7 @@
 //! closest name. Reproducing it faithfully needs the receiver to thread a
 //! per-run "already generated" set down into candidate collection.
 //!
-//! upstream: generator.c:831 `find_fuzzy()`, util1.c:1683 `fuzzy_distance()`.
+//! upstream: generator.c:836 `find_fuzzy()`, util1.c:1854 `fuzzy_distance()`.
 
 mod distance;
 mod search;
@@ -44,7 +44,7 @@ pub const FUZZY_LEVEL_1: u8 = 1;
 /// Fuzzy level for `-yy`; searches destination directory plus reference
 /// directories (`--compare-dest`, `--copy-dest`, `--link-dest`).
 ///
-/// upstream: options.c:2208 - when `fuzzy_basis > 1`, the value is set to
+/// upstream: options.c:2209 - when `fuzzy_basis > 1`, the value is set to
 /// `basis_dir_cnt + 1` so the search iterates over the dest dir (index 0)
 /// plus each reference directory.
 pub const FUZZY_LEVEL_2: u8 = 2;
@@ -63,7 +63,7 @@ pub struct FuzzyMatch {
 
 /// Fuzzy matcher for finding similar basis files.
 ///
-/// upstream: generator.c:831 `find_fuzzy()`.
+/// upstream: generator.c:836 `find_fuzzy()`.
 #[derive(Debug, Default)]
 pub struct FuzzyMatcher {
     /// Fuzzy matching level (1 or 2).
@@ -139,7 +139,7 @@ mod tests {
 
         #[test]
         fn max_distance_matches_upstream_seed() {
-            // upstream: generator.c:835 - lowest_dist starts at 25 << 16.
+            // upstream: generator.c:840 - lowest_dist starts at 25 << 16.
             assert_eq!(MAX_FUZZY_DISTANCE, 25 << 16);
             assert_eq!(FuzzyMatcher::new().max_distance(), 25 << 16);
         }

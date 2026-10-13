@@ -1,7 +1,8 @@
 #![deny(unsafe_code)]
 //! Checksum field decoding for file list entries (`--checksum` mode).
 //!
-//! upstream: flist.c:recv_file_entry() checksum branch.
+//! upstream: flist.c:recv_file_entry() checksum branch (line 1601,
+//! `read_buf(f, bp, flist_csum_len)`).
 
 use std::io::{self, Read};
 

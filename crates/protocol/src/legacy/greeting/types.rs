@@ -562,7 +562,7 @@ mod tests {
         assert_eq!(owned.digest_names(), Some("md4 md5"));
     }
 
-    // upstream: clientserver.c:199-203 - a whitespace-only list is what
+    // upstream: clientserver.c:226-230 - a whitespace-only list is what
     // `strdup(strchr(buf + 9, ' ') + 1)` yields for `@RSYNCD: 31.0  `. It is a
     // list the peer advertised, so it must NOT decay into "no list advertised":
     // upstream refuses it, and collapsing it grants access instead.

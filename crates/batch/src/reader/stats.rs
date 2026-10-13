@@ -17,7 +17,7 @@ impl BatchReader {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:370-383`: stats read with `read_varlong30(f, 3)`
+    /// - `main.c:368-377`: stats read with `read_varlong30(f, 3)`
     pub fn read_stats(&mut self) -> BatchResult<BatchStats> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(

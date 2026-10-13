@@ -2066,7 +2066,7 @@ fn single_component_symlinkat_unchanged_by_nested_path() {
 /// `--temp-dir` at commit time and lets a flipped foreign-owned parent
 /// substitute attacker content into the destination. Its refusal needs a
 /// second uid to observe, so the behavioural proof is the root leg of the
-/// upstream 3.5.0 suite (`temp-dir-symlink-injection`); what is pinned here is
+/// upstream 3.5.1 suite (`temp-dir-symlink-injection`); what is pinned here is
 /// that the ownership walk is *selected* at all.
 ///
 /// upstream: `rsync-3.5.1/syscall.c:2065` (absolute -> `owner_walk_parent`),

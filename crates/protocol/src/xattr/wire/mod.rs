@@ -6,7 +6,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `xattrs.c` - `send_xattr_request()`, `recv_xattr_request()`, `send_xattr()`
+//! - `xattrs.c` - `send_xattr()`, `send_xattr_request()`, `recv_xattr_request()`,
+//!   `receive_xattr()`
 
 mod decode;
 mod encode;

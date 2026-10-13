@@ -32,8 +32,9 @@
 //!
 //! # Upstream reference
 //!
-//! Upstream rsync uses `renameat(2)` for atomic temp-file commits in
-//! `generator.c:rename_tmp_file()`. The `RENAME_NOREPLACE` flag matches
+//! Upstream rsync commits temp files with `robust_rename()` (`util1.c`),
+//! called from `finish_transfer()` (`rsync.c:918`), and uses no `renameat2`
+//! flags. The `RENAME_NOREPLACE` flag matches
 //! the `--ignore-existing` invariant; `RENAME_EXCHANGE` allows atomic swap
 //! of two existing names without deleting either. `RENAME_WHITEOUT` is an
 //! overlayfs-only primitive included for completeness because the kernel
@@ -119,6 +120,10 @@ pub struct RenameAt2Args<'a> {
 /// The returned entry has no `user_data` set; the caller is expected to tag
 /// it via [`io_uring::squeue::Entry::user_data`] before pushing it onto a
 /// submission queue.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the kernel lacks `IORING_OP_RENAMEAT`.
 pub fn build_renameat2_sqe(args: RenameAt2Args<'_>) -> io::Result<squeue::Entry> {
     if !renameat2_supported() {
         return Err(io::Error::new(
@@ -160,6 +165,11 @@ pub fn build_renameat2_sqe_unchecked(args: RenameAt2Args<'_>) -> squeue::Entry {
 /// The ring is dropped when the call returns, so callers driving
 /// many renames should build their own ring and reuse it via
 /// [`build_renameat2_sqe`] for amortised submission cost.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` without kernel support, or an error when the ring
+/// cannot be built, the SQE cannot be queued, or no CQE is reaped.
 pub fn renameat2_blocking(args: RenameAt2Args<'_>) -> io::Result<i32> {
     let entry = build_renameat2_sqe(args)?.user_data(0);
     let mut ring = RawIoUring::new(2)?;
