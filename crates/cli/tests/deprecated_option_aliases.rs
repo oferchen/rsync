@@ -7,7 +7,7 @@ use cli::test_utils::parse_args;
 
 #[test]
 fn test_old_dirs_forces_recursion() {
-    // upstream: options.c:2206-2208 - --old-dirs sets xfer_dirs=4 -> recurse=1.
+    // upstream: options.c:2323-2325 - --old-dirs sets xfer_dirs=4 -> recurse=1.
     // It is unrelated to --mkpath (which stays at its default of false).
     let args = parse_args(["oc-rsync", "--old-dirs", "src", "dest"]).unwrap();
     assert!(args.recursive, "--old-dirs should force recursion on");
