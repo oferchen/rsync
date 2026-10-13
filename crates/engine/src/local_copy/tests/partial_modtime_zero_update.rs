@@ -26,7 +26,7 @@ fn update_transfers_file_when_dest_has_epoch_mtime() {
     let source_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, source_time, source_time).expect("set source times");
 
-    // Destination has mtime=0 (epoch), simulating the PIR-3.a stamp.
+    // Destination has mtime=0 (epoch), simulating the partial-file modtime=0 stamp.
     let epoch = FileTime::zero();
     set_file_times(&destination, epoch, epoch).expect("set dest epoch mtime");
 

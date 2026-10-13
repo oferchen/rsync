@@ -1531,7 +1531,7 @@ fn partial_dir_idempotent_transfer_with_existing_dest() {
 
 // upstream's `one_inplace`: an existing --partial-dir entry is the file the
 // reconstruction is written into, and it is renamed onto the destination on
-// commit (receiver.c:1212-1213, :1286-1300).
+// commit (receiver.c:1212-1213, :1305-1316).
 
 /// Sets up `dest/pdir/<name>` holding `old`, and `source` holding `new`.
 fn one_inplace_fixture(

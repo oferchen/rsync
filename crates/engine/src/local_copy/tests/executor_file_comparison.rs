@@ -124,7 +124,7 @@ mod file_comparison_tests {
 
     #[test]
     fn should_skip_copy_size_only_wins_over_ignore_times() {
-        // Upstream: generator.c:unchanged_file() checks size_only before
+        // Upstream: generator.c:quick_check_ok() checks size_only before
         // ignore_times. When both are set and sizes match, size_only wins.
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");

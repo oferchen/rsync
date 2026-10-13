@@ -193,9 +193,9 @@ fn execute_without_specials_records_skip_event() {
 /// Verifies that skipping a non-regular source emits the upstream
 /// `--info=NONREG` notice through the diagnostic event queue.
 ///
-/// NONREG sits in upstream's `info_verbosity[0]` table (options.c:250) and
+/// NONREG sits in upstream's `info_verbosity[0]` table (options.c:256) and
 /// is therefore enabled by default at level 1, independent of `-v`. The
-/// emitted wording mirrors `generator.c:1687`:
+/// emitted wording mirrors `generator.c:2113`:
 /// `skipping non-regular file "<path>"`.
 #[cfg(unix)]
 #[test]
@@ -1072,7 +1072,7 @@ fn execute_recopy_fifo_reuses_existing_same_identity_fifo() {
 
     let metadata = fs::symlink_metadata(&dest_fifo).expect("dest metadata");
     assert!(metadata.file_type().is_fifo());
-    // upstream: generator.c:2032-2055 - an existing FIFO of the same _S_IFMT
+    // upstream: generator.c:2047-2058 - an existing FIFO of the same _S_IFMT
     // bucket quick-checks equal, so the generator applies attributes in place
     // (set_file_attrs) and itemizes iflags=0 (`.S...`), never recreating the
     // node; it is therefore NOT counted as a created special. Before the
@@ -1526,9 +1526,9 @@ fn execute_fifo_produces_fifo_copied_event() {
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:1462` - `itemize()` sets `ITEM_IS_NEW` when `statret < 0`
+/// - `generator.c:584` - `itemize()` sets `ITEM_IS_NEW` when `statret < 0`
 ///   (the destination special file did not exist).
-/// - `log.c:736-738` - `ITEM_IS_NEW` fills itemize slots 2-10 with `+`.
+/// - `log.c:768-769` - `ITEM_IS_NEW` fills itemize slots 2-10 with `+`.
 #[cfg(unix)]
 #[test]
 fn execute_fifo_creation_sets_was_created_for_itemize() {
@@ -1846,7 +1846,7 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
 /// `--info=SYMSAFE` notice once for each unsafe symlink that gets
 /// followed.
 ///
-/// Mirrors `flist.c:218` in upstream rsync 3.4.1:
+/// Mirrors `flist.c:492-497` in upstream rsync 3.5.1:
 /// ```c
 /// if (copy_unsafe_links && unsafe_symlink(linkbuf, path)) {
 ///     if (INFO_GTE(SYMSAFE, 1)) {
