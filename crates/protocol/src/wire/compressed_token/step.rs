@@ -56,8 +56,9 @@ pub(super) enum TokenStep {
 /// Two decode paths exist, selected by [`accumulates`](Self::accumulates):
 ///
 /// - Non-streaming (zstd/lz4): each DEFLATED_DATA block is a complete unit. The
-///   core calls [`begin_block`](Self::begin_block) then
-///   [`decompress_into`](Self::decompress_into) once per block.
+///   core calls [`begin_block`](Self::begin_block), then
+///   [`decompress_step`](Self::decompress_step) until it reports the block
+///   finished, emitting each step's output before taking the next.
 /// - Streaming (zlib): a consecutive DEFLATED_DATA run is one deflate stream
 ///   split across wire blocks. The core feeds each block via
 ///   [`begin_block`](Self::begin_block) (first) or [`push_block`](Self::push_block)
@@ -74,12 +75,12 @@ pub(super) trait DeflateSink {
     /// fed block by block (zlib) rather than a series of independent blocks
     /// (zstd/lz4). Streaming sinks use [`stream_step`](Self::stream_step) and
     /// [`finish_run`](Self::finish_run); non-streaming sinks use
-    /// [`decompress_into`](Self::decompress_into).
+    /// [`decompress_step`](Self::decompress_step).
     fn accumulates(&self) -> bool;
 
     /// Presents the first block of a DEFLATED_DATA run.
     ///
-    /// Non-streaming sinks store `payload` for [`decompress_into`](Self::decompress_into);
+    /// Non-streaming sinks store `payload` for [`decompress_step`](Self::decompress_step);
     /// streaming sinks feed it into the persistent inflate stream for
     /// [`stream_step`](Self::stream_step).
     fn begin_block(&mut self, payload: &[u8]);
@@ -90,13 +91,18 @@ pub(super) trait DeflateSink {
     /// inflate stream. Non-streaming sinks never receive follow-on blocks.
     fn push_block(&mut self, payload: &[u8]) -> io::Result<()>;
 
-    /// Decompresses one complete block into `output` (non-streaming sinks).
+    /// Runs one decompression step of the current block into `output`
+    /// (non-streaming sinks).
     ///
-    /// The caller has already cleared `output`. Streaming sinks leave this
-    /// defaulted and produce output through [`stream_step`](Self::stream_step)
-    /// instead.
-    fn decompress_into(&mut self, _output: &mut Vec<u8>) -> io::Result<()> {
-        Ok(())
+    /// The caller has already cleared `output` and emits whatever the step
+    /// appended before calling again. Returns `true` once the block is finished,
+    /// so the next step reads a wire flag. Streaming sinks leave this defaulted
+    /// and produce output through [`stream_step`](Self::stream_step) instead.
+    ///
+    /// upstream: token.c recv_zstd_token() r_inflating (one
+    /// ZSTD_decompressStream into a fixed out_buffer_size dbuf per call).
+    fn decompress_step(&mut self, _output: &mut Vec<u8>) -> io::Result<bool> {
+        Ok(true)
     }
 
     /// Inflates the current block incrementally into `output`, appending at most
@@ -144,8 +150,8 @@ pub(super) struct TokenDecodeCore {
     rx_run: i32,
     /// A flag byte peeked past the end of a DEFLATED_DATA accumulation (zlib).
     saved_flag: Option<u8>,
-    /// Whether output is chunked in CHUNK_SIZE pieces (zlib/zstd) or emitted
-    /// whole (lz4).
+    /// Whether output is chunked in CHUNK_SIZE pieces (zlib) or emitted whole
+    /// (zstd/lz4).
     chunk_output: bool,
     /// The in-flight wire-read phase.
     phase: Phase,
@@ -164,6 +170,9 @@ enum Phase {
     DeflatedLen { flag: u8 },
     /// Have the full deflated length; needs the `len`-byte payload.
     DeflatedPayload { len: usize },
+    /// (zstd/lz4) decompressing the current block one step at a time; needs no
+    /// wire bytes. Re-entered until the sink reports the block finished.
+    Decompressing,
     /// (zlib streaming) inflating the current block into bounded output; needs
     /// no wire bytes. Re-entered until the block's input is fully consumed.
     Inflating,
@@ -311,7 +320,7 @@ impl TokenDecodeCore {
                             self.phase = Phase::Inflating;
                             continue;
                         }
-                        return self.finish_deflate(sink);
+                        return self.decompress_step(sink);
                     }
                     self.phase = Phase::DeflatedPayload { len };
                     return Ok(TokenStep::Need(len));
@@ -323,7 +332,13 @@ impl TokenDecodeCore {
                         self.phase = Phase::Inflating;
                         continue;
                     }
-                    return self.finish_deflate(sink);
+                    return self.decompress_step(sink);
+                }
+                Phase::Decompressing => {
+                    if let Some(tok) = self.emit_pending_output() {
+                        return Ok(TokenStep::Emit(tok));
+                    }
+                    return self.decompress_step(sink);
                 }
                 Phase::Inflating => {
                     // Inflate the current block into a bounded (<= CHUNK_SIZE)
@@ -485,21 +500,31 @@ impl TokenDecodeCore {
         }
     }
 
-    /// Decompresses one complete block (non-streaming sinks) and sets up output.
+    /// Decompresses the current block (non-streaming sinks) until a step yields
+    /// output or the block is finished.
     ///
-    /// Returns the first output chunk, or resumes the idle state when the block
-    /// produced no output. The zero-output case replaces the original recursive
-    /// re-read (`self.recv_token`) with an in-place state-machine transition:
-    /// a fresh `Need(1)` for the next flag - exactly the read the recursion
-    /// would have performed.
-    fn finish_deflate<S: DeflateSink>(&mut self, sink: &mut S) -> io::Result<TokenStep> {
-        self.decompress_buf.clear();
-        sink.decompress_into(&mut self.decompress_buf)?;
-        self.phase = Phase::Idle;
-        if let Some(tok) = self.take_first_output() {
-            return Ok(TokenStep::Emit(tok));
+    /// Returns that step's output, staying in `Decompressing` while the block
+    /// has more. A finished block with no output resumes the idle state: a fresh
+    /// `Need(1)` for the next flag. A step that yields nothing on an unfinished
+    /// block loops, as upstream's `break` back into its `for (;;)` does.
+    ///
+    /// upstream: token.c:895-919 recv_zstd_token() r_inflating
+    fn decompress_step<S: DeflateSink>(&mut self, sink: &mut S) -> io::Result<TokenStep> {
+        loop {
+            self.decompress_buf.clear();
+            let block_done = sink.decompress_step(&mut self.decompress_buf)?;
+            self.phase = if block_done {
+                Phase::Idle
+            } else {
+                Phase::Decompressing
+            };
+            if let Some(tok) = self.take_first_output() {
+                return Ok(TokenStep::Emit(tok));
+            }
+            if block_done {
+                return self.step_idle_after_zero_output();
+            }
         }
-        self.step_idle_after_zero_output()
     }
 
     /// Handles the idle re-entry after a zero-output DEFLATED_DATA block without
