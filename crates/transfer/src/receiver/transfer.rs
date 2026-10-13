@@ -732,8 +732,14 @@ impl ReceiverContext {
             budget_used,
         )?;
         stats.io_error |= io_bits;
-        // upstream: generator.c:352-353 remember_delete() for --delete-delay.
-        self.delayed_delete_victims.extend(victims);
+        if collect_only {
+            // upstream: generator.c:352-353 remember_delete() for --delete-delay.
+            self.delayed_delete_victims.extend(victims);
+        } else {
+            // upstream: delete.c:delete_item() -> log.c:924 log_delete() writes
+            // each removal to the module log as delete_in_dir() makes it.
+            self.record_daemon_log_deletions(DeletePassPhase::Early, &victims);
+        }
         // upstream: delete.c:241-256 - one global stats.deleted_* tally feeds
         // the single NDX_DEL_STATS frame (main.c:228-240).
         self.pending_del_stats.merge(&delete_stats);
