@@ -118,6 +118,16 @@ impl GeneratorContext {
         // synthetic `.` transfer-root emission below (once per build).
         let mut implied_dot_dir = false;
         for base_path in base_paths {
+            // upstream: flist.c:2914-2921 - a non-relative DOTDIR operand's
+            // `dir` half is entered before anything is stat'd, so a failure
+            // here preempts `link_stat` and the `--missing-args` handling.
+            if !relative_paths
+                && let Some((dir, error)) =
+                    engine::local_copy::operand_change_dir_failure(base_path)
+            {
+                self.report_change_dir_failure(&dir, &error);
+                continue;
+            }
             // upstream: flist.c:2578-2589 - non-relative mode splits each
             // positional on the LAST `/`: `dir = strrchr(fbuf, '/')` becomes
             // the parent and `fn` becomes the basename, then `chdir(dir)`

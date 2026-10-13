@@ -148,6 +148,7 @@ pub(crate) use metadata_sync::sync_xattrs_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_nfsv4_acls_if_requested;
 
+pub use operands::operand_change_dir_failure;
 pub(crate) use operands::{DestinationSpec, SourceSpec, operand_is_remote};
 
 pub use filter_program::{
@@ -300,6 +301,29 @@ pub(crate) fn operand_diagnostic_name(path: &std::path::Path) -> std::path::Path
         return path.to_path_buf();
     };
     lexically_normalize(&working_dir.join(path))
+}
+
+/// Names a `change_dir` target the way upstream's `full_fname()` does.
+///
+/// Unlike [`operand_diagnostic_name`], nothing is cleaned: `change_pathname()`
+/// hands `full_fname()` the raw `dir` half of the operand, so `src/./x/..`
+/// prints as typed after the working directory.
+///
+/// upstream: `util1.c:1540-1555` - `p1` is `curr_dir`, `p2` is `/` unless
+/// `curr_dir` is all slashes, and a rooted name gets neither.
+pub(crate) fn change_dir_diagnostic_name(dir: &std::path::Path) -> std::path::PathBuf {
+    if dir.has_root() {
+        return dir.to_path_buf();
+    }
+    let Ok(working_dir) = std::env::current_dir() else {
+        return dir.to_path_buf();
+    };
+    let mut name = working_dir.into_os_string();
+    if !name.as_encoded_bytes().iter().all(|&byte| byte == b'/') {
+        name.push("/");
+    }
+    name.push(dir.as_os_str());
+    std::path::PathBuf::from(name)
 }
 
 #[cfg(test)]

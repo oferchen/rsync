@@ -221,7 +221,9 @@ impl<'a> FullFnamePaths<'a> {
 /// non-UTF-8 name; inspecting a leading ASCII byte is exactly what its
 /// contract permits.
 fn is_rooted(path: &Path) -> bool {
-    path.as_os_str().as_encoded_bytes().first() == Some(&b'/')
+    // upstream tests `*fn == '/'`; `has_root` is that test on Unix and also
+    // recognises a Windows drive or UNC root, which must not get `curr_dir`.
+    path.has_root()
 }
 
 /// Upstream's `curr_dir[]` for a process that never selected a module.

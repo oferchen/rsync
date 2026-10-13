@@ -1,6 +1,7 @@
 //! Operand parsing utilities for local copy planning.
 
 use std::ffi::{OsStr, OsString};
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use super::{LocalCopyArgumentError, LocalCopyError};
@@ -511,6 +512,66 @@ pub(crate) fn operand_is_dot_dir(path: &OsStr) -> bool {
     }
 }
 
+/// Reports the directory upstream's sender cannot `chdir` into for a
+/// non-`--relative` DOTDIR operand (`dir/`, `dir/.`, `dir/..`), with the error.
+///
+/// Without `--relative`, `send_file_list()` makes each of those spellings end
+/// in `/.`, splits the operand at its last `/`, and `change_pathname()`s into
+/// the `dir` half before it stats the `.` half. A `dir` it cannot enter is
+/// reported as `change_dir "<dir>" failed`, sets `IOERR_GENERAL`, and skips
+/// the operand - before, and regardless of, the `--missing-args` handling that
+/// only a later `link_stat` failure reaches. The returned `dir` is spelled as
+/// upstream prints it: uncleaned, with only the marker removed.
+///
+/// Stat'ing `dir/.` performs `chdir(dir)`'s checks with its errno: the path
+/// must resolve, be a directory, and grant search permission.
+///
+/// Callers gate on `!--relative`, which takes the `link_stat` route instead.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2819-2846` - a trailing `/` gains `.`, a trailing `..` gains `/.`
+/// - `flist.c:2847-2858` - the split at the last `/`
+/// - `flist.c:2914-2921` - a failed `change_pathname()` skips the operand
+/// - `flist.c:686-694` - `change_pathname()` sets `IOERR_GENERAL` and reports
+///   `change_dir %s failed`
+pub fn operand_change_dir_failure(operand: &Path) -> Option<(PathBuf, io::Error)> {
+    let os = operand.as_os_str();
+    let (dir, probe) = if operand_ends_in_parent_dir(os) {
+        (operand.to_path_buf(), operand.join("."))
+    } else if operand_is_dot_dir(os) && os.len() > 1 {
+        (trim_operand_suffix(os, 2), operand.to_path_buf())
+    } else if has_trailing_separator(os) {
+        (trim_operand_suffix(os, 1), operand.join("."))
+    } else {
+        return None;
+    };
+    let error = match std::fs::metadata(&probe) {
+        Ok(metadata) if metadata.is_dir() => return None,
+        Ok(_) => io::Error::from(io::ErrorKind::NotADirectory),
+        Err(error) => error,
+    };
+    // upstream: flist.c:2852-2853 - a split at the leading `/` names `/`.
+    if dir.as_os_str().is_empty() {
+        return Some((PathBuf::from("/"), error));
+    }
+    Some((dir, error))
+}
+/// `operand` without its last `len` bytes, which the caller has checked are
+/// ASCII marker bytes.
+fn trim_operand_suffix(operand: &OsStr, len: usize) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = operand.as_bytes();
+        PathBuf::from(OsStr::from_bytes(&bytes[..bytes.len() - len]))
+    }
+    #[cfg(not(unix))]
+    {
+        let text = operand.to_string_lossy();
+        PathBuf::from(&text[..text.len() - len])
+    }
+}
 // Operand remote/local classification is unified in `crate::operand`, the
 // single source of truth mirroring upstream `check_for_hostspec()`. Re-exported
 // here so local-copy planning keeps its `operands::operand_is_remote` path.
