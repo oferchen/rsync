@@ -11,6 +11,7 @@
 //! - `sender.c:124` - `receive_sums()` reads signature blocks
 
 use std::io::{self, IoSlice, Read, Write};
+use std::ops::Range;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -18,6 +19,7 @@ use logging::{InfoFlag, PhaseTimer, info_gte};
 use protocol::CompatibilityFlags;
 use protocol::ProtocolVersion;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
+use protocol::flist::{FLIST_START_LARGE, FlistGrowth, ProcessRole};
 use protocol::wire::SignatureBlock;
 
 use super::GeneratorContext;
@@ -786,6 +788,15 @@ impl GeneratorContext {
             .incremental
             .initial_segment_count
             .unwrap_or(self.file_list.len());
+        // upstream: flist.c:2777-2781 - the list, and under INC_RECURSE the
+        // separate dir_flist, start with room for FLIST_START_LARGE entries.
+        let mut growth = FlistGrowth::default();
+        growth.expand(FLIST_START_LARGE, ProcessRole::Sender)?;
+        if self.inc_recurse() {
+            self.incremental
+                .dir_flist_growth
+                .expand(FLIST_START_LARGE, ProcessRole::Sender)?;
+        }
         for i in 0..count {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, &mut flist_writer);
@@ -793,6 +804,9 @@ impl GeneratorContext {
             // upstream: flist.c:646-663,915-916 - send_file_entry() tallies the
             // per-type counts and total_size as each entry is written.
             self.flist_send_stats.record(entry);
+            // upstream: flist.c:2094 - send_file_name() grows the list after
+            // sending each entry.
+            growth.push(ProcessRole::Sender)?;
         }
 
         // upstream: flist.c:3024-3031 - `if (io_error == 0 || ignore_errors)
@@ -812,6 +826,10 @@ impl GeneratorContext {
         };
         flist_writer.write_end(&mut probed, io_error_for_end)?;
         probed.flush()?;
+        if self.inc_recurse() {
+            // upstream: flist.c:3086 - add_dirs_to_tree(-1, flist, ...)
+            self.grow_dir_flist(0..count)?;
+        }
 
         // upstream: flist.c:3078-3081 - dump the (initial) flist at
         // DEBUG_GTE(FLIST, 3), then `send_file_list done` at level 2. The
@@ -908,8 +926,10 @@ impl GeneratorContext {
         // upstream: flist.c:send_file_entry() line 572
         flist_writer.set_first_ndx(seg_ndx_start);
 
-        // Write file entries from the reordered file_list.
+        // Write file entries from the reordered file_list. Each sub-list is a
+        // fresh list (flist.c:2657 flist_new) grown one entry at a time.
         let end = segment.flist_start + segment.count;
+        let mut growth = FlistGrowth::default();
         for i in segment.flist_start..end {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, flist_writer);
@@ -917,11 +937,15 @@ impl GeneratorContext {
             // upstream: flist.c:646-663,915-916 - send_file_entry() tallies the
             // per-type counts and total_size as each entry is written.
             self.flist_send_stats.record(entry);
+            // upstream: flist.c:2094 - send_file_name()'s flist_expand().
+            growth.push(ProcessRole::Sender)?;
         }
 
         // End-of-flist marker (zero byte).
         // upstream: flist.c:2410-2417 - always sends write_end_of_flist()
         flist_writer.write_end(writer, None)?;
+        // upstream: flist.c:2704 - add_dirs_to_tree(send_dir_ndx, flist, ...)
+        self.grow_dir_flist(segment.flist_start..end)?;
 
         // upstream: flist.c:2710 - send_extra_file_list() dumps each sub-list
         // at DEBUG_GTE(FLIST, 3). The bases slice is clamped rather than
@@ -940,6 +964,20 @@ impl GeneratorContext {
         );
 
         Ok(())
+    }
+
+    /// Appends the directories in `range` of the file list to the sender's
+    /// `dir_flist`, refusing at `--max-alloc` as upstream's `my_alloc()` does.
+    ///
+    /// upstream: flist.c:2198 - add_dirs_to_tree() `flist_expand(dir_flist, dir_cnt)`
+    fn grow_dir_flist(&mut self, range: Range<usize>) -> io::Result<()> {
+        let dirs = self.file_list.as_slice()[range]
+            .iter()
+            .filter(|entry| entry.is_dir())
+            .count();
+        self.incremental
+            .dir_flist_growth
+            .append(dirs, ProcessRole::Sender)
     }
 
     /// Reads filesystem ACLs and sets them on the writer for the next entry.

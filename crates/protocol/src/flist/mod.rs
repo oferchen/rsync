@@ -35,6 +35,7 @@ mod dir_tree;
 mod dual;
 mod entry;
 mod flags;
+mod growth;
 mod hardlink;
 mod incremental;
 mod intern;
@@ -53,6 +54,7 @@ pub use dir_tree::{DirTreeError, DirectoryTree};
 pub use dual::DualFileList;
 pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
+pub use growth::{FLIST_START_LARGE, FlistGrowth};
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,
     trace_hashtable_for_dev, trace_leader_is, trace_looking_for_leader, trace_virtual_first,
