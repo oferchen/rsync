@@ -62,7 +62,7 @@ use protocol::{
 };
 
 use crate::{
-    auth::ChallengeGenerator,
+    auth::{ChallengeGenerator, KERNEL_RNG_UNAVAILABLE_WARNING},
     config::DaemonConfig,
     connection::{ConnectionState, InvalidTransition},
     daemon_stream::DaemonStream,

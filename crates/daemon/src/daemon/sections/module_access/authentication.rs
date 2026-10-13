@@ -213,6 +213,7 @@ fn perform_module_authentication(
     messages: &LegacyMessageCache,
     protocol_version: Option<ProtocolVersion>,
     client_digests: AdvertisedDigests<'_>,
+    log_sink: Option<&SharedLogSink>,
 ) -> io::Result<AuthenticationStatus> {
     // upstream: authenticate.c:76 `gen_challenge` and :90 `generate_hash` both
     // call `sum_init(valid_auth_checksums.negotiated_nni, 0)`, so one negotiated
@@ -239,6 +240,12 @@ fn perform_module_authentication(
     }
 
     let challenge = ChallengeGenerator::generate(peer_ip, digest);
+    if !challenge.kernel_random
+        && let Some(log) = log_sink
+    {
+        log_raw_line(log, KERNEL_RNG_UNAVAILABLE_WARNING.as_bytes());
+    }
+    let challenge = challenge.text;
     {
         let stream = reader.get_mut();
         messages.write(
