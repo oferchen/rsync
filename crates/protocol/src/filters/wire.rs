@@ -29,7 +29,7 @@ impl RuleType {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1137-1214` - prefix character to rule type mapping
+    /// `exclude.c:1286-1363` - prefix character to rule type mapping
     pub const fn prefix_char(self) -> char {
         match self {
             RuleType::Include => '+',
@@ -46,7 +46,7 @@ impl RuleType {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1137-1214` - prefix character to rule type mapping
+    /// `exclude.c:1286-1363` - prefix character to rule type mapping
     pub const fn from_prefix_char(c: char) -> Option<Self> {
         match c {
             '+' => Some(RuleType::Include),
@@ -69,8 +69,8 @@ pub struct FilterRuleWireFormat {
     /// Glob pattern, stored as raw bytes.
     ///
     /// Upstream carries filter patterns as a raw `char *` end-to-end
-    /// (`exclude.c:219` allocates `rule->pattern = new_array(char, ...)`;
-    /// `exclude.c:1638` writes it verbatim with `write_buf`; `exclude.c:1685`
+    /// (`exclude.c:316` allocates `rule->pattern = new_array(char, ...)`;
+    /// `exclude.c:1937` writes it verbatim with `write_buf`; `exclude.c:1983`
     /// reads it back into a `char[]` with `read_sbuf`) and never validates the
     /// bytes as UTF-8. Storing an [`OsString`] rather than a `String` lets a
     /// pattern containing non-UTF-8 bytes round-trip through the wire
@@ -122,7 +122,7 @@ pub struct FilterRuleWireFormat {
     pub negate: bool,
     /// No-prefixes modifier (`-` or `+` on a merge/dir-merge rule).
     ///
-    /// upstream: `exclude.c:1227-1237` - `'-'` sets `FILTRULE_NO_PREFIXES`;
+    /// upstream: `exclude.c:1381-1391` - `'-'` sets `FILTRULE_NO_PREFIXES`;
     /// `'+'` additionally sets `FILTRULE_INCLUDE`. Both are only legal when
     /// `FILTRULE_MERGE_FILE` (merge `.` or dir-merge `:`) is already set.
     pub no_prefixes: bool,
@@ -139,7 +139,7 @@ pub struct FilterRuleWireFormat {
     /// gating for CVS rules - kept local on a receiving client, and (for the
     /// `:C` per-directory merge) only crossing the wire on protocol >= 29.
     ///
-    /// upstream: exclude.c:1652-1668 send_filter_list() - the `-C` rules are
+    /// upstream: exclude.c:1950-1968 send_filter_list() - the `-C` rules are
     /// added to the transmitted list only when `am_sender`, and `:C` only when
     /// `protocol_version >= 29`; otherwise they are appended after `send_rules()`
     /// and stay local.
@@ -223,7 +223,7 @@ impl FilterRuleWireFormat {
 
 /// Reads a 4-byte little-endian integer from the stream.
 ///
-/// This mirrors upstream rsync's `read_int()` function in io.c:1812,
+/// This mirrors upstream rsync's `read_int()` function in io.c:2003,
 /// which reads 4 bytes and interprets them as a little-endian int32.
 fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
     let mut buf = [0u8; 4];
@@ -233,7 +233,7 @@ fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
 
 /// Writes a 4-byte little-endian integer to the stream.
 ///
-/// This mirrors upstream rsync's `write_int()` function in io.c:1853,
+/// This mirrors upstream rsync's `write_int()` function in io.c:2380,
 /// which writes 4 bytes as a little-endian int32.
 fn write_i32_le(writer: &mut dyn Write, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
@@ -297,7 +297,7 @@ const MAX_FILTER_RULE_LEN: u32 = 5120;
 ///
 /// Reads a sequence of filter rules terminated by a 4-byte integer 0.
 /// Upstream uses `read_int()` / `write_int()` which are 4-byte little-endian integers,
-/// NOT varints. This matches upstream's send_filter_list() in exclude.c:1658.
+/// NOT varints. This matches upstream's recv_filter_list() in exclude.c:1971-1984.
 pub fn read_filter_list(
     reader: &mut dyn Read,
     protocol: ProtocolVersion,
@@ -344,7 +344,7 @@ pub fn read_filter_list(
 /// wire input; only the I/O mechanism (await vs blocking) differs. Gated on
 /// `tokio-transfer`.
 ///
-/// This matches upstream's `recv_filter_list()` in `exclude.c:1658`, which reads
+/// This matches upstream's `recv_filter_list()` in `exclude.c:1971-1984`, which reads
 /// 4-byte `read_int()` length prefixes until a zero terminator.
 ///
 /// # Errors
@@ -403,7 +403,7 @@ where
 ///
 /// Writes a sequence of filter rules followed by a 4-byte zero terminator.
 /// Upstream uses `write_int()` which is a 4-byte little-endian integer, NOT varint.
-/// This matches upstream's send_filter_list() in exclude.c:1658.
+/// This matches upstream's send_filter_list() / send_rules() in exclude.c:1888-1964.
 pub fn write_filter_list<W: Write>(
     writer: &mut W,
     rules: &[FilterRuleWireFormat],
@@ -424,13 +424,13 @@ pub fn write_filter_list<W: Write>(
 ///
 /// For protocol < 29, only old-style prefixes are accepted: `"+ "`, `"- "`,
 /// or `"!"`. No modifier characters are parsed. This matches upstream
-/// `exclude.c:1119-1133` where `XFLG_OLD_PREFIXES` restricts parsing to
+/// `exclude.c:1276-1284` where `XFLG_OLD_PREFIXES` restricts parsing to
 /// these three forms.
 ///
 /// The rule-type prefix and every modifier byte are ASCII, so parsing scans
 /// the leading bytes directly and treats the remaining bytes as the raw
 /// pattern body. The pattern is never validated as UTF-8: upstream carries it
-/// as a raw `char *` (`exclude.c:1685` `read_sbuf` into a `char[]`), so a
+/// as a raw `char *` (`exclude.c:1983` `read_sbuf` into a `char[]`), so a
 /// non-UTF-8 pattern is preserved verbatim rather than rejected.
 fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRuleWireFormat> {
     if buf.is_empty() {
@@ -440,7 +440,7 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
         ));
     }
 
-    // upstream: exclude.c:1675 - protocol < 29 uses XFLG_OLD_PREFIXES
+    // upstream: exclude.c:1974 - protocol < 29 uses XFLG_OLD_PREFIXES
     if protocol.uses_old_prefixes() {
         return parse_wire_rule_old_prefix(buf);
     }
@@ -463,15 +463,15 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1125-1133` - `XFLG_OLD_PREFIXES` branch treats the prefixes
-/// as optional; `exclude.c:1315-1323` cancels a tentative `'!'` clear when
+/// `exclude.c:1276-1284` - `XFLG_OLD_PREFIXES` branch treats the prefixes
+/// as optional; `exclude.c:1472-1473` cancels a tentative `'!'` clear when
 /// more text follows.
 ///
 /// # Errors
 ///
 /// Returns `InvalidData` when a prefix is followed by an empty pattern,
 /// mirroring upstream's "unexpected end of filter rule" `RERR_SYNTAX` exit
-/// (exclude.c:1324-1327).
+/// (exclude.c:1474-1475).
 fn parse_wire_rule_old_prefix(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
     if buf == b"!" {
         return Ok(FilterRuleWireFormat {
@@ -489,7 +489,7 @@ fn parse_wire_rule_old_prefix(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
     };
 
     if pattern_bytes.is_empty() {
-        // upstream: exclude.c:1324-1327 exits RERR_SYNTAX on a rule that
+        // upstream: exclude.c:1474-1475 exits RERR_SYNTAX on a rule that
         // ends right after its prefix.
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -539,7 +539,7 @@ fn invalid_modifier(buf: &[u8], byte: u8, position: usize) -> io::Error {
 
 /// Parses a wire rule using modern prefix rules (protocol >= 29).
 ///
-/// Mirrors upstream `parse_rule_tok()` (exclude.c:1241-1489). `recv_filter_list()`
+/// Mirrors upstream `parse_rule_tok()` (exclude.c:1241-1487). `recv_filter_list()`
 /// (exclude.c:1971-1984) feeds peer bytes through that same parser with
 /// `xflags = 0` at protocol >= 29, so every guard below applies to a wire rule
 /// exactly as it does to a command-line one.
@@ -730,10 +730,10 @@ fn strip_directory_suffix(rule: &mut FilterRuleWireFormat, pattern_bytes: &[u8])
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1623-1627` - sender exits with RERR_PROTOCOL when prefix is NULL
+/// `exclude.c:1922-1927` - sender exits with RERR_PROTOCOL when prefix is NULL
 fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io::Result<Vec<u8>> {
     let prefix = super::prefix::build_rule_prefix(rule, protocol).ok_or_else(|| {
-        // upstream: exclude.c:1627 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
+        // upstream: exclude.c:1926 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
         // error so the core exit-code mapper yields RERR_PROTOCOL, not
         // RERR_STREAMIO(12).
         crate::protocol_violation::protocol_violation(
@@ -744,7 +744,7 @@ fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io:
     let pattern_bytes = pattern_to_wire_bytes(&rule.pattern);
     // Non-merge anchored rules carry the anchor as a leading `/` in the pattern
     // body, mirroring upstream whose command-line `- /foo` keeps the slash in
-    // ent->pattern with FILTRULE_ABS_PATH unset (exclude.c:200-208). The `/`
+    // ent->pattern with FILTRULE_ABS_PATH unset (exclude.c:297-300). The `/`
     // prefix modifier is reserved for merge/dir-merge ABS_PATH rules
     // (build_rule_prefix), so add the slash here for every other rule type.
     // `pattern` stores the bare body; split_pattern_modifiers() (client) and
@@ -798,8 +798,8 @@ mod tests {
 
     /// A plain exclude round-trips at protocol 28, where the sender emits
     /// the bare pattern with no `"- "` prefix (upstream `get_rule_prefix()`
-    /// sets `legal_len = 0`, exclude.c:1542) and the receiver treats the
-    /// old-style prefixes as optional (exclude.c:1125-1133).
+    /// sets `legal_len = 0`, exclude.c:1841) and the receiver treats the
+    /// old-style prefixes as optional (exclude.c:1276-1284).
     #[test]
     fn old_prefix_bare_exclude_roundtrip() {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
@@ -816,7 +816,7 @@ mod tests {
 
     /// A `'!'` followed by more text is not a clear-list marker under the
     /// old prefixes: upstream cancels the tentative clear when the token is
-    /// longer than one byte (exclude.c:1315-1323) and the text becomes an
+    /// longer than one byte (exclude.c:1472-1473) and the text becomes an
     /// exclude pattern.
     #[test]
     fn old_prefix_bang_with_trailing_text_is_exclude() {
@@ -869,7 +869,7 @@ mod tests {
         // must serialize as `- /drop.txt` (leading slash in the PATTERN), not
         // `-/ drop.txt` (slash as the ABS_PATH prefix modifier). Upstream keeps
         // the slash in ent->pattern with FILTRULE_ABS_PATH unset, so its sender
-        // anchors the match to the transfer root (exclude.c:941-944). Encoding
+        // anchors the match to the transfer root (exclude.c:1041-1042). Encoding
         // the slash as the `/` modifier instead makes the remote sender treat
         // it as an unanchored basename match, wrongly excluding `sub/drop.txt`
         // as well as top-level `drop.txt` from the flist.
@@ -916,8 +916,8 @@ mod tests {
     /// the pattern `*/` (slash-bearing, anchored-style) and breaks the
     /// `--include='*/' --exclude='*'` directory-traversal idiom.
     ///
-    /// upstream: `exclude.c:923` - patterns with internal slashes are
-    /// treated as anchored matches.
+    /// upstream: `exclude.c:1046-1050` - a pattern with an internal slash
+    /// matches the trailing path elements rather than the basename.
     #[test]
     fn directory_only_wildcard_emits_single_trailing_slash() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
@@ -979,9 +979,9 @@ mod tests {
         assert!(parsed[0].perishable);
     }
 
-    /// upstream: `exclude.c:1555-1560` get_rule_prefix() emits `-` between `w`
+    /// upstream: `exclude.c:1854-1859` get_rule_prefix() emits `-` between `w`
     /// and `e` when FILTRULE_NO_PREFIXES is set on a merge/dir-merge rule;
-    /// `exclude.c:1227-1231` parse_rule_tok() accepts `-` after `:` or `.`.
+    /// `exclude.c:1381-1385` parse_rule_tok() accepts `-` after `:` or `.`.
     /// Round-trip ensures encode/decode parity for `:- .excl`.
     #[test]
     fn dir_merge_no_prefixes_minus_roundtrip() {
@@ -1009,8 +1009,8 @@ mod tests {
         assert!(!parsed[0].no_prefixes_include);
     }
 
-    /// upstream: `exclude.c:1232-1236` parse_rule_tok() - `+` after `:` or `.`
-    /// sets FILTRULE_NO_PREFIXES|FILTRULE_INCLUDE; `exclude.c:1556-1557`
+    /// upstream: `exclude.c:1386-1391` parse_rule_tok() - `+` after `:` or `.`
+    /// sets FILTRULE_NO_PREFIXES|FILTRULE_INCLUDE; `exclude.c:1855-1856`
     /// get_rule_prefix() emits `+` when both bits are set.
     #[test]
     fn dir_merge_no_prefixes_plus_roundtrip() {
@@ -1038,7 +1038,7 @@ mod tests {
         assert!(parsed[0].no_prefixes_include);
     }
 
-    /// upstream: `exclude.c:1228, 1233` - `-`/`+` modifiers are only valid
+    /// upstream: `exclude.c:1382, 1387` - `-`/`+` modifiers are only valid
     /// after FILTRULE_MERGE_FILE is set. A plain exclude rule with `-` after
     /// the type prefix must NOT be parsed as no-prefixes; the modifier loop
     /// terminates and the remainder becomes the pattern.
@@ -1122,8 +1122,8 @@ mod tests {
     /// A filter rule whose pattern contains a non-UTF-8 byte must round-trip
     /// through the wire serialize/parse pair byte-for-byte. Upstream carries the
     /// pattern as a raw `char *` and never validates it as UTF-8
-    /// (`exclude.c:1638` `write_buf(f_out, ent->pattern, len)` on send,
-    /// `exclude.c:1685` `read_sbuf(f_in, line, len)` into a `char[]` on recv),
+    /// (`exclude.c:1937` `write_buf(f_out, ent->pattern, len)` on send,
+    /// `exclude.c:1983` `read_sbuf(f_in, line, len)` into a `char[]` on recv),
     /// so a `0xFF` byte survives verbatim. Before the pattern became byte-based
     /// the reader rejected such a record as `InvalidData` (the pinned rejection
     /// is retired by this round-trip). The 0xFF byte cannot live in a `String`,
