@@ -824,8 +824,16 @@ impl GeneratorContext {
         } else {
             None
         };
+        // No flush here. Upstream send_file_list() only buffers: client_run()
+        // flushes once after it returns (main.c:1398) and do_server_sender()
+        // leaves it to the first blocking read in send_files() (main.c:992).
+        // The list, the id lists, the io_error word and an INC_RECURSE
+        // NDX_FLIST_EOF (flist.c:3092) therefore reach the peer in one write.
+        // Flushing here would split them: a receiver that fails right after
+        // reading the list (e.g. it cannot create the destination) exits before
+        // the second write, which then hits EPIPE and reports RERR_SOCKETIO
+        // where upstream reads EOF and reports RERR_STREAMIO.
         flist_writer.write_end(&mut probed, io_error_for_end)?;
-        probed.flush()?;
         if self.inc_recurse() {
             // upstream: flist.c:3086 - add_dirs_to_tree(-1, flist, ...)
             self.grow_dir_flist(0..count)?;
