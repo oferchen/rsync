@@ -1,9 +1,10 @@
 //! Kernel-side install and SIGSYS-on-block tests for the daemon worker
-//! seccomp filter (LSM-SECCOMP).
+//! seccomp filter.
 //!
-//! The filter is installed via `seccomp(2)` with default action
-//! `KILL_PROCESS`; once engaged it cannot be relaxed and applies to every
-//! subsequent syscall on the calling thread. Tests therefore fork a fresh
+//! The kernel-install scenarios use a minimal filter with default action
+//! `KILL_PROCESS`; the regression pins install the production worker filter
+//! through `apply_worker_seccomp_filter`. Once engaged a filter cannot be
+//! relaxed and applies to every subsequent syscall on the calling thread. Tests therefore fork a fresh
 //! child process for each scenario so the parent's harness thread is
 //! never restricted.
 //!
@@ -291,7 +292,7 @@ fn a_special_file_is_creatable_under_the_worker_filter() {
 /// `--backup-dir`, and renames the staged file into place. The plain push
 /// reaches none of the four.
 ///
-/// Regression pin. MEASURED on x86_64 CI at PR head `6664b588e`: a daemon
+/// Regression pin. MEASURED on x86_64 CI: a daemon
 /// push with `--backup --backup-dir=bak --delay-updates` died with
 /// `rsync: [receiver] mkstemp "payload" (in data) failed: Operation not
 /// permitted (1)` and exit 23, while the identical push WITHOUT
@@ -360,7 +361,7 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
             step
         };
 
-        // upstream: util1.c:1613-1625 handle_partial_dir(PDIR_CREATE).
+        // upstream: util1.c:1614-1629 handle_partial_dir(PDIR_CREATE).
         // The receiver creates this through the ownership walk, so the probe
         // calls the same primitive rather than `std::fs::create_dir_all`:
         // glibc lowers `mkdir()` to the legacy `mkdir(2)` on x86_64, which
@@ -370,7 +371,7 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
         if let Err(e) = fast_io::operator_mkdir(&staging, 0o777) {
             return report(10, &e);
         }
-        // upstream: receiver.c:439-447 open_tmpfile() -> secure_mkstemp().
+        // upstream: receiver.c:448 open_tmpfile() -> secure_mkstemp().
         // The temp's parent is the staging dir, not the destination root,
         // so this takes the operator-path fallback rather than the
         // destination `DirSandbox` the plain push uses.
@@ -389,7 +390,7 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
         if let Err(e) = fast_io::operator_rename(&destination, &backup, true) {
             return report(12, &e);
         }
-        // upstream: receiver.c:725 do_rename(partialptr, fname). The sweep
+        // upstream: receiver.c:723 do_rename_at(partialptr, fname). The sweep
         // issues this through the ownership walk (`operator_rename`), so the
         // probe does too: a bare `std::fs::rename` reaches glibc's wrapper,
         // lowered to the legacy `rename(2)` on x86_64, which this allowlist

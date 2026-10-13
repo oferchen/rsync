@@ -1,9 +1,9 @@
-//! Stress benchmark for the daemon's thread-per-connection model.
+//! Stress benchmark for the daemon's per-connection session model.
 //!
-//! Measures how the current `std::thread::spawn`-per-connection listener
-//! scales at 100, 1000, 5000, and 10000 concurrent client connections. The
-//! goal is to provide quantitative evidence about whether an async listener
-//! (tracked as issues #1935 / #1367) would deliver a meaningful improvement.
+//! Measures how the listener scales at 100, 1000, 5000, and 10000 concurrent
+//! client connections. On Unix each accepted connection is served by a forked
+//! child; on Windows by a spawned thread. The goal is quantitative evidence
+//! about whether an async listener would deliver a meaningful improvement.
 //!
 //! Each scenario:
 //!
@@ -191,9 +191,8 @@ impl StressResult {
 
     /// Estimates total thread-stack reservation based on the platform's
     /// default stack size and the number of successful connections. The
-    /// daemon spawns one OS thread per accepted connection, each reserving
-    /// the default stack (8 MiB on Linux, 512 KiB on macOS, 1 MiB on
-    /// Windows).
+    /// figure models a thread-backed session (one thread per accepted
+    /// connection, as on Windows); on Unix each session is a forked child.
     fn print_thread_stack_estimate(&self) {
         if self.succeeded == 0 {
             return;
@@ -256,7 +255,7 @@ fn spawn_daemon(
 /// The daemon's session handler completes on its own once the client
 /// disconnects (the read side returns EOF or the writer hits a broken
 /// pipe). This is the minimum amount of protocol traffic needed to make
-/// the accept-loop hand the socket off to a real worker thread.
+/// the accept-loop hand the socket off to a real session worker.
 ///
 /// Returns the outcome and, on success, the round-trip latency in
 /// microseconds (from connect attempt to greeting receipt).
@@ -673,9 +672,9 @@ fn thread_per_connection_scaling_ladder() {
 /// Profiles thread-stack overhead at the 10K tier. Computes the ratio of
 /// estimated stack reservation to observed peak RSS, which indicates how
 /// much of the process's memory footprint is attributable to thread stacks
-/// versus heap allocations. On Linux (8 MiB default stack), 10K threads
-/// reserve ~80 GiB of virtual address space; actual RSS depends on how
-/// many stack pages each thread touches.
+/// versus heap allocations. The estimate models thread-backed sessions; on
+/// Unix each session runs in a forked child, so the observed RSS covers
+/// only the parent process.
 #[test]
 #[ignore = "thread-stack profiling; run with --ignored. Requires high RLIMIT_NOFILE."]
 #[cfg(unix)]
