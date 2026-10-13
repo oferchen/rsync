@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn out_of_range_protocol_value_reports_error() {
-    // upstream: compat.c:635 rejects a value above PROTOCOL_VERSION (33) with
+    // upstream: compat.c:636-639 rejects a value above PROTOCOL_VERSION (33) with
     // RERR_PROTOCOL (errcode.h:26 -> exit 2). Protocol 27 is NOT rejected: it is
     // within upstream's 20..=33 command-line range and is accepted for a local
     // copy (exit 0). Use an out-of-range value to exercise the reject path.

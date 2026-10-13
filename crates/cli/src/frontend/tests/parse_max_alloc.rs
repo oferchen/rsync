@@ -393,7 +393,7 @@ fn max_alloc_zero_from_the_environment_transfers() {
 
 #[test]
 fn max_alloc_below_one_mib_produces_error_exit() {
-    // upstream: options.c:1966 - a non-zero `--max-alloc` below 1 MiB is a
+    // upstream: options.c:2073 - a non-zero `--max-alloc` below 1 MiB is a
     // syntax error (exit 1).
     let _guard = clear_rsync_rsh();
     let (code, _stdout, stderr) = run_with_args([

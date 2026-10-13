@@ -607,7 +607,7 @@ fn out_format_rejects_trailing_percent() {
 
 #[test]
 fn out_format_passes_unsupported_placeholder_through_literally() {
-    // upstream log.c:756 copies an unrecognized %escape through verbatim.
+    // upstream log.c:791-792 copies an unrecognized %escape through verbatim.
     let format = parse_out_format(OsStr::new("%z")).expect("parse out-format");
     assert!(!format.is_empty());
 }
