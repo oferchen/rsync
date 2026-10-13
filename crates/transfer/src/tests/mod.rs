@@ -2,6 +2,7 @@
 
 mod allow_inc_recurse;
 mod bwlimit_wiring;
+mod client_args_zlib;
 mod compress_off_level;
 mod config;
 mod error_exit_gate;
