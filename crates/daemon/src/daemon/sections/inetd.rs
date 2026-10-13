@@ -174,7 +174,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     // too. Per-module `forward lookup` still governs the access-control match
     // in `module_peer_hostname`.
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip(), true)
+        resolve_peer_hostname(peer_addr.ip())
     } else {
         None
     };

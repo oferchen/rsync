@@ -455,7 +455,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     // upstream: clientname.c `client_name` forward-confirms unconditionally;
     // per-module `forward lookup` governs the access-control match.
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip(), true)
+        resolve_peer_hostname(peer_addr.ip())
     } else {
         None
     };

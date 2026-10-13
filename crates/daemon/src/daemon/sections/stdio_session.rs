@@ -113,7 +113,7 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
 
     let peer_addr = remote_shell_session_peer()?;
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip(), true)
+        resolve_peer_hostname(peer_addr.ip())
     } else {
         None
     };
