@@ -17,8 +17,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:send_file_entry()` lines 640-680 (rdev write)
-//! - `flist.c:recv_file_entry()` lines 910-945 (rdev read)
+//! - `flist.c:send_file_entry()` lines 755-781, 941-956 (rdev write)
+//! - `flist.c:recv_file_entry()` lines 1249-1268 (rdev read)
 
 use std::io::Cursor;
 use std::path::PathBuf;

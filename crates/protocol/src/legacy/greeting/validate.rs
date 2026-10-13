@@ -14,7 +14,7 @@ use super::advertised::AdvertisedDigests;
 
 /// A required `@RSYNCD:` greeting token that the peer omitted.
 ///
-/// upstream: clientserver.c:188-210 `exchange_protocols()` - the subprotocol
+/// upstream: clientserver.c:176-261 `exchange_protocols()` - the subprotocol
 /// suffix and the digest name list are each mandatory past a protocol
 /// threshold, and their absence is fatal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,8 +30,8 @@ impl MissingGreetingToken {
     ///
     /// Both the daemon's `@ERROR: your client omitted the <desc>: <line>` and
     /// the client's `rsync: the server omitted the <desc>: <line>` messages
-    /// interpolate this text, matching upstream `clientserver.c:191/193` and
-    /// `clientserver.c:207/209`.
+    /// interpolate this text, matching upstream `clientserver.c:218/220` and
+    /// `clientserver.c:234/236`.
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
@@ -61,7 +61,7 @@ fn scan_protocol_digits(trimmed: &str) -> Option<(&str, usize)> {
 /// Splits the digest name list off a raw `@RSYNCD:` greeting line.
 ///
 /// This is upstream's `daemon_auth_choices = strchr(buf + 9, ' ')` followed by
-/// `strdup(daemon_auth_choices + 1)` (clientserver.c:199-203): the first space
+/// `strdup(daemon_auth_choices + 1)` (clientserver.c:226-230): the first space
 /// past the nine-byte `"@RSYNCD: "` head opens the list, and everything after
 /// that space *is* the list - the empty string when the space ends the line.
 /// Trailing `\r`/`\n` are stripped first because upstream operates on the
@@ -88,7 +88,7 @@ pub fn advertised_digests_in_greeting(line: &str) -> AdvertisedDigests<'_> {
 /// Reports whether `line` is an `@RSYNCD:` version banner at all.
 ///
 /// Mirrors upstream's `sscanf(buf, "@RSYNCD: %d.%d", ...) < 1` guard
-/// (`clientserver.c:180`), which the daemon answers with
+/// (`clientserver.c:208`), which the daemon answers with
 /// `@ERROR: protocol startup error`. A banner that parses but omits a required
 /// token is a *different* refusal - see [`missing_greeting_token`].
 #[doc(alias = "@RSYNCD")]
@@ -103,16 +103,16 @@ pub fn is_version_banner(line: &str) -> bool {
 /// Returns `None` when the line is a well-formed greeting, is not an `@RSYNCD:`
 /// version banner at all (see [`is_version_banner`] for that distinct case), or
 /// is a legacy (`protocol < 30`) greeting that needs neither token. The
-/// detection is byte-faithful to upstream `clientserver.c:180-211`:
+/// detection is byte-faithful to upstream `clientserver.c:208-238`:
 ///
 /// - the subprotocol is parsed with the equivalent of
 ///   `sscanf(buf, "@RSYNCD: %d.%d", ...)`; a missing `.subprotocol` leaves the
 ///   value unset and is fatal for `remote_protocol >= 30`
-///   (upstream: clientserver.c:188-197),
+///   (upstream: clientserver.c:215-224),
 /// - the digest list is detected with the equivalent of
 ///   `strchr(buf + 9, ' ')` - any space past the `"@RSYNCD: "` prefix - and its
 ///   absence is fatal for `remote_protocol > 31`
-///   (upstream: clientserver.c:199-211).
+///   (upstream: clientserver.c:226-238).
 ///
 /// Trailing `\r`/`\n` are stripped first so the gate matches upstream, which
 /// operates on the newline-stripped `read_line_old()` buffer.
@@ -150,7 +150,7 @@ mod tests {
         missing_greeting_token,
     };
 
-    // upstream: clientserver.c:228-232 - `strchr(buf + 9, ' ')` finds the
+    // upstream: clientserver.c:226-230 - `strchr(buf + 9, ' ')` finds the
     // trailing space, so `strdup(that + 1)` is a non-NULL EMPTY string. That is
     // a different state from the NULL a space-less greeting yields, and the
     // difference decides whether the peer is authenticated or refused.
@@ -202,7 +202,7 @@ mod tests {
         );
     }
 
-    // upstream: clientserver.c:188-197 - the subprotocol suffix is mandatory the
+    // upstream: clientserver.c:215-224 - the subprotocol suffix is mandatory the
     // moment protocol reaches 30, not 31; both 30 and 32 without ".NNN" are fatal.
     #[test]
     fn subprotocol_required_from_protocol_30() {
@@ -220,7 +220,7 @@ mod tests {
         );
     }
 
-    // upstream: clientserver.c:199-211 - protocol > 31 must carry a digest name
+    // upstream: clientserver.c:226-238 - protocol > 31 must carry a digest name
     // list even when the subprotocol suffix is present.
     #[test]
     fn digest_list_required_past_protocol_31() {
@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(missing_greeting_token("@RSYNCD: 31.0"), None);
     }
 
-    // upstream: clientserver.c:196 - protocol < 30 defaults remote_sub to 0 and
+    // upstream: clientserver.c:223 - protocol < 30 defaults remote_sub to 0 and
     // needs no digest list, so a bare legacy version is accepted.
     #[test]
     fn legacy_versions_need_neither_token() {

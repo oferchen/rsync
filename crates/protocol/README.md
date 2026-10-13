@@ -1,9 +1,10 @@
 # `protocol`
 
 `protocol` implements the negotiation and multiplexing primitives required by the
-Rust `rsync` implementation. The crate mirrors upstream rsync 3.4.4 behaviour so higher
+Rust `rsync` implementation. The crate mirrors upstream rsync 3.5.1 behaviour so higher
 layers can negotiate protocol versions, interpret legacy daemon banners, and exchange
-multiplexed frames without depending on the original C sources.
+multiplexed frames without depending on the original C sources. It supports protocols 28
+through 33; protocol 33 (upstream 3.5.1) adds only `MSG_BLOCK_STATS`.
 
 ## Design
 
@@ -11,9 +12,9 @@ The crate is decomposed into small modules that map onto the upstream architectu
 
 - `version` exposes [`ProtocolVersion`] and
   helpers for selecting the highest mutually supported protocol between peers.
-- `legacy` provides parsers for ASCII daemon handshakes such as
-  `@RSYNCD: 31.0` and the follow-up control messages emitted by rsync daemons prior to
-  protocol 30.
+- `legacy` provides parsers for the ASCII daemon handshake (`@RSYNCD: 31.0`) and the
+  follow-up `@RSYNCD:` / `@ERROR` control lines. Every rsync daemon uses this text
+  exchange before the binary protocol starts, whatever the protocol version.
 - `negotiation` contains incremental sniffers that classify the
   handshake style (binary vs. legacy ASCII) without losing buffered bytes.
 - `multiplex` and `envelope` re-create the
@@ -47,8 +48,9 @@ integrate naturally with transport code.
 ## Examples
 
 Determine whether a buffered prologue belongs to the legacy ASCII greeting or the binary
-negotiation. The helper behaves exactly like upstream rsync's `io.c:check_protok` logic by
-classifying the session based on the first byte.
+negotiation. The helper classifies the session from the first byte (`@` starts a legacy
+greeting). Upstream has no such sniffer: it knows the handshake style from the connection
+mode (`rsync://` daemon or remote shell), so this helper is an oc-only convenience.
 
 ```rust
 use protocol::{detect_negotiation_prologue, NegotiationPrologue};

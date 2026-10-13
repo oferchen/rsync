@@ -16,10 +16,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.c:179` `iconvbufs()` - central conversion with `ICB_INCLUDE_BAD`
+//! - `rsync.c:180` `iconvbufs()` - central conversion with `ICB_INCLUDE_BAD`
 //!   flag controlling whether invalid bytes are passed through or cause errors.
-//! - `flist.c:970` - recv uses `ICB_INIT` only (strict).
-//! - `io.c:1301` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD` (lossy).
+//! - `flist.c:1065` - recv uses `ICB_INIT` only (strict).
+//! - `io.c:1454-1455` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD` (lossy).
 //! - `rsync.c:305` - `send_protected_args` uses `ICB_INCLUDE_BAD` (lossy).
 
 use std::borrow::Cow;
@@ -111,12 +111,14 @@ impl FilenameConverter {
     /// Special values:
     /// - "." or "" means "use local system encoding" (defaults to UTF-8)
     ///
-    /// Supported encoding names include:
-    /// - UTF-8: "utf-8", "utf8", "UTF-8"
-    /// - ISO-8859-1: "iso-8859-1", "latin1", "ISO-8859-1"
-    /// - ASCII: "ascii", "us-ascii"
-    /// - Windows-1252: "windows-1252", "cp1252"
-    /// - EUC-JP, Shift_JIS, GB2312, Big5, KOI8-R, and many others via encoding_rs
+    /// Names are resolved with `encoding_rs::Encoding::for_label` (WHATWG
+    /// labels), e.g. "utf-8", "utf8", "windows-1252", "cp1252", "euc-jp",
+    /// "shift_jis", "gb2312", "big5", "koi8-r".
+    ///
+    /// Deviation from upstream: upstream passes the names to `iconv_open(3)`.
+    /// WHATWG maps "iso-8859-1", "latin1", "ascii" and "us-ascii" to
+    /// windows-1252, so those charsets do not convert exactly as libiconv
+    /// would.
     ///
     /// # Errors
     ///
@@ -305,13 +307,13 @@ impl FilenameConverter {
     /// whether any verbatim pass-through occurred.
     ///
     /// This mirrors upstream `iconvbufs()` with `ICB_INCLUDE_BAD` set: on an
-    /// unconvertible byte it runs `*obuf++ = *ibuf++` (rsync.c:261), copying
+    /// unconvertible byte it runs `*obuf++ = *ibuf++` (rsync.c:262), copying
     /// the offending source byte straight to the output rather than
     /// substituting it.
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1304` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD`
+    /// - `io.c:1454-1455` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD`
     /// - `rsync.c:305` - `send_protected_args` uses `ICB_INCLUDE_BAD`
     #[cfg(feature = "iconv")]
     pub fn remote_to_local_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
@@ -340,7 +342,7 @@ impl FilenameConverter {
     /// any verbatim pass-through occurred.
     ///
     /// This mirrors upstream `iconvbufs()` with `ICB_INCLUDE_BAD` set
-    /// (rsync.c:261 `*obuf++ = *ibuf++`).
+    /// (rsync.c:262 `*obuf++ = *ibuf++`).
     #[cfg(feature = "iconv")]
     pub fn local_to_remote_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
         if self.is_identity() {
@@ -511,14 +513,14 @@ impl FilenameConverter {
 /// semantics: bytes that cannot be converted are copied to the output
 /// verbatim rather than substituted.
 ///
-/// Upstream `iconvbufs()` (rsync.c:179) runs a single `iconv()` from the
+/// Upstream `iconvbufs()` (rsync.c:180) runs a single `iconv()` from the
 /// source charset to the target charset. When `iconv()` reports `EILSEQ` (an
 /// invalid input byte, or an input character that the target charset cannot
 /// represent) and `ICB_INCLUDE_BAD` is set, it executes `*obuf++ = *ibuf++`
-/// (rsync.c:261): it copies the offending source byte straight into the
+/// (rsync.c:262): it copies the offending source byte straight into the
 /// output and advances one byte, then resumes conversion. Trailing incomplete
 /// multibyte sequences are likewise passed through under
-/// `ICB_INCLUDE_INCOMPLETE`, which both lossy callers set (io.c:1304
+/// `ICB_INCLUDE_INCOMPLETE`, which both lossy callers set (io.c:1454-1455
 /// `read_line(RL_CONVERT)`, rsync.c:305 `send_protected_args`).
 ///
 /// Because `encoding_rs` converts through a Unicode intermediate rather than a
@@ -563,7 +565,7 @@ fn convert_include_bad(
                 match std::str::from_utf8(&scalar[..written]) {
                     Ok(text) if encode_scalar(text, &mut encoder, tgt, &mut out) => {
                         // Target charset cannot represent the scalar: copy its
-                        // source bytes verbatim (rsync.c:261).
+                        // source bytes verbatim (rsync.c:262).
                         out.extend_from_slice(span);
                         had_bad = true;
                     }
@@ -582,7 +584,7 @@ fn convert_include_bad(
                 // consumed since the last emitted scalar. Feeding one byte at a
                 // time means any following byte is never consumed into this
                 // result, so `input[seq_start..pos]` is precisely the bad run.
-                // Copy it verbatim (rsync.c:261).
+                // Copy it verbatim (rsync.c:262).
                 out.extend_from_slice(&input[seq_start..pos]);
                 had_bad = true;
                 seq_start = pos;
@@ -607,7 +609,7 @@ fn convert_include_bad(
 ///
 /// Returns `true` when the target charset cannot represent the scalar, in
 /// which case nothing is appended and the caller copies the verbatim source
-/// bytes (mirroring upstream's `*obuf++ = *ibuf++`, rsync.c:261).
+/// bytes (mirroring upstream's `*obuf++ = *ibuf++`, rsync.c:262).
 #[cfg(feature = "iconv")]
 fn encode_scalar(
     text: &str,
@@ -673,15 +675,14 @@ pub(super) fn is_utf8_name(name: &str) -> bool {
     )
 }
 
-/// Creates a [`FilenameConverter`] from the locale, using UTF-8 as the remote encoding.
+/// Creates a [`FilenameConverter`] for the locale charset.
 ///
-/// This is used when `--iconv=.` is specified (locale on one side, UTF-8 on the other).
+/// Deviation from upstream: the locale charset is not queried (upstream
+/// `rsync.c:77-83` `default_charset()` uses `nl_langinfo(CODESET)`); this
+/// always returns the identity converter.
 #[cfg(feature = "iconv")]
 #[must_use]
 pub fn converter_from_locale() -> FilenameConverter {
-    // On most modern systems, the locale is UTF-8, so this is often a no-op.
-    // For truly accurate locale detection, we would need to query LC_CTYPE,
-    // but UTF-8 is a reasonable default for modern systems.
     FilenameConverter::identity()
 }
 

@@ -1,8 +1,9 @@
 #![deny(unsafe_code)]
 //! Internal opcode-based delta format.
 //!
-//! This format is used for backward compatibility with earlier versions of this
-//! implementation. For upstream rsync compatibility, use the token-based functions
+//! Deviation from upstream: an oc-only format with no upstream counterpart, kept
+//! for backward compatibility with earlier versions of this implementation. For
+//! upstream rsync compatibility, use the token-based functions
 //! in the [`super::token`] module instead.
 
 use std::io::{self, Read, Write};

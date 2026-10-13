@@ -21,6 +21,10 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered remainder into an existing vector supplied by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] when `target` cannot grow.
     #[inline]
     pub fn take_buffered_remainder_into(
         &mut self,
@@ -42,6 +46,11 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered remainder into the provided slice while retaining the sniffed prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     #[inline]
     pub fn take_buffered_remainder_into_slice(
         &mut self,
@@ -64,6 +73,11 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered remainder into a vectored slice supplied by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     #[inline]
     pub fn take_buffered_remainder_into_vectored(
         &mut self,
@@ -83,6 +97,11 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered remainder into a caller-provided array while retaining the sniffed prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     pub fn take_buffered_remainder_into_array<const N: usize>(
         &mut self,
         target: &mut [u8; N],
@@ -92,6 +111,10 @@ impl NegotiationPrologueSniffer {
 
     /// Drains the buffered remainder into the provided [`Write`] implementation while retaining the
     /// sniffed negotiation prefix.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from writing to `target`.
     #[inline]
     pub fn take_buffered_remainder_into_writer<W: Write>(
         &mut self,
@@ -110,6 +133,10 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the sniffed negotiation prefix and any buffered remainder into two separate vectors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] when either vector cannot grow.
     pub fn take_buffered_split_into(
         &mut self,
         prefix: &mut Vec<u8>,

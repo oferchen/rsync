@@ -102,7 +102,7 @@ fn read_entry_detects_error_marker_with_safe_file_list() {
 /// too - upstream applies the mask on both flist branches, and covering only
 /// one of them leaves the hole open.
 ///
-/// upstream: flist.c:3189-3195 - `if ((flags = read_varint(f)) == 0) { int err
+/// upstream: flist.c:3190-3196 - `if ((flags = read_varint(f)) == 0) { int err
 /// = read_varint(f); io_error |= err & IOERR_VALID_MASK; break; }`
 #[test]
 fn varint_end_of_list_masks_undefined_bits_from_a_hostile_peer() {
@@ -1410,7 +1410,7 @@ fn read_entry_accepts_name_below_maxpathlen() {
 }
 
 // Zero-length filename validation tests
-// upstream: flist.c:2134 - sender rejects empty names. These tests verify
+// upstream: flist.c:2413-2418 - the sender skips empty names. These tests verify
 // that the receiver also rejects zero-length filenames as defense-in-depth.
 
 #[test]
@@ -1646,7 +1646,7 @@ fn entry_bytes_with_mode(protocol: ProtocolVersion, mode: u32) -> Vec<u8> {
     data
 }
 
-/// upstream: flist.c:1101-1117 recv_file_entry() rejects any file mode whose
+/// upstream: flist.c:1200-1208 recv_file_entry() rejects any file mode whose
 /// S_IFMT type bits are not a standard file type. Without this a malicious or
 /// buggy sender could smuggle a garbage mode past the downstream S_ISxxx
 /// checks; oc previously coerced unknown types to Regular. `0o070000` is an
@@ -1660,7 +1660,7 @@ fn read_entry_rejects_invalid_mode_type() {
     let mut reader = FileListReader::new(protocol);
     let err = reader.read_entry(&mut cursor).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    // upstream flist.c:1115 exit_cleanup(RERR_PROTOCOL) (exit 2), not
+    // upstream flist.c:1206 exit_cleanup(RERR_PROTOCOL) (exit 2), not
     // RERR_STREAMIO(12); the error must carry the ProtocolViolation marker.
     assert!(
         err.get_ref()
@@ -1671,7 +1671,7 @@ fn read_entry_rejects_invalid_mode_type() {
 
 /// Every standard S_IFMT type (reg/dir/lnk/chr/blk/fifo/sock) stays acceptable,
 /// so the hardening in `read_entry_rejects_invalid_mode_type` never rejects a
-/// legitimate entry. upstream: flist.c:1110-1112 S_ISREG/DIR/LNK/CHR/BLK/FIFO/SOCK.
+/// legitimate entry. upstream: flist.c:1201-1203 S_ISREG/DIR/LNK/CHR/BLK/FIFO/SOCK.
 #[test]
 fn read_entry_accepts_all_standard_mode_types() {
     let protocol = test_protocol();
@@ -1691,7 +1691,7 @@ fn read_entry_accepts_all_standard_mode_types() {
     }
 }
 
-/// upstream: flist.c:1109 - the mode-0 sentinel (a vanished source arg) is only
+/// upstream: flist.c:1200 - the mode-0 sentinel (a vanished source arg) is only
 /// legitimate under `--delete-missing-args` (missing_args == 2). With the flag
 /// set, the sentinel is accepted rather than rejected as an invalid type.
 #[test]
@@ -1722,7 +1722,7 @@ fn read_entry_rejects_mode_zero_without_delete_missing_args() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
-/// upstream: flist.c:1019-1024 recv_file_entry() validates the abbreviated
+/// upstream: flist.c:1101-1107 recv_file_entry() validates the abbreviated
 /// hard-link follower's reference index against the entries received so far
 /// (`first_hlink_ndx < 0 || first_hlink_ndx >= flist->ndx_start + flist->used`)
 /// and aborts with exit_cleanup(RERR_PROTOCOL) when it is out of range. A
@@ -1779,7 +1779,7 @@ fn abbreviated_hardlink_follower_out_of_range_is_protocol_violation() {
 /// same segment) still decodes cleanly and inherits the leader's metadata,
 /// proving the bounds check in
 /// `abbreviated_hardlink_follower_out_of_range_is_protocol_violation` never
-/// rejects a legitimate follower. upstream: flist.c:1032-1047.
+/// rejects a legitimate follower. upstream: flist.c:1101-1107.
 #[test]
 fn abbreviated_hardlink_follower_in_range_decodes() {
     use crate::flist::write::FileListWriter;
@@ -2226,7 +2226,7 @@ mod acl_integration {
     }
 
     /// Combined ACL + xattr reading respects upstream wire order.
-    /// upstream: flist.c:1458-1465 - ACLs before xattrs on wire.
+    /// upstream: flist.c:1604-1611 - ACLs before xattrs on wire.
     #[test]
     fn combined_acl_and_xattr_reading() {
         use crate::flist::write::FileListWriter;
@@ -2248,7 +2248,7 @@ mod acl_integration {
         send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
 
         // Wire format carries the full Linux xattr name verbatim, including
-        // the "user." namespace prefix. upstream: xattrs.c:rsync_xattr_lookup
+        // the "user." namespace prefix. upstream: xattrs.c:rsync_xal_get()
         // forwards the llistxattr(2) name unchanged.
         write_varint(&mut data, 0).unwrap();
         write_varint(&mut data, 1).unwrap();
@@ -2321,7 +2321,7 @@ mod acl_integration {
         .unwrap();
 
         // Wire format carries the full Linux xattr name verbatim, including
-        // the "user." namespace prefix. upstream: xattrs.c:rsync_xattr_lookup
+        // the "user." namespace prefix. upstream: xattrs.c:rsync_xal_get()
         // forwards the llistxattr(2) name unchanged. Non-Linux receivers
         // strip the prefix to recover the flat-namespace local name.
         write_varint(&mut data, 0).unwrap();
@@ -2417,7 +2417,7 @@ mod xattr_integration {
 
     /// Returns the wire-format name a Linux peer would emit for a
     /// `user.<base>` xattr. Upstream rsync sends xattr names byte-for-
-    /// byte (`xattrs.c:524-532`), so the wire form keeps the `user.`
+    /// byte (`xattrs.c:552-560`), so the wire form keeps the `user.`
     /// prefix.
     fn user_wire_name(base: &[u8]) -> Vec<u8> {
         let mut wire = b"user.".to_vec();
@@ -2836,7 +2836,7 @@ mod iconv_integration {
     /// (`with_symlink_iconv(true)`), mirroring the upstream `sender_symlink_iconv`
     /// path.
     ///
-    /// upstream: flist.c:1381 recv_file_entry() - sender_symlink_iconv gate.
+    /// upstream: flist.c:1527 recv_file_entry() - sender_symlink_iconv gate.
     #[cfg(unix)]
     #[test]
     fn read_symlink_target_converts_latin1_wire_bytes_to_utf8() {
@@ -2866,9 +2866,9 @@ mod iconv_integration {
     /// A converter WITHOUT negotiated CF_SYMLINK_ICONV (proto-30 / rsync 3.0.x
     /// peer) must leave the received symlink target as RAW wire bytes, even
     /// while filenames would be transcoded. This is the `read_sbuf` else branch
-    /// at upstream flist.c:1406 where `sender_symlink_iconv` is 0.
+    /// at upstream flist.c:1550-1552 where `sender_symlink_iconv` is 0.
     ///
-    /// upstream: compat.c:765-767 gate; flist.c:1381/1406 branch.
+    /// upstream: compat.c:776-778 gate; flist.c:1527/1550 branch.
     #[cfg(unix)]
     #[test]
     fn read_symlink_target_without_negotiated_flag_preserves_wire_bytes() {
@@ -2925,7 +2925,7 @@ mod iconv_integration {
     /// charset (CF_SYMLINK_ICONV negotiated) must be EMPTIED and record
     /// `io_error` (exit 23), not kept as a `?`-mangled target.
     ///
-    /// upstream: flist.c:1394-1402 recv_file_entry() - `io_error |=
+    /// upstream: flist.c:1540-1548 recv_file_entry() - `io_error |=
     /// IOERR_GENERAL`, warn, `bp[0]='\0'`, `outbuf.len = 0`.
     #[cfg(unix)]
     #[test]
@@ -2995,7 +2995,7 @@ mod iconv_integration {
 }
 
 // Regression: `update_stats` must not panic when accumulator overflows.
-// Upstream `flist.c:916` uses signed int64 and wraps; oc-rsync used plain `+=`
+// Upstream `flist.c:1614` uses signed int64 and wraps; oc-rsync used plain `+=`
 // on u64, which panicked under `overflow-checks=true` (cargo-fuzz debug
 // profile, hit by the `differential_flist` target). Saturate instead so the
 // cosmetic counter never aborts the transfer.
@@ -3054,7 +3054,7 @@ fn update_stats_counts_mode_zero_placeholder_as_special() {
 // fix (commit d4c4f67, NEWS.md:71). The upstream fix lives in `support/rrsync`;
 // here we pin the equivalent oc-rsync site (`clean_and_validate_name`) so any
 // future refactor that switches to a pair-replace strategy is caught.
-// upstream: util1.c clean_fname leading-slash skip + flist.c:3357 strip_root
+// upstream: util1.c clean_fname leading-slash skip + flist.c:3651 strip_root
 mod leading_slash_parity {
     use super::*;
 
@@ -3092,7 +3092,7 @@ mod leading_slash_parity {
 
     #[test]
     fn non_relative_double_leading_slash_rejected() {
-        // upstream: flist.c:993 exit_cleanup(RERR_UNSUPPORTED) - refusing an
+        // upstream: flist.c:1079 exit_cleanup(RERR_UNSUPPORTED) - refusing an
         // absolute sender pathname is exit 4, which oc maps from the
         // `Unsupported` io error kind (not `InvalidData`, which is exit 12).
         assert_eq!(
@@ -3283,7 +3283,7 @@ fn hardlink_idx_is_read_when_hard_links_are_preserved() {
 /// option, so this read is correctly skipped when it is off. Here the read is
 /// TWO longints rather than one varint, so a desync would be wider still.
 ///
-/// upstream: `flist.c:1413-1440` `recv_file_entry()` - the pre-30 dev/ino read
+/// upstream: `flist.c:1559-1587` `recv_file_entry()` - the pre-30 dev/ino read
 /// sits under `preserve_hard_links && xflags & XMIT_HLINKED`, the local option
 /// checked FIRST.
 #[test]

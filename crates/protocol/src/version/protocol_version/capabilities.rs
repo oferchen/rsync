@@ -45,7 +45,8 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1567-1571` - sender/receiver modifier support gated by protocol >= 29
+    /// `exclude.c:1866-1869` `get_rule_prefix()` - the `s`/`r` side modifiers are
+    /// emitted for transfer only when protocol >= 29
     #[must_use]
     pub const fn supports_sender_receiver_modifiers(self) -> bool {
         self.as_u8() >= 29
@@ -56,7 +57,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1350` - `protocol_version >= 30 ? FILTRULE_PERISHABLE : 0`
+    /// `exclude.c:1499` - `protocol_version >= 30 ? FILTRULE_PERISHABLE : 0`
     #[must_use]
     pub const fn supports_perishable_modifier(self) -> bool {
         self.as_u8() >= 30
@@ -70,7 +71,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1675` - `xflags = protocol_version >= 29 ? 0 : XFLG_OLD_PREFIXES`
+    /// `exclude.c:1974` `recv_filter_list()` - `xflags = protocol_version >= 29 ? 0 : XFLG_OLD_PREFIXES`
     #[must_use]
     pub const fn uses_old_prefixes(self) -> bool {
         self.as_u8() < 29
@@ -81,7 +82,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c` - `handle_stats()` sends flist times only for protocol >= 29
+    /// `main.c:329` `handle_stats()` - sends flist times only for protocol >= 29
     #[must_use]
     pub const fn supports_flist_times(self) -> bool {
         self.as_u8() >= 29
@@ -90,7 +91,7 @@ impl ProtocolVersion {
     /// Returns `true` if this protocol version sends iflags after NDX.
     ///
     /// - Protocol < 29: no iflags on the wire; the reader synthesises
-    ///   `ITEM_TRANSFER | ITEM_MISSING_DATA` (`rsync.c:383-384`)
+    ///   `ITEM_TRANSFER | ITEM_MISSING_DATA` (`rsync.c:384-385`)
     /// - Protocol >= 29: 2-byte iflags follow each NDX on the wire
     ///
     /// # Upstream Reference
@@ -108,7 +109,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `generator.c` / `receiver.c` - `max_phase = protocol >= 29 ? 2 : 1`
+    /// `sender.c:499`, `receiver.c:825` - `max_phase = protocol_version >= 29 ? 2 : 1`
     #[must_use]
     pub const fn supports_multi_phase(self) -> bool {
         self.as_u8() >= 29
@@ -158,8 +159,9 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c:1322-1323` - client activates input multiplex for protocol >= 23;
-    /// server activates output multiplex for protocol >= 23.
+    /// `main.c:1310-1311` `start_server()` - the server activates output
+    /// multiplex for protocol >= 23; `main.c:1378` `client_run()` gates the
+    /// client's input multiplex on the same threshold.
     #[must_use]
     pub const fn supports_multiplex_io(self) -> bool {
         self.as_u8() >= 23
@@ -170,7 +172,8 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c:893-918` - `read_final_goodbye()` skips for protocol < 24.
+    /// `main.c:1009` - `read_final_goodbye()` (`main.c:921`) is called only for
+    /// protocol >= 24.
     #[must_use]
     pub const fn supports_goodbye_exchange(self) -> bool {
         self.as_u8() >= 24
@@ -185,7 +188,8 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `io.c` - `need_messages_from_generator` is true for protocol >= 30.
+    /// `compat.c:788` `setup_protocol()` - `need_messages_from_generator` is set
+    /// for protocol >= 30.
     #[must_use]
     pub const fn supports_generator_messages(self) -> bool {
         self.as_u8() >= 30
@@ -202,10 +206,10 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1248` `start_filesfrom_forwarding` -
+    /// - `io.c:1398` `start_filesfrom_forwarding()` -
     ///   `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches the output to
     ///   `MPLX_TO_BUFFERED` before forwarding.
-    /// - `flist.c:2792-2798` `send_file_list` - the sender mirrors it by
+    /// - `flist.c:2793-2797` `send_file_list()` - the sender mirrors it by
     ///   reading the names with its input switched to `MPLX_TO_BUFFERED`.
     #[must_use]
     pub const fn forwards_files_from_unmultiplexed(self) -> bool {
@@ -219,7 +223,8 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c:893-918` - protocol >= 31 performs extra `NDX_DONE` round-trip.
+    /// `main.c:933` `read_final_goodbye()` - protocol >= 31 performs the extra
+    /// `NDX_DONE` round-trip; `main.c:1312` sends `MSG_IO_TIMEOUT` for >= 31.
     #[must_use]
     pub const fn supports_extended_goodbye(self) -> bool {
         self.as_u8() >= 31
@@ -273,8 +278,8 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: compat.c:720 `set_allow_inc_recurse()` - checksum negotiation
-    /// gated by protocol >= 30 and `-e` capability flag.
+    /// upstream: compat.c:741-743 `setup_protocol()` - `do_negotiated_strings`
+    /// is set from the client's `-e` `v` letter inside the protocol >= 30 branch.
     #[must_use]
     pub const fn supports_checksum_negotiation(self) -> bool {
         self.as_u8() >= 30
@@ -287,7 +292,8 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: main.c - `read_del_stats()` gated by protocol >= 31.
+    /// upstream: generator.c:2867,2911 - `write_del_stats()` is sent only for
+    /// protocol >= 31; read by `read_del_stats()` (main.c:244).
     #[must_use]
     pub const fn supports_delete_stats(self) -> bool {
         self.as_u8() >= 31
@@ -302,8 +308,9 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: compat.c:720 `set_allow_inc_recurse()` - INC_RECURSE gated
-    /// by protocol >= 30.
+    /// upstream: compat.c:719-720 `setup_protocol()` - `CF_INC_RECURSE` is only
+    /// offered in the protocol >= 30 branch; `set_allow_inc_recurse()`
+    /// (compat.c:162) decides whether it is allowed.
     #[must_use]
     pub const fn supports_inc_recurse(self) -> bool {
         self.as_u8() >= 30
@@ -314,8 +321,8 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1112` - `do_recv()` sends it only when `protocol_version >= 33`
-    /// - `io.c:1722` - `read_a_msg()` rejects it when `protocol_version < 33`
+    /// - `main.c:1113` - `do_recv()` sends it only when `protocol_version >= 33`
+    /// - `io.c:1724` - `read_a_msg()` rejects it when `protocol_version < 33`
     /// - `main.c:446` - `output_summary()` prints the line when `>= 33`
     #[must_use]
     pub const fn supports_block_stats(self) -> bool {

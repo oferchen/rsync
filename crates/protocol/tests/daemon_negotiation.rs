@@ -296,7 +296,7 @@ fn test_do_negotiation_false_uses_defaults() {
     .unwrap();
 
     // Should use protocol 30+ defaults: MD5 checksum, Zlib when send_compression=true
-    // upstream: compat.c:194 defaults to CPRES_ZLIB when -z active without negotiation
+    // upstream: compat.c:196 defaults to CPRES_ZLIB when -z active without negotiation
     assert_eq!(result.checksum.as_str(), "md5");
     assert_eq!(result.compression.as_str(), "zlib");
     assert!(stdout.is_empty());

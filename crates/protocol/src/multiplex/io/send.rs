@@ -13,6 +13,10 @@ use super::super::helpers::{ensure_payload_length, map_envelope_error_for_input}
 /// The payload length is validated against [`crate::MAX_PAYLOAD_LENGTH`], mirroring the
 /// 24-bit limit imposed by the C implementation. Violations result in
 /// [`io::ErrorKind::InvalidInput`].
+///
+/// Deviation from upstream: `io.c:send_msg()` queues the frame in the circular
+/// `iobuf.msg` buffer and `perform_io()` flushes it later; this writes the frame
+/// straight to `writer`, so any batching is the writer's own buffering.
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
     debug_log!(Io, 3, "mux send: code={:?} len={}", code, payload.len());
     let payload_len = ensure_payload_length(payload.len())?;
@@ -105,8 +109,8 @@ pub fn send_msgs_vectored<W: Write>(
 /// because a zero-length data frame contributes no bytes to the raw data stream
 /// and is silently absorbed by the peer.
 ///
-/// upstream: `io.c:maybe_send_keepalive()` (io.c:1479-1507) sends
-/// `send_msg(MSG_DATA, "", 0, 0)`; the explanatory comment is at io.c:1472-1478.
+/// upstream: `io.c:maybe_send_keepalive()` (io.c:1639-1667) sends
+/// `send_msg(MSG_DATA, "", 0, 0)`; the explanatory comment is at io.c:1632-1638.
 ///
 /// # Examples
 ///

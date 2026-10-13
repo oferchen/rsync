@@ -30,6 +30,10 @@ impl NegotiationPrologueSniffer {
 
     /// Drains only the sniffed negotiation prefix into an existing vector while preserving the
     /// buffered remainder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] when `target` cannot grow.
     pub fn take_sniffed_prefix_into(
         &mut self,
         target: &mut Vec<u8>,
@@ -56,6 +60,11 @@ impl NegotiationPrologueSniffer {
 
     /// Copies the sniffed negotiation prefix into a caller-provided slice while preserving the
     /// buffered remainder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     pub fn take_sniffed_prefix_into_slice(
         &mut self,
         target: &mut [u8],
@@ -82,6 +91,11 @@ impl NegotiationPrologueSniffer {
 
     /// Copies the sniffed negotiation prefix into a caller-provided array while preserving any
     /// buffered remainder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     pub fn take_sniffed_prefix_into_array<const N: usize>(
         &mut self,
         target: &mut [u8; N],
@@ -91,6 +105,10 @@ impl NegotiationPrologueSniffer {
 
     /// Writes the sniffed negotiation prefix to the provided [`Write`] implementation while
     /// preserving any buffered remainder.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from writing to `target`.
     pub fn take_sniffed_prefix_into_writer<W: Write>(
         &mut self,
         target: &mut W,

@@ -5,14 +5,20 @@
 //! operation. This reduces network round-trips when sending file lists over
 //! the network.
 //!
+//! Deviation from upstream: upstream has no batched file-list writer;
+//! `flist.c:send_file_entry()` writes each entry straight into io.c's
+//! output buffer. The wire bytes are identical either way.
+//!
 //! # Batching Strategy
 //!
 //! The writer flushes the batch when any of these conditions are met:
 //! - The batch contains `max_entries` entries (default: 64)
 //! - The batch size exceeds `max_bytes` bytes (default: 64KB)
-//! - The flush timeout expires (default: 100ms)
-//! - An explicit flush is requested
-//! - The writer is dropped (auto-flush)
+//! - The flush timeout has expired when an entry is added or
+//!   `check_timeout_flush` runs (default: 100ms)
+//! - An explicit flush is requested, or `finish` writes the end-of-list marker
+//!
+//! Dropping the writer does not flush; unflushed entries are discarded.
 //!
 //! # Usage
 //!

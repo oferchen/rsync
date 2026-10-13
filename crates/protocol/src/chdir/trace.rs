@@ -1,29 +1,29 @@
 //! `--debug=CHDIR` producer emissions for the current-directory change path.
 //!
-//! Mirrors upstream rsync 3.4.4's `util1.c::change_dir` `DEBUG_GTE(CHDIR, 1)`
+//! Mirrors upstream rsync 3.5.1's `util1.c::change_dir` `DEBUG_GTE(CHDIR, 1)`
 //! output byte-for-byte so wire-comparable diagnostics align across
 //! implementations. Upstream funnels every `chdir()` syscall through
-//! `change_dir`, which prints `"[%s] change_dir(%s)\n"` (`util1.c:1265-1266`)
+//! `change_dir`, which prints `"[%s] change_dir(%s)\n"` (`util1.c:1492-1493`)
 //! after the syscall succeeds. The `%s` placeholders render
-//! `who_am_i()` (`rsync.c:823-830`) and the cleaned absolute `curr_dir`.
+//! `who_am_i()` (`rsync.c:987-995`) and the cleaned absolute `curr_dir`.
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:1210-1269` `change_dir` - wraps `chdir`, maintains `curr_dir`,
+//! - `util1.c:1313-1496` `change_dir` - wraps `chdir`, maintains `curr_dir`,
 //!   cleans the path via `clean_fname`, and fires the emission below.
-//! - `util1.c:1265-1266` `DEBUG_GTE(CHDIR, 1)` -
+//! - `util1.c:1492-1493` `DEBUG_GTE(CHDIR, 1)` -
 //!   `"[%s] change_dir(%s)\n"` once per successful syscall (`set_path_only`
 //!   variants skip emission, matching upstream's `!set_path_only` guard).
-//! - `rsync.c:823-830` `who_am_i()` - role prefix string used by the
+//! - `rsync.c:987-995` `who_am_i()` - role prefix string used by the
 //!   emission.
-//! - `options.c:293` `DEBUG_WORD(CHDIR, W_CLI|W_SRV, ...)` - flag table
+//! - `options.c:309` `DEBUG_WORD(CHDIR, W_CLI|W_SRV, ...)` - flag table
 //!   entry, capping useful emissions at level 1.
 
 use logging::debug_log;
 
 /// Process role used as the `[<role>]` prefix in CHDIR emissions.
 ///
-/// Mirrors upstream's `who_am_i()` vocabulary (`rsync.c:823-830`) without
+/// Mirrors upstream's `who_am_i()` vocabulary (`rsync.c:987-995`) without
 /// pulling in heavier process-wide globals. Callers pass the role
 /// explicitly so the helper stays a thin formatter.
 ///
@@ -75,7 +75,7 @@ impl std::fmt::Display for ChdirRole {
 
 /// Traces a successful `chdir()` syscall (level 1).
 ///
-/// upstream: `util1.c:1265-1266` - `"[%s] change_dir(%s)\n"`. Emitted by
+/// upstream: `util1.c:1492-1493` - `"[%s] change_dir(%s)\n"`. Emitted by
 /// `change_dir` after the wrapped `chdir(2)` succeeds and `curr_dir` has
 /// been refreshed with the cleaned absolute path. Callers should pass the
 /// post-syscall, fully-resolved absolute path that matches what upstream
@@ -93,7 +93,7 @@ pub fn trace_change_dir(role: ChdirRole, curr_dir: &str) {
 #[cfg(test)]
 mod tests {
     //! Pinning tests for CHDIR emission shape. Strings match upstream
-    //! `util1.c:1265-1266` byte-for-byte once the role token from
+    //! `util1.c:1492-1493` byte-for-byte once the role token from
     //! `who_am_i()` is taken into account.
 
     use super::*;
@@ -126,7 +126,7 @@ mod tests {
 
     /// Role display strings match upstream `who_am_i()` vocabulary.
     ///
-    /// upstream: rsync.c:823-830 - `who_am_i()` returns one of
+    /// upstream: rsync.c:987-995 - `who_am_i()` returns one of
     /// `"client"`, `"server"`, `"sender"`, `"generator"`, `"receiver"`,
     /// or the capitalised `"Receiver"` for the pre-fork branch.
     #[test]
@@ -144,7 +144,7 @@ mod tests {
 
     /// Pins the level 1 emission for the client role to upstream format.
     ///
-    /// upstream: util1.c:1265-1266 - `"[%s] change_dir(%s)\n"`.
+    /// upstream: util1.c:1492-1493 - `"[%s] change_dir(%s)\n"`.
     #[test]
     fn change_dir_matches_upstream_format_client() {
         init_chdir(1);
@@ -158,7 +158,7 @@ mod tests {
 
     /// Pins the level 1 emission for the server/daemon-chroot role.
     ///
-    /// upstream: util1.c:1265-1266 emitted from `clientserver.c:987`
+    /// upstream: util1.c:1492-1493 emitted from `clientserver.c:1059`
     /// `change_dir(module_chdir, CD_NORMAL)` after the daemon chroot
     /// jail is established.
     #[test]

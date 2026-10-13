@@ -62,12 +62,13 @@ impl ProtocolCodec for LegacyProtocolCodec {
     }
 
     fn write_mtime<W: Write + ?Sized>(&self, writer: &mut W, mtime: i64) -> io::Result<()> {
-        // upstream: flist.c uses write_uint() for proto < 30 (unsigned 32-bit)
+        // upstream: flist.c:905 send_file_entry() uses write_int() for proto < 30;
+        // the low 32 bits on the wire are the same as this unsigned write.
         writer.write_all(&(mtime as u32).to_le_bytes())
     }
 
     fn read_mtime<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64> {
-        // upstream: flist.c uses read_uint() for proto < 30 (unsigned 32-bit)
+        // upstream: flist.c:1167 recv_file_entry() uses read_uint() for proto < 30.
         let mut buf = [0u8; 4];
         reader.read_exact(&mut buf)?;
         Ok(i64::from(u32::from_le_bytes(buf)))

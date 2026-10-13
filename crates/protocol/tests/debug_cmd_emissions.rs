@@ -1,9 +1,9 @@
 //! Integration tests for `--debug=CMD` producer emissions exposed by the
 //! `protocol::cmd` helper module.
 //!
-//! The trace helpers wrap upstream rsync 3.4.1's `print_child_argv`
-//! formatting from `util1.c:101-120` and the four CMD emission sites at
-//! `pipe.c:54`, `clientserver.c:348`, `rsync.c:296`, and `main.c:633`.
+//! The trace helpers wrap upstream rsync's `print_child_argv`
+//! formatting from `util1.c:102-121` and the four CMD emission sites at
+//! `pipe.c:54`, `clientserver.c:392`, `rsync.c:297`, and `main.c:646`.
 //! These tests drive each helper through the real [`logging`] channel - the
 //! same path users hit when running `oc-rsync --debug=CMD`.
 
@@ -39,7 +39,7 @@ fn cmd_messages() -> Vec<String> {
 }
 
 /// Pure-formatter contract: `print_child_argv` reproduces upstream
-/// `util1.c:101-120` layout exactly when given a typical SSH argv.
+/// `util1.c:102-121` layout exactly when given a typical SSH argv.
 #[test]
 fn print_child_argv_matches_upstream_pipe_invocation() {
     let argv = ["ssh", "user@example.com", "rsync", "--server", "."];
@@ -50,7 +50,7 @@ fn print_child_argv_matches_upstream_pipe_invocation() {
 }
 
 /// Pure-formatter contract: arguments containing whitespace are wrapped in
-/// upstream-style double quotes via `util1.c:109-116`.
+/// upstream-style double quotes via `util1.c:110-117`.
 #[test]
 fn print_child_argv_quotes_unsafe_args_like_upstream() {
     let argv = ["ssh", "-o", "ProxyJump=bastion host"];
@@ -76,7 +76,7 @@ fn opening_connection_emits_under_debug_cmd_level_1() {
 }
 
 /// `trace_sending_daemon_args` fires the upstream-format
-/// `clientserver.c:348-349` emission at level 1.
+/// `clientserver.c:392-393` emission at level 1.
 #[test]
 fn sending_daemon_args_emits_under_debug_cmd_level_1() {
     init_cmd(1);
@@ -91,7 +91,7 @@ fn sending_daemon_args_emits_under_debug_cmd_level_1() {
     );
 }
 
-/// `trace_protected_args` fires the upstream-format `rsync.c:296-297`
+/// `trace_protected_args` fires the upstream-format `rsync.c:297-298`
 /// emission at level 1.
 #[test]
 fn protected_args_emits_under_debug_cmd_level_1() {
@@ -106,7 +106,7 @@ fn protected_args_emits_under_debug_cmd_level_1() {
     );
 }
 
-/// `trace_cmd_argv` fires the upstream-format `main.c:633-637` enumeration
+/// `trace_cmd_argv` fires the upstream-format `main.c:646-650` enumeration
 /// only at level 2 or higher.
 #[test]
 fn cmd_argv_enumeration_emits_under_debug_cmd_level_2() {

@@ -23,7 +23,7 @@
 //!
 //! # Upstream Reference
 //!
-//! Based on rsync 3.4.1 source code:
+//! Based on rsync 3.5.1 source code:
 //! - `compat.c`: Compatibility flag handling and capability negotiation
 //! - `flist.c`: File list encoding changes
 //! - `io.c`: Protocol I/O and varint encoding
@@ -525,7 +525,7 @@ mod protocol_30_capability_negotiation {
         assert!(result.is_ok(), "Should fall back gracefully: {result:?}");
 
         // Should use MD5 default and Zlib when send_compression=true
-        // upstream: compat.c:194 defaults to CPRES_ZLIB when -z active without negotiation
+        // upstream: compat.c:195-196 defaults to CPRES_ZLIB when -z active without negotiation
         let negotiated = result.unwrap();
         assert_eq!(negotiated.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(negotiated.compression, CompressionAlgorithm::Zlib);
@@ -748,7 +748,7 @@ mod protocol_30_edge_cases {
 
     /// Protocol 30 rejects invalid checksum algorithms.
     ///
-    /// Upstream `recv_negotiate_str` (compat.c:383-406) treats unknown/invalid
+    /// Upstream `recv_negotiate_str` (compat.c:369-407) treats unknown/invalid
     /// algorithms as a hard error - no fallback to defaults.
     #[test]
     fn version_30_rejects_invalid_checksums() {
@@ -770,7 +770,7 @@ mod protocol_30_edge_cases {
 
     /// Protocol 30 rejects empty capability lists.
     ///
-    /// Upstream `recv_negotiate_str` (compat.c:383-406) treats empty/no-match
+    /// Upstream `recv_negotiate_str` (compat.c:369-407) treats empty/no-match
     /// lists as a hard error - no fallback to defaults.
     #[test]
     fn version_30_handles_empty_capability_lists() {
@@ -1434,7 +1434,7 @@ mod protocol_30_vstring_format {
 
     /// Protocol 30 rejects unknown algorithms in vstring negotiation.
     ///
-    /// Upstream `recv_negotiate_str` (compat.c:383-406) treats no-match
+    /// Upstream `recv_negotiate_str` (compat.c:369-407) treats no-match
     /// as a hard error - no fallback to defaults.
     #[test]
     fn version_30_vstring_unknown_algorithm_error() {

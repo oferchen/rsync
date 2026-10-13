@@ -34,9 +34,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `io.c:2281-2325` - `write_ndx()` function
-//! - `io.c:2327-2356` - `read_ndx()` function
-//! - `rsync.h:285-288` - NDX constant definitions
+//! - `io.c:2541-2585` - `write_ndx()` function
+//! - `io.c:2588-2630` - `read_ndx()` function
+//! - `rsync.h:316-319` - NDX constant definitions
 
 mod codec;
 mod constants;

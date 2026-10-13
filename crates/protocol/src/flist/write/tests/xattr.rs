@@ -72,7 +72,7 @@ fn xattr_write_roundtrip_with_reader() {
     // `user.*` verbatim, non-Linux strips the prefix to `my_attr`. Without
     // the `user.` prefix the non-Linux receiver drops the entry as a
     // non-storable disguised namespace (see xattr::prefix::wire_to_local
-    // and upstream xattrs.c:836-846).
+    // and upstream xattrs.c:874-901).
     xattr_list.push(XattrEntry::new("user.my_attr", b"my_value".to_vec()));
     entry.set_xattr_list(xattr_list);
 

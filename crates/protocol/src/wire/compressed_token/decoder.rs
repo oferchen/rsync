@@ -3,7 +3,7 @@
 //! Dispatches to the appropriate per-algorithm codec (zlib, zstd, lz4)
 //! based on the negotiated compression algorithm.
 //!
-//! - upstream: token.c:recv_compressed_token() (algorithm dispatch)
+//! - upstream: token.c:recv_token() (algorithm dispatch)
 
 use std::io::{self, Read};
 
@@ -96,7 +96,7 @@ impl CompressedTokenDecoder {
     /// For zstd, only resets token index and buffer state - the decompression
     /// context is preserved across files (one continuous stream).
     ///
-    /// upstream: token.c:862-865 (zstd r_init), token.c:589 (zlib inflateReset)
+    /// upstream: token.c:866-869 (zstd r_init), token.c:592 (zlib inflateReset)
     pub fn reset(&mut self) {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.reset(),
@@ -155,7 +155,7 @@ impl CompressedTokenDecoder {
     /// dictionary stays synchronized with an older peer's sender. No-op for
     /// zstd and lz4. Must be set before the first `see_token`.
     ///
-    /// upstream: token.c:710 `if (protocol_version >= 31) buf += blklen;`
+    /// upstream: token.c:713-714 `if (protocol_version >= 31) buf += blklen;`
     pub fn set_protocol_version(&mut self, protocol_version: u32) {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.set_protocol_version(protocol_version),

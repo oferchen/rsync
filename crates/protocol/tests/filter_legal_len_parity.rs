@@ -1,10 +1,10 @@
 //! Parity assertions for upstream rsync's `legal_len=1` rule at protocol < 29.
 //!
-//! Upstream `exclude.c:1530` sets `legal_len=1` when serializing filter rules
+//! Upstream `exclude.c:1829` sets `legal_len=1` when serializing filter rules
 //! for a peer that speaks protocol < 29, so only the single-character prefixes
 //! `+ `, `- ` (and the bare clear `!`) are allowed on the wire. If the rule
 //! list contains anything else - the dir-merge `:` prefix or any modifier
-//! flag - upstream's `send_rules()` at `exclude.c:1623-1627` exits
+//! flag - upstream's `send_rules()` at `exclude.c:1922-1927` exits
 //! `RERR_PROTOCOL` with "filter rules are too modern for remote rsync"
 //! before any bytes leave the sender.
 //!
@@ -32,7 +32,7 @@ fn dir_merge_rule(pattern: &str) -> FilterRuleWireFormat {
 
 /// Dir-merge `:` rules cannot be encoded at protocol 28.
 ///
-/// Mirrors upstream `exclude.c:1530-1534`: `legal_len=1` rejects any prefix
+/// Mirrors upstream `exclude.c:1829-1833`: `legal_len=1` rejects any prefix
 /// longer than `"+ "`/`"- "`, and the `:` rule type unconditionally exceeds
 /// that budget.
 #[test]
@@ -242,11 +242,11 @@ fn perishable_is_omitted_not_refused_at_protocol_28() {
 /// The wire parser treats a `:`-prefixed payload at protocol 28 as a bare
 /// exclude pattern, not a dir-merge rule and not an error.
 ///
-/// Upstream `exclude.c:1125-1133` runs the `XFLG_OLD_PREFIXES` branch of
+/// Upstream `exclude.c:1276-1284` runs the `XFLG_OLD_PREFIXES` branch of
 /// `parse_rule_tok()` at protocol < 29, where `"+ "` and `"- "` are
 /// *optional* prefixes: any other text - including a `':'` - falls through
 /// as an exclude pattern. Only the sender refuses to emit modern rules at
-/// old protocols (`send_rules`, exclude.c:1623-1627); the receiver stays
+/// old protocols (`send_rules`, exclude.c:1922-1927); the receiver stays
 /// lenient. Construct the wire frame manually (length-prefixed payload +
 /// zero terminator) since `write_filter_list` refuses to emit it.
 #[test]

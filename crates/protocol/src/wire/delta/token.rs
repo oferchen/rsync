@@ -38,7 +38,7 @@ use super::types::{CHUNK_SIZE, DeltaOp};
 /// assert_eq!(buf.len(), 4 + 5); // 4 bytes for length + 5 bytes of data
 /// ```
 ///
-/// Reference: `token.c:simple_send_token()` lines 307-314
+/// upstream: `token.c:simple_send_token()` lines 319-327
 pub fn write_token_literal<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
     let mut offset = 0;
     while offset < data.len() {
@@ -69,7 +69,7 @@ pub fn write_token_literal<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<
 ///
 /// Returns an error if writing to the underlying stream fails.
 ///
-/// Reference: `token.c:simple_send_token()` line 316
+/// upstream: `token.c:simple_send_token()` lines 329-330
 #[inline]
 pub fn write_token_block_match<W: Write>(writer: &mut W, block_index: u32) -> io::Result<()> {
     // The wire token is `-(block_index + 1)` as i32 LE, so the largest legal
@@ -99,7 +99,8 @@ pub fn write_token_block_match<W: Write>(writer: &mut W, block_index: u32) -> io
 ///
 /// Returns an error if writing to the underlying stream fails.
 ///
-/// Reference: `match.c:matched()` line 408, `token.c:simple_send_token()` line 316
+/// upstream: `match.c:449` `matched(f, s, buf, len, -1)`,
+/// `token.c:simple_send_token()` lines 329-330
 #[inline]
 pub fn write_token_end<W: Write>(writer: &mut W) -> io::Result<()> {
     write_int(writer, 0)
@@ -120,7 +121,7 @@ pub fn write_token_end<W: Write>(writer: &mut W) -> io::Result<()> {
 ///
 /// Returns an error if writing to the underlying stream fails.
 ///
-/// Reference: `match.c:match_sums()` lines 404-408 (whole file case)
+/// upstream: `match.c:match_sums()` lines 443-449 (whole file case)
 pub fn write_whole_file_delta<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
     write_token_literal(writer, data)?;
     write_token_end(writer)
@@ -224,13 +225,14 @@ pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
 }
 
 /// Rejects an uncompressed literal-token length larger than [`CHUNK_SIZE`], the
-/// per-token cap the sender enforces when chunking literal data
-/// (`token.c:simple_send_token`). A larger claimed length is a malformed or
-/// hostile stream that must not be allowed to drive an oversized allocation, so
-/// the receiver aborts with a `RERR_PROTOCOL`-mapped error rather than reserving
-/// the buffer. Mirrors the guard in `simple_recv_token`.
+/// per-token cap upstream's own sender enforces when chunking literal data
+/// (`token.c:simple_send_token()` lines 321-326). The receiver aborts with a
+/// `RERR_PROTOCOL`-mapped error rather than reserving an oversized buffer.
 ///
-/// upstream: token.c:298-302 simple_recv_token
+/// Deviation from upstream: this is the 3.4.4 `simple_recv_token()` guard
+/// ("invalid uncompressed token length"). Since 3.5.0 upstream accepts a run
+/// longer than `CHUNK_SIZE` (e.g. from acrosync peers with a 64 KiB block size)
+/// and reads it `CHUNK_SIZE` bytes at a time (`token.c:298-313`).
 pub fn check_literal_token_len(len: i32) -> io::Result<()> {
     if len > CHUNK_SIZE as i32 {
         return Err(crate::protocol_violation(format!(

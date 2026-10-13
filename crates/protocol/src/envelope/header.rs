@@ -16,8 +16,12 @@ impl MessageHeader {
     /// Creates a new header for `code` with the provided payload length.
     ///
     /// The constructor is `const` so golden multiplexed streams can be
-    /// assembled at compile time, matching upstream rsync's use of static
-    /// header tables for protocol tests.
+    /// assembled at compile time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnvelopeError::OversizedPayload`] when `payload_len` exceeds
+    /// [`MAX_PAYLOAD_LENGTH`].
     pub const fn new(code: MessageCode, payload_len: u32) -> Result<Self, EnvelopeError> {
         if payload_len > MAX_PAYLOAD_LENGTH {
             return Err(EnvelopeError::OversizedPayload(payload_len));
@@ -27,6 +31,11 @@ impl MessageHeader {
     }
 
     /// Parses a header from the beginning of `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnvelopeError::TruncatedHeader`] when fewer than [`HEADER_LEN`]
+    /// bytes are supplied, and the errors of [`MessageHeader::from_raw`] otherwise.
     pub fn decode(bytes: &[u8]) -> Result<Self, EnvelopeError> {
         if bytes.len() < HEADER_LEN {
             return Err(EnvelopeError::TruncatedHeader {
@@ -42,6 +51,15 @@ impl MessageHeader {
     }
 
     /// Constructs a multiplexed header from the raw 32-bit representation used on the wire.
+    ///
+    /// upstream: `io.c:read_a_msg()` splits the same word as `tag >> 24` minus
+    /// `MPLEX_BASE` and `tag & 0xFFFFFF`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnvelopeError::InvalidTag`] when the tag byte is below
+    /// [`MPLEX_BASE`] and [`EnvelopeError::UnknownMessageCode`] when the code
+    /// maps to no [`MessageCode`].
     #[inline]
     pub const fn from_raw(raw: u32) -> Result<Self, EnvelopeError> {
         let tag = (raw >> 24) as u8;
@@ -63,6 +81,11 @@ impl MessageHeader {
     }
 
     /// Encodes this header into the caller-provided slice without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EnvelopeError::TruncatedHeader`] when `out` is shorter than
+    /// [`HEADER_LEN`].
     pub fn encode_into_slice(self, out: &mut [u8]) -> Result<(), EnvelopeError> {
         if out.len() < HEADER_LEN {
             return Err(EnvelopeError::TruncatedHeader { actual: out.len() });

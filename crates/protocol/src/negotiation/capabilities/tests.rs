@@ -205,7 +205,7 @@ fn test_vstring_length_limit() {
 
 #[test]
 fn test_vstring_max_nstr_strlen_limit_rejects_oversized() {
-    // MAX_NSTR_STRLEN is 256 (upstream compat.c:91).
+    // MAX_NSTR_STRLEN is 256 (upstream compat.c:99).
     // A string of 257 bytes must be rejected.
     let mut buffer = Vec::new();
     let oversized = "x".repeat(257);
@@ -252,7 +252,7 @@ fn test_vstring_at_bufsize_is_rejected() {
 }
 
 /// Confirms `--debug=nstr` emits the exact wording used by upstream rsync
-/// 3.4.1 (compat.c:373-378, 521-525, 866) for the client-side bidirectional
+/// 3.5.1 (compat.c:374-379, 522-527, 856) for the client-side bidirectional
 /// negotiation exchange.
 #[test]
 fn test_negotiate_nstr_messages_match_upstream_wording_client() {
@@ -312,7 +312,7 @@ fn test_negotiate_nstr_messages_match_upstream_wording_client() {
 }
 
 /// Confirms `--debug=nstr` level 1 emits upstream's per-side "negotiated"
-/// summary (checksum.c:206-211, compat.c:213-219) using exact wording,
+/// summary (checksum.c:224-229, compat.c:214-220) using exact wording,
 /// including the `(level <N>)` clause that upstream always renders for the
 /// compress summary.
 #[test]
@@ -352,7 +352,7 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
             .any(|m| m == "Client negotiated checksum: md5"),
         "missing upstream level-1 checksum summary: {messages:?}"
     );
-    // upstream: compat.c:215-218 - "(level %d)" renders the resolved
+    // upstream: compat.c:216-219 - "(level %d)" renders the resolved
     // do_compression_level. parse_compress_choice(1) calls
     // init_compression_level() (token.c:55) first, which substitutes the zlib
     // def_level (6) for CLVL_NOT_SPECIFIED, so the raw INT_MIN sentinel is
@@ -367,7 +367,7 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
 
 /// At protocol 30+ without the negotiated 'v' capability
 /// (`do_negotiation == false`), upstream still calls `parse_checksum_choice(1)`
-/// / `parse_compress_choice(1)` (compat.c:819-820). Both emit the per-side
+/// / `parse_compress_choice(1)` (compat.c:830-831). Both emit the per-side
 /// summary with NO " negotiated" qualifier (valid_*.negotiated_nni stays NULL
 /// because no vstring exchange ran), and the compress level is resolved via
 /// `init_compression_level` (token.c:55). The client must therefore show the
@@ -455,7 +455,7 @@ fn test_no_negotiation_client_emits_resolved_fallback_summaries() {
 
 /// Confirms an explicit `--compress-level=N` renders `(level N)` in the
 /// compress summary instead of the `CLVL_NOT_SPECIFIED` sentinel. Regression
-/// for the previously hardcoded level argument. upstream: compat.c:215-218 -
+/// for the previously hardcoded level argument. upstream: compat.c:216-219 -
 /// `do_compression_level` is printed verbatim, so a user-supplied 9 must
 /// render as `(level 9)`.
 #[test]
@@ -513,7 +513,7 @@ fn test_negotiate_nstr_compress_summary_renders_explicit_level() {
 
 /// Confirms `--checksum-choice` suppresses the `" negotiated"` qualifier
 /// in the per-side summary, mirroring upstream's
-/// `valid_checksums.negotiated_nni == NULL` branch (checksum.c:209).
+/// `valid_checksums.negotiated_nni == NULL` branch (checksum.c:227).
 #[test]
 fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
     let _env = default_env();
@@ -527,7 +527,7 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
 
     let protocol = ProtocolVersion::try_from(32).unwrap();
     // With --checksum-choice forced, no checksum vstring is exchanged
-    // (upstream compat.c:541 skips send, compat.c:547 skips recv). The peer
+    // (upstream compat.c:544 skips send, compat.c:550 skips recv). The peer
     // sends only the compression vstring.
     let client_response = b"\x04zlib";
     let mut stdin = &client_response[..];
@@ -562,9 +562,9 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
         })
         .collect();
 
-    // upstream: checksum.c:209 - the " negotiated" qualifier renders only
+    // upstream: checksum.c:227 - the " negotiated" qualifier renders only
     // when valid_checksums.negotiated_nni is set. --checksum-choice
-    // bypasses negotiate_the_strings() (compat.c:175-187), so the
+    // skips the checksum exchange (compat.c:544-545), so the
     // qualifier must render blank here.
     assert!(
         messages.iter().any(|m| m == "Client checksum: md5"),
@@ -580,7 +580,7 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
 
 /// Confirms an explicit `--checksum-choice=xxh128` override forces the
 /// negotiated checksum to xxh128 regardless of automatic list selection.
-/// upstream: checksum.c:178-184 - when `checksum_choice` is set,
+/// upstream: checksum.c:196-204 - when `checksum_choice` is set,
 /// `parse_checksum_choice` resolves the algorithm directly from the name
 /// instead of `valid_checksums.negotiated_nni`.
 #[test]
@@ -589,7 +589,7 @@ fn test_checksum_override_forces_chosen_algorithm() {
 
     let protocol = ProtocolVersion::try_from(32).unwrap();
     // A forced checksum skips the checksum vstring exchange entirely
-    // (upstream compat.c:541/547). With compression also off, nothing is read
+    // (upstream compat.c:544/550). With compression also off, nothing is read
     // from the peer, so `stdin` is empty and `stdout` must carry no checksum
     // vstring.
     let mut stdin = &b""[..];
@@ -742,7 +742,7 @@ fn test_negotiate_do_negotiation_false_uses_defaults_no_io() {
     .unwrap();
 
     // Should use MD5 (protocol 30+ default) and Zlib when send_compression=true
-    // upstream: compat.c:194 defaults to CPRES_ZLIB when -z active without negotiation
+    // upstream: compat.c:195-196 defaults to CPRES_ZLIB when -z active without negotiation
     assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
     assert_eq!(result.compression, CompressionAlgorithm::Zlib);
     // No I/O should have occurred
@@ -1037,7 +1037,7 @@ fn test_choose_checksum_fallback_to_later_match() {
 
 #[test]
 fn test_choose_checksum_empty_list() {
-    // upstream: compat.c:383-406 - empty list is a negotiation failure (hard error)
+    // upstream: compat.c:381-406 - empty list is a negotiation failure (hard error)
     let result = choose_checksum_algorithm("", true);
     assert!(result.is_err(), "empty list should be a negotiation error");
 }
@@ -1111,7 +1111,7 @@ fn test_daemon_client_handles_empty_capabilities() {
     let _env = default_env();
 
     // Edge case: server sends empty capability lists.
-    // Upstream recv_negotiate_str (compat.c:383-406) treats an empty list
+    // Upstream recv_negotiate_str (compat.c:381-406) treats an empty list
     // as a hard error - no fallback to defaults.
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let server_lists = b"\x00\x00"; // Two empty vstrings
@@ -1350,7 +1350,7 @@ fn test_daemon_mode_respects_do_negotiation_false() {
 
 #[test]
 fn test_upstream_checksum_list_format() {
-    // Upstream rsync 3.4.1 sends checksums in this format:
+    // Upstream rsync 3.5.1 sends checksums in this format:
     // "xxh128 xxh3 xxh64 md5 md4 sha1 none"
     let upstream_format = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
     let result = choose_checksum_algorithm(upstream_format, true).unwrap();
@@ -1899,7 +1899,7 @@ fn phase2_11_vstring_2byte_multiple_in_sequence() {
 //
 // The vstring format has limits:
 // - Maximum encodable length: 0x7FFF (32767 bytes)
-// - Wire/sanity limit in read_vstring: 256 bytes (MAX_NSTR_STRLEN, upstream compat.c:91)
+// - Wire/sanity limit in read_vstring: 256 bytes (MAX_NSTR_STRLEN, upstream compat.c:99)
 //
 // These tests verify boundary conditions and error handling.
 
@@ -2314,7 +2314,7 @@ fn phase4_compression_zstd_not_available() {
 
 #[test]
 fn phase5_negotiate_only_unsupported_checksums() {
-    // upstream: compat.c:383-406 - no common algorithm is a hard error
+    // upstream: compat.c:381-406 - no common algorithm is a hard error
     let list = "blake3 sha256 sha512 xxh256";
     let result = choose_checksum_algorithm(list, true);
     assert!(
@@ -2325,7 +2325,7 @@ fn phase5_negotiate_only_unsupported_checksums() {
 
 #[test]
 fn phase5_negotiate_only_unsupported_compressions() {
-    // upstream: compat.c:383-406 - no common compression is a hard error
+    // upstream: compat.c:381-406 - no common compression is a hard error
     let list = "bzip2 lzma xz brotli";
     let err = choose_compression_algorithm(list, true).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -2333,7 +2333,7 @@ fn phase5_negotiate_only_unsupported_compressions() {
 
 #[test]
 fn phase5_negotiate_whitespace_only_list() {
-    // upstream: compat.c:383-406 - whitespace-only list has no valid algorithms
+    // upstream: compat.c:381-406 - whitespace-only list has no valid algorithms
     let list = "   \t   \n   ";
     let checksum = choose_checksum_algorithm(list, true);
     assert!(
@@ -2532,8 +2532,8 @@ fn phase8_negotiation_result_all_combinations() {
 // 2. Client sends unknown capability strings
 // 3. Features must degrade gracefully
 //
-// Upstream rsync (compat.c) implements graceful degradation when
-// capabilities cannot be negotiated, falling back to safe defaults.
+// Upstream skips names it does not know (compat.c:350) but fails hard with
+// RERR_UNSUPPORTED when no mutual name remains (compat.c:381-406).
 
 /// Tests fallback when server offers only algorithms client doesn't prefer.
 /// Client wants xxh128, but server only offers md5/md4/sha1.
@@ -2575,7 +2575,7 @@ fn capability_fallback_server_offers_unavailable_compression() {
 /// Tests that a peer list with only unavailable compressions is a hard error.
 #[test]
 fn capability_fallback_server_only_unavailable_compression() {
-    // upstream: compat.c:383-406 recv_negotiate_str - no mutual compression
+    // upstream: compat.c:381-406 recv_negotiate_str - no mutual compression
     // aborts with RERR_UNSUPPORTED; there is no silent "none" fallback.
     let remote_list = "brotli lzma xz";
     let err = choose_compression_algorithm(remote_list, true).unwrap_err();
@@ -2594,7 +2594,7 @@ fn capability_fallback_server_only_none_compression() {
 /// Tests handling of completely unknown checksum algorithm names.
 #[test]
 fn capability_fallback_unknown_checksum_strings() {
-    // upstream: compat.c:383-406 - all unknown algorithm names is a hard error
+    // upstream: compat.c:381-406 - all unknown algorithm names is a hard error
     let remote_list = "blake2b blake3 argon2 scrypt";
     let result = choose_checksum_algorithm(remote_list, true);
     assert!(
@@ -2606,7 +2606,7 @@ fn capability_fallback_unknown_checksum_strings() {
 /// Tests handling of completely unknown compression algorithm names.
 #[test]
 fn capability_fallback_unknown_compression_strings() {
-    // upstream: compat.c:383-406 - all unknown algorithm names is a hard error
+    // upstream: compat.c:381-406 - all unknown algorithm names is a hard error
     let remote_list = "snappy lzo lzf brotli";
     let err = choose_compression_algorithm(remote_list, true).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -2633,7 +2633,7 @@ fn capability_fallback_mixed_unknown_known_compression() {
 /// Tests handling of malformed algorithm names (typos, punctuation).
 #[test]
 fn capability_fallback_malformed_algorithm_names() {
-    // upstream: compat.c:383-406 - malformed names with no valid match is a hard error
+    // upstream: compat.c:381-406 - malformed names with no valid match is a hard error
     let remote_list = "md-5 md_5 md55 mdv md5!";
     let result = choose_checksum_algorithm(remote_list, true);
     assert!(
@@ -2671,7 +2671,7 @@ fn capability_fallback_empty_between_spaces() {
 /// Tests handling of numeric-only strings.
 #[test]
 fn capability_fallback_numeric_strings() {
-    // upstream: compat.c:383-406 - no valid algorithms is a hard error
+    // upstream: compat.c:381-406 - no valid algorithms is a hard error
     let remote_list = "123 456 789";
     let result = choose_checksum_algorithm(remote_list, true);
     assert!(
@@ -2683,7 +2683,7 @@ fn capability_fallback_numeric_strings() {
 /// Tests handling of special characters in algorithm names.
 #[test]
 fn capability_fallback_special_chars() {
-    // upstream: compat.c:383-406 - no valid algorithms is a hard error
+    // upstream: compat.c:381-406 - no valid algorithms is a hard error
     let remote_list = "md5@ sha1# xxh* md5-v2";
     let result = choose_checksum_algorithm(remote_list, true);
     assert!(
@@ -2751,7 +2751,7 @@ fn capability_fallback_graceful_checksum_degradation() {
 /// Tests compression negotiation with modern and legacy peers.
 ///
 /// Preference order follows upstream `valid_compressions_items[]`
-/// (compat.c:100-112): zstd > lz4 > zlibx > zlib > none, with each codec
+/// (compat.c:101-112): zstd > lz4 > zlibx > zlib > none, with each codec
 /// present only when its feature is compiled in. Both zstd and lz4 wire
 /// formats are validated byte-for-byte against upstream 3.4.4.
 #[test]
@@ -2843,7 +2843,7 @@ fn capability_fallback_no_varint_flist_flags() {
     )
     .unwrap();
 
-    // Should use MD5 (protocol 30+ default) and Zlib (upstream: compat.c:194
+    // Should use MD5 (protocol 30+ default) and Zlib (upstream: compat.c:195-196
     // defaults to CPRES_ZLIB when -z is active but no vstring negotiation)
     assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
     assert_eq!(result.compression, CompressionAlgorithm::Zlib);
@@ -3015,13 +3015,13 @@ fn forward_compat_unknown_sha256_in_peer_list_is_skipped() {
 /// choice." and exits with RERR_UNSUPPORTED (compat.c:387,406; errcode.h:28
 /// `RERR_UNSUPPORTED 4`). There is no silent md5/md4 fallback on the
 /// negotiated path; that fallback only exists for peers that cannot negotiate
-/// at all (compat.c:550-554).
+/// at all (compat.c:550-558).
 #[test]
 fn forward_compat_only_unknown_names_hard_error() {
     for is_server in [true, false] {
         let err = choose_checksum_algorithm("sha256 sha512 blake3", is_server).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported, "server={is_server}");
-        // upstream: compat.c:382 - the offered lists print only on the client;
+        // upstream: compat.c:384 - the offered lists print only on the client;
         // the server (`am_server && do_negotiated_strings`) aborts on the
         // headline alone.
         let expected = if is_server {
@@ -3068,7 +3068,7 @@ fn forward_compat_full_negotiation_with_future_peer() {
 /// `get_nni_by_name()` requires `nni->name[len] == '\0'`.
 #[test]
 fn capability_fallback_exact_match_required() {
-    // These should NOT match any algorithm - upstream compat.c:383-406
+    // These should NOT match any algorithm - upstream compat.c:381-406
     // rejects lists with no common algorithm as a hard error.
     let invalid_names = [
         "md5-hmac",   // suffix
@@ -3103,7 +3103,7 @@ fn capability_fallback_very_long_list() {
 
 /// Tests that whitespace-only lists produce an error (no algorithms to match).
 ///
-/// Upstream `recv_negotiate_str` (compat.c:383-406) treats empty/no-match as
+/// Upstream `recv_negotiate_str` (compat.c:381-406) treats empty/no-match as
 /// a hard error. Whitespace-only strings contain zero algorithm names after
 /// `split_whitespace()`, so they must fail.
 #[test]
@@ -3185,7 +3185,7 @@ fn capability_fallback_empty_vstring() {
         true,
     );
 
-    // upstream: compat.c:383-406 - empty remote checksum list is a hard error
+    // upstream: compat.c:381-406 - empty remote checksum list is a hard error
     assert!(result.is_err());
 }
 
@@ -3252,13 +3252,13 @@ fn supported_compressions_includes_validated_algorithms() {
 
 #[test]
 fn supported_compressions_order_matches_upstream() {
-    // upstream: compat.c:100-112 - preference order is
+    // upstream: compat.c:101-112 - preference order is
     // zstd > lz4 > zlibx > zlib > none, each present only when compiled in.
     let list = supported_compressions();
     let zlibx_pos = list.iter().position(|&s| s == "zlibx").unwrap();
     let zlib_pos = list.iter().position(|&s| s == "zlib").unwrap();
     let none_pos = list.iter().position(|&s| s == "none").unwrap();
-    // upstream: compat.c:101-108 - zstd, then lz4, precede zlibx when available.
+    // upstream: compat.c:102-107 - zstd, then lz4, precede zlibx when available.
     #[cfg(feature = "lz4")]
     let lz4_pos = {
         let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
@@ -3294,7 +3294,8 @@ fn negotiate_picks_best_validated_algorithm() {
 #[test]
 fn test_choose_checksum_server_picks_first_client_match() {
     // Server iterates remote (client's) list, picks first entry in server's local list.
-    // upstream: compat.c:353 `if (best == 1 || am_server) break;`
+    // upstream 3.4.x compat.c:353 `if (best == 1 || am_server) break;`. Deviation
+    // from upstream 3.5.1: compat.c:354 dropped the `am_server` arm.
     // Client sends: md5 xxh128 xxh3
     // Server supports: xxh128 xxh3 xxh64 md5 md4 sha1 none
     // Server iterates client list: md5 is first match → picks md5
@@ -3305,7 +3306,7 @@ fn test_choose_checksum_server_picks_first_client_match() {
 #[test]
 fn test_choose_checksum_client_picks_best_local_preference() {
     // Client iterates its own local list, picks first item also in server's list.
-    // upstream: compat.c:349-354 - client finds lowest local position among matches.
+    // upstream: compat.c:350-355 - client finds lowest local position among matches.
     // Server sends: md5 xxh128 xxh3
     // Client supports: xxh128 xxh3 xxh64 md5 md4 sha1 none
     // Client iterates local list: xxh128 is first local item in server's list → picks xxh128
@@ -3346,7 +3347,7 @@ fn test_choose_compression_client_picks_best_local_preference() {
 fn compression_override_used_on_legacy_protocol() {
     let _env = default_env();
 
-    // upstream: compat.c:194-195 - compression_override is honoured even on
+    // upstream: compat.c:186-192 - compression_override is honoured even on
     // legacy protocols where no vstring exchange occurs.
     let protocol = ProtocolVersion::try_from(29).unwrap();
     let mut stdin = &b""[..];
@@ -3439,7 +3440,7 @@ fn compression_override_none_falls_through_to_normal_negotiation() {
 }
 
 /// Tests for the `RSYNC_CHECKSUM_LIST` / `RSYNC_COMPRESS_LIST` env overrides
-/// (upstream compat.c:409-533).
+/// (upstream compat.c:409-536).
 ///
 /// The environment is process-global, so every test here serialises on
 /// [`ENV_LOCK`] via [`env_lock`] and mutates through [`EnvGuard`], which
@@ -3592,7 +3593,7 @@ mod env_list_overrides {
         // An INVALID list cannot match any remote offer, so selection errors -
         // upstream exits with RERR_UNSUPPORTED here. With no surviving own
         // candidate, upstream rebuilds the `Client list:` as " INVALID"
-        // (compat.c:403-404).
+        // (compat.c:401-402).
         let err =
             choose_checksum_algorithm_in("xxh128 md5 md4", false, &over.candidates).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
@@ -3629,7 +3630,7 @@ mod env_list_overrides {
              Client list: md5"
         );
 
-        // upstream: compat.c:382 - the server side of the same mismatch keeps
+        // upstream: compat.c:384 - the server side of the same mismatch keeps
         // the offered lists to itself (am_server && do_negotiated_strings) and
         // aborts on the headline alone.
         let server_err = choose_checksum_algorithm_in("md4", true, &over.candidates).unwrap_err();
@@ -3763,7 +3764,7 @@ mod env_list_overrides {
         assert_eq!(server.candidates, vec!["xxh3", "xxh128"]);
     }
 
-    // -- validate_choice_vs_env (upstream compat.c:426-449) --
+    // -- validate_choice_vs_env (upstream compat.c:426-455) --
     //
     // The server refuses a client-forced --checksum-choice/--compress-choice
     // whose algorithm is absent from RSYNC_CHECKSUM_LIST/RSYNC_COMPRESS_LIST.
@@ -3799,7 +3800,7 @@ mod env_list_overrides {
     // (c) Env list set and the forced choice is NOT a member - refused with the
     // byte-exact upstream message and ErrorKind::Unsupported. The core exit-code
     // mapper turns Unsupported into RERR_UNSUPPORTED (exit 4), matching upstream
-    // exit_cleanup(RERR_UNSUPPORTED) at compat.c:449. WHY exact text: it is
+    // exit_cleanup(RERR_UNSUPPORTED) at compat.c:450. WHY exact text: it is
     // observable stderr forwarded to the client, so a drop-in must match it.
     #[test]
     fn validate_checksum_choice_refuses_when_not_in_list() {
@@ -3954,7 +3955,7 @@ mod env_list_overrides {
 
     // -- fallback-default validation on the non-negotiated path --
     //
-    // upstream compat.c:541-565: even when the peer cannot negotiate strings,
+    // upstream compat.c:544-568: even when the peer cannot negotiate strings,
     // negotiate_the_strings populates the env-restricted saw list and validates
     // the prefilled "md5"/"md4"/"zlib" default against it, aborting with
     // RERR_UNSUPPORTED when the operator's env excludes the default.
@@ -4113,7 +4114,7 @@ mod env_list_overrides {
 
     // (i) A compress-list restriction that excludes zlib does NOT abort when
     // compression is off (send_compression = false): upstream gates the compress
-    // recv on do_compression (compat.c:544), so no validation runs.
+    // recv on do_compression (compat.c:547), so no validation runs.
     #[test]
     fn nonego_ignores_compress_env_when_compression_off() {
         let _lock = env_lock();

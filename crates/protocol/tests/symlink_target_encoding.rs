@@ -13,8 +13,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:send_file_entry()` lines 685-695 (symlink target write)
-//! - `flist.c:recv_file_entry()` lines 948-960 (symlink target read)
+//! - `flist.c:send_file_entry()` lines 959-962 (symlink target write)
+//! - `flist.c:recv_file_entry()` lines 1281-1297 and 1552 (symlink target read)
 
 use std::io::Cursor;
 use std::path::PathBuf;

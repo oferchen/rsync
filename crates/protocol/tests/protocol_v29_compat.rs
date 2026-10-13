@@ -1,6 +1,6 @@
 //! Protocol version 29 comprehensive compatibility tests.
 //!
-//! This test suite validates protocol version 29 implementation against rsync 3.4.1 behavior.
+//! This test suite validates protocol version 29 implementation against rsync 3.5.1 behavior.
 //! Tests cover three critical areas:
 //!
 //! 1. Protocol version 29 handshake (ASCII-based negotiation)
@@ -23,7 +23,7 @@
 //!
 //! # Upstream Reference
 //!
-//! Based on rsync 3.4.1 source code (protocol.c, compat.c).
+//! Based on rsync 3.5.1 source code (compat.c, io.c).
 
 use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{

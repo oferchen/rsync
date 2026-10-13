@@ -74,7 +74,7 @@ fn message_code_try_from_u8_succeeds_for_all_18_codes() {
 }
 
 /// Verifies that `MessageCode::ALL` contains exactly the 19 codes of
-/// upstream 3.5.1's `enum msgcode` (rsync.h:292-309) and that each code's
+/// upstream 3.5.1's `enum msgcode` (rsync.h:293-310) and that each code's
 /// numeric value matches its expected wire representation.
 #[test]
 fn message_code_all_array_contains_exactly_19_codes_with_correct_values() {

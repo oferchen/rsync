@@ -21,7 +21,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - Multiplex headers: `io.c:mplex_write()` - tag = MPLEX_BASE + msg_code
+//! - Multiplex headers: `io.c:send_msg()` (io.c:1173) - tag = MPLEX_BASE + msg_code
 //! - Delta tokens: `token.c:simple_send_token()` - write_int based encoding
 //! - NDX encoding: `io.c:write_ndx()` / `read_ndx()` - protocol < 30 uses
 //!   plain `write_int()`
@@ -46,7 +46,7 @@ fn proto28() -> ProtocolVersion {
 
 // ---------------------------------------------------------------------------
 // Multiplex frame header encoding
-// upstream: io.c:mplex_write() - header = (MPLEX_BASE + code) << 24 | len
+// upstream: io.c:1173 send_msg() - header = (MPLEX_BASE + code) << 24 | len
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -458,14 +458,14 @@ fn golden_v28_ndx_sequence_roundtrip() {
 
 // ---------------------------------------------------------------------------
 // Transfer stats exact wire bytes (protocol 28 - legacy longint encoding)
-// upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2260 write_longint()
+// upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2445 write_longint()
 // ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_stats_exact_wire_bytes_known_values() {
     // Protocol 28: 3 fields (total_read, total_written, total_size). No flist
     // timing fields. upstream io.h:46 write_varlong30() routes protocol < 30
-    // through io.c:2260 write_longint(), which writes each small value
+    // through io.c:2445 write_longint(), which writes each small value
     // (0..=0x7FFFFFFF) as a fixed 4-byte little-endian int:
     //   longint(1024) = 1024 as i32 LE = [0x00, 0x04, 0x00, 0x00]
     let stats = TransferStats::with_bytes(1024, 2048, 4096);
@@ -764,7 +764,7 @@ fn golden_v28_longint_one() {
 
 // ---------------------------------------------------------------------------
 // Multiplex frame with payload (complete message on wire)
-// upstream: io.c:mplex_write() - 4-byte header + payload bytes
+// upstream: io.c:1173 send_msg() - 4-byte header + payload bytes
 // ---------------------------------------------------------------------------
 
 #[test]

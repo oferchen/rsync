@@ -33,12 +33,15 @@ use crate::xattr::{
 /// Converts a peer-supplied wire length to a `usize`, rejecting the values
 /// that must never reach an allocation.
 ///
-/// upstream: `read_varint_size()` (io.c) aborts with
+/// upstream: `read_varint_size()` (io.c:2125-2134) aborts with
 /// `exit_cleanup(RERR_PROTOCOL)` on a negative length or one past the field
 /// maximum. A bare `as usize` cast instead widens a negative varint into a
 /// ~2^64 length, which sizes a `vec![0u8; len]` and aborts the process on
 /// capacity overflow. The ceiling is [`effective_max_alloc`] so a peer that
 /// raised `--max-alloc` is still honoured, matching the sibling decoders.
+///
+/// Deviation from upstream: `name_len` is bounded by the same `--max-alloc`
+/// ceiling rather than by `MAX_WIRE_XATTR_NAMELEN` (4096, `xattrs.c:835`).
 fn checked_wire_len(raw: i32, what: &str) -> io::Result<usize> {
     let max = effective_max_alloc();
     if raw < 0 || raw as usize > max {
@@ -231,14 +234,20 @@ impl XattrCache {
     ///
     /// # Upstream Reference
     ///
-    /// See `xattrs.c:receive_xattr()` lines 764-869.
+    /// See `xattrs.c:receive_xattr()` lines 803-923.
+    ///
+    /// Deviation from upstream: the `--filter` xattr rules (`saw_xattr_filter`,
+    /// `xattrs.c:868-873`) and the fake-super namespace disguise are not
+    /// applied here, and a name missing its trailing NUL is an `InvalidData`
+    /// error rather than upstream's `RERR_FILEIO` exit.
     pub fn receive_xattr<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
         am_root: bool,
         preserve_xattrs: u32,
     ) -> io::Result<u32> {
-        // upstream: ndx = read_varint(f)
+        // upstream: xattrs.c:812-819 reads ndx and rejects a negative or
+        // out-of-range value with RERR_STREAMIO.
         let ndx = read_varint(reader)?;
 
         if ndx < 0 || (ndx as usize) > self.lists.len() {
@@ -263,8 +272,9 @@ impl XattrCache {
             read_varint_bounded(reader, 0, MAX_WIRE_XATTR_COUNT as i32, "xattr count")? as usize;
 
         let mut list = XattrList::new();
-        // upstream: xattrs.c:863 - need_sort is set whenever name
-        // translation mutates a name. Linux keeps user.* verbatim and drops
+        // upstream: xattrs.c:807-811, 884 - need_sort starts set on non-Linux
+        // and is set on Linux whenever name translation mutates a name.
+        // Linux keeps user.* verbatim and drops
         // (non-root) or keeps verbatim (root) a non-user name, so a name is
         // never rewritten in place; non-Linux receivers always strip the
         // user. prefix, so wire ordering can diverge from local ordering
@@ -276,8 +286,8 @@ impl XattrCache {
         let mut total_xattr_bytes: usize = 0;
 
         for num in 1..=count {
-            // upstream: name_len/datum_len are read with read_varint_size
-            // (io.c), which aborts with exit_cleanup(RERR_PROTOCOL) on a
+            // upstream: xattrs.c:835-836 read name_len/datum_len with
+            // read_varint_size (io.c:2125-2134), which aborts with exit_cleanup(RERR_PROTOCOL) on a
             // negative or over-max value. A bare `as usize` here would widen a
             // negative varint into a ~2^64 length, so both are range-checked
             // before they can size an allocation.
@@ -290,8 +300,8 @@ impl XattrCache {
             //     rprintf(FERROR, "xattr datum_len exceeds per-value limit [%s]\n", ...);
             //     exit_cleanup(RERR_PROTOCOL);
             //
-            // The text is upstream's verbatim and is load-bearing: the 3.5.0
-            // `xattr-wire-cap` cell greps the receiver's output for this exact
+            // The text is upstream's verbatim and is load-bearing: the upstream
+            // testsuite `xattr-wire-cap` cell greps the receiver's output for this exact
             // literal, so interpolating the two lengths into the middle of it
             // would refuse the header correctly and still fail the cell.
             // Upstream reports neither number here.
@@ -301,7 +311,7 @@ impl XattrCache {
                 ));
             }
 
-            // upstream: xattrs.c:843-849 - the summed name+value bytes of one
+            // upstream: xattrs.c:843-851 - the summed name+value bytes of one
             // file's list are bounded, so a peer cannot drive an unbounded
             // aggregate out of individually-legal entries.
             total_xattr_bytes = total_xattr_bytes
@@ -313,24 +323,24 @@ impl XattrCache {
                         "xattr list byte total overflowed",
                     )
                 })?;
-            // upstream: xattrs.c:849-850 prints this literal and exits
+            // upstream: xattrs.c:848-851 prints this literal and exits
             // RERR_PROTOCOL.
             if total_xattr_bytes > MAX_XATTR_LIST_BYTES {
                 return Err(protocol_violation("xattr list exceeds per-file limit"));
             }
 
-            // upstream: dget_len = datum_len > MAX_FULL_DATUM ? 1 + xattr_sum_len : datum_len
+            // upstream: xattrs.c:837 dget_len = datum_len > MAX_FULL_DATUM ?
+            // 1 + xattr_sum_len : datum_len (oc stores no leading state byte).
             let dget_len = if datum_len > MAX_FULL_DATUM {
                 MAX_XATTR_DIGEST_LEN
             } else {
                 datum_len
             };
 
-            // Read name bytes (includes NUL terminator from upstream)
             let mut name = vec![0u8; name_len];
             reader.read_exact(&mut name)?;
 
-            // upstream: name_len < 1 || name[name_len-1] != '\0' -> error
+            // upstream: xattrs.c:857-860 name_len < 1 || name[name_len-1] != '\0'
             if name.is_empty() || name[name_len - 1] != 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -338,7 +348,6 @@ impl XattrCache {
                 ));
             }
 
-            // Strip the NUL terminator for internal storage
             name.truncate(name_len - 1);
 
             // Read value or checksum bytes from the wire before any filtering,
@@ -349,7 +358,7 @@ impl XattrCache {
                 buf
             };
 
-            // upstream: xattrs.c:820-853 - translate wire name to local name
+            // upstream: xattrs.c:874-901 - translate wire name to local name
             let local_name = match wire_to_local(&name, am_root) {
                 Some(n) => n,
                 None => {
@@ -358,14 +367,14 @@ impl XattrCache {
                 }
             };
 
-            // upstream: xattrs.c:848-853 - skip rsync.%FOO internal attrs
+            // upstream: xattrs.c:902-907 - skip rsync.%FOO internal attrs
             // unless preserve_xattrs >= 2 (double -X)
             if preserve_xattrs < 2 && is_rsync_internal_attr(&local_name) {
                 continue;
             }
 
             // Track whether name translation changed a name, requiring re-sort.
-            // upstream: xattrs.c:830 - need_sort = 1 on name prefix changes
+            // upstream: xattrs.c:884 - need_sort = 1 on name prefix changes
             if !need_sort && local_name != name {
                 need_sort = true;
             }
@@ -381,12 +390,12 @@ impl XattrCache {
             }
         }
 
-        // upstream: xattrs.c:863-864 - sort by name when translations changed order
+        // upstream: xattrs.c:917-918 - sort by name when translations changed order
         if need_sort && list.len() > 1 {
             list.sort_by_name();
         }
 
-        // upstream: ndx = rsync_xal_store(&temp_xattr)
+        // upstream: xattrs.c:920 ndx = rsync_xal_store(&temp_xattr)
         let stored_ndx = self.store(list);
         Ok(stored_ndx)
     }
@@ -399,7 +408,7 @@ impl XattrCache {
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c:848-853` - `preserve_xattrs < 2 && name[RPRE_LEN] == '%'`
+/// See `xattrs.c:902-907` - `preserve_xattrs < 2 && name[RPRE_LEN] == '%'`
 fn is_rsync_internal_attr(name: &[u8]) -> bool {
     let name_str = match std::str::from_utf8(name) {
         Ok(s) => s,
@@ -749,7 +758,7 @@ mod tests {
                 1,
             )
             .expect_err("a list past the per-file cap must be refused");
-        // upstream: xattrs.c:849-850 prints this literal and exits
+        // upstream: xattrs.c:848-851 prints this literal and exits
         // RERR_PROTOCOL.
         assert_eq!(err.to_string(), "xattr list exceeds per-file limit");
         assert!(
@@ -944,7 +953,7 @@ mod tests {
         // The internal-attribute slot (user.rsync.%stat) must be
         // filtered when preserve_xattrs == 1. Linux-only because
         // non-Linux receivers drop every non-user-prefixed wire name
-        // for non-root callers (upstream xattrs.c:844), so the slot
+        // for non-root callers (upstream xattrs.c:897-900), so the slot
         // would never survive translation to reach the level check.
         let mut cache = XattrCache::new();
         let mut buf = Vec::new();
@@ -975,7 +984,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn receive_rsync_internal_kept_at_level_2() {
         // The internal-attribute slot is kept when preserve_xattrs == 2
-        // (double `-X`), matching upstream xattrs.c:849. Linux-only for
+        // (double `-X`), matching upstream xattrs.c:903. Linux-only for
         // the same reason as the level-1 test above.
         let mut cache = XattrCache::new();
         let mut buf = Vec::new();
@@ -1000,7 +1009,7 @@ mod tests {
 
     #[test]
     fn receive_entries_preserve_wire_order() {
-        // upstream: xattrs.c:863 - the receiver only re-sorts when name
+        // upstream: xattrs.c:917 - the receiver only re-sorts when name
         // translation (iconv-style) changes the order. With names preserved
         // verbatim from the wire, the sender-sorted order is preserved as-is.
         let mut cache = XattrCache::new();
@@ -1029,7 +1038,7 @@ mod tests {
 
     #[test]
     fn receive_entries_preserve_order_after_skips() {
-        // upstream: xattrs.c qsort_cmp - 3.4.2 fix uses temp_xattr.count, not
+        // upstream: xattrs.c:918 qsort() - the 3.4.2 fix uses temp_xattr.count, not
         // the wire count. Verifies that entries skipped via `continue` (here,
         // the rsync.%stat internal attr at preserve_xattrs == 1) do not leave
         // a leak or misalignment in the cached XattrList. Input is in the
@@ -1231,7 +1240,7 @@ mod tests {
 
     /// upstream: xattrs.c:839-842 reports an oversized per-value datum length
     /// as `xattr datum_len exceeds per-value limit [%s]`, carrying neither the
-    /// offending length nor the ceiling. The 3.5.0 `xattr-wire-cap` cell greps
+    /// offending length nor the ceiling. The upstream `xattr-wire-cap` cell greps
     /// the receiver's output for that literal, so refusing the header is
     /// necessary but not sufficient - the refusal has to name itself in
     /// upstream's words.

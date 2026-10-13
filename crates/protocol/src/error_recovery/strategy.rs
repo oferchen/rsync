@@ -1,7 +1,7 @@
 //! Error classification, retry logic, and recovery strategy selection.
 //!
-//! These functions match upstream rsync's error handling behavior in receiver.c,
-//! determining how each error type should be handled.
+//! Deviation from upstream: upstream has no equivalent policy layer; these
+//! functions are oc-only.
 
 use std::io;
 
@@ -9,8 +9,7 @@ use super::{ErrorSeverity, PartialTransferState, RecoveryAction, TransferError};
 
 /// Classifies an I/O error into a severity level.
 ///
-/// This matches upstream rsync's error classification in receiver.c, determining whether
-/// an error should cause the transfer to abort, be retried, or allow skipping the file.
+/// Decides whether an error should abort the transfer, be retried, or skip the file.
 ///
 /// # Examples
 ///
@@ -38,15 +37,15 @@ pub fn classify_error(error: io::Error) -> ErrorSeverity {
         | ReadOnlyFilesystem | StorageFull => ErrorSeverity::Fatal,
 
         // Unknown kinds default to Fatal so unexpected conditions abort rather than silently
-        // skip - matches upstream rsync's conservative receiver.c handling.
+        // skip.
         _ => ErrorSeverity::Fatal,
     }
 }
 
 /// Determines if a transfer error should be retried.
 ///
-/// This implements retry logic matching upstream rsync's behavior, considering the error type,
-/// number of attempts already made, and maximum retry limit.
+/// Considers the error type, the number of attempts already made, and the retry limit.
+/// Upstream rsync has no retry loop; this is oc-only policy.
 ///
 /// # Arguments
 ///
@@ -96,8 +95,7 @@ pub fn should_retry(error: &TransferError, attempt: u32, max_retries: u32) -> bo
 
 /// Determines the appropriate recovery action for a transfer error.
 ///
-/// This matches upstream rsync's recovery strategy in receiver.c, considering both the
-/// error type and whether a partial transfer exists.
+/// Considers both the error type and whether a resumable partial transfer exists.
 ///
 /// # Examples
 ///

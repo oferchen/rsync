@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 //! File-size field decoding (varlong30 on protocol 30+, longint on 28-29).
 //!
-//! upstream: flist.c:recv_file_entry() length branch (line 856).
+//! upstream: flist.c:recv_file_entry() length branch (line 1155).
 
 use std::io::{self, Read};
 
@@ -31,7 +31,7 @@ use crate::varint::{read_longint, read_varlong};
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:recv_file_entry()` line 856: `file_length = read_varlong30(f, 3)`
+/// See `flist.c:recv_file_entry()` line 1155: `file_length = read_varlong30(f, 3)`
 pub fn decode_size<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<i64> {
     if protocol_version >= 30 {
         read_varlong(reader, 3)

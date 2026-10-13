@@ -17,7 +17,7 @@
 //!
 //! The list is terminated by a 4-byte little-endian zero. Upstream uses
 //! `write_int()` / `read_int()` here, not the protocol's varint encoding -
-//! see `exclude.c:1658 send_filter_list()` and `exclude.c:1675
+//! see `exclude.c:1944 send_filter_list()` and `exclude.c:1971
 //! recv_filter_list()`.
 //!
 //! ## Prefix Format
@@ -29,17 +29,24 @@
 //!
 //! | Char | Meaning | Protocol |
 //! |------|---------|----------|
-//! | `/` | Anchored pattern | All |
-//! | `!` | Negate (no-match-with-this) | All |
-//! | `C` | CVS exclude | All |
-//! | `n` | No-inherit | All |
-//! | `w` | Word-split | All |
-//! | `e` | Exclude pattern from merge | All |
-//! | `x` | XAttr only | All |
+//! | `/` | Absolute-path match (`FILTRULE_ABS_PATH`) | v29+ |
+//! | `!` | Negate (no-match-with-this) | v29+ |
+//! | `C` | CVS exclude | v29+ |
+//! | `n` | No-inherit (merge rules) | v29+ |
+//! | `w` | Word-split (merge rules) | v29+ |
+//! | `-` / `+` | No-prefixes, exclude/include only (merge rules) | v29+ |
+//! | `e` | Exclude pattern from merge | v29+ |
+//! | `x` | XAttr only | v29+ |
 //! | `s` | Apply sender-side | v29+ |
 //! | `r` | Apply receiver-side | v29+ |
 //! | `p` | Perishable | v30+ |
 //! | ` ` | Trailing space separator | All |
+//!
+//! Below protocol 29 `get_rule_prefix()` allows at most a one-byte prefix
+//! (`+`, `-` or none), so a rule carrying any modifier other than `s`, `r`
+//! or `p` (which are simply not written) is unsendable (`exclude.c:1829`,
+//! `exclude.c:1865-1878`). oc emits `/` only on merge/dir-merge
+//! rules; see `build_rule_prefix`.
 
 mod prefix;
 mod wire;

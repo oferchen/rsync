@@ -973,7 +973,7 @@ fn boundary_values_at_byte_boundaries() {
 
 #[test]
 fn mtime_boundary_values() {
-    // upstream: proto < 30 uses read_uint/write_uint (unsigned u32)
+    // upstream: proto < 30 reads mtime with read_uint() (flist.c:1167), so it is unsigned u32
     let legacy_mtimes = [
         0i64,
         1,

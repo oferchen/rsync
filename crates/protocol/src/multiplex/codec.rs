@@ -28,7 +28,7 @@ use super::helpers::{map_envelope_error, map_envelope_error_for_input};
 /// Each frame consists of:
 /// - 4 bytes: Little-endian header
 ///   - High byte: `MPLEX_BASE` (7) + [`MessageCode`] value
-///   - Lower 24 bits: Payload length (max 16MB)
+///   - Lower 24 bits: Payload length (max 16 MiB - 1)
 /// - N bytes: Payload data
 ///
 /// # Example
@@ -53,16 +53,17 @@ use super::helpers::{map_envelope_error, map_envelope_error_for_input};
 pub struct MultiplexCodec {
     /// Maximum payload size to accept when decoding.
     ///
-    /// Defaults to [`MAX_PAYLOAD_LENGTH`] (16MB) matching upstream rsync limits.
-    /// Can be reduced for memory-constrained environments.
+    /// [`MultiplexCodec::new`] sets it to [`MAX_PAYLOAD_LENGTH`], the 24-bit
+    /// header limit. The derived `Default` leaves it at 0, which rejects every
+    /// non-empty frame.
     max_payload_len: u32,
 }
 
 impl MultiplexCodec {
     /// Creates a new codec with default settings.
     ///
-    /// The maximum payload length is set to [`MAX_PAYLOAD_LENGTH`] (16MB),
-    /// matching upstream rsync's limit.
+    /// The maximum payload length is set to [`MAX_PAYLOAD_LENGTH`] (16 MiB - 1),
+    /// the largest length the 24-bit header field can carry.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -72,7 +73,7 @@ impl MultiplexCodec {
 
     /// Creates a codec with a custom maximum payload length.
     ///
-    /// Use this for memory-constrained environments where accepting 16MB
+    /// Use this for memory-constrained environments where accepting 16 MiB
     /// payloads would be problematic. The limit is clamped to
     /// [`MAX_PAYLOAD_LENGTH`] since the wire format cannot represent
     /// larger values.

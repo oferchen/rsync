@@ -13,6 +13,17 @@ use super::super::NegotiationPrologue;
 use super::NegotiationPrologueSniffer;
 
 /// Reads the complete legacy daemon line after the `@RSYNCD:` prefix has been buffered.
+///
+/// The line (including its `\n`) is written to `line`; bytes buffered past the
+/// newline stay in the sniffer. Counterpart of the greeting read in upstream
+/// `clientserver.c:203 exchange_protocols()`.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidInput`] when no complete legacy prefix was
+/// detected, [`io::ErrorKind::UnexpectedEof`] when the reader closes before the
+/// newline, [`io::ErrorKind::OutOfMemory`] when a buffer cannot grow, or any
+/// other read error.
 pub fn read_legacy_daemon_line<R: Read>(
     sniffer: &mut NegotiationPrologueSniffer,
     reader: &mut R,
@@ -78,6 +89,11 @@ pub fn read_legacy_daemon_line<R: Read>(
 }
 
 /// Reads and parses the legacy daemon greeting after the negotiation prefix has been buffered.
+///
+/// # Errors
+///
+/// Returns the errors of [`read_legacy_daemon_line`], or the greeting parser's
+/// error converted to [`io::Error`] for a malformed greeting.
 pub fn read_and_parse_legacy_daemon_greeting<R: Read>(
     sniffer: &mut NegotiationPrologueSniffer,
     reader: &mut R,
@@ -88,6 +104,10 @@ pub fn read_and_parse_legacy_daemon_greeting<R: Read>(
 }
 
 /// Reads and parses the legacy daemon greeting, returning a detailed view.
+///
+/// # Errors
+///
+/// Same as [`read_and_parse_legacy_daemon_greeting`].
 pub fn read_and_parse_legacy_daemon_greeting_details<'a, R: Read>(
     sniffer: &mut NegotiationPrologueSniffer,
     reader: &mut R,

@@ -7,7 +7,7 @@
 //! unanchored rules into descendant `pattern/**` companions on the wire, so
 //! a remote sender receiving a `- foo/*/` from the local client also saw a
 //! `- foo/*/**` it would otherwise have to interpret. Upstream
-//! `exclude.c:rule_matches()` (3.4.1 lines 903-960) returns "no match" for a
+//! `exclude.c:rule_matches()` (3.5.1 lines 1002-1081) returns "no match" for a
 //! non-directory candidate when `FILTRULE_DIRECTORY` is set, so the sender
 //! never emits a descendant companion. The fix that landed via UTS-DD now
 //! limits descendant synthesis to the single-path API; the wire path must
@@ -30,7 +30,7 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list, write_
 /// canonical sibling-include corpus
 /// `- foo/*/`, `+ foo/s?b/`. Two rules, no synthetic descendant.
 ///
-/// upstream: `exclude.c::send_filter_list()` (3.4.1) writes one wire record
+/// upstream: `exclude.c::send_filter_list()` (3.5.1) writes one wire record
 /// per parsed rule; `parse_rule_tok` does not duplicate dir-only rules into
 /// `pattern/**` siblings.
 fn dir_only_corpus() -> [FilterRuleWireFormat; 2] {

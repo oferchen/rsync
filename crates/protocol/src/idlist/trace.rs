@@ -6,7 +6,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `uidlist.c:218-227` (`DEBUG_GTE(OWN, 2)`) - `is_in_group` probe of the
+//! - `uidlist.c:218-226` (`DEBUG_GTE(OWN, 2)`) - `is_in_group` probe of the
 //!   calling process's gid list. Emitted once per process when `--group`
 //!   ownership preservation runs without root and the gidset is built.
 //!   Shape: `"process has %d gid%s: %d %d ..."`.
@@ -14,11 +14,11 @@
 //!   mapping trace. Emitted whenever the receiver adds a uid or gid to
 //!   the id list. Shape: `"%sid %u(%s) maps to %u"` where the leading
 //!   character is `'u'` for the uid list and `'g'` for the gid list.
-//! - `rsync.c:535-545` (`DEBUG_GTE(OWN, 1)`) - chown reporting from
+//! - `rsync.c:664-675` (`DEBUG_GTE(OWN, 1)`) - chown reporting from
 //!   `set_file_attrs`. Emitted once per file when the resolved uid or
 //!   gid differs from the destination's existing uid/gid. Shapes:
 //!   `"set uid of %s from %u to %u"` and `"set gid of %s from %u to %u"`.
-//! - `options.c:307` - `DEBUG_WORD(OWN, W_REC, "Debug ownership changes
+//! - `options.c:325` - `DEBUG_WORD(OWN, W_REC, "Debug ownership changes
 //!   in users & groups (levels 1-2)")` flag table entry, capping
 //!   emissions at level 2.
 
@@ -62,7 +62,7 @@ impl IdKind {
 /// upstream: `uidlist.c:287-291` - `"%sid %u(%s) maps to %u\n"`. The `kind`
 /// argument selects the upstream `"u"`/`"g"` prefix, `remote_id` is the id
 /// that arrived from the peer, `name` is the resolved name (rendered as
-/// the empty string when `None`, matching upstream's `name ? name : ""`
+/// the empty string when `None`, matching upstream's `if (!name) name = ""`
 /// at `uidlist.c:252-253`), and `local_id` is the id the receiver will
 /// use locally.
 #[inline]
@@ -82,7 +82,9 @@ pub fn trace_id_maps_to(kind: IdKind, remote_id: u32, name: Option<&[u8]>, local
 
 /// Traces the calling process's supplementary group list (level 2).
 ///
-/// upstream: `uidlist.c:218-227` - `"process has %d gid%s: %d %d ..."`.
+/// upstream: `uidlist.c:218-226` - `"process has %d gid%s: "` followed by
+/// `" %d"` per gid, so upstream prints two spaces after the colon; this
+/// renderer prints one.
 /// Emitted once per process from `is_in_group` after `getgroups` populates
 /// the gid set. The plural `"s"` is appended when `gids.len() != 1`,
 /// matching upstream's `ngroups == 1 ? "" : "s"` ternary.
@@ -116,7 +118,7 @@ pub fn trace_set_uid(fname: &str, from: u32, to: u32) {
 
 /// Traces a gid ownership change about to be applied (level 1).
 ///
-/// upstream: `rsync.c:672-676` - `"set gid of %s from %u to %u\n"`.
+/// upstream: `rsync.c:671-674` - `"set gid of %s from %u to %u\n"`.
 /// Emitted by `set_file_attrs` immediately before `do_lchown` when the
 /// resolved gid differs from the destination's existing gid.
 #[inline]
@@ -158,7 +160,7 @@ mod tests {
         // upstream: uidlist.c:289 - `idlist_ptr == &uidlist ? "u" : "g"`.
         assert_eq!(IdKind::Uid.prefix(), "u");
         assert_eq!(IdKind::Gid.prefix(), "g");
-        // upstream: rsync.c:667,542 - `"set uid of"` / `"set gid of"`.
+        // upstream: rsync.c:667,672 - `"set uid of"` / `"set gid of"`.
         assert_eq!(IdKind::Uid.word(), "uid");
         assert_eq!(IdKind::Gid.word(), "gid");
     }
@@ -212,7 +214,8 @@ mod tests {
 
     #[test]
     fn level2_process_gids_plural() {
-        // upstream: uidlist.c:221-225 - "process has N gids: g1 g2 ...".
+        // upstream: uidlist.c:221-225 - "process has N gids:  g1 g2 ..." (two
+        // spaces after the colon; oc prints one).
         init_at(2);
         trace_process_gids(&[0, 4, 100, 1000]);
         let m = own_messages();
@@ -236,7 +239,7 @@ mod tests {
 
     #[test]
     fn level1_set_gid_emits() {
-        // upstream: rsync.c:672-676 - "set gid of %s from %u to %u".
+        // upstream: rsync.c:671-674 - "set gid of %s from %u to %u".
         init_at(1);
         trace_set_gid("./file", 100, 200);
         let m = own_messages();
