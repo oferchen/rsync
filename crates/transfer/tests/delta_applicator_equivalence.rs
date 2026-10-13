@@ -1,9 +1,9 @@
 //! Equivalence safety gate for `DeltaApplicator`.
 //!
-//! Proves the (previously unwired) `DeltaApplicator` reconstructs files
-//! byte-for-byte identically to the live receiver token loop in
-//! `receiver/transfer/sync.rs:518-634`, including the compressed (`-z`)
-//! `see_token` dictionary-sync step (upstream `token.c:631`
+//! Proves `DeltaApplicator` reconstructs files byte-for-byte identically to
+//! the receiver token loop it replaced (the former `apply_delta_tokens` in
+//! `receiver/transfer/sync.rs`), including the compressed (`-z`) `see_token`
+//! dictionary-sync step (upstream `receiver.c:636` -> `token.c:688`
 //! `see_deflate_token()`).
 //!
 //! For the SAME basis + SAME constructed token stream, each test runs two
@@ -11,10 +11,10 @@
 //! `literal_bytes`:
 //!
 //! 1. a faithful reference applier (`reference_apply`) that drives the same
-//!    public primitives the live loop uses - `TokenReader::read_token`,
+//!    public primitives the former loop used - `TokenReader::read_token`,
 //!    `ChecksumVerifier`, `MapFile`, `SparseWriteState`, and crucially
 //!    `TokenReader::see_token` after every block ref - exactly as
-//!    `apply_delta_tokens` does (mirrored line-for-line, cited below), and
+//!    `apply_delta_tokens` did (mirrored line-for-line), and
 //! 2. `DeltaApplicator` + `apply_delta_stream`.
 
 #![deny(unsafe_code)]
@@ -151,12 +151,12 @@ fn expected_output(ops: &[Op], payload: &[u8], block_len: usize) -> Vec<u8> {
     out
 }
 
-/// Faithful reference re-implementation of the live token loop
-/// `apply_delta_tokens` (`receiver/transfer/sync.rs:518-634`). Mirrors it
-/// step-for-step so the equivalence assertion compares `DeltaApplicator`
-/// against the live behaviour - including the critical
-/// `token_reader.see_token(block_data)` after each block ref (sync.rs:629;
-/// upstream `token.c:631`).
+/// Faithful reference re-implementation of the former receiver token loop
+/// `apply_delta_tokens` (once in `receiver/transfer/sync.rs`, now replaced by
+/// `DeltaApplicator`). Mirrors it step-for-step so the equivalence assertion
+/// compares `DeltaApplicator` against that behaviour - including the critical
+/// `token_reader.see_token(block_data)` after each block ref (upstream
+/// `receiver.c:636` -> `token.c:688`).
 #[derive(Debug)]
 struct ReferenceResult {
     literal_bytes: u64,
@@ -212,11 +212,11 @@ fn reference_apply<R: Read>(
                 literal_bytes += len as u64;
             }
             DeltaToken::Literal(LiteralData::Pending(len)) => {
-                // The live loop first tries `reader.try_borrow_exact(len)` on
+                // The former loop first tried `reader.try_borrow_exact(len)` on
                 // its concrete `ServerReader`; that is a zero-copy I/O
                 // optimization with byte-identical output, so the reference
                 // (and the generic `DeltaApplicator` path) always read into a
-                // buffer instead. See sync.rs:565-578.
+                // buffer instead.
                 let mut buf = vec![0u8; len];
                 reader.read_exact(&mut buf)?;
                 write_chunk(&mut out, &mut sparse_state, &buf)?;
@@ -242,13 +242,13 @@ fn reference_apply<R: Read>(
                 let block_data = map.map_ptr(offset, bytes_to_copy)?;
                 write_chunk(&mut out, &mut sparse_state, block_data)?;
                 verifier.update(block_data);
-                // upstream: token.c:631 see_deflate_token() (sync.rs:629).
+                // upstream: receiver.c:636 see_token() -> token.c:688 see_deflate_token().
                 token_reader.see_token(block_data)?;
             }
         }
     }
 
-    // sync.rs:520-555 trailing checksum verification.
+    // Trailing whole-file checksum verification (upstream: receiver.c:677-687).
     let checksum_len = verifier.digest_len();
     let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     reader.read_exact(&mut expected_buf[..checksum_len])?;
@@ -261,7 +261,7 @@ fn reference_apply<R: Read>(
         ));
     }
 
-    // sync.rs:276-289 post-finish sparse size check.
+    // Post-finish sparse size check.
     let mut final_pos = None;
     if let Some(ref mut sparse) = sparse_state {
         let pos = sparse.finish(&mut out)?;
@@ -650,7 +650,7 @@ fn equivalence_checksum_mismatch_both_invalid() {
 /// late and every following byte shifted. The applicator must never reposition
 /// between tokens.
 // upstream: receiver.c:579 write_file() - no lseek between tokens;
-// fileio.c:85 flush_sparse_hole() flushes from the current position.
+// fileio.c:84 flush_sparse_hole() flushes from the current position.
 #[test]
 fn sparse_copy_ending_in_zeros_keeps_following_tokens_in_place() {
     let block_len = BLOCK_LEN as usize;

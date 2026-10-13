@@ -1,23 +1,22 @@
-//! UTS-NEXTEST-EDGE.h: nextest sanity for the upstream
+//! Nextest sanity for the upstream
 //! `delete-missing-args-files-from` scenario.
 //!
 //! Combines `--files-from=LIST` with `--delete-missing-args` and exercises
-//! the end-to-end mode-0 sentinel path that the production fix landed under
-//! UTS-19 / UTS-DD-files-from.3. The sender emits a mode-0 entry for each
+//! the end-to-end mode-0 sentinel path. The sender emits a mode-0 entry for each
 //! vanished `--files-from` operand; the receiver consumes the entry and
 //! removes the corresponding destination path.
 //!
 //! Without this guard the destination retains the stale sibling and the
 //! transfer exits cleanly, which is the silent-incompatibility upstream's
-//! `flist.c:2676-2683` and `generator.c:1348-1354` were written to avoid.
+//! `flist.c:2939-2954` and `generator.c:1749-1755` were written to avoid.
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2676-2683` - sender emits mode-0 sentinel when
+//! - `flist.c:2939-2954` - sender emits mode-0 sentinel when
 //!   `missing_args == 2` and `link_stat()` fails with `ENOENT`.
-//! - `generator.c:1348-1354` - receiver-side `delete_item()` branch on
+//! - `generator.c:1749-1755` - receiver-side `delete_item()` branch on
 //!   `file->mode == 0 && missing_args == 2`.
-//! - `options.c:765` / `options.c:768` - `--delete-missing-args` and
+//! - `options.c:742` / `options.c:743` - `--delete-missing-args` and
 //!   `--ignore-missing-args` flag definitions.
 
 use std::fs;
@@ -54,7 +53,7 @@ fn build_fixture() -> Fixture {
     fs::write(dest.join("keep.txt"), b"old").expect("write dest keep.txt");
 
     // files-from list references both the present source AND a vanished
-    // sibling. Upstream's `flist.c:2676` raises the mode-0 sentinel for
+    // sibling. Upstream's `flist.c:2951` raises the mode-0 sentinel for
     // the ENOENT entry when --delete-missing-args is in effect.
     let files_from = root.path().join("filelist");
     fs::write(&files_from, "keep.txt\nghost.txt\n").expect("write filelist");
@@ -69,8 +68,7 @@ fn build_fixture() -> Fixture {
 
 /// `--delete-missing-args` + `--files-from`: the present file transfers
 /// AND the vanished entry causes the destination sibling to be deleted.
-/// Mirrors upstream `delete-missing-args-files-from` test scenario and
-/// pins the production fix from UTS-19 / UTS-DD-files-from.3.
+/// Mirrors the upstream `delete-missing-args-files-from` test scenario.
 #[test]
 fn delete_missing_args_files_from_removes_vanished_destination() {
     let rsync_bin = test_support::oc_rsync_bin();
@@ -113,7 +111,7 @@ fn delete_missing_args_files_from_removes_vanished_destination() {
 /// Companion: `--ignore-missing-args` must NOT delete the destination
 /// sibling. Upstream gates `delete_item()` on `missing_args == 2`;
 /// `--ignore-missing-args` sets `missing_args == 1`, which skips the
-/// sentinel entirely (`flist.c:2676-2677`).
+/// sentinel entirely (`flist.c:2948-2950`).
 #[test]
 fn ignore_missing_args_files_from_preserves_destination() {
     let rsync_bin = test_support::oc_rsync_bin();

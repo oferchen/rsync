@@ -1,16 +1,15 @@
 //! ISI.g - Sender INC_RECURSE start-time win on a large-file-count source.
 //!
-//! Companion to the ISI.a-f correctness work. Where ISI.c (`#4842`) and
-//! ISI.d (`#4846`) proved the sender-side INC_RECURSE pipeline produces a
-//! byte-identical destination, and ISI.e (`#4859`) locked in wire-byte
-//! parity against upstream's sender output, this bench measures the
-//! **start-time win** that INC_RECURSE was invented to deliver in the
-//! first place.
+//! Companion to the ISI.a-f correctness work. Where ISI.c and ISI.d proved
+//! the sender-side INC_RECURSE pipeline produces a byte-identical
+//! destination, and ISI.e locked in wire-byte parity against upstream's
+//! sender output, this bench measures the **start-time win** that
+//! INC_RECURSE was invented to deliver in the first place.
 //!
 //! # The original motivation
 //!
-//! Upstream rsync's INC_RECURSE design (`flist.c:46 MIN_FILECNT_LOOKAHEAD`,
-//! `compat.c:720 set_allow_inc_recurse()`) lets the sender begin
+//! Upstream rsync's INC_RECURSE design (`rsync.h:151 MIN_FILECNT_LOOKAHEAD`,
+//! `compat.c:162 set_allow_inc_recurse()`) lets the sender begin
 //! transferring file data **before** the full file list has been built.
 //! Without it the sender must walk the entire source tree, build every
 //! `FileEntry`, and serialize the whole list onto the wire before the
@@ -118,15 +117,15 @@
 //! - ISI.a (`docs/design/isi-a-sender-inc-recurse-call-graph.md`) -
 //!   sender-side call graph and the single-flip blocker that ISI.b
 //!   lifted.
-//! - ISI.b (`#4802`) - introduced the now-retired `sender-inc-recurse`
-//!   cargo feature; ISI.h made INC_RECURSE unconditional and ISI.i.2
-//!   removed the flag.
-//! - ISI.c (`#4842`) - single-segment push interop.
-//! - ISI.d (`#4846`) - multi-segment push interop.
-//! - ISI.e (`#4859`) - wire-byte parity against upstream sender.
-//! - Upstream `flist.c:46` `MIN_FILECNT_LOOKAHEAD = 1000` - segment
+//! - ISI.b - introduced the now-retired `sender-inc-recurse` cargo
+//!   feature; ISI.h made INC_RECURSE unconditional and ISI.i.2 removed the
+//!   flag.
+//! - ISI.c - single-segment push interop.
+//! - ISI.d - multi-segment push interop.
+//! - ISI.e - wire-byte parity against upstream sender.
+//! - Upstream `rsync.h:151` `MIN_FILECNT_LOOKAHEAD = 1000` - segment
 //!   scheduling throttle.
-//! - Upstream `compat.c:720 set_allow_inc_recurse()` - the negotiation
+//! - Upstream `compat.c:162 set_allow_inc_recurse()` - the negotiation
 //!   that the `'i'` capability bit triggers.
 
 #![deny(unsafe_code)]

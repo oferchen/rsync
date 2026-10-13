@@ -8,9 +8,9 @@
 //! The local-copy engine had exactly that defect under `--inplace --sparse`.
 //!
 //! Upstream never repositions between tokens: receiver.c:579 `write_file()`
-//! and receiver.c:641 `skip_matched()` both hand the bytes to fileio.c
-//! `write_sparse()`, whose fileio.c:85 `flush_sparse_hole()` advances from the
-//! current position before fileio.c:119 `emit_sparse_span()` writes the data.
+//! and receiver.c:642 `skip_matched()` both hand the bytes to fileio.c
+//! `write_sparse()`, whose fileio.c:84 `flush_sparse_hole()` advances from the
+//! current position before fileio.c:121 `emit_sparse_span()` writes the data.
 //!
 //! These cells drive the daemon receiver (push) and the client receiver (pull)
 //! over a real `rsync://` loopback with a pinned block size, so a matched block

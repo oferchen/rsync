@@ -16,7 +16,7 @@
 //!
 //! The test drives [`ParallelDeltaApplier`] directly because the receiver's
 //! production token loop does not yet feed `ParallelDeltaApplier`
-//! (`MEMORY.md::project_parallel_interop_parity_gap`, PIP-9.b pending).
+//! (PIP-9.b pending).
 //! Routing the test through the applier is intentional:
 //!
 //! 1. PIP-9.b's wire-up plugs the receiver's token loop into the same

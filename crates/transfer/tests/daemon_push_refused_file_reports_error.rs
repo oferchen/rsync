@@ -5,7 +5,7 @@
 //! Upstream's receiver-side generator checks every entry against
 //! `daemon_filter_list` and, on a match, reports
 //! `ERROR: daemon refused to receive file "<name>"` as `FERROR_XFER`
-//! (`generator.c:1664-1676`) before dropping the entry. Three consequences
+//! (`generator.c:1662-1676`) before dropping the entry. Three consequences
 //! follow, and all three are asserted here:
 //!
 //! 1. The pushing client renders the line. `FERROR_XFER` from a server is

@@ -120,7 +120,7 @@ fn rsh_sender_refuses_a_swapped_directory_without_the_kernel_sandbox() {
 /// `from/sym-to-dir/..` stats as `other` but cleans to `from`, so the held
 /// root and the scanned directory disagree. rsync 3.5.1 refuses the scan with
 /// ELOOP and exits 23 with nothing transferred (3.5.0 sent `other`).
-/// upstream: `rsync-3.5.1/flist.c:302-305` records the root, `flist.c:2265-2266`
+/// upstream: `rsync-3.5.1/flist.c:302-305` records the root, `flist.c:2266-2267`
 /// opens the cleaned operand through it, `flist.c:325-329` refuses the changed
 /// identity and `flist.c:2374` reports the per-item `opendir` failure.
 #[test]

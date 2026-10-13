@@ -16,7 +16,7 @@
 //!   allocated `Vec`), but every item pays one channel send + receive on
 //!   top of the actual work.
 //!
-//! The hypothesis behind tasks #1284, #1370, #1681 is that at 100K small-
+//! The hypothesis under test is that at 100K small-
 //! file scales the `par_bridge` channel becomes a measurable bottleneck:
 //! the per-item cost approaches or exceeds the per-item cost of the work
 //! itself, while the work-stealing deque amortises dispatch nearly to
@@ -58,13 +58,11 @@
 //!   reaches for `par_bridge` over a stream that can be collected first
 //!   must justify why collection is not viable (memory pressure, infinite
 //!   stream, etc.). Otherwise prefer `collect().into_par_iter()`.
-//!   Relevant to #1284 (io_uring + rayon composition - the SQE producer
-//!   is naturally a stream) and #1370 (per-thread fold over the file
-//!   list).
+//!   Relevant to io_uring + rayon composition (the SQE producer is
+//!   naturally a stream) and to a per-thread fold over the file list.
 //! - If `par_bridge` over a generator stays within 10% of
 //!   `into_par_iter`, the convenience of streaming is worth preserving
-//!   for follow-ups under #1681 where pre-allocation would double peak
-//!   memory.
+//!   where pre-allocation would double peak memory.
 //! - The crossover point sets the threshold below which neither shape is
 //!   worth optimising: at small N the per-item closure dominates and the
 //!   choice of dispatch is noise.

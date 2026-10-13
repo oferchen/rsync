@@ -12,10 +12,10 @@
 //! `rsync -avvi --no-whole-file --fuzzy` and asserts the resulting tree
 //! matches - which only holds if the basis was actually reused.
 //!
-//! # Why this matters (Rule 9)
+//! # Why this matters
 //!
-//! oc-rsync had a local-copy regression (#505, fixed in PR #6333 via the
-//! engine tail-match) where `--fuzzy` failed to reuse a differently-named
+//! oc-rsync had a local-copy regression (fixed via the engine tail-match)
+//! where `--fuzzy` failed to reuse a differently-named
 //! same-content basis: the file was resent as pure literal data instead of
 //! matching against the fuzzy basis. That defeats the entire point of the
 //! option (bandwidth/IO savings) and silently diverges from upstream.
@@ -31,10 +31,10 @@
 //!   whole, proving the positive case's match came from the fuzzy basis and
 //!   not from some unrelated quick-check shortcut.
 //!
-//! A regression that reintroduced #505 would flip the positive case back to
+//! Reintroducing that regression would flip the positive case back to
 //! all-literal and fail the `Matched > 0` assertion.
 //!
-//! The scope is deliberately local-copy only. The #505 fix was local-copy
+//! The scope is deliberately local-copy only. The fix was local-copy
 //! specific; the wire-path fuzzy still carries a pre-existing efficiency gap
 //! (the last partial block is emitted as literal), so a wire-mode assertion on
 //! exact byte counts would be nondeterministic. Local copy is the path the fix
@@ -110,8 +110,8 @@ fn seed_fuzzy_pair(root: &Path) -> (std::path::PathBuf, std::path::PathBuf, u64)
 /// Positive control: `--fuzzy` reuses the differently-named same-content basis
 /// so the whole file matches and nothing is resent as literal data.
 ///
-/// This is the direct regression guard for #505 / PR #6333: before the fix the
-/// file was resent whole (all literal), so `Matched data` would be 0 here.
+/// This is the direct regression guard for that fix: before it the file was
+/// resent whole (all literal), so `Matched data` would be 0 here.
 // upstream: generator.c find_fuzzy() basis selection
 #[test]
 fn fuzzy_local_reuses_differently_named_basis() {

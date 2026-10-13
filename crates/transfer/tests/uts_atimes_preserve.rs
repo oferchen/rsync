@@ -64,7 +64,6 @@ fn atime_secs(path: &Path) -> i64 {
 /// The source atime is set to a fixed past value distinct from both its mtime
 /// and the wall clock, so a pass proves the atime was actually carried over -
 /// not left at transfer time and not confused with the mtime.
-// upstream: --atimes restores st_atime on the receiver
 #[test]
 fn atimes_flag_preserves_source_access_time() {
     require_binaries!("oc-rsync");

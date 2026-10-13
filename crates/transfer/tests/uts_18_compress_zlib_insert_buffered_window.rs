@@ -53,7 +53,7 @@
 //! # Upstream references
 //!
 //! - Upstream test: `testsuite/compress-zlib-insert_test.py` (issue #951).
-//! - Upstream code path: `fileio.c::map_ptr()` lines 236-279.
+//! - Upstream code path: `fileio.c:map_ptr()` lines 338-417.
 //! - In-tree lineage: UTS-18.f (panic-to-Err guard), UTS-18.g.1/.g.2/.g.3
 //!   (window_len clamp), EDG-PANIC.3 (negative-bounds coverage).
 

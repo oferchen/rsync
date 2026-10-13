@@ -1,8 +1,8 @@
 //! A pulling client prints its own `*deleting` rows under `--itemize-changes`.
 //!
 //! On a client, upstream's `log_delete()` renders the row locally through
-//! `log_formatted(FCLIENT, ...)` (upstream: log.c:919-921). Only a server
-//! forwards it, as `MSG_DELETED` (log.c:913-916). An oc client receiver that
+//! `log_formatted(FCLIENT, ...)` (upstream: log.c:918-921). Only a server
+//! forwards it, as `MSG_DELETED` (log.c:912-915). An oc client receiver that
 //! sent the row to the remote sender as `MSG_INFO` hung an oc-to-oc pull in
 //! the goodbye: an oc sender does not expect `MSG_INFO` from its peer. Against
 //! an upstream sender the row only appeared because that sender echoed it
@@ -67,7 +67,7 @@ fn itemized_delete_pull_from_an_oc_sender_completes_and_prints_locally() {
 /// before the generate loop (`--delete-before`, `--delete-during` without
 /// INC_RECURSE) itemizes the deletion first, while the late sweep of
 /// `--delete-after` and `--delete-delay` follows every transfer row
-/// (upstream: generator.c:2899-2902). Verified against rsync 3.5.1 on the same
+/// (upstream: generator.c:2898-2901). Verified against rsync 3.5.1 on the same
 /// fixture for all four modes.
 #[test]
 fn itemized_delete_pull_rows_follow_the_generator_order() {

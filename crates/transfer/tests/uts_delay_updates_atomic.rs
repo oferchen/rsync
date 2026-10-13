@@ -12,7 +12,7 @@
 //! `checkit()` confirms the destination matches - and, implicitly, that the
 //! `.~tmp~` staging directory does not survive a successful run.
 //!
-//! # Why this matters (Rule 9)
+//! # Why this matters
 //!
 //! The contract is atomicity plus cleanup: after a successful transfer every
 //! updated file holds the new content (proving the delayed rename fired) and no
@@ -34,8 +34,9 @@
 //! # Upstream References
 //!
 //! - `testsuite/delay-updates_test.py` - the upstream script this file ports.
-//! - `receiver.c` / `generator.c` - `--delay-updates` stages into `partialptr`
-//!   under `.~tmp~` and renames at `finish_transfer()` time.
+//! - `receiver.c:1318-1333` - `--delay-updates` finishes each file into
+//!   `partialptr` under `.~tmp~`; `receiver.c:701-736 handle_delayed_updates()`
+//!   renames them all into place once phase 2 ends (`receiver.c:874-875`).
 
 #![cfg(unix)]
 

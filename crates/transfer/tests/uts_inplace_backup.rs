@@ -12,9 +12,10 @@
 //!
 //! Upstream condition (both from `generator.c`):
 //!   `inplace && make_backups > 0 && fnamecmp_type == FNAMECMP_FNAME`
-//! -> `copy_file(fname, backupptr, ...)` (`generator.c:1862` for the
-//! whole-file/read-batch case, `generator.c:1898` for the delta case), then the
-//! `INFO_GTE(BACKUP, 1)` "backed up X to Y" line at `generator.c:1990-1992`.
+//! -> `copy_file(fname, backupptr, ...)` for the whole-file/read-batch case
+//! (`generator.c:2281-2295`), or a copy written through the held `f_copy` for
+//! the delta case (`generator.c:2328-2348`), then the `INFO_GTE(BACKUP, 1)`
+//! "backed up X to Y" line at `generator.c:2448-2450`.
 //!
 //! # Why this matters
 //!
