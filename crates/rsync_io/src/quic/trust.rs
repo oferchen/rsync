@@ -184,6 +184,7 @@ pub fn resolve(ca: Option<&Path>) -> io::Result<QuicTrust> {
 mod tests {
     use std::sync::Arc;
 
+    use base64::Engine as _;
     use rustls::client::danger::ServerCertVerifier;
     use rustls::pki_types::{ServerName, UnixTime};
 
@@ -424,3 +425,4 @@ mod tests {
             "a PEM without a certificate must report none found: {err}"
         );
     }
+}

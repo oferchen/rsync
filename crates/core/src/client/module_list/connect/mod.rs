@@ -418,8 +418,8 @@ fn open_quic_daemon_stream(
     };
     // `--quic-ca` is the only trust anchor and is strict (issuer, SAN,
     // validity); with none configured the dial is refused here.
-    let trust = resolve(quic.ca.as_deref())
-        .map_err(|error| quic_dial_error(addr, &error.to_string()))?;
+    let trust =
+        resolve(quic.ca.as_deref()).map_err(|error| quic_dial_error(addr, &error.to_string()))?;
     // `--quic-cc`/`--quic-window` tune the client endpoint only; unset fields
     // fall back to env then default inside `build_transport_config`.
     let tuning = QuicTransportTuning {
@@ -942,7 +942,9 @@ mod quic_connect_tests {
     fn exchange_greeting(stream: DaemonStream) {
         let (mut reader, mut writer, guard) = stream.split().expect("split");
         let mut greeting = [0u8; 14];
-        reader.read_exact(&mut greeting).expect("client read greeting");
+        reader
+            .read_exact(&mut greeting)
+            .expect("client read greeting");
         assert_eq!(&greeting, b"@RSYNCD: 32.0\n");
         writer.write_all(b"module\n").expect("client write");
         writer.flush().expect("client flush");
@@ -990,13 +992,13 @@ mod quic_connect_tests {
                 assert_eq!(err.exit_code(), 5);
                 let text = err.to_string();
                 assert!(
-                    text.contains("refusing to fall back to plaintext TCP"),
-                    "the refusal must be the QUIC dial error: {text}"
+                    text.contains("invalid peer certificate")
+                        && text.contains("refusing to fall back to plaintext TCP"),
+                    "the refusal must be the certificate rejection, with no TCP fallback: {text}"
                 );
             }
         }
     }
-
 
     /// A missing `--quic-ca` bundle fails loudly at trust resolution with exit 5
     /// (no dial attempted, no TCP fallback).
@@ -1084,7 +1086,6 @@ mod quic_connect_tests {
             }
         }
     }
-
 
     /// The real `@RSYNCD` greeting codec round-trips over a dialed QUIC stream,
     /// in the upstream daemon-speaks-first order. Where
