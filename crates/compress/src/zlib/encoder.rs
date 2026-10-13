@@ -10,7 +10,7 @@ use crate::common::{CountingSink, CountingWriter};
 
 /// Streaming encoder that records the number of compressed bytes produced.
 ///
-/// upstream: `send_deflated_token()` (token.c) calls
+/// upstream: token.c:381 `send_deflated_token()` calls
 /// `deflateInit2(..., -15, 8, Z_DEFAULT_STRATEGY)`, so the stream is raw
 /// deflate - the negative `windowBits` suppresses the zlib header and trailer.
 ///

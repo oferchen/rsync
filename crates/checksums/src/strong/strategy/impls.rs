@@ -8,7 +8,7 @@ use crate::strong::{Md4, Md5, Md5Seed, Sha1, Sha256, Sha512, StrongDigest, Xxh3,
 /// MD4 checksum strategy for rsync protocol versions < 30.
 ///
 /// Upstream rsync selects MD4 as the default strong checksum when the
-/// negotiated protocol version is below 30. See upstream `checksum.c`.
+/// negotiated protocol version is below 30. See upstream `checksum.c:parse_csum_name()`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Md4Strategy;
 
@@ -37,8 +37,8 @@ impl ChecksumStrategy for Md4Strategy {
 /// MD5 checksum strategy with optional seeding for rsync protocol versions >= 30.
 ///
 /// Supports seeded hashing with configurable seed ordering. The
-/// `CHECKSUM_SEED_FIX` flag controls whether the seed is hashed before
-/// (proper) or after (legacy) the file data - see upstream `checksum.c`.
+/// `CF_CHKSUM_SEED_FIX` flag controls whether the seed is hashed before
+/// (proper) or after (legacy) the file data - see upstream `checksum.c:get_checksum2()`.
 #[derive(Clone, Copy, Debug)]
 pub struct Md5Strategy {
     seed: Md5Seed,

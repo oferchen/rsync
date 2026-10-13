@@ -8,7 +8,7 @@
 //! - Specific exceptions must come BEFORE general rules
 //! - To include a specific file while excluding a pattern, put the include first
 //!
-//! Reference: rsync 3.4.1 exclude.c lines 1043-1065 for check_filter.
+//! Reference: rsync 3.5.1 exclude.c lines 1187-1214 for check_filter.
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
@@ -455,7 +455,7 @@ fn perishable_in_precedence() {
     assert!(!set.allows(Path::new("other.txt"), false));
 
     // For deletion: the top-level scan runs with `ignore_perishable` unset
-    // (upstream delete.c:147), so the perishable exclude `*` matches and
+    // (upstream delete.c:208), so the perishable exclude `*` matches and
     // protects other.txt from --delete.
     assert!(!set.allows_deletion(Path::new("other.txt"), false));
 }

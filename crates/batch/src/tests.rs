@@ -89,7 +89,7 @@ mod integration {
         assert!(reader.header().unwrap().compat_flags.is_none());
     }
 
-    /// WHY: a protocol-33 batch is what rsync 3.5.1 records (compat.c:611);
+    /// WHY: a protocol-33 batch is what rsync 3.5.1 records (io.c:2754 start_write_batch());
     /// this build speaks 33, so it must replay it rather than refuse it.
     #[test]
     fn read_header_accepts_protocol_33_batch() {
@@ -120,7 +120,7 @@ mod integration {
         // A batch written by a future rsync (protocol 34) must be refused by a
         // client that supports at most protocol 33, rather than silently
         // adopting an unsupported protocol and replaying it wrong.
-        // upstream: compat.c:609-613 "protocol version in the batch file is too new".
+        // upstream: compat.c:611-615 "protocol version in the batch file is too new".
         let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("too_new.batch");
 
@@ -662,7 +662,7 @@ mod integration {
     /// subsequent entries to be deserialized incorrectly.
     ///
     /// upstream: flist.c:990 `write_buf(f, sum, flist_csum_len)` writes the
-    /// checksum, and flist.c:1455 `read_buf(f, bp, flist_csum_len)` reads it.
+    /// checksum, and flist.c:1601 `read_buf(f, bp, flist_csum_len)` reads it.
     #[test]
     fn test_protocol_flist_roundtrip_with_always_checksum() {
         use protocol::flist::{FileEntry, FileListWriter};
@@ -953,7 +953,7 @@ mod integration {
         writer.write_header(flags).unwrap();
 
         // do_compression=true is a recorded flag only; batch body bytes must
-        // still be stored verbatim, never compressed (PR #3051).
+        // still be stored verbatim, never compressed.
         let data1 = b"file list data with compression flag set";
         let data2 = b"delta operations - must be readable without decompression";
         writer.write_data(data1).unwrap();
@@ -991,13 +991,13 @@ mod integration {
     /// a compressed delta batch with copy tokens (block matches) requires the
     /// decoder to feed matched block data into the inflate dictionary via
     /// see_token(). Without this, inflate fails with "invalid distance too
-    /// far back" (error -3 at token.c:665).
+    /// far back" (error -3 at token.c:667).
     ///
     /// oc-rsync implements proper dictionary sync in batch replay, making it
     /// capable of reading compressed delta batches that upstream itself cannot.
     ///
     /// upstream: token.c:see_deflate_token() - dictionary sync during live transfer
-    /// upstream: token.c:665 - inflate fails without dictionary sync in batch read
+    /// upstream: token.c:667 - inflate fails without dictionary sync in batch read
     #[test]
     fn test_replay_compressed_delta_with_block_matches() {
         use protocol::flist::{FileEntry, FileListWriter};
@@ -1077,7 +1077,7 @@ mod integration {
 
             // Multiple CPRES_ZLIB block matches require see_token() to feed
             // basis bytes into the inflate dictionary; without it, the decoder
-            // fails with "invalid distance too far back" (token.c:665).
+            // fails with "invalid distance too far back" (token.c:667).
             let mut token_buf = Vec::new();
             let mut encoder = CompressedTokenEncoder::default();
             encoder.set_zlibx(false);
@@ -1236,7 +1236,7 @@ mod integration {
     /// A batch body whose DEFLATED_DATA payload is a real zstd frame (magic
     /// 0xFD2FB528) must NOT be auto-detected and decoded as zstd on replay.
     ///
-    /// Upstream forces `write_batch` compression to "zlib" (compat.c:417-418),
+    /// Upstream forces `write_batch` compression to "zlib" (compat.c:414-415),
     /// so a batch token stream is ALWAYS zlib; the codec is pinned, never
     /// sniffed from the payload. A zstd frame is therefore fed to the zlib
     /// inflater, which rejects it - replay fails rather than silently switching
@@ -1360,7 +1360,7 @@ mod integration {
     /// This test exercises the exact code path in `replay.rs` where
     /// `decoder.reset()` is called before each file's token reading loop.
     ///
-    /// upstream: token.c:589 - inflateReset per file
+    /// upstream: token.c:592 - inflateReset per file
     /// upstream: token.c:recv_deflated_token() - r_init resets state
     #[test]
     fn test_replay_compressed_multi_file_resets_decoder() {
@@ -1497,11 +1497,11 @@ mod integration {
     /// tokens. The decoder must reset between files AND correctly feed basis
     /// block data via see_token() for each file independently.
     ///
-    /// This exercises the upstream bug scenario (token.c:665 inflate -3) for
+    /// This exercises the upstream bug scenario (token.c:667 inflate -3) for
     /// multiple files in sequence, verifying that oc-rsync handles it correctly.
     ///
     /// upstream: token.c:see_deflate_token() - per-file dictionary sync
-    /// upstream: token.c:665 - inflate error -3 when dictionary sync missing
+    /// upstream: token.c:667 - inflate error -3 when dictionary sync missing
     #[test]
     fn test_replay_compressed_multi_file_with_block_matches() {
         use protocol::flist::{FileEntry, FileListWriter};

@@ -6,11 +6,12 @@
 //! total_read      : varlong30 (bytes read by sender, written by receiver)
 //! total_written   : varlong30 (bytes written by sender, read by receiver)
 //! total_size      : varlong30 (total file size)
-//! flist_buildtime : varlong30 (protocol >= 29, microseconds)
-//! flist_xfertime  : varlong30 (protocol >= 29, microseconds)
+//! flist_buildtime : varlong30 (protocol >= 29, milliseconds)
+//! flist_xfertime  : varlong30 (protocol >= 29, milliseconds)
 //! ```
 //!
 //! The meaning of read/write swaps between sender and receiver perspectives.
+//! upstream: main.c:329 `handle_stats()`.
 
 use std::io::{self, Read, Write};
 use std::time::Duration;
@@ -104,9 +105,11 @@ pub struct TransferStats {
     pub total_written: u64,
     /// Total size of all files in the transfer.
     pub total_size: u64,
-    /// Time spent building the file list (microseconds).
+    /// Time spent building the file list, in milliseconds
+    /// (upstream `flist.c:3016-3020`).
     pub flist_buildtime: u64,
-    /// Time spent transferring the file list (microseconds).
+    /// Time spent transferring the file list, in milliseconds
+    /// (upstream `flist.c:3043`).
     pub flist_xfertime: u64,
     /// Total entries received from wire (incremental mode).
     pub entries_received: u64,

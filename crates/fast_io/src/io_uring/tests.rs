@@ -1078,7 +1078,7 @@ fn zero_copy_auto_follows_the_send_zc_feature_gate() {
     close_fd(fd_b);
 }
 
-/// Regression test for issue #1872: an `IORING_OP_SEND` on a back-pressured
+/// Regression test for an `IORING_OP_SEND` on a back-pressured
 /// TCP socket must not stall `submit_and_wait()` and starve concurrent RECV
 /// completions, producing a perceived deadlock.
 ///

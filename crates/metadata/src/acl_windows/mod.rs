@@ -32,17 +32,19 @@
 //!
 //! - **Sender:** for each translatable SID, encode the account name and
 //!   use the lower sub-authority (RID) as the synthetic uid/gid.
-//!   Untranslatable SIDs are dropped, matching upstream's lossy
-//!   cross-platform ACL semantics (see `acls.c:902-928`).
+//!   Untranslatable SIDs are dropped.
 //! - **Receiver:** look up the SID for the encoded account name. If no
-//!   name was sent or the lookup fails, the ACE is dropped, again
-//!   matching upstream's lossy cross-platform semantics.
+//!   name was sent or the lookup fails, the ACE is dropped.
+//!
+//! Deviation from upstream: upstream never drops a named entry; an id
+//! without a usable name is kept verbatim (`uidlist.c:281-282`) and applied
+//! as-is (`acls.c:399-409`). Windows has no numeric id to fall back on.
 //!
 //! # Upstream Reference
 //!
-//! - `acls.c:580-668` (`send_rsync_acl`, `send_acl`)
-//! - `acls.c:670-800` (`recv_rsync_acl`, `recv_acl`)
-//! - `acls.c:830-1000` (`set_acl`, `change_sacl_perms`)
+//! - `acls.c:837-898` (`send_rsync_acl`, `send_acl`)
+//! - `acls.c:961-1022` (`recv_rsync_acl`, `receive_acl`)
+//! - `acls.c:1087-1162` (`change_sacl_perms`), `acls.c:1423-1426` (`set_acl`)
 
 mod common;
 mod dacl;

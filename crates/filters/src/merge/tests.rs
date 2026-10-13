@@ -135,7 +135,7 @@ fn parse_clear_long() {
 
 #[test]
 fn long_form_keywords_are_case_sensitive() {
-    // WHY: upstream filter-file compatibility. exclude.c:1069 rule_strcmp uses a
+    // WHY: upstream filter-file compatibility. exclude.c:1220 rule_strcmp uses a
     // case-sensitive strncmp, so only the exact lowercase keyword is a directive.
     // A rsync filter file that relies on uppercase keywords must fail identically
     // under oc, otherwise the two implementations disagree on which rules apply.
@@ -149,7 +149,7 @@ fn long_form_keywords_are_case_sensitive() {
 
     // Uppercase / mixed-case keywords are not directives. `EXCLUDE`/`Dir-Merge`/
     // `CLEAR` start with a non-prefix byte, so upstream reports "Unknown filter
-    // rule" and exits RERR_SYNTAX (exclude.c:1210).
+    // rule" and exits RERR_SYNTAX (exclude.c:1363).
     for line in ["EXCLUDE foo", "Dir-Merge .f", "CLEAR", "Clear"] {
         let err = parse_rules(line, Path::new("test")).unwrap_err();
         assert!(
@@ -296,7 +296,7 @@ fn parse_preserves_pattern_case() {
 
 #[test]
 fn parse_leading_whitespace_is_rejected() {
-    // upstream: exclude.c:1211-1213 parse_rule_tok - a leading space is not a
+    // upstream: exclude.c:1362-1363 parse_rule_tok - a leading space is not a
     // valid rule prefix, so it reaches the `switch` default and raises
     // "Unknown filter rule" (RERR_SYNTAX). It must not be silently trimmed.
     let result = parse_rules("  + *.txt", Path::new("test"));
@@ -306,7 +306,7 @@ fn parse_leading_whitespace_is_rejected() {
 
 #[test]
 fn parse_trailing_whitespace_is_kept_in_pattern() {
-    // upstream: exclude.c:1313 - the pattern length is strlen, so a trailing
+    // upstream: exclude.c:1465 - the pattern length is strlen, so a trailing
     // space stays part of the pattern verbatim. `x.o` therefore does not match
     // `*.o ` and stays included (differential-fuzz silent-data regression).
     let rules = parse_rules("- *.o ", Path::new("test")).unwrap();
@@ -316,7 +316,7 @@ fn parse_trailing_whitespace_is_kept_in_pattern() {
 
 #[test]
 fn parse_whitespace_only_line_is_rejected() {
-    // upstream: exclude.c:1514 parse_filter_file - a whitespace-only line is
+    // upstream: exclude.c:1806 parse_filter_file - a whitespace-only line is
     // neither empty nor a comment, so it falls through to parse_rule_tok and
     // errors rather than being skipped as blank.
     let result = parse_rules("   \n- *.bak\n", Path::new("test"));
@@ -326,7 +326,7 @@ fn parse_whitespace_only_line_is_rejected() {
 
 #[test]
 fn parse_no_prefixes_keeps_literal_whitespace() {
-    // upstream: exclude.c:1122-1124,1313 - under FILTRULE_NO_PREFIXES the whole
+    // upstream: exclude.c:1273-1275,1465 - under FILTRULE_NO_PREFIXES the whole
     // line is taken verbatim as the pattern (no prefix scan, strlen length), so
     // leading and trailing whitespace are preserved literally.
     let rules = parse_rules_no_prefixes("  *.o \n", Path::new("test"), false, false, false);
@@ -419,7 +419,7 @@ fn parse_multiple_modifiers_order_independent() {
 
 #[test]
 fn parse_underscore_separator() {
-    // upstream: exclude.c:1290-1291,1313 - exactly one separator (here the `_`)
+    // upstream: exclude.c:1444-1445,1465 - exactly one separator (here the `_`)
     // is consumed after the rule char and modifiers; the remaining ` *.txt` is
     // taken verbatim by strlen, so the leading space stays part of the pattern.
     let rules = parse_rules("-!_ *.txt", Path::new("test")).unwrap();
@@ -477,7 +477,7 @@ fn parse_modifier_negate_then_pattern() {
 
 #[test]
 fn parse_modifier_unknown_char_without_separator_errors() {
-    // upstream: exclude.c:1180-1184 - without a separator the modifier loop
+    // upstream: exclude.c:1365-1380 - without a separator the modifier loop
     // keeps consuming characters, so the `p` in `path` is read as the
     // perishable modifier and the following `a` hits the `invalid:` label
     // rather than being treated as the start of the pattern.
@@ -512,7 +512,7 @@ fn parse_modifiers_space_only() {
 
 /// The merge-only modifiers (`e`, `n`, `w`, plus `C`) parse together on a
 /// merge-file rule. `!` is excluded because upstream rejects negation on a
-/// merge rule (exclude.c:1241-1246); it is covered by the non-merge test.
+/// merge rule (exclude.c:1395-1401); it is covered by the non-merge test.
 #[test]
 fn parse_modifiers_all_flags() {
     let (mods, pattern) = parse_modifiers(
@@ -559,7 +559,7 @@ fn parse_modifiers_non_merge_flags() {
 
 /// The `e` modifier is `FILTRULE_EXCLUDE_SELF`, valid only on a merge-file
 /// rule. On an ordinary exclude/include/etc. rule upstream jumps to `invalid`
-/// (exclude.c:1256-1259). oc-rsync previously accepted `-e *.bak` silently and
+/// (exclude.c:1410-1414). oc-rsync previously accepted `-e *.bak` silently and
 /// stored a flag no matching logic read, so a malformed rule became a no-op
 /// instead of the parse error upstream reports. This test pins the rejection so
 /// the two tools agree on what is a syntax error.
@@ -599,7 +599,7 @@ fn parse_exclude_self_modifier_accepted_on_merge_rule() {
 
 /// `n` (FILTRULE_NO_INHERIT) is valid only on a merge-file rule. On an
 /// ordinary exclude/include rule upstream jumps to `invalid`
-/// (exclude.c:1261-1264: `case 'n': if (!(rule->rflags &
+/// (exclude.c:1415-1419: `case 'n': if (!(rule->rflags &
 /// FILTRULE_MERGE_FILE)) goto invalid;`). oc-rsync previously accepted
 /// `-n *.tmp` and stored a no-inherit flag no path honoured, so a malformed
 /// rule silently diverged from upstream's syntax error.
@@ -619,7 +619,7 @@ fn parse_no_inherit_modifier_accepted_on_dir_merge_rule() {
 }
 
 /// `w` (FILTRULE_WORD_SPLIT) is valid only on a merge-file rule
-/// (exclude.c:1279-1283: `case 'w': if (!(rule->rflags &
+/// (exclude.c:1433-1437: `case 'w': if (!(rule->rflags &
 /// FILTRULE_MERGE_FILE)) goto invalid;`). oc-rsync previously expanded
 /// `-w foo bar baz` into three excludes, but upstream rejects `w` on an
 /// exclude rule as a syntax error; word-split applies only to merge-file
@@ -665,7 +665,7 @@ fn parse_cvs_mode_modifier() {
 
 #[test]
 fn parse_dir_merge_no_prefixes_exclude_modifier() {
-    // upstream: exclude.c:1197-1209 - `:- .filt` sets FILTRULE_NO_PREFIXES on a
+    // upstream: exclude.c:1381-1385 - `:- .filt` sets FILTRULE_NO_PREFIXES on a
     // dir-merge rule (exclude variant).
     let rules = parse_rules(":- .filt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
@@ -676,7 +676,7 @@ fn parse_dir_merge_no_prefixes_exclude_modifier() {
 
 #[test]
 fn parse_dir_merge_no_prefixes_include_modifier() {
-    // upstream: exclude.c:1210-1213 - `:+ .filt` sets FILTRULE_NO_PREFIXES and
+    // upstream: exclude.c:1386-1391 - `:+ .filt` sets FILTRULE_NO_PREFIXES and
     // FILTRULE_INCLUDE (include variant).
     let rules = parse_rules(":+ .filt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
@@ -685,7 +685,7 @@ fn parse_dir_merge_no_prefixes_include_modifier() {
 
 #[test]
 fn parse_dir_merge_abs_path_modifier() {
-    // upstream: exclude.c:1215-1216 - `:/ .filt` sets FILTRULE_ABS_PATH.
+    // upstream: exclude.c:1392-1394 - `:/ .filt` sets FILTRULE_ABS_PATH.
     let rules = parse_rules(":/ .filt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert!(rules[0].is_abs_path());
@@ -693,7 +693,7 @@ fn parse_dir_merge_abs_path_modifier() {
 
 #[test]
 fn parse_no_prefixes_modifier_on_non_merge_errors() {
-    // upstream: exclude.c:1197-1199 - `-`/`+` require FILTRULE_MERGE_FILE, so a
+    // upstream: exclude.c:1381-1383 - `-`/`+` require FILTRULE_MERGE_FILE, so a
     // plain exclude rule with `-` in its modifiers is invalid.
     let err = parse_rules("-- pattern", Path::new("test")).unwrap_err();
     assert_modifier_rejected_without_echo(&err.to_string(), "-- pattern");
@@ -701,7 +701,7 @@ fn parse_no_prefixes_modifier_on_non_merge_errors() {
 
 #[test]
 fn parse_negate_modifier_on_merge_errors() {
-    // upstream: exclude.c:1191-1196 - `!` is meaningless on a merge default and
+    // upstream: exclude.c:1395-1401 - `!` is meaningless on a merge default and
     // is rejected on merge / dir-merge rules.
     let err = parse_rules(":! .filt", Path::new("test")).unwrap_err();
     assert_modifier_rejected_without_echo(&err.to_string(), ":! .filt");
@@ -900,7 +900,7 @@ fn read_rules_recursive_mixed_with_dir_merge() {
     assert_eq!(rules[1].action(), FilterAction::Include);
 }
 
-// upstream: exclude.c parse_filter_str (rsync-3.4.2) lines 1269-1278 — the
+// upstream: exclude.c:1423-1432 parse_rule_tok() - the
 // `s` and `r` modifiers gate which side a rule fires on. These tests pin
 // down the three-state parsing surface (both, sender-only, receiver-only)
 // and the `prefix_specifies_side` rejection.
@@ -946,7 +946,7 @@ fn parse_both_side_modifiers_collapses_to_both() {
 
 #[test]
 fn parse_rejects_s_modifier_on_side_specific_prefix() {
-    // upstream: exclude.c parse_filter_str sets `prefix_specifies_side` for
+    // upstream: exclude.c parse_rule_tok() sets `prefix_specifies_side` for
     // H/S/P/R prefixes and rejects 's' or 'r' modifiers on them.
     for line in ["Hs foo", "Ss foo", "Ps foo", "Rs foo"] {
         let err = parse_rules(line, Path::new("test")).unwrap_err();
@@ -988,7 +988,7 @@ fn parse_rejects_c_modifier_after_no_prefixes() {
     assert_modifier_rejected_without_echo(&err.message, ":-C");
 }
 
-// upstream: exclude.c:1404-1408 - merge / dir-merge with the `C`
+// upstream: exclude.c:1554-1557 - merge / dir-merge with the `C`
 // (CVS-ignore) modifier and an empty pattern defaults to `.cvsignore`.
 #[test]
 fn parse_colon_c_empty_pattern_defaults_to_cvsignore() {
@@ -1017,7 +1017,7 @@ fn parse_dot_c_empty_pattern_defaults_to_cvsignore() {
     assert!(rules[0].is_cvs_mode());
 }
 
-// upstream: exclude.c:1279-1283 - a `:w` dir-merge sets FILTRULE_WORD_SPLIT on
+// upstream: exclude.c:1433-1437 - a `:w` dir-merge sets FILTRULE_WORD_SPLIT on
 // its FilterRule so the chain later tokenises the merge file on whitespace.
 #[test]
 fn parse_dir_merge_w_modifier_sets_word_split_on_rule() {
@@ -1028,7 +1028,7 @@ fn parse_dir_merge_w_modifier_sets_word_split_on_rule() {
     assert!(rules[0].is_word_split());
 }
 
-// upstream: exclude.c:1499 - word-split tokenises on any whitespace and parses
+// upstream: exclude.c:1772-1773 - word-split tokenises on any whitespace and parses
 // each token as a rule; `_` separates a token's prefix from its pattern.
 #[test]
 fn parse_rules_word_split_splits_on_any_whitespace() {
@@ -1042,14 +1042,14 @@ fn parse_rules_word_split_splits_on_any_whitespace() {
     assert_eq!(rules[2].pattern(), b"*.bak");
 }
 
-// upstream: exclude.c:1211-1213 - a bare token with no valid prefix is an
+// upstream: exclude.c:1362-1363 - a bare token with no valid prefix is an
 // "Unknown filter rule" error, same as the non-word-split parser.
 #[test]
 fn parse_rules_word_split_rejects_bare_token() {
     assert!(parse_rules_word_split("*.log", Path::new("test")).is_err());
 }
 
-// upstream: exclude.c:1122-1133, 1499 - `:w-` tokenises on whitespace with each
+// upstream: exclude.c:1273-1275, 1772-1773 - `:w-` tokenises on whitespace with each
 // token a literal exclude (no prefix dispatch).
 #[test]
 fn parse_rules_no_prefixes_word_split_literal_tokens() {
@@ -1082,7 +1082,7 @@ fn parse_rules_no_prefixes_line_mode_keeps_whole_line() {
     assert_eq!(rules[0].pattern(), b"*.log *.tmp *.bak");
 }
 
-// upstream: exclude.c:1069-1078 rule_strcmp accepts `_` as a keyword separator
+// upstream: exclude.c:1218-1227 rule_strcmp accepts `_` as a keyword separator
 // exactly like a space, so `exclude_*.bak` must parse identically to
 // `exclude *.bak`. Long-form filter files written with `_` separators are a
 // documented rsync convenience and must interoperate.
@@ -1145,7 +1145,7 @@ fn long_form_comma_sender_side_exclude() {
     assert!(!rules[0].applies_to_receiver());
 }
 
-// upstream: exclude.c:1176-1179 consumes a comma immediately after a
+// upstream: exclude.c:1325-1329 consumes a comma immediately after a
 // single-character prefix, so `+,p foo` is the same perishable include as the
 // directly-adjacent `+p foo`.
 #[test]

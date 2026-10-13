@@ -71,6 +71,10 @@ pub enum IoUringDepthError {
 ///     Err(IoUringDepthError::TooLarge(IO_URING_DEPTH_MAX * 2)),
 /// );
 /// ```
+///
+/// # Errors
+///
+/// Returns `IoUringDepthError` when `depth` is zero, above the maximum, or not a power of two.
 pub fn validate_io_uring_depth(depth: u32) -> Result<u32, IoUringDepthError> {
     if depth == 0 {
         return Err(IoUringDepthError::Zero);

@@ -4,11 +4,12 @@ use super::trait_def::CompressionNegotiator;
 use crate::strategy::CompressionAlgorithmKind;
 use crate::strategy::profile::ProtocolCompressionProfile;
 
-/// Default compression negotiator matching upstream rsync 3.4.1 behaviour.
+/// Default compression negotiator for protocol >= 30 peers.
 ///
 /// Advertises algorithms in upstream preference order: zstd > lz4 > zlibx >
 /// zlib > none (with zstd and lz4 conditional on feature flags). Selection
-/// uses the asymmetric client/server rule from `parse_negotiate_str()`.
+/// uses the asymmetric client/server rule described on
+/// [`CompressionNegotiator::select_algorithm`].
 ///
 /// # Example
 ///
@@ -46,8 +47,10 @@ impl CompressionNegotiator for DefaultCompressionNegotiator {
         let supported = self.supported_algorithms();
 
         if is_server {
-            // Server: iterate client's (remote) list, first match in our list wins.
-            // upstream: compat.c:353 `if (best == 1 || am_server) break;`
+            // Server: iterate the client's (remote) list, first match wins. This is
+            // the 3.4.x rule (`if (best == 1 || am_server) break;`). Deviation from
+            // upstream: 3.5.1 compat.c:354 parse_negotiate_str() breaks only on
+            // `best == 1`, so the server picks its own best mutual preference.
             for remote_algo in remote_list {
                 if let Some(kind) = CompressionAlgorithmKind::from_name(remote_algo)
                     && kind.is_available()
@@ -354,7 +357,7 @@ mod tests {
 
     #[test]
     fn negotiation_protocol_version_29_boundary() {
-        // upstream: compat.c:556-563 - last pre-vstring version, fallback zlib.
+        // upstream: compat.c:560-567 - last pre-vstring version, fallback zlib.
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(29),
             CompressionAlgorithmKind::Zlib
@@ -363,7 +366,7 @@ mod tests {
 
     #[test]
     fn negotiation_protocol_version_30_boundary() {
-        // upstream: compat.c:101-102 - first vstring version; zstd preferred.
+        // upstream: compat.c:102-103 - first vstring version; zstd preferred.
         let kind = CompressionAlgorithmKind::for_protocol_version(30);
         #[cfg(feature = "zstd")]
         assert_eq!(kind, CompressionAlgorithmKind::Zstd);

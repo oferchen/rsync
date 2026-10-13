@@ -8,12 +8,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.h:300` - `MSG_DELETED = 101`.
-//! - `io.c:mplex_write()` - header = `(MPLEX_BASE + code) << 24 | len`, so the
+//! - `rsync.h:308` - `MSG_DELETED = 101`.
+//! - `io.c:send_msg()` (io.c:1173) - header = `(MPLEX_BASE + code) << 24 | len`, so the
 //!   tag byte is `7 + 101 = 108 = 0x6C`.
-//! - `log.c:866-869` - `send_msg(MSG_DELETED, fname, len, ...)`; a directory
-//!   bumps `len` to include its trailing NUL (`log.c:867-868`).
-//! - `io.c:1642` - the reader treats a trailing NUL as a directory marker.
+//! - `log.c:913-916` - `send_msg(MSG_DELETED, fname, len, ...)`; a directory
+//!   bumps `len` to include its trailing NUL (`log.c:914-915`).
+//! - `io.c:1822-1824` - the reader treats a trailing NUL as a directory marker.
 
 use std::io::Cursor;
 
@@ -45,7 +45,7 @@ fn golden_msg_deleted_file_frame_exact_bytes() {
 #[test]
 fn golden_msg_deleted_dir_frame_has_trailing_nul() {
     // A deleted directory "bar": upstream bumps len to include the trailing NUL
-    // (log.c:867-868), so the payload is b"bar\0" (len 4). header 0x6C000004,
+    // (log.c:914-915), so the payload is b"bar\0" (len 4). header 0x6C000004,
     // LE [0x04,0x00,0x00,0x6C], then b"bar\0".
     let frame = MessageFrame::new(MessageCode::Deleted, b"bar\0".to_vec()).unwrap();
     let mut bytes = Vec::new();

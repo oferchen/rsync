@@ -7,7 +7,7 @@
 //! compatible pre-release; otherwise the protocol is downgraded by one. This
 //! module mirrors that logic byte-for-byte.
 //!
-//! Upstream reference: `rsync.h:128` (`SUBPROTOCOL_VERSION`), `compat.c:885`
+//! Upstream reference: `rsync.h:128` (`SUBPROTOCOL_VERSION`), `compat.c:896`
 //! (`get_subprotocol_version`), and `compat.c:133` (`check_sub_protocol`).
 
 use super::constants::NEWEST_SUPPORTED_PROTOCOL;
@@ -22,12 +22,12 @@ pub const PROTOCOL_VERSION: u8 = NEWEST_SUPPORTED_PROTOCOL;
 ///
 /// upstream: rsync.h:128 `SUBPROTOCOL_VERSION`. It MUST be `0` for a final,
 /// official release and non-zero only for a pre-release protocol tweak. This
-/// crate ships as a release, so it mirrors upstream 3.4.4's value of `0`.
+/// crate ships as a release, so it mirrors upstream 3.5.1's value of `0`.
 pub const SUBPROTOCOL_VERSION: u8 = 0;
 
 /// Returns the subprotocol version this side advertises for `protocol_version`.
 ///
-/// upstream: compat.c:885 `get_subprotocol_version()`. A release build
+/// upstream: compat.c:896 `get_subprotocol_version()`. A release build
 /// (`SUBPROTOCOL_VERSION == 0`) always advertises `0`; a pre-release build
 /// advertises its subprotocol only while negotiating the newest protocol and
 /// falls back to `0` (final version of the older protocol) otherwise.
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(PROTOCOL_VERSION, 33);
     }
 
-    // upstream: compat.c:885 - a release build advertises 0 at every version.
+    // upstream: compat.c:896 - a release build advertises 0 at every version.
     #[test]
     fn get_subprotocol_version_is_zero_for_release() {
         assert_eq!(get_subprotocol_version(PROTOCOL_VERSION), 0);
@@ -187,7 +187,7 @@ mod tests {
     }
 
     // upstream: compat.c:158-159 - as a release, an equal-protocol pre-release
-    // peer still forces the one-step downgrade so both sides drop to protocol 31.
+    // peer still forces the one-step downgrade below the newest protocol.
     #[test]
     fn release_build_downgrades_against_equal_prerelease_peer() {
         let our_sub = get_subprotocol_version(PROTOCOL_VERSION);

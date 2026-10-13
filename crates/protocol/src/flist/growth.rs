@@ -120,7 +120,7 @@ fn refusal_error(refusal: Refusal, role: ProcessRole) -> io::Error {
             "[{role}] exceeded --max-alloc={} setting (file=flist.c, line=626)",
             effective_max_alloc()
         )),
-        // upstream: flist.c:637-638.
+        // upstream: flist.c:638-640.
         Refusal::TooLarge => {
             malloc_failure(format!("[{role}] file list has grown too large to expand"))
         }
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn small_lists_grow_by_four() {
-        // upstream: flist.c:606-609 - below FLIST_START_LARGE/16 the array
+        // upstream: flist.c:611-614 - below FLIST_START_LARGE/16 the array
         // quadruples.
         let mut list = FlistGrowth::default();
         list.grow(1, usize::MAX).unwrap();
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn int_overflow_is_refused_before_max_alloc() {
-        // upstream: flist.c:597-598,603-604 - past INT_MAX the list is "too
+        // upstream: flist.c:599-600,608-617 - past INT_MAX the list is "too
         // large to expand" whatever --max-alloc allows.
         let mut list = FlistGrowth {
             used: INT_MAX,

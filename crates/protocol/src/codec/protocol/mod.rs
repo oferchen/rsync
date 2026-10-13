@@ -150,8 +150,8 @@ pub trait ProtocolCodec: Send + Sync {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1530` - `legal_len = for_xfer && protocol_version < 29 ? 1 : MAX_RULE_PREFIX-1`
-    /// `exclude.c:1567-1571` - Sender/receiver modifier support gated by protocol >= 29
+    /// `exclude.c:1829` - `legal_len = for_xfer && protocol_version < 29 ? 1 : MAX_RULE_PREFIX-1`
+    /// `exclude.c:1864-1870` - Sender/receiver modifier support gated by protocol >= 29
     fn supports_sender_receiver_modifiers(&self) -> bool {
         self.protocol_version() >= 29
     }
@@ -163,8 +163,8 @@ pub trait ProtocolCodec: Send + Sync {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1350` - `protocol_version >= 30 ? FILTRULE_PERISHABLE : 0`
-    /// `exclude.c:1574` - Perishable modifier gated by protocol >= 30
+    /// `exclude.c:1499` - `protocol_version >= 30 ? FILTRULE_PERISHABLE : 0`
+    /// `exclude.c:1871-1876` - Perishable modifier gated by protocol >= 30
     fn supports_perishable_modifier(&self) -> bool {
         self.protocol_version() >= 30
     }
@@ -175,7 +175,7 @@ pub trait ProtocolCodec: Send + Sync {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1675` - `xflags = protocol_version >= 29 ? 0 : XFLG_OLD_PREFIXES`
+    /// `exclude.c:1974` - `xflags = protocol_version >= 29 ? 0 : XFLG_OLD_PREFIXES`
     fn uses_old_prefixes(&self) -> bool {
         self.protocol_version() < 29
     }
@@ -187,7 +187,7 @@ pub trait ProtocolCodec: Send + Sync {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c` - handle_stats() sends flist times only for protocol >= 29
+    /// `main.c:356 handle_stats()` - sends flist times only for protocol >= 29
     fn supports_flist_times(&self) -> bool {
         self.protocol_version() >= 29
     }

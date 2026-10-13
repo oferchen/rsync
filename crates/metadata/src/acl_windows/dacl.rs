@@ -17,7 +17,7 @@ use windows::Win32::Security::{
     GetSidSubAuthorityCount, InitializeAcl, IsValidSid, LookupAccountNameW, LookupAccountSidW,
     PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE, SidTypeAlias, SidTypeGroup, SidTypeWellKnownGroup,
 };
-// upstream: WinNT.h - ACCESS_ALLOWED_ACE_TYPE is the ACE-type discriminant byte (0x0)
+// Windows SDK WinNT.h - ACCESS_ALLOWED_ACE_TYPE is the ACE-type discriminant byte (0x0)
 // for an allow ACE; in windows-rs 0.62 it lives under SystemServices, not Security.
 use windows::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows::core::{PCWSTR, PWSTR};
@@ -156,7 +156,7 @@ const NO_DESTINATION_SID: &str = "could not be mapped to Windows SIDs";
 /// that struct for exactly these. Object ACEs (types 5-8) interpose an
 /// object GUID before `SidStart` and are named without a principal.
 ///
-/// upstream: WinNT.h - ACCESS_ALLOWED_ACE_TYPE 0x0 .. SYSTEM_ALARM_ACE_TYPE 0x3.
+/// Windows SDK WinNT.h: `ACCESS_ALLOWED_ACE_TYPE` 0x0 .. `SYSTEM_ALARM_ACE_TYPE` 0x3.
 fn ace_type_label(ace_type: u8) -> (&'static str, bool) {
     match ace_type {
         0 => ("allow", true),
@@ -227,9 +227,8 @@ pub(super) fn dacl_to_rsync_acl(pdacl: *mut ACL) -> (RsyncAcl, DroppedAces) {
 
         if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
             // Deny, audit, alarm and object ACEs cannot be expressed in the
-            // POSIX-style rsync wire format. Upstream's cross-platform ACL
-            // transfer is lossy in the same way; the audit record is what
-            // keeps the loss visible.
+            // POSIX-style rsync wire format, so they are dropped; the audit
+            // record is what keeps the loss visible.
             dropped.record_description(match principal {
                 Some((_, Some((rid, _, name)))) => format!(
                     "ACE #{index} ({label} for {}, id {rid})",
@@ -273,14 +272,14 @@ pub(super) fn dacl_to_rsync_acl(pdacl: *mut ACL) -> (RsyncAcl, DroppedAces) {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `get_rsync_acl()` in `acls.c` lines 472-536. The fall-back to
+/// Mirrors `get_rsync_acl()` (`acls.c:586-759`). The fall-back to
 /// `RsyncAcl::from_mode()` matches upstream's behaviour when no extended
 /// ACL is available.
 pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
     if is_default {
-        // upstream: acls.c:472-486 - default ACLs apply to directories on
-        // POSIX systems only. NTFS has inherited ACEs but no separate
-        // "default ACL" wire entry.
+        // upstream: acls.c:send_acl() sends a default ACL only for
+        // directories (acls.c:892-897), and only POSIX systems have one.
+        // NTFS has inherited ACEs but no separate "default ACL" wire entry.
         return RsyncAcl::new();
     }
 
@@ -320,7 +319,7 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `set_acl()` in `acls.c` lines 930-1001 and the receiver flow
+/// Mirrors `set_acl()` (`acls.c:1423-1426`) and the receiver flow
 /// that consumes the ACL cache populated during file-list reception.
 #[allow(clippy::module_name_repetitions)]
 pub fn apply_acls_from_cache(
@@ -386,7 +385,7 @@ pub fn store_acls_via_fake_super(
 ///
 /// Windows lacks POSIX default ACLs, so this returns `ACCESSPERMS & ~umask`
 /// without emitting `--debug=ACL` output. Mirrors upstream's `#ifdef
-/// SUPPORT_ACLS` guard at `generator.c:1337-1340`, which only consults the
+/// SUPPORT_ACLS` guard at `generator.c:1738-1741`, which only consults the
 /// directory's default ACL on POSIX targets.
 #[allow(clippy::module_name_repetitions)]
 #[must_use]
@@ -400,7 +399,7 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `change_sacl_perms()` in `acls.c` lines 857-933.
+/// Mirrors `change_sacl_perms()` (`acls.c:1087-1162`).
 pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
     let mut result = acl.clone();
     if let Some(mode) = mode {
@@ -502,7 +501,8 @@ pub(super) fn resolve_acl_aces(acl: &RsyncAcl) -> (Vec<Vec<u8>>, Vec<u32>, Dropp
 /// Unmappable ACEs are dropped and surfaced through a per-file audit
 /// diagnostic naming each lost principal (see [`resolve_acl_aces`]); when no
 /// entry survives the mapping, no DACL is written so the destination retains
-/// its inherited permissions, matching upstream's lossy semantics.
+/// its inherited permissions. Deviation from upstream: upstream applies every
+/// named entry, keeping an unmapped id verbatim (`uidlist.c:281-282`).
 pub(super) fn apply_rsync_acl_to_path(path: &Path, acl: &RsyncAcl) -> Result<(), MetadataError> {
     if acl.names.is_empty() {
         return Ok(());

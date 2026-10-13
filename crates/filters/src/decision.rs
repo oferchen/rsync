@@ -15,7 +15,7 @@ use crate::{
 ///
 /// - `include_exclude` / `protect_risk` govern path (file) decisions.
 /// - `xattr` holds `x`-modifier rules that govern xattr-name decisions only,
-///   kept separate because upstream `exclude.c:914` never matches an
+///   kept separate because upstream `exclude.c:1013` never matches an
 ///   `x`-modifier rule against a path nor an ordinary rule against an xattr
 ///   name.
 #[derive(Debug, Default)]
@@ -31,7 +31,7 @@ impl FilterSetInner {
     /// Evaluates the xattr chain first-match-wins and returns the matching
     /// rule's include/exclude verdict; with no match the name is included by
     /// default. Mirrors upstream `exclude.c:name_is_excluded(name,
-    /// NAME_IS_XATTR, ALL_FILTERS)` consulted from `xattrs.c:250`.
+    /// NAME_IS_XATTR, ALL_FILTERS)` consulted from `xattrs.c:263`.
     pub(crate) fn xattr_name_allowed(&self, name: &str, side: XattrSide) -> bool {
         for rule in &self.xattr {
             // Side elision precedes the pattern test, as upstream's
@@ -57,7 +57,7 @@ impl FilterSetInner {
     /// - `Transfer` checks sender-side include/exclude rules.
     /// - `Deletion` checks receiver-side rules. Perishable rules are honoured
     ///   here because the top-level delete scan runs with `ignore_perishable`
-    ///   unset (upstream delete.c:147); they are only skipped inside a
+    ///   unset (upstream delete.c:208); they are only skipped inside a
     ///   directory being wholly removed, which the receiver deletes en masse
     ///   without re-filtering.
     ///
@@ -82,9 +82,9 @@ impl FilterSetInner {
     /// Descendants are gated per-rule on `directory_only`, which is the whole
     /// point of this predicate. Upstream's daemon parser rewrites a
     /// directory-form rule to the `pattern/***` wildcard via `XFLG_DIR2WILD3`
-    /// (exclude.c:307-313), so `- /excluded/` matches both the directory and
+    /// (exclude.c:308-314), so `- /excluded/` matches both the directory and
     /// everything beneath it, while a bare `- /excluded` stays an exact
-    /// `strcmp` (exclude.c:1002 `rule_matches()`) that matches the directory
+    /// `strcmp` (exclude.c:1067-1069 `rule_matches()`) that matches the directory
     /// alone. oc collapses `pattern/***` back to a `directory_only` stem plus
     /// synthetic `pattern/**` descendant matchers, so `directory_only` is
     /// precisely the record of "this rule was written in directory form" - and
@@ -202,7 +202,7 @@ impl FilterSetInner {
             // rule; the parse that supplied it is long finished. Without the
             // redaction a peer-chosen per-directory merge file's contents are
             // echoed at plain `-vv`, because upstream sets this trace's level
-            // to 1 for a sender or generator (`exclude.c:1093`).
+            // to 1 for a sender or generator (`exclude.c:1087`).
             let pattern_text = String::from_utf8_lossy(&rule.pattern);
             let shown = rule.source.as_source().rule_text(&pattern_text);
             if allowed {
@@ -257,7 +257,7 @@ impl FilterSetInner {
             }
         }
 
-        // upstream: exclude.c:1038 check_filter() walks ONE list first-match-wins
+        // upstream: exclude.c:1192-1211 check_filter() walks ONE list first-match-wins
         // and returns `ent->rflags & FILTRULE_INCLUDE ? 1 : -1`. oc partitions
         // that list into the include/exclude and protect/risk chains, so combine
         // their two receiver-side first-matches back into a single source-ordered
@@ -285,7 +285,7 @@ impl FilterSetInner {
     /// against global rules by source order. Descendant matchers are suppressed
     /// (`check_descendants == false`), matching the traversal transfer path.
     ///
-    /// upstream: exclude.c:1046-1050 check_filter()
+    /// upstream: exclude.c:1195-1200 check_filter()
     pub(crate) fn transfer_match_order(&self, path: &Path, is_dir: bool) -> Option<usize> {
         first_matching_rule(
             &self.include_exclude,
@@ -309,7 +309,7 @@ impl FilterSetInner {
     /// chain to interleave a `dir-merge` scope against global rules by source
     /// order on the deletion path.
     ///
-    /// upstream: exclude.c:1038 check_filter()
+    /// upstream: exclude.c:1187 check_filter()
     pub(crate) fn deletion_match_order(&self, path: &Path, is_dir: bool) -> Option<usize> {
         let include_exclude = first_matching_rule(
             &self.include_exclude,
@@ -359,9 +359,9 @@ impl FilterSetInner {
             DecisionContext::Transfer => |rule| rule.applies_to_sender,
             DecisionContext::Deletion => |rule| rule.applies_to_receiver,
         };
-        // upstream: exclude.c:1044 check_filter() only skips perishable rules
+        // upstream: exclude.c:1193 check_filter() only skips perishable rules
         // when `ignore_perishable` is set, which happens exclusively inside a
-        // directory being wholly deleted (delete.c:147). The receiver's
+        // directory being wholly deleted (delete.c:208). The receiver's
         // top-level delete scan runs with `ignore_perishable == 0`, so a
         // perishable rule still matches (and therefore protects) a candidate.
         let include_perishable = true;
@@ -434,7 +434,7 @@ impl FilterSetInner {
 ///   matchers so an excluded directory protects its children from deletion
 ///   (upstream subtree-pruning semantic). Kept off the transfer path so a
 ///   directory-only unanchored wildcard like `foo/*/` does not over-exclude
-///   files inside subdirectories (#6015).
+///   files inside subdirectories.
 ///
 /// # Returns
 ///
@@ -469,7 +469,7 @@ where
 /// source-ordered verdict upstream's `check_filter()` produces for deletion.
 ///
 /// Upstream keeps every rule in one list and returns on the first match with
-/// `rflags & FILTRULE_INCLUDE ? 1 : -1` (exclude.c:1060). oc splits the list
+/// `rflags & FILTRULE_INCLUDE ? 1 : -1` (exclude.c:1209). oc splits the list
 /// into two chains, so the earlier-defined of the two first-matches (by
 /// [`CompiledRule::order`]) is the one upstream would have hit first. A rule
 /// carrying the include flag (`+` include or `R` risk) makes the entry
@@ -574,7 +574,7 @@ where
 ///
 /// Transfer checks use sender-side rules; Deletion checks use receiver-side
 /// rules. Both honour perishable rules: the top-level delete scan runs with
-/// upstream's `ignore_perishable` unset (delete.c:147), so a perishable rule
+/// upstream's `ignore_perishable` unset (delete.c:208), so a perishable rule
 /// still protects a matching destination entry from `--delete`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecisionContext {
@@ -845,8 +845,8 @@ mod tests {
 
     /// Regression for the `exclude` / `exclude-lsh` over-deletion: a
     /// directory-only unanchored wildcard exclude (`foo/*/`) must protect the
-    /// children of the matched directory from deletion on the receiver. After
-    /// #6015 suppressed the synthesised `foo/*/**` descendant for BOTH the
+    /// children of the matched directory from deletion on the receiver. When
+    /// the synthesised `foo/*/**` descendant was suppressed for BOTH the
     /// transfer and deletion paths, `foo/sub/file1` fell through to the
     /// default "allow deletion" and was over-deleted under `--delete-during`.
     /// The deletion-only descendant matcher restores child protection while
@@ -887,12 +887,12 @@ mod tests {
         );
     }
 
-    /// #6015 guard: the deletion-only descendant for a directory-only
+    /// Guard: the deletion-only descendant for a directory-only
     /// unanchored wildcard exclude (`foo/*/`) must NOT leak into the transfer
     /// path. Upstream emits no `foo/*/**` transfer rule, so `foo/sub/file1`
     /// stays included for transfer (it must match its own rules, and there is
-    /// none). Re-exposing the descendant here would re-trip the over-exclusion
-    /// #6015 fixed (`complex_nested_patterns`).
+    /// none). Re-exposing the descendant here would reintroduce the transfer
+    /// over-exclusion (`complex_nested_patterns`).
     #[test]
     fn deletion_dir_only_wildcard_does_not_affect_transfer() {
         let mut inner = FilterSetInner::default();

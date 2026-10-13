@@ -38,9 +38,9 @@
 //!   `if (!daemon_config_filter_file)`: a PER-DIRECTORY merge is confined, while
 //!   the daemon's own `filter` / `include from` / `exclude from` parameters are
 //!   deliberately EXEMPT. The two directions are opposite on purpose.
-//! - `rsync-3.5.1/syscall.c:388-390` - a daemon seeds `abspath` from
+//! - `rsync-3.5.1/syscall.c:388-394` - a daemon seeds `abspath` from
 //!   `module_dir`, which is what `ModuleState.root` carries here.
-//! - `rsync-3.5.1/exclude.c:1682` - `parse_filter_file()` runs without
+//! - `rsync-3.5.1/exclude.c:912-913, 1703-1722` - `parse_filter_file()` runs without
 //!   `XFLG_FATAL_ERRORS`, so an unopenable merge file is skipped.
 
 #![cfg(unix)]
@@ -121,7 +121,7 @@ fn a_merge_file_symlinked_out_of_the_module_is_not_read() {
 
     let _session = serve_module(&fixture.module);
     let mut chain = dir_merge_chain();
-    // A refused merge file is skipped rather than fatal (exclude.c:1682), so
+    // A refused merge file is skipped rather than fatal (exclude.c:1703-1722), so
     // this must not error - the divergence shows up in the match below.
     let guard = chain
         .enter_directory(&fixture.sub)

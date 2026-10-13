@@ -10,7 +10,7 @@
 //! is peeled first, the `/***` stays in the pattern, and the directory check
 //! still fires before the wildmatch. oc folds both suffixes into one
 //! `directory_only` stem, and a negated WILD3 rule consults its descendant
-//! matcher so that `-! /?*/***` keeps `II/0` (#7907). Without the separate
+//! matcher so that `-! /?*/***` keeps `II/0`. Without the separate
 //! written-slash record, the same reach made `-!p /?*/***/` keep `II/0` too,
 //! where upstream excludes it.
 //!
@@ -65,7 +65,7 @@ const ORACLE: &[(&str, [bool; 5])] = &[
     // The crash rule. The file `II/0` is excluded even though `?*/***` would
     // wildmatch it: the directory check fires first.
     ("-!p /?*/***/", [false, true, true, false, true]),
-    // Same rule without the trailing `/` (#7907): no FILTRULE_DIRECTORY, so the
+    // Same rule without the trailing `/`: no FILTRULE_DIRECTORY, so the
     // file IS wildmatched, matches, and negate keeps it. The pair isolates the
     // written slash as the only difference.
     ("-!p /?*/***", [true, true, true, false, true]),

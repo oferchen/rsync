@@ -8,7 +8,7 @@
 //! Flag bit positions from rsync.h (protocol 28+):
 //! - Bits 0-7: Primary flags (first byte/varint)
 //! - Bits 8-15: Extended flags (second byte, protocol 28+)
-//! - Bits 16+: Additional extended flags (protocol 30+)
+//! - Bits 16+: Varint-only flags (need `CF_VARINT_FLIST_FLAGS`, rsync.h:70)
 
 #![allow(dead_code)] // Many constants reserved for future protocol features
 
@@ -163,7 +163,7 @@ pub const XMIT_SAME_HIGH_RDEV: u8 = XMIT_SAME_RDEV_MAJOR;
 /// entry on the wire. These flags control which metadata fields follow and
 /// which can be reconstructed from the previous entry's state.
 ///
-/// // upstream: rsync.h XMIT_* constants, flist.c:send_file_entry()/recv_file_entry()
+/// upstream: rsync.h XMIT_* constants, flist.c:send_file_entry()/recv_file_entry()
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct FileFlags {
     /// First byte of flags (bits 0-7).

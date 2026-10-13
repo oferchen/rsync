@@ -55,9 +55,7 @@ const SCALES: &[usize] = &[100_000, 250_000, 500_000];
 /// (uid/gid ~8 bytes), and pooled string storage (~44 bytes average).
 const UPSTREAM_BYTES_PER_ENTRY: f64 = 76.8;
 
-// ---------------------------------------------------------------------------
 // Path generators
-// ---------------------------------------------------------------------------
 
 /// Flat paths: `dir_NNNNN/file_NNNNN.dat`.
 ///
@@ -96,9 +94,7 @@ fn shared_path(i: usize) -> PathBuf {
     ))
 }
 
-// ---------------------------------------------------------------------------
 // Synthetic metadata
-// ---------------------------------------------------------------------------
 
 /// Returns a realistic file size for entry `i`.
 ///
@@ -127,9 +123,7 @@ fn synthetic_mode(i: usize) -> u32 {
     }
 }
 
-// ---------------------------------------------------------------------------
 // RSS measurement
-// ---------------------------------------------------------------------------
 
 /// Returns the current resident set size in bytes.
 ///
@@ -209,9 +203,7 @@ fn linux_rss_bytes() -> usize {
     0
 }
 
-// ---------------------------------------------------------------------------
 // Builder
-// ---------------------------------------------------------------------------
 
 /// Builds a `Vec<FileEntry>` with realistic metadata and dirname interning.
 ///
@@ -237,9 +229,7 @@ fn build_entries(count: usize, path_fn: fn(usize) -> PathBuf) -> Vec<FileEntry> 
     entries
 }
 
-// ---------------------------------------------------------------------------
 // RSS regression report
-// ---------------------------------------------------------------------------
 
 /// Measures the RSS delta from allocating `count` entries with the given
 /// path distribution, then prints a detailed per-entry overhead report.
@@ -293,9 +283,7 @@ fn measure_and_report(label: &str, count: usize, path_fn: fn(usize) -> PathBuf) 
     (rss_delta, entry_count)
 }
 
-// ---------------------------------------------------------------------------
 // Criterion benchmarks
-// ---------------------------------------------------------------------------
 
 /// Benchmark: flist construction throughput across scales and distributions.
 ///

@@ -100,8 +100,8 @@ pub struct FileListWriter {
     /// Against a proto-30 / pre-3.1 peer that lacks the capability, targets are
     /// sent as raw local bytes even while filenames are transcoded.
     ///
-    /// upstream: compat.c:765-767 `sender_symlink_iconv = iconv_opt && (...)`,
-    /// applied at flist.c:1867.
+    /// upstream: compat.c:776-778 `sender_symlink_iconv = iconv_opt && (...)`,
+    /// applied at flist.c:2028.
     symlink_iconv: bool,
     /// Cached: whether varint flag encoding is enabled (computed once at construction).
     use_varint_flags: bool,
@@ -128,13 +128,13 @@ pub struct FileListWriter {
     /// Whether to write user/group name strings for named ACL entries.
     ///
     /// Upstream writes ACL names only when `inc_recurse && !numeric_ids`
-    /// (`acls.c:597`); otherwise the receiver remaps ids through the id-list.
+    /// (`acls.c:827`); otherwise the receiver remaps ids through the id-list.
     acl_send_names: bool,
     /// Whether to emit inline `XMIT_USER_NAME_FOLLOWS`/`XMIT_GROUP_NAME_FOLLOWS`
     /// owner names in each file entry.
     ///
     /// Upstream sets these flags only under incremental recursion
-    /// (`flist.c:706-707,716-717`: `if (inc_recurse && user_name)`). Without
+    /// (`flist.c:789-790,799-800`: `if (inc_recurse && user_name)`). Without
     /// `inc_recurse` the names ride exclusively in the trailing id-list
     /// (`send_id_lists`/`recv_id_list`, uidlist.c), so emitting them inline as
     /// well diverges from upstream's wire encoding. Defaults to `false`; the
@@ -282,7 +282,7 @@ impl FileListWriter {
     /// Sets whether user/group name strings are written for named ACL entries.
     ///
     /// Upstream sends ACL names only when `inc_recurse && !numeric_ids`
-    /// (`acls.c:597`); otherwise the receiver remaps ids through the id-list.
+    /// (`acls.c:827`); otherwise the receiver remaps ids through the id-list.
     #[inline]
     #[must_use]
     pub const fn with_acl_send_names(mut self, send_names: bool) -> Self {
@@ -294,7 +294,7 @@ impl FileListWriter {
     /// `XMIT_GROUP_NAME_FOLLOWS`) are emitted per file entry.
     ///
     /// Upstream sets these flags only under incremental recursion
-    /// (`flist.c:706-707,716-717`: `if (inc_recurse && user_name)`). Callers
+    /// (`flist.c:789-790,799-800`: `if (inc_recurse && user_name)`). Callers
     /// pass the negotiated `inc_recurse` value. When `false`, owner names are
     /// carried solely by the trailing id-list (`send_id_lists`), matching
     /// upstream's non-incremental encoding.
@@ -309,7 +309,7 @@ impl FileListWriter {
     ///
     /// Used to feed named-entry user/group ids into the shared uid/gid id-list
     /// before it is transmitted, mirroring upstream `add_uid`/`add_gid` in
-    /// `send_ida_entries` (`acls.c:592-595`).
+    /// `send_ida_entries` (`acls.c:821-825`).
     #[inline]
     #[must_use]
     pub const fn acl_cache(&self) -> &AclCache {
@@ -381,7 +381,7 @@ impl FileListWriter {
     /// `--iconv`. When `false`, symlink targets are written as raw local bytes
     /// even if a filename converter is attached.
     ///
-    /// upstream: compat.c:765-767 `sender_symlink_iconv`, applied at flist.c:1867.
+    /// upstream: compat.c:776-778 `sender_symlink_iconv`, applied at flist.c:2028.
     #[inline]
     #[must_use]
     pub const fn with_symlink_iconv(mut self, symlink_iconv: bool) -> Self {
@@ -426,7 +426,7 @@ impl FileListWriter {
     ///
     /// Abbreviation is a protocol 30+ feature: upstream only skips metadata
     /// after writing `first_hlink_ndx` (`goto the_end`), and `first_hlink_ndx`
-    /// is set only when `protocol_version >= 30` (flist.c:742-812). For
+    /// is set only when `protocol_version >= 30` (flist.c:823-852). For
     /// protocols 28-29 hardlinks are identified by trailing `(dev, ino)` pairs
     /// and every entry carries full metadata; abbreviating a follower there
     /// desyncs the receiver (it still reads full metadata + dev/ino).
@@ -507,7 +507,8 @@ impl FileListWriter {
                 .take()
                 .unwrap_or_else(|| (RsyncAcl::from_mode(entry.mode()), None));
 
-            // upstream: acls.c:657-658 - strip base entries derivable from mode
+            // upstream: acls.c:142,888 rsync_acl_strip_perms() - strip base entries
+            // derivable from mode
             access_acl.strip_perms_for_send(entry.mode());
 
             send_acl(
@@ -530,7 +531,7 @@ impl FileListWriter {
             let cached_index = self.xattr_cache.find(&list);
             send_xattr(writer, &list, cached_index, self.checksum_seed)?;
             if cached_index.is_none() {
-                // upstream: xattrs.c:538 - rsync_xal_store() adds to cache
+                // upstream: xattrs.c:566 - rsync_xal_store() adds to cache
                 let _ = self.xattr_cache.store(list);
             }
         }

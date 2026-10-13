@@ -1,4 +1,4 @@
-//! Integration tests for the shared io_uring ring (issue #1874).
+//! Integration tests for the shared io_uring ring.
 //!
 //! Covers:
 //!

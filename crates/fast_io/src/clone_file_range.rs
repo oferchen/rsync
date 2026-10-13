@@ -11,7 +11,7 @@
 //! Linux 4.5 (`ENOSYS`), the wrapper returns `Ok(false)` so the caller can
 //! fall back to `copy_file_range(2)` or read+write.
 //!
-//! Upstream rsync 3.4.1 does not use `FICLONERANGE`. This is an oc-rsync-only
+//! Upstream rsync 3.5.1 does not use `FICLONERANGE`. This is an oc-rsync-only
 //! optimization that produces byte-identical output and changes no protocol
 //! behavior - it is invisible on the wire.
 //!

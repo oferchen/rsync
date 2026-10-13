@@ -606,7 +606,7 @@ pub fn linkat_via_sandbox_or_fallback(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:815` `do_link_at()` - resolves the parent of each
+/// - `rsync-3.5.1/syscall.c:1076` `do_link_at()` - resolves the parent of each
 ///   side and issues `linkat` against the resulting dirfd.
 /// - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk that
 ///   refuses an absolute symlink target.
@@ -679,7 +679,7 @@ pub fn confined_link_anonymous(staged: BorrowedFd<'_>, root: &Path, dest: &Path)
 /// # Upstream Reference
 ///
 /// - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk.
-/// - `rsync-3.5.0/receiver.c` - upstream's always-stage-then-rename shape.
+/// - `rsync-3.5.1/receiver.c` - upstream's always-stage-then-rename shape.
 ///
 /// # Errors
 ///

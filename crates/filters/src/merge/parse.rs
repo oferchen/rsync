@@ -72,20 +72,20 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
 /// Parses a per-dir merge file under FILTRULE_NO_PREFIXES semantics.
 ///
 /// When a dir-merge rule carries the `-` or `+` modifier, upstream
-/// `exclude.c:1116-1133 parse_rule_tok` skips the entire short-prefix and
+/// `exclude.c:1273-1275 parse_rule_tok` skips the entire short-prefix and
 /// long-form dispatch and consumes each non-empty, non-comment line as a
 /// literal pattern. Lines become exclude rules by default; when `force_include`
 /// is set (the `+` variant), they become include rules instead.
 ///
 /// When `cvs_ignore` is true (FILTRULE_CVS_IGNORE inherited from the
 /// template), a bare `!` line tentatively clears the list, matching upstream's
-/// FILTRULE_CLEAR_LIST escape hatch at `exclude.c:1123-1124`. Without
+/// FILTRULE_CLEAR_LIST escape hatch at `exclude.c:1274-1275`. Without
 /// CVS_IGNORE, `!` is just another literal pattern.
 ///
 /// When `word_split` is true (the `w` modifier, e.g. `:w-`), the whole file is
 /// tokenised on any whitespace instead of one pattern per line, mirroring
-/// upstream's `parse_filter_file()` token loop (`exclude.c:1499`). Comments are
-/// not stripped in word-split mode (`exclude.c:1514`), so every token becomes a
+/// upstream's `parse_filter_file()` token loop (`exclude.c:1772-1773`). Comments are
+/// not stripped in word-split mode (`exclude.c:1806`), so every token becomes a
 /// literal pattern.
 pub(crate) fn parse_rules_no_prefixes(
     content: &str,
@@ -102,7 +102,7 @@ pub(crate) fn parse_rules_no_prefixes(
     let source = RuleSource::FileWordSplit { name: &name };
 
     let mut push_token = |token: &str| {
-        // upstream: exclude.c:1123-1124 - when FILTRULE_CVS_IGNORE is set on
+        // upstream: exclude.c:1274-1275 - when FILTRULE_CVS_IGNORE is set on
         // the template, a bare `!` becomes FILTRULE_CLEAR_LIST. Without
         // CVS_IGNORE the `!` is taken literally per the no-prefixes contract.
         let rule = if cvs_ignore && token == "!" {
@@ -121,8 +121,8 @@ pub(crate) fn parse_rules_no_prefixes(
     };
 
     if word_split {
-        // upstream: exclude.c:1499 - word_split splits on any whitespace and
-        // parses every non-empty token; comments are not skipped (line 1514).
+        // upstream: exclude.c:1772-1773 - word_split splits on any whitespace and
+        // parses every non-empty token; comments are not skipped (line 1806).
         for token in content.split_whitespace() {
             push_token(token);
         }
@@ -148,9 +148,9 @@ pub(crate) fn parse_rules_no_prefixes(
 /// `w` modifier) but not FILTRULE_NO_PREFIXES.
 ///
 /// Upstream `parse_filter_file()` tokenises the file on any whitespace when
-/// word-split is active (`exclude.c:1499`) and runs each non-empty token
+/// word-split is active (`exclude.c:1772-1773`) and runs each non-empty token
 /// through the normal rule parser; comments are not stripped in this mode
-/// (`exclude.c:1514`). A token that is not a valid rule (for example a bare
+/// (`exclude.c:1806`). A token that is not a valid rule (for example a bare
 /// pattern with no `-`/`+` prefix) is an error, matching upstream's
 /// `parse_rule_tok()` "Unknown filter rule" / "unexpected end of filter rule".
 pub(crate) fn parse_rules_word_split(
@@ -174,7 +174,7 @@ pub(crate) fn parse_rules_word_split(
 
 /// Modifiers parsed from a rule prefix.
 ///
-/// These mirror upstream rsync's rule modifiers from `exclude.c` (lines 1220-1288).
+/// These mirror upstream rsync's rule modifiers from `exclude.c` (lines 1365-1443).
 /// Modifiers appear between the action character and the pattern, e.g., `-!ps pattern`.
 ///
 /// # Modifier Characters
@@ -194,7 +194,7 @@ pub(crate) fn parse_rules_word_split(
 /// | `-` | `no_prefixes` | Merged lines are literal excludes (merge rules only) |
 /// | `+` | `no_prefixes`+`no_prefixes_include` | Merged lines are literal includes (merge rules only) |
 ///
-/// upstream: exclude.c:1256-1259 - the `e` modifier maps to
+/// upstream: exclude.c:1410-1414 - the `e` modifier maps to
 /// `FILTRULE_EXCLUDE_SELF` and is valid only on a merge-file rule
 /// (`FILTRULE_MERGE_FILE`); on any other rule upstream jumps to `invalid`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -219,7 +219,7 @@ pub(crate) struct RuleModifiers {
 impl RuleModifiers {
     /// Applies modifiers to a filter rule.
     pub(crate) fn apply(self, rule: FilterRule) -> FilterRule {
-        // upstream: exclude.c:1248-1254 - the `C` modifier on a merge/dir-merge
+        // upstream: exclude.c:1402-1409 - the `C` modifier on a merge/dir-merge
         // rule implicitly sets FILTRULE_NO_INHERIT (alongside NO_PREFIXES,
         // WORD_SPLIT, CVS_IGNORE). Mirror that here so `:C .cvsignore` rules
         // do not propagate into descendant directories.
@@ -262,7 +262,7 @@ impl RuleModifiers {
 /// upstream's `invalid:` label rather than silently treating it as the start of
 /// the pattern.
 ///
-/// upstream: exclude.c:1215-1289 - the modifier loop and its `invalid:` label.
+/// upstream: exclude.c:1365-1443 - the modifier loop and its `invalid:` label.
 pub(crate) fn parse_modifiers<'a>(
     s: &'a str,
     is_merge: bool,
@@ -276,7 +276,7 @@ pub(crate) fn parse_modifiers<'a>(
     for (idx, ch) in s.char_indices() {
         match ch {
             '!' => {
-                // upstream: exclude.c:1191-1196 - negation is meaningless as a
+                // upstream: exclude.c:1395-1401 - negation is meaningless as a
                 // merge-file default, so `!` on a merge rule is invalid.
                 if is_merge {
                     return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
@@ -284,7 +284,7 @@ pub(crate) fn parse_modifiers<'a>(
                 mods.negate = true;
             }
             'p' => mods.perishable = true,
-            // upstream: exclude.c:1269-1277 - `s`/`r` are invalid when the rule
+            // upstream: exclude.c:1423-1432 - `s`/`r` are invalid when the rule
             // prefix already binds a side (H/S sender, P/R receiver), i.e.
             // `prefix_specifies_side`.
             's' => {
@@ -300,7 +300,7 @@ pub(crate) fn parse_modifiers<'a>(
                 mods.receiver_only = true;
             }
             'x' => mods.xattr_only = true,
-            // upstream: exclude.c:1256-1260 - `e` (FILTRULE_EXCLUDE_SELF) is
+            // upstream: exclude.c:1410-1414 - `e` (FILTRULE_EXCLUDE_SELF) is
             // valid only on a merge-file rule; on any other rule upstream
             // jumps to `invalid`.
             'e' => {
@@ -309,7 +309,7 @@ pub(crate) fn parse_modifiers<'a>(
                 }
                 mods.exclude_self = true;
             }
-            // upstream: exclude.c:1261-1264 - `n` (FILTRULE_NO_INHERIT) is
+            // upstream: exclude.c:1415-1419 - `n` (FILTRULE_NO_INHERIT) is
             // valid only on a merge-file rule; on any other rule upstream
             // jumps to `invalid`.
             'n' => {
@@ -318,7 +318,7 @@ pub(crate) fn parse_modifiers<'a>(
                 }
                 mods.no_inherit = true;
             }
-            // upstream: exclude.c:1279-1283 - `w` (FILTRULE_WORD_SPLIT) is
+            // upstream: exclude.c:1433-1437 - `w` (FILTRULE_WORD_SPLIT) is
             // valid only on a merge-file rule; on any other rule upstream
             // jumps to `invalid`.
             'w' => {
@@ -336,9 +336,9 @@ pub(crate) fn parse_modifiers<'a>(
                 }
                 mods.cvs_mode = true;
             }
-            // upstream: exclude.c:1215-1216 - `/` sets FILTRULE_ABS_PATH.
+            // upstream: exclude.c:1392-1394 - `/` sets FILTRULE_ABS_PATH.
             '/' => mods.abs_path = true,
-            // upstream: exclude.c:1197-1213 - `-`/`+` set FILTRULE_NO_PREFIXES
+            // upstream: exclude.c:1381-1391 - `-`/`+` set FILTRULE_NO_PREFIXES
             // and are valid only on a merge-file rule that has not already set
             // the flag; `+` additionally sets FILTRULE_INCLUDE.
             '-' => {
@@ -355,9 +355,9 @@ pub(crate) fn parse_modifiers<'a>(
                 mods.no_prefixes_include = true;
             }
             ' ' | '_' => {
-                // upstream: exclude.c:1290-1291 - after the modifier loop stops
+                // upstream: exclude.c:1444-1445 - after the modifier loop stops
                 // at the first separator, exactly one separator is consumed
-                // (`if (*s) s++`). The pattern length is then strlen (line 1313),
+                // (`if (*s) s++`). The pattern length is then strlen (line 1465),
                 // so any further leading/trailing whitespace stays in the
                 // pattern verbatim. Do not trim the remainder.
                 let remainder = &s[idx + ch.len_utf8()..];
@@ -379,7 +379,7 @@ pub(crate) fn parse_modifiers<'a>(
 /// relative to the whole rule string, where the action character is position 0,
 /// so the reported position is `idx + 1`.
 ///
-/// upstream: exclude.c:1180-1184 - `rprintf(FERROR, "invalid modifier '%c' at
+/// upstream: exclude.c:1372-1380 - `rprintf(FERROR, "invalid modifier '%c' at
 /// position %d in filter rule: %s\n", *s, (int)(s - *rulestr_ptr), *rulestr_ptr)`.
 fn invalid_modifier(
     ch: char,
@@ -454,7 +454,7 @@ impl ShortFormAction {
 /// `Ok(None)` if no prefix matched, or `Err` if a recognised prefix was paired
 /// with an invalid modifier (e.g. `Hr`, `Sr`, `Ps`, `Rs`).
 ///
-/// upstream: exclude.c:parse_filter_str() - short-form prefix handling
+/// upstream: exclude.c:1325-1364 parse_rule_tok() - short-form prefix handling
 fn try_parse_short_form(
     line: &str,
     source_path: &Path,
@@ -480,7 +480,7 @@ fn try_parse_short_form(
         return Ok(None);
     };
 
-    // upstream: exclude.c:1176-1179 - in the default (single-character prefix)
+    // upstream: exclude.c:1325-1329 - in the default (single-character prefix)
     // case, a comma immediately after the prefix is consumed as a separator
     // (`if (s[1] == ',') s++;`) so the modifier loop begins after it. This lets
     // `+,x pattern` be written as an equivalent of `+x pattern`. Only the comma
@@ -488,7 +488,7 @@ fn try_parse_short_form(
     // invalid modifier, exactly as upstream reports.
     let rest = rest.strip_prefix(',').unwrap_or(rest);
 
-    // upstream: exclude.c:1136 - `prefix_specifies_side` is set for the H/S
+    // upstream: exclude.c:1345-1358 - `prefix_specifies_side` is set for the H/S
     // (sender) and P/R (receiver) prefixes, gating the `s`/`r` modifiers.
     let prefix_specifies_side = matches!(prefix_char, 'H' | 'S' | 'P' | 'R');
     let (mods, pattern) = parse_modifiers(
@@ -500,7 +500,7 @@ fn try_parse_short_form(
         line_num,
     )?;
     if pattern.is_empty() {
-        // upstream: exclude.c:1404-1408 - a merge / dir-merge rule with the
+        // upstream: exclude.c:1554-1557 - a merge / dir-merge rule with the
         // `C` (CVS-ignore) modifier and an empty pattern defaults to the
         // filename `.cvsignore`. Without `C`, an empty pattern remains
         // unrecognised here and falls through to long-form parsing.
@@ -511,9 +511,9 @@ fn try_parse_short_form(
         return Ok(None);
     }
 
-    // upstream: exclude.c:1214-1287 `parse_rule_tok` applies the parsed modifiers
+    // upstream: exclude.c:1365-1443 `parse_rule_tok` applies the parsed modifiers
     // to every rule prefix, including a plain merge (`.`): the merge-file
-    // modifiers are gated on `FILTRULE_MERGE_FILE`, which `.` sets (exclude.c:1186)
+    // modifiers are gated on `FILTRULE_MERGE_FILE`, which `.` sets (exclude.c:1337-1338)
     // just as `:` does. Dropping them for `.` silently ignored `C`, `w`, `n`, `e`,
     // side restrictions and anchoring on plain merges.
     let rule = action.to_rule(pattern);
@@ -535,11 +535,11 @@ fn is_c_isspace(ch: char) -> bool {
 /// if no keyword matched, or `Err` if a keyword was followed by a comma and an
 /// invalid modifier.
 ///
-/// upstream: exclude.c:1069-1078 rule_strcmp - a keyword matches only when it is
+/// upstream: exclude.c:1218-1227 rule_strcmp - a keyword matches only when it is
 /// followed by one of the accepted separators: whitespace, `_`, `,`, or the end
 /// of the string. Whitespace/`_`/end terminate the keyword and the remaining
 /// text is the pattern verbatim; a `,` instead introduces modifiers, which are
-/// parsed by the same modifier loop as short-form prefixes (exclude.c:1138-1289).
+/// parsed by the same modifier loop as short-form prefixes (exclude.c:1241-1487).
 fn try_parse_long_form(
     line: &str,
     source_path: &Path,

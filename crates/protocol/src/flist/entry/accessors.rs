@@ -60,7 +60,7 @@ impl FileEntry {
     /// Replaces the relative path name of the entry.
     ///
     /// Used by the receiver's single-file rename path (upstream
-    /// `main.c:818-845 get_local_name()`): when the daemon resolves a
+    /// `main.c:get_local_name()`): when the daemon resolves a
     /// `module/tail` destination to a non-directory leaf, the receiver
     /// rewrites the lone flist entry's basename to match the requested
     /// destination basename so that `dest_dir.join(entry.path())` lands
@@ -68,7 +68,7 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:818-845` - `get_local_name()` returns `cp + 1` (the
+    /// - `main.c:872` - `get_local_name()` returns `cp + 1` (the
     ///   basename of `dest_path`) as `local_name`; receiver.c then uses
     ///   `local_name ? local_name : f_name(file)` to compute the on-disk
     ///   path.
@@ -95,7 +95,7 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:3314-3327`: `if (strip_root)` block in `flist_sort_and_clean()`
+    /// - `flist.c:3651-3667`: `if (strip_root)` block in `flist_sort_and_clean()`
     pub fn strip_leading_slashes(&mut self) {
         #[cfg(unix)]
         {
@@ -145,9 +145,9 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:759-795` `send_file_entry()` filename emission.
-    /// - `util1.c:1052-1058` Cygwin POSIX boundary - the only `\` handling
-    ///   in upstream lives there, which oc-rsync does not run under.
+    /// - `flist.c:854-890` `send_file_entry()` filename emission.
+    /// - `util1.c:1146-1152` `clean_fname()` - upstream's only `__CYGWIN__`
+    ///   path code; upstream never translates `\`.
     #[inline]
     #[must_use]
     pub fn name_bytes(&self) -> Cow<'_, [u8]> {
@@ -170,7 +170,7 @@ impl FileEntry {
     /// Returns the Unix mode bits (type + permissions) as `u32`.
     ///
     /// Internally stored as `u16` (matching upstream rsync's `uint16 mode`,
-    /// rsync.h:806). Widened to `u32` on return for API compatibility.
+    /// rsync.h:848). Widened to `u32` on return for API compatibility.
     #[inline]
     #[must_use]
     pub const fn mode(&self) -> u32 {
@@ -187,7 +187,7 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2496` - `file->mode = 0` for delete-missing-args sentinel
+    /// - `flist.c:2951-2955` - a zeroed `st` (mode 0) is sent as the delete-missing-args sentinel
     #[inline]
     pub fn set_mode(&mut self, mode: u32) {
         self.mode = mode as u16;
@@ -502,7 +502,7 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:3316` - `file->flags |= FLAG_DUPLICATE` (am_sender branch).
+    /// - `flist.c:3618` - `file->flags |= FLAG_DUPLICATE` (am_sender branch).
     #[inline]
     #[must_use]
     pub const fn duplicate(&self) -> bool {
@@ -513,7 +513,7 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:3316` - `file->flags |= FLAG_DUPLICATE` (am_sender branch).
+    /// - `flist.c:3618` - `file->flags |= FLAG_DUPLICATE` (am_sender branch).
     pub const fn set_duplicate(&mut self, dup: bool) {
         if dup {
             self.present |= super::core::PRESENT_DUPLICATE;
@@ -684,7 +684,7 @@ impl FileEntry {
     /// Returns `true` when this entry is a live file-list slot (not a tombstone).
     ///
     /// Mirrors upstream rsync's `F_IS_ACTIVE(f)` macro, which tests
-    /// `basename[0]` (rsync.h:926): a real entry always has a non-empty name,
+    /// `basename[0]` (rsync.h:945): a real entry always has a non-empty name,
     /// while a slot cleared by `clear_file()` (a dropped duplicate) or
     /// `flist_free()` (a reclaimed INC_RECURSE segment) has an empty name and
     /// is therefore inactive. Inactive slots keep their array position so NDX
@@ -707,11 +707,11 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:3173 clear_file()` - `memset(file, 0, ...)` zeroes the
-    ///   struct (including `basename[0]`, making `F_IS_ACTIVE` false) while
+    /// - `flist.c:3475 clear_file()` - `memset(file, 0, FILE_STRUCT_LEN + 1)`
+    ///   zeroes the struct (including `basename[0]`, making `F_IS_ACTIVE` false) while
     ///   leaving the slot in `flist->files[]` so following NDX values are
     ///   unaffected.
-    /// - `flist.c:3332` - the receiver's dedup pass calls `clear_file()` on
+    /// - `flist.c:3634` - the receiver's dedup pass calls `clear_file()` on
     ///   the dropped duplicate.
     pub fn tombstone(&mut self) {
         self.reclaim_heap_data();
@@ -731,9 +731,9 @@ impl FileEntry {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:3188 flist_free()` - frees completed file list segments
-    /// - `sender.c:247` - sender calls `flist_free(first_flist)` on NDX_DONE
-    /// - `receiver.c:589` - receiver calls `flist_free(first_flist)` on NDX_DONE
+    /// - `flist.c:3525 flist_free()` - frees completed file list segments
+    /// - `sender.c:533` - sender calls `flist_free(first_flist)` on NDX_DONE
+    /// - `receiver.c:863` - receiver calls `flist_free(first_flist)` on NDX_DONE
     pub fn reclaim_heap_data(&mut self) {
         // Drop the path buffer contents without deallocating.
         self.name = PathBuf::new();

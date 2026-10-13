@@ -2,8 +2,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `checksum.c` - protocol version determines default algorithm (MD4 < 30, MD5 >= 30)
-//! - `compat.c` - checksum capability negotiation for XXH3/SHA family
+//! - `checksum.c:parse_csum_name()` - protocol version picks the default (MD4 < 30, MD5 >= 30)
+//! - `compat.c:negotiate_the_strings()` - checksum name negotiation (XXH128, XXH3, XXH64,
+//!   MD5, MD4, SHA1)
 
 use super::impls::{
     Md4Strategy, Md5Strategy, Sha1Strategy, Sha256Strategy, Sha512Strategy, Xxh3_128Strategy,
@@ -24,7 +25,7 @@ pub struct ChecksumStrategySelector;
 impl ChecksumStrategySelector {
     /// Selects the default algorithm for a given protocol version.
     ///
-    /// Mirrors upstream `checksum.c` algorithm selection:
+    /// Mirrors upstream `checksum.c:parse_csum_name()` default selection:
     ///
     /// - Protocol < 30: MD4
     /// - Protocol >= 30: MD5
@@ -48,7 +49,7 @@ impl ChecksumStrategySelector {
 
     /// Selects the default algorithm with configurable MD5 seed ordering.
     ///
-    /// Use this when you have explicit control over the `CHECKSUM_SEED_FIX`
+    /// Use this when you have explicit control over the `CF_CHKSUM_SEED_FIX`
     /// compatibility flag.
     #[must_use]
     pub fn for_protocol_version_with_seed_order(

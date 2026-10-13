@@ -398,7 +398,7 @@ mod imp {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/sender.c:261` `int hops = 32;`
+    /// - `rsync-3.5.1/sender.c:267` `int hops = 32;`
     const COPYLINKS_MAXHOPS: u32 = 32;
 
     pub(super) fn open_source_confined(
@@ -939,7 +939,7 @@ mod tests {
     /// An absolute leaf target is refused under `--copy-links`.
     ///
     /// WHY: upstream refuses an absolute target outright
-    /// (`rsync-3.5.1/sender.c:321-324`) rather than testing where it lands -
+    /// (`rsync-3.5.1/sender.c:318-321`) rather than testing where it lands -
     /// it names a path the module does not contain, even when it happens to
     /// resolve back inside.
     #[test]
@@ -987,7 +987,7 @@ mod tests {
 
     /// A self-referential symlink terminates instead of spinning.
     ///
-    /// WHY: upstream caps the chain at 32 hops (`rsync-3.5.1/sender.c:261`).
+    /// WHY: upstream caps the chain at 32 hops (`rsync-3.5.1/sender.c:267`).
     /// Without the cap a module operator - or an attacker with write access
     /// to the tree - hangs the daemon's sender with two symlinks.
     #[test]

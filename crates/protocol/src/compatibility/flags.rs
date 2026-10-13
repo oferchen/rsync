@@ -10,12 +10,12 @@ use super::known::KnownCompatibilityFlag;
 /// Bitfield that encodes rsync compatibility flags exchanged after protocol negotiation.
 ///
 /// Upstream rsync uses the compatibility flag exchange to signal optional
-/// behaviours that depend on both peers supporting protocol features introduced
-/// after version 30. The flags are transmitted using the variable-length
+/// behaviours; the exchange happens only when the negotiated protocol is 30 or
+/// newer (`compat.c:719` `setup_protocol()`). The flags are transmitted using the variable-length
 /// integer codec implemented in the `varint` module, making the bitfield compact
 /// while retaining forward compatibility when new bits are defined.
 ///
-/// Bit definitions mirror upstream `compat.c:117` (`CF_*` macros).
+/// Bit definitions mirror upstream `compat.c:118-126` (`CF_*` macros).
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -55,7 +55,7 @@ impl CompatibilityFlags {
     /// This is NOT an upstream rsync flag. It occupies a high private bit
     /// (`0x0200_0000`) deliberately kept out of `Self::KNOWN_MASK`, the
     /// default-advertised set, and [`Self::ALL_KNOWN`]. compat_flags is a
-    /// varint on the wire (upstream `compat.c:741` `read_varint`), and upstream
+    /// varint on the wire (upstream `compat.c:751` `read_varint`), and upstream
     /// tolerates unknown bits by ignoring them, so this private bit transmits
     /// harmlessly to a stock peer and is masked away by the negotiation AND
     /// unless BOTH peers are oc AND both opted in.
@@ -107,12 +107,9 @@ impl CompatibilityFlags {
     /// Returns `true` when the bitfield contains flags unknown to this release.
     ///
     /// Upstream rsync tolerates future compatibility bits by leaving them set
-    /// while ignoring their semantics. Higher layers in the Rust implementation
-    /// often need to detect that situation so they can log downgraded
-    /// diagnostics or gate behaviour that depends on mutually understood
-    /// capabilities. This helper mirrors the upstream check performed after the
-    /// bitfield is received over the wire by simply testing whether any
-    /// off-range bits are present.
+    /// while ignoring their semantics; it performs no explicit check. This
+    /// helper lets higher layers detect that situation, for example to log a
+    /// diagnostic, by testing whether any bit outside `KNOWN_MASK` is present.
     #[must_use]
     pub const fn has_unknown_bits(self) -> bool {
         self.unknown_bits() != 0
@@ -120,12 +117,9 @@ impl CompatibilityFlags {
 
     /// Returns a new bitfield with all unknown compatibility flags cleared.
     ///
-    /// Older upstream daemons mask future bits when propagating their own flag
-    /// set so peers without knowledge of a capability do not accidentally
-    /// expose it further downstream. Reproducing that behaviour keeps the Rust
-    /// implementation compatible with mixed-version deployments while still
-    /// allowing callers to retain the original value when they need to surface
-    /// the full bit pattern in diagnostics.
+    /// Upstream keeps unknown bits in `compat_flags` and simply never tests
+    /// them; this helper lets callers drop them explicitly while the original
+    /// value stays available for diagnostics.
     #[must_use]
     pub const fn without_unknown_bits(self) -> Self {
         Self::new(self.bits & Self::KNOWN_MASK)

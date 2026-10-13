@@ -101,9 +101,9 @@ impl CompressionAlgorithmKind {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: compat.c:556-563 - `recv_negotiate_str` defaults to `"zlib"`
+    /// upstream: compat.c:560-567 - `recv_negotiate_str` defaults to `"zlib"`
     /// when `do_negotiated_strings == 0` (protocol < 30 unconditionally).
-    /// upstream: compat.c:101-102 - zstd is the first entry in
+    /// upstream: compat.c:102-103 - zstd is the first entry in
     /// `valid_compressions_items[]` when `SUPPORT_ZSTD` is defined.
     #[must_use]
     pub const fn for_protocol_version(protocol_version: u8) -> Self {

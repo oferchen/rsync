@@ -129,7 +129,7 @@ fn supports_flist_times_boundary_at_29() {
 }
 
 /// WHY: MSG_BLOCK_STATS and its --stats line exist only from protocol 33
-/// (main.c:446,1112; io.c:1722). Every older version must stay silent so a
+/// (main.c:446,1113; io.c:1724). Every older version must stay silent so a
 /// protocol-32 session with a 3.5.0 peer is byte-identical to before.
 #[test]
 fn supports_block_stats_boundary_at_33() {
@@ -615,7 +615,7 @@ fn capabilities_preferred_compression() {
     use super::ProtocolCapabilities;
 
     // Protocol < 30 has no vstring negotiation; preferred codec is always
-    // zlib regardless of any feature flag. upstream: compat.c:556-563.
+    // zlib regardless of any feature flag. upstream: compat.c:560-567.
     let caps_28 = ProtocolCapabilities::new(ProtocolVersion::V28);
     assert_eq!(caps_28.preferred_compression(), "zlib");
 

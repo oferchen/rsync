@@ -194,7 +194,7 @@ fn double_star_anchored() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // upstream rsync 3.4.4: `**/` consumes a real `/` boundary, so
+    // upstream rsync 3.5.1: `**/` consumes a real `/` boundary, so
     // `/src/**/test.txt` requires at least one intermediate directory. A
     // top-level `src/test.txt` (no intermediate dir) is NOT excluded - verified
     // against `rsync -rn -i --exclude=/src/**/test.txt` which lists
@@ -386,7 +386,7 @@ fn monorepo_structure() {
 /// (and trailing `/` for directory-only) but no leading `/`, so they use
 /// tail-matching and exclude matching directories at any depth.
 ///
-/// upstream: exclude.c:rule_matches() lines 947-951
+/// upstream: exclude.c:rule_matches() lines 1046-1050
 #[test]
 fn exclude_lsh_scenario_tail_matching() {
     let rules = [

@@ -4,7 +4,7 @@
 //!
 //! This crate provides the cryptographic and non-cryptographic hash algorithms
 //! used by rsync for delta-transfer operations. All implementations are
-//! byte-for-byte compatible with upstream rsync 3.4.1, ensuring interoperability
+//! byte-for-byte compatible with upstream rsync 3.5.1, ensuring interoperability
 //! with the C reference implementation.
 //!
 //! # Quick Start
@@ -78,11 +78,11 @@
 //! | Property | Value |
 //! |----------|-------|
 //! | Output size | 128 bits (16 bytes) |
-//! | Use case | rsync protocol < 30, file list validation |
+//! | Use case | default for rsync protocol >= 30, whole-file checksum |
 //! | Security | Cryptographically broken - legacy use only |
 //! | Performance | ~500 MB/s (pure Rust), ~1 GB/s (OpenSSL) |
 //!
-//! MD5 supports seeded hashing for rsync's `CHECKSUM_SEED_FIX` compatibility:
+//! MD5 supports seeded hashing for rsync's `CF_CHKSUM_SEED_FIX` compatibility:
 //!
 //! ```rust
 //! use checksums::strong::{Md5, Md5Seed, StrongDigest};
@@ -343,10 +343,10 @@
 //!
 //! # Upstream Compatibility
 //!
-//! All algorithms produce output identical to upstream rsync 3.4.1:
+//! All algorithms produce output identical to upstream rsync 3.5.1:
 //!
 //! - Rolling checksums match `checksum.c:get_checksum1()`
-//! - MD4/MD5 match rsync's checksum file validation
+//! - MD4/MD5 match `checksum.c:get_checksum2()` and `checksum.c:file_checksum()`
 //! - XXH64/XXH3 match rsync's modern strong checksum paths
 //!
 //! # See Also

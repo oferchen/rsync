@@ -7,13 +7,13 @@
 //! bitfield so higher layers can reason about individual compatibility bits
 //! without manipulating integers directly.
 //!
-//! Upstream reference: `compat.c:117` for the `CF_*` bit definitions and
-//! `compat.c:572` (`setup_protocol`) for the negotiation handshake.
+//! Upstream reference: `compat.c:118-126` for the `CF_*` bit definitions and
+//! `compat.c:576` (`setup_protocol()`) for the negotiation handshake.
 //!
 //! # Design
 //!
 //! - [`CompatibilityFlags`] wraps a `u32` and provides associated constants for
-//!   every flag currently defined by rsync 3.4.1. The bitfield implements the
+//!   every flag currently defined by rsync 3.5.1. The bitfield implements the
 //!   standard bit-operator traits (`BitOr`, `BitAnd`, `BitXor`) to keep usage
 //!   ergonomic, and reuses the varint codec for serialization.
 //! - [`KnownCompatibilityFlag`] is an enumeration of upstream flag definitions

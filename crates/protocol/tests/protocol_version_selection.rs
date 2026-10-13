@@ -20,7 +20,7 @@
 //!
 //! # Upstream Compatibility
 //!
-//! - rsync 2.6.4: Protocol 28
+//! - rsync 2.6.1-2.6.3: Protocol 28 (2.6.4 moved to 29)
 //! - rsync 3.0.x: Protocol 30
 //! - rsync 3.1.x: Protocol 31
 //! - rsync 3.4.x: Protocol 32
@@ -452,7 +452,7 @@ fn rejects_versions_above_maximum_advertisement() {
     }
 }
 
-/// Simulate negotiation with rsync 2.6.4 (protocol 28).
+/// Simulate negotiation with a protocol-28 peer (rsync 2.6.1-2.6.3).
 #[test]
 fn backwards_compat_rsync_264() {
     // Old rsync would only advertise protocol 28
@@ -559,7 +559,7 @@ fn error_all_invalid_versions() {
 
 /// Test error message content.
 ///
-/// upstream: compat.c:620-621 emits the two-line wording verbatim. We mirror
+/// upstream: compat.c:623-624 emits the two-line wording verbatim. We mirror
 /// it byte-for-byte. The rejected version is preserved on the variant and
 /// accessible via `unsupported_version()` for callers that need it.
 #[test]

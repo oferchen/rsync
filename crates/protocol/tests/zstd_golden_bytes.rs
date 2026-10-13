@@ -8,7 +8,7 @@
 //! recv_zstd_token). Unlike zlib, zstd does NOT strip the 4-byte sync marker
 //! (0x00 0x00 0xFF 0xFF) and uses `ZSTD_e_flush` at token boundaries.
 //!
-//! ## Wire format (shared with zlib, upstream token.c lines 321-329)
+//! ## Wire format (shared with zlib, upstream token.c:333-341)
 //!
 //! ```text
 //! END_FLAG      = 0x00  - end of file marker
@@ -19,13 +19,15 @@
 //! TOKENRUN_REL  = 0xC0  - + 6-bit relative token + 16-bit LE run count
 //! ```
 //!
-//! ## Zstd-specific behavior (upstream token.c lines 678-776)
+//! ## Zstd-specific behavior (upstream token.c:send_zstd_token() lines 735-835)
 //!
 //! - No sync marker stripping (zstd frames are self-delimiting)
 //! - `ZSTD_e_flush` at every token boundary (block match or EOF)
 //! - `ZSTD_e_continue` for literal data between boundaries
-//! - Output buffered in MAX_DATA_COUNT-sized buffer, written as DEFLATED_DATA
-//!   blocks when full or on flush
+//! - Output buffered in a MAX_DATA_COUNT-sized buffer, written as DEFLATED_DATA
+//!   blocks when full or on flush. Deviation from upstream: 3.5.1 writes a block
+//!   after every `ZSTD_compressStream2()` call that produced output
+//!   (token.c:815-821); both framings decode to the same bytes.
 
 use std::io::{Cursor, Read};
 
@@ -34,9 +36,7 @@ use protocol::wire::{
     MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
 };
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Decodes all tokens from a zstd-encoded byte buffer.
 fn zstd_decode_all(data: &[u8]) -> (Vec<u8>, Vec<u32>) {
@@ -131,16 +131,14 @@ fn parse_wire_structure(data: &[u8]) -> (Vec<&'static str>, Vec<usize>) {
     (sequence, block_sizes)
 }
 
-// ===========================================================================
 // Section 1: Literal-only streams
-// ===========================================================================
 
 /// A literal-only zstd stream must produce: DEFLATED_DATA block(s) + END_FLAG.
 /// The DEFLATED_DATA header uses the same 14-bit length encoding as zlib.
 /// No sync marker (0x00 0x00 0xFF 0xFF) should appear in the output - zstd
 /// frames are self-delimiting and don't use zlib sync flush markers.
 ///
-/// upstream: token.c:send_zstd_token() lines 727-769
+/// upstream: token.c:send_zstd_token() lines 786-829
 #[test]
 fn golden_zstd_literal_only_wire_structure() {
     let encoded = zstd_encode(&[ZstdTestToken::Literal(
@@ -183,7 +181,7 @@ fn golden_zstd_literal_only_wire_structure() {
 /// Verify exact DEFLATED_DATA header bytes for a small zstd literal.
 /// The header format is: byte0 = DEFLATED_DATA | (len >> 8), byte1 = len & 0xFF.
 ///
-/// upstream: token.c lines 758-760
+/// upstream: token.c:818-820
 #[test]
 fn golden_zstd_deflated_data_header_exact_bytes() {
     let encoded = zstd_encode(&[ZstdTestToken::Literal(b"test".to_vec())]);
@@ -222,7 +220,8 @@ fn golden_zstd_deflated_data_header_exact_bytes() {
 /// Upstream zlib mode strips trailing 0x00 0x00 0xFF 0xFF from each flush;
 /// zstd does not produce these markers at all.
 ///
-/// upstream: token.c line 685 - zstd uses ZSTD_e_flush, no marker stripping
+/// upstream: token.c:797-820 - zstd flushes with ZSTD_e_flush and writes all output,
+/// with no marker trimming
 #[test]
 fn golden_zstd_no_sync_marker_in_output() {
     let data = b"Data to compress with zstd - should not contain zlib sync markers";
@@ -238,14 +237,12 @@ fn golden_zstd_no_sync_marker_in_output() {
     }
 }
 
-// ===========================================================================
 // Section 2: Block-match-only streams
-// ===========================================================================
 
 /// A single block match at index 0 produces TOKEN_REL | 0 + END_FLAG.
 /// Token encoding is shared across all compression algorithms.
 ///
-/// upstream: token.c lines 700-723 (zstd run encoding same as zlib)
+/// upstream: token.c:765-782 (zstd run encoding, same as zlib)
 #[test]
 fn golden_zstd_single_block_match_token_rel() {
     let encoded = zstd_encode(&[ZstdTestToken::BlockMatch(0)]);
@@ -270,7 +267,7 @@ fn golden_zstd_block_match_rel_42() {
 /// Block match at index 100 (> 63) requires TOKEN_LONG absolute encoding.
 /// r = 100 - 0 = 100 > 63, so TOKEN_LONG + 4-byte LE index.
 ///
-/// upstream: token.c line 391 TOKEN_LONG path
+/// upstream: token.c:773-774 TOKEN_LONG path
 #[test]
 fn golden_zstd_block_match_token_long() {
     let encoded = zstd_encode(&[ZstdTestToken::BlockMatch(100)]);
@@ -293,14 +290,12 @@ fn golden_zstd_non_consecutive_blocks_separate_tokens() {
     assert_eq!(encoded[2], END_FLAG);
 }
 
-// ===========================================================================
 // Section 3: Token run encoding (consecutive block matches)
-// ===========================================================================
 
 /// Consecutive blocks 0,1,2 use TOKENRUN_REL encoding.
 /// run_start=0, last_token=2, n=2, r=0. All fit in relative encoding.
 ///
-/// upstream: token.c lines 700-723 (zstd uses same run detection as zlib)
+/// upstream: token.c:765-782 (zstd uses the same run detection as zlib)
 #[test]
 fn golden_zstd_consecutive_blocks_tokenrun_rel() {
     let encoded = zstd_encode(&[
@@ -320,7 +315,7 @@ fn golden_zstd_consecutive_blocks_tokenrun_rel() {
 /// Consecutive blocks starting at 100 use TOKENRUN_LONG (r > 63).
 /// run_start=100, last_token=101, n=1, r=100 > 63.
 ///
-/// upstream: token.c lines 391-397
+/// upstream: token.c:773-779
 #[test]
 fn golden_zstd_consecutive_blocks_tokenrun_long() {
     let encoded = zstd_encode(&[
@@ -378,15 +373,13 @@ fn golden_zstd_run_then_separate_block() {
     assert_eq!(encoded[4], END_FLAG);
 }
 
-// ===========================================================================
 // Section 4: Mixed literal + block match streams
-// ===========================================================================
 
 /// Literal data followed by a block match: DEFLATED_DATA + TOKEN_REL + END_FLAG.
 /// The flush at the token boundary ensures decompressible output before the
 /// token byte.
 ///
-/// upstream: token.c lines 700-723 - compress_and_flush before writing token
+/// upstream: token.c:786-829 - the literal is compressed and flushed before the token
 #[test]
 fn golden_zstd_mixed_literal_then_block() {
     let encoded = zstd_encode(&[
@@ -444,7 +437,7 @@ fn golden_zstd_mixed_block_then_literal() {
 /// Interleaved pattern: lit, block, lit, block, lit, end.
 /// Each literal is flushed before its following token.
 ///
-/// upstream: token.c lines 700-723 - has_literals triggers compress_and_flush
+/// upstream: token.c:786-829 - each literal span is compressed and flushed before its token
 #[test]
 fn golden_zstd_interleaved_literal_block_literal() {
     let encoded = zstd_encode(&[
@@ -511,15 +504,13 @@ fn golden_zstd_mixed_with_run_encoding() {
     assert_eq!(blocks, vec![0, 1, 2]);
 }
 
-// ===========================================================================
 // Section 5: DEFLATED_DATA framing and flush boundaries
-// ===========================================================================
 
 /// Small literals should produce exactly one DEFLATED_DATA block per flush.
-/// Upstream accumulates output in a MAX_DATA_COUNT buffer and writes a single
-/// DEFLATED_DATA block on flush (token.c lines 755-763).
+/// Upstream writes a DEFLATED_DATA block for each `ZSTD_compressStream2()` call
+/// that produced output (token.c:815-821); a small flushed literal yields one.
 ///
-/// upstream: token.c lines 740-743 - ZSTD_e_flush
+/// upstream: token.c:798-801 - ZSTD_e_flush
 #[test]
 fn golden_zstd_small_literal_single_deflated_block() {
     let encoded = zstd_encode(&[
@@ -543,7 +534,7 @@ fn golden_zstd_small_literal_single_deflated_block() {
 /// Large incompressible data must split into multiple DEFLATED_DATA blocks,
 /// each at most MAX_DATA_COUNT (16383) bytes.
 ///
-/// upstream: token.c line 755 - write when output buffer is full
+/// upstream: token.c:794 - each output buffer holds at most MAX_DATA_COUNT bytes
 #[test]
 fn golden_zstd_large_literal_multiple_deflated_blocks() {
     // Generate incompressible data using xorshift64
@@ -585,7 +576,7 @@ fn golden_zstd_large_literal_multiple_deflated_blocks() {
 /// Verify END_FLAG is always a single 0x00 byte at the end of the stream.
 /// Shared across all compression algorithms.
 ///
-/// upstream: token.c line 462 write_byte(f, END_FLAG)
+/// upstream: token.c:833 write_byte(f, END_FLAG)
 #[test]
 fn golden_zstd_end_flag_single_zero_byte() {
     // Empty stream (no literals, no blocks)
@@ -610,9 +601,7 @@ fn golden_zstd_end_flag_not_confused_with_other_flags() {
     assert_ne!(END_FLAG & 0xC0, TOKENRUN_REL);
 }
 
-// ===========================================================================
 // Section 6: Zstd-specific compressed payload verification
-// ===========================================================================
 
 /// Verify the zstd compressed payload starts with a valid zstd frame.
 /// Zstd frames begin with the magic number 0xFD2FB528 (little-endian).
@@ -688,9 +677,7 @@ fn golden_zstd_output_differs_from_zlib() {
     assert_eq!(zlib_literals, input.as_slice());
 }
 
-// ===========================================================================
 // Section 7: Decoder golden byte tests - hand-crafted wire bytes
-// ===========================================================================
 
 /// Verify the zstd decoder handles a hand-crafted wire stream with
 /// only token bytes (no DEFLATED_DATA). Block-match-only streams have
@@ -761,9 +748,7 @@ fn golden_zstd_decoder_empty_stream() {
     assert!(blocks.is_empty());
 }
 
-// ===========================================================================
 // Section 8: Encoder/decoder roundtrip with exact byte verification
-// ===========================================================================
 
 /// Verify that encoding then decoding a complex mixed stream preserves
 /// all data and block indices exactly. This is the zstd equivalent of the
@@ -796,8 +781,8 @@ fn golden_zstd_complex_roundtrip() {
 /// in a transfer session. The compression context is never reset between
 /// files - only the token run-encoding state resets.
 ///
-/// upstream: token.c:688 (CCtx created once), token.c:700-703 (only run
-/// state resets), token.c:789 (DCtx created once)
+/// upstream: token.c:743 (CCtx created once), token.c:759-762 (only run
+/// state resets), token.c:847 (DCtx created once)
 #[test]
 fn golden_zstd_continuous_stream_across_files() {
     let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();

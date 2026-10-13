@@ -18,12 +18,9 @@ use crate::id_lookup::{lookup_group_by_name, lookup_user_by_name};
 /// (when the uid/gid has no passwd/group entry) or as a resolved name. A
 /// numeric string is used directly with no wire name. A real name is resolved
 /// to its local id via NSS (`getpwnam_r`/`getgrnam_r`) and preserved so the
-/// receiver can remap by name - mirroring upstream `add_uid`/`add_gid` at
-/// `acls.c:591-602`, which sends the name unless `--numeric-ids`.
-///
-/// The previous `name.parse().unwrap_or(0)` silently coerced every real name to
-/// id 0 (root) and dropped the name, so the receiver's name-based remap was
-/// starved and named ACL entries collapsed onto root.
+/// receiver can remap by name - mirroring upstream `add_uid`/`add_gid` in
+/// `send_ida_entries()` (`acls.c:821-825`), which sends the name unless
+/// `--numeric-ids`.
 fn resolve_named_entry(name: &str, is_user: bool) -> (u32, Option<Vec<u8>>) {
     if let Ok(id) = name.parse::<u32>() {
         return (id, None);
@@ -51,7 +48,12 @@ fn resolve_named_entry(name: &str, is_user: bool) -> (u32, Option<Vec<u8>>) {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `get_rsync_acl()` in `acls.c` lines 472-536.
+/// Mirrors `get_rsync_acl()` (`acls.c:586-759`) for the path-based read.
+///
+/// Deviation from upstream: a read error that `no_acl_syscall_error()` does not
+/// classify is reported by upstream as `get_acl: sys_acl_get_file` and fails
+/// with -1 (`acls.c:752-755`); this function falls back to the mode-derived ACL
+/// instead.
 pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let option = if is_default {
@@ -69,14 +71,15 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
         Ok(e) => e,
         Err(e) => {
             if is_unsupported_error(&e) {
-                // upstream: acls.c:525-528 - fake ACL from mode when unsupported
+                // upstream: acls.c:748-751 - fake ACL from mode when unsupported
                 return if !is_default {
                     RsyncAcl::from_mode(mode)
                 } else {
                     RsyncAcl::new()
                 };
             }
-            // upstream: acls.c:525-528 - mode-based fallback on error
+            // Deviation from upstream (acls.c:752-755 returns -1): mode-based
+            // fallback on any other error.
             return if !is_default {
                 RsyncAcl::from_mode(mode)
             } else {
@@ -99,18 +102,18 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
         let perms = exacl_perms_to_rsync(entry.perms);
         match entry.kind {
             AclEntryKind::User if entry.name.is_empty() => {
-                // upstream: acls.c:481 - user_obj from unnamed User entry
+                // upstream: acls.c:288-293 unpack_smb_acl() - user_obj from unnamed User entry
                 if acl.user_obj == NO_ENTRY {
                     acl.user_obj = perms;
                 }
             }
             AclEntryKind::Group if entry.name.is_empty() => {
-                // upstream: acls.c:484 - group_obj from unnamed Group entry
+                // upstream: acls.c:294-299 - group_obj from unnamed Group entry
                 if acl.group_obj == NO_ENTRY {
                     acl.group_obj = perms;
                 }
             }
-            // upstream: acls.c:487-490 - mask and other POSIX entries
+            // upstream: acls.c:300-311 - mask and other POSIX entries
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             AclEntryKind::Mask => {
                 if acl.mask_obj == NO_ENTRY {
@@ -124,9 +127,9 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
                 }
             }
             AclEntryKind::User => {
-                // upstream: acls.c:497-501 - named user ACE. Resolve the name to
+                // upstream: acls.c:313-315 - named user ACE. Resolve the name to
                 // a numeric id and keep it for the wire so the receiver remaps
-                // by name (upstream add_uid, acls.c:593).
+                // by name (upstream add_uid, acls.c:823).
                 let (uid, name) = resolve_named_entry(&entry.name, true);
                 acl.names.push(match name {
                     Some(name) => IdAccess::user_with_name(uid, u32::from(perms), name),
@@ -134,8 +137,8 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
                 });
             }
             AclEntryKind::Group => {
-                // upstream: acls.c:502-506 - named group ACE. As above via
-                // upstream add_gid (acls.c:595).
+                // upstream: acls.c:316-317 - named group ACE. As above via
+                // upstream add_gid (acls.c:825).
                 let (gid, name) = resolve_named_entry(&entry.name, false);
                 acl.names.push(match name {
                     Some(name) => IdAccess::group_with_name(gid, u32::from(perms), name),
@@ -146,7 +149,7 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
         }
     }
 
-    // upstream: acls.c:493-501 - fill NO_ENTRY base entries from mode
+    // upstream: acls.c:614-623 - fill NO_ENTRY base entries from mode
     if acl.user_obj == NO_ENTRY {
         acl.user_obj = ((mode >> 6) & 7) as u8;
     }

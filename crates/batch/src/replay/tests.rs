@@ -155,7 +155,7 @@ fn write_literals_ignores_copy_ops() {
 
 /// The batch replay codec is pinned to zlib: `create_compressed_decoder`
 /// builds a zlib decoder regardless of payload, matching upstream which forces
-/// `write_batch` compression to "zlib" (compat.c:417-418). There is no codec
+/// `write_batch` compression to "zlib" (compat.c:414-415). There is no codec
 /// parameter and no payload sniffing, so a zstd stream can never be selected.
 #[test]
 fn compressed_decoder_created_is_zlib() {
@@ -171,10 +171,10 @@ fn compressed_decoder_created_is_zlib() {
 /// desync every following field.
 ///
 /// The value is `ITEM_TRANSFER` alone. Upstream's `ITEM_TRANSFER |
-/// ITEM_MISSING_DATA` (rsync.c:383-384) adds a log-only bit at `1<<16`
-/// (rsync.h:254) that cannot fit this u16 framing word and that replay never
+/// ITEM_MISSING_DATA` (rsync.c:384-385) adds a log-only bit at `1<<16`
+/// (rsync.h:261) that cannot fit this u16 framing word and that replay never
 /// renders. It must not be approximated by `1<<10`, which is
-/// `ITEM_REPORT_CRTIME` (rsync.h:247) and would be a different flag entirely.
+/// `ITEM_REPORT_CRTIME` (rsync.h:254) and would be a different flag entirely.
 #[test]
 fn read_iflags_pre_29_synthesises_item_transfer_without_reading() {
     let dir = test_support::create_tempdir();
@@ -203,7 +203,7 @@ fn read_iflags_pre_29_synthesises_item_transfer_without_reading() {
 
 /// Protocol 29+ reads the 16-bit little-endian iflags word off the wire.
 ///
-/// upstream: rsync.c:383 - `read_shortint(f_in)`
+/// upstream: rsync.c:384 - `read_shortint(f_in)`
 #[test]
 fn read_iflags_proto_29_reads_shortint() {
     let dir = test_support::create_tempdir();

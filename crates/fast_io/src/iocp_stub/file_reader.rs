@@ -21,6 +21,10 @@ pub struct IocpReader {
 
 impl IocpReader {
     /// Always returns an `Unsupported` error on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn open<P: AsRef<Path>>(_path: P, _config: &IocpConfig) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -29,6 +33,10 @@ impl IocpReader {
     }
 
     /// Reads data at the specified offset.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> io::Result<usize> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -37,6 +45,10 @@ impl IocpReader {
     }
 
     /// Reads the entire file into a vector.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn read_all_batched(&mut self) -> io::Result<Vec<u8>> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,

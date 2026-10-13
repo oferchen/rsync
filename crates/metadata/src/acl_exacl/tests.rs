@@ -157,7 +157,7 @@ fn is_unsupported_error_detects_common_messages() {
 #[cfg(unix)]
 #[test]
 fn is_unsupported_error_detects_os_error_codes() {
-    // upstream: lib/sysacls.c:2778-2799 - no_acl_syscall_error swallows
+    // upstream: lib/sysacls.c:2922-2944 - no_acl_syscall_error swallows
     // ENOSYS, ENOTSUP, EINVAL; ENOENT only on macOS.
     let codes = [libc::ENOTSUP, libc::ENOSYS, libc::EINVAL, libc::ENODATA];
 
@@ -173,7 +173,7 @@ fn is_unsupported_error_detects_os_error_codes() {
 #[cfg(unix)]
 #[test]
 fn is_unsupported_error_surfaces_eperm() {
-    // upstream: acls.c:994-997 - EPERM from sys_acl_set_file surfaces via
+    // upstream: acls.c:1352-1355 - EPERM from sys_acl_set_file surfaces via
     // rsyserr(FERROR_XFER, ...) rather than being swallowed. Without this,
     // a non-root receiver carrying an unmappable UID in a named ACL entry
     // would silently drop the entire ACL apply.
@@ -187,7 +187,7 @@ fn is_unsupported_error_surfaces_eperm() {
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn is_unsupported_error_surfaces_enoent_on_linux_freebsd() {
-    // upstream: lib/sysacls.c:2780-2782 - the ENOENT swallow is macOS-only.
+    // upstream: lib/sysacls.c:2924-2927 - the ENOENT swallow is macOS-only.
     let err = std::io::Error::from_raw_os_error(libc::ENOENT);
     assert!(
         !is_unsupported_error(&err),
@@ -257,7 +257,7 @@ fn rsync_acl_to_entries_named_user_and_group() {
 
 #[test]
 fn reconstruct_access_acl_preserves_full_mask_over_narrower_named_entry() {
-    // Bug #251: the receiver narrowed the ACL mask to a named entry's perms
+    // Regression: the receiver narrowed the ACL mask to a named entry's perms
     // instead of the transmitted (mode-derived) mask, silently downgrading
     // group access (exit 0, no error).
     //
@@ -267,7 +267,7 @@ fn reconstruct_access_acl_preserves_full_mask_over_narrower_named_entry() {
     // wire ACL carries only the named user (r--) with mask/base entries unset.
     // reconstruct_acl() must restore the mask from the mode group bits
     // ((0o664 >> 3) & 7 = 0o6 = rw-), NOT collapse it to the named user's r--.
-    // upstream: acls.c:770-773 recv_rsync_acl(type=ACCESS).
+    // upstream: acls.c:1000-1006 recv_rsync_acl(type=ACCESS).
     use protocol::acl::{IdAccess, NO_ENTRY};
 
     let mut wire = RsyncAcl::new();
@@ -319,7 +319,7 @@ fn rsync_acl_to_entries_remaps_named_ids_via_id_map() {
     // whatever principal owns 1000 on the receiver. The AclIdMapper (built from
     // the received uid/gid id-lists) must convert 1000 -> 2000, exactly as
     // upstream match_acl_ids()/match_uid() do for file owners.
-    // upstream: acls.c:1069-1072, uidlist.c:483-484.
+    // upstream: acls.c:1438-1441, uidlist.c:485-486.
     use crate::AclIdMapper;
     use protocol::acl::IdAccess;
     use std::collections::HashMap;
@@ -387,7 +387,7 @@ fn rsync_acl_to_entries_id_map_numeric_ids_passthrough() {
 #[test]
 fn rsync_acl_to_entries_preserves_unmappable_named_user() {
     // upstream: uidlist.c:282 - recv_add_id falls back to id2 = id when
-    // user_to_uid(name, ...) fails, and acls.c:404 hands that raw id to
+    // user_to_uid(name, ...) fails, and acls.c:405-408 hands that raw id to
     // sys_acl_set_info(). The entry must reach setfacl, not be dropped.
     use protocol::acl::IdAccess;
 
@@ -552,7 +552,7 @@ fn reconstruct_acl_masks_special_bits_from_mode() {
     // receiver rebuilds stripped base entries from the mode it must use only
     // the low 0o777 bits, so the special bits never leak into an ACL entry -
     // they are restored separately via chmod after the ACL is applied.
-    // upstream: acls.c:931-932 change_sacl_perms() returns
+    // upstream: acls.c:1162 change_sacl_perms() returns
     // `(old_mode & ~ACCESSPERMS) | (mode & ACCESSPERMS)`.
     use protocol::acl::{IdAccess, NO_ENTRY};
 
@@ -582,9 +582,9 @@ fn apply_acls_from_cache_preserves_setgid_and_sticky() {
     // WHY: applying a POSIX access ACL via setfacl re-derives the permission
     // bits from the ACL's base entries and clears setuid/setgid/sticky, which
     // are not representable in the ACL. Upstream restores them after set_acl
-    // (acls.c:924-932, rsync.c:659-660). Dropping setgid silently downgrades a
-    // setgid binary or directory - a metadata-fidelity and security regression
-    // (#213). This must hold for an ordinary (non-root) user.
+    // (acls.c:1087-1162, rsync.c:806-820). Dropping setgid silently downgrades a
+    // setgid binary or directory - a metadata-fidelity and security regression.
+    // This must hold for an ordinary (non-root) user.
     use protocol::acl::IdAccess;
     use std::os::unix::fs::PermissionsExt;
 
@@ -648,7 +648,7 @@ fn default_perms_for_dir_missing_dir_returns_umask_default() {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[test]
 fn default_perms_for_dir_emits_when_default_acl_present() {
-    // upstream: acls.c:1131-1134 - DEBUG_GTE(ACL, 1) fires when the
+    // upstream: acls.c:1500-1503 - DEBUG_GTE(ACL, 1) fires when the
     // directory's default ACL unpacked into a user_obj entry.
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 

@@ -1452,7 +1452,7 @@ mod tests {
         assert_eq!(hostname.verdict, Verdict::Match);
     }
 
-    // -- file load order (task 237e) ----------------------------------
+    // file load order
     //
     // `ssh -G`'s system path is compiled in and its user path comes from
     // the passwd entry, so the oracle cannot be pointed at fixture

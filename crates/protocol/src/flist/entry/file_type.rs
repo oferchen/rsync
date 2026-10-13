@@ -31,7 +31,8 @@ impl FileType {
     /// The file type is encoded in the upper 4 bits of the mode (S_IFMT mask
     /// `0o170000`). Returns `None` for unrecognized mode patterns.
     ///
-    /// upstream: rsync.h S_IFMT mask (`0o170000`).
+    /// Uses the POSIX `S_IFMT` mask (`0o170000`); upstream relies on the system
+    /// `<sys/stat.h>` values plus `to_wire_mode()` (ifuncs.h) for odd platforms.
     pub const fn from_mode(mode: u32) -> Option<Self> {
         match mode & 0o170000 {
             0o100000 => Some(Self::Regular),     // S_IFREG

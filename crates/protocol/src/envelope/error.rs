@@ -13,7 +13,7 @@ pub enum EnvelopeError {
     /// The high tag byte did not include the required [`super::MPLEX_BASE`] offset.
     #[error("multiplexed header contained invalid tag byte {0}")]
     InvalidTag(u8),
-    /// The encoded message code is not understood by rsync 3.4.1.
+    /// The tag maps to no [`super::MessageCode`] (upstream `enum msgcode`, `rsync.h`).
     #[error("unknown multiplexed message code {0}")]
     UnknownMessageCode(u8),
     /// The payload length exceeded the representable range.

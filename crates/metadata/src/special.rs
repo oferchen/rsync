@@ -205,7 +205,7 @@ pub fn socket_creation_unsupported(_relative: &Path) -> bool {
 ///
 /// `destination` is the full name, matching upstream's `full_fname()`, which
 /// wraps the path in double quotes.
-// upstream: generator.c:2510-2519 - rprintf(FWARNING, "skipping socket ...")
+// upstream: generator.c:2516-2519 - rprintf(FWARNING, "skipping socket ...")
 #[must_use]
 pub fn format_skipped_socket_message(destination: &Path) -> String {
     format!(
@@ -216,12 +216,13 @@ pub fn format_skipped_socket_message(destination: &Path) -> String {
 
 /// Creates an empty 0600 regular file used as a fake-super placeholder.
 ///
-/// Upstream `do_mknod()` performs the equivalent substitution by routing the
-/// call through `do_open` with `O_CREAT|O_WRONLY|O_EXCL` and mode `0600`. Any
+/// Upstream `do_mknod()` performs the equivalent substitution with
+/// `open(O_WRONLY|O_CREAT|O_TRUNC, 0600)` (syscall.c:1317-1322); oc uses
+/// `O_CREAT|O_WRONLY|O_EXCL` (`create_new`). Any
 /// pre-existing entry at `destination` is removed first to mirror the
 /// `unlink + create` semantics used by upstream when overwriting an existing
 /// special-file destination.
-/// upstream: syscall.c:107-220 - do_mknod() routes to do_open when am_root < 0
+/// upstream: syscall.c:1317-1322 - do_mknod() creates an empty 0600 file when am_root < 0
 fn create_fake_super_placeholder(
     destination: &Path,
     context: &'static str,
@@ -569,7 +570,7 @@ fn create_fifo_parts_inner(
 /// The bind path is bounded by `sizeof(sun_path)` (104 bytes on Apple); an
 /// over-long path surfaces as an `ENAMETOOLONG` error rather than silently
 /// truncating, matching upstream's `strlcpy` length check.
-// upstream: syscall.c:622-646 do_mknod() - !MKNOD_CREATES_SOCKETS socket branch
+// upstream: syscall.c:1338-1361 do_mknod() - socket()+bind() fallback when mknod() fails
 #[cfg(all(
     unix,
     any(
@@ -918,7 +919,7 @@ mod tests {
 
     // The wording is upstream's verbatim, including `full_fname()`'s quotes:
     // the testsuite cell greps stderr, so the text is part of the contract.
-    // upstream: generator.c:2510-2519
+    // upstream: generator.c:2516-2519
     #[test]
     fn the_skipped_socket_notice_matches_upstream_wording() {
         assert_eq!(
@@ -929,7 +930,7 @@ mod tests {
 
     // On Apple targets, `mknod(2)` with `S_IFSOCK` is unsupported, so a
     // socket destination must be materialised via socket()+bind()+chmod,
-    // mirroring upstream's !MKNOD_CREATES_SOCKETS branch (syscall.c:622-646).
+    // mirroring upstream's socket()+bind() fallback (syscall.c:1338-1361).
     // The result must be a real socket node carrying the requested mode, and
     // a stale entry at the destination must be replaced rather than error.
     #[cfg(all(

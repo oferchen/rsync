@@ -33,9 +33,7 @@ use fast_io::iocp::{
 };
 use fast_io::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
 
-// ---------------------------------------------------------------------------
 // WTD-2.a: IOCP reader + writer round-trip via factory
-// ---------------------------------------------------------------------------
 
 /// Write data through the IOCP writer factory and read it back through the
 /// IOCP reader factory. The payload exceeds `IOCP_MIN_FILE_SIZE` so both
@@ -73,9 +71,7 @@ fn factory_roundtrip_above_min_size() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.b: Reader factory falls back for small files
-// ---------------------------------------------------------------------------
 
 /// Files below `IOCP_MIN_FILE_SIZE` must be served by the Std reader, not
 /// the IOCP reader, because the overlapped setup cost exceeds the async
@@ -99,9 +95,7 @@ fn factory_reader_uses_std_below_threshold() {
     assert_eq!(data, payload);
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.c: IocpWriter seek + write at non-zero offset
-// ---------------------------------------------------------------------------
 
 /// Writing after seeking to a non-zero offset must place data at the correct
 /// file position.
@@ -179,9 +173,7 @@ fn writer_seek_end_returns_error() {
     assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.d: FileWriter::preallocate + overwrite
-// ---------------------------------------------------------------------------
 
 /// `FileWriter::preallocate` must extend the file to the requested size.
 /// Subsequent writes must fill the preallocated region without error.
@@ -215,9 +207,7 @@ fn writer_preallocate_then_fill() {
     assert_eq!(&content[..expected_size as usize], &payload[..]);
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.e: FileWriter::sync durability
-// ---------------------------------------------------------------------------
 
 /// `FileWriter::sync` must flush data to stable storage. Verify by writing,
 /// syncing, and reading back.
@@ -242,9 +232,7 @@ fn writer_sync_persists_data() {
     assert_eq!(content, "durable-after-sync");
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.f: Concurrent IocpDiskBatch instances
-// ---------------------------------------------------------------------------
 
 /// Two independent `IocpDiskBatch` instances must operate simultaneously
 /// without interfering. Each owns its own completion port and handle.
@@ -301,9 +289,7 @@ fn concurrent_disk_batch_instances() {
     assert_eq!(content_b, payload_b);
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.g: IocpReader read_at with explicit offset
-// ---------------------------------------------------------------------------
 
 /// `IocpReader::read_at` must read data at an arbitrary offset without
 /// affecting the sequential position.
@@ -330,9 +316,7 @@ fn reader_read_at_arbitrary_offset() {
     assert_eq!(&buf, &payload[512..528]);
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.h: IocpReader seek_to validates bounds
-// ---------------------------------------------------------------------------
 
 /// `IocpReader::seek_to` past the end of the file must return an error.
 #[test]
@@ -354,9 +338,7 @@ fn reader_seek_beyond_eof_errors() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.i: IocpWriter create_for_append preserves existing content offset
-// ---------------------------------------------------------------------------
 
 /// `IocpWriter::create_for_append` opens an existing file at offset 0.
 /// Writing appended data after a seek to the file's logical end should
@@ -385,9 +367,7 @@ fn writer_create_for_append_preserves_content() {
     assert_eq!(content, "existing-content-appended");
 }
 
-// ---------------------------------------------------------------------------
 // WTD-2.j: Large concurrent_ops IocpDiskBatch
-// ---------------------------------------------------------------------------
 
 /// Drive a moderate payload through a batch with `concurrent_ops = 64` to
 /// exercise deep in-flight queues.

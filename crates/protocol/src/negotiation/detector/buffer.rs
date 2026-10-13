@@ -10,8 +10,7 @@ impl NegotiationPrologueDetector {
     ///
     /// When the detector concludes that the peer is using the legacy ASCII
     /// greeting, the already consumed bytes must be included when parsing the
-    /// full banner. Upstream rsync accomplishes this by reusing the peeked
-    /// prefix. The buffer grows across subsequent [`Self::observe`] calls until
+    /// full banner. The buffer grows across subsequent [`Self::observe`] calls until
     /// the canonical `@RSYNCD:` prefix has been captured or a mismatch forces
     /// the legacy classification. For binary negotiations, no bytes are retained
     /// and this method returns an empty slice.
@@ -70,8 +69,7 @@ impl NegotiationPrologueDetector {
     /// connection attempt.
     ///
     /// Restores the struct to the state produced by
-    /// [`NegotiationPrologueDetector::new`], mirroring upstream rsync's practice
-    /// of zeroing its detection state before accepting another connection.
+    /// [`NegotiationPrologueDetector::new`].
     pub const fn reset(&mut self) {
         self.buffer = [0; LEGACY_DAEMON_PREFIX_LEN];
         self.len = 0;

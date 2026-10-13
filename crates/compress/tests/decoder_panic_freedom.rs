@@ -2,8 +2,8 @@
 //! malformed input.
 //!
 //! Decoders are reached by attackers (the receiver decompresses bytes chosen
-//! by the sender). UTS-18 (PR #5566) surfaced one bounds-check-via-panic class
-//! in an adjacent parser path; these tests catch the same class in the zlib,
+//! by the sender). A bounds-check-via-panic class was once found in an
+//! adjacent parser path; these tests catch the same class in the zlib,
 //! zstd, and lz4 codec decoders by sweeping arbitrary byte buffers through
 //! each decoder entry point and asserting only `Ok(_)` or `Err(_)` come back.
 //!

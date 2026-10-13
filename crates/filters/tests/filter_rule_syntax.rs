@@ -12,7 +12,7 @@
 //! 7. Combined filter types
 //! 8. Rule ordering
 //!
-//! Reference: rsync 3.4.1 exclude.c for filter rule parsing.
+//! Reference: rsync 3.5.1 exclude.c for filter rule parsing.
 
 use filters::{FilterAction, FilterRule, FilterSet, parse_rules};
 use std::path::Path;
@@ -30,7 +30,7 @@ mod include_rules {
 
     #[test]
     fn short_form_include_no_space_errors() {
-        // upstream: exclude.c:1226 - a short-prefix rule requires a separator
+        // upstream: exclude.c:1365-1379 - a short-prefix rule requires a separator
         // before the pattern. `+*.txt` reads `*` as a modifier and rejects it:
         //   invalid modifier '*' at position 1 in filter rule: +*.txt
         let err = parse_rules("+*.txt", Path::new("test")).unwrap_err();
@@ -47,10 +47,10 @@ mod include_rules {
 
     #[test]
     fn long_form_include_uppercase_errors() {
-        // upstream: exclude.c:1069 rule_strcmp uses a case-sensitive strncmp, so
+        // upstream: exclude.c:1218-1227 rule_strcmp uses a case-sensitive strncmp, so
         // `INCLUDE` never matches the `include` keyword. The leading `I` is not a
         // short-form prefix either, so upstream reports "Unknown filter rule" and
-        // exits RERR_SYNTAX (exclude.c:1210).
+        // exits RERR_SYNTAX (exclude.c:1363).
         let err = parse_rules("INCLUDE *.txt", Path::new("test")).unwrap_err();
         assert!(
             err.to_string().contains("Unknown filter rule"),
@@ -151,7 +151,7 @@ mod include_rules {
         assert!(!rules[0].applies_to_receiver());
     }
 
-    // upstream: exclude.c:1279-1283 - `w` (word-split) is valid only on a
+    // upstream: exclude.c:1433-1437 - `w` (word-split) is valid only on a
     // merge-file rule; on an include rule upstream reports "invalid modifier
     // 'w'". oc-rsync mirrors the rejection.
     #[test]
@@ -174,7 +174,7 @@ mod exclude_rules {
 
     #[test]
     fn short_form_exclude_no_space_errors() {
-        // upstream: exclude.c:1226 - `-*.bak` reads `*` as a modifier:
+        // upstream: exclude.c:1365-1379 - `-*.bak` reads `*` as a modifier:
         //   invalid modifier '*' at position 1 in filter rule: -*.bak
         let err = parse_rules("-*.bak", Path::new("test")).unwrap_err();
         crate::assert_modifier_rejected_without_echo(&err.to_string(), "-*.bak");
@@ -191,7 +191,7 @@ mod exclude_rules {
     #[test]
     fn long_form_exclude_uppercase_errors() {
         // upstream: rule_strcmp is case-sensitive, so `EXCLUDE` is not the
-        // `exclude` keyword, and `E` is not a short-form prefix. rsync 3.4.4
+        // `exclude` keyword, and `E` is not a short-form prefix. rsync 3.5.1
         // reports "Unknown filter rule" and exits RERR_SYNTAX.
         let err = parse_rules("EXCLUDE *.bak", Path::new("test")).unwrap_err();
         assert!(
@@ -265,7 +265,7 @@ mod exclude_rules {
 
     #[test]
     fn exclude_with_exclude_self_modifier_is_rejected() {
-        // upstream: exclude.c:1256-1258 - the `e` (FILTRULE_EXCLUDE_SELF)
+        // upstream: exclude.c:1410-1414 - the `e` (FILTRULE_EXCLUDE_SELF)
         // modifier requires FILTRULE_MERGE_FILE; on a plain exclude rule
         // upstream jumps to `invalid`. oc-rsync previously accepted `-e *.log`
         // and stored a flag no matching logic read, silently diverging from
@@ -274,7 +274,7 @@ mod exclude_rules {
         crate::assert_modifier_rejected_without_echo(&err.to_string(), "-e *.log");
     }
 
-    // upstream: exclude.c:1261-1264 / 1279-1283 - `n` and `w` are valid only
+    // upstream: exclude.c:1415-1419 / 1433-1437 - `n` and `w` are valid only
     // on a merge-file rule (FILTRULE_MERGE_FILE). On an ordinary exclude rule
     // upstream jumps to `invalid`; oc-rsync mirrors that syntax error rather
     // than silently accepting the modifier.
@@ -299,7 +299,7 @@ mod exclude_rules {
     #[test]
     fn exclude_underscore_separator() {
         // Underscore separates modifiers from the pattern. upstream:
-        // exclude.c:1290-1291,1313 consumes exactly one separator (the `_`) and
+        // exclude.c:1365,1444-1445,1465 consumes exactly one separator (the `_`) and
         // then takes the rest verbatim (strlen), so the following space stays
         // part of the pattern.
         let rules = parse_rules("-!_ *.txt", Path::new("test")).unwrap();
@@ -328,9 +328,9 @@ mod clear_rules {
 
     #[test]
     fn long_form_clear_uppercase_errors() {
-        // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
+        // upstream: exclude.c:1290 RULE_STRCMP(s, "clear") is a case-sensitive
         // strncmp, so `CLEAR` is not the clear directive. `C` is not a short-form
-        // prefix either, so rsync 3.4.4 reports "Unknown filter rule" and exits
+        // prefix either, so rsync 3.5.1 reports "Unknown filter rule" and exits
         // RERR_SYNTAX.
         let err = parse_rules("CLEAR", Path::new("test")).unwrap_err();
         assert!(
@@ -451,7 +451,7 @@ mod dir_merge_rules {
     #[test]
     fn long_form_dir_merge_uppercase_errors() {
         // upstream: rule_strcmp is case-sensitive, so `DIR-MERGE` is not the
-        // `dir-merge` keyword, and `D` is not a short-form prefix. rsync 3.4.4
+        // `dir-merge` keyword, and `D` is not a short-form prefix. rsync 3.5.1
         // reports "Unknown filter rule" and exits RERR_SYNTAX.
         let err = parse_rules("DIR-MERGE .rsync-filter", Path::new("test")).unwrap_err();
         assert!(
@@ -539,7 +539,7 @@ mod hide_show_rules {
     fn hide_long_form_uppercase_errors() {
         // upstream long-form keywords are lowercase only. `HIDE *.secret` is
         // parsed as the `H` (hide) short prefix followed by an invalid `I`
-        // modifier, matching rsync 3.4.4:
+        // modifier, matching rsync 3.5.1:
         //   invalid modifier 'I' at position 1 in filter rule: HIDE *.secret
         let err = parse_rules("HIDE *.secret", Path::new("test")).unwrap_err();
         crate::assert_modifier_rejected_without_echo(&err.to_string(), "HIDE *.secret");
@@ -939,7 +939,7 @@ mod combined_filter_types {
     fn modifiers_on_different_rule_types() {
         // Note: side-specific prefixes (H/S/P/R) implicitly bind their side,
         // so adding an `s`/`r` modifier is redundant and upstream rejects it
-        // (see exclude.c:1269-1278 prefix_specifies_side). `P!` alone already
+        // (see exclude.c:1423-1432 prefix_specifies_side). `P!` alone already
         // implies receiver-only; `H!p` is sender-only.
         let rules = parse_rules(
             "+!p special.txt\n\
@@ -1137,7 +1137,7 @@ mod rule_ordering {
         assert!(!set.allows(Path::new("file.tmp"), false));
 
         // Deletion: the top-level scan runs with `ignore_perishable` unset
-        // (upstream exclude.c:1044 / delete.c:147), so the perishable exclude
+        // (upstream exclude.c:1193-1194 / delete.c:208), so the perishable exclude
         // protects a matching entry exactly like a plain exclude.
         assert!(!set.allows_deletion(Path::new("file.tmp"), false));
     }
@@ -1168,7 +1168,7 @@ mod comments_and_whitespace {
 
     #[test]
     fn leading_whitespace_rejected() {
-        // upstream: exclude.c:1211-1213 parse_rule_tok - a leading space is not a
+        // upstream: exclude.c:1325-1326,1363 parse_rule_tok - a leading space is not a
         // valid rule prefix and raises "Unknown filter rule"; it is never
         // trimmed away.
         let result = parse_rules("  + *.txt", Path::new("test"));
@@ -1178,7 +1178,7 @@ mod comments_and_whitespace {
 
     #[test]
     fn trailing_whitespace_kept_in_pattern() {
-        // upstream: exclude.c:1313 - the pattern length is strlen, so trailing
+        // upstream: exclude.c:1465 - the pattern length is strlen, so trailing
         // whitespace stays part of the pattern verbatim.
         let rules = parse_rules("+ *.txt ", Path::new("test")).unwrap();
         assert_eq!(rules[0].pattern(), b"*.txt ");

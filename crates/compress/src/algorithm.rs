@@ -11,7 +11,8 @@ use thiserror::Error;
 use crate::zlib::CompressionLevel;
 
 /// Default zlib compression level matching upstream rsync.
-/// upstream: token.c - `Z_DEFAULT_COMPRESSION` resolves to 6.
+/// upstream: token.c:66 `init_compression_level()` - `def_level = 6` because
+/// `Z_DEFAULT_COMPRESSION` is `-1`.
 pub const ZLIB_DEFAULT_LEVEL: i32 = 6;
 
 /// Maximum zstd compression level accepted by `--compress-level`.
@@ -19,21 +20,24 @@ pub const ZLIB_DEFAULT_LEVEL: i32 = 6;
 pub const ZSTD_MAX_LEVEL: i32 = 22;
 
 /// Default zstd compression level.
-/// upstream: token.c - `ZSTD_CLEVEL_DEFAULT` is 3.
+/// upstream: token.c:75 `init_compression_level()` - `def_level = ZSTD_CLEVEL_DEFAULT` (3).
 pub const ZSTD_DEFAULT_LEVEL: i32 = 3;
 
 /// Fastest zstd compression level used for the `Fast` variant.
 pub const ZSTD_FAST_LEVEL: i32 = 1;
 
 /// Best zstd compression level used for the `Best` variant.
-/// upstream: token.c - maximum level capped at 19 (ZSTD_maxCLevel without ultra).
+///
+/// Deviation from upstream: an oc-only preset. Upstream has no "best" level and
+/// caps zstd at `ZSTD_maxCLevel()` (token.c:74); 19 is libzstd's highest
+/// non-ultra level.
 pub const ZSTD_BEST_LEVEL: i32 = 19;
 
 /// Default lz4 acceleration factor. Higher values trade compression ratio for speed.
 pub const LZ4_DEFAULT_ACCELERATION: i32 = 1;
 
 /// Raw `do_compression_level` value upstream uses when the user did not pass
-/// `--compress-level`. upstream: rsync.h:1153 `#define CLVL_NOT_SPECIFIED INT_MIN`.
+/// `--compress-level`. upstream: rsync.h:1210 `#define CLVL_NOT_SPECIFIED INT_MIN`.
 ///
 /// [`CompressionAlgorithm::resolve_debug_level`] treats this sentinel as
 /// "unspecified" and substitutes the codec's default level, mirroring
@@ -83,9 +87,8 @@ impl CompressionAlgorithm {
 
     /// Returns the default compression algorithm used when callers enable `--compress`.
     ///
-    /// upstream: `valid_compressions_items[]` (compat.c) lists the negotiation
-    /// precedence in table order - zstd, lz4, zlibx, zlib, none - and that
-    /// order is unchanged in 3.5.0.
+    /// upstream: compat.c:101-112 `valid_compressions_items[]` lists the negotiation
+    /// precedence in table order - zstd, lz4, zlibx, zlib, none.
     #[must_use]
     pub const fn default_algorithm() -> Self {
         #[cfg(feature = "zstd")]
@@ -212,7 +215,7 @@ fn clamped(level: u8) -> NonZeroU8 {
     NonZeroU8::new(level).expect("clamped level is non-zero")
 }
 
-/// Clamps into the zlib range, mirroring `token.c:59-70`.
+/// Clamps into the zlib range, mirroring `token.c:62-70` and `token.c:93-104`.
 ///
 /// `Z_DEFAULT_COMPRESSION` (`-1`) remaps to the real default level (6); `0` is
 /// upstream's `off_level` and disables compression; all other values saturate

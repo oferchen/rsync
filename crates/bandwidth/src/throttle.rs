@@ -1,11 +1,12 @@
 //! Bandwidth-throttling writer decorator.
 //!
-//! Mirrors upstream rsync's socket-write pacing in `io.c:852-880`: the sender's
-//! writer clamps every outbound write to `bwlimit_writemax` bytes
-//! (`options.c:2403-2406`, `bwlimit * 128` floored at 512) and calls
-//! `sleep_for_bwlimit(n)` after each chunk. The receiver never throttles -
-//! `main.c:1081` sets `bwlimit_writemax = 0` once it becomes the receiver - so
-//! callers install a limiter only on a sender-role writer.
+//! Mirrors upstream rsync's socket-write pacing in `io.c:952-980` (`perform_io()`):
+//! every outbound socket write is clamped to `bwlimit_writemax` bytes
+//! (`options.c:2545-2548`, `bwlimit * 128` floored at 512) and followed by
+//! `sleep_for_bwlimit(n)`. The forked receiver never throttles -
+//! `main.c:1096` (`do_recv()`) sets `bwlimit_writemax = 0` in the child - while
+//! the generator that keeps the socket on the receiving side still paces its
+//! writes. Callers decide which writers get a limiter.
 //!
 //! This decorator is the single owner of that clamp-then-pace sequence for the
 //! whole workspace. Any transport whose write endpoint implements [`Write`] -
@@ -23,7 +24,7 @@ use crate::BandwidthLimiter;
 /// [`BandwidthLimiter::write_max_bytes`]-sized chunks and each chunk is
 /// registered with the limiter (which sleeps once the accumulated debt exceeds
 /// the pacing threshold), mirroring the clamp-then-`sleep_for_bwlimit` sequence
-/// in `io.c:864-880`.
+/// in `io.c:952-980`.
 ///
 /// When `limiter` is `None` (`--bwlimit=0`, or the receiver role) the decorator
 /// is a zero-overhead passthrough: `write`, `write_vectored`, and `flush`
@@ -56,8 +57,8 @@ impl<W: Write> Write for ThrottlingWriter<W> {
         // Destructure so `inner` and `limiter` can be borrowed independently.
         let Self { inner, limiter } = self;
         match limiter {
-            // upstream: io.c:864 `if (bwlimit_writemax && len > bwlimit_writemax)
-            // len = bwlimit_writemax;` then io.c:879 `sleep_for_bwlimit(n)`.
+            // upstream: io.c:952 `if (bwlimit_writemax && len > bwlimit_writemax)
+            // len = bwlimit_writemax;` then io.c:980 `sleep_for_bwlimit(n)`.
             Some(limiter) => {
                 let max = limiter.write_max_bytes().max(1);
                 for chunk in buf.chunks(max) {
@@ -126,7 +127,7 @@ mod tests {
 
     /// A `None` limiter is a byte-and-syscall-identical passthrough.
     ///
-    /// WHY: `--bwlimit=0` and the receiver role (`main.c:1081`) must not perturb
+    /// WHY: `--bwlimit=0` and the receiver role (`main.c:1096`) must not perturb
     /// the un-throttled wire path, so a single `write` reaches the inner writer
     /// whole - no clamping, no sleeping.
     #[test]
@@ -145,8 +146,8 @@ mod tests {
 
     /// An active limiter clamps each inner write to `write_max_bytes`.
     ///
-    /// WHY: upstream `io.c:864` caps every socket write to `bwlimit_writemax`
-    /// (`options.c:2404` `bwlimit * 128`), so a single large logical write must
+    /// WHY: upstream `io.c:952` caps every socket write to `bwlimit_writemax`
+    /// (`options.c:2546` `bwlimit * 128`), so a single large logical write must
     /// reach the descriptor as multiple bounded writes, never one oversized one.
     #[test]
     fn limited_clamps_each_write_to_write_max() {
@@ -169,7 +170,7 @@ mod tests {
     /// The limiter registers pacing sleeps proportional to the throughput.
     ///
     /// WHY: this is the whole point of `--bwlimit` on the sender - upstream
-    /// `io.c:879 sleep_for_bwlimit(n)` makes the sender wait so the average
+    /// `io.c:980 sleep_for_bwlimit(n)` makes the sender wait so the average
     /// egress rate tracks the configured limit. Under the crate's test build the
     /// limiter records the requested sleep durations instead of blocking on them
     /// (see `limiter::sleep`), so this asserts on the recorded pacing schedule -

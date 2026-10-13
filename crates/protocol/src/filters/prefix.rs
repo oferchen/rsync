@@ -20,7 +20,7 @@ use crate::ProtocolVersion;
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1522-1587` - `get_rule_prefix()` returns NULL for unsendable rules
+/// `exclude.c:1824-1886` - `get_rule_prefix()` returns NULL for unsendable rules
 pub fn build_rule_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> Option<String> {
     if protocol.uses_old_prefixes() {
         return build_old_prefix(rule);
@@ -100,7 +100,7 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
             })
         }
         // A merge rule is expanded at parse time and a clear rule empties the
-        // list (exclude.c:1467-1473), so neither reaches get_rule_prefix();
+        // list (exclude.c:1540-1551), so neither reaches get_rule_prefix();
         // oc has no pre-29 encoding for either.
         RuleType::Merge | RuleType::Clear | RuleType::DirMerge => None,
     }
@@ -110,23 +110,25 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
 ///
 /// Protect (`P`) and Risk (`R`) rules are normalized to upstream's wire
 /// representation before transmission. Upstream's `get_rule_prefix()`
-/// (`exclude.c:1536-1572`) only emits `+`, `-`, or `:` as the leading
+/// (`exclude.c:1831-1841`) only emits `+`, `-`, or `:` as the leading
 /// character; the receiver-side semantics that distinguish a protect rule
 /// from a plain exclude are conveyed exclusively via the `r` modifier flag.
 /// Sending a literal `P` over the wire causes upstream's parser to combine
 /// it with the receiver-side `r` modifier emitted from `applies_to_receiver`,
-/// producing an invalid `Pr` rule (upstream `exclude.c:1270-1271` rejects
+/// producing an invalid `Pr` rule (upstream `exclude.c:1423-1426` rejects
 /// `r` after a side-specifying prefix).
 ///
-/// upstream: exclude.c:1536-1542 - protect rules emit `-` (exclude semantics).
-/// upstream: exclude.c:1201-1206 - risk rules emit `+` (include semantics).
+/// upstream: exclude.c:1355-1358 - `P` parses as RECEIVER_SIDE (an exclude), so it
+/// is sent as `-` (exclude.c:1837-1839).
+/// upstream: exclude.c:1352-1358 - `R` parses as INCLUDE|RECEIVER_SIDE, so it is
+/// sent as `+` (exclude.c:1835-1836).
 fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> String {
     use super::wire::RuleType;
 
     // Worst case: type(1) + modifiers(10) + trailing space(1) = 12 bytes.
     let mut prefix = String::with_capacity(12);
 
-    // upstream: exclude.c:1536-1572 send_filter_list() - Protect/Risk are encoded
+    // upstream: exclude.c:1831-1871 get_rule_prefix() - Protect/Risk are encoded
     // as `-`/`+` plus the `r` modifier (driven by FILTRULE_RECEIVER_SIDE), never
     // as literal `P`/`R` on the wire.
     let prefix_char = match rule.rule_type {
@@ -137,16 +139,17 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
     prefix.push(prefix_char);
 
     // Modifier emission order is part of the wire contract; do not reorder.
-    // upstream: exclude.c:1543-1544 get_rule_prefix() emits the `/` modifier
-    // only for FILTRULE_ABS_PATH, which is set exclusively on merge/dir-merge
-    // rules (the `/` merge modifier, exclude.c:1238-1239). A command-line
-    // anchored rule such as `- /foo` keeps its leading slash in ent->pattern
-    // and never sets FILTRULE_ABS_PATH, so its anchor rides in the pattern body
-    // (see serialize_rule), not in the prefix. Emitting `/` for a plain exclude
-    // makes the remote parser read it as ABS_PATH plus a bare, non-anchored
-    // pattern that matches the basename at any depth (exclude.c:941-944
-    // rule_matches keys anchoring off a literal leading `/` in the pattern, not
-    // the modifier), wrongly excluding e.g. `sub/foo` as well as `foo`.
+    // upstream: exclude.c:1843-1844 get_rule_prefix() emits the `/` modifier
+    // only for FILTRULE_ABS_PATH, set by the `/` rule modifier on any rule
+    // (exclude.c:1392-1394) or by add_rule() under XFLG_ANCHORED2ABS /
+    // XFLG_ABS_IF_SLASH (exclude.c:297-300). A command-line anchored rule such
+    // as `- /foo` keeps its leading slash in ent->pattern without ABS_PATH, so
+    // its anchor rides in the pattern body (see serialize_rule). Emitting `/`
+    // for that rule would make the peer match it against the absolute path
+    // (exclude.c:1022) instead of anchoring on the literal leading `/`
+    // (exclude.c:1041). oc's `anchored` flag only maps to the `/` modifier on
+    // merge/dir-merge rules; a non-merge rule carrying upstream's `/` modifier
+    // is not represented.
     if rule.anchored && matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) {
         prefix.push('/');
     }
@@ -155,11 +158,11 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('!');
     }
 
-    // upstream: exclude.c:1548-1561 get_rule_prefix() - when FILTRULE_CVS_IGNORE
+    // upstream: exclude.c:1847-1860 get_rule_prefix() - when FILTRULE_CVS_IGNORE
     // is set, emit ONLY `C`; the no-inherit/word-split/no-prefixes flags it
     // implies must not also be emitted. The remote parser re-derives them from
-    // `C` (exclude.c:1248-1254) and rejects a redundant `-` after `C` because
-    // the `C` case already set NO_PREFIXES (exclude.c:1249 -> `invalid`), so
+    // `C` (exclude.c:1402-1408) and rejects a redundant `-` after `C` because
+    // the `C` case already set NO_PREFIXES (exclude.c:1381-1383 -> `invalid`), so
     // emitting `:Cnw-` makes upstream fail with "invalid modifier '-'".
     if rule.cvs_exclude {
         prefix.push('C');
@@ -172,7 +175,7 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
             prefix.push('w');
         }
 
-        // upstream: exclude.c:1555-1560 - on a merge/dir-merge rule, emit `-`
+        // upstream: exclude.c:1854-1859 - on a merge/dir-merge rule, emit `-`
         // when FILTRULE_NO_PREFIXES is set and `+` when
         // FILTRULE_NO_PREFIXES|FILTRULE_INCLUDE are both set. Order matches
         // upstream: between `w` and `e`.
@@ -189,8 +192,9 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('x');
     }
 
-    // upstream: exclude.c:1569-1572 - `r` is forced for Protect/Risk because
-    // their wire encoding relies on FILTRULE_RECEIVER_SIDE on a plain `-`/`+`.
+    // upstream: exclude.c:1868-1871 emits `r` for FILTRULE_RECEIVER_SIDE. It is
+    // forced for Protect/Risk because their wire encoding relies on
+    // FILTRULE_RECEIVER_SIDE on a plain `-`/`+`.
     if protocol.supports_sender_receiver_modifiers() {
         if rule.sender_side {
             prefix.push('s');
@@ -209,11 +213,11 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
     // space that divides the prefix from the pattern, gated only on `legal_len`
     // (zeroed at :1841 for the protocol<29 bare-pattern form). It has no
     // clear-rule branch at all, because upstream never emits one: parse_filter_str
-    // pops the list and `goto free_continue`s at exclude.c:1542-1551 before a `!`
+    // pops the list and `goto free_continue`s at exclude.c:1540-1551 before a `!`
     // rule can enter filter_list, so send_rules never sees it. That makes this
     // oc-only traffic, judged by upstream's PARSER rather than its emitter: for a
     // `!` rule with any trailing byte,
-    // exclude.c:1467-1473 raises `'!' rule has trailing characters` and
+    // exclude.c:1466-1471 raises `'!' rule has trailing characters` and
     // exit_cleanup(RERR_SYNTAX). MEASURED against rsync 3.5.0 - `--filter='! '`
     // exits 1 with that message while `--filter='!'` exits 0 - so emitting the
     // space here made every clear rule oc sent abort a real upstream peer.
@@ -249,7 +253,7 @@ mod tests {
 
     #[test]
     fn anchored_non_merge_omits_slash_modifier() {
-        // upstream: exclude.c:1543-1544 - a command-line anchored rule keeps its
+        // upstream: exclude.c:1843-1844 - a command-line anchored rule keeps its
         // leading slash in the pattern, so FILTRULE_ABS_PATH is unset and no `/`
         // modifier is emitted. The anchor is written into the pattern body by
         // serialize_rule() instead.
@@ -262,9 +266,8 @@ mod tests {
 
     #[test]
     fn anchored_dir_merge_emits_slash_modifier() {
-        // upstream: exclude.c:1238-1239 / 1543-1544 - the `/` modifier on a
-        // merge/dir-merge rule sets FILTRULE_ABS_PATH and is emitted in the
-        // prefix (e.g. `:/`), anchoring the merged rules to the transfer root.
+        // upstream: exclude.c:1392-1394 / 1843-1844 - the `/` modifier sets
+        // FILTRULE_ABS_PATH and is emitted in the prefix (e.g. `:/`).
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
@@ -288,7 +291,7 @@ mod tests {
         // The anchor no longer appears as a `/` prefix modifier on a plain
         // exclude; it rides in the pattern body (serialize_rule). With
         // FILTRULE_CVS_IGNORE set, upstream get_rule_prefix() emits only `C`
-        // and suppresses the implied `n` (exclude.c:1548-1561), so the remote
+        // and suppresses the implied `n` (exclude.c:1847-1860), so the remote
         // parser re-derives no-inherit from `C` rather than seeing `Cn`.
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-C ");
@@ -298,7 +301,7 @@ mod tests {
     fn cvs_dir_merge_emits_only_c_modifier() {
         // Regression: a `:C` dir-merge carries cvs_exclude + the implied
         // no_inherit/word_split/no_prefixes flags. Upstream emits just `:C`
-        // (exclude.c:1548-1561); emitting `:Cnw-` makes the remote parser
+        // (exclude.c:1847-1860); emitting `:Cnw-` makes the remote parser
         // reject the redundant `-` after `C` ("invalid modifier '-'"), which
         // aborts daemon/remote transfers using a CVS-style per-dir merge.
         let protocol = ProtocolVersion::from_supported(32).unwrap();
@@ -425,7 +428,7 @@ mod tests {
         // The `/` anchor is no longer a prefix modifier for a non-merge rule;
         // it moves into the pattern body (serialize_rule). With
         // FILTRULE_CVS_IGNORE set, upstream get_rule_prefix() emits only `C`
-        // and suppresses the implied `n`/`w` (exclude.c:1548-1561), so they do
+        // and suppresses the implied `n`/`w` (exclude.c:1847-1860), so they do
         // not appear even though no_inherit/word_split are set on the rule.
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-!Cexsrp ");
@@ -441,7 +444,7 @@ mod tests {
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
         // Exactly one byte: real rsync 3.5.0 aborts on `"! "` with
-        // `'!' rule has trailing characters` (exclude.c:1467-1473).
+        // `'!' rule has trailing characters` (exclude.c:1466-1471).
         assert_eq!(prefix, "!");
     }
 
@@ -466,7 +469,7 @@ mod tests {
 
     #[test]
     fn protect_rule_emits_dash_with_receiver_modifier() {
-        // upstream: exclude.c:1645 send_filter_list() encodes a P rule as
+        // upstream: exclude.c:1831-1871 get_rule_prefix() encodes a P rule as
         // an exclude (`-`) carrying the FILTRULE_RECEIVER_SIDE modifier (`r`).
         // FilterRuleSpec::protect() sets applies_to_receiver=true, which
         // build_wire_format_rules() forwards as receiver_side=true.
@@ -484,7 +487,7 @@ mod tests {
 
     #[test]
     fn risk_rule_emits_plus_with_receiver_modifier() {
-        // upstream: exclude.c:1201-1206 - 'R' parses as INCLUDE|RECEIVER_SIDE,
+        // upstream: exclude.c:1352-1358 - 'R' parses as INCLUDE|RECEIVER_SIDE,
         // so it serializes as `+r` (include with receiver modifier).
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {

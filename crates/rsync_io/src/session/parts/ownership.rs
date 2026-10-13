@@ -27,6 +27,10 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Rehydrates a [`NegotiationPrologueSniffer`] using the stored negotiation snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the sniffer's buffer cannot grow to hold the snapshot.
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,
@@ -51,6 +55,11 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Attempts to transform the inner transport for both handshake variants while preserving metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryMapInnerError` carrying the closure's error and the original value when
+    /// `map` fails.
     pub fn try_map_stream_inner<F, T, E>(
         self,
         map: F,
@@ -71,6 +80,10 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Consumes the parts structure, returning the binary handshake components when available.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original value unchanged when it holds the other handshake variant.
     pub fn into_binary(self) -> HandshakePartsResult<BinaryHandshakeComponents<R>, R> {
         match self {
             SessionHandshakeParts::Binary(parts) => {
@@ -98,6 +111,10 @@ impl<R> SessionHandshakeParts<R> {
     /// Consumes the parts structure, returning the binary handshake parts when available.
     ///
     /// Returns the original value on mismatch, matching [`TryFrom`] ergonomics.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original value unchanged when it holds the other handshake variant.
     pub fn into_binary_parts(self) -> Result<BinaryHandshakeParts<R>, SessionHandshakeParts<R>> {
         match self {
             SessionHandshakeParts::Binary(parts) => Ok(parts),
@@ -106,6 +123,10 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Consumes the parts structure, returning the legacy handshake components when available.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original value unchanged when it holds the other handshake variant.
     pub fn into_legacy(self) -> HandshakePartsResult<LegacyHandshakeComponents<R>, R> {
         match self {
             SessionHandshakeParts::Binary(parts) => Err(SessionHandshakeParts::Binary(parts)),
@@ -120,6 +141,10 @@ impl<R> SessionHandshakeParts<R> {
     ///
     /// Returns the original value on mismatch, matching [`Self::into_legacy`]
     /// and [`TryFrom`] ergonomics.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original value unchanged when it holds the other handshake variant.
     pub fn into_legacy_parts(
         self,
     ) -> Result<LegacyDaemonHandshakeParts<R>, SessionHandshakeParts<R>> {

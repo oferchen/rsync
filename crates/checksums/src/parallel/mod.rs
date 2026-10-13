@@ -4,6 +4,10 @@
 //! enabling concurrent digest computation for improved performance
 //! when processing multiple data blocks or files.
 //!
+//! Deviation from upstream: upstream computes block and file digests serially
+//! (`generator.c:generate_and_send_sums()`, `checksum.c:file_checksum()`); rayon
+//! parallelism is an oc-only performance design that preserves output order and bytes.
+//!
 //! # File Hashing
 //!
 //! The module provides functions for hashing multiple files concurrently:

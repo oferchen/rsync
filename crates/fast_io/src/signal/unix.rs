@@ -13,14 +13,13 @@ use super::SignalHandlerFn;
 
 /// Installs `handler` for `signum` with no `sa_flags`.
 ///
-/// upstream: `rsync.h:1260` defines `SIGACTION(n,h)` as
+/// upstream: `rsync.h:1294` defines `SIGACTION(n,h)` as
 /// `sigact.sa_handler = (h), sigaction((n), &sigact, NULL)` over a
-/// file-static `struct sigaction sigact` (`main.c:133`, `cleanup.c:43`) that
+/// file-static `struct sigaction sigact` (`main.c:137`, `cleanup.c:43`) that
 /// is never given any flags, so `sa_flags == 0` and `SA_RESTART` is *not*
-/// set. Upstream depends on that: a signal aborts the blocking `select()` in
-/// `perform_io()` with `EINTR`, which `io.c:784-797` treats exactly like a
-/// timeout, and the next loop iteration observes `got_kill_signal`
-/// (`io.c:768`). Installing with `SA_RESTART` instead would restart the
+/// set. Upstream depends on that: a signal aborts the blocking `poll()` in
+/// `perform_io()` with `EINTR`, which `io.c:866-876` treats like a timeout,
+/// and the next loop iteration observes `got_kill_signal` (`io.c:849`). Installing with `SA_RESTART` instead would restart the
 /// blocked syscall and the flag would never be read.
 ///
 /// The handler must be async-signal-safe: only atomic stores against

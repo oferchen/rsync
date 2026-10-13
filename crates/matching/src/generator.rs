@@ -31,7 +31,11 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 /// they are flushed early to bound memory usage. Without this, a large
 /// unmatched region would grow `pending_literals` to the entire file size.
 ///
-/// upstream: rsync.h:158, match.c:339
+/// Deviation from upstream: upstream flushes only the literal bytes up to
+/// `offset - blength` once the backlog reaches `blength + CHUNK_SIZE`, while
+/// this scan flushes the whole backlog, so literal token boundaries can differ.
+///
+/// upstream: rsync.h:158, match.c:372 `hash_search()`
 const CHUNK_SIZE: usize = 32 * 1024;
 
 /// Minimum bytes per parallel stripe in [`DeltaGenerator::generate_chunked`].
@@ -45,8 +49,8 @@ const MIN_PARALLEL_CHUNK_BYTES: usize = 1024 * 1024;
 /// Per-scan counters backing the `--debug=deltasum` per-file line and the
 /// sender's run totals.
 ///
-/// upstream: match.c:363-366 zeroes `false_alarms`/`hash_hits`/`matches` at the
-/// top of `match_sums()`; match.c:472-475 folds them into the run totals that
+/// upstream: match.c:397-401 zeroes `false_alarms`/`hash_hits`/`matches` at the
+/// top of `match_sums()`; match.c:474-476 folds them into the run totals that
 /// `match_report()` prints. `hash_hits`/`false_alarms` carry oc-native
 /// semantics (see [`crate::ProbeCounters`]).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -90,7 +94,7 @@ fn flush_seq_match_run(
 /// The signature layout only ever leaves the *last* block short (every earlier
 /// block spans a full `block_len`), which is why upstream derives its scan
 /// bound from that one block: `end = len + 1 - s->sums[s->count-1].len`
-/// (`match.c:174`). Returns `None` when the basis divides evenly into full
+/// (`match.c:197`). Returns `None` when the basis divides evenly into full
 /// blocks, in which case there is no short tail to match.
 fn short_final_block_len(index: &DeltaSignatureIndex, block_len: usize) -> Option<usize> {
     let count = index.block_count();
@@ -110,7 +114,7 @@ fn short_final_block_len(index: &DeltaSignatureIndex, block_len: usize) -> Optio
 /// re-splits its gap literals at exactly this same cadence, so both paths frame
 /// literals identically by construction rather than by coincidence.
 ///
-/// upstream: match.c:339-340 (`if (a_bytes >= CHUNK_SIZE + blength)`).
+/// upstream: match.c:372-373 (`backup >= s->blength+CHUNK_SIZE`).
 #[inline]
 const fn literal_flush_cadence(block_len: usize) -> usize {
     block_len + CHUNK_SIZE
@@ -318,7 +322,7 @@ pub struct DeltaGenerator {
     consecutive_match_needed: u8,
     /// Enforces upstream's in-place ("updating basis file") monotonicity guard.
     ///
-    /// When `true` the scan mirrors `match.c:211` (`updating_basis_file`): a
+    /// When `true` the scan mirrors `match.c:235` (`updating_basis_file`): a
     /// candidate whose basis offset precedes the current source cursor is
     /// suppressed and its bytes are emitted as a literal instead of a `Copy`.
     /// This is required under `--inplace`, where the receiver reads the basis
@@ -392,8 +396,13 @@ impl DeltaGenerator {
     /// never seeks backwards to read a basis region it has already overwritten.
     /// Reconstruction stays byte-identical; only the unsafe read is avoided.
     ///
-    /// upstream: match.c:211 (`if (updating_basis_file && s->sums[i].offset <
-    /// offset ...)`), sender.c:338 (`updating_basis_file = ... inplace ...`).
+    /// Deviation from upstream: only the `offset >= cursor` guard is mirrored.
+    /// Upstream also unlinks bypassed chain entries, prefers the block at the
+    /// aligned offset (`SUMFLG_SAME_OFFSET`) and re-aligns zero runs
+    /// (match.c:275-319).
+    ///
+    /// upstream: match.c:235 (`if (updating_basis_file && s->sums[i].offset <
+    /// offset ...)`), sender.c:629-630 (`updating_basis_file = ... inplace ...`).
     #[must_use]
     pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
         self.updating_basis_file = updating;
@@ -436,7 +445,7 @@ impl DeltaGenerator {
     /// [`ScanCounters`] the caller needs for the `--debug=deltasum` per-file
     /// counter line and the sender's run totals.
     ///
-    /// upstream: match.c:363-366 (per-file counters), match.c:472-475 (run
+    /// upstream: match.c:397-401 (per-file counters), match.c:474-476 (run
     /// total accumulation).
     pub fn generate_counted<R: Read>(
         &self,
@@ -463,7 +472,7 @@ impl DeltaGenerator {
     /// current source `cursor` under the in-place guard.
     ///
     /// With the guard off this is always `true` (no restriction). With it on it
-    /// mirrors `match.c:211`: the block's basis offset (`idx * block_len`) must
+    /// mirrors `match.c:235`: the block's basis offset (`idx * block_len`) must
     /// be at or ahead of the write cursor, otherwise the receiver would read a
     /// destination region it has already overwritten. A block matched at its
     /// identical offset (`basis_offset == cursor`, upstream's
@@ -494,7 +503,7 @@ impl DeltaGenerator {
     ///
     /// `tail_match` states whether `reader`'s EOF is the source file's EOF. Only
     /// then may the short-final-block probe run: upstream reaches that block
-    /// solely at offset `len - s->sums[s->count-1].len` (`match.c:174`), so a
+    /// solely at offset `len - s->sums[s->count-1].len` (`match.c:197`), so a
     /// stripe that merely stops early must not claim it mid-file.
     fn scan<R: Read>(
         &self,
@@ -514,13 +523,13 @@ impl DeltaGenerator {
         let mut false_alarms = 0u64;
         let mut matches = 0u64;
         let mut offset = 0u64;
-        // upstream: match.c:126 `n = offset - last_match` - the literal-byte
+        // upstream: match.c:130 `(offset - last_match)` - the literal-byte
         // count the `match at` line reports, so the trace needs the end of the
         // previous match, not just the current cursor.
         let mut last_match = 0u64;
         // upstream prints `sum=%.8x k=%ld` and the level-3 `hash search`
         // parameter line once, right after the first window's checksum is
-        // computed (match.c:190-202). oc computes that checksum inside the
+        // computed (match.c:189-202). oc computes that checksum inside the
         // scan loop, so the emission rides the first full window.
         let mut first_window = true;
 
@@ -566,7 +575,7 @@ impl DeltaGenerator {
                 pending_literals.push(outgoing_byte);
                 offset += 1;
 
-                // upstream: match.c:339-340 - flush early to bound memory growth
+                // upstream: match.c:372-373 - flush early to bound memory growth
                 if pending_literals.len() >= literal_flush_cadence(block_len) {
                     literal_bytes += pending_literals.len() as u64;
                     total_bytes += pending_literals.len() as u64;
@@ -601,7 +610,8 @@ impl DeltaGenerator {
             // upstream: match.c:210-213
             trace_deltasum::trace_scan_offset(offset, digest.sum2(), digest.sum1());
 
-            // upstream: match.c:144-190 - try want_i hint before hash probe.
+            // upstream: match.c:321-334 - probe the want_i hint first; it picks the
+            // same block `check_want_i` would prefer.
             let (first, second) = window.as_slices();
             let matched = match want_i {
                 Some(hint) if index.check_block_match_slices(hint, digest, first, second) => {
@@ -612,12 +622,12 @@ impl DeltaGenerator {
                     index.find_match_slices(digest, first, second)
                 }
             };
-            // upstream: match.c:211 - under --inplace, drop any candidate whose
+            // upstream: match.c:235 - under --inplace, drop any candidate whose
             // basis offset precedes the write cursor (fall back to literal).
             let matched =
                 matched.filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
             if let Some(mut match_idx) = matched {
-                // upstream: match.c:265-310 - block match with bulk refill.
+                // upstream: match.c:336-344 - emit the match and advance one block.
                 // After each match, refill the window in bulk and compute the
                 // rolling checksum via SIMD-accelerated update() instead of
                 // block_len individual push_back()+update_byte() calls. Chained
@@ -700,7 +710,7 @@ impl DeltaGenerator {
                     rolling.reset();
                     offset += block_len as u64;
 
-                    // upstream: match.c:303-308 - recomputes checksum from scratch
+                    // upstream: match.c:338-342 - recomputes checksum from scratch
                     // over the next window via get_checksum1() (SIMD-accelerated).
                     let mut filled = 0usize;
                     while filled < block_len {
@@ -728,7 +738,7 @@ impl DeltaGenerator {
                         rolling.update(s2);
                     }
 
-                    // upstream: match.c:144-190 - try want_i hint at the next
+                    // upstream: match.c:321-334 - try the want_i hint at the next
                     // block boundary before falling back to a hash probe.
                     // The probe uses the index's recorded
                     // [`DeltaSignatureIndex::next_match`] link so a stored
@@ -744,7 +754,7 @@ impl DeltaGenerator {
                                 index.find_match_slices(adj_digest, f, s)
                             }
                         };
-                    // upstream: match.c:211 - `offset` has advanced by one block
+                    // upstream: match.c:235 - `offset` has advanced by one block
                     // above, so re-apply the in-place guard to the adjacent
                     // candidate before extending the run.
                     let adj_match = adj_match
@@ -766,13 +776,13 @@ impl DeltaGenerator {
         // EOF tail match, mirroring the three cooperating pieces of upstream's
         // `hash_search()`:
         //
-        // - `end = len + 1 - s->sums[s->count-1].len` (`match.c:174`) derives the
+        // - `end = len + 1 - s->sums[s->count-1].len` (`match.c:197`) derives the
         //   scan bound from the LAST block's length, not from `blength`, so the
         //   scan keeps going past `len - blength`.
         // - the rolling window shrinks byte by byte once there is nothing left to
-        //   feed it (`--k` when `!more`, `match.c:321-331`).
+        //   feed it (`--k` when `!more`, `match.c:354-364`).
         // - a candidate is accepted only when `l = MIN(blength, len-offset)`
-        //   equals `s->sums[i].len` (`match.c:222-224`).
+        //   equals `s->sums[i].len` (`match.c:254-256`).
         //
         // Together those admit exactly one short match, at offset
         // `len - tail_len` with a `tail_len`-byte window: every other shrunk
@@ -801,7 +811,7 @@ impl DeltaGenerator {
                 let digest = RollingDigest::from_bytes(tail);
                 index
                     .find_tail_match(digest, tail, &[])
-                    // upstream: match.c:211 - the in-place guard applies
+                    // upstream: match.c:235 - the in-place guard applies
                     // to the tail candidate like any other.
                     .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset))
             };
@@ -861,8 +871,8 @@ impl DeltaGenerator {
             tokens.push(DeltaToken::Literal(pending_literals));
         }
 
-        // upstream: match.c:441-442. The per-file counter line is NOT emitted
-        // here: upstream prints it at match.c:468-471, AFTER `sending file_sum`
+        // upstream: match.c:442-443. The per-file counter line is NOT emitted
+        // here: upstream prints it at match.c:469-472, AFTER `sending file_sum`
         // and the checksum trailer (match.c:465-466). The counters therefore
         // travel out through `ScanCounters` and the caller that writes that
         // trailer emits the line, which is what keeps the three lines in
@@ -870,7 +880,7 @@ impl DeltaGenerator {
         trace_deltasum::trace_done_hash_search();
 
         // Nothing is printed at DELTASUM level 1 here. upstream's only level-1
-        // delta diagnostic is match_report()'s `total:` line (match.c:479-487),
+        // delta diagnostic is match_report()'s `total:` line (match.c:480-489),
         // which the sender emits ONCE for the whole run - not once per file -
         // from a single place (sender.c:818). The run totals travel out through
         // `ScanCounters` so the driver can print that line once.
@@ -929,7 +939,7 @@ impl DeltaGenerator {
         // Counters for the per-file `--debug=deltasum` line. `matches` counts
         // blocks the scan CONFIRMED, including one later demoted to a literal
         // by the consecutive-match rule - the confirmation is what upstream's
-        // counter records (match.c:238 `matches++` sits at the accepted-block
+        // counter records (match.c:343 `matches++` sits at the accepted-block
         // site, before any emission decision).
         let mut hash_hits = 0u64;
         let mut false_alarms = 0u64;
@@ -991,7 +1001,7 @@ impl DeltaGenerator {
             // upstream: match.c:210-213
             trace_deltasum::trace_scan_offset(offset, digest.sum2(), digest.sum1());
             let (first, second) = window.as_slices();
-            // upstream: match.c:211 - under --inplace, suppress a candidate whose
+            // upstream: match.c:235 - under --inplace, suppress a candidate whose
             // basis offset precedes the write cursor so it demotes to a literal.
             hash_hits += 1;
             let matched = index
@@ -1109,7 +1119,7 @@ impl DeltaGenerator {
         // Drain any residual window bytes as literals.
         //
         // The ungated scan probes the basis's short final block here
-        // (`match.c:222-224`); this path deliberately does not. Its whole premise
+        // (`match.c:254-256`); this path deliberately does not. Its whole premise
         // is that a halved strong sum is only trustworthy when a neighbouring
         // block corroborates the match, and the final short block has no
         // successor to corroborate it. Admitting it would mean a second, weaker
@@ -1122,7 +1132,7 @@ impl DeltaGenerator {
         }
         flush_pending!();
 
-        // upstream: match.c:441-442. As in `scan`, the counter
+        // upstream: match.c:442-443. As in `scan`, the counter
         // line belongs to the caller that writes the checksum trailer.
         trace_deltasum::trace_done_hash_search();
 
@@ -1228,7 +1238,7 @@ impl DeltaGenerator {
             return self.generate_gated(Cursor::new(source), index);
         }
 
-        // The in-place monotonicity guard (`match.c:211`) compares each match's
+        // The in-place monotonicity guard (`match.c:235`) compares each match's
         // basis offset against the global source cursor. Parallel stripes only
         // know a stripe-local cursor, so route the guarded scan through the
         // sequential path, which tracks the true global offset.
@@ -1265,7 +1275,7 @@ impl DeltaGenerator {
     /// locking. Only a stripe that runs to `source.len()` sees the file's real
     /// EOF, so only it may claim the basis's short final block; a stripe that
     /// stops at a boundary would otherwise place that block mid-file, where
-    /// upstream's `l = MIN(blength, len-offset)` test (`match.c:222-224`) never
+    /// upstream's `MIN((OFF_T)s->blength, len-offset)` test (`match.c:254-256`) never
     /// admits it.
     fn scan_ranges_and_merge(
         &self,
@@ -1342,7 +1352,7 @@ impl DeltaGenerator {
     /// machinery at a chosen stripe count `{1, 2, 4, 8, ...}` on modest fixtures,
     /// independent of host CPU count and file size, so it can prove the merged
     /// output is invariant to how the source was striped. This entry point does
-    /// exactly that: it runs [`Self::scan_ranges_and_merge`] over exactly `stripes` overlapping ranges
+    /// exactly that: it runs `Self::scan_ranges_and_merge` over exactly `stripes` overlapping ranges
     /// (or fewer only when `source` is shorter than `stripes` bytes).
     ///
     /// It honours the same two bail-outs as the production path - the
@@ -1863,7 +1873,7 @@ mod tests {
             })
             .sum();
         // The fallback is the ungated scan, which also takes the short final
-        // block through its EOF tail probe (`match.c:222-224`), so the whole
+        // block through its EOF tail probe (`match.c:254-256`), so the whole
         // basis is Copied: the full block plus the 200-byte tail.
         assert_eq!(
             copied,

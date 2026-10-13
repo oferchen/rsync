@@ -18,8 +18,10 @@ use crate::error::NegotiationError;
 ///
 /// - [`NegotiationError::NoMutualProtocol`] when no advertised version
 ///   overlaps with [`ProtocolVersion::SUPPORTED_VERSIONS`].
-/// - [`NegotiationError::UnsupportedVersion`] when all advertised versions
-///   fall below the minimum or exceed the maximum advertisement threshold.
+/// - [`NegotiationError::UnsupportedVersion`] as soon as any advertised
+///   version exceeds the maximum advertisement threshold, or when every
+///   advertised version falls below [`ProtocolVersion::OLDEST`] (the lowest
+///   rejected value is reported).
 ///
 /// # Examples
 ///
@@ -315,7 +317,7 @@ mod tests {
 
     #[test]
     fn select_highest_mutual_mixed_supported_and_clamped() {
-        // 35 is clamped to NEWEST (32).
+        // 35 is clamped to NEWEST (33).
         let versions = vec![35_u8, 30, 29];
         let result = select_highest_mutual(versions).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
@@ -534,7 +536,7 @@ mod tests {
 
     #[test]
     fn select_future_clamps_to_newest() {
-        // Versions 33-40 fall within the upstream tolerance window and clamp.
+        // 33 is NEWEST; 34-40 fall within the upstream tolerance window and clamp.
         let result = select_highest_mutual([33_u8]).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
 

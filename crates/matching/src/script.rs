@@ -19,7 +19,9 @@ pub enum DeltaToken {
     Copy {
         /// Zero-based index of the signature block being reused.
         index: u64,
-        /// Number of bytes copied from the referenced block.
+        /// Number of bytes copied starting at the referenced block. A coalesced
+        /// run of adjacent basis blocks spans several blocks, so `len` can
+        /// exceed the block length.
         len: usize,
     },
 }

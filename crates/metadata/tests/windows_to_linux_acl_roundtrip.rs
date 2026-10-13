@@ -15,7 +15,7 @@
 //!   add two standard `user.*` slots, feed through
 //!   `apply_xattrs_from_list` against a `TempDir` file on non-Windows
 //!   hosts. Once the receiver intercepts the reserved slot (WAS-5,
-//!   dispatch shape in PR #4388), the standard slots survive and the
+//!   dispatch shape), the standard slots survive and the
 //!   reserved one is filtered out of the destination state observed
 //!   through `read_xattrs_for_wire`. Until the dispatch lands, the
 //!   slot is treated as a regular `user.*` xattr; the test detects
@@ -64,7 +64,7 @@ use protocol::xattr::{XattrEntry, XattrList};
 /// Reserved xattr name that carries the Windows security descriptor
 /// across the cross-platform xattr stream. Matches Samba's NT-ACL slot
 /// (`user.win32.security_descriptor`) and the constant introduced by
-/// the WAS-5 dispatch in PR #4388. Hardcoded here so the test holds
+/// the WAS-5 dispatch. Hardcoded here so the test holds
 /// the contract even before the constant is exported from `metadata`.
 const WINDOWS_SDDL_XATTR_NAME: &[u8] = b"user.win32.security_descriptor";
 
@@ -72,7 +72,7 @@ const WINDOWS_SDDL_XATTR_NAME: &[u8] = b"user.win32.security_descriptor";
 /// transmits xattr names verbatim from `listxattr(2)`, so on Linux the
 /// wire form keeps the `user.` prefix. On macOS / BSD the wire form
 /// adds `user.` because non-Linux peers insert that prefix on the
-/// sender side (`xattrs.c:518-530`).
+/// sender side (`xattrs.c:546-558`).
 ///
 /// Only referenced from `#[cfg(unix)]` tests below, so gate the
 /// constant the same way to keep the Windows build's `-D dead_code`
@@ -199,7 +199,7 @@ fn simulated_windows_xattr_dropped_on_linux() {
     );
 
     // Reserved-slot contract: on POSIX the receiver-side dispatch
-    // (WAS-5, PR #4388) filters the slot out of the on-disk xattr
+    // (WAS-5) filters the slot out of the on-disk xattr
     // listing. Until that lands, the slot is treated as a regular
     // `user.*` xattr. The branch below tolerates both states so the
     // test does not flake against in-flight master, and the strict

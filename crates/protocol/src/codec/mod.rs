@@ -65,7 +65,7 @@ pub use ndx::{
 ///
 /// # Motivation
 ///
-/// Previously, code needed to call two factory functions to get both codecs:
+/// Without it, callers need two factory calls to get both codecs:
 /// ```
 /// # use protocol::codec::{create_protocol_codec, create_ndx_codec};
 /// let version = 32;
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn all_supported_versions_create_valid_codecs() {
-        // Test all supported protocol versions (28-32)
+        // Test protocol versions 28-32
         for version in 28..=32 {
             let codecs = ProtocolCodecs::for_version(version);
             assert_eq!(codecs.protocol_version(), version);

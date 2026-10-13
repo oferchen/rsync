@@ -35,7 +35,7 @@
 //!
 //! Block sizing follows upstream rsync's behavior from:
 //! - `generator.c:sum_sizes_sqroot()` - Block size heuristics
-//! - Protocol documentation for block size limits
+//! - `rsync.h:161,164` - `MAX_BLOCK_SIZE` / `OLD_MAX_BLOCK_SIZE` limits
 
 use checksums::RollingDigest;
 use protocol::ProtocolVersion;

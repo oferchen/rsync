@@ -6,9 +6,6 @@
 //! (code, length, payload bytes) is compared frame-for-frame. A chunked variant
 //! drives the async reader over a byte-at-a-time delivery boundary to prove it
 //! reassembles frames identically across `.await` points.
-//!
-//! This is the test the `async-wire-parity` CI gate runs; it replaces the
-//! previous no-op that referenced a non-existent `transfer` test.
 
 use std::io::Cursor;
 use std::pin::Pin;

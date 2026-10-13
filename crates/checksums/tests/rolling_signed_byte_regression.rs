@@ -1,6 +1,6 @@
 //! Hard regression fixture for the signed-byte rolling checksum.
 //!
-//! PR #3560 fixed a sign-extension bug in the rolling checksum where bytes
+//! A past fix corrected a sign-extension bug in the rolling checksum where bytes
 //! `>= 0x80` were treated as unsigned, diverging from upstream rsync's
 //! `schar *buf = (schar *)buf1` cast (`checksum.c:307`). The proptest in
 //! `rolling_simd_parity.rs` covers this via a self-contained reference, but

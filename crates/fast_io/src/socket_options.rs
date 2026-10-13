@@ -135,6 +135,10 @@ pub fn set_socket_int_option_raw(
 /// upstream: not implemented; this is an oc-rsync-specific perf improvement
 /// that is wire-compatible with upstream rsync. TFO only affects the
 /// initial SYN exchange, not the rsync protocol that follows.
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on platforms that support the option.
 #[cfg(unix)]
 pub fn enable_tcp_fastopen_raw(raw_fd: std::os::fd::RawFd, qlen: i32) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
@@ -184,6 +188,10 @@ pub fn enable_tcp_fastopen_raw(
 /// Convenience wrapper around [`enable_tcp_fastopen_raw`] for callers that
 /// already hold a `TcpListener` (e.g. the daemon accept loop applying TFO
 /// after the socket has been converted from `socket2::Socket`).
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on platforms that support the option.
 pub fn enable_tcp_fastopen_listener(listener: &TcpListener, qlen: i32) -> io::Result<bool> {
     #[cfg(unix)]
     {
@@ -219,6 +227,10 @@ pub fn enable_tcp_fastopen_listener(listener: &TcpListener, qlen: i32) -> io::Re
 /// upstream: not implemented; this is an oc-rsync-specific perf improvement
 /// that is wire-compatible with upstream rsync. TFO only affects the initial
 /// SYN exchange, not the rsync protocol that follows.
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on Linux.
 #[cfg(unix)]
 pub fn enable_tcp_fastopen_connect_raw(raw_fd: std::os::fd::RawFd) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
@@ -290,6 +302,10 @@ pub const fn connectx_fastopen_supported() -> bool {
 /// upstream: not implemented; this is an oc-rsync-specific perf improvement
 /// that is wire-compatible with upstream rsync. TFO only affects the initial
 /// SYN exchange, not the rsync protocol that follows.
+///
+/// # Errors
+///
+/// Returns the `connectx` error on macOS.
 #[cfg(unix)]
 pub fn connectx_fastopen_raw(
     raw_fd: std::os::fd::RawFd,
@@ -416,6 +432,10 @@ fn connectx_fastopen_darwin(
 ///
 /// upstream: not implemented; this is an oc-rsync-specific perf
 /// improvement that is wire-compatible with upstream rsync.
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on platforms that support the option.
 pub fn set_tcp_notsent_lowat(stream: &TcpStream, bytes: u32) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
     {
@@ -470,6 +490,10 @@ pub fn set_tcp_notsent_lowat(stream: &TcpStream, bytes: u32) -> io::Result<bool>
 ///
 /// upstream: not implemented; an oc-rsync-specific perf hint that is
 /// wire-compatible with upstream rsync.
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on Linux.
 pub fn set_tcp_quickack(stream: &TcpStream) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
     {
@@ -522,6 +546,10 @@ pub fn rearm_tcp_quickack(stream: Option<&TcpStream>) {
 ///
 /// upstream: not implemented; an oc-rsync-specific perf hint that is
 /// wire-compatible with upstream rsync.
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on Linux.
 pub fn set_so_max_pacing_rate(stream: &TcpStream, bytes_per_sec: u32) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
     {
@@ -567,6 +595,11 @@ pub const fn so_max_pacing_rate_supported() -> bool {
 ///
 /// upstream: not implemented; an oc-rsync-specific perf hint that is
 /// wire-compatible with upstream rsync.
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on Linux, except a permission refusal, which is reported as
+/// `Ok(false)`.
 pub fn set_so_busy_poll(stream: &TcpStream, usecs: u32) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
     {
@@ -665,6 +698,10 @@ pub fn set_socket_buffer_sizes(
 ///
 /// upstream: not implemented; an oc-rsync-specific perf hint that is
 /// wire-compatible with upstream rsync.
+///
+/// # Errors
+///
+/// Returns the `setsockopt` error on platforms that support corking.
 pub fn set_tcp_cork(stream: &TcpStream, cork: bool) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
     {

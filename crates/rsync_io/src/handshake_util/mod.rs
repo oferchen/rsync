@@ -19,8 +19,8 @@ mod tests;
 /// Binary and legacy daemon negotiations both record the verbatim protocol
 /// number announced by the peer alongside the clamped
 /// [`ProtocolVersion`] that will be used for the remainder of the
-/// session. When the advertisement exceeds the range supported by rsync
-/// 3.4.1 the negotiated value is clamped to
+/// session. When the advertisement exceeds the range supported by this
+/// implementation the negotiated value is clamped to
 /// [`ProtocolVersion::NEWEST`]. Higher layers frequently need to branch
 /// on whether the peer ran a supported protocol or merely announced a
 /// future release, so the classification is centralised here to ensure
@@ -63,7 +63,7 @@ impl RemoteProtocolAdvertisement {
 
     /// Returns the [`ProtocolVersion`] used after clamping a future advertisement.
     ///
-    /// When the peer announces a protocol newer than rsync 3.4.1 understands the
+    /// When the peer announces a protocol newer than this implementation understands the
     /// negotiated session is downgraded to [`ProtocolVersion::NEWEST`]. This
     /// helper surfaces the clamped value only for those future advertisements so
     /// higher layers can reference it in diagnostics without repeating the enum
@@ -134,7 +134,7 @@ impl RemoteProtocolAdvertisement {
     /// Returns the raw protocol number announced by the peer.
     ///
     /// The value matches the on-the-wire advertisement regardless of whether it fell within the
-    /// supported range. When the peer selected a protocol known to rsync 3.4.1 the returned value
+    /// supported range. When the peer selected a protocol known to this implementation the returned value
     /// equals the numeric form of [`ProtocolVersion`]; future advertisements yield the unclamped
     /// number so higher layers can surface diagnostics that mirror upstream rsync.
     ///

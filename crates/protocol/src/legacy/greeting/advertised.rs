@@ -2,7 +2,7 @@
 //!
 //! Upstream splits the list off the greeting with
 //! `daemon_auth_choices = strchr(buf + 9, ' ')` and, when that finds a space,
-//! keeps `strdup(daemon_auth_choices + 1)` (clientserver.c:199-203). A greeting
+//! keeps `strdup(daemon_auth_choices + 1)` (clientserver.c:226-230). A greeting
 //! whose last byte *is* that space therefore produces a non-NULL **empty**
 //! string, which upstream treats differently from the NULL a space-less
 //! greeting produces. This module carries that distinction in the type system so
@@ -18,7 +18,7 @@ use super::tokens::DigestListTokens;
 /// - [`Self::Absent`] - no space followed the `"@RSYNCD: "` head, so
 ///   `daemon_auth_choices` stays NULL. `negotiate_daemon_auth()` substitutes
 ///   `protocol_version >= 30 ? "md5" : "md4"` and sets `md4_is_old`
-///   (compat.c:857-862), which always negotiates successfully.
+///   (compat.c:868-873), which always negotiates successfully.
 /// - [`Self::Present`] - a space was found, so `daemon_auth_choices` is the text
 ///   after it and may be empty. `parse_negotiate_str()` walks that text and
 ///   returns 0 when it yields no mutually supported name (compat.c:333-364),

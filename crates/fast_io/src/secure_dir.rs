@@ -85,7 +85,7 @@ pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
 /// - `syscall.c:3336-3340` - `secure_relative_open()` routes an absolute
 ///   `basedir` to that helper under the comment "Absolute basedir:
 ///   operator-trusted."
-/// - `main.c:778` / `clientserver.c:993` - the receiver destination and the
+/// - `main.c:777-778` / `clientserver.c:1059` - the receiver destination and the
 ///   daemon module root are entered with a plain `change_dir()`.
 ///
 /// # Errors

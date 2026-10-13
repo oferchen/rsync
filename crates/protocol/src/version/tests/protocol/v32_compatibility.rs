@@ -2,23 +2,20 @@
 //!
 //! These tests verify that protocol version 32 works correctly, including:
 //! - Protocol version 32 handshake and negotiation
-//! - All features introduced in v32 (rsync 3.4.1)
+//! - Version-level feature predicates at v32
 //! - Backward compatibility with older versions (v28-v31)
 //! - Wire format handling specific to v32
 //!
 //! # Protocol Version 32 Features
 //!
-//! Protocol 32 is the newest version, released with rsync 3.4.1. It includes:
-//! - **All v31 features**: Binary negotiation, varint encoding, safe file list always enabled
-//! - **XXH128 checksums**: 128-bit XXHash for better collision resistance
-//! - **Zstd compression**: Modern, efficient compression algorithm
-//! - **ID0_NAMES capability**: File-list entries support id0 names
-//! - **Enhanced algorithm negotiation**: Full vstring-based algorithm selection
+//! Protocol 32 is spoken by upstream rsync 3.4.x and 3.5.0; 3.5.1 moved to protocol 33.
+//! It carries all v31 features (binary negotiation, varint encoding, safe file list
+//! always enabled). Checksum and compression negotiation (XXH3/XXH128, zstd) and the
+//! `ID0_NAMES` compat flag are gated by the `-e` capability letters, not by protocol 32.
 //!
 //! # Upstream Reference
 //!
-//! Protocol 32 corresponds to rsync 3.4.1 and represents the current state-of-the-art
-//! in rsync protocol evolution. It is the target protocol for modern rsync deployments.
+//! rsync.h `PROTOCOL_VERSION` is 32 in 3.4.1 through 3.5.0.
 
 use crate::error::NegotiationError;
 use crate::version::{ProtocolVersion, select_highest_mutual};
@@ -52,7 +49,7 @@ fn v32_constant_is_32() {
     assert_eq!(ProtocolVersion::V32.as_u8(), 32);
 }
 
-/// Verifies protocol 32 equals NEWEST.
+/// Verifies NEWEST is v33, one above v32.
 #[test]
 fn v32_equals_newest() {
     assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
@@ -220,7 +217,7 @@ fn v33_is_newest_supported() {
     assert_eq!(ProtocolVersion::NEWEST.as_u8(), 33);
 }
 
-/// Verifies v32 has no newer version.
+/// Verifies the newest version (v33) has no newer version.
 #[test]
 fn v32_has_no_next_newer() {
     assert!(ProtocolVersion::V33.next_newer().is_none());
@@ -235,7 +232,7 @@ fn v32_next_older_is_v31() {
     );
 }
 
-/// Verifies future versions clamp to v32.
+/// Verifies future versions clamp to NEWEST (v33).
 #[test]
 fn v32_future_versions_clamp_to_v32() {
     // Version 35 is within MAXIMUM_PROTOCOL_ADVERTISEMENT (40)
@@ -906,7 +903,7 @@ fn v32_maximum_advertisement_boundary() {
 fn v32_version_ordering_position() {
     let versions = ProtocolVersion::supported_versions();
 
-    // v32 should be first (newest)
+    // v33 is first (newest)
     assert_eq!(versions[0], ProtocolVersion::V33);
 
     // v28 should be last (oldest)

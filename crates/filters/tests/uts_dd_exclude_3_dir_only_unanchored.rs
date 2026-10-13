@@ -1,7 +1,7 @@
 //! UTS-DD-exclude.3 regression: a directory-only unanchored pattern such
 //! as `- foo/*/` must NOT auto-synthesise `/**` descendants. Upstream
 //! `exclude.c:rule_matches()` returns "no match" for a non-directory
-//! candidate when the rule carries `FILTRULE_DIRECTORY` (line 938-939),
+//! candidate when the rule carries `FILTRULE_DIRECTORY` (lines 1037-1038),
 //! so the file is included by default and the sender's walk handles
 //! descent pruning by never entering the matched directory. Pre-baking
 //! `foo/*/**` would steal precedence from a sibling include like
@@ -10,8 +10,7 @@
 //! Fixture mirrors the upstream `testsuite/exclude.test` /
 //! `exclude-lsh.test` exclude-from file so this test pins the
 //! over-deletion that was visible in CI as "Only in to: new" /
-//! "Only in to/foo: down" before PR #5880 landed and remains pinned
-//! after the explicit dir-only unanchored gate refactor.
+//! "Only in to/foo: down".
 
 use std::path::Path;
 

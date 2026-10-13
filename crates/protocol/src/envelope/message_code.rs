@@ -21,16 +21,16 @@ pub enum MessageCode {
     /// Raw file data written to the multiplexed stream.
     Data = 0,
     #[doc(alias = "MSG_ERROR_XFER")]
-    /// Fatal transfer error (`FERROR_XFER`).
+    /// Transfer error for a single file (`FERROR_XFER`), sent at any protocol.
     ErrorXfer = 1,
     #[doc(alias = "MSG_INFO")]
     /// Informational log message (`FINFO`).
     Info = 2,
     #[doc(alias = "MSG_ERROR")]
-    /// Non-fatal error (`FERROR`).
+    /// Error message (`FERROR`), sent over the socket for protocol >= 30.
     Error = 3,
     #[doc(alias = "MSG_WARNING")]
-    /// Warning message (`FWARNING`).
+    /// Warning message (`FWARNING`), sent over the socket for protocol >= 30.
     Warning = 4,
     #[doc(alias = "MSG_ERROR_SOCKET")]
     /// Error emitted by the sibling process over the receiver/generator pipe
@@ -103,13 +103,12 @@ impl ParseMessageCodeError {
 }
 
 impl MessageCode {
-    /// Alias constant representing the legacy `MSG_FLUSH` identifier.
+    /// Alias constant for the upstream `MSG_FLUSH` name, equal to [`MessageCode::Info`].
     ///
-    /// Upstream rsync exposes `MSG_FLUSH` as a preprocessor macro that maps to
-    /// the same numeric value as [`MessageCode::Info`]. Maintaining the alias
-    /// allows callers to reference the historic name when mirroring traces or
-    /// constructing golden streams while still reusing the canonical `Info`
-    /// variant for on-the-wire encoding.
+    /// Upstream `MSG_FLUSH` (`rsync.h:228`) is not a message tag: it is an
+    /// `io_flush()` flush type ("flush iobuf.msg only", `io.c:2366`) that sits
+    /// beside `FULL_FLUSH` and `NORMAL_FLUSH` and happens to equal 2. The alias
+    /// only lets callers parse or name that value; it never appears as a tag.
     pub const FLUSH: MessageCode = MessageCode::Info;
 
     /// Returns the numeric representation expected on the wire.
@@ -120,6 +119,8 @@ impl MessageCode {
     }
 
     /// Attempts to construct a [`MessageCode`] from its on-the-wire numeric representation.
+    ///
+    /// Returns `None` for values that upstream's `enum msgcode` does not define.
     pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Data),
@@ -149,8 +150,8 @@ impl MessageCode {
     ///
     /// The variants are arranged by their numeric value so that callers can
     /// iterate deterministically when constructing golden multiplexed streams
-    /// or exhaustively testing round-trips. The ordering mirrors upstream's
-    /// `enum msgcode` definitions to preserve byte-level parity.
+    /// or exhaustively testing round-trips (upstream: `rsync.h:293-310`
+    /// `enum msgcode`).
     pub const ALL: [MessageCode; 19] = [
         MessageCode::Data,
         MessageCode::ErrorXfer,
@@ -185,24 +186,30 @@ impl MessageCode {
     /// `MSG_INFO` and `MSG_WARNING` are batchable - they accumulate in the
     /// write buffer and drain with the next DATA flush or explicit
     /// `io_flush()`. All other control messages (ERROR, REDO, NO_SEND,
-    /// SUCCESS, etc.) are latency-sensitive and must be flushed immediately.
+    /// SUCCESS, etc.) are treated as latency-sensitive and flushed immediately.
+    ///
+    /// Deviation from upstream: upstream flushes no message code eagerly; this
+    /// per-code policy is oc's own.
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:983 send_msg()` - appends to `iobuf.msg` without flushing
-    /// - `io.c:698-734 perform_io()` - drains `iobuf.msg` opportunistically
+    /// - `io.c:1088 send_msg()` - appends to `iobuf.msg` without flushing
+    /// - `io.c:647 perform_io()` - drains `iobuf.msg` whenever it waits for room or input
     #[inline]
     #[must_use]
     pub const fn requires_immediate_flush(self) -> bool {
         !matches!(self, Self::Info | Self::Warning)
     }
 
-    /// Reports whether this message is a keepalive (no-op) used to prevent
-    /// connection timeouts during long operations.
+    /// Reports whether this message is the legacy `MSG_NOOP` keepalive.
     ///
-    /// Upstream rsync sends `MSG_NOOP` messages as heartbeats when the sender
-    /// may be silent for extended periods (e.g., during large file checksumming).
-    /// Receivers should silently consume these messages without side effects.
+    /// Protocol-30 peers sent `MSG_NOOP` as a heartbeat. Current upstream sends
+    /// an empty `MSG_DATA` instead (`io.c:1632-1638`), but still accepts
+    /// `MSG_NOOP`: `io.c:1770 read_a_msg()` requires a zero-length payload and,
+    /// on the sender, answers with its own keepalive.
+    ///
+    /// Returns `false` for the empty `MSG_DATA` keepalive, which has no
+    /// dedicated code.
     ///
     /// # Examples
     ///
@@ -225,7 +232,8 @@ impl MessageCode {
     /// `ErrorSocket`, `ErrorUtf8`, and `ErrorExit`. Useful for counting remote
     /// errors received through the multiplex channel.
     ///
-    /// upstream: io.c - `FERROR*` codes map to these message types.
+    /// upstream: `rsync.h:282-310` - the `FERROR*` values of `enum logcode`
+    /// reuse the same numbers in `enum msgcode`.
     #[inline]
     #[must_use]
     pub const fn is_error(self) -> bool {

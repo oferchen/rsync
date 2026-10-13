@@ -105,7 +105,7 @@ impl MetadataOptions {
     /// `fast_io::secure_chmod_at`) must bypass that guard, because the user
     /// has explicitly opted into following dest-side symlinks-to-dirs.
     ///
-    /// upstream: generator.c:1356 - `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
+    /// upstream: generator.c:1745 - `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`.
     #[must_use]
     pub const fn keep_dirlinks(&self) -> bool {
         self.keep_dirlinks
@@ -148,7 +148,7 @@ impl MetadataOptions {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:574-625` - `set_file_attrs()` is unconditionally called for
+    /// - `generator.c:2246` - `set_file_attrs()` is unconditionally called for
     ///   quick-check matched files. oc-rsync mirrors this by always calling the
     ///   apply chain when `requires_apply()` returns true.
     #[must_use]
@@ -169,8 +169,8 @@ impl MetadataOptions {
     /// How a path-based metadata apply resolves the destination's parent.
     ///
     /// - `--keep-dirlinks`: the operator opted into following dest-side
-    ///   symlinked directories (`generator.c:1356`,
-    ///   `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`), so the parent is
+    ///   symlinked directories (`generator.c:1745`,
+    ///   `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`), so the parent is
     ///   resolved through the ambient namespace.
     /// - Otherwise the op is anchored on a confined parent dirfd. When the
     ///   operator-named destination root is known, the path up to and

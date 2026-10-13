@@ -17,6 +17,10 @@ pub trait FileReader: Read {
     fn position(&self) -> u64;
 
     /// Seeks to a position in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns the seek error.
     fn seek_to(&mut self, pos: u64) -> io::Result<()>;
 
     /// Returns the remaining bytes to read.
@@ -25,6 +29,10 @@ pub trait FileReader: Read {
     }
 
     /// Reads the entire file into a vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns the read error.
     fn read_all(&mut self) -> io::Result<Vec<u8>> {
         let mut buf = Vec::with_capacity(self.remaining() as usize);
         self.read_to_end(&mut buf)?;
@@ -40,9 +48,17 @@ pub trait FileWriter: Write {
     fn bytes_written(&self) -> u64;
 
     /// Syncs the file to disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns the sync error.
     fn sync(&mut self) -> io::Result<()>;
 
     /// Pre-allocates space for the file (advisory).
+    ///
+    /// # Errors
+    ///
+    /// Returns the preallocation error, if the implementation performs one.
     fn preallocate(&mut self, _size: u64) -> io::Result<()> {
         Ok(())
     }
@@ -54,6 +70,10 @@ pub trait FileReaderFactory: Send + Sync {
     type Reader: FileReader + Send;
 
     /// Opens a file for reading.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from opening the file.
     fn open(&self, path: &Path) -> io::Result<Self::Reader>;
 }
 
@@ -63,9 +83,17 @@ pub trait FileWriterFactory: Send + Sync {
     type Writer: FileWriter + Send;
 
     /// Creates a file for writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from creating the file.
     fn create(&self, path: &Path) -> io::Result<Self::Writer>;
 
     /// Creates a file with pre-allocated space.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from creating or sizing the file.
     fn create_with_size(&self, path: &Path, size: u64) -> io::Result<Self::Writer>;
 }
 
@@ -81,6 +109,10 @@ pub struct StdFileReader {
 
 impl StdFileReader {
     /// Opens a file for reading.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from opening the file or reading its metadata.
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
@@ -124,6 +156,10 @@ pub struct StdFileWriter {
 
 impl StdFileWriter {
     /// Creates a file for writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from creating the file.
     pub fn create(path: &Path) -> io::Result<Self> {
         let file = File::create(path)?;
         Ok(Self {
@@ -141,6 +177,10 @@ impl StdFileWriter {
     }
 
     /// Creates a file with pre-allocated space.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from creating or sizing the file.
     pub fn create_with_size(path: &Path, size: u64) -> io::Result<Self> {
         let file = File::create(path)?;
         file.set_len(size)?;

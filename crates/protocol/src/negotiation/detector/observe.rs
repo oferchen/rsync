@@ -44,7 +44,6 @@ impl NegotiationPrologueDetector {
 
         for &byte in chunk {
             if self.len == 0 {
-                // upstream: clientserver.c - first byte determines negotiation style
                 let classification = NegotiationPrologue::from_initial_byte(byte);
 
                 if classification == NegotiationPrologue::Binary {
@@ -90,10 +89,8 @@ impl NegotiationPrologueDetector {
 
     /// Observes a single byte from the transport and updates the negotiation state.
     ///
-    /// Upstream rsync often peeks at one octet at a time while deciding whether the
-    /// peer is speaking the legacy ASCII or binary handshake. This convenience
-    /// wrapper keeps that call pattern expressive without forcing callers to
-    /// allocate temporary one-byte slices.
+    /// Convenience wrapper over [`Self::observe`] for byte-at-a-time callers, so
+    /// they need not build one-byte slices.
     #[must_use]
     #[inline]
     pub fn observe_byte(&mut self, byte: u8) -> NegotiationPrologue {

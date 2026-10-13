@@ -133,6 +133,11 @@ impl SharedRing {
     /// Builds a shared ring or returns the underlying io_uring construction
     /// error. Use [`try_new`](Self::try_new) for the policy-driven path that
     /// folds availability into a `None` return.
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::ErrorKind::Unsupported` when io_uring is unavailable, or the ring
+    /// construction error.
     pub fn new(reader_fd: RawFd, writer_fd: RawFd, config: &SharedRingConfig) -> io::Result<Self> {
         if !is_io_uring_available() {
             return Err(io::Error::new(
@@ -230,6 +235,10 @@ impl SharedRing {
     /// The caller must ensure `buf` outlives the submission and that no
     /// other reference to the same memory exists until the matching CQE has
     /// been reaped via [`reap`](Self::reap).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the submission queue is full.
     pub fn submit_read(&mut self, op_id: u64, offset: u64, buf: &mut [u8]) -> io::Result<()> {
         let fd = sqe_fd_for(self.reader_fd, self.reader_slot);
         let entry = opcode::Read::new(fd, buf.as_mut_ptr(), buf.len() as u32)
@@ -257,6 +266,10 @@ impl SharedRing {
     ///
     /// upstream: io.c:perform_io() uses select() to wait for write-readiness
     /// before draining the output buffer; this is the io_uring equivalent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the submission queue is full.
     pub fn submit_poll_write(&mut self, op_id: u64) -> io::Result<()> {
         let fd = sqe_fd_for(self.writer_fd, self.writer_slot);
         let entry = opcode::PollAdd::new(fd, libc::POLLOUT as u32)
@@ -284,6 +297,10 @@ impl SharedRing {
     ///
     /// The caller must ensure `data` outlives the submission and that no
     /// mutation occurs until the matching CQE has been reaped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the submission queue is full.
     pub fn submit_send(&mut self, op_id: u64, data: &[u8]) -> io::Result<()> {
         let fd = sqe_fd_for(self.writer_fd, self.writer_slot);
         let entry = opcode::Send::new(fd, data.as_ptr(), data.len() as u32)
@@ -312,6 +329,10 @@ impl SharedRing {
     /// blocking for `wait_for` CQEs. Callers must therefore measure progress
     /// by draining [`reap`](Self::reap) and must never treat this value as a
     /// completion count.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `io_uring_enter` error.
     pub fn submit_and_wait(&mut self, wait_for: usize) -> io::Result<usize> {
         self.ring.submit_and_wait(wait_for)
     }
@@ -322,6 +343,10 @@ impl SharedRing {
     /// Each CQE is decoded via [`OpTag::decode`]; an unknown tag is treated
     /// as a programmer error and surfaces as `Err(InvalidData)` so the
     /// caller can fail loudly rather than silently dropping a completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::ErrorKind::InvalidData` when a CQE carries an unknown tag.
     pub fn reap(&mut self) -> io::Result<Vec<SharedCompletion>> {
         let mut out = Vec::new();
         loop {

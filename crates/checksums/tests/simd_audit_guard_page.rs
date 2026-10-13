@@ -1,8 +1,8 @@
 //! Guard-page over-read harness for the SIMD rolling checksum.
 //!
 //! Places the input buffer flush against an unreadable page so any load past
-//! `buf + len` faults here. Mirrors upstream 3.5.0's `test_no_overread()` in
-//! `simd-checksum-x86_64.cpp`.
+//! `buf + len` faults here. Mirrors upstream's `test_no_overread()` in
+//! `simd-checksum-x86_64.cpp:617` (added in 3.5.0).
 
 #![cfg(unix)]
 

@@ -2,20 +2,20 @@
 
 `checksums` provides the rolling and strong checksum primitives used by the
 Rust `rsync` implementation. The algorithms are byte-for-byte compatible with
-upstream rsync 3.4.4 so delta-transfer heuristics and compatibility checks remain
+upstream rsync 3.5.1 so delta-transfer heuristics and compatibility checks remain
 interchangeable with the C reference implementation.
 
 ## Design
 
-The crate currently offers two modules:
+The main modules:
 
-- The `rolling` module implements the Adler-32–style weak checksum (`rsum`) used
+- The `rolling` module implements the Adler-32-style weak checksum (`rsum`) used
   for block matching during delta transfers.
-- [`crate::strong`] exposes MD4, MD5, XXH64, and XXH3 (64- and 128-bit) digests
+- [`crate::strong`] exposes MD4, MD5, SHA-1, SHA-256, SHA-512, XXH64, and XXH3 (64- and 128-bit) digests
   together with the [`crate::strong::StrongDigest`] trait that higher layers use
   to abstract over the negotiated algorithm.
-- When the crate is built with the default `openssl-vendored` feature (or the
-  narrower `openssl` flag), the MD4 and MD5 wrappers transparently dispatch to
+- When the crate is built with the `openssl` feature (or `openssl-vendored`,
+  which implies it; neither is on by default), the MD4 and MD5 wrappers transparently dispatch to
   OpenSSL's EVP implementations while retaining the pure-Rust fallback so the
   workspace can advertise `openssl-crypto` capability in the version banner.
 

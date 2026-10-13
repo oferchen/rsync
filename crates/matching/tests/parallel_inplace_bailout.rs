@@ -4,7 +4,7 @@
 //!
 //! # Why this route exists
 //!
-//! Upstream's in-place guard (upstream: match.c:232-239, 3.5.0) unlinks any
+//! Upstream's in-place guard (upstream: match.c:235-239) unlinks any
 //! hash-chain candidate whose basis offset precedes the running source
 //! `offset` (unless `SUMFLG_SAME_OFFSET`): under `--inplace` the receiver
 //! overwrites the basis as it reconstructs, so a backward-referencing `Copy`
@@ -71,7 +71,7 @@ fn reconstruct(basis: &[u8], index: &DeltaSignatureIndex, script: &DeltaScript) 
 
 /// Asserts the in-place invariant on a token stream: every `Copy`'s basis
 /// offset is at or ahead of the reconstruction cursor when it is emitted
-/// (upstream: match.c:232-239 admits `offset >= our offset` or same-offset).
+/// (upstream: match.c:235-239 admits `offset >= our offset` or same-offset).
 fn assert_monotonic_basis_offsets(script: &DeltaScript, block_len: usize) {
     let mut cursor = 0u64;
     for token in script.tokens() {

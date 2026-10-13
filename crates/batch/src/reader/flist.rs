@@ -89,7 +89,7 @@ impl BatchReader {
         // them. Upstream does not need a bit because its batch file is a byte
         // tee of a real wire stream and the replaying receiver takes
         // preserve_atimes/preserve_crtimes from the replay script's argv. Both
-        // gate a per-entry field (`flist.c:850`, `flist.c:859`), so a reader
+        // gate a per-entry field (`flist.c:915`, `flist.c:910`), so a reader
         // that does not know about them decodes the following entry's flag
         // byte as a timestamp and desynchronises the stream.
         let preserve_atimes = self.config.preserve_atimes;
@@ -139,7 +139,7 @@ impl BatchReader {
             .with_preserve_atimes(preserve_atimes)
             .with_preserve_crtimes(preserve_crtimes);
 
-        // upstream: flist.c:164 - when always_checksum is set, each regular file
+        // upstream: flist.c:1590 - when always_checksum is set, each regular file
         // entry in the flist carries a trailing checksum of flist_csum_len bytes.
         // Without this, the reader would skip those bytes and go out of sync.
         // The checksum length depends on the negotiated algorithm. For batch files
@@ -176,7 +176,7 @@ impl BatchReader {
         // sender reports errors, then breaks the loop without aborting.
         //
         // Both contributions are taken unconditionally here. Upstream gates the
-        // PEER half on `!ignore_errors` (flist.c:3192/3210/3313), but the batch
+        // PEER half on `!ignore_errors` (flist.c:3193/3211/3314), but the batch
         // reader has no `ignore_errors` plumbed to it - the option belongs to the
         // replay invocation, not to the recorded stream - so applying the gate
         // would mean inventing a policy this layer cannot see. Behaviour is
@@ -184,12 +184,12 @@ impl BatchReader {
         // batch-replay reunification.
         self.io_error = flist_reader.peer_io_error() | flist_reader.local_io_error();
 
-        // upstream: flist.c:3004-3006 - recv_id_list(f, flist) when !inc_recurse
+        // upstream: flist.c:3296-3299 - recv_id_list(f, flist) when !inc_recurse
         // The batch stream contains uid/gid name mapping lists after the flist
         // entries. We must consume them to keep the stream position correct for
         // delta replay. numeric_ids is not recorded in the batch header, but the
         // replay script re-supplies --numeric-ids from the original invocation.
-        // When it is set, the sender emits no ID lists (flist.c:2788 requires
+        // When it is set, the sender emits no ID lists (flist.c:3063 requires
         // numeric_ids <= 0), so none are present in the stream and the reader
         // must not attempt to consume them.
         if !inc_recurse {
@@ -201,13 +201,13 @@ impl BatchReader {
                 .unwrap_or(false);
             let proto_ver = protocol_version.as_u8();
 
-            // upstream: uidlist.c:465 - (preserve_uid || preserve_acls) && numeric_ids <= 0
+            // upstream: uidlist.c:466 - (preserve_uid || preserve_acls) && numeric_ids <= 0
             if (flags.preserve_uid || flags.preserve_acls) && !numeric_ids {
                 let mut uid_list = IdList::new();
                 uid_list.read(reader, id0_names, proto_ver, |_| Ok(None))?;
             }
 
-            // upstream: uidlist.c:473 - (preserve_gid || preserve_acls) && numeric_ids <= 0
+            // upstream: uidlist.c:474 - (preserve_gid || preserve_acls) && numeric_ids <= 0
             if (flags.preserve_gid || flags.preserve_acls) && !numeric_ids {
                 let mut gid_list = IdList::new();
                 gid_list.read(reader, id0_names, proto_ver, |_| Ok(None))?;
@@ -219,11 +219,11 @@ impl BatchReader {
         // protocol stream). We cannot read all sub-lists here because delta
         // NDX values appear between them. Instead, store the flist reader and
         // NDX codec so sub-lists can be read on-demand during delta replay.
-        // upstream: main.c:do_recv() interleaves recv_additional_file_list()
-        // with recv_files() in an event loop.
+        // upstream: rsync.c:379 read_ndx_and_attrs() receives each sub-list
+        // between the per-file records recv_files() reads.
         if inc_recurse {
             self.ndx_codec = Some(NdxCodecEnum::new(protocol_version.as_u8()));
-            // upstream: flist.c:3209 - ndx_start = prev->ndx_start + prev->used + 1
+            // upstream: flist.c:3511 - ndx_start = prev->ndx_start + prev->used + 1
             // The initial flist has ndx_start=1, so the next sub-list starts at
             // 1 + entries.len() + 1 (the +1 gap between segments).
             self.flist_next_ndx_start = 1 + entries.len() as i32 + 1;
@@ -286,7 +286,7 @@ impl BatchReader {
         // See the note on the initial-segment drain above: unconditional here
         // because the batch reader has no `ignore_errors` to consult.
         self.io_error |= flist_reader.peer_io_error() | flist_reader.local_io_error();
-        // upstream: flist.c:3209 - ndx_start = prev->ndx_start + prev->used + 1
+        // upstream: flist.c:3511 - ndx_start = prev->ndx_start + prev->used + 1
         // The current segment started at flist_next_ndx_start (set before
         // reset_for_new_segment). The next segment's ndx_start accounts for
         // the entries in this segment plus the +1 gap.

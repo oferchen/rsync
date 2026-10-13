@@ -522,7 +522,7 @@ mod tests {
         }
     }
 
-    // --- arm classification -------------------------------------------------
+    // arm classification
 
     /// Arm 1: the opt-out is a STATIC POLICY answer, read before any I/O, so a
     /// path that arm 3 refuses classifies as unconfined here.
@@ -595,7 +595,7 @@ mod tests {
         );
     }
 
-    // --- unlink -------------------------------------------------------------
+    // unlink
 
     /// Arm 3 must leave the out-of-root file ALIVE. This is the whole point of
     /// the contract: an "on any error, do the plain syscall" collapse deletes
@@ -641,7 +641,7 @@ mod tests {
         assert!(!fx.inside.exists());
     }
 
-    // --- rmdir --------------------------------------------------------------
+    // rmdir
 
     #[test]
     fn rmdir_arm_three_refuses_and_the_out_of_root_directory_survives() {
@@ -667,7 +667,7 @@ mod tests {
         assert!(!doomed.exists());
     }
 
-    // --- recursive remove ---------------------------------------------------
+    // recursive remove
 
     #[test]
     fn remove_dir_all_arm_three_refuses_and_the_out_of_root_tree_survives() {
@@ -697,7 +697,7 @@ mod tests {
         assert!(!doomed.exists());
     }
 
-    // --- rename -------------------------------------------------------------
+    // rename
 
     /// A refused DESTINATION must refuse the whole rename: upstream walks each
     /// endpoint independently and returns -1 the moment either side fails, so
@@ -731,7 +731,7 @@ mod tests {
         assert!(target.exists() && !fx.inside.exists());
     }
 
-    // --- open ---------------------------------------------------------------
+    // open
 
     #[test]
     fn open_arm_three_refuses_an_escaping_parent() {
@@ -798,7 +798,7 @@ mod tests {
         assert_eq!(body, "INSIDE");
     }
 
-    // --- symlink ------------------------------------------------------------
+    // symlink
 
     /// The link is a CREATE, so arm 3 is proven by the absence of a new entry
     /// outside the root - not merely by an `Err`, which an unwritable parent
@@ -851,7 +851,7 @@ mod tests {
         );
     }
 
-    // --- mkdir --------------------------------------------------------------
+    // mkdir
 
     #[test]
     fn mkdir_arm_three_refuses_and_no_directory_appears_outside_the_root() {
@@ -900,7 +900,7 @@ mod tests {
         assert_eq!(err.raw_os_error(), Some(libc::EEXIST));
     }
 
-    // --- the precondition every routed call site inherits --------------------
+    // the precondition every routed call site inherits
 
     /// MEASURED, and it is the reason every cell above calls `confine_to`
     /// first: with no confinement session installed, `session_confinement_root`

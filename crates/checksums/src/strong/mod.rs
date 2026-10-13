@@ -10,7 +10,7 @@
 //!
 //! - `checksum.c:get_checksum2()` - strong checksum dispatch by algorithm
 //! - `checksum.c:file_checksum()` - whole-file checksum for file list validation
-//! - `compat.c` - checksum negotiation and `CHECKSUM_SEED_FIX` handling
+//! - `compat.c:negotiate_the_strings()` and `CF_CHKSUM_SEED_FIX` (`compat.c:736,759`)
 //!
 //! # Algorithm Examples
 //!

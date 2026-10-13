@@ -49,8 +49,9 @@ use super::special::restore_special_mode_bits;
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `set_acl()` in `acls.c` lines 930-1001 which applies cached
-/// ACLs to destination files during the receiver's metadata application phase.
+/// Mirrors `set_acl_fdat()` and `set_rsync_acl()` (`acls.c:1166`, `acls.c:1376`),
+/// which apply cached ACLs to destination files during the receiver's metadata
+/// application phase.
 #[allow(clippy::module_name_repetitions)]
 pub fn apply_acls_from_cache(
     destination: &Path,
@@ -83,7 +84,7 @@ pub fn apply_acls_from_cache(
             reset_acl_from_mode(destination)?;
         }
 
-        // upstream: acls.c:924-932 + rsync.c:659-660 - applying the access ACL
+        // upstream: acls.c:change_sacl_perms() + rsync.c:806-820 - applying the access ACL
         // re-derives the permission bits and clears setuid/setgid/sticky, which
         // are not representable in a POSIX ACL. Restore them from the
         // transferred mode so setgid/setuid binaries and sticky dirs survive an
@@ -148,8 +149,8 @@ pub fn apply_acls_from_cache(
 ///
 /// # Upstream Reference
 ///
-/// Mirrors the `am_root < 0` branch of `set_rsync_acl()` in `acls.c` lines
-/// 1229-1245.
+/// Mirrors the `am_root < 0` branches of `set_rsync_acl()` (`acls.c:1176-1182`
+/// default delete, `acls.c:1228-1251` store).
 #[allow(clippy::module_name_repetitions)]
 pub fn store_acls_via_fake_super(
     destination: &Path,
@@ -172,7 +173,7 @@ pub fn store_acls_via_fake_super(
 
     if let Some(def_ndx) = default_ndx {
         match cache.get_default(def_ndx) {
-            // upstream: acls.c:934-935 - user_obj == NO_ENTRY means "no default
+            // upstream: acls.c:1176-1177 - user_obj == NO_ENTRY means "no default
             // ACL", so the xattr is removed rather than storing an empty ACL.
             Some(def_acl) if !def_acl.has_user_obj() => {
                 remove_fake_super_default_acl(destination).map_err(|e| {

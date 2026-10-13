@@ -2,7 +2,7 @@
 //!
 //! Cross-platform connection primitive that yields a pair of byte streams
 //! used as the stderr aux-channel between the parent process and a spawned
-//! `ssh` child. Created for task SSE-3 (#2372) per
+//! `ssh` child. Created for task SSE-3 per
 //! `docs/design/socketpair-stderr-channel.md`. SSE-4 layers the async
 //! drain on top of this primitive.
 //!
@@ -21,7 +21,7 @@
 //!   the listener. Wiring that result into a `File`-typed parent-side
 //!   handle requires the `OwnedHandle`/`RawSocket` bridge implemented
 //!   in the `fast_io` crate, which `rsync_io` must not duplicate
-//!   (workspace `#![deny(unsafe_code)]` policy). SSE-5 (#2374) lands
+//!   (workspace `#![deny(unsafe_code)]` policy). SSE-5 lands
 //!   the Windows shim in coordination with `fast_io`; until then the
 //!   Windows implementation here returns
 //!   `io::ErrorKind::Unsupported` so the caller falls back to

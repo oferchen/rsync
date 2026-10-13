@@ -113,9 +113,9 @@ fn a_pinned_module_root_survives_an_unsearchable_parent() {
     let module = fixture.module.clone();
     let sub_file = module.join("sub").join("file");
 
-    // ---- Non-vacuity: an ordinary, traversable parent still works, with and
-    // ---- without a pin. A fix that broke the ordinary path would sail past
-    // ---- every assertion below it.
+    // Non-vacuity: an ordinary, traversable parent still works, with and
+    // without a pin. A fix that broke the ordinary path would sail past
+    // every assertion below it.
     clear_session_root_fd();
     let unpinned_meta = fast_io::pinned_root::symlink_metadata(&module).expect("unpinned lstat");
     assert!(unpinned_meta.is_dir(), "the module root is a directory");
@@ -140,9 +140,9 @@ fn a_pinned_module_root_survives_an_unsearchable_parent() {
         "the pinned scan must see exactly what the unpinned one saw"
     );
 
-    // ---- The barrier goes up. Everything from here on runs with the module's
-    // ---- parent unsearchable, which is the state a daemon reaches by
-    // ---- dropping to the module uid.
+    // The barrier goes up. Everything from here on runs with the module's
+    // parent unsearchable, which is the state a daemon reaches by
+    // dropping to the module uid.
     fixture.seal().expect("seal the parent");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         sealed_assertions(&module, &sub_file);

@@ -1,6 +1,6 @@
 //! Protocol version 32 compatibility tests.
 //!
-//! Comprehensive tests for protocol version 32, the newest version (rsync 3.4.1).
+//! Comprehensive tests for protocol version 32 (rsync 3.4.0 through 3.5.0).
 //! These tests validate:
 //! - Protocol version 32 handshake and negotiation
 //! - All features inherited from v31 (binary negotiation, safe file list always enabled)
@@ -11,7 +11,7 @@
 //!
 //! # Protocol Version 32 Overview
 //!
-//! Protocol version 32 is the current newest version, introduced in rsync 3.4.1.
+//! Protocol version 32 was introduced in rsync 3.4.0; 3.5.1 moved to 33.
 //! Key features:
 //! - **All v31 features**: Binary negotiation, varint encoding, safe file list always enabled
 //! - **XXH128 checksums**: 128-bit XXHash for better collision resistance
@@ -21,7 +21,7 @@
 //!
 //! # Upstream Reference
 //!
-//! Based on rsync 3.4.1 source code:
+//! Based on rsync 3.5.1 source code:
 //! - `compat.c`: Compatibility flag handling and capability negotiation
 //! - `flist.c`: File list encoding
 //! - `io.c`: Protocol I/O and varint/varlong encoding
@@ -111,7 +111,7 @@ mod protocol_32_handshake {
         assert_eq!(ProtocolVersion::V32.as_u8(), 32);
     }
 
-    /// Protocol 32 equals NEWEST.
+    /// NEWEST is protocol 33; the test name predates the bump from 32.
     #[test]
     fn version_32_equals_newest() {
         assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
@@ -731,13 +731,13 @@ mod protocol_32_ordering {
         assert_eq!(ProtocolVersion::V32.offset_from_oldest(), 4);
     }
 
-    /// v32 offset from newest.
+    /// NEWEST (protocol 33) has offset 0.
     #[test]
     fn version_32_offset_from_newest() {
         assert_eq!(ProtocolVersion::V33.offset_from_newest(), 0);
     }
 
-    /// v32 is first in supported list.
+    /// Protocol 33 is first in the supported list.
     #[test]
     fn version_32_first_in_list() {
         let versions = ProtocolVersion::supported_versions();

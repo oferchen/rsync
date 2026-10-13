@@ -27,7 +27,7 @@
 //!
 //! # Upstream Reference
 //!
-//! See `flist.c:send_file_entry()` lines 470-750 for the canonical wire encoding.
+//! See `flist.c:send_file_entry()` lines 700-1000 for the canonical wire encoding.
 
 mod constants;
 mod encode;

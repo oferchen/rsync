@@ -9,8 +9,8 @@
 //! mode is active, diagnostics are sent to syslog with the configured facility
 //! and tag.
 //!
-//! upstream: log.c - `logit()` calls `syslog(priority, "%s", buf)` when
-//! `logfile_was_closed` is false and the daemon is running.
+//! upstream: log.c:139 - `logit()` calls `syslog(priority, "%s", buf)`
+//! whenever no log file is open.
 
 use std::fmt;
 use std::process;
@@ -37,8 +37,8 @@ fn logger_slot() -> &'static Mutex<Option<BsdLogger>> {
 /// daemon configuration maps string names (e.g., `"daemon"`, `"local0"`) to
 /// these constants via [`SyslogFacility::from_name`].
 ///
-/// upstream: `loadparm.c` - `lp_syslog_facility()` returns an integer facility
-/// code parsed from the `syslog facility` configuration directive.
+/// upstream: loadparm.c:575-586 `case P_ENUM` - `lp_syslog_facility()` returns
+/// the integer facility code parsed from the `syslog facility` directive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyslogFacility {
     /// Kernel messages (LOG_KERN).
@@ -121,7 +121,7 @@ impl SyslogFacility {
     /// # }
     /// ```
     pub fn from_name(name: &str) -> Option<Self> {
-        // upstream: loadparm.c - facility_names[] lookup table
+        // upstream: loadparm.c:98 enum_syslog_facility[] lookup table
         match name.to_ascii_lowercase().as_str() {
             "kern" => Some(Self::Kern),
             "user" => Some(Self::User),
@@ -251,8 +251,9 @@ impl fmt::Display for SyslogFacility {
 
 /// Default syslog tag for the daemon process.
 ///
-/// Upstream rsync uses `"rsyncd"`; oc-rsync uses `"oc-rsyncd"` to avoid
-/// colliding with upstream log entries on systems running both implementations.
+/// Deviation from upstream: upstream's default is `"rsyncd"` (daemon-parm.txt:44);
+/// oc-rsync uses `"oc-rsyncd"` to avoid colliding with upstream log entries on
+/// systems running both implementations.
 pub const DEFAULT_SYSLOG_TAG: &str = "oc-rsyncd";
 
 /// Configuration for syslog-based logging in daemon mode.
@@ -320,14 +321,15 @@ impl SyslogConfig {
     /// sink, restoring the previously-active logger when the returned
     /// [`SyslogReconfigGuard`] is dropped.
     ///
-    /// upstream: log.c:169 `log_init` reopens syslog for the selected module
-    /// (`closelog()` then `openlog(lp_syslog_tag(module_id), LOG_PID,
-    /// lp_syslog_facility(module_id))`) when the module's tag or facility differ
-    /// from the global (`-1`) values. Upstream serves each connection in a
-    /// forked child that never restores the global handle because it exits;
-    /// oc-rsync serves connections on threads sharing one process-wide syslog
-    /// handle, so the guard restores the daemon-global logger on drop to keep
-    /// later global diagnostics on the configured facility and tag.
+    /// upstream: log.c:186 `log_init` reopens syslog for the selected module
+    /// (`closelog()` then log.c:152 `openlog(lp_syslog_tag(module_id),
+    /// options, lp_syslog_facility(module_id))`) when the module's tag or
+    /// facility differ from the global (`-1`) values. Upstream serves each
+    /// connection in a forked child that never restores the global handle
+    /// because it exits; oc-rsync can serve a connection on a thread (the QUIC
+    /// listener does) sharing one process-wide syslog handle, so the guard
+    /// restores the daemon-global logger on drop to keep later global
+    /// diagnostics on the configured facility and tag.
     pub fn reconfigure(&self) -> SyslogReconfigGuard {
         let logger = self.connect();
         let previous = match logger_slot().lock() {
@@ -351,7 +353,7 @@ impl SyslogConfig {
 
     /// Builds the RFC 3164 formatter carrying this configuration's ident.
     ///
-    /// upstream: log.c:152 `openlog(lp_syslog_tag(module_id), LOG_PID, ...)`
+    /// upstream: log.c:152 `openlog(lp_syslog_tag(module_id), options, ...)`
     /// passes the tag as given, so an empty `syslog tag` is an empty ident.
     /// Callers substitute [`DEFAULT_SYSLOG_TAG`] only when no tag is set.
     fn formatter(&self) -> Formatter3164 {
@@ -399,7 +401,7 @@ pub enum SyslogPriority {
 /// successful [`SyslogConfig::open`] call. If syslog has not been opened, or
 /// if the previous `open` failed to connect, the call is silently dropped.
 ///
-/// upstream: log.c - `syslog(priority, "%s", buf)`. The safe `syslog` crate
+/// upstream: log.c:139 - `syslog(priority, "%s", buf)`. The safe `syslog` crate
 /// formats the message according to RFC 3164 before writing to the socket, so
 /// `%` characters in `message` are not interpreted as format specifiers.
 pub fn syslog_message(priority: SyslogPriority, message: &str) {
@@ -463,7 +465,7 @@ impl Drop for SyslogGuard {
 /// Dropping the guard reinstates whichever logger was active before the
 /// reconfiguration - typically the daemon-global logger opened at startup.
 ///
-/// upstream: log.c:169 `log_init` reopens syslog per selected module; the guard
+/// upstream: log.c:186 `log_init` reopens syslog per selected module; the guard
 /// models the "restore to global" transition that upstream gets for free by
 /// serving each connection in a short-lived forked child.
 pub struct SyslogReconfigGuard {
@@ -799,7 +801,7 @@ mod tests {
 
     // WHY: a module that sets `syslog facility`/`syslog tag` reconfigures the
     // shared, process-wide syslog handle for the duration of its connection.
-    // Because oc-rsync serves connections on threads (not forked children),
+    // Because oc-rsync can serve connections on threads (not forked children),
     // the reconfiguration must be reverted on drop so subsequent daemon-global
     // diagnostics are not stranded on the last module's facility/tag. Seeding a
     // known prior state (no logger) makes the restoration observable regardless

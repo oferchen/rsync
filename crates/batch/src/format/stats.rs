@@ -7,7 +7,7 @@ use std::io::{self, Read, Write};
 
 /// Writes one stats field using upstream's `write_varlong30` macro semantics.
 ///
-/// upstream: main.c:374 writes the batch stats via `write_varlong30(batch_fd,
+/// upstream: main.c:381 writes the batch stats via `write_varlong30(batch_fd,
 /// x, 3)`, and io.h:46 `write_varlong30()` gates on the protocol version.
 /// Protocol below 30 falls back to `write_longint()` (fixed 4-byte
 /// little-endian, widening to 12 bytes for values that exceed a signed 32-bit
@@ -46,7 +46,7 @@ fn read_stat<R: Read>(reader: &mut R, min_bytes: u8, protocol_version: i32) -> i
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:374-383`: `write_varlong30(batch_fd, total_read, 3)` etc.
+/// - `main.c:378-388`: `write_varlong30(batch_fd, total_read, 3)` etc.
 /// - Stats use `varlong30` encoding: fixed 4-byte longint for protocol below
 ///   30, variable-length varlong (`min_bytes=3`) for protocol 30 and above.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

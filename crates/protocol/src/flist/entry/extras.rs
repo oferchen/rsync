@@ -61,7 +61,9 @@ pub(super) struct FileEntryExtras {
     pub(super) xattr_list: Option<XattrList>,
 
     // 4-byte aligned fields.
-    /// Access time nanoseconds (protocol 32+, --atimes).
+    /// Access time nanoseconds (--atimes). Always 0 for entries decoded from the
+    /// wire: upstream sends atime as whole seconds only
+    /// (upstream: flist.c:send_file_entry()).
     pub(super) atime_nsec: u32,
     /// Device major number (for block/char devices).
     /// Meaningful only when `EXTRAS_PRESENT_RDEV` is set.

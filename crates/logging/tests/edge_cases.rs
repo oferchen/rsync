@@ -3,7 +3,7 @@
 //! These tests verify correct handling of edge cases including empty messages,
 //! special characters, long lines, unicode content, and boundary conditions.
 //!
-//! Reference: rsync 3.4.1 log.c for message handling edge cases.
+//! Reference: rsync 3.5.1 log.c for message handling edge cases.
 
 use logging::{
     DebugFlag, DiagnosticEvent, InfoFlag, LogCode, VerbosityConfig, apply_info_flag, debug_log,

@@ -58,6 +58,11 @@ impl Write for IoUringOrStdSocketWriter {
 ///
 /// The `fd` must be a valid socket file descriptor. The caller retains
 /// ownership - this function does not close the fd.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the policy requires io_uring and it is
+/// unavailable, or the reader construction error.
 pub fn socket_reader_from_fd(
     fd: RawFd,
     buffer_capacity: usize,
@@ -109,6 +114,11 @@ pub fn socket_reader_from_fd(
 ///
 /// The `fd` must be a valid socket file descriptor. The caller retains
 /// ownership - this function does not close the fd.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the policy requires io_uring and it is
+/// unavailable, or the writer construction error.
 pub fn socket_writer_from_fd(
     fd: RawFd,
     buffer_capacity: usize,

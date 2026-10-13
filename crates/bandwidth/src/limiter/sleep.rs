@@ -2,12 +2,15 @@
 //!
 //! [`LimiterSleep`] records the requested and actual durations of a single
 //! pacing interval. The internal [`sleep_for`] helper chunks large durations
-//! so that a single sleep never exceeds `MAX_SLEEP_DURATION`, matching the
-//! defensive approach in upstream rsync's `io.c:sleep_for_bwlimit()`.
+//! so that a single sleep never exceeds `MAX_SLEEP_DURATION`.
 //!
-//! Under the `test-support` feature (or in `#[cfg(test)]` builds), actual
-//! sleeping is replaced by recording the requested chunks into a shared
-//! buffer inspected via [`super::test_support::RecordedSleepSession`].
+//! Deviation from upstream: `io.c:sleep_for_bwlimit()` issues one `select()`;
+//! the chunking only keeps each call within `Duration` range.
+//!
+//! With the `test-support` feature (or in `#[cfg(test)]` builds) the requested
+//! chunks are also recorded into a shared buffer inspected via
+//! [`super::test_support::RecordedSleepSession`]. Only `#[cfg(test)]` builds
+//! skip the real sleep.
 
 use super::{MAX_REPRESENTABLE_MICROSECONDS, MAX_SLEEP_DURATION, MICROS_PER_SECOND};
 use std::time::Duration;
@@ -67,7 +70,7 @@ pub(crate) const fn duration_from_microseconds(us: u128) -> Duration {
 }
 
 /// Sleeps for the given duration, chunking into `MAX_SLEEP_DURATION` segments.
-/// upstream: io.c:sleep_for_bwlimit() - uses select() for the actual sleep
+/// upstream: io.c:2349-2351 sleep_for_bwlimit() - `select()` performs the actual sleep
 pub(crate) fn sleep_for(duration: Duration) {
     let mut remaining = duration;
 

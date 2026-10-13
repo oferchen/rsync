@@ -14,7 +14,8 @@
 //!
 //! # Upstream Reference
 //!
-//! `main.c` - signal handler setup for SIGPIPE, SIGHUP, SIGTERM, SIGUSR1, SIGUSR2.
+//! `main.c:1854-1855` (SIGUSR1/SIGUSR2), `main.c:1919-1921` (SIGINT/SIGHUP/SIGTERM)
+//! and `main.c:1928` (SIGPIPE ignored).
 
 use std::io;
 use std::sync::Arc;
@@ -25,20 +26,28 @@ use std::sync::atomic::AtomicBool;
 /// On Unix, signal handlers set these via `signal_hook`. On Windows,
 /// `SetConsoleCtrlHandler` sets them from a console control callback.
 ///
-/// upstream: main.c - signal handler setup for SIGPIPE, SIGHUP, SIGTERM,
-/// SIGUSR1, SIGUSR2.
+/// upstream: main.c:1854-1928 - signal handler setup for SIGPIPE, SIGHUP,
+/// SIGTERM, SIGUSR1, SIGUSR2.
 #[derive(Clone, Debug, Default)]
 pub struct SignalFlags {
     /// Reload configuration (SIGHUP on Unix).
+    ///
+    /// Deviation from upstream: upstream treats SIGHUP like SIGINT/SIGTERM and
+    /// exits with `RERR_SIGNAL` (main.c:1920 `sig_int`).
     pub reload_config: Arc<AtomicBool>,
     /// Stop accepting connections and drain workers (SIGTERM/SIGINT on Unix,
     /// CTRL_C/CTRL_CLOSE on Windows).
     pub shutdown: Arc<AtomicBool>,
     /// Finish current transfers then exit with code 19 (`RERR_SIGNAL1`).
     /// Unlike `shutdown`, allows in-progress transfers to complete.
-    /// upstream: main.c - SIGUSR1 sets `got_xfer_error = 1`.
+    ///
+    /// Deviation from upstream: upstream's `sigusr1_handler()` (main.c:1684)
+    /// exits immediately via `exit_cleanup(RERR_SIGNAL1)`.
     pub graceful_exit: Arc<AtomicBool>,
     /// Log a progress summary of active connections (SIGUSR2 on Unix).
+    ///
+    /// Deviation from upstream: upstream's `sigusr2_handler()` (main.c:1695)
+    /// tells the receiver child to wrap up and exit.
     /// Consumed (reset to `false`) after each dump.
     pub progress_dump: Arc<AtomicBool>,
 }
@@ -63,14 +72,15 @@ impl SignalFlags {
 /// On Windows, registers a console control handler mapping CTRL_C/CTRL_CLOSE
 /// to shutdown and CTRL_BREAK to graceful exit.
 ///
-/// upstream: main.c - SIGACT() calls for SIGPIPE, SIGHUP, SIGTERM, SIGUSR1, SIGUSR2.
+/// upstream: main.c:1854-1928 - `SIGACTMASK()`/`SIGACTION()` calls for SIGPIPE,
+/// SIGHUP, SIGTERM, SIGUSR1, SIGUSR2.
 #[cfg(unix)]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
     use signal_hook::consts::{SIGHUP, SIGINT, SIGPIPE, SIGTERM, SIGUSR1, SIGUSR2};
 
     let flags = SignalFlags::new();
 
-    // upstream: main.c SIGACT(SIGPIPE, SIG_IGN) - prevent daemon termination
+    // upstream: main.c:1928 SIGACTION(SIGPIPE, SIG_IGN) - prevent daemon termination
     // on broken client sockets; errors surface as EPIPE io::Error instead.
     let sigpipe_sink = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGPIPE, Arc::clone(&sigpipe_sink))?;
@@ -269,7 +279,7 @@ mod windows_console_ctrl_tests {
     use crate::error::SignalRegistrationError;
     use std::sync::atomic::Ordering;
 
-    // #204: The Windows console control handler is installed via
+    // The Windows console control handler is installed via
     // `SetConsoleCtrlHandler` and stores its flag references in process-global
     // `OnceLock` statics so the `extern "system"` callback can reach them. That
     // makes registration one-shot per process. nextest runs each test in its own

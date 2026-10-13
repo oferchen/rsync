@@ -14,7 +14,7 @@ pub enum ParseProtocolVersionErrorKind {
     Negative,
     /// The provided string encoded an integer larger than `u8::MAX`.
     Overflow,
-    /// The parsed integer fell outside upstream rsync's supported range.
+    /// The parsed integer fell outside `ProtocolVersion::supported_range()`.
     UnsupportedRange(u8),
 }
 

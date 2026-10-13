@@ -24,7 +24,7 @@ use std::io;
 /// The username is passed to the API verbatim; both a bare `user` and a
 /// qualified `DOMAIN\user` form are accepted by the local lookup.
 ///
-/// upstream: authenticate.c:283-295 `auth_server()` resolves the user's groups
+/// upstream: authenticate.c:384-396 `auth_server()` resolves the user's groups
 /// and `wildmatch`es each against the `@group` token.
 #[allow(unsafe_code)]
 pub fn groups_for_user(username: &str) -> Result<Vec<String>, io::Error> {

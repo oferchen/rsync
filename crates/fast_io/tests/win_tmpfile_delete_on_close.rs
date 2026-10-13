@@ -11,9 +11,7 @@ use fast_io::win_tmpfile::{
     win_tmpfile_probe,
 };
 
-// ---------------------------------------------------------------------------
 // Cross-platform probe tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn probe_returns_valid_result_for_tempdir() {
@@ -48,9 +46,7 @@ fn open_win_temp_file_returns_result_for_tempdir() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Windows-specific tests
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
 mod windows {
@@ -222,9 +218,7 @@ mod windows {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Non-Windows fallback tests
-// ---------------------------------------------------------------------------
 
 #[cfg(not(target_os = "windows"))]
 mod non_windows {

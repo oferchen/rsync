@@ -13,7 +13,7 @@
 //! 8. Reading from standard input (dash path)
 //! 9. Large file handling
 //!
-//! Reference: rsync 3.4.1 exclude.c and rsync(1) man page FILTER RULES section
+//! Reference: rsync 3.5.1 exclude.c and rsync(1) man page FILTER RULES section
 
 use filters::{FilterAction, FilterSet, read_rules, read_rules_recursive};
 use std::fs;
@@ -203,7 +203,7 @@ mod comment_handling {
     }
 
     /// Test: A `#` comment is only recognised at the very start of the line.
-    /// upstream: exclude.c:1514 parse_filter_file - leading whitespace is not
+    /// upstream: exclude.c:1805-1806 parse_filter_file - leading whitespace is not
     /// stripped, so `  # ...` is not a comment; it reaches parse_rule_tok and
     /// errors with "Unknown filter rule".
     #[test]
@@ -289,7 +289,7 @@ mod blank_line_handling {
     }
 
     /// Test: A whitespace-only line is not blank and is not skipped.
-    /// upstream: exclude.c:1514 - only truly-empty lines are skipped; a line of
+    /// upstream: exclude.c:1805-1806 - only truly-empty lines are skipped; a line of
     /// spaces reaches parse_rule_tok and errors ("Unknown filter rule").
     #[test]
     fn whitespace_only_line_is_rejected() {
@@ -335,7 +335,7 @@ mod blank_line_handling {
     }
 
     /// Test: File with only (truly empty) blank lines produces no rules.
-    /// upstream: exclude.c:1514 - empty lines are skipped; whitespace-only lines
+    /// upstream: exclude.c:1805-1806 - empty lines are skipped; whitespace-only lines
     /// would instead error, so this fixture uses only newlines.
     #[test]
     fn only_blank_lines() {
@@ -652,7 +652,7 @@ mod pattern_preservation {
     use super::*;
 
     /// Test: Only one separator is consumed after the action; further leading
-    /// whitespace stays in the pattern. upstream: exclude.c:1290-1291,1313 -
+    /// whitespace stays in the pattern. upstream: exclude.c:1365,1444-1445,1465 -
     /// exactly one space/underscore is consumed, then the rest is taken verbatim
     /// via strlen. `-   spaced_file.txt` keeps two leading spaces.
     #[test]
@@ -667,7 +667,7 @@ mod pattern_preservation {
     }
 
     /// Test: Trailing whitespace in the pattern is kept verbatim.
-    /// upstream: exclude.c:1313 - pattern length is strlen, so trailing spaces
+    /// upstream: exclude.c:1465 - pattern length is strlen, so trailing spaces
     /// remain part of the pattern.
     #[test]
     fn trailing_whitespace_kept() {
@@ -929,7 +929,7 @@ mod rule_modifiers_from_file {
 
     /// Test: the `w` word-split modifier is valid only on a merge-file rule.
     ///
-    /// upstream: exclude.c:1279-1283 - `case 'w': if (!(rule->rflags &
+    /// upstream: exclude.c:1433-1437 - `case 'w': if (!(rule->rflags &
     /// FILTRULE_MERGE_FILE)) goto invalid;`. On an ordinary exclude rule
     /// upstream reports "invalid modifier 'w'"; oc-rsync mirrors the error
     /// rather than expanding the line into per-word excludes.

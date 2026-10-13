@@ -70,6 +70,11 @@ pub struct SignatureBlock {
 /// - Rolling sum (4 bytes LE) - 32-bit rolling checksum
 /// - Strong sum (variable length) - Cryptographic hash
 ///
+/// Deviation from upstream: the header is three varints with no `remainder`
+/// field. Upstream's `io.c:write_sum_head()` sends four fixed 32-bit integers
+/// (see `SumHead`); only the per-block layout matches
+/// upstream's `generator.c:generate_and_send_sums()`.
+///
 /// # Arguments
 ///
 /// * `writer` - The output stream to write to

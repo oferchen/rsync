@@ -2,9 +2,10 @@
 //!
 //! Wire format varies by protocol version:
 //!
-//! - Protocol 30+: varlong30 encoding with 3-byte minimum
-//! - Protocol 29: adds flist build/transfer time fields
-//! - Protocol < 29: basic byte counts only
+//! - Protocol 30+: `write_varlong30()` emits a varlong with a 3-byte minimum
+//!   (below 30 it falls back to `write_longint()`, `io.h:46`)
+//! - Protocol 29+: adds the flist build/transfer time fields
+//! - Protocol < 29: byte counts only
 
 mod created;
 mod delete;

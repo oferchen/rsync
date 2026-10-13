@@ -251,12 +251,14 @@ fn zstd_consecutive_block_matches_use_run_encoding() {
 
 /// Verifies flush boundary placement matches upstream framing.
 ///
-/// Upstream writes one DEFLATED_DATA block per output buffer fill
+/// The encoder writes one DEFLATED_DATA block per output buffer fill
 /// (during continue) or per flush call. For small literals that fit in
 /// a single buffer, the entire compressed+flushed output should appear
-/// as a single DEFLATED_DATA block, not multiple smaller blocks.
+/// as a single DEFLATED_DATA block, not multiple smaller blocks. Upstream
+/// writes after every `ZSTD_compressStream2()` call that produced output,
+/// which also yields one block here.
 ///
-/// upstream: token.c lines 812-818
+/// upstream: token.c lines 815-821
 #[test]
 fn zstd_flush_produces_single_deflated_data_block_for_small_input() {
     let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
@@ -373,10 +375,9 @@ fn zstd_wire_format_ordering() {
 }
 
 /// Verifies that large literals produce multiple DEFLATED_DATA blocks
-/// each capped at MAX_DATA_COUNT, matching upstream's buffer-full write
-/// pattern.
+/// each capped at MAX_DATA_COUNT.
 ///
-/// upstream: token.c line 812 - write when zstd_out_buff.pos == zstd_out_buff.size
+/// upstream: token.c line 794 - `zstd_out_buff.size = MAX_DATA_COUNT`
 #[test]
 fn zstd_large_literal_splits_into_max_data_count_blocks() {
     let mut encoder = ZstdTokenEncoder::new(1, None).unwrap();
@@ -462,8 +463,8 @@ fn zstd_large_literal_splits_into_max_data_count_blocks() {
 /// The encoder and decoder contexts persist across file boundaries -
 /// only token run-encoding state resets between files.
 ///
-/// upstream: token.c:740 (CCtx created once), token.c:756-759 (only
-/// run state resets), token.c:844 (DCtx created once)
+/// upstream: token.c:743 (CCtx created once), token.c:759-762 (only
+/// run state resets), token.c:847 (DCtx created once)
 #[test]
 fn zstd_continuous_stream_across_files() {
     let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
@@ -536,7 +537,7 @@ fn zstd_block_match_without_literals_no_deflated_data() {
 /// Verifies the 2-byte header encoding: first byte is
 /// `DEFLATED_DATA | (len >> 8)`, second byte is `len & 0xFF`.
 /// This must match upstream's obuf[0]/obuf[1] encoding at
-/// token.c lines 815-816.
+/// token.c lines 818-819.
 #[test]
 fn zstd_deflated_data_header_matches_upstream() {
     let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();

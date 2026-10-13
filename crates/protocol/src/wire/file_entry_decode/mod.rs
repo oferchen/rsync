@@ -21,7 +21,7 @@
 //!
 //! # Upstream Reference
 //!
-//! See `flist.c:recv_file_entry()` lines 750-1050 for the canonical wire decoding.
+//! See `flist.c:recv_file_entry()` (from line 1002) for the canonical wire decoding.
 
 mod checksum;
 mod device;

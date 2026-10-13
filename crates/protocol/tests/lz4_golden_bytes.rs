@@ -138,7 +138,7 @@ fn parse_wire_structure(data: &[u8]) -> (Vec<&'static str>, Vec<usize>) {
 /// The DEFLATED_DATA header uses the same 14-bit length encoding as zlib/zstd.
 /// LZ4 compresses each chunk independently - no persistent compression state.
 ///
-/// upstream: token.c:send_compressed_token() lines 919-948 (SUPPORT_LZ4)
+/// upstream: token.c:send_compressed_token() lines 965-994 (SUPPORT_LZ4)
 #[test]
 fn golden_lz4_literal_only_wire_structure() {
     let encoded = lz4_encode(&[Lz4TestToken::Literal(

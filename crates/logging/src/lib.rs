@@ -8,9 +8,9 @@
 //! # Architecture
 //!
 //! Upstream rsync uses two parallel arrays of per-category verbosity levels:
-//! `info_verbosity[]` and `debug_verbosity[]` (upstream: options.c:228-243).
+//! `info_verbosity[]` and `debug_verbosity[]` (upstream: options.c:244-259).
 //! The `-v` flag increments a global verbose counter, and
-//! `set_output_verbosity()` (upstream: options.c:513) walks both tables
+//! `set_output_verbosity()` (upstream: options.c:532) walks both tables
 //! cumulatively from level 0 through the requested level, setting individual
 //! flags. Fine-grained overrides are available via `--info=FLAGS` and
 //! `--debug=FLAGS` (upstream: options.c:parse_output_words()).
@@ -43,7 +43,7 @@
 //! # Error formatting
 //!
 //! The [`rsync_error_fmt!`] and [`rsync_warning_fmt!`] macros produce strings
-//! matching upstream's diagnostic format (upstream: log.c:rwrite(),
+//! matching upstream's diagnostic format (upstream: log.c:log_exit(),
 //! errcode.h):
 //!
 //! ```text

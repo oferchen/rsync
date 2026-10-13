@@ -1,6 +1,6 @@
 //! `--debug=BIND` producer emissions for daemon listener setup.
 //!
-//! Mirrors upstream rsync 3.4.4's `DEBUG_GTE(BIND, 1)` output byte-for-byte
+//! Mirrors upstream rsync 3.5.1's `DEBUG_GTE(BIND, 1)` output byte-for-byte
 //! so wire-comparable diagnostics align across implementations. Upstream
 //! accumulates per-address-family error messages while iterating
 //! `getaddrinfo` results inside `open_socket_in` and flushes them through
@@ -9,20 +9,20 @@
 //!
 //! # Upstream Reference
 //!
-//! - `socket.c:440-446` `socket() failed:` - per-family accumulation when
+//! - `socket.c:594-602` `socket() failed:` - per-family accumulation when
 //!   `socket(2)` returns `-1`.
-//! - `socket.c:469-478` `bind() failed:` - per-family accumulation when
+//! - `socket.c:622-631` `bind() failed:` - per-family accumulation when
 //!   `bind(2)` returns `-1`.
-//! - `socket.c:487-494` - the flush loop that fires each message through
+//! - `socket.c:642-647` - the flush loop that fires each message through
 //!   `FLOG` once the iteration completes.
-//! - `options.c:292` - `DEBUG_WORD(BIND, W_CLI, "Debug socket bind actions")`
+//! - `options.c:308` - `DEBUG_WORD(BIND, W_CLI, "Debug socket bind actions")`
 //!   flag table entry. Useful upstream `DEBUG_GTE` calls cap at level 1.
 //!
 //! The helpers in this module fire the upstream-verbatim message text
 //! through `debug_log!(Bind, 1, ...)`. Callsites that need the
 //! unconditional `!i` flush (every candidate failed) should emit a
 //! separate `FERROR`-equivalent line in addition to calling the helper,
-//! matching `socket.c:496-502`.
+//! matching `socket.c:650-656`.
 
 use std::io;
 
@@ -30,7 +30,7 @@ use logging::debug_log;
 
 /// Traces a failed `bind(2)` attempt during daemon listener setup.
 ///
-/// upstream: `socket.c:471-473` -
+/// upstream: `socket.c:625-627` -
 /// `"bind() failed: %s (address-family %d)\n"`. `address_family` carries
 /// the raw integer from `resp->ai_family` (typically `AF_INET = 2` or
 /// `AF_INET6 = 10` on Linux). The error string mirrors what upstream
@@ -52,7 +52,7 @@ pub fn trace_bind_failure(address_family: i32, error: &io::Error) {
 
 /// Traces a failed `socket(2)` attempt during daemon listener setup.
 ///
-/// upstream: `socket.c:441-444` -
+/// upstream: `socket.c:595-598` -
 /// `"socket(%d,%d,%d) failed: %s\n"`. `family`, `socktype`, and
 /// `protocol` carry the raw integers passed to the `socket(2)` syscall
 /// (`resp->ai_family`, `resp->ai_socktype`, `resp->ai_protocol`).
@@ -75,7 +75,7 @@ pub fn trace_socket_failure(family: i32, socktype: i32, protocol: i32, error: &i
 #[cfg(test)]
 mod tests {
     //! Pinning tests for BIND emission shape. Strings match upstream
-    //! `socket.c:441-444` and `socket.c:471-473` byte-for-byte once the
+    //! `socket.c:595-598` and `socket.c:625-627` byte-for-byte once the
     //! `strerror(errno)` substitution is taken into account.
 
     use super::*;
@@ -107,7 +107,7 @@ mod tests {
     }
 
     /// Pins the level 1 `bind() failed:` emission shape against upstream
-    /// `socket.c:471-473`.
+    /// `socket.c:625-627`.
     #[test]
     fn bind_failure_matches_upstream_format() {
         init_bind(1);
@@ -122,7 +122,7 @@ mod tests {
     }
 
     /// Pins the level 1 `socket() failed:` emission shape against upstream
-    /// `socket.c:441-444`.
+    /// `socket.c:595-598`.
     #[test]
     fn socket_failure_matches_upstream_format() {
         init_bind(1);

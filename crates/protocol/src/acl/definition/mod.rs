@@ -23,7 +23,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `acls.c` lines 731-800: `recv_rsync_acl()`
+//! - `acls.c` lines 961-1014: `recv_rsync_acl()`
 
 mod convert;
 mod types;

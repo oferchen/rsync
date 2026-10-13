@@ -41,9 +41,7 @@ use checksums::cpu_features::{SimdLevel, reset_simd_override_for_tests};
 use checksums::md5_backend::Dispatcher;
 use checksums::strong::{Md4, Md5, Xxh3, Xxh3_128};
 
-// ---------------------------------------------------------------------------
 // Constants
-// ---------------------------------------------------------------------------
 
 /// Block sizes covering rsync's practical range.
 /// 8 KiB is the default block size; 32 KiB and 128 KiB appear for larger files.
@@ -65,9 +63,7 @@ const BANDWIDTHS_BPS: &[(u64, &str)] = &[
 /// Batch width for SIMD vs scalar MD5 comparison.
 const MD5_BATCH_WIDTH: usize = 16;
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Deterministic pseudo-random buffer via xorshift64.
 fn build_buffer(size: usize) -> Vec<u8> {
@@ -119,9 +115,7 @@ fn configured_criterion() -> Criterion {
         .measurement_time(Duration::from_secs(3))
 }
 
-// ---------------------------------------------------------------------------
 // CBP-2: Bandwidth-constrained wall-clock comparison
-// ---------------------------------------------------------------------------
 
 /// Hash all blocks with the given algorithm, interleaving a simulated network
 /// transfer delay per block.
@@ -188,9 +182,7 @@ fn bench_bandwidth_constrained(c: &mut Criterion) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // CBP-3: CPU utilization ratio per algorithm
-// ---------------------------------------------------------------------------
 
 /// Measures hash_time / (hash_time + transfer_time) for a given algorithm and
 /// bandwidth. Returns the ratio as a value in [0.0, 1.0].
@@ -289,9 +281,7 @@ fn bench_cpu_utilization(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // CBP-4: SIMD-accelerated MD5 vs scalar MD5
-// ---------------------------------------------------------------------------
 
 fn bench_simd_vs_scalar_md5(c: &mut Criterion) {
     let buf = build_buffer(MD5_BATCH_WIDTH * BLOCK_SIZE);
@@ -382,9 +372,7 @@ fn bench_simd_vs_scalar_md5(c: &mut Criterion) {
     eprintln!();
 }
 
-// ---------------------------------------------------------------------------
 // Criterion harness
-// ---------------------------------------------------------------------------
 
 criterion_group! {
     name = benches;

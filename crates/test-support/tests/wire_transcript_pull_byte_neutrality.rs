@@ -1,7 +1,7 @@
-//! Byte-neutrality transcript cells for lazy-receiver-consumption (A5a).
+//! Byte-neutrality transcript cells for lazy receiver consumption.
 //!
 //! This is the receiver-side analog of the sender/PUSH gate in
-//! `wire_transcript_byte_neutrality.rs` (LF-0b). Where that file captures a
+//! `wire_transcript_byte_neutrality.rs`. Where that file captures a
 //! PUSH (`oc-rsync SRC/ host:DEST`, client = SENDER), this one captures a
 //! PULL (`oc-rsync host:SRC/ DEST`, client = RECEIVER). The `capture-rsh`
 //! trampoline is direction-agnostic - it appends every byte the client writes
@@ -9,10 +9,10 @@
 //! writes toward the client to the server->client file - so on a pull the
 //! client->server stream is the RECEIVER/generator's outbound wire: its
 //! per-file NDX, block-signature headers and NDX_DONE phase markers. That is
-//! precisely the stream A5a's lazy-receiver-consumption work will re-time, so
+//! precisely the stream lazy receiver consumption will re-time, so
 //! this harness becomes its byte-identity gate.
 //!
-//! Cells (mirroring the LF-0b three):
+//! Cells (1-3 mirror the push file's first three):
 //!
 //! 1. Determinism - two PULL runs of the same binary on the same fixture,
 //!    under the harness normalization set (fixed `--checksum-seed`, pinned
@@ -27,20 +27,21 @@
 //!    the planted byte and not fixture-construction noise. Without the revert
 //!    arm the gate would be vacuous - it could not be shown to actually see a
 //!    change rather than to always disagree.
-//! 3. Receiver-stream substance (the A5a gate) - a multi-level directory
+//! 3. Receiver-stream substance - a multi-level directory
 //!    fixture makes the receiver walk several entries, so the client->server
 //!    stream carries a per-file NDX/signature/NDX_DONE sequence rather than a
 //!    bare handshake. The cell pins that this stream is non-trivial AND that
 //!    it GROWS with the entry count (a deep multi-file tree's receiver-outbound
 //!    stream is strictly larger than a single-file tree's). That growth is the
-//!    non-vacuity proof: the bytes A5a will change are demonstrably present and
+//!    non-vacuity proof: the bytes that work will change are demonstrably present and
 //!    counted here, so a future change to the receiver's NDX_DONE timing moves
 //!    this stream and fails the gate rather than slipping past a fixed
 //!    handshake.
 //!
 //! The captures are the raw byte streams of both directions, multiplex
-//! framing included (upstream: io.c:1173 keeps the 4-byte frame headers inside
-//! the same stream), taken by the `capture-rsh` trampoline.
+//! framing included (upstream: io.c:776 perform_io() and io.c:1173 send_msg()
+//! write the 4-byte frame headers into the same stream), taken by the
+//! `capture-rsh` trampoline.
 #![cfg(unix)]
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -229,12 +230,12 @@ fn pull_transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
     let reverted = capture(reverted_src.path(), "sensitivity reverted", |_| {});
     assert_transcripts_eq(&base, &reverted, "reverted fixture");
 }
-/// Cell 3 (the A5a gate): the receiver's outbound stream is substantive and
+/// Cell 3: the receiver's outbound stream is substantive and
 /// scales with the entry count.
 ///
 /// The client->server stream on a pull is the receiver/generator's outbound
 /// wire - the per-file NDX, block-signature headers and NDX_DONE phase markers
-/// that A5a's lazy-receiver-consumption work will re-time. This cell proves
+/// that lazy receiver consumption will re-time. This cell proves
 /// those bytes are actually captured here, two ways: the multi-level tree's
 /// receiver-outbound stream is non-trivial (well past a bare handshake), and it
 /// is strictly LARGER than a single-file tree's, because each extra entry the
@@ -267,7 +268,7 @@ fn pull_receiver_outbound_stream_is_substantive_and_scales_with_entries() {
     // own NDX/signature/NDX_DONE unit, so the multi-level tree's stream must be
     // strictly - and substantially - larger. The `+ 32` margin (measured delta
     // is ~95 bytes over six extra entries) rules out a single incidental byte:
-    // it demands several per-file units, so the bytes A5a re-times are
+    // it demands several per-file units, so the re-timed bytes are
     // demonstrably counted here and equal sizes could never pass vacuously.
     assert!(
         multi.client_to_server.len() >= single.client_to_server.len() + 32,
@@ -345,7 +346,7 @@ fn tree_listing(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     out
 }
 
-/// Cell 4 (IRP-03/04): the staging flag engages INC_RECURSE on a pull, and the
+/// Cell 4: the staging flag engages INC_RECURSE on a pull, and the
 /// incremental receiver still reproduces the source tree.
 ///
 /// With the flag set the client advertises `'i'`, the oc server sender answers
@@ -377,12 +378,13 @@ fn pull_inc_recurse_flag_engages_and_transfers_the_tree() {
     );
 }
 
-/// Cell 5 (IRP-03/04): options that must keep the whole-list pull leave the
+/// Cell 5: options that must keep the whole-list pull leave the
 /// wire byte-identical to the flag-off run even with the flag set.
 ///
 /// `--no-inc-recursive` is the user's explicit opt-out, and `--delete-before`
 /// / `--delete-after` need the complete list up front, so upstream's own gate
-/// withholds `'i'` for them (compat.c:172-177).
+/// withholds `'i'` for them (upstream: compat.c:172-177
+/// set_allow_inc_recurse()).
 #[test]
 fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes() {
     let src = test_support::create_tempdir();
@@ -400,10 +402,10 @@ fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes(
     }
 }
 
-/// Cell 6 (IRP-08): the per-directory delete modes pull incrementally under
+/// Cell 6: the per-directory delete modes pull incrementally under
 /// the flag and still delete exactly the extraneous entries.
 ///
-/// upstream: generator.c:2780-2798 deletes in each sub-list's parent as the
+/// upstream: generator.c:2780-2798 generate_files() deletes in each sub-list's parent as the
 /// sub-list is walked, so a `--delete` pull keeps INC_RECURSE.
 #[test]
 fn pull_inc_recurse_flag_engages_under_per_directory_deletes() {

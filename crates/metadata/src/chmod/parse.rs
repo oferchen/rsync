@@ -92,7 +92,7 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
     loop {
         let ch = bytes.get(i).copied();
 
-        // upstream: chmod.c:58 - at end-of-string or a comma, close the clause.
+        // upstream: chmod.c:72 - at end-of-string or a comma, close the clause.
         if ch.is_none() || ch == Some(b',') {
             let Some(clause_op) = op else {
                 return Err(ChmodError::new(
@@ -156,7 +156,7 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
                 break;
             }
 
-            // upstream: chmod.c:103-106 - consume the comma and reset per-clause
+            // upstream: chmod.c:133-138 - consume the comma and reset per-clause
             // state (the `D`/`F` selector does not carry across a comma).
             i += 1;
             state = State::FirstHalf;
@@ -176,7 +176,7 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
         let c = byte as char;
 
         match state {
-            // upstream: chmod.c:110-158.
+            // upstream: chmod.c:141-191.
             State::FirstHalf => match byte {
                 b'D' => {
                     if files_only {
@@ -221,7 +221,7 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
                     state = State::SecondHalf;
                 }
                 _ => {
-                    // upstream: chmod.c:148-156 - an octal digit (< 8) starts a
+                    // upstream: chmod.c:181-188 - an octal digit (< 8) starts a
                     // numeric mode only when no who-class has been seen.
                     if byte.is_ascii_digit() && byte < b'8' && where_ == 0 {
                         op = Some(Op::Set);
@@ -264,7 +264,7 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
                 b'o' => copybits = 0o001,
                 _ => return Err(err(c)),
             },
-            // upstream: chmod.c:187-194.
+            // upstream: chmod.c:247-254.
             State::OctalNum => {
                 if byte.is_ascii_digit() && byte < b'8' {
                     what = what * 8 + u32::from(byte - b'0');
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn octal_accepts_one_to_four_digits_capped_at_chmod_bits() {
-        // upstream: chmod.c:187-194 accumulates octal digits, capping at
+        // upstream: chmod.c:247-254 accumulates octal digits, capping at
         // CHMOD_BITS. Length is not fixed at 3-4 digits.
         assert_eq!(one("7").mode_or, 0o7);
         assert_eq!(one("75").mode_or, 0o75);
@@ -329,14 +329,14 @@ mod tests {
         assert!(d.dirs_only && !d.files_only);
         let f = one("F644");
         assert!(f.files_only && !f.dirs_only);
-        // upstream: chmod.c:113-120 - mixing D and F in one clause errors.
+        // upstream: chmod.c:144-153 - mixing D and F in one clause errors.
         assert!(parse("DF644").is_err());
         assert!(parse("FD644").is_err());
     }
 
     #[test]
     fn selector_resets_after_comma() {
-        // upstream: chmod.c:106 resets flags after each comma, so the leading
+        // upstream: chmod.c:138 resets flags after each comma, so the leading
         // `F` only tags the first clause.
         let clauses = parse("Fu=rw,go-r").expect("parses");
         assert_eq!(clauses.len(), 2);
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn assign_preserves_setid_when_no_s_present() {
-        // upstream: chmod.c:90 - CHMOD_EQ only strips the top bits (topbits)
+        // upstream: chmod.c:113 - CHMOD_EQ only strips the top bits (topbits)
         // when `s`/`t` are present (topoct != 0). `u=rx` keeps setuid.
         let c = one("u=rx");
         assert_eq!(c.mode_and, CHMOD_BITS - 0o700);
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn sticky_ignores_who() {
-        // upstream: chmod.c:179-181 - `t` always adds 01000 regardless of who.
+        // upstream: chmod.c:222-225 - `t` always adds 01000 regardless of who.
         assert_eq!(one("g+t").mode_or, 0o1000);
         assert_eq!(one("u+t").mode_or, 0o1000);
         assert_eq!(one("+t").mode_or, 0o1000);
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn implied_who_applies_umask() {
-        // upstream: chmod.c:76-77 - `+w` with no who becomes where=0o111 and is
+        // upstream: chmod.c:91-92 - `+w` with no who becomes where=0o111 and is
         // masked by ~umask. With umask 022, only owner-write survives.
         let c = one("+w");
         assert_eq!(c.mode_or, 0o222 & !UMASK);
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn empty_and_stray_commas_rejected() {
-        // upstream: chmod.c:61-63 - a clause with no operator errors.
+        // upstream: chmod.c:75-77 - a clause with no operator errors.
         assert!(parse("").is_err());
         assert!(parse("u+r,").is_err());
         assert!(parse(",u+r").is_err());

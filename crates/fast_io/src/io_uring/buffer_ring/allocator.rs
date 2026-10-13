@@ -252,6 +252,10 @@ impl BgidAllocator {
     /// ids available again; otherwise the recommended downgrade is to
     /// skip the buffer-ring registration and continue serving with plain
     /// `recv`/`read` on that connection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the process-wide bgid free-list mutex is poisoned.
     pub fn allocate() -> Result<u16, BgidAllocError> {
         // Reuse a freed id when one is available. The lock is held only for
         // the pop, so contention with concurrent deallocate calls is
@@ -310,6 +314,10 @@ impl BgidAllocator {
     /// obtained (free-list empty *and* counter at the namespace limit).
     /// A short non-empty batch is returned as `Ok` so partial progress is
     /// visible to the caller.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the process-wide bgid free-list mutex is poisoned.
     pub fn allocate_batch(count: usize) -> Result<Vec<u16>, BgidAllocError> {
         if count == 0 {
             return Ok(Vec::new());
@@ -377,6 +385,10 @@ impl BgidAllocator {
     /// duplicate id present in the input or already in the free-list is
     /// dropped silently to preserve the no-duplicates invariant documented
     /// on [`deallocate`](Self::deallocate).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the process-wide bgid free-list mutex is poisoned.
     pub fn deallocate_batch(bgids: &[u16]) {
         if bgids.is_empty() {
             return;
@@ -413,6 +425,10 @@ impl BgidAllocator {
     /// never issued by this allocator) pollutes the free-list and causes a
     /// later [`allocate`](Self::allocate) to issue an id that may collide
     /// with a ring active elsewhere in the process.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the process-wide bgid free-list mutex is poisoned.
     pub fn deallocate(bgid: u16) {
         let mut free_list = bgid_free_list().lock().expect("bgid free-list poisoned");
         if !free_list.contains(&bgid) {
@@ -426,6 +442,10 @@ impl BgidAllocator {
     /// available for reuse. When this reaches zero,
     /// [`allocate`](Self::allocate) returns [`BgidAllocError::Exhausted`].
     /// The value may decrease concurrently as other threads allocate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the process-wide bgid free-list mutex is poisoned.
     pub fn remaining() -> u32 {
         let used = NEXT_BGID.load(Ordering::Relaxed).min(BGID_NAMESPACE_SIZE);
         let free = bgid_free_list()

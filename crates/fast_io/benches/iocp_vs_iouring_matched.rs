@@ -183,9 +183,7 @@ fn run_stdfs(paths: &[PathBuf], payload: &[u8]) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Linux: io_uring cells
-// ---------------------------------------------------------------------------
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 mod linux_cells {
@@ -351,9 +349,7 @@ mod linux_cells {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Windows: IOCP cells
-// ---------------------------------------------------------------------------
 
 #[cfg(all(target_os = "windows", feature = "iocp"))]
 mod windows_cells {
@@ -447,11 +443,9 @@ mod windows_cells {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Fallback for hosts without a kernel-async backend on this build (the
 // std_baseline cell still runs so every host produces a portable
 // reference row).
-// ---------------------------------------------------------------------------
 
 #[cfg(not(any(
     all(target_os = "linux", feature = "io_uring"),
@@ -493,9 +487,7 @@ mod baseline_only {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Criterion entry point.
-// ---------------------------------------------------------------------------
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 criterion_group!(iocp_vs_iouring_matched, linux_cells::bench_matched);

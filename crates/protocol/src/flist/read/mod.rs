@@ -115,8 +115,8 @@ pub struct FileListReader {
     /// `CF_SYMLINK_ICONV` was negotiated. Against a proto-30 / pre-3.1 peer the
     /// target arrives as raw local bytes and must NOT be transcoded.
     ///
-    /// upstream: flist.c:1381 gates the recv-side conversion on
-    /// `sender_symlink_iconv` (compat.c:765-767).
+    /// upstream: flist.c:1527 gates the recv-side conversion on
+    /// `sender_symlink_iconv` (compat.c:776-778).
     symlink_iconv: bool,
     /// Whether `--relative` (`-R`) paths are active.
     ///
@@ -167,11 +167,11 @@ pub struct FileListReader {
     xattr_cache: XattrCache,
     /// Growth of the list being received, upstream's per-`recv_file_list()`
     /// `flist`. Reset at each end marker, since every sub-list is a new list.
-    /// upstream: flist.c:3171-3172
+    /// upstream: flist.c:3172-3173
     flist_growth: FlistGrowth,
     /// Growth of the receiver's `dir_flist` under INC_RECURSE. Never reset:
     /// it holds every directory received across all sub-lists.
-    /// upstream: flist.c:3174-3178,3239-3241
+    /// upstream: flist.c:3175-3179,3239-3241
     dir_flist_growth: FlistGrowth,
     /// Whether the initial list has ended. Upstream reads the initial list in
     /// the pre-fork receiver and every sub-list in the forked receiver, which
@@ -413,8 +413,8 @@ impl FileListReader {
     /// `--iconv`. When `false`, symlink targets are decoded as raw local bytes
     /// even if a filename converter is attached.
     ///
-    /// upstream: flist.c:1381 gates the recv-side conversion on
-    /// `sender_symlink_iconv` (compat.c:765-767).
+    /// upstream: flist.c:1527 gates the recv-side conversion on
+    /// `sender_symlink_iconv` (compat.c:776-778).
     #[inline]
     #[must_use]
     pub const fn with_symlink_iconv(mut self, symlink_iconv: bool) -> Self {
@@ -430,7 +430,7 @@ impl FileListReader {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:994`: `!relative_paths && *thisname == '/'`
+    /// - `flist.c:1077`: `!relative_paths && *thisname == '/'`
     #[inline]
     #[must_use]
     pub const fn with_relative_paths(mut self, relative: bool) -> Self {
@@ -448,7 +448,7 @@ impl FileListReader {
     ///
     /// Already reduced to `IOERR_VALID_MASK`, but deliberately NOT gated on
     /// `--ignore-errors`: upstream applies that gate at the point of use
-    /// (`flist.c:3192`, `:2967`, `:3070` all read
+    /// (`flist.c:3192`, `:3210`, `:3313` all read
     /// `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`). Callers that
     /// hold the option must apply it; callers that do not must not use this.
     ///
@@ -515,7 +515,7 @@ impl FileListReader {
 
     /// Creates the list's pointer arrays the first time a list is read from.
     ///
-    /// upstream: flist.c:3171-3179 - `flist_expand(flist, FLIST_START_LARGE)`
+    /// upstream: flist.c:3172-3179 - `flist_expand(flist, FLIST_START_LARGE)`
     /// for every list, and the same for `dir_flist` on the first list under
     /// INC_RECURSE.
     fn start_list_growth(&mut self) -> io::Result<()> {
@@ -634,7 +634,7 @@ impl FileListReader {
                 return Ok(None);
             }
             FlagsResult::IoError(code) => {
-                // upstream: flist.c:3193,3211 recv_file_list() does
+                // upstream: flist.c:3192-3193,3210-3211 recv_file_list() does
                 // `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK` and
                 // breaks the loop - it does NOT abort the transfer. The mask
                 // keeps a hostile peer from planting undefined bits; the
@@ -652,7 +652,7 @@ impl FileListReader {
 
         let name = self.read_name(reader, flags)?;
 
-        // upstream: flist.c:2134 - sender rejects empty names; we enforce the
+        // upstream: flist.c:2416 - sender rejects empty names; we enforce the
         // same invariant as defense-in-depth against a malicious sender.
         if name.is_empty() {
             return Err(io::Error::new(
@@ -667,10 +667,10 @@ impl FileListReader {
 
         // Abbreviated followers (leader in same flist segment) have metadata
         // copied from the leader; unabbreviated followers carry full metadata.
-        // upstream: flist.c:recv_file_entry() lines 805-834
+        // upstream: flist.c:recv_file_entry() lines 1098-1153
         let (size, metadata, link_target, rdev, hardlink_dev_ino, checksum) =
             if self.is_abbreviated_follower(flags, hardlink_idx) {
-                // upstream: flist.c:1031 - look up leader in the current segment
+                // upstream: flist.c:1113-1114 - look up leader in the current segment
                 // and copy its metadata. The sender's static compression variables
                 // (mode, modtime, uid, gid, atime) were already updated from the
                 // leader's data before `goto the_end`, so the receiver must mirror
@@ -690,7 +690,7 @@ impl FileListReader {
                 };
                 let leader_local_idx = (idx as i32 - self.ndx_start) as usize;
 
-                // upstream: flist.c:1019-1024 - a follower whose reference index
+                // upstream: flist.c:1101-1107 - a follower whose reference index
                 // is beyond the entries received so far (>= ndx_start + used)
                 // is a protocol violation. Upstream logs "hard-link reference
                 // out of range" and aborts with exit_cleanup(RERR_PROTOCOL).
@@ -703,7 +703,7 @@ impl FileListReader {
                     )));
                 };
 
-                // upstream: flist.c:1032-1047 - copy fields from leader
+                // upstream: flist.c:1114-1151 - copy fields from leader
                 let leader_mode = leader.mode();
                 let leader_mtime = leader.mtime();
                 let leader_uid = leader.uid();
@@ -712,7 +712,7 @@ impl FileListReader {
 
                 // Update compression state to match sender's statics
                 // upstream: sender updates mode/modtime/uid/gid/atime at
-                // flist.c:667-730 BEFORE goto the_end
+                // flist.c:747-829 BEFORE goto the_end
                 self.state.update_mode(leader_mode);
                 self.state.update_mtime(leader_mtime);
                 if let Some(uid) = leader_uid {
@@ -784,7 +784,7 @@ impl FileListReader {
         // sender intended (mirrors upstream's `lastname` semantics).
         let converted_name = self.apply_encoding_conversion(name)?;
 
-        // upstream: flist.c:993-997 - clean_fname(CFN_REFUSE_DOT_DOT_DIRS)
+        // upstream: flist.c:1076-1080 - clean_fname(CFN_REFUSE_DOT_DOT_DIRS)
         // then reject leading '/' when !relative_paths.
         // In --relative mode, leading slashes are stripped instead.
         let cleaned_name = self.clean_and_validate_name(converted_name)?;
@@ -814,7 +814,7 @@ impl FileListReader {
         // the name (mkdir, rename, backup) from the same forgery.
         //
         // Checked on the CLEANED name, matching upstream: `thisname` at
-        // flist.c:1355 has already been through clean_fname() at :768-772.
+        // flist.c:1355 has already been through clean_fname() at :1076-1077.
         // Both upstream spellings are honoured - `/.` survives cleaning in
         // `--relative` mode, where leading slashes are stripped rather than
         // refused.
@@ -904,7 +904,7 @@ impl FileListReader {
         }
 
         // Read ACLs from the wire (after checksum, before xattrs).
-        // upstream: flist.c:1458-1460 - ACLs are read for all non-symlink entries,
+        // upstream: flist.c:1604-1607 - ACLs are read for all non-symlink entries,
         // including abbreviated hardlink followers. Symlinks never carry ACLs.
         if self.preserve_acls && !entry.is_symlink() {
             let (access_ndx, def_ndx) =
@@ -916,7 +916,7 @@ impl FileListReader {
         }
 
         // Read xattr index/data from wire (after ACLs).
-        // upstream: flist.c:1462-1465 - receive_xattr() is called after
+        // upstream: flist.c:1608-1611 - receive_xattr() is called after
         // receive_acl() and runs for ALL entries including hardlink followers.
         if self.preserve_xattrs {
             let xattr_ndx =
@@ -932,7 +932,7 @@ impl FileListReader {
         }
         self.update_stats(&entry);
 
-        // upstream: flist.c:3255 - recv_file_list() prints `recv_file_name(%s)`
+        // upstream: flist.c:3255-3257 - recv_file_list() prints `recv_file_name(%s)`
         // for each entry as its loop stores it. Every oc receive loop decodes
         // through here, so this is the one owner for that emission.
         super::trace::trace_recv_file_name(entry.name());

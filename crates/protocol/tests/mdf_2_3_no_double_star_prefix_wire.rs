@@ -6,18 +6,18 @@
 //! UTS-DD-exclude.5 root cause: oc-rsync historically prepended `**/` to
 //! every unanchored pattern to mimic upstream's
 //! `wildmatch_array(..., slash_handling = -1)` cross-segment match
-//! (`lib/wildmatch.c:316`). When the source pattern already contained
+//! (`lib/wildmatch.c:329`). When the source pattern already contained
 //! `**`, the prefix compounded into `**/foo/**/bar`, polluting the rule
 //! list with companions upstream never emits and breaking byte-for-byte
-//! wire parity with `exclude.c::send_filter_list()` (3.4.1).
+//! wire parity with `exclude.c::send_filter_list()` (3.5.1).
 //!
-//! Upstream `exclude.c:rule_matches()` lines 903-960 handle unanchored
+//! Upstream `exclude.c:rule_matches()` lines 1002-1081 handle unanchored
 //! `**`-bearing patterns without rewriting; the matcher handles
 //! cross-segment matching at evaluation time. The wire format mirrors the
 //! user-typed rule exactly.
 //!
 //! In-tree implementation: `crates/filters/src/compiled.rs`
-//! `normalise_recursive_wildcards` (PR #5751). Decision-side parity at
+//! `normalise_recursive_wildcards`. Decision-side parity at
 //! `crates/filters/tests/uts_dd_exclude_5_no_double_recursive_wildcard.rs`.
 //! This test pins the wire-byte side of the same contract.
 //!
@@ -30,7 +30,7 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list, write_
 /// double-star corpus from `testsuite/exclude.test` and the UTS-DD
 /// regression. Three rules, no synthetic `**/`-prefix companions.
 ///
-/// upstream: `exclude.c::send_filter_list()` (3.4.1) writes one wire
+/// upstream: `exclude.c::send_filter_list()` (3.5.1) writes one wire
 /// record per user-typed rule with no rewriting of the pattern string.
 fn double_star_corpus() -> [FilterRuleWireFormat; 3] {
     [

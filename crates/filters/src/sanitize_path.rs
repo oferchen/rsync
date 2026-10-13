@@ -12,9 +12,9 @@
 //! # Upstream Reference
 //!
 //! - `util1.c:1235` - `sanitize_path(dest, p, rootdir, depth, flags)`
-//! - `flist.c:999` - applied to received file names in daemon mode
-//! - `flist.c:2539` - applied to `--files-from` entries
-//! - `flist.c:1407` - applied to symlink targets when `sanitize_paths && !munge_symlinks`
+//! - `flist.c:1083` - applied to received file names in daemon mode
+//! - `flist.c:2811`, `flist.c:2817` - applied to `--files-from` entries
+//! - `flist.c:1553-1554` - applied to symlink targets when `sanitize_paths && !munge_symlinks`
 
 /// Sanitizes a path to prevent directory traversal beyond the module root.
 ///
@@ -42,7 +42,7 @@ pub fn sanitize_path(path: &str) -> String {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2539` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
+/// - `flist.c:2811` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
 pub fn sanitize_path_keep_dot_dirs(path: &str) -> String {
     sanitize_path_with_depth(path, 0, true)
 }
@@ -59,7 +59,7 @@ pub fn sanitize_path_keep_dot_dirs(path: &str) -> String {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2539` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
+/// - `flist.c:2811` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
 pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
     sanitize_path_bytes(path, 0, true)
 }
@@ -109,7 +109,7 @@ pub fn sanitize_path_bytes_default(path: &[u8], depth: usize) -> Vec<u8> {
 ///
 /// - `util1.c:1242-1263` - the `dest != p` arm: `if (*p == '/') { if
 ///   (!rootdir) rootdir = module_dir; ... depth = 0; p++; }`
-/// - `options.c:2417` - `--backup-dir`, depth 0
+/// - `options.c:2418` - `--backup-dir`, depth 0
 /// - `main.c:1254-1257` - basis dirs and `--partial-dir`, `curr_dir_depth`
 #[must_use]
 pub fn sanitize_path_rooted_bytes(path: &[u8], rootdir: &[u8], depth: usize) -> Vec<u8> {
@@ -193,12 +193,12 @@ fn sanitize_path_into(
 ) -> Vec<u8> {
     let mut p = 0usize;
 
-    // upstream: util1.c:1148 - strip leading slash (absolute -> relative)
+    // upstream: util1.c:1270-1273 - discard a leading slash (absolute -> relative)
     if p < bytes.len() && bytes[p] == b'/' {
         p += 1;
     }
 
-    // upstream: util1.c:1158 - drop leading "./" unless SP_KEEP_DOT_DIRS
+    // upstream: util1.c:1260-1263 - drop leading "./" unless SP_KEEP_DOT_DIRS
     if !keep_dot_dirs {
         while p + 1 < bytes.len() && bytes[p] == b'.' && bytes[p + 1] == b'/' {
             p += 2;
@@ -265,7 +265,7 @@ fn sanitize_path_into(
     // slash is meaningful - on a `--files-from` line it selects a directory's
     // contents rather than the directory itself - so it must not be stripped.
     if result.is_empty() {
-        // upstream: util1.c:1200 - an empty result becomes ".".
+        // upstream: util1.c:1301-1304 - an empty result becomes ".".
         b".".to_vec()
     } else {
         result
@@ -621,7 +621,7 @@ mod tests {
     /// rootdir with its depth forced to 0, so a `..` climb can reach neither
     /// above the rootdir nor into the rootdir's own spelling. This is the
     /// arm a daemon's `--backup-dir`, `--partial-dir` and alt-basis dirs take
-    /// (options.c:2417, main.c:1254-1257), and the rootdir is `module_dir`.
+    /// (options.c:2418, main.c:1254-1257), and the rootdir is `module_dir`.
     #[test]
     fn rooted_absolute_value_re_roots_at_the_rootdir_with_depth_zero() {
         for (path, root, depth, want) in [

@@ -48,7 +48,7 @@ mod reader_creation_tests {
     /// this same open path accepts a regular file, so a refusal here cannot be
     /// the open failing for an unrelated reason.
     ///
-    /// upstream: batch.c:275-281
+    /// upstream: batch.c:274-283
     #[test]
     #[cfg(unix)]
     fn read_batch_refuses_a_character_device() {
@@ -68,7 +68,7 @@ mod reader_creation_tests {
     /// Both batch-file refusals must carry the variant that maps to
     /// `RERR_FILEIO`, not the generic I/O variant.
     ///
-    /// upstream: batch.c:271,280 - the failed open and the `!S_ISREG` refusal
+    /// upstream: batch.c:270,279 - the failed open and the `!S_ISREG` refusal
     /// both `exit_cleanup(RERR_FILEIO)`. oc renders the exit code from the
     /// error variant, so a refusal filed as `BatchError::Io` reports exit 1
     /// under a "batch replay failed" prefix - naming a phase that never ran.
@@ -102,7 +102,7 @@ mod reader_creation_tests {
     /// device node cannot be opened at all (a `nodev` mount), and an operator
     /// reads the errno - paraphrasing loses both.
     ///
-    /// upstream: batch.c:268-271
+    /// upstream: batch.c:269-272
     #[test]
     #[cfg(unix)]
     fn a_failed_open_reports_upstreams_wording_and_errno() {
@@ -220,7 +220,7 @@ mod stdin_source_tests {
     /// sockets. The FIFO cannot seek, so the replay must decode it exactly as
     /// the buffered `-` source does.
     ///
-    /// upstream: `rsync-3.5.1/batch.c:274-282` - `!S_ISREG && !S_ISFIFO`.
+    /// upstream: `rsync-3.5.1/batch.c:274-283` - `!S_ISREG && !S_ISFIFO`.
     #[test]
     #[cfg(unix)]
     fn read_batch_replays_a_fifo() {
@@ -302,7 +302,7 @@ mod header_tests {
         reader.read_header().unwrap();
 
         // The reader lowers itself to the batch's recorded protocol (30), as
-        // upstream compat.c:607-608 lowers protocol_version to remote_protocol.
+        // upstream compat.c:608-609 lowers protocol_version to remote_protocol.
         // Only a protocol above the ceiling is rejected (see
         // read_header_rejects_batch_from_newer_protocol).
         assert_eq!(reader.config().protocol_version, 30);
@@ -720,7 +720,7 @@ mod flist_deserialization_tests {
     /// must not try to consume them even though `preserve_uid`/`preserve_gid`
     /// are set. Reading them would decode the following delta bytes as a
     /// varint id-list and desync the stream. WHY: this guards the exact
-    /// upstream `uidlist.c:465,473` `numeric_ids <= 0` gate.
+    /// upstream `uidlist.c:466,474` `numeric_ids <= 0` gate.
     #[test]
     fn numeric_ids_skips_id_list_reads() {
         let temp_dir = test_support::create_tempdir();
@@ -785,7 +785,7 @@ mod flist_deserialization_tests {
     }
 
     /// Without `--numeric-ids`, the sender emits empty uid/gid id-lists after
-    /// the flist (`uidlist.c:465,473` with `numeric_ids <= 0`), so the reader
+    /// the flist (`uidlist.c:466,474` with `numeric_ids <= 0`), so the reader
     /// must consume them to stay aligned for delta replay. WHY: proves the
     /// `numeric_ids` gate does not regress the default id-list-consuming path.
     #[test]
@@ -861,7 +861,7 @@ mod flist_deserialization_tests {
     /// in the flist carries a trailing checksum. If the reader doesn't consume
     /// these bytes, subsequent entries will be deserialized incorrectly.
     ///
-    /// upstream: flist.c:907 writes checksum bytes, flist.c:1455 reads them
+    /// upstream: flist.c:990 writes checksum bytes, flist.c:1601 reads them
     #[test]
     fn protocol_flist_roundtrip_with_always_checksum() {
         let temp_dir = test_support::create_tempdir();

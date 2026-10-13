@@ -437,7 +437,7 @@ fn all_levels_work_with_counting_encoder() {
 // mechanics produce correct, independently decompressible segments and
 // that token boundaries survive a roundtrip.
 //
-// Reference: upstream token.c lines 433-454 (Z_SYNC_FLUSH + marker strip).
+// upstream: token.c:444-460 send_deflated_token() (Z_SYNC_FLUSH + marker strip).
 
 /// Compresses `input` with raw deflate and Z_SYNC_FLUSH, returning the
 /// compressed bytes *including* the trailing sync marker.

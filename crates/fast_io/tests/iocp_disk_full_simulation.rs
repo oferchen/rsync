@@ -1,5 +1,4 @@
-//! Disk-full regression coverage for the Windows IOCP disk-commit path
-//! (task #1932).
+//! Disk-full regression coverage for the Windows IOCP disk-commit path.
 //!
 //! Real disk-full coverage on CI is impractical because Windows lacks a
 //! ramfs/tmpfs equivalent and provisioning a VHD just for these tests is
@@ -309,7 +308,7 @@ fn nth_submission_disk_full_skips_earlier_writes() {
     );
 }
 
-/// Regression for the mid-batch submission-error use-after-free (#488): with
+/// Regression for the mid-batch submission-error use-after-free: with
 /// more than one op allowed in flight, a synchronous submit fault must drain
 /// the in-flight ops the kernel already accepted before their pinned
 /// OVERLAPPED buffers are dropped. Dropping them under an outstanding
@@ -383,7 +382,7 @@ fn multi_in_flight_disk_full_drains_before_drop() {
     );
 }
 
-/// Regression for the mid-batch *completion*-error use-after-free (#488). The
+/// Regression for the mid-batch *completion*-error use-after-free. The
 /// submission-error tests above cover a `WriteFile` that fails synchronously.
 /// This test covers the other half: a `WriteFile` that the kernel *accepts*
 /// (ERROR_IO_PENDING) but that later posts a completion carrying a faulted

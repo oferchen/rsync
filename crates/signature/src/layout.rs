@@ -7,13 +7,13 @@ use thiserror::Error;
 
 use crate::block_size::MAX_SUM_LENGTH as SUM_LENGTH;
 
-/// Default block length used by rsync when files are small.
+/// Default block length used by rsync when files are small (upstream: rsync.h:25).
 const BLOCK_SIZE: u32 = 700;
-/// Maximum block size supported by protocol versions 30 and newer.
+/// Maximum block size supported by protocol versions 30 and newer (upstream: rsync.h:161).
 const MAX_BLOCK_SIZE: u32 = 1 << 17;
-/// Maximum block size accepted by legacy protocol versions (< 30).
+/// Maximum block size accepted by legacy protocol versions (< 30) (upstream: rsync.h:164).
 const OLD_MAX_BLOCK_SIZE: u32 = 1 << 29;
-/// Bias applied when computing strong checksum lengths for larger files.
+/// Bias applied when computing strong checksum lengths (upstream: rsync.h:759).
 const BLOCKSUM_BIAS: i32 = 10;
 
 /// Default negotiated transfer-digest width, matching upstream's 16-byte digests
@@ -312,8 +312,8 @@ fn derive_block_length(file_length: u64, protocol: ProtocolVersion) -> u32 {
 /// strong sum so the wire `sum_head` never advertises a `s2length` wider than the
 /// checksum the sender expects.
 ///
-/// (upstream: generator.c:697-750 `sum_sizes_sqroot()`, specifically
-/// generator.c:705 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`)
+/// (upstream: generator.c:703 `sum_sizes_sqroot()`, specifically
+/// generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`)
 fn derive_strong_sum_length(
     file_length: u64,
     block_length: u32,
@@ -328,7 +328,7 @@ fn derive_strong_sum_length(
     // upstream: generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`.
     let max_s2length = i32::from(SUM_LENGTH.min(transfer_digest_length.get()));
 
-    // upstream: generator.c:738-740 - a full-length phase csum yields the whole
+    // upstream: generator.c:744-745 - a full-length phase csum yields the whole
     // negotiated digest, not an unconditional SUM_LENGTH.
     if checksum_length.get() == SUM_LENGTH {
         return NonZeroU8::new(max_s2length as u8).expect("max_s2length floors at 1");
@@ -347,7 +347,7 @@ fn derive_strong_sum_length(
         bias -= 1;
     }
 
-    // upstream: generator.c:753-755 - `MAX(s2length, csum_length)` floors the
+    // upstream: generator.c:753-754 - `MAX(s2length, csum_length)` floors the
     // computed length, then `MIN(s2length, max_s2length)` caps it last, so the
     // negotiated digest width wins even below the phase csum length.
     let mut strong_len = (bias + 1 - 32 + 7) / 8;
@@ -384,7 +384,7 @@ mod tests {
     }
 
     /// A narrower negotiated transfer digest (XXH64 / XXH3-64 = 8 bytes) must cap
-    /// the `sum_head` `s2length`, mirroring upstream generator.c:705
+    /// the `sum_head` `s2length`, mirroring upstream generator.c:711
     /// `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`. The sender rejects an
     /// `s2length` wider than the digest it expects, so an uncapped 16-byte sum
     /// desyncs the wire. WHY: the strong-sum byte on the wire must equal what a

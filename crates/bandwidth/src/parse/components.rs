@@ -3,7 +3,7 @@
 //! [`BandwidthLimitComponents`] stores the result of parsing a bandwidth
 //! argument and records whether the limit was explicitly supplied. This
 //! distinction lets daemon modules apply upstream rsync's precedence rule
-//! in `options.c:2401` - the strictest byte-per-second rate wins.
+//! in `options.c:2543` - the strictest byte-per-second rate wins.
 
 use std::num::NonZeroU64;
 use std::str::FromStr;
@@ -129,7 +129,11 @@ impl BandwidthLimitComponents {
     /// the caller previously supplied a rate. This allows higher layers to reason about the
     /// effective limiter without materialising a [`BandwidthLimiter`] instance solely to combine
     /// configuration sources.
-    /// upstream: options.c:2401 - min(client, daemon) wins
+    ///
+    /// Deviation from upstream: `daemon_bwlimit = 0` means "no daemon cap" and
+    /// keeps the client rate, whereas an unlimited override here clears it.
+    ///
+    /// upstream: options.c:2543-2544 - min(client, daemon) wins
     #[must_use]
     pub fn constrained_by(&self, override_components: &Self) -> Self {
         let mut rate = self.rate;
@@ -260,7 +264,7 @@ mod tests {
 
     #[test]
     fn constrained_by_takes_minimum_rate() {
-        // upstream: options.c:2401 - min(client, daemon) wins.
+        // upstream: options.c:2543 - min(client, daemon) wins.
         let c1 = BandwidthLimitComponents::new(Some(nz(1000)));
         let c2 = BandwidthLimitComponents::new(Some(nz(500)));
         let constrained = c1.constrained_by(&c2);

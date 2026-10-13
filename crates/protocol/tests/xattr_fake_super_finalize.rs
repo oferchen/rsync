@@ -9,10 +9,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:283-287` - `recv_xattr_request()` on the sender after iflags
+//! - `sender.c:578-582` - `recv_xattr_request()` on the sender after iflags
 //! - `sender.c:469-486` - `send_xattr_request()` in `write_ndx_and_attrs()`
-//! - `xattrs.c:623-675` - sender path emits `rel_num + len + data + 0`
-//! - `generator.c:585-592` - generator emits at least the 0 terminator when
+//! - `xattrs.c:651-703` - sender path emits `rel_num + len + data + 0`
+//! - `generator.c:598-606` - generator emits at least the 0 terminator when
 //!   `ITEM_REPORT_XATTR` is set on a new file (count mismatch path).
 
 use std::io::Cursor;
@@ -134,7 +134,7 @@ fn sender_round_trips_request_into_response() {
     assert_eq!(decoded[0], (1, value1));
     assert_eq!(decoded[1], (3, value3));
 
-    // States reset to Done after emission (upstream xattrs.c:651).
+    // States reset to Done after emission (upstream xattrs.c:679).
     assert_eq!(sender_list.entries()[0].state(), XattrState::Done);
     assert_eq!(sender_list.entries()[2].state(), XattrState::Done);
 }

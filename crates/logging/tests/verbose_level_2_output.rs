@@ -8,7 +8,7 @@
 //! - Basic debug flags (Bind=1, Cmd=1, Connect=1, Del=1, Deltasum=1, Dup=1,
 //!   Filter=1, Flist=1, Iconv=1)
 //!
-//! Reference: rsync 3.4.1 options.c and log.c for -vv behavior.
+//! Reference: rsync 3.5.1 options.c and log.c for -vv behavior.
 
 use logging::{
     DebugFlag, DiagnosticEvent, InfoFlag, VerbosityConfig, debug_gte, debug_log, drain_events,

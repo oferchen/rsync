@@ -20,9 +20,9 @@
 //!
 //! `pat_len` is the length of the pattern alone: `parse_rule_tok` has already
 //! consumed the action prefix and any modifiers by this point
-//! (`exclude.c:1456-1464`). The check therefore sits above both the
-//! `FILTRULE_CLEAR_LIST` branch (`:1541`) and the `FILTRULE_MERGE_FILE` branch
-//! (`:1550`), governing every rule kind and running before a merge directive's
+//! (`exclude.c:1458-1465`). The check therefore sits above both the
+//! `FILTRULE_CLEAR_LIST` branch (`:1542`) and the `FILTRULE_MERGE_FILE` branch
+//! (`:1553`), governing every rule kind and running before a merge directive's
 //! file is ever opened.
 //!
 //! upstream passes `NULL` as the template here, which is not "no provenance":

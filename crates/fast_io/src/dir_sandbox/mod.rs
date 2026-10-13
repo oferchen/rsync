@@ -188,6 +188,11 @@ impl DirSandbox {
     /// therefore behaviour-identical to the unpolicied entry point; the oracle
     /// arm replaces the mechanism and lands with its consumer in tasks
     /// 599/600.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the anchor cannot be opened, or `EXDEV`/`ELOOP` when a
+    /// peer-named component leaves the anchor or is a symlink.
     #[cfg(unix)]
     pub fn open_dest_anchor_with_policy(
         anchor: &Path,
@@ -1127,7 +1132,7 @@ pub(crate) fn walk_beneath(anchor: BorrowedFd<'_>, relative: &Path) -> io::Resul
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/main.c` `get_local_name()` -> `change_dir(dest_path,
+/// - `rsync-3.5.1/main.c` `get_local_name()` -> `change_dir(dest_path,
 ///   CD_NORMAL)` - the operator's destination is entered once.
 /// - `rsync-3.5.1/syscall.c:1245` `do_lchown_at()` (and `do_chmod_at()`, the
 ///   utimes wrapper) - the entry's parent is resolved relative to that cwd

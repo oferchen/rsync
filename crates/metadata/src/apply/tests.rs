@@ -41,7 +41,7 @@ fn file_permissions_and_times_are_preserved() {
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    // upstream: rsync.c:588-589 - without --atimes the destination access time
+    // upstream: rsync.c:725-726 - without --atimes the destination access time
     // is left unchanged (ATTRS_SKIP_ATIME); it must NOT be clobbered with the
     // source atime. The default options preserve times but not atimes.
     assert_ne!(
@@ -148,7 +148,7 @@ fn file_executability_can_be_preserved_without_other_bits() {
     )
     .expect("apply metadata");
 
-    // upstream: rsync.c:457-465 - source has exec bits and dest has none,
+    // upstream: rsync.c:472-480 - source has exec bits and dest has none,
     // so dest gets exec granted to whoever can already read: 0o620 has
     // owner-read so owner-exec is added, group has only write, other has
     // nothing. Result is 0o720, not 0o731 / 0o751.
@@ -300,7 +300,7 @@ fn symlink_times_are_preserved_without_following_target() {
 
     let dest_meta = fs::symlink_metadata(&dest_link).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    // upstream: rsync.c:588-589 - without --atimes the symlink's access time is
+    // upstream: rsync.c:725-726 - without --atimes the symlink's access time is
     // left unchanged; only its mtime is written (via lutimes, without following
     // the target).
     assert_eq!(dest_mtime, mtime);
@@ -500,8 +500,8 @@ fn group_override_takes_precedence() {
 
 // GAP M8: upstream never distinguishes an explicit `--chown`/`--usermap`
 // override from the `-o`/`-a` preserve path - both set `preserve_uid` and are
-// gated by the same `change_uid = am_root && ...` check (rsync.c:526,
-// options.c:1799,1839). A non-root process that cannot chown must have the
+// gated by the same `change_uid = am_root && ...` check (rsync.c:655,
+// options.c:673,1906,1946). A non-root process that cannot chown must have the
 // attempt skipped, not surfaced as a fatal EPERM (exit code 23). Before this
 // fix `owner_override`/`group_override` bypassed the gate and propagated the
 // kernel's EPERM as a fatal `MetadataError`.
@@ -721,7 +721,7 @@ fn apply_metadata_from_file_entry_with_timestamps() {
     );
 }
 
-/// upstream: rsync.c:632 `set_times()` runs before rsync.c:658 `do_chmod_at()`,
+/// upstream: rsync.c:781 `set_times()` runs before rsync.c:812 `do_chmod_at()`,
 /// so timestamps are applied ahead of the (possibly read-only) target mode. This
 /// test drives the full `apply_metadata_with_attrs_flags_and_pre_transfer` path
 /// with both `-p` and `-t` and a read-only target mode: the resulting file must
@@ -834,7 +834,7 @@ fn apply_permissions_from_entry_no_change_when_disabled() {
 /// silently kept the temp file's `0o600` mode over ssh/daemon (e.g. a source
 /// 0o644 file corrupted to 0o600), while a local copy and upstream both land
 /// the umask-masked source mode.
-// upstream: rsync.c:449-472 dest_mode() + rsync.c:489-682 set_file_attrs().
+// upstream: rsync.c:464-487 dest_mode() + rsync.c:504-840 set_file_attrs().
 #[cfg(unix)]
 #[test]
 fn no_perms_new_file_from_entry_gets_umask_masked_source_mode() {
@@ -881,7 +881,7 @@ fn no_perms_new_file_from_entry_gets_umask_masked_source_mode() {
 /// EXISTING destination the receiver must KEEP the destination's prior
 /// permission bits (upstream `dest_mode()` `exists=true` branch), threading
 /// the pre-transfer stat so the temp file's `0o600` never leaks through.
-// upstream: rsync.c:454-456 dest_mode() exists branch.
+// upstream: rsync.c:470-471 dest_mode() exists branch.
 #[cfg(unix)]
 #[test]
 fn no_perms_existing_file_from_entry_keeps_prior_mode() {
@@ -994,7 +994,7 @@ fn chmod_without_perms_new_file_from_entry_masks_tweak_by_umask() {
 /// Local-copy analogue of the two entry-path pins, through
 /// `apply_dest_mode_pre_transfer`: a `--chmod` without `--perms` must ride
 /// the exists split (existing keeps its bits) instead of bypassing it.
-// upstream: receiver.c:980 dest_mode() invocation + rsync.c:464-486.
+// upstream: receiver.c:1208 dest_mode() invocation + rsync.c:464-486.
 #[cfg(unix)]
 #[test]
 fn chmod_without_perms_pre_transfer_rides_the_exists_split() {
@@ -1150,7 +1150,7 @@ fn epoch_timestamp_zero_seconds_is_preserved() {
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
 
-    // upstream: rsync.c:588-589 - without --atimes the access time is left
+    // upstream: rsync.c:725-726 - without --atimes the access time is left
     // unchanged; only the epoch mtime must round-trip.
     assert_ne!(
         dest_atime, epoch_time,
@@ -1440,9 +1440,9 @@ fn birthtime_secs(path: &std::path::Path) -> i64 {
 /// An incoming crtime of 0 must be stamped, not silently ignored.
 ///
 /// Zero is a legitimate value on the wire rather than a marker for "absent".
-/// Upstream's `get_create_time()` returns 0 when the sender is a daemon running
-/// without chroot (`syscall.c`, 3.4.3+), so every file list produced by such a
-/// daemon carries crtime 0 - and upstream stamps it, because `rsync.c:615-623`
+/// Upstream's `get_create_time()` returned 0 when the sender was a daemon running
+/// without chroot (`syscall.c`, 3.4.3-3.4.4), so every file list produced by such a
+/// daemon carries crtime 0 - and upstream stamps it, because `rsync.c:750-767`
 /// gates only on `crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME)` and then on
 /// `same_time()`, with no zero test anywhere.
 ///
@@ -1776,7 +1776,7 @@ fn fake_super_chmod_deflects_directory_real_mode() {
     }
 }
 
-// upstream: xattrs.c:1220 - regular files are deflected to 0600 (not 0700).
+// upstream: xattrs.c:1315 - regular files are deflected to 0600 (not 0700).
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn fake_super_chmod_deflects_regular_file_real_mode() {
@@ -1811,7 +1811,7 @@ fn fake_super_chmod_deflects_regular_file_real_mode() {
     }
 }
 
-// upstream: xattrs.c:1225-1237 - when the real mode/uid/gid already faithfully
+// upstream: xattrs.c:1325-1336 - when the real mode/uid/gid already faithfully
 // represent the intended values (a plain 0755 dir owned by the copying user),
 // set_stat_xattr writes no shim and removes any stale %stat. An unprivileged
 // same-owner fake-super copy of such a directory must leave no %stat behind.
@@ -2043,7 +2043,7 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
     );
 }
 
-/// upstream: generator.c:396 `mtime_differs()` -> util1.c:1573 `same_time()` -
+/// upstream: generator.c:402 `mtime_differs()` -> util1.c:1744 `same_time()` -
 /// `unchanged_attrs()` must treat two mtimes within `--modify-window` as equal.
 /// Before threading the window, oc compared the mtime exactly, so a
 /// within-window destination was mis-classified as changed and its metadata was
@@ -2099,7 +2099,7 @@ fn metadata_unchanged_honors_modify_window() {
 /// quick-check gates on; if it were wrong (or absent) a dest differing ONLY in
 /// the read-only attribute would be judged unchanged and never re-stamped. This
 /// runs on Linux to lock the mapping (0o200 clear == read-only) independent of
-/// any Windows filesystem, mirroring upstream `perms_differ()` (generator.c:418).
+/// any Windows filesystem, mirroring upstream `perms_differ()` (generator.c:424).
 #[test]
 fn windows_readonly_differs_maps_owner_write_bit() {
     // Sender mode is writable (0o644): a read-only dest differs, a writable
@@ -2202,7 +2202,7 @@ fn metadata_unchanged_ignores_perms_when_not_preserved() {
     );
 }
 
-/// upstream: generator.c:418-426 perms_differ() - without --perms,
+/// upstream: generator.c:424-433 perms_differ() - without --perms,
 /// --executability must flag an executability-presence mismatch so the
 /// receiver's quick-check skip path still runs the attribute pass. Before the
 /// fix the network attr-only path left an up-to-date 0644 file at 0644 when
@@ -2248,10 +2248,10 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
     );
 }
 
-/// upstream: generator.c:423-426 - perms_differ() under --executability
+/// upstream: generator.c:429-430 - perms_differ() under --executability
 /// compares only exec-bit PRESENCE; read/write differences and matching
 /// presence must not trigger the attribute pass, and non-regular entries are
-/// never tweaked by dest_mode() (rsync.c:456 S_ISREG check).
+/// never tweaked by dest_mode() (rsync.c:472 S_ISREG check).
 #[cfg(unix)]
 #[test]
 fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
@@ -2542,7 +2542,7 @@ fn atime_of(path: &Path) -> (i64, i64) {
     (meta.atime(), meta.atime_nsec())
 }
 
-/// upstream: rsync.c:740-741 - the atime leg of set_file_attrs() compares
+/// upstream: rsync.c:740-742 - the atime leg of set_file_attrs() compares
 /// `same_time(st_atime, 0, file_atime, 0)`: whole seconds, window-aware, with
 /// ATTRS_ACCURATE_TIME forcing the stamp and directories always skipped.
 #[cfg(unix)]
@@ -2600,7 +2600,7 @@ fn atime_needs_set_mirrors_set_file_attrs_atime_leg() {
 }
 
 /// upstream: generator.c:2246 passes ATTRS_ACCURATE_TIME on a -c match, so
-/// rsync.c:741 re-stamps atime even when the stat taken before the checksum
+/// rsync.c:742 re-stamps atime even when the stat taken before the checksum
 /// read already matched. The read itself may have bumped atime since, so the
 /// apply must not trust that stale stat to skip the utimes.
 #[cfg(unix)]
@@ -2620,8 +2620,8 @@ fn accurate_time_restamps_atime_despite_a_matching_stale_stat() {
     assert_eq!(atime_of(&dest), (1_650_000_000, 0));
 }
 
-/// upstream: rsync.c:727-729 sets only ATTRS_SKIP_MTIME without --times; the
-/// atime leg (rsync.c:738-748) still runs, and set_times() writes the
+/// upstream: rsync.c:723-724 sets only ATTRS_SKIP_MTIME without --times; the
+/// atime leg (rsync.c:740-749) still runs, and set_times() writes the
 /// destination's own mtime back unchanged.
 #[cfg(unix)]
 #[test]
@@ -2649,7 +2649,7 @@ fn skip_mtime_accurate_time_restamps_atime_and_keeps_mtime() {
 }
 
 /// Without ATTRS_ACCURATE_TIME a sub-second-only atime difference is equal
-/// under rsync.c:741 `same_time(st_atime, 0, file_atime, 0)`, so the apply must
+/// under rsync.c:742 `same_time(st_atime, 0, file_atime, 0)`, so the apply must
 /// leave it alone rather than re-stamp nanoseconds away.
 #[cfg(unix)]
 #[test]
@@ -2667,7 +2667,7 @@ fn subsecond_atime_difference_is_not_restamped() {
 }
 
 /// An atime of 0 (the epoch) is a real value on the wire, not "absent":
-/// upstream skips the atime only for directories (rsync.c:731), so a file whose
+/// upstream skips the atime only for directories (rsync.c:725-726), so a file whose
 /// sender atime is 0 gets it.
 #[cfg(unix)]
 #[test]
@@ -2682,7 +2682,7 @@ fn epoch_atime_is_stamped() {
 }
 
 /// A directory entry is never atime-stamped, even under ATTRS_ACCURATE_TIME
-/// and even if its entry somehow carries an atime (rsync.c:731).
+/// and even if its entry somehow carries an atime (rsync.c:725-726).
 #[cfg(unix)]
 #[test]
 fn directory_atime_is_never_stamped() {
@@ -2829,8 +2829,8 @@ fn apply_permissions_from_entry_refuses_parent_symlink_escape() {
 /// KDL.8: with `--keep-dirlinks` active, a path-based chmod through a
 /// destination whose parent is a symlink-to-a-real-dir must succeed by
 /// resolving the symlink, instead of being refused by the dirfd-anchored
-/// `secure_chmod_at` sandbox. Mirrors upstream `generator.c:1356`'s
-/// `link_stat(fname, &sx.st, keep_dirlinks && is_dir)` which follows the
+/// `secure_chmod_at` sandbox. Mirrors upstream `generator.c:1745`'s
+/// `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)` which follows the
 /// symlinked parent at stat time.
 ///
 /// Regression coverage for the macOS panic in
@@ -2952,12 +2952,11 @@ fn operator_destination_root_symlink_is_followed_without_keep_dirlinks() {
     );
 }
 
-// KDL.7.1 cross-platform regression: `--keep-dirlinks` must succeed through a
-// symlinked destination directory on every supported platform. Pins the
-// guarantee from PR #5793 (macOS chmod bypass), PRs #5798/#5799 (extended to
-// four more chmod sites), and the KDL.7 audit that confirmed Linux
-// (openat2 RESOLVE_BENEATH sandboxes parents only, leaf symlink legal) and
-// Windows (chmod is a no-op) were CLEAN by construction but unpinned.
+// Cross-platform regression: `--keep-dirlinks` must succeed through a
+// symlinked destination directory on every supported platform. Pins the macOS
+// chmod bypass and its extension to the other chmod sites; Linux (openat2
+// RESOLVE_BENEATH sandboxes parents only, leaf symlink legal) and Windows
+// (chmod is a no-op) are correct by construction.
 #[test]
 fn keep_dirlinks_bypass_is_cross_platform_safe() {
     let temp = test_support::create_tempdir();
@@ -3025,7 +3024,7 @@ fn keep_dirlinks_bypass_is_cross_platform_safe() {
 }
 
 // Mirrors upstream rsync's `change_uid`/`change_gid` privilege gates
-// (rsync.c:526-528): a non-root process must not attempt to set a file's owner
+// (rsync.c:655): a non-root process must not attempt to set a file's owner
 // uid, and may only set its group to one it belongs to. Before this gate,
 // oc-rsync attempted the chown unconditionally and surfaced the resulting
 // EPERM as a fatal exit-code-23 error (e.g. under `-aR` when an implied parent
@@ -3077,7 +3076,7 @@ fn dir_without_perms_over_entry_path_lands_source_mode() {
         .preserve_times(false);
     apply_metadata_from_file_entry(&dir, &entry, &opts).expect("apply dir entry");
 
-    // upstream: generator.c:1466-1467 + rsync.c:659-660 - a new directory
+    // upstream: generator.c:1856 + rsync.c:484 - a new directory
     // without -p lands the source mode masked by dflt_perms, so a 0700 source
     // dir stays 0700 rather than the mkdir umask default 0755.
     assert_eq!(
@@ -3134,7 +3133,7 @@ fn entry_path_omits_atime_without_atimes() {
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    // upstream: rsync.c:588-589 - without --atimes the access time is left
+    // upstream: rsync.c:725-726 - without --atimes the access time is left
     // unchanged (UTIME_OMIT); only the mtime is written.
     assert_eq!(
         dest_mtime,
@@ -3184,7 +3183,7 @@ fn setgid_parent_new_dir_keeps_inherited_sgid() {
         .preserve_times(false);
     apply_metadata_from_file_entry(&child, &entry, &opts).expect("apply dir entry");
 
-    // upstream: rsync.c:512-516 - a freshly-created dir keeps an inherited
+    // upstream: rsync.c:641-645 - a freshly-created dir keeps an inherited
     // S_ISGID even though dest_mode() strips it from the non-preserved mode.
     assert_ne!(
         current_mode(&child) & 0o2000,
@@ -3214,7 +3213,7 @@ fn local_atimes_zeroes_atime_nsec() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
+    // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
     assert_eq!(
         dest_atime.unix_seconds(),
         1_700_000_000,
@@ -3230,8 +3229,8 @@ fn local_atimes_zeroes_atime_nsec() {
 // Symlink-mode application only exists where the OS can chmod a link
 // (`CAN_CHMOD_SYMLINK` = macOS/BSD). The two tests below encode WHY it matters:
 // a receiver/local-copy that reports a `p` column for a symlink must also apply
-// that mode, or report and action would drift (upstream rsync.c:658-668 chmods
-// every file type; syscall.c:900 do_chmod() uses lchmod/setattrlist for
+// that mode, or report and action would drift (upstream rsync.c:806-822 chmods
+// every file type; syscall.c:1705 do_chmod() uses lchmod/setattrlist for
 // symlinks). They fail on pre-fix code, which skipped the symlink chmod.
 #[cfg(target_os = "macos")]
 #[test]

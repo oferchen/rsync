@@ -1,5 +1,5 @@
 //! Integration tests for SSH stderr error-message propagation over the
-//! socketpair-backed aux channel (SSE-6, #2375).
+//! socketpair-backed aux channel.
 //!
 //! These tests exercise the primitive landed in SSE-3
 //! (`rsync_io::ssh::socketpair_stderr::make_stderr_socketpair`) by wiring
@@ -12,7 +12,7 @@
 //! error propagation without scraping the local process stderr.
 //!
 //! The async `AsyncSshTransport::stderr_capture()` accessor is staged
-//! behind SSE-4 (PR #4363) and is therefore not relied on here; the
+//! behind SSE-4 and is therefore not relied on here; the
 //! synthetic in-process socketpair drives the same kernel path the
 //! production code takes once SSE-4 wires the drain through tokio.
 //!

@@ -12,7 +12,7 @@
 //! 7. Multiple --exclude flags
 //! 8. Case sensitivity
 //!
-//! Reference: rsync 3.4.1 exclude.c and rsync(1) man page INCLUDE/EXCLUDE PATTERN RULES
+//! Reference: rsync 3.5.1 exclude.c and rsync(1) man page INCLUDE/EXCLUDE PATTERN RULES
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;

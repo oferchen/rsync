@@ -6,7 +6,7 @@
 //!   streaming support. Suitable for file compression and storage.
 //!
 //! - `raw`: Raw LZ4 blocks with rsync-specific 2-byte framing. Required for
-//!   wire protocol compatibility with upstream rsync 3.4.1.
+//!   wire protocol compatibility with upstream rsync.
 //!
 //! # Wire Protocol Compatibility
 //!

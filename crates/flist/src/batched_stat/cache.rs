@@ -22,11 +22,15 @@ type StatShard = Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>;
 ///
 /// Uses sharded locking (16 independent `Mutex<HashMap>` shards) to reduce
 /// contention under parallel stat workloads. Paths are routed to shards via
-/// a fast hash of their byte representation.
+/// a fast hash of their byte representation. The `follow_symlinks` flag is
+/// not part of the key, so a path cached by an `lstat()`-style fetch answers a
+/// later `stat()`-style request for the same path, and vice versa.
+///
+/// Methods that lock a shard panic if that shard's mutex is poisoned.
 ///
 /// # Confinement constraint
 ///
-/// **This type is unreached, and it must not be wired as written.** It is keyed
+/// **This type has no production caller, and it must not be wired as written.** It is keyed
 /// on a path *string*, so a hit returns the metadata the path denoted when the
 /// entry was filled, not the metadata it denotes now. There is no invalidation
 /// hook and no generation counter: nothing here observes filesystem mutation,
@@ -50,18 +54,20 @@ type StatShard = Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>;
 /// # Upstream
 ///
 /// Upstream has no counterpart to re-key against: there is no pathname-keyed
-/// stat cache anywhere in rsync's file-list build. `flist.c:1772-1781`'s
-/// `lastdir` interns a directory *name* (a `char *`) and a derived component
-/// count, never a `STRUCT_STAT`; `make_file()` destructures each stat into
+/// stat cache anywhere in rsync's file-list build. `make_file()`'s `lastdir`
+/// (`flist.c:1773-1781`) interns a directory *name* (a `char *`) and its byte
+/// length, never a `STRUCT_STAT`; `make_file()` destructures each stat into
 /// scalar `file_struct` fields and drops it. Every hashtable upstream keeps is
-/// keyed on integers, not paths - `(dev, ino)` in `hlink.c:74-84`, `gnum`,
-/// `fs_dev`, an xattr-content checksum - and the one path-shaped cache
-/// (`syscall.c:3721-3729`) holds open dirfds, which upstream's own comment
-/// argues are race-safe precisely because an fd pins an inode where a resolved
-/// path snapshot does not. Where a stale snapshot would be dangerous upstream
-/// re-stats and diffs against the flist value (`sender.c:429`, `failed_op =
-/// "re-lstat"`). An oc-invented cache with no upstream analogue is a design
-/// decision, not an inherited one.
+/// keyed on integers, not paths - `(dev, ino)` in `hlink.c:idev_find()`, `gnum`,
+/// `fs_dev`, an xattr-content checksum - and the one path-shaped cache (the
+/// `dpc_*` dir-fd chain at `syscall.c:3721-3727`) holds open dirfds, which
+/// upstream's own comment argues are race-safe precisely because an fd pins an
+/// inode where a resolved path snapshot does not. Where a stale snapshot would
+/// be dangerous upstream re-stats and diffs against the flist value
+/// (`sender.c:430` in `successful_send()`, `failed_op = "re-lstat"`).
+///
+/// Deviation from upstream: this cache is an oc-only design with no upstream
+/// analogue.
 #[derive(Debug)]
 pub struct BatchedStatCache {
     shards: Arc<[StatShard; SHARD_COUNT]>,
@@ -129,7 +135,6 @@ impl BatchedStatCache {
     ) -> io::Result<Arc<fs::Metadata>> {
         let idx = Self::shard_index(path);
 
-        // Fast path: check shard
         {
             let shard = self.shards[idx].lock().unwrap();
             if let Some(metadata) = shard.get(path) {
@@ -137,7 +142,7 @@ impl BatchedStatCache {
             }
         }
 
-        // Slow path: fetch outside lock, then insert
+        // Miss: stat outside the lock, then insert.
         let metadata = if follow_symlinks {
             fs::metadata(path)?
         } else {
@@ -207,6 +212,8 @@ impl BatchedStatCache {
     }
 }
 
+/// Clones share the same shards, so an insert through one handle is visible
+/// through every clone.
 impl Clone for BatchedStatCache {
     fn clone(&self) -> Self {
         Self {

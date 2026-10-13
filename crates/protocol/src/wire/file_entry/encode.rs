@@ -48,7 +48,7 @@ use super::constants::{
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:send_file_entry()` lines 545-575
+/// See `flist.c:send_file_entry()` lines 869-882
 pub fn encode_flags<W: Write>(
     writer: &mut W,
     xflags: u32,
@@ -65,7 +65,7 @@ pub fn encode_flags<W: Write>(
         };
         write_varint(writer, flags_to_write as i32)?;
     } else if protocol_version >= 28 {
-        // Protocol 28-29: two-byte encoding if extended flags needed
+        // Protocol 28+ without varint flags: two-byte encoding if extended flags needed
         let mut flags_to_write = xflags;
         if flags_to_write == 0 && !is_dir {
             flags_to_write |= XMIT_TOP_DIR as u32;
@@ -90,6 +90,8 @@ pub fn encode_flags<W: Write>(
 }
 
 /// Encodes the end-of-list marker.
+///
+/// upstream: `flist.c:write_end_of_flist()` lines 2624-2633.
 ///
 /// # Arguments
 ///
@@ -175,7 +177,7 @@ pub fn encode_end_marker<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:send_file_entry()` lines 580-610
+/// See `flist.c:send_file_entry()` lines 884-890
 pub fn encode_name<W: Write>(
     writer: &mut W,
     name: &[u8],
@@ -222,7 +224,7 @@ pub fn encode_name<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:send_file_entry()` line 580: `write_varlong30(f, F_LENGTH(file), 3)`
+/// See `flist.c:send_file_entry()` line 900: `write_varlong30(f, F_LENGTH(file), 3)`
 pub fn encode_size<W: Write>(writer: &mut W, size: u64, protocol_version: u8) -> io::Result<()> {
     if protocol_version >= 30 {
         write_varlong(writer, size as i64, 3)
@@ -251,7 +253,7 @@ pub fn encode_size<W: Write>(writer: &mut W, size: u64, protocol_version: u8) ->
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:send_file_entry()` lines 582-584
+/// See `flist.c:send_file_entry()` lines 901-906
 pub fn encode_mtime<W: Write>(writer: &mut W, mtime: i64, protocol_version: u8) -> io::Result<()> {
     if protocol_version >= 30 {
         write_varlong(writer, mtime, 4)
@@ -370,7 +372,7 @@ pub fn encode_owner_name<W: Write>(writer: &mut W, name: &str) -> io::Result<()>
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:send_file_entry()` lines 640-680
+/// See `flist.c:send_file_entry()` lines 941-956
 pub fn encode_rdev<W: Write>(
     writer: &mut W,
     major: u32,
@@ -422,7 +424,7 @@ pub fn encode_symlink_target<W: Write>(
 ///
 /// `varint(idx)`
 pub fn encode_hardlink_idx<W: Write>(writer: &mut W, idx: u32) -> io::Result<()> {
-    // upstream: flist.c - indices are bounded by flist size (< 2^31),
+    // upstream: flist.c:894 - indices are bounded by flist size (< 2^31),
     // so the as-i32 cast is safe. The decoder mirrors this with `as u32`.
     write_varint(writer, idx as i32)
 }
@@ -438,7 +440,7 @@ pub fn encode_hardlink_idx<W: Write>(writer: &mut W, idx: u32) -> io::Result<()>
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:send_file_entry()` lines 690-710
+/// See `flist.c:send_file_entry()` lines 964-978
 pub fn encode_hardlink_dev_ino<W: Write>(
     writer: &mut W,
     dev: i64,
@@ -446,7 +448,7 @@ pub fn encode_hardlink_dev_ino<W: Write>(
     same_dev: bool,
 ) -> io::Result<()> {
     if !same_dev {
-        // upstream: write dev + 1 (upstream convention)
+        // upstream: flist.c:966-967 - dev is sent 1-incremented so it is never zero
         crate::write_longint(writer, dev + 1)?;
     }
     crate::write_longint(writer, ino)

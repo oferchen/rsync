@@ -85,7 +85,7 @@ impl DeltaSignatureIndex {
     /// single block is short still yields an index: upstream runs
     /// `build_hash_table()` + `hash_search()` for any `s->count > 0`
     /// (`match.c:match_sums()`), and its short-block rule
-    /// (`l = MIN(blength, len-offset) == s->sums[i].len`, `match.c:222-224`)
+    /// (`l = MIN(blength, len-offset) == s->sums[i].len`, `match.c:254-256`)
     /// then matches that lone block through the EOF tail probe. Returning
     /// `None` here would send such a file entirely as literal data. Only a
     /// signature with no blocks at all - an empty basis, which upstream also
@@ -108,7 +108,7 @@ impl DeltaSignatureIndex {
     /// the provided role.
     ///
     /// Mirrors upstream rsync's `who_am_i()` prefix on the
-    /// `created hashtable` line emitted from `hashtable.c:45-53`.
+    /// `created hashtable` line emitted from `hashtable.c:55-63`.
     pub fn from_signature_with_role(
         signature: &FileSignature,
         algorithm: SignatureAlgorithm,
@@ -156,7 +156,7 @@ impl DeltaSignatureIndex {
             #[cfg(any(test, feature = "bench-internal"))]
             seq_match_counters: std::sync::Arc::new(super::SeqMatchCounters::default()),
         };
-        // upstream: hashtable.c:45-53 - one HASH,1 emission per hashtable
+        // upstream: hashtable.c:55-63 - one HASH,1 emission per hashtable
         // creation, with optional `req:` prefix when the rounded-up size
         // differs from the caller's requested capacity.
         trace_created(role, index.identifier(), requested, size);
@@ -205,7 +205,7 @@ impl DeltaSignatureIndex {
 
         if ok {
             let size = self.lookup.capacity();
-            // upstream: hashtable.c:100-103 - emit when the bucket count
+            // upstream: hashtable.c:115-118 - emit when the bucket count
             // changes from the previously traced value. Our `rebuild`
             // reuses the same allocation when possible, so the size only
             // ever differs when the caller's signature width changes.

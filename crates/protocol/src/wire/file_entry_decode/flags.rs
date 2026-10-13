@@ -1,8 +1,8 @@
 #![deny(unsafe_code)]
 //! XMIT flag word decoding and end-of-list sentinel detection.
 //!
-//! upstream: flist.c:recv_file_entry() flags branch (lines 760-790),
-//! XMIT_IO_ERROR_ENDLIST sentinel handling.
+//! upstream: flist.c:recv_file_list() flags read (lines 3189-3210), including
+//! the XMIT_IO_ERROR_ENDLIST sentinel handling at line 3203.
 
 use std::io::{self, Read};
 
@@ -43,7 +43,7 @@ use super::super::file_entry::{XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:recv_file_entry()` lines 760-790
+/// See `flist.c:recv_file_list()` lines 3189-3210
 pub fn decode_flags<R: Read>(
     reader: &mut R,
     protocol_version: u8,
@@ -82,7 +82,7 @@ pub fn decode_flags<R: Read>(
             // Wire: [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST] + varint(err).
             // Without this, decode_end_marker is never called; the error
             // varint leaks into the next entry parse, corrupting the flist.
-            // upstream: flist.c:recv_file_entry() XMIT_IO_ERROR_ENDLIST branch.
+            // upstream: flist.c:3203 recv_file_list() XMIT_IO_ERROR_ENDLIST branch.
             // The sentinel is exactly [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST].
             // XMIT_IO_ERROR_ENDLIST shares its bit with XMIT_HLINK_FIRST; a bitmask
             // test would fire on any hardlink-leader or atime-inherit entry that also
@@ -158,7 +158,7 @@ pub fn decode_end_marker<R: Read>(
 ///
 /// # Upstream Reference
 ///
-/// `flist.c:recv_file_entry()` XMIT_IO_ERROR_ENDLIST branch.
+/// `flist.c:recv_file_list()` XMIT_IO_ERROR_ENDLIST branch (line 3203).
 #[must_use]
 pub fn is_io_error_end_marker(flags: u32) -> bool {
     // Must match exact sentinel, not just the bit: XMIT_HLINK_FIRST shares

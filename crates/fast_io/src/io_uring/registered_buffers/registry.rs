@@ -390,6 +390,10 @@ impl RegisteredBufferGroup {
     /// Called by the ring owner before dropping the ring. If the ring is dropped
     /// first, the kernel automatically unregisters buffers - but explicit
     /// unregistration is preferred for deterministic cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from the `IORING_UNREGISTER_BUFFERS` call.
     pub fn unregister(&self, ring: &RawIoUring) -> io::Result<()> {
         ring.submitter().unregister_buffers()
     }

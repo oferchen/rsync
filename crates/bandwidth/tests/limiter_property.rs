@@ -21,10 +21,8 @@
 //! *requested* duration rather than the *actual* duration so the
 //! invariants hold deterministically regardless of OS scheduling.
 //
-// upstream: io.c:2063 `sleep_for_bwlimit()` - the rate enforcement
-// routine our `BandwidthLimiter::register` mirrors. The C symbol is
-// `sleep_for_bwlimit`; some references in older rsync documentation use
-// the historical name `bwlimit_pause` for the same routine.
+// upstream: io.c:2323 `sleep_for_bwlimit()` - the rate enforcement
+// routine our `BandwidthLimiter::register` mirrors.
 
 use bandwidth::{BandwidthLimiter, parse_bandwidth_argument, recorded_sleep_session};
 use proptest::prelude::*;
@@ -182,9 +180,10 @@ proptest! {
 /// `parse_bandwidth_argument("0")` must return `Ok(None)`, signalling
 /// "unlimited" and preventing any limiter from being constructed.
 ///
-/// Upstream rsync interprets `--bwlimit=0` as the unlimited sentinel
-/// in `options.c:2387` (`if (bwlimit < 0) bwlimit = 0`); a zero value
-/// disables `sleep_for_bwlimit` calls entirely.
+/// Upstream rsync accepts `--bwlimit=0` as unlimited (`unlimited_0` in the
+/// `parse_size_arg()` call at `options.c:1827`); with `bwlimit == 0` the
+/// `if (bwlimit)` at `options.c:2545` leaves `bwlimit_writemax` at 0, so
+/// `io.c:979` never calls `sleep_for_bwlimit`.
 #[test]
 fn zero_rate_means_unlimited() {
     let parsed = parse_bandwidth_argument("0").expect("parse succeeds");

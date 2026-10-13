@@ -10,18 +10,15 @@ impl NegotiationPrologueDetector {
     ///
     /// Callers that feed data incrementally can use this accessor to check
     /// whether a definitive classification has already been produced without
-    /// issuing another `observe` call. This mirrors upstream rsync's approach
-    /// where the decision is sticky after the first non-`NeedMoreData`
-    /// determination.
+    /// issuing another `observe` call. The decision is sticky after the first
+    /// non-`NeedMoreData` determination.
     pub const fn decision(&self) -> Option<NegotiationPrologue> {
         self.decided
     }
 
     /// Reports whether the negotiation style has been determined.
     ///
-    /// Returns `false` until the first byte is observed, mirroring upstream
-    /// rsync's behavior where the detection logic remains pending until the
-    /// transport yields data.
+    /// Returns `false` until the first byte is observed.
     #[must_use]
     pub const fn is_decided(&self) -> bool {
         matches!(self.decided, Some(decision) if decision.is_decided())
@@ -31,8 +28,8 @@ impl NegotiationPrologueDetector {
     /// legacy ASCII negotiation.
     ///
     /// The predicate remains `true` even when additional prefix bytes still
-    /// need to be buffered, matching upstream rsync's behavior where the legacy
-    /// decision is sticky once the initial `@` byte has been observed.
+    /// need to be buffered: the legacy decision is sticky once the initial `@`
+    /// byte has been observed.
     #[must_use = "check whether the detector classified the exchange as legacy ASCII"]
     pub const fn is_legacy(&self) -> bool {
         matches!(self.decided, Some(decision) if decision.is_legacy())
@@ -71,8 +68,8 @@ impl NegotiationPrologueDetector {
     /// observed (or ruled out due to a mismatch) after classifying the stream
     /// as [`NegotiationPrologue::LegacyAscii`].
     ///
-    /// Upstream rsync marks the prefix handling as complete once the canonical
-    /// marker is buffered or a divergence is detected. Higher layers can use
+    /// Prefix handling is complete once the canonical marker is buffered or a
+    /// divergence is detected. Higher layers can use
     /// this to determine when it is safe to hand the accumulated bytes to the
     /// legacy greeting parser.
     #[must_use]

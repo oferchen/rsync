@@ -32,7 +32,7 @@ pub fn list_attributes(path: &Path, follow_symlinks: bool) -> io::Result<Vec<OsS
 /// On macOS the read is routed through the macOS variant so resource
 /// forks larger than the kernel's 64 MiB single-call ceiling are fetched in
 /// full via positioned `getxattr(2)` calls, matching upstream rsync's
-/// `sys_lgetxattr` (`lib/sysxattrs.c:60-80`). On other Unix platforms the
+/// `sys_lgetxattr` (`lib/sysxattrs.c:75-96`). On other Unix platforms the
 /// value fits in a single call, so the `xattr` crate is used directly.
 #[cfg(not(target_os = "macos"))]
 pub fn read_attribute(
@@ -54,7 +54,7 @@ pub fn read_attribute(
 /// The macOS kernel returns at most 64 MiB from a single `getxattr(2)` call
 /// for the resource fork attribute (`com.apple.ResourceFork`). Upstream rsync
 /// works around this by re-issuing the call with an increasing byte offset
-/// until the whole attribute has been read (`lib/sysxattrs.c:60-80`,
+/// until the whole attribute has been read (`lib/sysxattrs.c:75-96`,
 /// `GETXATTR_FETCH_LIMIT = 64*1024*1024`). The `xattr` crate issues a single
 /// positionless call, so it silently truncates resource forks past 64 MiB;
 /// this helper restores full fidelity.
@@ -182,7 +182,7 @@ pub fn write_attribute_at(file: &File, name: &[u8], value: &[u8]) -> io::Result<
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/xattrs.c:1041-1045` - the same fd-vs-path choice on removal
+/// - `rsync-3.5.1/xattrs.c:1095-1096` - the same fd-vs-path choice on removal
 pub fn remove_attribute_at(file: &File, name: &[u8]) -> io::Result<()> {
     xattr::FileExt::remove_xattr(file, OsStr::from_bytes(name))
 }

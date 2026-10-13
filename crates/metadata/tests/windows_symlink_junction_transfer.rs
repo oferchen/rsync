@@ -1,7 +1,7 @@
 //! End-to-end symlink + junction transfer round-trip through oc-rsync on
 //! Windows (WPC-9'.5 and WPC-9'.6).
 //!
-//! Sibling tests in `windows_reparse_fixtures.rs` (PR #5583) feed the WPC-8
+//! Sibling tests in `windows_reparse_fixtures.rs` feed the WPC-8
 //! classifier (`metadata::windows::reparse::classify_reparse_point`) with
 //! realistic `mklink`-created reparse points and assert classifier output.
 //! Those tests stop at the kernel boundary: they prove the classifier reads
@@ -43,7 +43,7 @@
 //!
 //! ## Why duplicate the fixture wrappers
 //!
-//! `tests/windows_reparse_fixtures.rs` (PR #5583) defines
+//! `tests/windows_reparse_fixtures.rs` defines
 //! `DirSymlinkFixture` and `JunctionFixture` but each `.rs` file under
 //! `tests/` compiles as a separate integration-test crate, so the types
 //! cannot be imported across files without `#[path]` inclusion (which
@@ -236,7 +236,7 @@ fn dir_symlink_push_preserves_link() {
 ///
 /// The deeper classifier-level assertion (junction stays a junction, not
 /// a symlink) lives in `windows_reparse_fixtures.rs` and depends on the
-/// WPC-8 classifier from PR #5579 / PR #5592; this end-to-end test just
+/// WPC-8 classifier; this end-to-end test just
 /// proves the transfer pipeline preserves the reparse-point shape.
 #[test]
 fn junction_push_preserves_junction() {

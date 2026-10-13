@@ -13,7 +13,7 @@
 //! `C` modifier, the trailing space separator, or the default `.cvsignore`
 //! pattern without tripping a regression.
 //!
-//! upstream: `exclude.c::send_filter_list()` (3.4.4) writes each rule as a
+//! upstream: `exclude.c::send_filter_list()` (3.5.1) writes each rule as a
 //! 4-byte little-endian length prefix followed by `get_rule_prefix()` output
 //! (here: `:C ` = type `:` + modifier `C` + trailing space) concatenated with
 //! the pattern bytes. The full list is terminated by a 4-byte zero record.
@@ -64,7 +64,7 @@ fn colon_c_bare_modifier_emits_cvsignore_default_over_lsh() {
 /// bytes here guards against accidental modifier-flag downgrades on the
 /// v29-v31 envelope, which lsh.sh transports may negotiate.
 ///
-/// upstream: `exclude.c::get_rule_prefix()` (3.4.4) emits the `C` modifier
+/// upstream: `exclude.c::get_rule_prefix()` (3.5.1) emits the `C` modifier
 /// unconditionally on v29+; the trailing space separator is part of the
 /// contract.
 #[test]

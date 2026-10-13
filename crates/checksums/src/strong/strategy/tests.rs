@@ -268,7 +268,7 @@ fn selector_for_protocol_version_31() {
     assert_eq!(strategy.algorithm_name(), "md5");
 }
 
-// upstream: checksum.c - protocol < 30 uses MD4, >= 30 uses MD5.
+// upstream: checksum.c:parse_csum_name() - protocol < 30 uses MD4, >= 30 uses MD5.
 
 #[test]
 fn strong_checksum_protocol_0_uses_md4() {
@@ -544,7 +544,7 @@ fn empty_input_produces_valid_digest() {
     }
 }
 
-// upstream: checksum.c - protocol < 30 uses MD4, >= 30 uses MD5.
+// upstream: checksum.c:parse_csum_name() - protocol < 30 uses MD4, >= 30 uses MD5.
 // Verifies the boundary holds across the entire u8 range.
 
 #[test]

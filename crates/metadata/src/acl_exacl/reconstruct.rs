@@ -23,15 +23,16 @@ use crate::id_lookup::{
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `change_sacl_perms()` in `acls.c` lines 857-933 which fills
-/// base entries from the file mode when the ACL was received stripped.
+/// Mirrors `change_sacl_perms()` (`acls.c:1087-1162`), which fills base
+/// entries from the file mode when the ACL was received stripped, and the
+/// mask fill in `recv_rsync_acl()` (`acls.c:1000-1006`).
 pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
     let mode = match mode {
         Some(m) => m,
         None => return acl.clone(),
     };
 
-    // upstream: acls.c:931-932 change_sacl_perms() returns
+    // upstream: acls.c:1162 change_sacl_perms() returns
     // `(old_mode & ~ACCESSPERMS) | (mode & ACCESSPERMS)`, so only the low 0o777
     // permission bits ever feed the ACL's USER_OBJ/GROUP_OBJ/MASK/OTHER
     // entries. Mask off setuid/setgid/sticky here so those special bits can
@@ -41,19 +42,20 @@ pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
 
     let mut result = acl.clone();
 
-    // upstream: acls.c:892 - user_obj from mode bits 8-6
+    // upstream: acls.c:1121-1122 - user_obj from mode bits 8-6
     if result.user_obj == NO_ENTRY {
         result.user_obj = ((perm_mode >> 6) & 7) as u8;
     }
-    // upstream: acls.c:898 - group_obj from mode bits 5-3
+    // upstream: acls.c:1124-1128 - group_obj from mode bits 5-3
     if result.group_obj == NO_ENTRY {
         result.group_obj = ((perm_mode >> 3) & 7) as u8;
     }
-    // upstream: acls.c:911 - other_obj from mode bits 2-0
+    // upstream: acls.c:1140-1141 - other_obj from mode bits 2-0
     if result.other_obj == NO_ENTRY {
         result.other_obj = (perm_mode & 7) as u8;
     }
-    // upstream: acls.c:900-908 - mask from mode bits 5-3 when needed
+    // upstream: acls.c:1000-1006 recv_rsync_acl() - mask from mode bits 5-3
+    // when named entries exist
     if !result.names.is_empty() && result.mask_obj == NO_ENTRY {
         result.mask_obj = ((perm_mode >> 3) & 7) as u8;
     }
@@ -83,10 +85,11 @@ pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
 ///
 /// # Upstream Reference
 ///
-/// - `acls.c:395-405` `pack_smb_acl` - passes `ida->id` straight to
+/// - `acls.c:399-409` `pack_smb_acl` - passes `ida->id` straight to
 ///   `sys_acl_set_info()` without dropping unresolved IDs.
-/// - `acls.c:705-721` `recv_ida_entries` - calls `match_uid`/`match_gid` on
-///   incoming named entries.
+/// - `acls.c:927-959` `recv_ida_entries` - resolves incoming named entries via
+///   `recv_user_name`/`recv_group_name`, or `match_uid`/`match_gid` under
+///   incremental recursion.
 /// - `uidlist.c:243-294` `recv_add_id` - falls back to the raw wire id when
 ///   the name does not resolve; emits the `DEBUG_GTE(OWN, 2)` mapping line.
 ///
@@ -94,12 +97,13 @@ pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
 ///
 /// When `id_map` is present, named entry ids are remapped through the received
 /// id-list plus `--usermap`/`--groupmap`, mirroring upstream `match_acl_ids()`
-/// (`acls.c:1059-1081`). Without a mapper the receiver falls back to the
+/// (`acls.c:1430-1450`). Without a mapper the receiver falls back to the
 /// name-based NSS resolution described above.
 pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl, id_map: Option<&AclIdMapper>) -> Vec<AclEntry> {
     let mut entries = Vec::new();
 
-    // upstream: acls.c:866-878 - base entries for POSIX ACLs only (Linux/FreeBSD).
+    // upstream: acls.c:pack_smb_acl() - base entries only under
+    // `#ifndef HAVE_OSX_ACLS` (Linux/FreeBSD).
     // macOS manages base mode bits separately from extended ACL entries.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -161,17 +165,17 @@ pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl, id_map: Option<&AclIdMapper>)
 /// 3. Always return the chosen id (resolved or unchanged wire id). Upstream
 ///    falls back to `id2 = id` at `uidlist.c:282` and the receiver still
 ///    calls `sys_acl_set_info()` with whatever id is in `ida->id`
-///    (`acls.c:404`), so unmappable IDs flow through to the kernel.
+///    (`acls.c:405-408`), so unmappable IDs flow through to the kernel.
 ///
 /// When `id_map` is present it takes precedence: the id is remapped through the
 /// received id-list plus `--usermap`/`--groupmap`, mirroring upstream
-/// `match_acl_ids()` (`acls.c:1059-1081`). The id-list already folds in the
+/// `match_acl_ids()` (`acls.c:1430-1450`). The id-list already folds in the
 /// sender-supplied name resolution, so this is the cross-host path.
 fn resolve_ida_id(ida: &IdAccess, id_map: Option<&AclIdMapper>) -> u32 {
     let is_user = ida.access & NAME_IS_USER != 0;
     let wire = ida.id;
 
-    // upstream: acls.c:1069-1072 match_racl_ids - convert every named entry id
+    // upstream: acls.c:1438-1441 match_racl_ids - convert every named entry id
     // through the same uid/gid table as file owners (match_uid/match_gid).
     if let Some(mapper) = id_map {
         let mapped = if is_user {

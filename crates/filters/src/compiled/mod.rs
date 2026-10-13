@@ -84,15 +84,15 @@ impl CompiledRule {
         // sets it too), so the written slash is recorded separately.
         let trailing_slash = pattern.len() > 1 && pattern.last() == Some(&b'/');
 
-        // upstream: exclude.c:236 add_rule() - FILTRULE_WILD is set only when
+        // upstream: exclude.c:333-334 add_rule() - FILTRULE_WILD is set only when
         // the pattern contains a wildcard metacharacter (`*`, `?`, `[`). A
-        // non-wild rule is matched with a literal comparison (exclude.c:967-978
+        // non-wild rule is matched with a literal comparison (exclude.c:1064-1077
         // litmatch_array / strcmp), where a backslash is an ordinary filename
         // byte, NOT an escape. oc matches every rule with wildmatch(), which
         // treats `\` as an escape, so a literal backslash in a non-wild pattern
         // (e.g. a `back\slash.txt` --files-from name) would otherwise fail to
         // match its own file - on a pull the receiver then aborts with
-        // "rejecting unrequested file-list name" (flist.c:1251). Escape each `\`
+        // "rejecting unrequested file-list name" (flist.c:1369). Escape each `\`
         // to `\\` for non-wild patterns so wildmatch reproduces upstream's
         // literal comparison. Wild patterns keep `\` as an escape, matching
         // upstream's wildmatch_array path.
@@ -112,7 +112,7 @@ impl CompiledRule {
 
         // upstream: exclude.c:292-294 add_rule() counts EVERY `/` byte toward
         // `slash_cnt`, including a `/` sitting inside a `[...]` class - even
-        // though lib/wildmatch.c:247 dowild() makes a class never match a `/`.
+        // though lib/wildmatch.c:235 dowild() makes a class never match a `/`.
         // For an unanchored rule without `**`, rule_matches() then chooses
         // `slash_handling = slash_cnt + 1` (exclude.c:1046-1050) and
         // `trailing_N_elements()` yields NULL unless the name has that many
@@ -145,9 +145,9 @@ impl CompiledRule {
             });
         }
 
-        // upstream: exclude.c:903-960 rule_matches() - an unanchored pattern
+        // upstream: exclude.c:1051-1055 rule_matches() - an unanchored pattern
         // that already begins with `**` is matched with slash_handling = -1
-        // (try after every slash) by wildmatch_array (lib/wildmatch.c:316).
+        // (try after every slash) by wildmatch_array (lib/wildmatch.c:347).
         // A leading `**` already carries the cross-depth anchor, so
         // prepending an extra `**/` would compound recursion and emit
         // matchers like `**/**/baz`. Skip the prefix only when
@@ -228,14 +228,13 @@ impl CompiledRule {
             } else if is_directory_only_unanchored_wildcard {
                 // upstream: exclude.c:rule_matches() emits no `foo/*/**`
                 // transfer rule for a directory-only unanchored wildcard - the
-                // sender walk prunes the matched directory instead (#6015).
+                // sender walk prunes the matched directory instead.
                 // The receiver's per-candidate deletion scan has no such
                 // pruning, so route `{core}/**` into a deletion-only set that
                 // keeps children of the excluded directory off the delete pass
                 // without re-exposing `foo/*/**` to the Transfer path. The
                 // anchored-wildcard case (`/*`) stays fully suppressed because
-                // `*/**` would over-match nested paths even on deletion
-                // (regression #5421).
+                // `*/**` would over-match nested paths even on deletion.
                 deletion_descendant_patterns.insert([core_pattern.as_ref(), b"/**"].concat());
                 if !anchored && !has_double_star {
                     deletion_descendant_patterns
@@ -244,7 +243,7 @@ impl CompiledRule {
             }
         }
 
-        // upstream FILTRULE_WILD2_PREFIX (exclude.c:241-242): set only when the
+        // upstream FILTRULE_WILD2_PREFIX (exclude.c:336-339): set only when the
         // user's pattern starts with `**`, which implies it is unanchored.
         // Anchored patterns (`/**/*`) whose stem starts with `**` after the
         // leading-`/` strip are NOT WILD2_PREFIX and must not get the prepend.
@@ -276,7 +275,7 @@ impl CompiledRule {
 /// Returns `true` when `pattern` has a literal `/` inside a `[...]` bracket
 /// expression.
 ///
-/// This mirrors how upstream rsync's `dowild()` (lib/wildmatch.c:137-252) walks
+/// This mirrors how upstream rsync's `dowild()` (lib/wildmatch.c:137-238) walks
 /// a class: an unescaped `[` opens it, an optional leading `!`/`^` negates it, a
 /// `]` in the first member position is a literal member, `\` escapes the next
 /// byte, and the class closes at the next unescaped `]`. A `/` encountered
@@ -392,9 +391,9 @@ mod tests {
     }
 
     /// A non-wild pattern carrying a literal backslash must match the file
-    /// whose name contains that backslash. upstream: exclude.c:236 only sets
+    /// whose name contains that backslash. upstream: exclude.c:333-334 only sets
     /// FILTRULE_WILD for `*?[`, so `back\slash.txt` is matched with a literal
-    /// strcmp (exclude.c:967-978) where `\` is an ordinary byte. oc matches via
+    /// strcmp (exclude.c:1064-1077) where `\` is an ordinary byte. oc matches via
     /// wildmatch(), which treats `\` as an escape, so the literal backslash had
     /// to be escaped at compile time to reproduce upstream's literal match.
     #[test]
@@ -547,7 +546,7 @@ mod tests {
     /// Verifies that `--exclude '*/'` (and other directory-only wildcards)
     /// does NOT generate descendant matchers.
     ///
-    /// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+    /// upstream: `exclude.c:rule_matches()` line 1037-1038 returns "no match"
     /// when the rule carries `FILTRULE_DIRECTORY` and the candidate is not
     /// itself a directory. Pre-baking `*/**` (or `foo/*/**`) overreaches
     /// because the wildcard's per-directory match set is decided at walk
@@ -844,7 +843,7 @@ mod tests {
     /// UTS-DD-exclude.5 regression: an unanchored pattern that does NOT
     /// contain `**` must still get the implicit `**/` prefix variant so it
     /// matches at any depth, mirroring upstream's match-the-name handling
-    /// for `!u.slash_cnt && !FILTRULE_WILD2` (exclude.c:917-922).
+    /// for `!u.slash_cnt && !FILTRULE_WILD2` (exclude.c:1016-1021).
     #[test]
     fn implicit_double_star_prefix_added_for_plain_pattern() {
         let compiled = make_exclude("bar");
@@ -860,7 +859,7 @@ mod tests {
     /// anchors the pattern to the path root absent the prefix, so without
     /// `**/foo/**/bar` the matcher cannot tail-match `xx/foo/yy/bar`.
     /// Upstream's `wildmatch_array(..., slash_handling=-1)`
-    /// (lib/wildmatch.c:316, exclude.c:952-956) tries the pattern after
+    /// (lib/wildmatch.c:347, exclude.c:1051-1055) tries the pattern after
     /// every slash, which is wire-equivalent to the `**/` prefixed
     /// variant.
     #[test]
@@ -888,7 +887,7 @@ mod tests {
 
     /// Unanchored pattern with an interior slash but no `**` still gets the
     /// `**/` variant. Upstream's slash_cnt-based tail matching
-    /// (exclude.c:947-951) is wire-equivalent to globset's `**/foo/bar`.
+    /// (exclude.c:1046-1050) is wire-equivalent to globset's `**/foo/bar`.
     #[test]
     fn implicit_double_star_prefix_added_for_unanchored_slash_pattern() {
         let compiled = make_exclude("foo/bar");
@@ -931,7 +930,7 @@ mod tests {
         // The `{core}/**` descendant is routed to the deletion-only set so the
         // receiver protects children of the excluded directory (exclude /
         // exclude-lsh over-deletion regression) without re-exposing `foo/*/**`
-        // to the transfer path (#6015).
+        // to the transfer path.
         assert_eq!(
             deletion_descendant_pattern_strings(&compiled),
             vec!["**/foo/*/**", "foo/*/**"],
@@ -940,7 +939,7 @@ mod tests {
 
     /// The deletion-only descendant matcher must fire only on the deletion
     /// path. `matches_for_deletion` sees `foo/sub/file1`; the transfer
-    /// `matches` (any `check_descendants`) must not (#6015 guard).
+    /// `matches` (any `check_descendants`) must not.
     #[test]
     fn deletion_descendant_matches_only_for_deletion() {
         use std::path::Path;
@@ -984,7 +983,7 @@ mod tests {
 
     /// Differential-fuzzer regression: a `*/***/` exclude must match a
     /// top-level directory, mirroring upstream's `FILTRULE_WILD3_SUFFIX` which
-    /// appends `/` to a directory candidate (`exclude.c:936-937`). The
+    /// appends `/` to a directory candidate (`exclude.c:1033-1036`). The
     /// trailing-dir-slash + `/***` combination must collapse to the
     /// directory-only stem `*`; before the `normalise_pattern` reorder oc-rsync
     /// kept `*/***` and failed to match a slashless directory name, so the dir

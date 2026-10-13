@@ -5,8 +5,8 @@
 //! byte stream of BOTH directions of a client<->server transfer lands in two
 //! files, then reads them back as a [`WireTranscript`] for byte-identity
 //! comparison between two binaries or configurations. First consumer: the
-//! lazy-flist programme's gate that a staged producer change with its flag
-//! off is byte-identical to the eager producer (LF-0b/LF-8a).
+//! lazy-flist gate that a staged producer change with its flag off is
+//! byte-identical to the eager producer.
 //!
 //! # Normalization
 //!
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn finish_refuses_a_missing_capture() {
         // Why: a comparison that silently read two absent files as equal
-        // would pass without the instrument ever running - Rule 12.
+        // would pass without the instrument ever running.
         let dir = crate::create_tempdir();
         let recorder = TranscriptRecorder::new(dir.path());
         match recorder.finish() {

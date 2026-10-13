@@ -28,8 +28,8 @@ fn prologue_detector_exposes_legacy_decision_state() {
     assert_eq!(detector.observe(b"@"), NegotiationPrologue::LegacyAscii);
     assert_eq!(detector.decision(), Some(NegotiationPrologue::LegacyAscii));
 
-    // Additional observations keep reporting the cached decision, matching
-    // upstream's handling once the legacy path has been chosen.
+    // Additional observations keep reporting the cached decision once the
+    // legacy path has been chosen.
     assert_eq!(detector.observe(b"RSYN"), NegotiationPrologue::LegacyAscii);
     assert_eq!(detector.decision(), Some(NegotiationPrologue::LegacyAscii));
 }
@@ -122,7 +122,7 @@ fn legacy_prefix_remaining_tracks_mismatch_completion() {
     );
 
     // Diverging from the canonical marker completes the prefix handling
-    // immediately, mirroring upstream's behavior. The helper should report
+    // immediately. The helper should report
     // that no additional bytes are required once the mismatch has been
     // observed.
     assert_eq!(detector.observe(b"YNXD"), NegotiationPrologue::LegacyAscii);
@@ -285,9 +285,9 @@ fn buffered_prefix_stops_growing_after_mismatch_with_long_chunk() {
 
     // Feed a chunk that starts with the legacy marker but diverges on the
     // second byte. The detector should record the observed prefix up to
-    // the mismatch and ignore the remainder of the chunk, mirroring
-    // upstream's behavior of replaying the legacy decision without
-    // extending the buffered slice past the canonical marker length.
+    // the mismatch and ignore the remainder of the chunk, replaying the
+    // legacy decision without extending the buffered slice past the
+    // canonical marker length.
     let mut chunk = Vec::new();
     chunk.push(b'@');
     chunk.extend_from_slice(&[b'X'; 32]);

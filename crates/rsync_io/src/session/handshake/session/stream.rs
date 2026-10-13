@@ -35,6 +35,10 @@ impl<R> SessionHandshake<R> {
     /// sniffed prefix length recorded during negotiation are forwarded to the shared
     /// [`NegotiationPrologueSniffer::rehydrate_from_parts`] logic, ensuring the reconstructed
     /// sniffer observes the same transcript as the original detection pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the sniffer's buffer cannot grow to hold the snapshot.
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,
@@ -139,6 +143,11 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Attempts to transform the inner transport for both handshake variants.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryMapInnerError` carrying the closure's error and the original value when
+    /// `map` fails.
     pub fn try_map_stream_inner<F, T, E>(
         self,
         map: F,
@@ -191,6 +200,10 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Consumes the wrapper, returning the binary handshake when applicable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original value unchanged when it holds the other handshake variant.
     pub fn into_binary(self) -> Result<BinaryHandshake<R>, SessionHandshake<R>> {
         match self {
             Self::Binary(handshake) => Ok(handshake),
@@ -199,6 +212,10 @@ impl<R> SessionHandshake<R> {
     }
 
     /// Consumes the wrapper, returning the legacy daemon handshake when applicable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original value unchanged when it holds the other handshake variant.
     pub fn into_legacy(self) -> Result<LegacyDaemonHandshake<R>, SessionHandshake<R>> {
         match self {
             Self::Binary(_) => Err(self),

@@ -2,7 +2,7 @@ use super::ChmodModifiers;
 use super::{directory_transfer_mode, transfer_root_self_locks};
 
 // The following encode upstream's generator dir-permission-during-transfer +
-// write-gated restore (generator.c:1512-1520 / 2107-2145). They pin the exact
+// write-gated restore (generator.c:1904-1911 / touch_up_dirs() at 2565). They pin the exact
 // final mode a directory carries after the dance, verified against upstream
 // rsync 3.4.4: `ug=rw` on a dir yields 0o765 (owner-write kept the transient
 // owner-rwx), `u=rx` yields 0o555 (owner lacked write, strict mode restored),

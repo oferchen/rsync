@@ -2,11 +2,11 @@
 //!
 //! Upstream reaches that block through three cooperating pieces of
 //! `hash_search()`: the scan bound comes from the LAST block's length
-//! (`end = len + 1 - s->sums[s->count-1].len`, `match.c:174`), the rolling
+//! (`end = len + 1 - s->sums[s->count-1].len`, `match.c:197`), the rolling
 //! window shrinks once there is nothing left to feed it (`--k` when `!more`,
-//! `match.c:321-331`), and a candidate is accepted only when
+//! `match.c:354-364`), and a candidate is accepted only when
 //! `l = MIN(blength, len-offset)` equals `s->sums[i].len`
-//! (`match.c:222-224`). Together those admit exactly one short match, at
+//! (`match.c:254-256`). Together those admit exactly one short match, at
 //! offset `len - tail_len`.
 //!
 //! Why this matters beyond byte counts: the short block must be emitted as its

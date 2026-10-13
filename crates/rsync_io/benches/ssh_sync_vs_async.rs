@@ -1,7 +1,7 @@
 //! crates/rsync_io/benches/ssh_sync_vs_async.rs
 //!
 //! Benchmark: synchronous `Read + Write` SSH-style I/O versus a tokio
-//! `spawn_blocking` shim on a simulated slow link (task #1889).
+//! `spawn_blocking` shim on a simulated slow link.
 //!
 //! # Motivation
 //!

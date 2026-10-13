@@ -153,7 +153,9 @@ fn probe_send_zc() -> bool {
 
 /// Submits one `IORING_OP_SEND_ZC` SQE and drains both CQEs synchronously.
 ///
-/// Returns the byte count from the transfer CQE on success. Errors:
+/// Returns the byte count from the transfer CQE on success.
+///
+/// # Errors
 ///
 /// - `io::ErrorKind::Unsupported` if the running kernel does not advertise
 ///   `IORING_OP_SEND_ZC` (see [`is_supported`]).
@@ -171,6 +173,11 @@ fn probe_send_zc() -> bool {
 /// The function does not return until both the transfer CQE
 /// (`IORING_CQE_F_MORE` set) and the notification CQE (`IORING_CQE_F_NOTIF`
 /// set) have been observed. By the time the caller regains control, the
+///
+/// # Panics
+///
+/// Panics if the drain loop exits without having observed the transfer CQE, which would be an
+/// internal invariant violation.
 /// kernel has released its reference to `buf` and the slice may be reused
 /// or dropped immediately.
 pub fn try_send_zc(

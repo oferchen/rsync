@@ -22,7 +22,10 @@ pub enum LegacyDaemonMessage<'a> {
     /// Notification that the daemon is closing the legacy exchange
     /// (`@RSYNCD: EXIT`).
     Exit,
-    /// Capability advertisement emitted by legacy daemons (`@RSYNCD: CAP …`).
+    /// Capability line (`@RSYNCD: CAP ...`).
+    ///
+    /// Deviation from upstream: no upstream release (3.0.9 through 3.5.1) sends
+    /// this keyword; it is parsed only so such a line is not misclassified.
     #[doc(alias = "@RSYNCD: CAP")]
     Capabilities {
         /// Raw capability string advertised by the daemon with ASCII
@@ -31,25 +34,20 @@ pub enum LegacyDaemonMessage<'a> {
     },
     /// The daemon requires authentication before continuing and supplies the
     /// base64 challenge inline after the keyword (e.g.
-    /// `@RSYNCD: AUTHREQD <challenge>`). The value is optional because older
-    /// daemons staged the challenge in a separate `@RSYNCD: AUTH <challenge>`
-    /// banner and sent a bare `AUTHREQD` first; the parser surfaces the inline
-    /// challenge as an optional borrowed substring.
+    /// `@RSYNCD: AUTHREQD <challenge>`). The value is optional so a bare
+    /// `AUTHREQD` line still parses; upstream always sends the challenge inline.
     ///
-    /// upstream: authenticate.c:245 - leader `"@RSYNCD: AUTHREQD "` followed by
-    /// the challenge, not a module name.
+    /// upstream: authenticate.c:337 - `io_printf(f_out, "%s%s\n", leader, challenge)`
+    /// with leader `"@RSYNCD: AUTHREQD "` (clientserver.c:809).
     AuthRequired {
         /// Base64 challenge supplied inline by the daemon, when present.
         challenge: Option<&'a str>,
     },
     /// Authentication challenge emitted after [`LegacyDaemonMessage::AuthRequired`].
     ///
-    /// Some deployments stage authentication across two banners: the
-    /// `AUTHREQD` keyword advertises that credentials are required and a
-    /// follow-up `@RSYNCD: AUTH <challenge>` supplies the base64 challenge.
-    /// Modern rsync versions typically inline the challenge inside the
-    /// `AUTHREQD` response, but tolerating both styles ensures parity with
-    /// legacy daemons still using the split handshake.
+    /// Parses `@RSYNCD: AUTH <challenge>`. Deviation from upstream: no upstream
+    /// release (3.0.9 through 3.5.1) sends this keyword; upstream inlines the
+    /// challenge in the `AUTHREQD` line.
     AuthChallenge {
         /// Base64-encoded challenge supplied by the daemon.
         challenge: &'a str,
@@ -167,11 +165,9 @@ pub fn parse_legacy_daemon_message(
 
 /// Parses a legacy daemon error line of the form `@ERROR: ...`.
 ///
-/// Legacy rsync daemons sometimes terminate the ASCII negotiation path with an
-/// explicit error banner rather than the regular `@RSYNCD:` responses. The
-/// payload following `@ERROR:` is returned with surrounding ASCII whitespace
-/// removed, allowing callers to surface the daemon's diagnostic verbatim while
-/// still matching upstream trimming behavior.
+/// Upstream daemons end a refused negotiation with an `@ERROR: ...` line instead
+/// of an `@RSYNCD:` response (e.g. `clientserver.c:213`). The payload after
+/// `@ERROR:` is returned with surrounding ASCII whitespace removed.
 #[doc(alias = "@ERROR")]
 pub fn parse_legacy_error_message(line: &str) -> Option<&str> {
     parse_prefixed_payload(line, "@ERROR:")
@@ -179,9 +175,9 @@ pub fn parse_legacy_error_message(line: &str) -> Option<&str> {
 
 /// Parses a legacy daemon warning line of the form `@WARNING: ...`.
 ///
-/// The returned payload mirrors [`parse_legacy_error_message`], enabling higher
-/// layers to surface warning text emitted by older daemons without guessing the
-/// exact formatting nuances.
+/// The returned payload mirrors [`parse_legacy_error_message`]. Deviation from
+/// upstream: no upstream release (3.0.9 through 3.5.1) emits `@WARNING:`; the
+/// parser exists only for tolerance.
 #[doc(alias = "@WARNING")]
 pub fn parse_legacy_warning_message(line: &str) -> Option<&str> {
     parse_prefixed_payload(line, "@WARNING:")
@@ -360,7 +356,7 @@ pub fn parse_daemon_module_listing(line: &str) -> (&str, &str) {
 /// digest response, terminated by a newline. This is the emit half whose inverse
 /// is [`parse_daemon_auth_response`].
 ///
-/// upstream: authenticate.c:375 `io_printf(f_out, "%s %s\n", user, pass2)`.
+/// upstream: authenticate.c:473 `io_printf(f_out, "%s %s\n", user, pass2)`.
 ///
 /// # Examples
 ///
@@ -380,7 +376,7 @@ pub fn format_daemon_auth_response(user: &str, response: &str) -> String {
 /// trailing CR/LF are removed. A line with no separator yields an empty
 /// response, which the daemon rejects as a failed authentication.
 ///
-/// upstream: authenticate.c - `auth_server()` reads the line and splits it into
+/// upstream: authenticate.c:288 `auth_server()` reads the line and splits it into
 /// the username and the response digest.
 ///
 /// # Examples

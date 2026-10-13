@@ -10,8 +10,8 @@
 //! The fix is neither to delete the option nor to blanket-skip the test: it is
 //! to ask the binary what it supports and to record what was consequently not
 //! exercised. Upstream's own testsuite does exactly this - `acl-symlink-race`
-//! greps `--version` output and calls `test_skipped()` when ACLs are absent
-//! (`testsuite/acl-symlink-race_test.py:50`).
+//! reads the `-VV` capability JSON and calls `test_skipped()` when ACLs are
+//! absent (`testsuite/acl-symlink-race_test.py:49-51`).
 //!
 //! A skipped row must stay visible. [`Capabilities::skip_reason`] returns the
 //! reason so the caller can print it, and callers are expected to assert that

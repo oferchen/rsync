@@ -23,7 +23,7 @@ const I64_MAX: u64 = i64::MAX as u64;
 /// 1TB test size - represents realistic large files
 const ONE_TB: u64 = 1024 * 1024 * 1024 * 1024;
 
-/// 100TB - tests multi-petabyte edge cases
+/// 100TB - tests very large file sizes
 const HUNDRED_TB: u64 = 100 * ONE_TB;
 
 mod signature_layout {

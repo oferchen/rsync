@@ -4,7 +4,7 @@
 //! structures, error conditions, and boundary scenarios that might arise
 //! in real-world usage.
 //!
-//! Reference: rsync 3.4.1 flist.c
+//! Reference: rsync 3.5.1 flist.c
 
 use flist::{FileListBuilder, FileListEntry, FileListError, FileListErrorKind};
 use std::fs;

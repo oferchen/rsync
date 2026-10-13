@@ -92,7 +92,7 @@ mod tests {
 /// exactly on `--ignore-errors`:
 ///
 /// * a value the PEER sent in the file-list trailer is accumulated only when
-///   `ignore_errors` is clear - `flist.c:3192`, `:2967`, `:3070` are all
+///   `ignore_errors` is clear - `flist.c:3192`, `:3210`, `:3313` are all
 ///   `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`;
 /// * a value this side generated while decoding is accumulated unconditionally
 ///   - `flist.c:1066`'s filename-transcode failure has no `ignore_errors` check.

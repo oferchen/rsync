@@ -95,8 +95,8 @@ pub enum FnameCmpType {
     /// # Upstream Reference
     ///
     /// - `rsync.h` - `FNAMECMP_FUZZY` (0x83)
-    /// - `generator.c:861,903` - `*fnamecmp_type_ptr = FNAMECMP_FUZZY + i`
-    /// - `receiver.c:860-861` - `fnamecmp_type - (FNAMECMP_FUZZY + 1)` recovers
+    /// - `generator.c:866,908` - `*fnamecmp_type_ptr = FNAMECMP_FUZZY + i`
+    /// - `receiver.c:1036-1037` - `fnamecmp_type - (FNAMECMP_FUZZY + 1)` recovers
     ///   the basis-dir index for the reference-directory range.
     Fuzzy(u8),
 }
@@ -148,8 +148,8 @@ impl FnameCmpType {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:404` - `fnamecmp_type = read_byte(f_in)` (no range check)
-    /// - `receiver.c:860-873` - contextual validation of the fuzzy/basis-dir range
+    /// - `rsync.c:405` - `fnamecmp_type = read_byte(f_in)` (no range check)
+    /// - `receiver.c:1025-1050` - contextual validation of the fuzzy/basis-dir range
     pub const fn from_wire(byte: u8) -> Option<Self> {
         match byte {
             Self::BASIS_DIR_LOW..=Self::BASIS_DIR_HIGH => Some(Self::BasisDir(byte)),
@@ -174,7 +174,7 @@ impl FnameCmpType {
 
     /// Returns true if this is a fuzzy-matched basis (the `FNAMECMP_FUZZY + i`
     /// range). Upstream gates `ITEM_XNAME_FOLLOWS` on `fnamecmp_type >=
-    /// FNAMECMP_FUZZY` (`generator.c:1945`).
+    /// FNAMECMP_FUZZY` (`generator.c:2383-2384`).
     #[must_use]
     pub const fn is_fuzzy(&self) -> bool {
         matches!(self, Self::Fuzzy(_))
@@ -287,8 +287,8 @@ mod tests {
 
     #[test]
     fn from_wire_maps_fuzzy_range() {
-        // upstream: rsync.c:404 reads the byte unconditionally and validates the
-        // fuzzy/basis-dir range contextually in receiver.c:860-873. The
+        // upstream: rsync.c:405 reads the byte unconditionally and validates the
+        // fuzzy/basis-dir range contextually in receiver.c:1025-1050. The
         // FNAMECMP_FUZZY + i range (0x83..=0xFF) therefore decodes to Fuzzy(i)
         // rather than being rejected at decode time.
         assert_eq!(FnameCmpType::from_wire(0x83), Some(FnameCmpType::Fuzzy(0)));
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn is_fuzzy_only_for_fuzzy_range() {
-        // upstream: generator.c:1945 gates ITEM_XNAME_FOLLOWS on
+        // upstream: generator.c:2383-2384 gates ITEM_XNAME_FOLLOWS on
         // fnamecmp_type >= FNAMECMP_FUZZY, so is_fuzzy must be true across the
         // whole 0x83..=0xFF range and false for every other type.
         assert!(FnameCmpType::Fuzzy(0).is_fuzzy());

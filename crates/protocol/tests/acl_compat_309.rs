@@ -17,8 +17,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1430-1432` - ACLs read only when `preserve_acls` is set
-//! - `flist.c:send_file_entry() line 654` - ACLs skipped for symlinks
+//! - `flist.c:1604-1607` `recv_file_entry()` - ACLs read only when `preserve_acls` is set
+//!   and the entry is not a symlink
+//! - `flist.c:2049-2050` `send_file_name()` - ACLs skipped for symlinks
 //! - `acls.c` - entire file guarded by `#ifdef SUPPORT_ACLS`
 
 use std::io::Cursor;

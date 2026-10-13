@@ -4,7 +4,7 @@
 //! in complex ways, including nested patterns, overlapping rules, and
 //! combinations of all rule types (include, exclude, protect, risk, clear).
 //!
-//! Reference: rsync 3.4.1 exclude.c for rule evaluation semantics.
+//! Reference: rsync 3.5.1 exclude.c for rule evaluation semantics.
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
@@ -334,7 +334,7 @@ fn perishable_exclude_with_protect() {
     assert!(!set.allows(Path::new("temp/keep/important.txt"), false));
 
     // For deletion: the top-level scan runs with `ignore_perishable` unset
-    // (upstream delete.c:147), so the perishable exclude protects temp/scratch.
+    // (upstream delete.c:208), so the perishable exclude protects temp/scratch.
     assert!(!set.allows_deletion(Path::new("temp/scratch.txt"), false));
 
     // temp/keep: protected by both the exclude and the protect rule.

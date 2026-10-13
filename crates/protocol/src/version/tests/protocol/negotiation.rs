@@ -1,22 +1,23 @@
 //! Protocol version negotiation tests.
 //!
 //! These tests verify rsync protocol version negotiation behavior, including:
-//! - Version range boundaries (MIN_SUPPORTED=28 to MAX_SUPPORTED=32)
+//! - Version range boundaries (MIN_SUPPORTED=28 to MAX_SUPPORTED=33)
 //! - Invalid version rejection
 //! - Version feature flags across protocol versions
 //!
 //! # Protocol Version Overview
 //!
-//! The rsync protocol supports versions 28-32:
+//! This implementation supports versions 28-33:
 //! - **v28**: Oldest supported, legacy ASCII negotiation, fixed encoding
 //! - **v29**: Last legacy ASCII negotiation version, adds sender/receiver modifiers
 //! - **v30**: First binary negotiation, introduces varint encoding
 //! - **v31**: Safe file list always enabled
-//! - **v32**: Current newest supported version
+//! - **v32**: Newest version of upstream 3.4.x and 3.5.0
+//! - **v33**: Newest supported version (upstream 3.5.1), adds `MSG_BLOCK_STATS`
 //!
 //! # Upstream Compatibility
 //!
-//! - Versions 33-40 are clamped to NEWEST (32) for forward compatibility
+//! - Versions 34-40 are clamped to NEWEST (33) for forward compatibility
 //! - Versions above 40 (MAXIMUM_PROTOCOL_ADVERTISEMENT) are rejected
 //! - Versions below 28 are rejected as too old
 
@@ -90,7 +91,7 @@ fn negotiation_boundary_versions() {
 /// Verifies versions between NEWEST and MAXIMUM_PROTOCOL_ADVERTISEMENT are clamped.
 #[test]
 fn future_versions_clamp_to_newest() {
-    // Versions 33-40 fall within the upstream tolerance window and clamp to NEWEST.
+    // 33 is NEWEST; 34-40 fall within the upstream tolerance window and clamp to it.
     for version in 33..=40 {
         let result = select_highest_mutual([version]);
         assert!(result.is_ok(), "version {version} should clamp to NEWEST");
@@ -540,7 +541,7 @@ fn version_31_feature_profile() {
     );
 }
 
-/// Verifies version 32 has the expected feature set (current newest).
+/// Verifies version 32 has the expected feature set.
 #[test]
 fn version_32_feature_profile() {
     let v = ProtocolVersion::V32;
@@ -572,7 +573,7 @@ fn version_32_feature_profile() {
 
 /// Verifies `UnsupportedVersion` error message matches upstream wording.
 ///
-/// upstream: compat.c:618-623 (start_protocol). The message is intentionally
+/// upstream: compat.c:621-626 `setup_protocol()`. The message is intentionally
 /// version-agnostic; the rejected version is reachable via the variant data
 /// through `unsupported_version()` for structured callers.
 #[test]

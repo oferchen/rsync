@@ -14,9 +14,7 @@ use protocol::{CompatibilityFlags, ProtocolVersion};
 use std::io::Cursor;
 use std::path::PathBuf;
 
-// ---------------------------------------------------------------------------
 // Strategies
-// ---------------------------------------------------------------------------
 
 /// Generates a valid ASCII filename component (1-64 bytes, no slashes or NUL).
 ///
@@ -131,9 +129,7 @@ fn nsec_strategy() -> impl Strategy<Value = u32> {
     ]
 }
 
-// ---------------------------------------------------------------------------
 // Roundtrip helpers
-// ---------------------------------------------------------------------------
 
 /// Writes an entry, appends the end marker, then reads it back.
 /// Writer and reader must have matching preserve flags.
@@ -186,9 +182,7 @@ fn assert_core_fields_match(original: &FileEntry, decoded: &FileEntry) {
     assert_eq!(decoded.mtime(), original.mtime(), "mtime mismatch");
 }
 
-// ---------------------------------------------------------------------------
 // Regular file roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
@@ -244,9 +238,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Directory roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
@@ -272,9 +264,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Symlink roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
@@ -305,9 +295,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Device file roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
@@ -361,9 +349,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Special file roundtrips (FIFO, socket)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
@@ -411,9 +397,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Multi-entry sequence roundtrips (cross-entry compression)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -501,9 +485,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Protocol-version-specific encoding roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -564,9 +546,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Checksum roundtrips (--checksum mode)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -630,9 +610,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Mtime nanoseconds roundtrip (protocol 31+)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
@@ -684,9 +662,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Access time roundtrips (--atimes)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -719,7 +695,7 @@ proptest! {
     }
 
     /// Atime nanoseconds are NOT transmitted on the wire at any protocol
-    /// version. upstream `flist.c:832-833` (sender) and `flist.c:1119-1120`
+    /// version. upstream `flist.c:916` (sender) and `flist.c:1211`
     /// (receiver) encode atime as a single \`varlong(atime, 4)\` and never
     /// emit an nsec component; mtime is the only timestamp whose nsec is
     /// gated by a transmission flag (\`XMIT_MOD_NSEC\`). Encode-only nsec
@@ -781,9 +757,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Creation time roundtrips (--crtimes)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -842,9 +816,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // User/group name roundtrips (protocol 30+)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -890,9 +862,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Large file size roundtrips (varlong encoding, protocol 30+)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -921,9 +891,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Hardlink leader roundtrips (protocol 30+)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -961,7 +929,7 @@ proptest! {
     /// A follower has hardlink_idx < u32::MAX. The writer sets XMIT_HLINKED but
     /// NOT XMIT_HLINK_FIRST, and skips all metadata after the index; the
     /// receiver copies that metadata from the leader. The reference must point
-    /// at an entry received so far (upstream flist.c:1019): here the follower
+    /// at an entry received so far (upstream flist.c:1102): here the follower
     /// references the leader at NDX 0, so it is always in range.
     #[test]
     fn hardlink_follower_roundtrip(
@@ -998,9 +966,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Hardlink dev/ino roundtrips (protocol 28-29)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -1037,9 +1003,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Content directory flag roundtrips (protocol 30+)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -1090,9 +1054,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Encoding determinism
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
@@ -1125,9 +1087,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Cross-entry delta compression stress
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
@@ -1222,9 +1182,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Combined preserve flags roundtrip
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]

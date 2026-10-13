@@ -17,7 +17,7 @@ use crate::wildmatch::wildmatch;
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledPattern {
     bytes: Vec<u8>,
-    /// upstream `FILTRULE_WILD2_PREFIX` (exclude.c:241-242): set only when the
+    /// upstream `FILTRULE_WILD2_PREFIX` (exclude.c:336-339): set only when the
     /// user's pattern *starts* with `**` (which implies it is unanchored). Such
     /// rules are matched with a leading `/` prepended to the candidate so
     /// `**/bar` matches a top-level `bar`. An anchored pattern like `/**/*`
@@ -40,7 +40,7 @@ impl CompiledPattern {
     /// `/`-separated and relative).
     pub(super) fn is_match(&self, path: &Path) -> bool {
         let body = path_match_bytes(path);
-        // upstream: exclude.c:929-931 rule_matches() - a WILD2_PREFIX rule
+        // upstream: exclude.c:1028-1031 rule_matches() - a WILD2_PREFIX rule
         // matches the candidate with a leading "/" prepended, so `**/bar`
         // matches a top-level `bar` (via `/bar`) as well as `a/b/bar`. Our
         // relative candidates never start with '/', so the prepend always
@@ -236,20 +236,20 @@ fn normalise_recursive_wildcards(pattern: &[u8]) -> Cow<'_, [u8]> {
 /// - It contains `/` anywhere in the pattern (besides trailing `/`)
 ///
 /// A trailing `/***` suffix is treated as directory-only on the stem.
-/// upstream: `exclude.c:936-937` - `FILTRULE_WILD3_SUFFIX` appends `/` to
+/// upstream: `exclude.c:1033-1036` - `FILTRULE_WILD3_SUFFIX` appends `/` to
 /// directory names during matching, allowing `dir/***` to match both the
 /// directory itself and all its contents. We normalize `dir/***` to `dir/`
 /// (directory-only) so the standard descendant-matcher expansion produces
 /// the correct `dir/**` content matchers.
 ///
-/// This mirrors upstream rsync's pattern normalization in
-/// `exclude.c:parse_filter_str()` where leading and trailing slashes are
-/// stripped and used to set `FILTRULE_ABS_PATH` and `FILTRULE_DIRECTORY`
-/// flags respectively.
+/// This mirrors upstream rsync's pattern handling: `add_rule()` strips a
+/// trailing slash into `FILTRULE_DIRECTORY` (`exclude.c:287-290`), and
+/// `rule_matches()` treats a leading slash as an anchored match
+/// (`exclude.c:1041-1044`).
 pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
     let starts_with_slash = pattern.first() == Some(&b'/');
 
-    // upstream: exclude.c:190-193 then 243-248 - add_rule() first peels a
+    // upstream: exclude.c:287-290 then 340-345 - add_rule() first peels a
     // single trailing `/` (FILTRULE_DIRECTORY), THEN detects a trailing `***`
     // (FILTRULE_WILD3_SUFFIX). Matching that order is required so the combined
     // `dir/***/` form collapses to a directory-only stem; checking `/***`
@@ -280,12 +280,12 @@ pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
         stripped
     };
 
-    // upstream: exclude.c:rule_matches() - FILTRULE_ABS_PATH is only set
-    // for patterns that start with `/` (or when XFLG_ABS_IF_SLASH is in
-    // effect, which is restricted to daemon module configs). A pattern
-    // with internal slashes but no leading `/` is NOT anchored; instead
-    // upstream tail-matches it against the last N+1 path components (line
-    // 947-951). The glob equivalent is `**/pattern`, which our caller
+    // upstream: exclude.c:1041-1044 rule_matches() - only a pattern that
+    // starts with `/` is an anchored match (the daemon's XFLG_ABS_IF_SLASH,
+    // clientserver.c:935-952, additionally anchors any slashed pattern). A
+    // pattern with internal slashes but no leading `/` is NOT anchored;
+    // instead upstream tail-matches it against the last N+1 path components
+    // (exclude.c:1046-1050). The glob equivalent is `**/pattern`, which our caller
     // adds for unanchored patterns.
     let anchored = starts_with_slash;
 
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(core.as_ref(), b"caf\xe9");
     }
 
-    /// upstream: exclude.c:936-937 - FILTRULE_WILD3_SUFFIX appends `/` to
+    /// upstream: exclude.c:1033-1036 - FILTRULE_WILD3_SUFFIX appends `/` to
     /// directory names during matching. `dir/***` matches both the directory
     /// itself (when is_dir) and everything inside it.
     #[test]

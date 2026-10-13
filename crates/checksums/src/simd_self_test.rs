@@ -288,7 +288,7 @@ mod tests {
 
     /// The host-default invocation must pass on every tier-1 platform.
     ///
-    /// This is the single source-tree assertion required by task 2224: every
+    /// This is the single source-tree assertion of SIMD parity: every
     /// SIMD path the host CPU selects must produce digests byte-equal to the
     /// scalar reference across the full input sweep.
     #[test]

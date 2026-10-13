@@ -194,8 +194,8 @@ fn protect_rule_blocks_deletion_without_affecting_transfer() {
 
 #[test]
 fn perishable_rule_protects_from_deletion_at_top_level() {
-    // upstream: exclude.c:1044 check_filter() only skips perishable rules when
-    // `ignore_perishable` is set (delete.c:147), which happens exclusively
+    // upstream: exclude.c:1193 check_filter() only skips perishable rules when
+    // `ignore_perishable` is set (delete.c:208), which happens exclusively
     // inside a directory being wholly deleted. The top-level delete scan runs
     // with it unset, so a perishable exclude protects a matching destination
     // entry from `--delete` exactly like a plain exclude. `--delete-excluded`
@@ -333,8 +333,6 @@ fn sender_only_risk_does_not_clear_receiver_protection() {
 /// upstream testsuite: `--include=/down/ --exclude='/*'` must allow files
 /// inside `down/` because the anchored `/*` exclude only matches root-level
 /// items and does not propagate to descendants via pattern expansion.
-///
-/// Regression test for #5421.
 #[test]
 fn anchored_wildcard_exclude_allows_included_directory_contents() {
     let rules = [FilterRule::include("/down/"), FilterRule::exclude("/*")];

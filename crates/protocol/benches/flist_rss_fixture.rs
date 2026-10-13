@@ -29,9 +29,7 @@ const SCALES: &[usize] = &[100_000, 500_000, 1_000_000];
 /// Maximum inline size for FileEntry - regression guard.
 const MAX_INLINE_SIZE: usize = 96;
 
-// ---------------------------------------------------------------------------
 // Path generators
-// ---------------------------------------------------------------------------
 
 /// Flat paths: `dir_NNNNN/file_NNNNN.dat` (1-2 components, many unique dirs).
 ///
@@ -69,9 +67,7 @@ fn shared_path(i: usize) -> PathBuf {
     ))
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Allocate `count` FileEntry structs using the given path generator,
 /// with optional dirname interning via `PathInterner`.
@@ -118,9 +114,7 @@ fn report_memory_stats(label: &str, count: usize) {
     eprintln!("-------------------------------");
 }
 
-// ---------------------------------------------------------------------------
 // Benchmarks
-// ---------------------------------------------------------------------------
 
 /// Benchmark: allocate Vec<FileEntry> with flat paths (no interning).
 fn bench_flat_allocation(c: &mut Criterion) {

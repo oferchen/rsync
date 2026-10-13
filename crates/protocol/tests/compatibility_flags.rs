@@ -2,7 +2,7 @@
 //!
 //! These tests validate the wire-level encoding, negotiation semantics, and
 //! bitfield operations for rsync compatibility flags (CF_*) as defined by
-//! upstream rsync 3.4.1. The tests ensure our implementation produces
+//! upstream rsync 3.5.1. The tests ensure our implementation produces
 //! byte-identical varint-encoded payloads and handles all 9 known flags
 //! correctly.
 
@@ -97,7 +97,7 @@ fn test_inplace_partial_dir_wire_byte_matches_upstream() {
     CompatibilityFlags::INPLACE_PARTIAL_DIR
         .encode_to_vec(&mut buf)
         .expect("encoding must succeed");
-    // upstream: compat.c:736-738 - write_byte(f_out, compat_flags) for the
+    // upstream: compat.c:745-750 - write_byte(f_out, compat_flags) for the
     // pre-release path and write_varint(f_out, compat_flags) otherwise.
     // CF_INPLACE_PARTIAL_DIR alone is 0x40, which encodes identically
     // under both writers.

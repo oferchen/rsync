@@ -115,6 +115,10 @@ impl ChannelReader {
     /// rather than against the per-`recv_timeout` slice, so a sequence of
     /// short-lived chunks before the remote stalls still surfaces as a
     /// timeout error within the configured budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SshError::GoodbyePhaseTimeout` when EOF does not arrive within `budget`.
     pub fn wait_for_eof_with_timeout(&mut self, budget: Duration) -> Result<(), SshError> {
         let deadline = Instant::now() + budget;
         loop {
@@ -246,7 +250,7 @@ pub fn connect_and_exec(
 ///
 /// The peer `rsync --server` writes the diagnostics it does not frame into the
 /// multiplexed protocol stream - notably the `--append-verify` phase-1 `failed
-/// verification` warning, which upstream routes to fd2 (`log.c:314` maps
+/// verification` warning, which upstream routes to fd2 (`log.c:341` maps
 /// `FWARNING` to stderr) rather than sending a `MSG_WARNING` - to its stderr,
 /// which arrives on the channel as extended data. Forwarding the stderr stream
 /// verbatim mirrors the subprocess transport's drain
@@ -596,7 +600,7 @@ mod tests {
     /// forwarded to the local stderr verbatim: this is the byte the embedded
     /// (russh) push transport dropped, so upstream's `--append-verify` phase-1
     /// `failed verification` warning never reached the operator while the
-    /// subprocess ssh transport surfaced it (`log.c:314` routes `FWARNING` to
+    /// subprocess ssh transport surfaced it (`log.c:341` routes `FWARNING` to
     /// fd2). Pins that parity at the routing boundary that carries the warning.
     #[test]
     fn forward_remote_stderr_writes_stderr_stream_verbatim() {

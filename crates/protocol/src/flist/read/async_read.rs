@@ -11,8 +11,7 @@
 //! wire bytes - including when the bytes are delivered in arbitrary chunks
 //! across `.await` points.
 //!
-//! Additive and unwired: this leaf is not connected to the receiver pipeline.
-//! Its consuming rung is the coupled ASY-7 receiver redo.
+//! Not yet connected to the receiver pipeline; only tests call it.
 
 use std::io;
 

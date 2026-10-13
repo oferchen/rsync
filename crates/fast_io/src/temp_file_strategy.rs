@@ -91,6 +91,10 @@ pub trait TempFileStrategy: Send + Sync {
     ///
     /// A [`TempFileHandle`] with an open writable file and the metadata needed
     /// for commit or cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from creating the temporary file.
     fn create(&self, destination: &Path) -> io::Result<TempFileHandle>;
 
     /// Atomically materializes the temp file at `destination`.
@@ -99,6 +103,10 @@ pub trait TempFileStrategy: Send + Sync {
     /// with retry on `ETXTBSY` and cross-device fallback.
     ///
     /// If a file already exists at `destination`, it is removed first.
+    ///
+    /// # Errors
+    ///
+    /// Returns the link or rename error.
     fn commit(&self, handle: TempFileHandle, destination: &Path) -> io::Result<()>;
 
     /// Cleans up the temp file without committing.

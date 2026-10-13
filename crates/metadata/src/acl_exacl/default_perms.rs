@@ -12,32 +12,36 @@ use super::perms::exacl_perms_to_rsync;
 
 /// Computes the default permission bits a child of `dir` should inherit.
 ///
-/// Mirrors upstream rsync's `default_perms_for_dir` (`acls.c:1083-1139`):
+/// Mirrors upstream rsync's `default_perms_for_dir` (`acls.c:1453-1508`):
 ///
 /// 1. Start from `ACCESSPERMS & ~umask` (the POSIX default).
 /// 2. Read the directory's default POSIX ACL.
 /// 3. When the ACL has a `user_obj` entry, fold its bits into the returned
 ///    permission mask via `rsync_acl_get_perms`.
 /// 4. When `--debug=ACL` is at level 1, emit `got ACL-based default perms %o
-///    for directory %s` (`acls.c:1133-1134`).
+///    for directory %s` (`acls.c:1502-1503`).
 ///
 /// Unsupported filesystems and missing default ACLs both fall back to the
 /// umask-derived default without emitting; only the successful ACL lookup
 /// produces the upstream debug line.
 ///
+/// Deviation from upstream: any `getfacl` error falls back to the umask
+/// default silently; upstream prints a `falling back on umask` warning for
+/// errors other than `EINVAL`/`ENOTSUP`/`ENOSYS` (`acls.c:1483-1485`).
+///
 /// On platforms that do not expose POSIX default ACLs (e.g. macOS), this
 /// function returns the umask-derived default and never emits, matching the
-/// `#ifdef SUPPORT_ACLS` gating at `generator.c:1337-1340`.
+/// `#ifdef SUPPORT_ACLS` gating at `generator.c:1738-1741`.
 ///
 /// # Upstream Reference
 ///
-/// - `acls.c:1083-1139` `default_perms_for_dir`
-/// - `generator.c:1337-1340` and `receiver.c:862-867` - the two call sites
+/// - `acls.c:1453-1508` `default_perms_for_dir`
+/// - `generator.c:1738-1741` and `receiver.c:1200-1206` - the two call sites
 ///   that fold the returned bits into `dest_mode()` when `--perms` is off.
 #[allow(clippy::module_name_repetitions)]
 #[must_use]
 pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
-    // upstream: acls.c:1093 - perms = ACCESSPERMS & ~orig_umask
+    // upstream: acls.c:1462 - perms = ACCESSPERMS & ~orig_umask
     let default_perms = 0o777u32 & !(orig_umask & 0o777);
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -52,7 +56,7 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
             return default_perms;
         }
 
-        // upstream: acls.c:1131 - racl.user_obj != NO_ENTRY guard
+        // upstream: acls.c:1500 - racl.user_obj != NO_ENTRY guard
         let mut user_obj_perms: Option<u8> = None;
         let mut group_obj_perms: Option<u8> = None;
         let mut other_obj_perms: Option<u8> = None;
@@ -79,7 +83,7 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
         let Some(user_obj) = user_obj_perms else {
             return default_perms;
         };
-        // upstream: acls.c:129-134 rsync_acl_get_perms:
+        // upstream: acls.c:133-138 rsync_acl_get_perms:
         //   = (user_obj << 6)
         //     + ((mask_obj != NO_ENTRY ? mask_obj : group_obj) << 3)
         //     + other_obj
@@ -91,7 +95,7 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
         let perms = (u32::from(user_obj) << 6)
             | (u32::from(group_bits) << 3)
             | u32::from(other_obj_perms.unwrap_or(0));
-        // upstream: acls.c:1133-1134 - DEBUG_GTE(ACL, 1) emission
+        // upstream: acls.c:1502-1503 - DEBUG_GTE(ACL, 1) emission
         trace_default_perms_for_dir(perms, &dir_label);
         perms
     }

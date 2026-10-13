@@ -145,7 +145,7 @@ impl Md4 {
     /// }
     /// ```
     ///
-    /// upstream: checksum.c:358-396 `get_checksum2()` MD4 branch.
+    /// upstream: checksum.c:376-412 `get_checksum2()` MD4 branch.
     ///
     /// # Examples
     ///
@@ -169,7 +169,7 @@ impl Md4 {
     pub fn digest_with_seed(seed: i32, data: &[u8]) -> [u8; 16] {
         let mut hasher = Md4::new();
         hasher.update(data);
-        // upstream: checksum.c:377-380 - SIVAL(buf1, len, checksum_seed) appends
+        // upstream: checksum.c:394-397 - SIVAL(buf1, len, checksum_seed) appends
         // the seed as a 32-bit little-endian value when seed != 0.
         if seed != 0 {
             hasher.update(&seed.to_le_bytes());
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn md4_seeded_appends_seed_after_data() {
-        // upstream: checksum.c:376-380 - SIVAL(buf1, len, checksum_seed)
+        // upstream: checksum.c:394-397 - SIVAL(buf1, len, checksum_seed)
         let seed: i32 = 0x12345678;
         let data = b"rsync block payload";
 

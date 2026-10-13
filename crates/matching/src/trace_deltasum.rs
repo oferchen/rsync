@@ -23,6 +23,8 @@
 //!
 //! # Measured fidelity, against upstream 3.5.0 (`--debug=deltasum{,2,3}`)
 //!
+//! The format strings are unchanged in 3.5.1.
+//!
 //! Fixture: a 256 KB pseudo-random file, 100 bytes overwritten in a backdated
 //! basis, `--no-whole-file -t` so the delta path engages.
 //!
@@ -53,7 +55,7 @@
 //!   is received: the one in-process signature index serves both roles. Upstream
 //!   prints those 375 lines locally only because its local run really does drive
 //!   two processes over a socketpair. Nor does it have one for `generating and
-//!   sending sums for %d` (generator.c:2363) - the local executor carries no
+//!   sending sums for %d` (generator.c:2365) - the local executor carries no
 //!   wire file index, and naming a fabricated one would be inventing output.
 //! - **Local ordering**: upstream's local run emits every sender line, then its
 //!   receiver process drains the delta and emits `recv mapped` plus all its
@@ -143,7 +145,7 @@ pub fn trace_match(offset: u64, last_match: u64, j: u64, len: usize, n: u64) {
 
 /// Level 2 `built hash table` - the signature hash index is ready.
 ///
-/// upstream: match.c:436-437 `match_sums()`.
+/// upstream: match.c:437-438 `match_sums()`.
 #[inline]
 pub fn trace_built_hash_table() {
     debug_log!(Deltasum, 2, "built hash table");
@@ -151,7 +153,7 @@ pub fn trace_built_hash_table() {
 
 /// Level 2 `done hash search` - the scan over the source completed.
 ///
-/// upstream: match.c:441-442 `match_sums()`.
+/// upstream: match.c:442-443 `match_sums()`.
 #[inline]
 pub fn trace_done_hash_search() {
     debug_log!(Deltasum, 2, "done hash search");
@@ -169,7 +171,7 @@ pub fn trace_sending_file_sum() {
 /// Level 2 `false_alarms=%d hash_hits=%d matches=%d` - per-file scan counters,
 /// printed after the file's checksum trailer.
 ///
-/// upstream: match.c:468-471 `match_sums()`. Counter semantics are oc-native
+/// upstream: match.c:469-472 `match_sums()`. Counter semantics are oc-native
 /// (see [`crate::ProbeCounters`]): `hash_hits` counts bithash-prefilter
 /// positives and `false_alarms` counts prefilter positives that produced no
 /// confirmed match, where upstream counts bucket hits and strong-sum rejects.
@@ -185,7 +187,7 @@ pub fn trace_match_counters(false_alarms: u64, hash_hits: u64, matches: u64) {
 /// Renders the `total:` match-report line - the ONE owner of upstream's
 /// format string (note the double spaces before `hash_hits=`/`false_alarms=`
 /// and the single space before `data=`; `data` is `big_num(stats.literal_data)`,
-/// which is plain decimal per inums.h:20-23).
+/// which is plain decimal per inums.h:19-23).
 ///
 /// upstream: match.c:485-488 `match_report()`.
 #[inline]
@@ -199,13 +201,13 @@ pub fn match_totals_line(matches: u64, hash_hits: u64, false_alarms: u64, data: 
 /// Level 1 `total: matches=%d  hash_hits=%d  false_alarms=%d data=%s` - the
 /// once-per-run sender totals.
 ///
-/// upstream: match.c:479-487 `match_report()`, called after `send_files()`
+/// upstream: match.c:480-489 `match_report()`, called after `send_files()`
 /// finishes (sender.c:818). The LOCAL copy path renders this line directly
 /// from the client summary (`cli::frontend::progress::render`) to keep
 /// upstream's position between the name list and the summary trailer; this
 /// function is the local emitter for a CLIENT-side network sender. A
 /// server-side sender frames [`match_totals_line`] as `MSG_INFO` instead
-/// (log.c:330-346 routes FINFO through the mux under `am_server`), so the
+/// (log.c:357-366 `rwrite()` routes FINFO through the mux under `am_server`), so the
 /// far-end client renders it and counts its bytes.
 #[inline]
 pub fn trace_match_totals(matches: u64, hash_hits: u64, false_alarms: u64, data: u64) {
@@ -246,7 +248,7 @@ pub fn trace_receive_sums_chunk(i: u64, len: usize, offset: u64, sum1: u32) {
 /// Level 2 `send_files mapped %s%s%s of size %s` - the sender opened its
 /// source for scanning.
 ///
-/// upstream: sender.c:762-765 `send_files()` (the `%s%s%s` is
+/// upstream: sender.c:763-765 `send_files()` (the `%s%s%s` is
 /// path/slash/fname; oc passes the joined path).
 #[inline]
 pub fn trace_send_files_mapped(path: &dyn std::fmt::Display, size: u64) {
@@ -256,7 +258,7 @@ pub fn trace_send_files_mapped(path: &dyn std::fmt::Display, size: u64) {
 /// Level 2 `calling match_sums %s%s%s` - the sender is entering the delta
 /// scan for this file.
 ///
-/// upstream: sender.c:770-771 `send_files()`.
+/// upstream: sender.c:771-772 `send_files()`.
 #[inline]
 pub fn trace_calling_match_sums(path: &dyn std::fmt::Display) {
     debug_log!(Deltasum, 2, "calling match_sums {path}");
@@ -265,7 +267,7 @@ pub fn trace_calling_match_sums(path: &dyn std::fmt::Display) {
 /// Level 3 `gen mapped %s of size %s` - the generator opened the basis it
 /// will checksum.
 ///
-/// upstream: generator.c:2358-2361 `recv_generator()`.
+/// upstream: generator.c:2359-2361 `recv_generator()`.
 #[inline]
 pub fn trace_gen_mapped(path: &dyn std::fmt::Display, size: u64) {
     debug_log!(Deltasum, 3, "gen mapped {path} of size {size}");
@@ -274,7 +276,7 @@ pub fn trace_gen_mapped(path: &dyn std::fmt::Display, size: u64) {
 /// Level 2 `generating and sending sums for %d` - the generator is producing
 /// the signature for file index `ndx`.
 ///
-/// upstream: generator.c:2363-2364 `recv_generator()`.
+/// upstream: generator.c:2364-2365 `recv_generator()`.
 #[inline]
 pub fn trace_generating_sums(ndx: i32) {
     debug_log!(Deltasum, 2, "generating and sending sums for {ndx}");
@@ -283,7 +285,7 @@ pub fn trace_generating_sums(ndx: i32) {
 /// Level 2 `count=%s rem=%ld blength=%ld s2length=%d flength=%s` - the
 /// signature geometry chosen for a basis.
 ///
-/// upstream: generator.c:765-770 `sum_sizes_sqroot()`.
+/// upstream: generator.c:766-770 `sum_sizes_sqroot()`.
 #[inline]
 pub fn trace_sum_geometry(
     count: u64,
@@ -302,7 +304,7 @@ pub fn trace_sum_geometry(
 /// Level 3 `chunk[%s] offset=%s len=%ld sum1=%08lx` - one generated signature
 /// block on the generator.
 ///
-/// upstream: generator.c:817-822 `generate_and_send_sums()`.
+/// upstream: generator.c:818-822 `generate_and_send_sums()`.
 #[inline]
 pub fn trace_gen_chunk(i: u64, offset: u64, len: usize, sum1: u32) {
     debug_log!(
@@ -315,7 +317,7 @@ pub fn trace_gen_chunk(i: u64, offset: u64, len: usize, sum1: u32) {
 /// Level 2 `recv mapped %s of size %s` - the receiver opened the basis it
 /// will copy matched blocks from.
 ///
-/// upstream: receiver.c:514-517 `receive_data()`.
+/// upstream: receiver.c:515-517 `receive_data()`.
 #[inline]
 pub fn trace_recv_mapped(path: &dyn std::fmt::Display, size: u64) {
     debug_log!(Deltasum, 2, "recv mapped {path} of size {size}");
@@ -324,7 +326,7 @@ pub fn trace_recv_mapped(path: &dyn std::fmt::Display, size: u64) {
 /// Level 3 `data recv %d at %s` - a literal run arrived at output offset
 /// `offset`.
 ///
-/// upstream: receiver.c:568-571 `receive_data()`.
+/// upstream: receiver.c:569-571 `receive_data()`.
 #[inline]
 pub fn trace_data_recv(len: usize, offset: u64) {
     debug_log!(Deltasum, 3, "data recv {len} at {offset}");
@@ -334,7 +336,7 @@ pub fn trace_data_recv(len: usize, offset: u64) {
 /// applied from basis offset `offset2` at output offset `offset`; `seek` adds
 /// upstream's ` (seek)` marker for the in-place skip fast path.
 ///
-/// upstream: receiver.c:625-630 `receive_data()`.
+/// upstream: receiver.c:626-630 `receive_data()`.
 #[inline]
 pub fn trace_recv_chunk(i: u64, len: usize, offset2: u64, offset: u64, seek: bool) {
     debug_log!(
@@ -348,7 +350,7 @@ pub fn trace_recv_chunk(i: u64, len: usize, offset2: u64, offset: u64, seek: boo
 /// Level 2 `got file_sum` - the receiver consumed the sender's whole-file
 /// checksum trailer.
 ///
-/// upstream: receiver.c:687-689 `receive_data()`.
+/// upstream: receiver.c:688-689 `receive_data()`.
 #[inline]
 pub fn trace_got_file_sum() {
     debug_log!(Deltasum, 2, "got file_sum");
@@ -380,9 +382,9 @@ mod tests {
             .collect()
     }
 
-    /// Pins every format string byte-for-byte against upstream 3.5.0 output
-    /// captured from `--debug=deltasum3` runs (match.c / sender.c /
-    /// generator.c / receiver.c, see per-fn citations).
+    /// Pins every format string byte-for-byte against upstream output captured
+    /// from 3.5.0 `--debug=deltasum3` runs; the strings are unchanged in 3.5.1
+    /// (match.c / sender.c / generator.c / receiver.c, see per-fn citations).
     #[test]
     fn formats_match_upstream() {
         setup(4);

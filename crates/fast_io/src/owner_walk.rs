@@ -369,25 +369,22 @@ fn is_namespace_pin(abspath: Option<&Path>, name: &OsStr) -> bool {
 
 /// Flags for a dirfd the walk only *steps through*, never hands back.
 ///
-/// # The divergence, and why it is not a policy change
+/// # Why `O_PATH`
 ///
-/// Upstream opens intermediates `O_RDONLY|O_DIRECTORY` (`syscall.c:626`). oc
-/// opens them `O_PATH` on Linux. That is a deliberate divergence, forced by a
-/// difference in the CONFINEMENT MECHANISM, not by a difference in policy:
+/// Upstream 3.5.1 opens intermediates with `directory_traverse_flags()`, which
+/// is `O_PATH|O_DIRECTORY` where `O_PATH` exists (`syscall.c:83-92`, used at
+/// `syscall.c:373` and `:626`), so the Linux arm matches upstream.
 ///
-/// - Upstream confines a daemon with **chroot**, which RELOCATES `/`. Its walk
-///   therefore starts inside the jail and every component it opens is reachable
-///   by construction.
-/// - oc confines with **Landlock**, which does NOT relocate `/`. The identical
-///   walk from `/` must open `/`, `/tmp`, `/tmp/.tmpXXXX`, ... - none of which
-///   the ruleset grants. In Landlock's model `openat(O_RDONLY|O_DIRECTORY)` is
-///   an ACCESS and needs `LANDLOCK_ACCESS_FS_READ_DIR`; `O_PATH` names a
-///   location and needs nothing. So the walk cannot TRAVERSE, and dies before
-///   reaching a leaf that is plainly inside the granted tree.
+/// `O_PATH` also matters for Landlock. Upstream confines a daemon with
+/// **chroot**, which relocates `/`; oc confines with **Landlock**, which does
+/// not. The walk from `/` must step through `/`, `/tmp`, `/tmp/.tmpXXXX`, ...,
+/// none of which the ruleset grants. In Landlock's model
+/// `openat(O_RDONLY|O_DIRECTORY)` is an access needing
+/// `LANDLOCK_ACCESS_FS_READ_DIR`, while `O_PATH` names a location and needs
+/// nothing, so only `O_PATH` lets the walk reach a leaf inside the granted tree.
 ///
-/// `O_PATH` is the minimum privilege traversal actually requires - POSIX
-/// traversal needs `x`, not `r`. The collision is between two oc-side
-/// mechanisms, not between oc and upstream.
+/// `O_PATH` is the minimum privilege traversal requires - POSIX traversal
+/// needs `x`, not `r`.
 ///
 /// # What is preserved
 ///
@@ -407,9 +404,13 @@ pub(crate) fn traversal_dir_flags() -> OFlags {
     OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC
 }
 
-/// Non-Linux has no Landlock, so the walk keeps upstream's own flags.
+/// Non-Linux arm: `O_RDONLY|O_DIRECTORY`, upstream's fallback where `O_PATH`
+/// is unavailable.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:626`.
+/// Deviation from upstream: a platform that does define `O_PATH` (e.g.
+/// FreeBSD 14) gets `O_PATH|O_DIRECTORY` from upstream but `O_RDONLY` here.
+///
+/// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn traversal_dir_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC
@@ -2194,15 +2195,15 @@ mod tests {
         assert_eq!(std::fs::read(&created).expect("read"), b"NEW");
     }
 
-    /// The one thing that DOES change: an intermediate dirfd is opened by
-    /// location on Linux, and with upstream's own flags everywhere else.
+    /// An intermediate dirfd is opened by location (`O_PATH`) on Linux.
     ///
     /// Unconditional - there is no gate to assert around. Landlock does not
     /// relocate `/` the way upstream's chroot does, so a walk from `/` must
     /// step through components no ruleset grants; `O_PATH` needs no access
     /// right, `O_RDONLY|O_DIRECTORY` needs `READ_DIR`.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:626` - the deliberate divergence.
+    /// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`,
+    /// used for the walk at `syscall.c:626`.
     #[cfg(target_os = "linux")]
     #[test]
     fn an_intermediate_dirfd_is_opened_by_location_on_linux() {
@@ -2230,10 +2231,10 @@ mod tests {
         );
     }
 
-    /// The mirror half: no Landlock exists off Linux, so the walk keeps
-    /// upstream's own flags and there is no anchor to reopen.
+    /// The mirror half: off Linux the walk uses upstream's non-`O_PATH`
+    /// fallback flags and there is no anchor to reopen.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:626`.
+    /// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn an_intermediate_dirfd_keeps_upstreams_flags_off_linux() {

@@ -1,7 +1,12 @@
 //! Error recovery and partial transfer handling for rsync protocol operations.
 //!
-//! This module provides error recovery strategies, partial transfer tracking, and exit code
-//! mapping that match upstream rsync's receiver.c error handling behavior.
+//! This module provides error classification, retry/resume policy, and partial transfer
+//! tracking.
+//!
+//! Deviation from upstream: upstream has no per-error retry or resume policy. A per-file
+//! failure is reported (`FERROR_XFER`) and the file is skipped, a fatal one calls
+//! `exit_cleanup()`, and partial data survives only through `--partial` /
+//! `--partial-dir`. This module is oc-only and has no consumer outside this crate.
 //!
 //! # Design
 //!

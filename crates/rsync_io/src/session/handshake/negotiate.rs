@@ -59,6 +59,11 @@ where
 /// This mirrors [`negotiate_session`] but allows higher layers to reuse a
 /// [`NegotiationPrologueSniffer`] across multiple negotiations, matching the
 /// existing binary and legacy helper variants.
+///
+/// # Errors
+///
+/// Returns an I/O error when reading the prologue fails or the peer does not speak the expected
+/// negotiation style.
 pub fn negotiate_session_with_sniffer<R>(
     reader: R,
     desired_protocol: ProtocolVersion,

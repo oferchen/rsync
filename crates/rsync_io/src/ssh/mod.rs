@@ -62,7 +62,7 @@
 //! require an `AF_INET`/`AF_INET6` socket FD and are therefore unreachable
 //! for SSH transfers - regardless of kernel version or `io_uring_policy`.
 //! This mirrors upstream rsync, which also performs blocking reads/writes
-//! on the inherited stdio FDs when invoked over SSH (`main.c:507 do_cmd()`).
+//! on the inherited stdio FDs when invoked over SSH (`main.c:520 do_cmd()`).
 //!
 //! The Linux kernel does support submitting `IORING_OP_READ` /
 //! `IORING_OP_WRITE` against pipe FDs (5.1+), and `splice()` / `vmsplice()`
@@ -80,8 +80,8 @@
 //! The disposition - including both the two-socketpairs-per-direction
 //! variant matching upstream and the single bidirectional socketpair
 //! variant - is recorded in `docs/audits/ssh-socketpair-vs-pipes.md`
-//! (#1938) and `docs/audits/ssh-single-socketpair-bidirectional.md`
-//! (#1687). The stderr channel is socketpair-backed on Unix; see
+//! and `docs/audits/ssh-single-socketpair-bidirectional.md`.
+//! The stderr channel is socketpair-backed on Unix; see
 //! `aux_channel.rs` for that path.
 
 /// The single ssh_config tokeniser, shared by both config readers.

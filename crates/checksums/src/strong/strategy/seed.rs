@@ -9,7 +9,7 @@ use crate::strong::Md5Seed;
 pub enum Md5SeedConfig {
     /// No seed - equivalent to standard MD5 behavior.
     None,
-    /// Seed hashed before data (protocol 30+ with `CHECKSUM_SEED_FIX`).
+    /// Seed hashed before data (protocol 30+ with `CF_CHKSUM_SEED_FIX`).
     Proper(i32),
     /// Seed hashed after data (legacy protocol behavior).
     Legacy(i32),

@@ -11,7 +11,7 @@
 //!
 //! # Upstream Reference
 //!
-//! `authenticate.c` - permission checks for secrets files.
+//! `authenticate.c:check_secret()` - permission checks for secrets files.
 
 use std::io;
 use std::path::Path;
@@ -21,8 +21,10 @@ use std::path::Path;
 /// On Unix, verifies the file is not other-accessible (`mode & 0o006`).
 /// When the daemon runs as root, also verifies the file is owned by root.
 ///
-/// upstream: authenticate.c - `(st.st_mode & 06) != 0` rejects other-accessible
-/// files; `st.st_uid != ROOT_UID` rejects non-root-owned files when running as root.
+/// upstream: authenticate.c:172-179 `check_secret()` - `(st.st_mode & 06) != 0`
+/// rejects other-accessible files; `st.st_uid != ROOT_UID` rejects non-root-owned
+/// files when running as root. Upstream applies both only under `strict modes`;
+/// that gate is the caller's responsibility here.
 #[cfg(unix)]
 pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
     use std::fs;
@@ -31,7 +33,7 @@ pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
     let metadata = fs::metadata(path)?;
     let mode = metadata.permissions().mode();
 
-    // upstream: authenticate.c - reject if other-readable or other-writable
+    // upstream: authenticate.c:173 - reject if other-readable or other-writable
     if (mode & 0o006) != 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -42,7 +44,7 @@ pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
         ));
     }
 
-    // upstream: authenticate.c - when running as root, secrets must be owned by root
+    // upstream: authenticate.c:176 - when running as root, secrets must be owned by root
     let my_uid = nix::unistd::getuid();
     if my_uid.is_root() && metadata.uid() != 0 {
         return Err(io::Error::new(
@@ -57,7 +59,7 @@ pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// No-op permission check on non-Unix platforms (matching upstream rsync).
+/// No-op permission check on non-Unix platforms.
 #[cfg(not(unix))]
 pub fn check_secrets_file_permissions(_path: &Path) -> io::Result<()> {
     Ok(())

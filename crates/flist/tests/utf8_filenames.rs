@@ -9,7 +9,7 @@
 //! - Right-to-left scripts (Arabic, Hebrew)
 //! - Mixed scripts in same filename
 //!
-//! Reference: rsync 3.4.1 flist.c
+//! Reference: rsync 3.5.1 flist.c
 //!
 //! Note: Some tests may be skipped on filesystems that don't support certain
 //! Unicode characters in filenames.

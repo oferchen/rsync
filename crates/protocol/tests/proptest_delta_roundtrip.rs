@@ -11,9 +11,7 @@ use protocol::wire::{
 };
 use std::io::Cursor;
 
-// ---------------------------------------------------------------------------
 // Proptest strategies for DeltaOp generation
-// ---------------------------------------------------------------------------
 
 /// Strategy for generating arbitrary literal data (0..=4096 bytes).
 fn arb_literal() -> impl Strategy<Value = DeltaOp> {
@@ -47,9 +45,7 @@ fn arb_delta_ops() -> impl Strategy<Value = Vec<DeltaOp>> {
     prop::collection::vec(arb_delta_op(), 0..=32)
 }
 
-// ---------------------------------------------------------------------------
 // Internal format: single DeltaOp roundtrip
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// A single Copy operation roundtrips through the internal opcode format.
@@ -82,9 +78,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Internal format: complete delta stream roundtrip
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// A complete delta stream roundtrips through the internal format.
@@ -112,9 +106,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Upstream token format: individual token roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// A literal written in token format reads back correctly.
@@ -163,9 +155,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Upstream token format: complete stream roundtrip
-// ---------------------------------------------------------------------------
 
 /// Reads a full token stream back into `DeltaOp` values.
 ///
@@ -265,9 +255,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Edge cases
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// Zero-length literal roundtrips through the internal format.

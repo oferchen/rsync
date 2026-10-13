@@ -16,7 +16,7 @@ use std::io;
 /// `exit_cleanup(RERR_UNSUPPORTED)` (exit 4, `compat.c:406`).
 ///
 /// Upstream prints three lines, but the two list-detail lines are guarded by
-/// `if (!am_server || !do_negotiated_strings)` (`compat.c:382`):
+/// `if (!am_server || !do_negotiated_strings)` (`compat.c:384`):
 ///
 /// ```text
 /// Failed to negotiate a <kind> choice.
@@ -25,12 +25,12 @@ use std::io;
 /// ```
 ///
 /// - `<peer>` is `Client` on the server and `Server` on the client
-///   (`compat.c:384` `am_server ? "Client" : "Server"`); `peer_list` is the
+///   (`compat.c:388` `am_server ? "Client" : "Server"`); `peer_list` is the
 ///   list received from - or, on the non-negotiated path, the default assumed
 ///   of - the peer (upstream's `tmpbuf`).
-/// - `<self>` is the opposite label (`compat.c:405`); its list is our own
-///   candidate order with each name space-prefixed (`compat.c:394-402`), or
-///   ` INVALID` when no candidate survived (`compat.c:403-404`).
+/// - `<self>` is the opposite label (`compat.c:403`); its list is our own
+///   candidate order with each name space-prefixed (`compat.c:391-400`), or
+///   ` INVALID` when no candidate survived (`compat.c:401-402`).
 ///
 /// On the server's negotiated path (`am_server && do_negotiated_strings`) the
 /// two list lines are suppressed, matching upstream, so the server aborts on
@@ -60,19 +60,19 @@ pub(super) fn negotiation_failure(
         msg.push_str(" list: ");
         msg.push_str(peer_list);
 
-        // upstream: compat.c:394-402 - rebuild our own list from the saw
+        // upstream: compat.c:391-400 - rebuild our own list from the saw
         // ordinals, each surviving name written with a leading space.
         let mut own = String::new();
         for name in own_candidates {
             own.push(' ');
             own.push_str(name);
         }
-        // upstream: compat.c:403-404 - an empty rebuild becomes " INVALID".
+        // upstream: compat.c:401-402 - an empty rebuild becomes " INVALID".
         if own.is_empty() {
             own.push_str(" INVALID");
         }
 
-        // upstream: compat.c:405 rprintf(FERROR, "%s list:%s\n", self, tmpbuf) -
+        // upstream: compat.c:403 rprintf(FERROR, "%s list:%s\n", self, tmpbuf) -
         // no space after the colon; the rebuilt list already leads with one.
         msg.push('\n');
         msg.push_str(own_label);

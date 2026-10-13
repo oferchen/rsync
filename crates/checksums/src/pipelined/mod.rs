@@ -46,6 +46,10 @@
 //! - I/O and computation times are balanced
 //! - Block sizes are large enough to amortize synchronization overhead
 //! - The underlying storage is fast (SSD/NVMe)
+//!
+//! Deviation from upstream: upstream reads and hashes sequentially through
+//! `map_ptr()` in `checksum.c:file_checksum()` and `generator.c:generate_and_send_sums()`;
+//! the overlapped reader is an oc-only performance design with identical digests.
 
 mod checksums;
 mod config;

@@ -1,5 +1,4 @@
-//! High-concurrency stress coverage for the Windows IOCP disk path
-//! (task #1871).
+//! High-concurrency stress coverage for the Windows IOCP disk path.
 //!
 //! These cases exercise the IOCP submission and completion machinery under
 //! workloads that are large enough to stress kernel-pool limits and the

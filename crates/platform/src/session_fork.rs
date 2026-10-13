@@ -3,7 +3,8 @@
 //! Upstream rsync forks a child for every accepted connection so that
 //! per-session state - most importantly `chroot()` and the working directory,
 //! which are process-wide - cannot leak into the next connection.
-//! upstream: `main.c` accept loop, `clientserver.c:978-987` `rsync_module()`.
+//! upstream: `socket.c:695` `start_accept_loop()`, which forks per connection
+//! at socket.c:761.
 //!
 //! This module owns the `fork`/`waitpid` calls so that `crates/daemon`, which
 //! is `#![deny(unsafe_code)]`, can split connections through a safe API.

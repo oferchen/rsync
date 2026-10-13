@@ -13,9 +13,7 @@ use protocol::{
 };
 use std::io::Cursor;
 
-// ---------------------------------------------------------------------------
 // Varint (i32) encoding size boundaries
-// ---------------------------------------------------------------------------
 
 /// Returns the expected encoding length for a given i32 value.
 ///
@@ -86,9 +84,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Varint (i32) roundtrip with u32 bit patterns
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// All u32 bit patterns roundtrip through varint when reinterpreted as i32.
@@ -129,9 +125,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Longint (i64) property tests
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// All i64 values roundtrip through longint encoding.
@@ -184,9 +178,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Varlong (i64 with min_bytes) property tests
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// Varlong with min_bytes=3 roundtrips file-size-range values.
@@ -247,9 +239,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Explicit boundary value tests as property tests (parameterized)
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// All specified boundary values roundtrip through varint.
@@ -305,9 +295,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Cross-codec consistency
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// Values that fit in both varint (i32) and longint inline range produce
@@ -345,9 +333,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Monotonicity: larger non-negative values never encode to fewer bytes
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// For non-negative i32 values, a larger value never encodes to fewer bytes
@@ -384,9 +370,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Varlong30 (protocol 30+ alias) property tests
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// write_varlong30/read_varlong30 roundtrips for arbitrary non-negative values.
@@ -415,9 +399,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Varint30 (protocol-versioned i32) property tests
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// write_varint30_int/read_varint30_int roundtrips for protocol >= 30 (varint mode).

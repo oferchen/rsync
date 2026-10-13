@@ -3,7 +3,7 @@ use crate::chmod::ChmodModifiers;
 
 #[test]
 fn attrs_flags_constants_match_upstream() {
-    // upstream rsync.h:192-196
+    // upstream rsync.h:222-226
     assert_eq!(AttrsFlags::REPORT.bits(), 1 << 0);
     assert_eq!(AttrsFlags::SKIP_MTIME.bits(), 1 << 1);
     assert_eq!(AttrsFlags::ACCURATE_TIME.bits(), 1 << 2);
@@ -114,7 +114,7 @@ fn attrs_flags_individual_predicate_methods() {
 
 #[test]
 fn attrs_flags_upstream_set_file_attrs_scenario() {
-    // Mirrors upstream rsync.c:583-593 logic for omit_dir_times / omit_link_times
+    // Mirrors upstream rsync.c:719-721 logic for omit_dir_times / omit_link_times
     // When dir/link times are omitted, all three time-skip flags are set.
     let omit_times = AttrsFlags::SKIP_MTIME | AttrsFlags::SKIP_ATIME | AttrsFlags::SKIP_CRTIME;
     assert_eq!(omit_times, AttrsFlags::SKIP_ALL_TIMES);
@@ -128,7 +128,7 @@ fn attrs_flags_upstream_set_file_attrs_scenario() {
 
 #[test]
 fn attrs_flags_upstream_accurate_time_with_report() {
-    // Mirrors upstream generator.c:1827 where quick-check match combines
+    // Mirrors upstream generator.c:2246 where quick-check match combines
     // maybe_ATTRS_REPORT and maybe_ATTRS_ACCURATE_TIME.
     let flags = AttrsFlags::REPORT | AttrsFlags::ACCURATE_TIME;
     assert!(flags.report());
@@ -138,7 +138,7 @@ fn attrs_flags_upstream_accurate_time_with_report() {
 
 #[test]
 fn attrs_flags_upstream_receiver_skip_all_when_not_ok_to_set_time() {
-    // Mirrors upstream rsync.c:749 and :774 where ok_to_set_time is false:
+    // Mirrors upstream rsync.c:912 and :938 where ok_to_set_time is false:
     // ATTRS_SKIP_MTIME | ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME
     let flags = AttrsFlags::SKIP_MTIME | AttrsFlags::SKIP_ATIME | AttrsFlags::SKIP_CRTIME;
     assert!(flags.skip_mtime());

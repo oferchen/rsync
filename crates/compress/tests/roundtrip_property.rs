@@ -16,7 +16,7 @@
 //! that the decoder reassembles the original bytes regardless of the chunk
 //! and flush layout. This mirrors the upstream contract documented in
 //! `token.c:send_token()` (encoder writes incrementally with periodic
-//! flushes) and `token.c:simple_recv_token()` (decoder reassembles tokens
+//! flushes) and `token.c:recv_token()` (decoder reassembles tokens
 //! incrementally on the receiving side).
 
 use std::io::Read;
@@ -170,7 +170,7 @@ fn zlib_round_trip_every_level_every_shape() {
 #[test]
 fn zlib_streaming_flush_boundaries_round_trip() {
     // upstream: token.c:send_token() emits compressed bytes incrementally,
-    // and token.c:simple_recv_token() reassembles them on the receiving end.
+    // and token.c:recv_token() reassembles them on the receiving end.
     // The implementation must therefore tolerate arbitrary write/flush layouts.
     for (level_name, level) in zlib_levels() {
         // Restrict the streaming sweep to a representative set of sizes to keep
@@ -247,7 +247,7 @@ fn zstd_round_trip_every_level_every_shape() {
 #[cfg(feature = "zstd")]
 #[test]
 fn zstd_streaming_flush_boundaries_round_trip() {
-    // upstream: token.c:send_token() / token.c:simple_recv_token() - the
+    // upstream: token.c:send_token() / token.c:recv_token() - the
     // streaming contract requires the decoder to recover the original bytes
     // regardless of how the encoder partitioned its writes or where flushes
     // landed in the stream.

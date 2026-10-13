@@ -4,7 +4,7 @@
 //! correctly, including individual flags, multiple flags, numeric levels,
 //! and special keywords like ALL and NONE.
 //!
-//! Reference: rsync 3.4.1 options.c for --debug flag parsing.
+//! Reference: rsync 3.5.1 options.c for --debug flag parsing.
 
 use logging::{DebugFlag, VerbosityConfig, apply_debug_flag, debug_gte, drain_events, init};
 

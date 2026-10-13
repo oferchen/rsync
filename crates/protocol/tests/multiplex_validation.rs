@@ -3,7 +3,7 @@
 //! These tests validate the wire-level multiplexing protocol used by rsync to
 //! carry control messages alongside file data. The tests ensure frame encoding,
 //! demultiplexing, vectored I/O, and all message tags work correctly according
-//! to upstream rsync 3.4.1 semantics.
+//! to upstream rsync 3.5.1 semantics.
 
 use protocol::{MessageCode, MessageFrame, recv_msg, recv_msg_into, send_frame, send_msg};
 use std::io::Cursor;

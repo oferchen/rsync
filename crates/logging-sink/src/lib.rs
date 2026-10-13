@@ -97,7 +97,7 @@ pub use sink::{LineModeGuard, MessageSink, TryMapWriterError};
 /// when a connection actually opens syslog lives in the Unix-only
 /// [`syslog::SyslogFacility`].
 ///
-/// upstream: loadparm.c enum_syslog_facility[]
+/// upstream: loadparm.c:98 enum_syslog_facility[]
 const SYSLOG_FACILITY_NAMES: &[&str] = &[
     "auth", "authpriv", "cron", "daemon", "ftp", "kern", "lpr", "mail", "news", "security",
     "syslog", "user", "uucp", "local0", "local1", "local2", "local3", "local4", "local5", "local6",
@@ -112,7 +112,7 @@ const SYSLOG_FACILITY_NAMES: &[&str] = &[
 /// point for the daemon's `syslog facility` directive; unknown names are
 /// rejected here before a module override is recorded.
 ///
-/// upstream: loadparm.c:456 `case P_ENUM` walks `enum_syslog_facility[]`.
+/// upstream: loadparm.c:575-586 `case P_ENUM` walks `enum_syslog_facility[]`.
 pub fn canonical_syslog_facility(name: &str) -> Option<&'static str> {
     SYSLOG_FACILITY_NAMES
         .iter()

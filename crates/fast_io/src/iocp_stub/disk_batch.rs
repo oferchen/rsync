@@ -26,6 +26,10 @@ pub struct IocpDiskBatch {
 
 impl IocpDiskBatch {
     /// Always returns an `Unsupported` error on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn new(_config: &IocpConfig) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -39,6 +43,10 @@ impl IocpDiskBatch {
     }
 
     /// Begins a new file for writing (always fails on this platform).
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn begin_file(&mut self, _file: std::fs::File) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -47,6 +55,10 @@ impl IocpDiskBatch {
     }
 
     /// Writes data to the current file (always fails on this platform).
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn write_data(&mut self, _data: &[u8]) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -55,6 +67,10 @@ impl IocpDiskBatch {
     }
 
     /// Flushes buffered data (always fails on this platform).
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn flush(&mut self) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -63,6 +79,10 @@ impl IocpDiskBatch {
     }
 
     /// Commits the current file (always fails on this platform).
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn commit_file(&mut self, _do_fsync: bool) -> io::Result<(std::fs::File, u64)> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,

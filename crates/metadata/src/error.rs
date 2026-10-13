@@ -67,9 +67,9 @@ impl MetadataError {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:682-684` - `"%s %s failed"` with `chown` or `chgrp`
-    /// - `rsync.c:781` - `"failed to set times on %s"`
-    /// - `rsync.c:811-813` - `"failed to set permissions on %s"`
+    /// - `rsync.c:685-687` - `"%s %s failed"` with `chown` or `chgrp`
+    /// - `rsync.c:784` - `"failed to set times on %s"`
+    /// - `rsync.c:814-816` - `"failed to set permissions on %s"`
     /// - `log.c:499-500` - `rsyserr()` appends `": %s (%d)"`
     #[must_use]
     pub fn set_file_attrs_text(&self, full_fname: &str) -> Option<String> {

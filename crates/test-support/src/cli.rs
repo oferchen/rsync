@@ -184,7 +184,7 @@ impl OcRsyncCliRunner {
     ///
     /// Some rsync behaviour reads the ambient umask, so a test asserting the
     /// resulting mode bits is only meaningful once the umask is pinned. The
-    /// clearest case is `--chmod` with a bare `+w`: `chmod.c:92` computes
+    /// clearest case is `--chmod` with a bare `+w`: `chmod.c:92` parse_chmod() computes
     /// `bits = (where * what) & ~orig_umask`, so under umask 022 a `+w` on an
     /// already-user-writable directory adds *nothing* and the assertion holds
     /// vacuously, while under 002 it adds group-write.
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn binary_not_found_variant_when_unlocatable() {
-        // Why: Rule 12 - when no binary can be located at all, run must yield
+        // Why: when no binary can be located at all, run must yield
         // the dedicated BinaryNotFound variant so callers can distinguish
         // "not built" from "spawn failed", never a silent success.
         let mut runner = OcRsyncCliRunner::new();

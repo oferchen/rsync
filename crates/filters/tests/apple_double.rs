@@ -108,8 +108,8 @@ fn explicit_include_overrides_apple_double() {
 
 /// Perishable rules apply during transfers and also protect a matching entry
 /// from the top-level `--delete` scan, matching `--cvs-exclude` semantics
-/// (upstream exclude.c:1044 only skips perishable rules once `ignore_perishable`
-/// is set inside a wholly-deleted directory, delete.c:147).
+/// (upstream exclude.c:1193-1194 only skips perishable rules once `ignore_perishable`
+/// is set inside a wholly-deleted directory, delete.c:208).
 #[test]
 fn perishable_rules_protect_top_level_deletion() {
     let set = FilterSet::from_rules_with_apple_double(Vec::<FilterRule>::new(), true).unwrap();

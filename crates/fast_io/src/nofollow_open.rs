@@ -1,7 +1,8 @@
 //! Receiver-side basis file open with `O_NOFOLLOW` on the basename.
 //!
 //! Mirrors upstream rsync's `do_open_at()` / `secure_relative_open()`
-//! dirname/basename split in `syscall.c:844` and `syscall.c:1908`: the
+//! dirname/basename split (`syscall.c:1636` `do_open_at()`, `syscall.c:3243`
+//! `secure_relative_open()`): the
 //! parent directory is opened with normal symlink resolution (so a
 //! legitimate directory symlink such as the one created by
 //! `--copy-dirlinks` continues to work) while the final path component
@@ -64,7 +65,7 @@ use std::path::Path;
 /// is rejected with `ELOOP`.
 ///
 /// Top-level paths (no `/`) short-circuit to [`File::open`] because
-/// there is no dirname to split, matching upstream `syscall.c:866`.
+/// there is no dirname to split, matching upstream `syscall.c:1672-1674`.
 ///
 /// # Errors
 ///
@@ -116,7 +117,7 @@ mod imp {
             return open_nonblock(path);
         };
 
-        // Upstream `syscall.c:866`: `if (!slash) return do_open(...)`.
+        // Upstream `syscall.c:1672-1674`: `if (!slash) return do_open(...)`.
         // Treat the empty parent ("foo" with no slash) and the lone
         // root component identically: there is no dirname to split.
         let dirname = match path.parent() {

@@ -124,10 +124,12 @@ impl ProtocolVersion {
         }
     }
 
-    /// The newest protocol version supported by upstream rsync 3.4.4.
+    /// The newest supported protocol version, matching upstream rsync 3.5.1.
     pub const NEWEST: ProtocolVersion = ProtocolVersion::new_const(NEWEST_SUPPORTED_PROTOCOL);
 
-    /// The oldest protocol version supported by upstream rsync 3.4.4.
+    /// The oldest supported protocol version.
+    ///
+    /// Deviation from upstream: rsync.h `MIN_PROTOCOL_VERSION` is 20.
     pub const OLDEST: ProtocolVersion = ProtocolVersion::new_const(OLDEST_SUPPORTED_PROTOCOL);
 
     /// Protocol version at which rsync switched from the legacy ASCII
@@ -375,6 +377,15 @@ impl ProtocolVersion {
 
     /// Converts a peer-advertised version into the negotiated protocol
     /// version.
+    ///
+    /// Values above [`ProtocolVersion::NEWEST`] but within
+    /// `MAX_PROTOCOL_VERSION` (40) are clamped to the newest supported
+    /// version, as upstream `compat.c:setup_protocol()` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NegotiationError::UnsupportedVersion`] when `value` is zero,
+    /// above 40, or below [`ProtocolVersion::OLDEST`].
     #[inline]
     pub fn from_peer_advertisement(value: u32) -> Result<Self, NegotiationError> {
         if value == 0 {

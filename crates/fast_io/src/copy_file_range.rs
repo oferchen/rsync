@@ -105,6 +105,10 @@ pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io:
 /// Passing that buffer here eliminates the 256KB `Vec` allocation that the
 /// standard fallback path creates for every file, which is significant for
 /// workloads with many small files (e.g., 100K x 100B).
+///
+/// # Errors
+///
+/// Returns any I/O error from the zero-copy syscall or the read/write fallback.
 pub fn copy_file_contents_buffered(
     source: &File,
     destination: &File,

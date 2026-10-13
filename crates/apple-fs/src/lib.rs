@@ -132,8 +132,7 @@ pub fn mknod(path: &Path, mode: libc::mode_t, device: libc::dev_t) -> io::Result
 ///
 /// # Errors
 ///
-/// Always returns an [`io::ErrorKind::Unsupported`] error to mirror the
-/// behaviour of upstream rsync on unsupported targets.
+/// Always returns an [`io::ErrorKind::Unsupported`] error.
 pub fn mkfifo(_path: &Path, _mode: ModeType) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -163,15 +162,13 @@ pub fn mknod(_path: &Path, _mode: ModeType, _device: DeviceType) -> io::Result<(
 /// may have different byte representations, causing delete-pass and quick-check
 /// filename comparisons to fail.
 ///
-/// On macOS this normalizes both the `read_dir` result and the file-list entry
-/// name to NFC before comparison. On all other platforms this is a no-op that
-/// returns the input unchanged, avoiding any allocation overhead.
+/// On macOS a UTF-8 name is returned in NFC; ASCII and non-UTF-8 names are
+/// returned unchanged. Callers normalize both sides of a comparison (the
+/// `read_dir` name and the file-list name). On all other platforms this is a
+/// no-op that returns the input unchanged.
 ///
-/// # Upstream Reference
-///
-/// Upstream rsync handles this via `--iconv` when transferring between
-/// systems with different filename encodings. This function provides the
-/// equivalent normalization for the common macOS NFD case.
+/// Deviation from upstream: upstream rsync never normalizes names implicitly;
+/// it converts filename encodings only when `--iconv` is given.
 #[cfg(target_os = "macos")]
 pub fn normalize_filename(name: &std::ffi::OsStr) -> std::ffi::OsString {
     use std::os::unix::ffi::OsStrExt;

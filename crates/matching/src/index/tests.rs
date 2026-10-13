@@ -7,7 +7,7 @@ use std::num::NonZeroU8;
 /// A basis smaller than one block still yields a usable index.
 ///
 /// Upstream runs `build_hash_table()` + `hash_search()` for any `s->count > 0`
-/// (`match.c:match_sums()`), and the short-block rule at `match.c:222-224`
+/// (`match.c:match_sums()`), and the short-block rule at `match.c:254-256`
 /// matches that lone block. Refusing to build the index here made the sender
 /// re-send every sub-block-size file entirely as literal data.
 #[test]
@@ -96,7 +96,7 @@ fn find_match_window_handles_split_buffers() {
 
 /// The counted probe must tally `hash_hits`/`false_alarms` for the `-vv`
 /// `total:` line WITHOUT changing which block it matches: upstream's
-/// `hash_search()` (match.c:180-244) maintains the counters as a pure side
+/// `hash_search()` (match.c:163-378) maintains the counters as a pure side
 /// effect of the same scan. A counted probe that returned a different index
 /// than the uncounted one would let a debug-only diagnostic alter the bytes the
 /// delta reuses, so this pins both the counts and the returned index.
@@ -144,7 +144,7 @@ fn find_match_window_counted_tallies_probe_diagnostics() {
 
 /// A window whose rolling sum belongs to no basis block must not be counted as
 /// a hash hit: upstream only bumps `hash_hits` once the coarse lookup admits a
-/// candidate (match.c:202), so an unrelated window is rejected before any
+/// candidate (match.c:228), so an unrelated window is rejected before any
 /// counter moves.
 #[test]
 fn find_match_window_counted_leaves_counters_untouched_on_a_clean_miss() {

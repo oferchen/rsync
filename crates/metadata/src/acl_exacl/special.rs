@@ -27,12 +27,12 @@ const SPECIAL_MODE_BITS: u32 = 0o7000;
 ///
 /// # Upstream Reference
 ///
-/// - `acls.c:924-932` `change_sacl_perms()` - keeps the special bits out of the
+/// - `acls.c:1087-1162` `change_sacl_perms()` - keeps the special bits out of the
 ///   ACL-derived mode (`(old_mode & ~ACCESSPERMS) | (mode & ACCESSPERMS)`) and,
 ///   under `SMB_ACL_LOSES_SPECIAL_MODE_BITS`, forces a later chmod to restore
 ///   any lost setid bits.
-/// - `rsync.c:659-660` `set_file_attrs()` - the final
-///   `do_chmod_at(fname, new_mode)` after `set_acl()` re-applies any special
+/// - `rsync.c:806-820` `set_file_attrs()` - the final
+///   `do_chmod_at(fname, new_mode)` after `set_acl_fdat()` re-applies any special
 ///   bit the ACL application dropped.
 pub(super) fn restore_special_mode_bits(path: &Path, mode: u32) -> Result<(), MetadataError> {
     let special = mode & SPECIAL_MODE_BITS;
@@ -47,7 +47,7 @@ pub(super) fn restore_special_mode_bits(path: &Path, mode: u32) -> Result<(), Me
         .permissions()
         .mode();
 
-    // upstream: rsync.c:659 - the chmod is skipped when the on-disk mode already
+    // upstream: rsync.c:807 - the chmod is skipped when the on-disk mode already
     // matches, mirroring `BITS_EQUAL(sxp->st.st_mode, new_mode, CHMOD_BITS)`.
     if current & SPECIAL_MODE_BITS == special {
         return Ok(());

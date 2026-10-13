@@ -1,8 +1,8 @@
 //! Integration tests for `--debug=CHDIR` producer emissions exposed by the
 //! `protocol::chdir` helper module.
 //!
-//! The trace helper wraps upstream rsync 3.4.1's sole `DEBUG_GTE(CHDIR, 1)`
-//! emission from `util1.c:1265-1266` (`"[%s] change_dir(%s)\n"`). Upstream
+//! The trace helper wraps upstream rsync's sole `DEBUG_GTE(CHDIR, 1)`
+//! emission from `util1.c:1492-1493` (`"[%s] change_dir(%s)\n"`). Upstream
 //! routes every successful `chdir()` syscall through `change_dir`, so this
 //! single helper covers the entire CHDIR producer surface.
 //!
@@ -38,7 +38,7 @@ fn chdir_messages() -> Vec<String> {
 }
 
 /// Role tokens match upstream `who_am_i()` output byte-for-byte
-/// (`rsync.c:823-830`).
+/// (`rsync.c:987-995`).
 #[test]
 fn role_tokens_match_upstream_who_am_i() {
     assert_eq!(ChdirRole::Client.as_str(), "client");
@@ -50,7 +50,7 @@ fn role_tokens_match_upstream_who_am_i() {
 }
 
 /// `trace_change_dir` fires the upstream-format
-/// `util1.c:1265-1266` emission at level 1 through the real logging channel.
+/// `util1.c:1492-1493` emission at level 1 through the real logging channel.
 #[test]
 fn change_dir_emits_under_debug_chdir_level_1() {
     init_chdir(1);
@@ -64,7 +64,7 @@ fn change_dir_emits_under_debug_chdir_level_1() {
 
 /// The daemon's chroot-jail setup uses the upstream pre-fork-receiver role
 /// token (`"Receiver"`, capitalised) and a post-chroot `curr_dir` of `"/"`.
-/// This mirrors upstream `clientserver.c:987` `change_dir(module_chdir,
+/// This mirrors upstream `clientserver.c:1059` `change_dir(module_chdir,
 /// CD_NORMAL)` where, after `chroot()`, the cleaned absolute path becomes
 /// the new root.
 #[test]

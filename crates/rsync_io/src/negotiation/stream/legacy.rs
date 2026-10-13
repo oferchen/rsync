@@ -41,6 +41,10 @@ impl<R: Read> NegotiatedStream<R> {
     /// [`protocol::parse_legacy_daemon_greeting_bytes`]. On success the negotiated
     /// [`ProtocolVersion`] is returned while leaving any bytes after the newline buffered for
     /// subsequent reads.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the line cannot be read or is not a valid `@RSYNCD:` greeting.
     #[doc(alias = "@RSYNCD")]
     pub fn read_and_parse_legacy_daemon_greeting(
         &mut self,
@@ -55,6 +59,10 @@ impl<R: Read> NegotiatedStream<R> {
     /// This mirrors [`Self::read_and_parse_legacy_daemon_greeting`] but exposes the structured
     /// [`LegacyDaemonGreeting`] used by higher layers to inspect the advertised protocol number,
     /// subprotocol, and digest list.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the line cannot be read or is not a valid `@RSYNCD:` greeting.
     #[doc(alias = "@RSYNCD")]
     pub fn read_and_parse_legacy_daemon_greeting_details<'a>(
         &mut self,
@@ -70,6 +78,10 @@ impl<R: Read> NegotiatedStream<R> {
     /// replaying transport wrapper so callers can continue using [`Read`] after the buffered
     /// negotiation prefix has been replayed. The returned [`LegacyDaemonMessage`] borrows the
     /// supplied buffer, matching the lifetime semantics of the parser from the protocol crate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the line cannot be read or is not a recognised daemon message.
     #[doc(alias = "@RSYNCD")]
     pub fn read_and_parse_legacy_daemon_message<'a>(
         &mut self,
@@ -84,6 +96,10 @@ impl<R: Read> NegotiatedStream<R> {
     /// Empty payloads are returned as `Some("")`, mirroring the behaviour of
     /// [`protocol::parse_legacy_error_message_bytes`]. Any parsing failure is converted into
     /// [`io::ErrorKind::InvalidData`], matching the conversion performed by the protocol crate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the line cannot be read or cannot be parsed.
     #[doc(alias = "@ERROR")]
     pub fn read_and_parse_legacy_daemon_error_message<'a>(
         &mut self,
@@ -94,6 +110,10 @@ impl<R: Read> NegotiatedStream<R> {
     }
 
     /// Reads and parses a legacy daemon warning line of the form `@WARNING: ...`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the line cannot be read or cannot be parsed.
     #[doc(alias = "@WARNING")]
     pub fn read_and_parse_legacy_daemon_warning_message<'a>(
         &mut self,

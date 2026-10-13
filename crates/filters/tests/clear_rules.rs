@@ -4,7 +4,7 @@
 //! previously defined filter rules. Clear rules can target specific sides
 //! (sender/receiver) and affect both include/exclude and protect/risk rules.
 //!
-//! Reference: rsync 3.4.1 exclude.c lines 1393-1401 for clear rule handling.
+//! Reference: rsync 3.5.1 exclude.c lines 1542-1551 for clear rule handling.
 
 use filters::{FilterAction, FilterRule, FilterSet};
 use std::path::Path;

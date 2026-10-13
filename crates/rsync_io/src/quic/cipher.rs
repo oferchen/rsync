@@ -132,9 +132,9 @@ fn probed(suite: SupportedCipherSuite) -> SupportedCipherSuite {
 /// Client-side QUIC cipher-suite family override (`--quic-cipher`).
 ///
 /// Fixes the negotiated 1-RTT (application) AEAD to one family. Unset (`None`
-/// at the call sites) leaves the CPU-adaptive default in [`client_provider`]
+/// at the call sites) leaves the CPU-adaptive default in `client_provider`
 /// untouched. Because QUIC always protects Initial packets with AES-128-GCM
-/// (RFC 9001 section 5.2), that suite is always offered; see [`Self::suites`]
+/// (RFC 9001 section 5.2), that suite is always offered; see `Self::suites`
 /// for how each family still forces the 1-RTT choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicCipher {
@@ -154,6 +154,10 @@ impl QuicCipher {
     /// Parses a cipher family name (`--quic-cipher`), failing loudly on
     /// anything but the two recognized names (repo policy: never silently fall
     /// back on a bad argument).
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::ErrorKind::InvalidInput` for any name other than `aes` or `chacha20`.
     pub fn parse(value: &str) -> io::Result<Self> {
         match value.trim() {
             "aes" => Ok(Self::Aes),

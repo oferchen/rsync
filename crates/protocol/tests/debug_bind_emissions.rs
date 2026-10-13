@@ -1,9 +1,10 @@
 //! Integration tests for `--debug=BIND` producer emissions exposed by the
 //! `protocol::bind` helper module.
 //!
-//! The trace helpers wrap upstream rsync 3.4.1's per-address-family
-//! `socket(2)` and `bind(2)` failure messages from `socket.c:440-478`,
-//! flushed through the `BIND` debug gate at `socket.c:487-494`. These
+//! The trace helpers wrap upstream rsync's per-address-family
+//! `socket(2)` and `bind(2)` failure messages from `socket.c:590-631`
+//! (`open_socket_in()`), flushed through the `BIND` debug gate at
+//! `socket.c:643-645`. These
 //! tests drive each helper through the real [`logging`] channel - the
 //! same path users hit when running `oc-rsyncd --debug=BIND`.
 
@@ -45,7 +46,7 @@ fn fake_error(msg: &str) -> io::Error {
 }
 
 /// Pins the level 1 `bind() failed:` shape against upstream
-/// `socket.c:471-473`.
+/// `socket.c:622-626`.
 #[test]
 fn bind_failure_matches_upstream_format_for_ipv6() {
     init_bind(1);
@@ -75,7 +76,7 @@ fn bind_failure_matches_upstream_format_for_ipv4() {
 }
 
 /// Pins the level 1 `socket() failed:` shape against upstream
-/// `socket.c:441-444`.
+/// `socket.c:594-597`.
 #[test]
 fn socket_failure_matches_upstream_format() {
     init_bind(1);

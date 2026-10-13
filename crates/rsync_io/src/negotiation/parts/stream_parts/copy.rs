@@ -28,11 +28,19 @@ impl<R> NegotiatedStreamParts<R> {
     ///     .expect("vector can reserve space for replay bytes");
     /// assert_eq!(replay.as_slice(), parts.buffered());
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the destination buffer cannot grow to hold the bytes.
     pub fn copy_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         NegotiationBufferAccess::copy_buffered_into_vec(self, target)
     }
 
     /// Copies the unread portion of the buffered negotiation data into a caller-provided vector without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the destination buffer cannot grow to hold the bytes.
     pub fn copy_buffered_remaining_into_vec(
         &self,
         target: &mut Vec<u8>,
@@ -47,11 +55,19 @@ impl<R> NegotiatedStreamParts<R> {
     /// accumulate handshake transcripts inside pre-existing log buffers. Additional capacity is
     /// reserved via [`Vec::try_reserve`]; on success the appended length matches the buffered
     /// payload and the replay cursor remains untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the destination buffer cannot grow to hold the bytes.
     pub fn extend_buffered_into_vec(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         NegotiationBufferAccess::extend_buffered_into_vec(self, target)
     }
 
     /// Appends the unread portion of the buffered negotiation transcript to `target` without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the destination buffer cannot grow to hold the bytes.
     pub fn extend_buffered_remaining_into_vec(
         &self,
         target: &mut Vec<u8>,
@@ -65,6 +81,10 @@ impl<R> NegotiatedStreamParts<R> {
     /// decompose the stream into parts to observe the sniffed prefix and remainder while preserving
     /// the replay state. The destination is cleared before data is appended; if additional capacity
     /// is required a [`TryReserveError`] is returned and the original contents remain untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the destination buffer cannot grow to hold the bytes.
     pub fn copy_buffered_into(&self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         NegotiationBufferAccess::copy_buffered_into(self, target)
     }
@@ -115,6 +135,10 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Copies the buffered negotiation data into the caller-provided slice without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BufferedCopyTooSmall` when the target is too small for the buffered bytes.
     pub fn copy_buffered_into_slice(
         &self,
         target: &mut [u8],
@@ -123,6 +147,10 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Copies the unread portion of the buffered negotiation data into `target` without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BufferedCopyTooSmall` when the target is too small for the buffered bytes.
     pub fn copy_buffered_remaining_into_slice(
         &self,
         target: &mut [u8],
@@ -131,6 +159,10 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Copies the buffered negotiation data into a caller-provided array without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BufferedCopyTooSmall` when `N` is smaller than the buffered bytes.
     pub fn copy_buffered_into_array<const N: usize>(
         &self,
         target: &mut [u8; N],
@@ -139,6 +171,10 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Copies the unread portion of the buffered negotiation data into a caller-provided array without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BufferedCopyTooSmall` when `N` is smaller than the buffered bytes.
     pub fn copy_buffered_remaining_into_array<const N: usize>(
         &self,
         target: &mut [u8; N],
@@ -147,11 +183,19 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Streams the buffered negotiation data into the provided writer without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns any I/O error reported by `target`.
     pub fn copy_buffered_into_writer<W: Write>(&self, target: &mut W) -> io::Result<usize> {
         NegotiationBufferAccess::copy_buffered_into_writer(self, target)
     }
 
     /// Streams the unread portion of the buffered negotiation data into the provided writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns any I/O error reported by `target`.
     pub fn copy_buffered_remaining_into_writer<W: Write>(
         &self,
         target: &mut W,
@@ -160,6 +204,10 @@ impl<R> NegotiatedStreamParts<R> {
     }
 
     /// Copies the unread portion of the buffered negotiation data into the provided vectored buffers without consuming it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BufferedCopyTooSmall` when the buffers cannot hold the unread bytes.
     pub fn copy_buffered_remaining_into_vectored(
         &self,
         bufs: &mut [IoSliceMut<'_>],

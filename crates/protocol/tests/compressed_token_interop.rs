@@ -1,6 +1,6 @@
 // `| 0` used deliberately in wire format constants to document the offset field.
 #![allow(clippy::identity_op)]
-//! Compressed token interop tests against upstream rsync 3.4.1.
+//! Compressed token interop tests against upstream rsync 3.5.1.
 //!
 //! These tests verify wire compatibility with upstream rsync's compressed token
 //! format defined in `token.c`. The compressed token stream uses DEFLATED_DATA
@@ -472,7 +472,7 @@ fn encoder_consecutive_large_offset_uses_tokenrun_long() {
 
 /// Non-consecutive blocks produce separate token encodings.
 /// Blocks 0, then 5: first run is 0 (relative), second is 5 (relative to last_run_end=0).
-/// After first run: last_run_end = 0 (last_token, matching upstream token.c:398).
+/// After first run: last_run_end = 0 (last_token, matching upstream token.c:410).
 /// Second run: r = 5 - 0 = 5 which fits in 6 bits.
 #[test]
 fn encoder_non_consecutive_blocks_separate_tokens() {

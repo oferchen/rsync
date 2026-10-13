@@ -186,6 +186,11 @@ impl WiredBasisWindow {
     /// lifetime of the returned guard. Violating this invariant is
     /// undefined behaviour from the kernel's perspective; an `EFAULT`
     /// would also be valid grounds for a `Fatal` return.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MlockError::Downgrade` when the pin is refused for a recoverable reason (for
+    /// example `RLIMIT_MEMLOCK`), or `MlockError::Fatal` otherwise.
     pub fn new(addr: *const u8, len: usize) -> Result<Self, MlockError> {
         let len = len.min(MAX_WIRED_WINDOW_BYTES);
         if len == 0 {

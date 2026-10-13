@@ -479,6 +479,10 @@ impl MacosWriter {
     /// Creates a file for writing using standard buffered I/O.
     ///
     /// The `size_hint` is ignored on non-macOS platforms.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from creating the file.
     pub fn create(path: &Path, _size_hint: u64) -> io::Result<Self> {
         let file = std::fs::File::create(path)?;
         Ok(Self {
@@ -508,6 +512,10 @@ impl MacosWriter {
     }
 
     /// Flushes buffered data and fsyncs the underlying file.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error from flushing or syncing the file.
     pub fn sync(&mut self) -> io::Result<()> {
         self.inner.flush()?;
         self.inner.get_ref().sync_all()
@@ -530,6 +538,10 @@ impl Write for MacosWriter {
 /// Stub `writev_buffers` for non-macOS platforms.
 ///
 /// Falls back to sequential `write_all` calls for each buffer.
+///
+/// # Errors
+///
+/// Returns the first write error.
 #[cfg(not(target_os = "macos"))]
 pub fn writev_buffers(file: &std::fs::File, buffers: &[&[u8]]) -> io::Result<usize> {
     use std::io::Write;

@@ -273,7 +273,7 @@ impl FileWriterFactory for IocpWriterFactory {
 /// and the file path can be recovered for re-opening. `Disabled` always uses
 /// standard I/O.
 ///
-/// # Reopen path for `FILE_FLAG_OVERLAPPED` (issue #1929)
+/// # Reopen path for `FILE_FLAG_OVERLAPPED`
 ///
 /// `std::fs::File` opens handles without `FILE_FLAG_OVERLAPPED`, so the raw
 /// handle cannot be associated with a completion port. To use IOCP we recover
@@ -300,7 +300,7 @@ pub fn writer_from_file(
                     "IOCP requested but not available on this system",
                 ));
             }
-            // Issue #1929: recover the file path from the existing handle,
+            // recover the file path from the existing handle,
             // close the non-overlapped handle, and reopen via the IocpWriter
             // path-based constructor which uses FILE_FLAG_OVERLAPPED.
             let path = path_from_file(&file).map_err(|err| {
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(read_back, test_data);
     }
 
-    /// Issue #1929: under `IocpPolicy::Enabled`, a file opened without
+    /// under `IocpPolicy::Enabled`, a file opened without
     /// FILE_FLAG_OVERLAPPED must be transparently reopened with the flag and
     /// returned as an `Iocp` variant so the writer is actually associated
     /// with a completion port.
@@ -594,7 +594,7 @@ mod tests {
         assert_eq!(&content[..payload.len()], payload);
     }
 
-    /// Issue #1929: anonymous handles (e.g. unnamed pipes) cannot be reopened
+    /// anonymous handles (e.g. unnamed pipes) cannot be reopened
     /// because `GetFinalPathNameByHandleW` has no path to return. Under
     /// `Enabled`, surface a clear `Unsupported` error.
     #[test]

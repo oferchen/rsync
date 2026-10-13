@@ -11,11 +11,16 @@
 //! across platforms by sorting directory entries lexicographically before
 //! yielding them.
 //!
+//! Deviation from upstream: upstream `flist.c` sorts the finished list with
+//! `f_name_cmp()` (directories compare as if their name ended in `/`); this
+//! walker yields a depth-first pre-order with each directory's names sorted
+//! by raw bytes.
+//!
 //! This crate is not wired into the active transfer path. The live file-list
 //! machinery used by transfers lives in `protocol::flist`; nothing in the
-//! transfer pipeline consumes [`FileListWalker`] or [`FileListBuilder`]. The
-//! crate is a self-contained, legacy traversal utility retained for its
-//! standalone walker API.
+//! transfer pipeline consumes [`FileListWalker`] or [`FileListBuilder`], and no
+//! other workspace crate depends on `flist`. The crate is a self-contained,
+//! legacy traversal utility retained for its standalone walker API.
 //!
 //! # Design
 //!
@@ -86,8 +91,6 @@
 //!
 //! - `protocol::flist` for the file-list implementation actually used by the
 //!   transfer pipeline (wire encoding, incremental recursion, sorting).
-//! - [`core`](https://docs.rs/core/latest/core/) for the
-//!   central orchestration facade, which re-exports this crate.
 
 mod builder;
 mod entry;

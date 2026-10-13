@@ -374,7 +374,7 @@ mod tests {
     fn lossy_remote_to_local_unmappable_chars_verbatim() {
         // Convert UTF-8 with CJK characters to ISO-8859-1 (cannot represent CJK).
         // Under ICB_INCLUDE_BAD upstream copies the unconvertible source bytes
-        // verbatim (rsync.c:261 `*obuf++ = *ibuf++`); it does NOT substitute.
+        // verbatim (rsync.c:262 `*obuf++ = *ibuf++`); it does NOT substitute.
         let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
         let utf8_with_cjk = "file_\u{4e16}\u{754c}.txt"; // file_世界.txt
         let outcome = conv.remote_to_local_lossy(utf8_with_cjk.as_bytes());
@@ -394,7 +394,7 @@ mod tests {
     fn lossy_local_to_remote_unmappable_chars_verbatim() {
         // UTF-8 local with CJK -> windows-1252 remote (cannot represent CJK).
         // ICB_INCLUDE_BAD copies the unconvertible source bytes verbatim
-        // (rsync.c:261) instead of substituting them.
+        // (rsync.c:262) instead of substituting them.
         let conv = FilenameConverter::new("UTF-8", "windows-1252").unwrap();
         let utf8_with_cjk = "dir_\u{4e16}/file.txt";
         let outcome = conv.local_to_remote_lossy(utf8_with_cjk.as_bytes());
@@ -433,7 +433,7 @@ mod tests {
         assert!(strict_result.is_err());
 
         // Lossy: succeeds, copying the unconvertible source bytes verbatim
-        // (rsync.c:261) rather than substituting them.
+        // (rsync.c:262) rather than substituting them.
         let lossy_result = conv.remote_to_local_lossy(utf8_with_cjk.as_bytes());
         assert!(lossy_result.had_replacements);
         assert_eq!(
@@ -527,7 +527,7 @@ mod tests {
         let outcome = conv.remote_to_local_lossy(invalid_utf8);
         assert!(outcome.had_replacements);
         // Under ICB_INCLUDE_BAD the invalid 0xFF byte is copied verbatim
-        // (rsync.c:261), not turned into U+FFFD or '?'. ASCII surrounds it.
+        // (rsync.c:262), not turned into U+FFFD or '?'. ASCII surrounds it.
         assert_eq!(
             &*outcome.output,
             &[b'f', b'i', b'l', b'e', 0xFF, b'.', b't', b'x', b't']
@@ -536,8 +536,8 @@ mod tests {
 
     /// WHY this matters: upstream `iconvbufs()` with `ICB_INCLUDE_BAD` copies
     /// unconvertible source bytes straight to the output (`*obuf++ = *ibuf++`,
-    /// rsync.c:261) instead of substituting them. Both lossy callers -
-    /// `read_line(RL_CONVERT)` (io.c:1304) and `send_protected_args`
+    /// rsync.c:262) instead of substituting them. Both lossy callers -
+    /// `read_line(RL_CONVERT)` (io.c:1454-1455) and `send_protected_args`
     /// (rsync.c:305) - rely on this: a peer must be able to reproduce the
     /// bytes we emit exactly. Substituting invalid bytes with `?`/U+FFFD would
     /// silently corrupt the byte stream, so scattered invalid source bytes

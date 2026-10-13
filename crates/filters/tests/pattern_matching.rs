@@ -1,7 +1,7 @@
 //! Integration tests for include/exclude pattern matching.
 //!
 //! These tests verify that the filter pattern matching behavior mirrors
-//! upstream rsync 3.4.1's exclude.c implementation. Tests cover:
+//! upstream rsync 3.5.1's exclude.c implementation. Tests cover:
 //! - Wildcard patterns (*, ?, **)
 //! - Character class patterns ([])
 //! - Anchored vs unanchored patterns
@@ -278,7 +278,7 @@ fn directory_pattern_excludes_contents() {
 
 /// Verifies nested directory patterns.
 ///
-/// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+/// upstream: `exclude.c:rule_matches()` lines 1037-1038 returns "no match"
 /// when the rule carries `FILTRULE_DIRECTORY` and the candidate is not
 /// itself a directory. The directory wildcard `packages/*/node_modules/`
 /// matches the directory entry `packages/app/node_modules` (`is_dir=true`)
@@ -298,7 +298,7 @@ fn nested_directory_pattern() {
     // for a non-directory entry; the file is included by default and the
     // sender walk handles descent pruning by never entering the excluded
     // directory in the first place. Wire-equivalent behaviour with
-    // upstream rsync 3.4.x.
+    // upstream rsync 3.5.1.
     assert!(set.allows(Path::new("packages/app/node_modules/pkg"), false));
 
     // Root node_modules not matched

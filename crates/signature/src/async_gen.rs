@@ -224,7 +224,8 @@ impl AsyncSignatureGenerator {
             workers.push(handle);
         }
 
-        // Drop the original sender so workers can detect when all work is done
+        // Drop the original result sender so `wait_for_result` reports a
+        // disconnect once every worker has exited.
         drop(result_sender);
 
         Self {
@@ -238,7 +239,8 @@ impl AsyncSignatureGenerator {
 
     /// Requests signature generation for a file.
     ///
-    /// Returns the request ID that can be used to match the result.
+    /// Returns the caller-supplied `request.request_id`, which the matching
+    /// [`SignatureResult`] carries.
     ///
     /// # Errors
     ///
@@ -354,7 +356,7 @@ fn worker_thread_main_shared(
 
 /// Synchronously generates a signature for a request.
 ///
-/// This is called by worker threads.
+/// Runs on a worker thread; failures are reported in the result, not returned.
 fn generate_signature_sync(request: SignatureRequest) -> SignatureResult {
     let result = (|| -> Result<FileSignature, Box<dyn std::error::Error>> {
         let basis_file = fs::File::open(&request.basis_path)?;

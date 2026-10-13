@@ -24,9 +24,7 @@ use protocol::{
 };
 use std::io::Cursor;
 
-// ---------------------------------------------------------------------------
 // Strategies
-// ---------------------------------------------------------------------------
 
 /// Generates a valid strong checksum length (1-16 bytes).
 fn strong_sum_length_strategy() -> impl Strategy<Value = u8> {
@@ -93,9 +91,7 @@ fn stat_value_strategy() -> impl Strategy<Value = u64> {
     ]
 }
 
-// ---------------------------------------------------------------------------
 // Signature block roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
@@ -193,9 +189,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Delta operation roundtrips (internal opcode format)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -250,9 +244,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Token stream roundtrips (upstream wire format)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -316,9 +308,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // TransferStats wire format roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
@@ -372,9 +362,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // DeleteStats wire format roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -427,9 +415,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // MessageHeader encode_raw/from_raw roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -478,9 +464,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // MessageCode u8 conversion roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -512,9 +496,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // varlong30 roundtrips
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]

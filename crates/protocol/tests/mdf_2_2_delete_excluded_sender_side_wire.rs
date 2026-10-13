@@ -8,7 +8,7 @@
 //! delete-pass would observe `applies_to_receiver = true` on the merged
 //! exclude rule and skip the matching files instead of deleting them under
 //! `--delete-excluded`. Upstream `exclude.c::parse_rule_tok()` lines
-//! 1324-1332 (3.4.1) OR the FILTRULE_SENDER_SIDE bit onto every per-token
+//! 1478-1480 (3.5.1) OR the FILTRULE_SENDER_SIDE bit onto every per-token
 //! rule when the `delete_excluded` global is set, except for rules that
 //! already carry an explicit `r`/`s` modifier (the OR is gated by the
 //! FILTRULES_SIDES bit being clear).
@@ -30,7 +30,7 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list, write_
 /// `exclude.c::get_rule_prefix()` for a FILTRULE_SENDER_SIDE-bearing
 /// exclude.
 ///
-/// upstream: `exclude.c::parse_rule_tok()` lines 1324-1332 implicit OR;
+/// upstream: `exclude.c::parse_rule_tok()` lines 1478-1480 implicit OR;
 /// `exclude.c::get_rule_prefix()` `s` modifier emission.
 #[test]
 fn delete_excluded_merge_exclude_wire_emits_sender_side_prefix() {
@@ -98,7 +98,7 @@ fn merge_exclude_without_delete_excluded_emits_bare_prefix() {
 /// because they are how the user reintroduces files into the delete-pass
 /// scope.
 ///
-/// upstream: `exclude.c::parse_rule_tok()` lines 1324-1332 - the OR is on
+/// upstream: `exclude.c::parse_rule_tok()` lines 1478-1480 - the OR is on
 /// the exclude path, not the include path.
 #[test]
 fn delete_excluded_does_not_flip_include_rule_wire_format() {

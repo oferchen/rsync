@@ -116,7 +116,8 @@ const INFO_VERBOSITY: [&[(InfoFlag, u8)]; DEBUG_VERBOSITY.len()] = {
 /// [`apply_info_flag`](Self::apply_info_flag) /
 /// [`apply_debug_flag`](Self::apply_debug_flag) for `--info=`/`--debug=`
 /// overrides.
-/// upstream: options.c struct that backs info_levels[] + debug_levels[]
+///
+/// upstream: options.c:263 `info_levels[]` and `debug_levels[]`
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerbosityConfig {
@@ -236,7 +237,7 @@ impl VerbosityConfig {
 /// Parse a flag token like `"copy2"` into `("copy", 2)` or `"del"` into `("del", 1)`.
 ///
 /// Tokens without a trailing digit default to level 1, matching upstream
-/// rsync's `parse_output_words()` behaviour (upstream: options.c).
+/// rsync's `parse_output_words()` behaviour (upstream: options.c:459).
 fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
     if token.is_empty() {
         return Err("empty flag token".to_owned());

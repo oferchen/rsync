@@ -1,6 +1,6 @@
 /// Additional byte count lookup used by rsync's variable-length integer codec.
 ///
-/// The table mirrors `int_byte_extra` from upstream `io.c`. Each entry
+/// The table mirrors `int_byte_extra` from upstream `io.c:185`. Each entry
 /// specifies how many extra bytes follow the leading tag for a particular
 /// high-bit pattern.
 pub(super) const INT_BYTE_EXTRA: [u8; 64] = [

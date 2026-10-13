@@ -16,7 +16,7 @@
 //! ### Version Boundary Tests
 //! - Protocol 0 (invalid)
 //! - Protocol 27 (below minimum supported)
-//! - Protocol 33+ (above maximum supported)
+//! - Protocol 34+ (above maximum supported, clamped to 33)
 //! - Protocol 255 (maximum u8 value)
 //! - Very large protocol numbers (u32 overflow)
 //!

@@ -1,9 +1,9 @@
 //! UTS-DD-exclude.5 regression: oc-rsync must not double-wrap unanchored
 //! patterns that already contain a `**` element.
 //!
-//! Upstream rsync (`exclude.c:903-960 rule_matches`) handles an unanchored
+//! Upstream rsync (`exclude.c:1002-1081 rule_matches`) handles an unanchored
 //! pattern with a `**` element by calling
-//! `wildmatch_array(..., slash_handling = -1)` (`lib/wildmatch.c:316`),
+//! `wildmatch_array(..., slash_handling = -1)` (`lib/wildmatch.c:329`),
 //! which tries the pattern at the start AND after every `/`. There is no
 //! pattern-string rewriting at parse time. oc-rsync historically prepended
 //! an implicit `**/` to every unanchored pattern to mimic the same
@@ -21,7 +21,7 @@ use std::path::Path;
 use filters::{FilterRule, FilterSet};
 
 /// `+ foo**too` from `testsuite/exclude.test:102`: an interior bare `**`
-/// must still match across path separators after PR #5751's
+/// must still match across path separators under the
 /// `normalise_recursive_wildcards` rewrite (`foo**too` -> `foo/**/too`).
 /// Guarded here so the UTS-DD-exclude.5 fix doesn't regress UTS-20.
 #[test]
@@ -64,7 +64,7 @@ fn rooted_infix_double_star_pattern_still_matches() {
 
 /// Unanchored patterns without `**` (the canonical case for the
 /// implicit-prefix injection) MUST still get the `**/` prefix and match
-/// at any depth. Mirrors `exclude.c:917-922` name-only matching for the
+/// at any depth. Mirrors `exclude.c:1016-1021` name-only matching for the
 /// `!u.slash_cnt && !FILTRULE_WILD2` branch.
 #[test]
 fn plain_basename_pattern_still_matches_at_any_depth() {

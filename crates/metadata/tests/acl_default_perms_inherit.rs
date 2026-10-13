@@ -8,8 +8,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `acls.c:1083-1139` `default_perms_for_dir`
-//! - `generator.c:1337-1339` per-parent `dflt_perms` lookup driving
+//! - `acls.c:1453-1508` `default_perms_for_dir`
+//! - `generator.c:1738-1741` per-parent `dflt_perms` lookup driving
 //!   `dest_mode()` when `!preserve_perms`.
 
 #![cfg(all(target_os = "linux", feature = "acl"))]
@@ -96,7 +96,7 @@ fn child_file_inherits_parent_default_acl_when_perms_disabled() {
 ///
 /// # Upstream Reference
 ///
-/// - `acls.c:129-134` `rsync_acl_get_perms` mask-vs-group_obj precedence
+/// - `acls.c:133-138` `rsync_acl_get_perms` mask-vs-group_obj precedence
 #[test]
 fn default_perms_honours_mask_over_group_obj() {
     let dir = test_support::create_tempdir();

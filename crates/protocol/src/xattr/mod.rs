@@ -29,7 +29,9 @@
 //!
 //! # Reference
 //!
-//! - Upstream rsync 3.4.4 `xattrs.c`
+//! - Upstream rsync 3.5.1 `xattrs.c`: `send_xattr()` (523-571), `xattr_diff()`
+//!   (575-647), `send_xattr_request()` (651-705), `recv_xattr_request()`
+//!   (709-799), `receive_xattr()` (803-923)
 
 use md5::Md5;
 use md5::digest::OutputSizeUser;
@@ -59,7 +61,7 @@ pub use wire::{
 /// Maximum size for a full xattr value transmission.
 ///
 /// Values larger than this are abbreviated to checksums on the wire.
-/// Matches upstream rsync's `MAX_FULL_DATUM`.
+/// Matches upstream rsync's `MAX_FULL_DATUM` (`xattrs.c:49`).
 pub const MAX_FULL_DATUM: usize = 32;
 
 /// Maximum length of the xattr checksum digest.
@@ -98,10 +100,14 @@ pub const MAX_XATTR_VALUE_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_XATTR_LIST_BYTES: usize = 512 * 1024 * 1024;
 
 /// Rsync xattr namespace prefix for special attributes.
+///
+/// upstream: `xattrs.c:67` (`HAVE_LINUX_XATTRS`).
 #[cfg(target_os = "linux")]
 pub const RSYNC_PREFIX: &str = "user.rsync.";
 
 /// Rsync xattr namespace prefix for special attributes (non-Linux).
+///
+/// upstream: `xattrs.c:70`.
 #[cfg(not(target_os = "linux"))]
 pub const RSYNC_PREFIX: &str = "rsync.";
 
@@ -130,12 +136,13 @@ pub const MAX_WIRE_XATTR_NAME_LEN: usize = 4096;
 /// and platforms (macOS resource forks, transferred as `com.apple.ResourceFork`)
 /// allow much larger values.
 ///
-/// upstream: xattrs.c:803 reads the datum length via
+/// upstream: xattrs.c:836 (`receive_xattr()`) and xattrs.c:780
+/// (`recv_xattr_request()`) read the datum length via
 /// `read_varint_size(f, MAX_WIRE_XATTR_DATALEN, "xattr datum_len")`, where
 /// `MAX_WIRE_XATTR_DATALEN` is `0x7fffffff` (~2 GiB, rsync.h:178). Upstream
 /// does not bound the datum by that wire ceiling directly; the real
 /// allocation guard is `--max-alloc` (default `DEFAULT_MAX_ALLOC` = 1 GiB,
-/// options.c:203) enforced inside `new_array()`/`my_alloc()`.
+/// options.c:209) enforced inside `new_array()`/`my_alloc()`.
 ///
 /// The decoders no longer compare against this fixed constant. They call
 /// [`crate::max_alloc::effective_max_alloc`], which returns this default until
@@ -145,10 +152,10 @@ pub const MAX_WIRE_XATTR_NAME_LEN: usize = 4096;
 /// (and the value the decoders enforce when `--max-alloc` is unset).
 pub const MAX_WIRE_XATTR_VALUE_LEN: usize = crate::max_alloc::DEFAULT_MAX_ALLOC;
 
-/// User namespace prefix for xattrs.
+/// User namespace prefix for xattrs (`xattrs.c:60`).
 pub const USER_PREFIX: &str = "user.";
 
-/// System namespace prefix for xattrs.
+/// System namespace prefix for xattrs (`xattrs.c:62`).
 pub const SYSTEM_PREFIX: &str = "system.";
 
 #[cfg(test)]

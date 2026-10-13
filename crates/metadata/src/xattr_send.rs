@@ -18,7 +18,7 @@ use protocol::xattr::{XattrList, xattr_diff};
 /// Which side of the transfer is collecting the attributes.
 ///
 /// Upstream reads this from the `am_sender` global in two places:
-/// `xattrs.c:237` (`user_only`) and `xattrs.c:262` (the `rsync.%FOO` strip).
+/// `xattrs.c:249` (`user_only`) and `xattrs.c:273-279` (the `rsync.%FOO` strip).
 /// Both consult the role, so it cannot be folded into another field.
 ///
 /// The enum deliberately has no `Default`: the two roles select different
@@ -63,10 +63,10 @@ impl XattrRole {
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:237` - `int user_only = am_sender ? 0 : !am_root;`
-/// - `xattrs.c:250-257` - the `x`-modifier filter branch and the namespace
+/// - `xattrs.c:249` - `int user_only = am_sender ? 0 : !am_root;`
+/// - `xattrs.c:262-269` - the `x`-modifier filter branch and the namespace
 ///   branch are mutually exclusive
-/// - `xattrs.c:260-267` - the `rsync.%FOO` internal-attribute gate
+/// - `xattrs.c:273-279` - the `rsync.%FOO` internal-attribute gate
 #[derive(Clone, Copy)]
 pub struct XattrSendOptions<'a> {
     /// Which side is reading (upstream's `am_sender`).
@@ -77,7 +77,7 @@ pub struct XattrSendOptions<'a> {
     /// Whether the reading process is privileged (upstream's `am_root`).
     ///
     /// It decides two things: whether a generator read is confined to the
-    /// `user.*` namespace (`xattrs.c:237`), and whether the `system.*`
+    /// `user.*` namespace (`xattrs.c:249`), and whether the `system.*`
     /// namespace can reach the wire at all.
     pub am_root: bool,
     /// Xattr preservation level: 1 for `-X`, 2 for `-XX`.
@@ -96,7 +96,7 @@ pub struct XattrSendOptions<'a> {
     /// `false` is not collected.
     ///
     /// When this is `Some`, upstream skips the namespace test entirely
-    /// (`xattrs.c:250-257`: the namespace check is the `else` of the filter
+    /// (`xattrs.c:262-269`: the namespace check is the `else` of the filter
     /// check), so the filter alone decides.
     pub filter: Option<&'a dyn Fn(&str) -> bool>,
     /// Seed for the digest that abbreviates values over `MAX_FULL_DATUM`.
@@ -127,7 +127,7 @@ impl XattrSendOptions<'_> {
         }
     }
 
-    /// Upstream's `user_only` for these options (`xattrs.c:237`).
+    /// Upstream's `user_only` for these options (`xattrs.c:249`).
     #[must_use]
     pub fn user_only(&self) -> bool {
         self.role.user_only(self.am_root)
@@ -137,11 +137,11 @@ impl XattrSendOptions<'_> {
 /// Whether `destination`'s extended attributes differ from the `sender` set,
 /// for the `ITEM_REPORT_XATTR` (`x`) column of `--itemize-changes`.
 ///
-/// Mirrors upstream `generator.c:566-572`: with `preserve_xattrs` the generator
+/// Mirrors upstream `generator.c:571-577`: with `preserve_xattrs` the generator
 /// reads the destination's current attributes (`get_xattr`) and compares them
 /// against the sender's list (`xattr_diff`). `dest_opts` must therefore describe
 /// a *generator* read - [`XattrRole::Generator`] - so `user_only`
-/// (`xattrs.c:237`) confines an unprivileged process to `user.*` and a
+/// (`xattrs.c:249`) confines an unprivileged process to `user.*` and a
 /// namespace it could never store cannot raise the column.
 ///
 /// Callers must invoke this before applying the sender's attributes, so the

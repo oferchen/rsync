@@ -50,9 +50,9 @@ pub(super) fn warn_partial_apply() {
 /// Unlike [`warn_partial_apply`], this diagnostic is not rate-limited and
 /// names each dropped entry: cross-domain transfers can lose different
 /// entries on different files, and operators need a complete per-file trail
-/// of exactly what was discarded rather than a single opaque warning. Mirrors
-/// the spirit of upstream `acls.c`, which warns when an id cannot be mapped to
-/// a destination account.
+/// of exactly what was discarded rather than a single opaque warning. No
+/// upstream counterpart: upstream never drops an entry, so it has nothing to
+/// report.
 pub(super) fn warn_dropped_aces(path: &Path, reason: &str, dropped: &[String]) {
     if dropped.is_empty() {
         return;
@@ -85,7 +85,10 @@ pub(super) fn to_wide(path: &Path) -> Vec<u16> {
 /// Returns `true` when the underlying error indicates the volume does not
 /// support DACLs (e.g. FAT32 mounts) or the path is not addressable.
 ///
-/// upstream: acls.c - `no_acl_syscall_error()` swallows ENOTSUP-style errors.
+/// Counterpart of upstream `no_acl_syscall_error()` (`lib/sysacls.c:2922-2944`),
+/// which swallows ENOTSUP-style errors. Deviation from upstream:
+/// `ERROR_FILE_NOT_FOUND` is also swallowed; upstream swallows `ENOENT` only on
+/// macOS.
 pub(super) fn is_unsupported(code: WIN32_ERROR) -> bool {
     // ERROR_NOT_SUPPORTED == 50, ERROR_INVALID_FUNCTION == 1, ERROR_FILE_NOT_FOUND == 2.
     matches!(code, ERROR_NOT_SUPPORTED) || code.0 == 1 || code.0 == 2

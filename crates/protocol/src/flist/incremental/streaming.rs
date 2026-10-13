@@ -5,7 +5,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `io.c:read_a_msg()` - Incremental file list segments in INC_RECURSE mode
+//! - `io.c:wait_for_receiver()` / `rsync.c:read_ndx_and_attrs()` - receive
+//!   INC_RECURSE sub-lists via `recv_file_list(f, dir_ndx)`
 
 use crate::flist::{FileEntry, FileListReader, FileListStats};
 

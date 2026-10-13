@@ -39,7 +39,7 @@ pub struct BandwidthLimiter {
 
 impl BandwidthLimiter {
     /// Constructs a new limiter from the supplied byte-per-second rate.
-    /// upstream: io.c:sleep_for_bwlimit() - initial setup
+    /// upstream: io.c:sleep_for_bwlimit() - statics `total_written` and `prior_tv` start zeroed
     #[must_use]
     pub fn new(limit: NonZeroU64) -> Self {
         let write_max = calculate_write_max(limit);
@@ -60,7 +60,7 @@ impl BandwidthLimiter {
     /// rate applies immediately without carryover from the previous period.
     /// This is also used when a daemon module overrides the client-supplied
     /// `--bwlimit`.
-    /// upstream: options.c:2401 - daemon_bwlimit override reconfiguration
+    /// upstream: options.c:2543-2548 - `daemon_bwlimit` override then `bwlimit_writemax`
     #[doc(alias = "--bwlimit")]
     pub fn update_limit(&mut self, limit: NonZeroU64) {
         let write_max = calculate_write_max(limit);
@@ -95,7 +95,7 @@ impl BandwidthLimiter {
     /// The value scales linearly with the configured rate so that pacing
     /// sleeps remain short and responsive. Callers should split writes
     /// larger than this threshold into chunks.
-    /// upstream: options.c:2404 - bwlimit_writemax = bwlimit * 128
+    /// upstream: options.c:2546 - `bwlimit_writemax = (size_t)bwlimit * 128`
     #[inline]
     #[must_use]
     pub const fn write_max_bytes(&self) -> usize {
@@ -168,9 +168,13 @@ impl BandwidthLimiter {
         let elapsed_us = end
             .checked_duration_since(start)
             .map_or(0, |duration| duration.as_micros().min(u128::from(u64::MAX)));
-        // A short sleep (the backend woke earlier than requested) leaves debt
-        // unpaid. Carry the un-slept remainder forward as simulated elapsed
-        // time so the next register() credits it and pacing stays on target.
+        // A short sleep leaves the remainder un-slept. It is credited as
+        // simulated elapsed time on the next register(), which cancels the
+        // `leftover` debt below; this is what lets `cfg(test)` builds (where
+        // `sleep_for` only records) behave as if the sleep had happened.
+        // Deviation from upstream: io.c:2356 carries the remaining debt and,
+        // after an oversleep, a negative `total_written` credit; here
+        // undersleep debt is forgiven and oversleep credit is clamped to zero.
         if sleep_us > elapsed_us {
             self.simulated_elapsed_us = sleep_us - elapsed_us;
         }

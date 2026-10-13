@@ -4,7 +4,7 @@
 //! fast-path pass followed by a lowest-distance pass over every candidate in
 //! the destination directory (and, at level 2, the reference directories).
 //!
-//! upstream: generator.c:831 `find_fuzzy()`.
+//! upstream: generator.c:836 `find_fuzzy()`.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -20,7 +20,7 @@ struct Candidate {
     /// Basename as raw OS bytes. Distance scoring and the candidate sort both
     /// run on these bytes, never a lossy-UTF8 rendering, so non-UTF8 filenames
     /// score and order exactly as upstream's byte-oriented `fuzzy_distance()`
-    /// and bytewise `f_name_cmp()` dictate. upstream: util1.c:1683
+    /// and bytewise `f_name_cmp()` dictate. upstream: util1.c:1854
     /// `fuzzy_distance()`, flist.c `f_name_cmp()`.
     name: Vec<u8>,
     /// Absolute path to the candidate file.
@@ -61,7 +61,7 @@ impl FuzzyMatcher {
     /// `target_mtime` is the source file's modification time in whole seconds
     /// since the Unix epoch; `None` disables the fast-path.
     ///
-    /// upstream: generator.c:831 `find_fuzzy()`.
+    /// upstream: generator.c:836 `find_fuzzy()`.
     pub fn find_fuzzy_basis(
         &self,
         target_name: &OsStr,
@@ -72,7 +72,7 @@ impl FuzzyMatcher {
         let target_bytes = os_str_bytes(target_name);
         let target_suffix = find_filename_suffix(&target_bytes).to_vec();
 
-        // upstream: generator.c:843/868 - iterate dirlist_array[0..fuzzy_basis],
+        // upstream: generator.c:848/873 - iterate dirlist_array[0..fuzzy_basis],
         // the destination directory first then each reference directory.
         let mut dirs: Vec<&Path> = Vec::with_capacity(1 + self.fuzzy_basis_dirs.len());
         dirs.push(dest_dir);
@@ -85,7 +85,7 @@ impl FuzzyMatcher {
             .map(|dir| collect_candidates(dir, &target_bytes))
             .collect();
 
-        // Pass 1: exact size + mtime fast-path. upstream: generator.c:842-866.
+        // Pass 1: exact size + mtime fast-path. upstream: generator.c:847-871.
         if let Some(target_secs) = target_mtime {
             for candidates in &per_dir {
                 for candidate in candidates {
@@ -100,7 +100,7 @@ impl FuzzyMatcher {
             }
         }
 
-        // Pass 2: lowest-distance wins. upstream: generator.c:868-908.
+        // Pass 2: lowest-distance wins. upstream: generator.c:873-913.
         let mut lowest_dist = self.max_distance;
         let mut best: Option<FuzzyMatch> = None;
         for candidates in &per_dir {
@@ -111,10 +111,10 @@ impl FuzzyMatcher {
                     &target_suffix,
                     lowest_dist,
                 );
-                // upstream: generator.c:896-899 - emit each candidate's distance
+                // upstream: generator.c:901-904 - emit each candidate's distance
                 // as fixed-point `%d.%05d` for --debug=FUZZY parsers.
                 trace_fuzzy_distance(&String::from_utf8_lossy(&candidate.name), dist);
-                // upstream: generator.c:900 - `<=` lets a later equal-distance
+                // upstream: generator.c:905 - `<=` lets a later equal-distance
                 // candidate win; the sorted scan order makes this deterministic.
                 if dist <= lowest_dist {
                     lowest_dist = dist;
@@ -131,13 +131,13 @@ impl FuzzyMatcher {
 }
 
 /// Collects the eligible fuzzy candidates in `dir`, sorted by basename to
-/// mirror upstream's sorted dirlist ordering (flist.c:3694
+/// mirror upstream's sorted dirlist ordering (flist.c:3561
 /// `flist_sort_and_clean`).
 ///
 /// Skips non-regular files, zero-length files, and the exact-name file (which,
 /// when present, is used as the direct basis before fuzzy matching runs).
 ///
-/// upstream: generator.c:852-856,883 - `F_IS_ACTIVE`, `S_ISREG`, and
+/// upstream: generator.c:857-861,888 - `F_IS_ACTIVE`, `S_ISREG`, and
 /// `!F_LENGTH(fp)` screening.
 fn collect_candidates(dir: &Path, target_name: &[u8]) -> Vec<Candidate> {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -151,7 +151,7 @@ fn collect_candidates(dir: &Path, target_name: &[u8]) -> Vec<Candidate> {
             _ => continue,
         };
 
-        // upstream: generator.c:855 - skip zero-length files.
+        // upstream: generator.c:860 - skip zero-length files.
         if metadata.len() == 0 {
             continue;
         }
@@ -292,7 +292,7 @@ mod tests {
         /// A candidate with the exact target size and mtime must be returned by
         /// the fast-path (distance 0) ahead of any closer-named candidate.
         ///
-        /// upstream: generator.c:858-863 - size/modtime match short-circuits.
+        /// upstream: generator.c:863-868 - size/modtime match short-circuits.
         #[test]
         fn size_mtime_match_wins_over_closer_name() {
             let dir = test_support::create_tempdir();
@@ -365,7 +365,7 @@ mod tests {
         }
 
         /// WHY: upstream `fuzzy_distance()` / `find_filename_suffix()` and the
-        /// dirlist sort are byte-oriented (util1.c:1623,1683; flist.c
+        /// dirlist sort are byte-oriented (util1.c:1794,1854; flist.c
         /// `f_name_cmp`). Routing candidate names through `to_string_lossy`
         /// first collapses every distinct invalid byte to U+FFFD, so two
         /// different non-UTF8 basenames become the same string and score an

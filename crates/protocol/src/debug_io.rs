@@ -1,9 +1,9 @@
 //! DEBUG_IO tracing for I/O operations.
 //!
-//! This module provides structured tracing for I/O operations that match
-//! upstream rsync's io.c debug output format. All tracing is conditionally
-//! compiled behind the `tracing` feature flag and produces no-op inline
-//! functions when disabled.
+//! This module provides structured `tracing` events for I/O operations. It is
+//! oc-only: the events carry structured fields and do not reproduce upstream's
+//! `--debug=IO` text output. All tracing is conditionally compiled behind the
+//! `tracing` feature flag and produces no-op inline functions when disabled.
 //!
 //! # Examples
 //!
@@ -23,7 +23,7 @@
 
 use std::time::Duration;
 
-/// Target name for tracing events, matching rsync's debug category.
+/// Target name for tracing events.
 #[cfg(feature = "tracing")]
 const IO_TARGET: &str = "rsync::io";
 

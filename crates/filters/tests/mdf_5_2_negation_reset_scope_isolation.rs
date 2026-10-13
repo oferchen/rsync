@@ -3,12 +3,12 @@
 //! inherited from outer directories' merge files. Closes the row .2 x MDF-5
 //! cell from FIL-AUD-2 (`docs/design/fil-aud-exclude-vs-mdf-matrix.md`).
 //!
-//! Upstream mechanism (rsync 3.4.4 `exclude.c`): `push_local_filters()` at
-//! `exclude.c:801` sets `lp->tail = NULL` when entering a directory, which
+//! Upstream mechanism (rsync 3.5.1 `exclude.c`): `push_local_filters()` at
+//! `exclude.c:900` sets `lp->tail = NULL` when entering a directory, which
 //! reclassifies the parent directory's rules as the INHERITED tail of the
 //! same mergelist `lp`. The `FILTRULE_CLEAR_LIST` handler
-//! (`exclude.c:1399-1400`) then runs `pop_filter_list(listp)` - which
-//! early-returns at `exclude.c:579` when `!` is the file's first line because
+//! (`exclude.c:1548-1549`) then runs `pop_filter_list(listp)` - which
+//! early-returns at `exclude.c:675-676` when `!` is the file's first line because
 //! `listp->tail` is NULL - and, crucially, ALSO runs `listp->head = NULL`.
 //! That final `head = NULL` drops the inherited parent rules, so a nested `!`
 //! resets the entire list, not just the current file's own section. Verified
@@ -35,8 +35,8 @@ use filters::{DirMergeConfig, FilterChain, FilterRule, FilterSet};
 /// takes effect. When `inner` is left, the outer rule is restored for the rest
 /// of `src` (and its siblings), mirroring `exclude.c:pop_local_filters()`.
 ///
-/// upstream: exclude.c:801 push_local_filters (parent rules become inherited)
-/// + exclude.c:1399-1400 FILTRULE_CLEAR_LIST (pop_filter_list then head=NULL).
+/// upstream: exclude.c:900 push_local_filters (parent rules become inherited)
+/// + exclude.c:1548-1549 FILTRULE_CLEAR_LIST (pop_filter_list then head=NULL).
 #[test]
 fn inner_bang_clear_wipes_inherited_outer_scope() {
     let root = test_support::create_tempdir();
@@ -82,7 +82,7 @@ fn inner_bang_clear_wipes_inherited_outer_scope() {
 /// against an overcorrection that scopes ALL `!` clears to per-directory
 /// files only.
 ///
-/// upstream: exclude.c:1393-1402 - FILTRULE_CLEAR_LIST at the top level
+/// upstream: exclude.c:1542-1551 - FILTRULE_CLEAR_LIST at the top level
 /// targets the global listp, identical mechanism to the merge-file case
 /// but with a different target list.
 #[test]

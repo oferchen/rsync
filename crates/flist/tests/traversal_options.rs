@@ -4,7 +4,7 @@
 //! correctly affect traversal behavior, matching upstream rsync's
 //! various command-line flags for controlling file list generation.
 //!
-//! Reference: rsync 3.4.1 flist.c
+//! Reference: rsync 3.5.1 flist.c
 
 use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::fs;

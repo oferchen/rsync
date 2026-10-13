@@ -1,6 +1,6 @@
 //! Upstream's diagnostic for a file that failed whole-file verification.
 //!
-//! `receiver.c:1087-1107` is one rule with five decisions in it - severity,
+//! `receiver.c:1350-1371` (`recv_files()`) is one rule with five decisions in it - severity,
 //! emission gate, `keptstr`, retry suffix and the format string - and every
 //! decision reads state that oc keeps in different places on its two receive
 //! paths. Reproducing the rule beside each path is how the wordings drift, so
@@ -39,7 +39,7 @@ pub struct VerifyFailure {
     /// `stdout_format_has_i`, the third disjunct of the emission gate.
     ///
     /// Derive this from the resolved FORMAT, never from an `-i` boolean.
-    /// `options.c:2354-2367` feeds one variable from two sources and `-i`
+    /// `options.c:2496-2509` feeds one variable from two sources and `-i`
     /// rewrites `stdout_format` to `"%i %n%L"`, so a format-derived value
     /// catches both `-i` and a bare `--out-format='%i%n'`; an `-i` boolean
     /// misses the latter.
@@ -48,38 +48,38 @@ pub struct VerifyFailure {
     ///
     /// Upstream's `stdout_format_has_i` is a TRI-STATE, not a flag: `2` when
     /// `am_server` and the format carries `%I`, and `itemize_changes` is a
-    /// counter (`options.c:1587`), so `-ii` also yields `2`. Several upstream
-    /// sites test `> 1` specifically (`generator.c:583,1010,1138`,
-    /// `hlink.c:400`, `log.c:832`). This gate is not one of them -
-    /// `receiver.c:1088` tests plain truthiness - so a `bool` is exact here.
+    /// counter (`options.c:1694`), so `-ii` also yields `2`. Several upstream
+    /// sites test `> 1` specifically (`generator.c:589,1142,1298`,
+    /// `hlink.c:415`, `log.c:879`). This gate is not one of them -
+    /// `receiver.c:1351` tests plain truthiness - so a `bool` is exact here.
     /// A caller that needs the `-i`/`-ii` distinction must carry the level
     /// itself rather than widen this field.
     ///
-    /// upstream: receiver.c:1088 - note it reads `stdout_format_has_i`
-    /// unconditionally, unlike `receiver.c:660`, which picks
+    /// upstream: receiver.c:1351 - note it reads `stdout_format_has_i`
+    /// unconditionally, unlike `receiver.c:823`, which picks
     /// `logfile_format_has_i` instead when `am_server`.
     pub stdout_format_has_i: bool,
     /// `--partial` is in force. Upstream's `keep_partial`, which `--inplace`
-    /// clears (`options.c:2448`) even though the partial file is still kept -
+    /// clears (`options.c:2590`) even though the partial file is still kept -
     /// the `inplace` disjunct below is what covers that case.
     ///
-    /// upstream: receiver.c:1090.
+    /// upstream: receiver.c:1353.
     pub keep_partial: bool,
     /// This file has a partial path to retain, i.e. upstream's
     /// `partialptr != NULL`.
     ///
-    /// upstream: receiver.c:1090.
+    /// upstream: receiver.c:1353.
     pub has_partial_path: bool,
     /// `--partial-dir` is in force, i.e. upstream's `partial_dir != NULL`.
     ///
-    /// upstream: receiver.c:1092.
+    /// upstream: receiver.c:1355.
     pub partial_dir: bool,
     /// The update was written straight to the destination. Upstream's
-    /// `inplace`, which `options.c:2419` also sets for `--append`, so an
+    /// `inplace`, which `options.c:2561` also sets for `--append`, so an
     /// append that fails verification reports its update as retained rather
     /// than discarded.
     ///
-    /// upstream: receiver.c:1090.
+    /// upstream: receiver.c:1353.
     pub inplace: bool,
 }
 
@@ -90,7 +90,7 @@ impl VerifyFailure {
     /// falsifies the first clause, which is what lets a `--partial-dir` run
     /// reach the second rather than reporting the update as discarded.
     ///
-    /// upstream: receiver.c:1090-1095.
+    /// upstream: receiver.c:1353-1358.
     const fn kept_str(self) -> &'static str {
         // upstream's first clause, `!(keep_partial && partialptr) && !inplace`,
         // negated once so the two ways an update survives read positively.
@@ -117,7 +117,7 @@ impl VerifyFailure {
     /// from the flags the client forwarded, so `--info=name0` suppresses the
     /// line even under `-v`, exactly as upstream's `INFO_GTE` does.
     ///
-    /// upstream: receiver.c:1088 - `if (msgtype == FERROR_XFER ||
+    /// upstream: receiver.c:1351 - `if (msgtype == FERROR_XFER ||
     /// INFO_GTE(NAME, 1) || stdout_format_has_i)`.
     fn is_reported(self) -> bool {
         self.redoing || info_gte(InfoFlag::Name, 1) || self.stdout_format_has_i
@@ -128,21 +128,21 @@ impl VerifyFailure {
 /// silent.
 ///
 /// `name` is the file's *file list* name. Upstream's receiver has already
-/// `change_dir()`ed into the destination root (`main.c:828`), so `fname` - and
+/// `change_dir()`ed into the destination root (`main.c:get_local_name()`), so `fname` - and
 /// `f_name(file, NULL)` in the `local_name` case - renders relative to it; a
 /// joined absolute destination path is never what a user sees here.
 ///
 /// The returned [`LogCode`] is upstream's `msgtype`. Callers route it: the
 /// network receiver converts it to a multiplexed `MessageCode`, the local
-/// executor writes it to the stream `log.c:313-316` routes that code to.
+/// executor writes it to the stream `log.c:336-347` routes that code to.
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:1087` - `msgtype = redoing ? FERROR_XFER : FWARNING`.
-/// - `receiver.c:1088` - the emission gate, `VerifyFailure::is_reported`.
-/// - `receiver.c:1089-1095` - `keptstr`, `VerifyFailure::kept_str`.
-/// - `receiver.c:1096-1103` - `errstr` and `redostr`.
-/// - `receiver.c:1104-1107` - the format string reproduced below.
+/// - `receiver.c:1350` - `msgtype = redoing ? FERROR_XFER : FWARNING`.
+/// - `receiver.c:1351` - the emission gate, `VerifyFailure::is_reported`.
+/// - `receiver.c:1352-1358` - `keptstr`, `VerifyFailure::kept_str`.
+/// - `receiver.c:1359-1366` - `errstr` and `redostr`.
+/// - `receiver.c:1367-1370` - the format string reproduced below.
 #[must_use]
 pub fn verification_failure(name: &Path, state: VerifyFailure) -> Option<(LogCode, String)> {
     if !state.is_reported() {
@@ -186,8 +186,8 @@ mod tests {
     ///
     /// Rows 3 and 7 are unreachable from the command line - upstream sets
     /// `keep_partial` whenever `--partial-dir` is given, and rejects
-    /// `--inplace --partial-dir` outright (`options.c:2435-2440`) - but they
-    /// are what pin the if/else-if ORDER at receiver.c:1090-1095. Rewriting
+    /// `--inplace --partial-dir` outright (`options.c:2575-2583`) - but they
+    /// are what pin the if/else-if ORDER at receiver.c:1353-1358. Rewriting
     /// the chain as three independent predicates still passes every reachable
     /// row and fails these two.
     #[test]
@@ -235,7 +235,7 @@ mod tests {
     /// `redoing` selects the severity, and with it the retry suffix: the
     /// phase-2 form promises nothing because no retry remains.
     ///
-    /// upstream: receiver.c:1087,1096-1102.
+    /// upstream: receiver.c:1350,1359-1366.
     #[test]
     fn redoing_selects_severity_and_drops_the_retry_suffix() {
         set_name_level(true);
@@ -257,7 +257,7 @@ mod tests {
     /// The `FWARNING` form carries `redostr`, and `--read-batch` downgrades the
     /// promise to "may".
     ///
-    /// upstream: receiver.c:1101-1102.
+    /// upstream: receiver.c:1364-1365.
     #[test]
     fn read_batch_downgrades_the_retry_promise() {
         set_name_level(true);
@@ -276,7 +276,7 @@ mod tests {
     /// The emission gate: `FERROR_XFER` short-circuits it, the warning needs
     /// per-file output from either `INFO_GTE(NAME, 1)` or `%i`.
     ///
-    /// upstream: receiver.c:1088.
+    /// upstream: receiver.c:1351.
     #[test]
     fn the_gate_covers_all_three_disjuncts() {
         set_name_level(false);
@@ -310,7 +310,7 @@ mod tests {
 
     /// The name is rendered as given, never absolutised.
     ///
-    /// upstream: receiver.c:1105-1106.
+    /// upstream: receiver.c:1367-1370.
     #[test]
     fn the_name_is_printed_verbatim() {
         set_name_level(true);

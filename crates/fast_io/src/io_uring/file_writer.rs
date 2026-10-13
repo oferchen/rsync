@@ -63,6 +63,10 @@ impl IoUringWriter {
     }
 
     /// Wraps an existing file handle for writing with io_uring.
+    ///
+    /// # Errors
+    ///
+    /// Returns the io_uring ring construction error.
     pub fn from_file(file: File, config: &IoUringConfig) -> io::Result<Self> {
         Self::new_from_file(file, config)
     }
@@ -111,6 +115,11 @@ impl IoUringWriter {
     }
 
     /// Creates a file with preallocated space.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be created or sized, or the io_uring writer cannot
+    /// be built.
     pub fn create_with_size<P: AsRef<Path>>(
         path: P,
         size: u64,
@@ -126,6 +135,11 @@ impl IoUringWriter {
     /// Submits a single SQE on the per-thread ring and waits for completion.
     /// For bulk writes, prefer buffered `write()` + `flush()` which batches
     /// SQEs automatically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the SQE cannot be queued, the submit fails, no completion arrives,
+    /// or the kernel reports a negative result.
     pub fn write_at(&mut self, offset: u64, buf: &[u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -170,6 +184,11 @@ impl IoUringWriter {
     ///
     /// Submits up to `sq_entries` writes per `submit_and_wait` call on the
     /// per-thread ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a write cannot be submitted or completes with an error, or
+    /// `io::ErrorKind::WriteZero` when the kernel writes nothing.
     pub fn write_all_batched(&mut self, data: &[u8], offset: u64) -> io::Result<()> {
         let buffer_size = self.buffer_size;
         let sq_entries = self.sq_entries as usize;

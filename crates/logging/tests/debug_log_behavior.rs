@@ -4,7 +4,7 @@
 //! diagnostic messages based on the configured verbosity levels. The behavior
 //! mirrors rsync's -debug=FLAG[N] option handling.
 //!
-//! Reference: rsync 3.4.1 log.c for debug output behavior.
+//! Reference: rsync 3.5.1 log.c for debug output behavior.
 
 use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, debug_log, drain_events, init};
 

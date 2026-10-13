@@ -665,7 +665,7 @@ fn non_root_sender_unmappable_uid_remap_matches_upstream() {
     // with --numeric-ids both implementations carry "user:1500000"
     // verbatim. The receiver must call getpwnam_r("1500000") and, when
     // it fails, fall back to the numeric id from the wire. ACL-1
-    // (PR #4742) installed that fallback on the oc-rsync receiver,
+    // installed that fallback on the oc-rsync receiver,
     // matching upstream's `recv_add_id()` at `uidlist.c:282`.
     //
     // The byte-identical assertion is two-pronged:
@@ -830,7 +830,7 @@ fn acl_2c_upstream_sender_oc_receiver() {
     // oc-rsync acts as receiver. Source carries both mappable
     // (root user/group, name resolution succeeds) and unmappable
     // (UNMAPPABLE_UID/UNMAPPABLE_GID, name resolution fails) named ACL
-    // entries. Per ACL-1 (PR #4742) the oc-rsync receiver must:
+    // entries. Per ACL-1 the oc-rsync receiver must:
     //   - keep mappable named entries with their resolved local id;
     //   - keep unmappable named entries with their raw wire id verbatim
     //     (no silent drop), matching upstream uidlist.c:282 `id2 = id`.

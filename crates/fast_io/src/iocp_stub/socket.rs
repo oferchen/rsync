@@ -1,4 +1,4 @@
-//! Cross-platform stub for the Windows-only `iocp::socket` module (issue #1928).
+//! Cross-platform stub for the Windows-only `iocp::socket` module.
 //!
 //! Mirrors the public surface of [`crate::iocp::socket`] on Windows so code
 //! that names `IocpSocketReader` / `IocpSocketWriter` behind a runtime check
@@ -30,6 +30,10 @@ impl IocpSocketReader {
     }
 
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn associate(_socket: u64, _pump: SharedPump) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -38,6 +42,10 @@ impl IocpSocketReader {
     }
 
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn recv_async(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -73,6 +81,10 @@ impl IocpSocketWriter {
     }
 
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn associate(_socket: u64, _pump: SharedPump) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -81,6 +93,10 @@ impl IocpSocketWriter {
     }
 
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn send_async(&mut self, _buf: &[u8]) -> io::Result<usize> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,

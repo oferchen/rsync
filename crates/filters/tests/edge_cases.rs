@@ -4,7 +4,7 @@
 //! error conditions, and complex pattern combinations that might arise
 //! in real-world usage.
 //!
-//! Reference: rsync 3.4.1 exclude.c for pattern handling edge cases.
+//! Reference: rsync 3.5.1 exclude.c for pattern handling edge cases.
 
 use filters::XattrSide;
 use filters::{FilterAction, FilterRule, FilterSet};
@@ -218,7 +218,7 @@ fn escaped_brackets() {
 ///
 /// The pattern `path\\file` (two literal backslash bytes) has no `*?[`, so
 /// upstream sets no FILTRULE_WILD and matches it with a literal comparison
-/// (exclude.c:967-978 litmatch_array): the backslashes are ordinary bytes, NOT
+/// (exclude.c:1070-1077 strcmp): the backslashes are ordinary bytes, NOT
 /// escapes. Verified against rsync 3.4.4 (`- path\\file` excludes the file named
 /// `path\\file` and leaves `path\file` untouched). A pattern is only de-escaped
 /// on the wildmatch path, which non-wild rules never take.
@@ -426,7 +426,7 @@ fn malformed_bracket_patterns_compile_and_never_match() {
 
 /// Verifies complex nested patterns.
 ///
-/// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+/// upstream: `exclude.c:rule_matches()` lines 1037-1038 returns "no match"
 /// for a non-directory entry when the rule carries `FILTRULE_DIRECTORY`.
 /// `**/node_modules/` is a wildcard directory-only pattern and so does
 /// NOT match a file like `node_modules/lodash` directly - upstream relies
@@ -453,7 +453,7 @@ fn complex_nested_patterns() {
     // pruning, so single-path queries for files inside the directory
     // report "no match" against the directory-only rule and fall through
     // to defaults (include). Wire-equivalent behaviour with upstream
-    // rsync 3.4.x.
+    // rsync 3.5.1.
     assert!(set.allows(Path::new("node_modules/lodash"), false));
     assert!(set.allows(Path::new("packages/app/node_modules/react"), false));
 
@@ -509,7 +509,7 @@ fn many_rules() {
 
 /// Verifies xattr_only rules apply to xattr names, not file paths.
 ///
-/// upstream: exclude.c:914 - an `x`-modifier rule matches xattr NAMES only
+/// upstream: exclude.c:1013-1014 - an `x`-modifier rule matches xattr NAMES only
 /// (NAME_IS_XATTR), never a file path.
 #[test]
 fn xattr_only_rules_apply_to_names_not_paths() {
@@ -560,7 +560,7 @@ fn side_flagged_xattr_rules_participate_only_on_their_own_side() {
 ///
 /// upstream: exclude.c:1903-1912 - a rule with neither side flag never has
 /// `elide` assigned, so it stays 0, which never equals `cur_elide_value`
-/// (`LOCAL_RULE` = 1 / `REMOTE_RULE` = 2, exclude.c:180).
+/// (`LOCAL_RULE` = 1 / `REMOTE_RULE` = 2, exclude.c:178-179).
 #[test]
 fn an_unflagged_xattr_rule_participates_on_both_sides() {
     let rule = FilterRule::exclude("user.both").with_xattr_only(true);

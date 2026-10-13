@@ -34,7 +34,7 @@ use super::config::{IoUringConfig, is_io_uring_available};
 /// Default write buffer capacity for the batched disk writer (256 KB).
 ///
 /// Matches upstream rsync's `wf_writeBufSize = WRITE_SIZE * 8`
-/// (fileio.c:165).
+/// (fileio.c:263).
 const DEFAULT_BUFFER_CAPACITY: usize = 256 * 1024;
 
 /// Batched io_uring disk writer for the disk commit phase.
@@ -70,6 +70,10 @@ impl IoUringDiskBatch {
     ///
     /// Allocates a single io_uring ring that will be reused across all file
     /// operations. Returns `Err` if ring creation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns the io_uring ring construction error.
     pub fn new(config: &IoUringConfig) -> io::Result<Self> {
         let ring = config.build_ring()?;
         Ok(Self {

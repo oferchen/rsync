@@ -33,7 +33,7 @@ impl UserMapping {
     ///
     /// See `NameMapping::map_uid_named`: name/wildcard rules match against the
     /// wire name rather than a receiver-local reverse lookup of the raw id,
-    /// mirroring upstream `recv_add_id` (uidlist.c:255-268).
+    /// mirroring upstream `recv_add_id` (uidlist.c:255-270).
     pub fn map_uid_named(
         &self,
         uid: RawUid,
@@ -80,7 +80,7 @@ impl GroupMapping {
     ///
     /// See `NameMapping::map_gid_named`: name/wildcard rules match against the
     /// wire name rather than a receiver-local reverse lookup of the raw id,
-    /// mirroring upstream `recv_add_id` (uidlist.c:255-268).
+    /// mirroring upstream `recv_add_id` (uidlist.c:255-270).
     pub fn map_gid_named(
         &self,
         gid: RawGid,

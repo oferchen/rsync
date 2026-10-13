@@ -35,7 +35,7 @@ use protocol::flist::FileEntry;
 #[cfg(not(target_os = "macos"))]
 const HISTORICAL_CRTIME_SECS: i64 = 946_684_800;
 
-/// #198 - the entry-based crtime apply is a documented no-op on non-macOS,
+/// The entry-based crtime apply is a documented no-op on non-macOS,
 /// non-Windows Unix.
 ///
 /// `set_crtime()` is a stub returning `Ok(())` on Linux (and other non-macOS,
@@ -65,7 +65,7 @@ fn crtimes_entry_apply_is_a_documented_noop_on_non_macos_unix() {
     );
 }
 
-/// #198 - the entry-based crtime apply actually stamps the creation time on
+/// The entry-based crtime apply actually stamps the creation time on
 /// Windows via `SetFileTime`.
 ///
 /// On Windows `set_crtime()` writes the NTFS creation time, so an entry that
@@ -102,13 +102,13 @@ fn crtimes_entry_apply_sets_creation_time_on_windows() {
     );
 }
 
-/// #197 + #199 - a non-root receiver silently skips a non-`user.*` xattr and
+/// A non-root receiver silently skips a non-`user.*` xattr and
 /// preserves a `user.*` one, continuing without error.
 ///
 /// There is no separate resource-fork subsystem: a macOS resource fork travels
 /// as the ordinary `com.apple.ResourceFork` xattr, so its fate on a
 /// non-supporting receiver is governed entirely by the generic xattr namespace
-/// rule. Upstream `xattrs.c:830` restricts a non-root receiver's stored xattrs
+/// rule. Upstream `xattrs.c:874-877` restricts a non-root receiver's stored xattrs
 /// to the `user.*` namespace: a non-`user.*` attribute is silently skipped,
 /// while a `user.*` attribute is applied. This pins both halves so a regression
 /// cannot (a) hard-error on the skipped attribute, nor (b) drop the preserved
@@ -147,7 +147,7 @@ fn non_root_receiver_skips_non_user_namespace_xattr_and_keeps_user_one() {
     let list = XattrList::with_entries(vec![
         XattrEntry::new(b"user.pin.kept".to_vec(), b"v".to_vec()),
         // A non-`user.*` stand-in for a resource fork / system attribute that a
-        // non-root receiver is not permitted to store (upstream `xattrs.c:830`).
+        // non-root receiver is not permitted to store (upstream `xattrs.c:874-877`).
         XattrEntry::new(b"security.pin.dropped".to_vec(), b"v".to_vec()),
     ]);
 

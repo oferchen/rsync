@@ -39,7 +39,7 @@ pub enum IocpError {
     /// IOCP reader/writer through the path-based factory functions, or to
     /// reopen the file via [`super::file_factory::writer_from_file`] under
     /// the [`crate::IocpPolicy::Enabled`] policy, which performs the
-    /// `FILE_FLAG_OVERLAPPED` reopen automatically (#1929).
+    /// `FILE_FLAG_OVERLAPPED` reopen automatically.
     #[error("IOCP overlapped operation rejected with ERROR_INVALID_PARAMETER: {context}")]
     InvalidOperation {
         /// Free-form context describing the call site (e.g. `"WriteFile"`).

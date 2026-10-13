@@ -46,7 +46,7 @@ pub(super) fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
 
 /// Decodes a variable-length integer from `reader` using rsync's wire format.
 ///
-/// The implementation mirrors `read_varint()` from upstream `io.c`. The leading
+/// The implementation mirrors `read_varint()` (upstream `io.c:2024`). The leading
 /// tag byte determines how many additional bytes follow, all of which are read
 /// from `reader` before the value is reconstructed in little-endian order.
 ///
@@ -80,7 +80,7 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
 
 /// Reads a varint and validates it falls within the inclusive range `[lo, hi]`.
 ///
-/// Mirrors upstream `io.c:read_varint_bounded()`. Upstream aborts the transfer
+/// Mirrors upstream `io.c:2112` `read_varint_bounded()`. Upstream aborts the transfer
 /// with `RERR_PROTOCOL` on an out-of-range wire value; here the equivalent is a
 /// typed [`io::ErrorKind::InvalidData`], which higher layers map to the same
 /// protocol error. `what` names the field for the diagnostic, matching the
@@ -114,7 +114,7 @@ pub fn read_varint_bounded<R: Read + ?Sized>(
 /// Reads a varint destined for a `usize`, rejecting negatives and values above
 /// `max`.
 ///
-/// Mirrors upstream `io.c:read_varint_size()`, which guards `usize` conversions
+/// Mirrors upstream `io.c:2125` `read_varint_size()`, which guards `usize` conversions
 /// so a negative wire value cannot wrap to `~SIZE_MAX`. Callers reading a
 /// length or count from the wire should use this instead of casting the result
 /// of [`read_varint`] directly. Upstream aborts with `RERR_PROTOCOL` on a bad

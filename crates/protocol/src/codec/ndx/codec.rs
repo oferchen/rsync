@@ -23,7 +23,7 @@ enum NdxLead {
 
 /// Classifies the leading byte of a modern NDX value.
 ///
-/// Upstream `io.c:2328-2337` - `read_ndx()` first-byte dispatch.
+/// Upstream `io.c:2598-2605` - `read_ndx()` first-byte dispatch.
 #[inline]
 fn classify_ndx_lead(lead: u8) -> NdxLead {
     if lead == 0xFF {
@@ -151,7 +151,7 @@ pub trait NdxCodec {
 ///
 /// # Upstream Reference
 ///
-/// `io.c:2284-2286`:
+/// `io.c:2595-2596` (`read_ndx()`; `write_ndx()` does the same at `io.c:2547-2550`):
 /// ```c
 /// if (protocol_version < 30)
 ///     return read_int(f);
@@ -224,8 +224,8 @@ impl NdxCodec for LegacyNdxCodec {
 ///
 /// # Upstream Reference
 ///
-/// `io.c:2281-2325` - `write_ndx()` function
-/// `io.c:2327-2356` - `read_ndx()` function
+/// `io.c:2541-2585` - `write_ndx()` function
+/// `io.c:2588-2630` - `read_ndx()` function
 #[derive(Debug, Clone)]
 pub struct ModernNdxCodec {
     protocol_version: u8,
@@ -338,11 +338,11 @@ impl NdxCodec for ModernNdxCodec {
             (diff, ndx)
         } else if ndx == NDX_DONE {
             // NDX_DONE is sent as single-byte 0 with no side effects
-            // Upstream io.c:2297-2300
+            // Upstream io.c:2557-2560
             return writer.write_all(&[0x00]);
         } else {
             // All negative index bytes start with 0xFF
-            // Upstream io.c:2301-2306
+            // Upstream io.c:2561-2566
             buf[cnt] = 0xFF;
             cnt += 1;
             let ndx_abs = ndx.wrapping_neg();
@@ -352,13 +352,13 @@ impl NdxCodec for ModernNdxCodec {
         };
 
         // Encode the diff value
-        // Upstream io.c:2308-2323
+        // Upstream io.c:2568-2583
         if diff > 0 && diff < 0xFE {
             buf[cnt] = diff as u8;
             cnt += 1;
         } else if !(0..=0x7FFF).contains(&diff) {
             // Full 4-byte encoding with high bit set
-            // Upstream io.c:2313-2318
+            // Upstream io.c:2573-2578
             buf[cnt] = 0xFE;
             cnt += 1;
             buf[cnt] = ((ndx_positive >> 24) as u8) | 0x80;
@@ -371,7 +371,7 @@ impl NdxCodec for ModernNdxCodec {
             cnt += 1;
         } else {
             // 2-byte diff encoding
-            // Upstream io.c:2319-2322
+            // Upstream io.c:2579-2583
             buf[cnt] = 0xFE;
             cnt += 1;
             buf[cnt] = (diff >> 8) as u8;
@@ -404,11 +404,11 @@ impl NdxCodec for ModernNdxCodec {
 
         let num = if b[0] == 0xFE {
             // Extended encoding
-            // Upstream io.c:2343-2352
+            // Upstream io.c:2606-2614
             reader.read_exact(&mut b[..1])?;
             if b[0] & 0x80 != 0 {
                 // 4-byte full value
-                // Upstream io.c:2345-2349
+                // Upstream io.c:2608-2612
                 let high = b[0];
                 reader.read_exact(&mut b[..3])?;
                 decode_ndx_extended_full(high, b[0], b[1], b[2])
@@ -600,7 +600,8 @@ pub fn create_ndx_codec(protocol_version: u8) -> NdxCodecEnum {
 /// A redo pass legitimately re-emits an already-sent index: upstream
 /// `io.c:write_ndx` imposes no ordering, and `sender.c:469-486` echoes the redo
 /// NDX via the same `write_ndx_and_attrs` path used for the first send
-/// (`generator.c:2178-2216` re-requests the file on the redo). Once such a
+/// (`generator.c:2647-2673` `check_for_finished_files()` re-requests the file
+/// on the redo). Once such a
 /// re-emission is seen the guard latches off, since no monotonic invariant
 /// holds across redo. The tracking is `debug_assert`-only, so release builds
 /// compile it out and this wrapper has zero overhead.

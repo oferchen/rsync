@@ -52,23 +52,24 @@ impl BatchHeader {
     ///
     /// Format matches upstream rsync batch file layout:
     /// 1. Stream flags bitmap (i32) - `batch.c:113 write_int(fd, flags)`
-    /// 2. Protocol version (i32) - `io.c:2559 write_int(batch_fd, protocol_version)`
-    /// 3. Compat flags (varint, if protocol >= 30) - `io.c:2561 write_varint(batch_fd, compat_flags)`
-    /// 4. Checksum seed (i32) - `io.c:2562 write_int(batch_fd, checksum_seed)`
+    /// 2. Protocol version (i32) - `io.c:2754 write_int(batch_fd, protocol_version)`
+    /// 3. Compat flags (varint, if protocol >= 30) -
+    ///    `io.c:2756 write_varint(batch_fd, compat_flags)`
+    /// 4. Checksum seed (i32) - `io.c:2757 write_int(batch_fd, checksum_seed)`
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         // upstream: batch.c:113 write_int(fd, flags)
         self.stream_flags
             .write_to_versioned(writer, self.protocol_version)?;
 
-        // upstream: io.c:2559 write_int(batch_fd, protocol_version)
+        // upstream: io.c:2754 write_int(batch_fd, protocol_version)
         write_i32(writer, self.protocol_version)?;
 
-        // upstream: io.c:2560-2561
+        // upstream: io.c:2755-2756
         if let Some(flags) = self.compat_flags {
             write_varint(writer, flags)?;
         }
 
-        // upstream: io.c:2562 write_int(batch_fd, checksum_seed)
+        // upstream: io.c:2757 write_int(batch_fd, checksum_seed)
         write_i32(writer, self.checksum_seed)?;
 
         Ok(())
@@ -78,21 +79,21 @@ impl BatchHeader {
     ///
     /// Format matches upstream rsync (same order as write_to):
     /// 1. Stream flags bitmap (i32) - `batch.c:118 read_int(fd)`
-    /// 2. Protocol version (i32) - read as `remote_protocol` via `compat.c:604`
-    /// 3. Compat flags (varint, if protocol >= 30) - `compat.c:740 read_varint(f_in)`
+    /// 2. Protocol version (i32) - read as `remote_protocol` via `compat.c:607`
+    /// 3. Compat flags (varint, if protocol >= 30) - `compat.c:752 read_varint(f_in)`
     /// 4. Checksum seed (i32) - read via normal protocol negotiation
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         // upstream: batch.c:118 batch_stream_flags = read_int(fd)
         let raw_bitmap = BatchFlags::read_raw(reader)?;
 
-        // upstream: compat.c:604 remote_protocol = read_int(f_in)
+        // upstream: compat.c:607 remote_protocol = read_int(f_in)
         let protocol_version = read_i32(reader)?;
 
         // Reconstruct flags with the correct protocol version mask
         // upstream: batch.c:125-128 protocol-version gating of flag bits
         let stream_flags = BatchFlags::from_bitmap(raw_bitmap, protocol_version);
 
-        // upstream: compat.c:740 compat_flags = read_varint(f_in)
+        // upstream: compat.c:752 compat_flags = read_varint(f_in)
         let compat_flags = if protocol_version >= 30 {
             Some(read_varint(reader)?)
         } else {

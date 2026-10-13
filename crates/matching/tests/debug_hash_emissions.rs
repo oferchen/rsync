@@ -56,7 +56,7 @@ fn build_signature() -> signature::FileSignature {
 /// Exercises `DeltaSignatureIndex::from_signature` under `--debug=HASH` and
 /// asserts the upstream-format created emission fires.
 ///
-/// upstream: hashtable.c:45-53.
+/// upstream: hashtable.c:55-63.
 #[test]
 fn from_signature_emits_created_under_debug_hash() {
     init_hash_level_1();
@@ -76,7 +76,7 @@ fn from_signature_emits_created_under_debug_hash() {
 /// Drops a constructed index and asserts the matching destroyed emission
 /// fires through the [`Drop`] impl.
 ///
-/// upstream: hashtable.c:60-63.
+/// upstream: hashtable.c:70-73.
 #[test]
 fn drop_emits_destroyed_under_debug_hash() {
     init_hash_level_1();

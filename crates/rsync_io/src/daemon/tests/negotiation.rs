@@ -260,7 +260,7 @@ fn into_stream_parts_exposes_legacy_state() {
 
     let transport = stream.into_inner();
     assert_eq!(transport.flushes(), 1);
-    // upstream: clientserver.c:157 - the greeting advertises this side's own
+    // upstream: clientserver.c:181 - the greeting advertises this side's own
     // desired protocol, not the negotiated (possibly clamped/decremented) value.
     assert_eq!(transport.written(), client_greeting(desired.as_u8()));
 }
@@ -363,7 +363,7 @@ fn legacy_handshake_round_trips_from_components() {
 /// narrow the negotiation to a set it chose - it can advertise only weak
 /// algorithms and have the client confirm them as its own, removing the
 /// client's floor. Upstream cannot do this even accidentally: the greeting goes
-/// out at clientserver.c:157, before the server's is read at clientserver.c:174.
+/// out at clientserver.c:181, before the server's is read at clientserver.c:203.
 #[test]
 fn legacy_client_greeting_advertises_our_digests_not_the_servers() {
     let transport = MemoryTransport::new(b"@RSYNCD: 31.0 sha512 md5\n");
@@ -406,7 +406,7 @@ fn legacy_client_greeting_ignores_a_single_weak_server_digest() {
 
 /// Capping the protocol changes the version field and nothing else.
 ///
-/// upstream: compat.c:838-842 emits `get_default_nno_list()` verbatim, so the
+/// upstream: compat.c:844-853 emits `get_default_nno_list()` verbatim, so the
 /// list is never filtered by version. Verified against rsync 3.4.4:
 /// `--protocol=29` sends `@RSYNCD: 29.0 sha512 sha256 sha1 md5 md4`.
 #[test]
@@ -435,7 +435,7 @@ fn legacy_client_greeting_respects_protocol_cap() {
 // `30.5` into the client greeting and negotiated protocol 30 (a bare min); a
 // non-discriminating fixture whose version equals ours would hide both bugs.
 //
-// upstream: clientserver.c:157 writes our own greeting before reading the
+// upstream: clientserver.c:181 writes our own greeting before reading the
 // server's, so rsync 3.4.4 sends `@RSYNCD: 32.0 ...` here (verified against the
 // real binary), and clientserver.c:215-219 decrements the session protocol to 29
 // because the server's nonzero subprotocol differs from our release sub 0.

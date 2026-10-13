@@ -56,7 +56,8 @@
 //! # Upstream Reference
 //!
 //! - `flist.c:recv_file_list()` - Traditional batch receiving
-//! - `io.c:read_a_msg()` - Incremental file list segments in INC_RECURSE mode
+//! - `io.c:wait_for_receiver()` / `rsync.c:read_ndx_and_attrs()` - receive
+//!   INC_RECURSE sub-lists via `recv_file_list(f, dir_ndx)`
 
 mod ready_entry;
 mod streaming;
@@ -295,6 +296,9 @@ impl IncrementalFileList {
     ///
     /// Entries that cannot be resolved (e.g., due to invalid paths) remain as
     /// unresolved orphans in the result.
+    ///
+    /// Deviation from upstream: rsync never synthesizes missing parents. Its
+    /// receiver relies on the sender's flist order and `make_path()` at create time.
     pub fn finalize(mut self) -> FinalizationResult {
         let unprocessed_ready: Vec<FileEntry> = self.ready.drain(..).collect();
         let unprocessed_ready_count = unprocessed_ready.len();

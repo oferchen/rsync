@@ -526,9 +526,9 @@ pub struct ModuleState {
     pub root: Option<PathBuf>,
     /// Upstream `am_chrooted`.
     ///
-    /// Assigned in exactly one place - `clientserver.c:988`, inside
+    /// Assigned in exactly one place - `clientserver.c:1055`, inside
     /// `rsync_module()`'s per-module `use chroot` handling. The daemon-level
-    /// `daemon chroot` deliberately leaves it clear (`clientserver.c:1345-1357`)
+    /// `daemon chroot` deliberately leaves it clear (`clientserver.c:1478-1489`)
     /// because that chroot confines resolution to the daemon root rather than
     /// to a module boundary, so the per-module defences must keep firing.
     pub chrooted: bool,

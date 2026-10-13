@@ -8,7 +8,7 @@
 //! file signatures. It combines:
 //! - Block sizing heuristics from upstream rsync's `generator.c:sum_sizes_sqroot()`
 //! - Signature generation using rolling and strong checksums
-//! - Standalone block size calculation matching rsync 3.4.1
+//! - Standalone block size calculation matching rsync 3.5.1
 //!
 //! # Overview
 //!
@@ -19,7 +19,7 @@
 //!    using [`generate_file_signature`]
 //!
 //! For more granular control, you can use the [`block_size`] module to calculate
-//! block sizes and checksum lengths independently
+//! block sizes and checksum lengths independently.
 //!
 //! # Example
 //!
@@ -86,7 +86,7 @@ mod file;
 mod generation;
 mod layout;
 
-/// Block size calculation algorithm matching upstream rsync 3.4.1.
+/// Block size calculation algorithm matching upstream rsync 3.5.1.
 ///
 /// Provides standalone functions for calculating block sizes and checksum lengths
 /// used in rsync's delta transfer algorithm.

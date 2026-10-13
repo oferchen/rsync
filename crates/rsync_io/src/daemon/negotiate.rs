@@ -43,6 +43,11 @@ where
 /// allocations when establishing many daemon sessions. The sniffer is reset
 /// before any bytes are observed so state from previous negotiations is fully
 /// cleared. Behaviour otherwise matches [`negotiate_legacy_daemon_session`].
+///
+/// # Errors
+///
+/// Returns an I/O error when reading the prologue fails or the peer does not speak the expected
+/// negotiation style.
 #[doc(alias = "@RSYNCD")]
 pub fn negotiate_legacy_daemon_session_with_sniffer<R>(
     reader: R,
@@ -110,8 +115,8 @@ where
         desired_protocol.as_u8()
     );
 
-    // upstream: clientserver.c:157 writes this side's own greeting BEFORE
-    // clientserver.c:174 reads the server's, so the banner advertises our own
+    // upstream: clientserver.c:181 writes this side's own greeting BEFORE
+    // clientserver.c:203 reads the server's, so the banner advertises our own
     // configured version and subprotocol, never the server's.
     let banner = build_client_greeting(desired_protocol, our_sub);
     stream.write_all(&banner)?;
@@ -141,8 +146,8 @@ fn negotiate_protocol(
     our_sub: u8,
 ) -> ProtocolVersion {
     let clamped = cmp::min(desired_protocol, server_greeting.protocol());
-    // upstream: clientserver.c:180 stores the server's raw `remote_protocol` from
-    // `sscanf`; the `protocol_version < remote_protocol` branch (clientserver.c:222)
+    // upstream: clientserver.c:209 stores the server's raw `remote_protocol` from
+    // `sscanf`; the `protocol_version < remote_protocol` branch (clientserver.c:251)
     // needs that un-clamped value so a server advertising a newer protocol is not
     // mistaken for an equal one whose nonzero subprotocol would force a downgrade.
     let their_protocol = u8::try_from(server_greeting.advertised_protocol()).unwrap_or(u8::MAX);
@@ -160,16 +165,16 @@ fn negotiate_protocol(
 
 /// Renders the client's `@RSYNCD:` greeting line.
 ///
-/// upstream: clientserver.c:157 calls `output_daemon_greeting()` (compat.c:833)
-/// BEFORE clientserver.c:174 reads the server's line, so every field is this
+/// upstream: clientserver.c:181 calls `output_daemon_greeting()` (compat.c:844)
+/// BEFORE clientserver.c:203 reads the server's line, so every field is this
 /// side's own advertisement, never derived from the server. The banner therefore
 /// carries our configured `protocol_version` and `get_subprotocol_version()`
-/// (compat.c:842 `io_printf(f_out, "@RSYNCD: %d.%d %s\n", protocol_version,
+/// (compat.c:853 `io_printf(f_out, "@RSYNCD: %d.%d %s\n", protocol_version,
 /// our_sub, tmpbuf)`) regardless of what the server advertised. Verified against
 /// rsync 3.4.4: a client answering a server that greeted `@RSYNCD: 30.5` still
 /// sends `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4`.
 ///
-/// The digest list is `get_default_nno_list()` (compat.c:840) and is likewise
+/// The digest list is `get_default_nno_list()` (compat.c:853) and is likewise
 /// never filtered by protocol version: `--protocol=28` still greets with
 /// `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
 fn build_client_greeting(advertised_protocol: ProtocolVersion, subprotocol: u8) -> Vec<u8> {
@@ -256,7 +261,7 @@ mod tests {
         );
     }
 
-    // upstream: compat.c:840-842 `output_daemon_greeting()` emits
+    // upstream: compat.c:844-853 `output_daemon_greeting()` emits
     // `get_default_nno_list()` verbatim with no version filtering. Verified
     // against rsync 3.4.4: `--protocol=28` through `--protocol=32` all send the
     // identical five names, differing only in the version field.

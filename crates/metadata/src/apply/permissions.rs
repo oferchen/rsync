@@ -79,7 +79,7 @@ static ORIG_UMASK: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:1824` - `umask(orig_umask = umask(0));` runs in `main()` before
+/// - `main.c:1904` - `umask(orig_umask = umask(0));` runs in `main()` before
 ///   any privilege drop or sandbox setup.
 #[cfg(unix)]
 #[allow(unsafe_code)]
@@ -137,14 +137,14 @@ fn cached_umask() -> u32 {
 
 /// Returns the default permission seed for a child created under `parent`.
 ///
-/// Mirrors upstream `generator.c:1349-1351` which calls `default_perms_for_dir(dn)`
+/// Mirrors upstream `generator.c:1738-1741` which calls `default_perms_for_dir(dn)`
 /// when `--perms` is off. The helper folds the parent directory's POSIX default
 /// ACL `user_obj`/`group_obj`/`other_obj` entries into the seed; when there is
 /// no default ACL (or the filesystem does not support POSIX default ACLs) it
 /// returns the umask-derived `ACCESSPERMS & ~orig_umask`.
 ///
-/// upstream: `acls.c:1083-1139` `default_perms_for_dir`
-/// upstream: `generator.c:1349-1352` per-parent `dflt_perms` lookup
+/// upstream: `acls.c:1453-1508` `default_perms_for_dir`
+/// upstream: `generator.c:1738-1741` per-parent `dflt_perms` lookup
 #[cfg(unix)]
 fn default_perms_seed(parent: Option<&Path>) -> u32 {
     let umask = cached_umask();
@@ -182,7 +182,7 @@ fn default_perms_seed(parent: Option<&Path>) -> u32 {
 /// [`default_perms_seed`] when the `acl` feature is enabled. Falls back to the
 /// umask-derived seed when the parent is unknown or no default ACL is present.
 ///
-/// upstream: rsync.c:449-472 `dest_mode()`
+/// upstream: rsync.c:464-487 `dest_mode()`
 /// upstream: generator.c:1740-1742 `dflt_perms = default_perms_for_dir(dn)`
 /// upstream: generator.c:2770 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
 #[cfg(unix)]
@@ -200,7 +200,7 @@ fn compute_dest_mode(
         let dflt_perms = default_perms_seed(dest_parent);
         let mut new_mode = source_mode & (!0o7777 | dflt_perms);
         if let Some(existing) = existing {
-            // upstream: rsync.c:512-516 - a freshly-created directory that
+            // upstream: rsync.c:641-645 - a freshly-created directory that
             // inherited S_ISGID from a setgid parent keeps that bit even when
             // !preserve_perms strips it out of the dest_mode() result:
             // `if (inherit && S_ISDIR(new_mode) && sxp->st.st_mode & S_ISGID)`.
@@ -246,7 +246,7 @@ fn compute_dest_mode(
 /// against the pre-transfer destination, so the tweak must feed the exists
 /// split here rather than bypass it.
 ///
-/// upstream: receiver.c:980 (`dest_mode()` invocation) + rsync.c:449-472
+/// upstream: receiver.c:1208 (`dest_mode()` invocation) + rsync.c:464-487
 /// (`dest_mode()` body)
 #[cfg(unix)]
 pub fn apply_dest_mode_pre_transfer(
@@ -264,7 +264,7 @@ pub fn apply_dest_mode_pre_transfer(
         return Ok(());
     }
 
-    // upstream: receiver.c:1193-1208 - the basis file is opened with O_NOFOLLOW
+    // upstream: receiver.c:1191-1208 - the basis file is opened with O_NOFOLLOW
     // and the fd is dropped again unless it is a regular file, so a symlink /
     // fifo / device obstacle leaves `exists = fd1 != -1` false and the incoming
     // file takes the new-destination rule (its lstat mode - 0o755 for a symlink
@@ -300,7 +300,7 @@ pub fn apply_dest_mode_pre_transfer(
 /// upstream's unconditional `set_file_attrs()` chmod) and by the `-E`
 /// without `-p` path.
 ///
-/// upstream: rsync.c:449-472 `dest_mode()`
+/// upstream: rsync.c:464-487 `dest_mode()`
 #[cfg(unix)]
 fn dest_mode_for_existing_or_new(
     entry: &protocol::flist::FileEntry,
@@ -393,16 +393,16 @@ pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bo
 /// `(fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)` - so the destination stays
 /// readable/writable during and after the transfer. Special bits
 /// (setuid/setgid/sticky) are dropped from the real mode; they survive only in
-/// the xattr. The normal chmod-to-`fmode` is skipped (upstream `rsync.c:660`).
+/// the xattr. The normal chmod-to-`fmode` is skipped (upstream `rsync.c:808`).
 ///
 /// The `user.rsync.%stat` xattr is only written when the real
 /// mode/uid/gid/rdev cannot faithfully represent the intended values - i.e.
 /// when `real_mode != fmode` (special bits or perms were dropped) or the
 /// destination's on-disk owner/group differ from the intended ones. When the
 /// real attributes already match, upstream writes no shim and removes any stale
-/// `%stat` (`xattrs.c:1225-1237`), so an unprivileged same-owner copy of a
+/// `%stat` (`xattrs.c:1325-1336`), so an unprivileged same-owner copy of a
 /// plain 0755 dir / 0644 file leaves no `%stat` behind.
-/// upstream: xattrs.c:1188-1237 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
+/// upstream: xattrs.c:1273-1357 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
 ///           | (S_ISDIR ? 0700 : 0600); write-or-remove based on faithfulness.
 #[cfg(unix)]
 fn apply_fake_super_mode(
@@ -424,7 +424,7 @@ fn apply_fake_super_mode(
         0o100000
     };
 
-    // upstream: xattrs.c:1219-1220 - enable full owner access, dump special bits.
+    // upstream: xattrs.c:1313-1315 - enable full owner access, dump special bits.
     let real_mode = type_bits | (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 };
 
     #[cfg(feature = "xattr")]
@@ -443,7 +443,7 @@ fn apply_fake_super_mode(
             .map(|s| (s.uid, s.gid, s.rdev))
             .unwrap_or((0, 0, None));
 
-        // upstream: xattrs.c:1225-1229 - the shim is redundant when the real
+        // upstream: xattrs.c:1325-1326 - the shim is redundant when the real
         // (mode & type)==stored mode and the on-disk owner/group already equal
         // the intended values (rdev is 0 for non-devices). Compare against the
         // destination's actual on-disk owner/group.
@@ -459,7 +459,7 @@ fn apply_fake_super_mode(
             && want_rdev.is_none();
 
         if faithful {
-            // upstream: xattrs.c:1227-1233 - drop any stale %stat and skip write.
+            // upstream: xattrs.c:1327-1335 - drop any stale %stat and skip write.
             remove_fake_super(destination).map_err(|error| {
                 MetadataError::new("remove fake-super metadata", destination, error)
             })?;
@@ -501,7 +501,7 @@ pub(super) fn apply_permissions_with_chmod(
     options: &MetadataOptions,
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    // upstream: rsync.c:577-578 set_file_attrs() - under fake-super (am_root<0)
+    // upstream: rsync.c:808 set_file_attrs() - under fake-super (am_root<0)
     // the intended mode is deflected into the xattr and the real mode is forced
     // self-accessible; the normal chmod is skipped.
     #[cfg(unix)]
@@ -567,7 +567,7 @@ pub(super) fn apply_permissions_with_chmod(
             // upstream: generator.c:1856 - even when !preserve_perms the
             // generator rewrites `file->mode = dest_mode(...)` for a
             // directory, judging `exists` by the pre-mkdir `statret`, and
-            // set_file_attrs() (rsync.c:658) chmods the directory to it. The
+            // set_file_attrs() (rsync.c:812) chmods the directory to it. The
             // caller's `existing` carries that pre-transfer stat: a fresh
             // directory takes the source mode masked by dflt_perms
             // (rsync.c:481-485) instead of the mkdir umask default, while a
@@ -578,14 +578,14 @@ pub(super) fn apply_permissions_with_chmod(
             let mut new_mode = directory_dest_mode(destination, source_mode, options, existing);
             if let Ok(current_meta) = fs::metadata(destination) {
                 let current_mode = current_meta.permissions().mode();
-                // upstream: rsync.c:512-516 - a freshly-created directory that
+                // upstream: rsync.c:641-645 - a freshly-created directory that
                 // inherited S_ISGID from a setgid parent keeps that bit even
                 // though dest_mode() dropped it.
                 if existing.is_none() && current_mode & 0o2000 != 0 {
                     new_mode |= 0o2000;
                 }
                 if (current_mode & 0o7777) != new_mode {
-                    // upstream: syscall.c:do_chmod():939-941 - when neither
+                    // upstream: syscall.c:do_chmod():1745-1746 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs()
                     // continues.
@@ -604,7 +604,7 @@ pub(super) fn apply_permissions_with_chmod(
             existing,
             destination.parent(),
         ) {
-            // upstream: syscall.c:do_chmod():939-941 - when neither --perms
+            // upstream: syscall.c:do_chmod():1745-1746 - when neither --perms
             // nor --executability is active, chmod failure is non-fatal.
             // upstream returns 0 so set_file_attrs() continues.
             let _ = chmod_path_honoring_keep_dirlinks(
@@ -636,7 +636,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 ) -> Result<(), MetadataError> {
     use std::os::unix::fs::PermissionsExt;
 
-    // upstream: rsync.c:577-578 set_file_attrs() - fake-super deflects the mode
+    // upstream: rsync.c:808 set_file_attrs() - fake-super deflects the mode
     // into the xattr and forces a self-accessible real mode; the open fd (which
     // could be a regular-file placeholder) is not used for the chmod so the
     // deflection stays path-based, matching set_stat_xattr().
@@ -716,7 +716,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
         existing,
         destination.parent(),
     ) {
-        // upstream: syscall.c:do_chmod():939-941 - when neither --perms
+        // upstream: syscall.c:do_chmod():1745-1746 - when neither --perms
         // nor --executability is active, chmod failure is non-fatal.
         // upstream returns 0 so set_file_attrs() continues.
         if let Some(fd) = fd {
@@ -748,7 +748,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// parent in our test path is a symlink to a real directory and the chmod must
 /// land on the canonical file. Falls back to `std::fs::set_permissions`, which
 /// resolves symlinks through the OS path walk like upstream
-/// `generator.c:1356`'s `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
+/// `generator.c:1745`'s `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`.
 ///
 /// Both branches remain visible to `fakeroot`: `secure_chmod_at` performs the
 /// mode change with the libc `fchmodat(2)` symbol (only the parent-directory
@@ -758,7 +758,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// interposed by fakeroot's LD_PRELOAD wrapper, so no raw-syscall path bypasses
 /// the faked mode here.
 ///
-/// upstream: rsync.c:set_file_attrs() / generator.c:1356 link_stat
+/// upstream: rsync.c:set_file_attrs() / generator.c:1745 gen_entry_stat()
 ///
 /// `parent_dirfd` optionally carries the destination's parent directory,
 /// already resolved through the SAME `secure_open_dir` walk `secure_chmod_at`
@@ -1000,7 +1000,7 @@ pub(super) fn apply_symlink_permissions_like(
 /// source mode passes through; without `--perms` or `--chmod` the plain
 /// [`compute_dest_mode`] reduction supplies the mode, so the recorded xattr
 /// reflects the same mode a privileged transfer would have applied on disk.
-/// upstream: rsync.c:495-519 set_file_attrs() new_mode / dest_mode + tweak_mode
+/// upstream: rsync.c:641-648 set_file_attrs() new_mode / dest_mode + tweak_mode
 #[cfg(unix)]
 fn intended_fake_super_mode(
     destination: &Path,
@@ -1165,11 +1165,11 @@ fn chmod_tweaked_dest_mode(
     }
 
     if let Some(existing) = pre_transfer {
-        // upstream: rsync.c:470-482 - an existing destination keeps its own
+        // upstream: rsync.c:470-480 - an existing destination keeps its own
         // permission bits with the type bits from the (tweaked) flist mode.
         let mut new_mode = (tweaked & !0o7777) | (existing.permissions().mode() & 0o7777);
         if options.executability() && source_is_regular {
-            // upstream: rsync.c:472-481 dest_mode() - for existing regular
+            // upstream: rsync.c:472-480 dest_mode() - for existing regular
             // files only, copy the (tweaked) source's exec presence: if it
             // has no exec bits, clear them on dest; else if dest has no exec
             // bits, grant exec to everyone who can already read
@@ -1185,7 +1185,7 @@ fn chmod_tweaked_dest_mode(
     } else {
         // upstream: rsync.c:483-485 - fresh destination: mask by
         // `dflt_perms = default_perms_for_dir(dn)`, which folds the parent's
-        // POSIX default ACL when one is present (acls.c:1083) and otherwise
+        // POSIX default ACL when one is present (acls.c:1453) and otherwise
         // reduces to `ACCESSPERMS & ~orig_umask`; special bits drop out.
         tweaked & (!0o7777 | default_perms_seed(destination.parent()))
     }
@@ -1227,7 +1227,7 @@ fn apply_permissions_without_chmod(
                     .mode()
             };
 
-            // upstream: rsync.c:457-465 dest_mode() - if source has no exec
+            // upstream: rsync.c:472-480 dest_mode() - if source has no exec
             // bits, clear them on dest; else if dest has no exec bits, grant
             // exec to everyone who can already read (`new_mode & 0444 >> 2`).
             // When dest already has some exec bits they are preserved
@@ -1287,7 +1287,7 @@ pub(super) fn apply_permissions_from_entry(
         use std::os::unix::fs::PermissionsExt;
 
         if !options.permissions() && !options.executability() && options.chmod().is_none() {
-            // upstream: receiver.c:980 - even when `!preserve_perms` and
+            // upstream: receiver.c:1198-1209 - even when `!preserve_perms` and
             // `!preserve_executability`, the receiver mutates `file->mode` via
             // `dest_mode()` and `set_file_attrs()` chmods the post-rename
             // destination to it. For an existing destination this preserves
@@ -1328,7 +1328,7 @@ pub(super) fn apply_permissions_from_entry(
                     &fresh_meta
                 };
                 if (current_meta.permissions().mode() & 0o7777) != (new_mode & 0o7777) {
-                    // upstream: syscall.c:do_chmod():939-941 - when neither
+                    // upstream: syscall.c:do_chmod():1745-1746 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs() continues.
                     let _ = chmod_path_honoring_keep_dirlinks(
@@ -1342,7 +1342,7 @@ pub(super) fn apply_permissions_from_entry(
             } else if entry.file_type().is_dir() {
                 // upstream: generator.c:1856 - even when !preserve_perms
                 // the generator runs `file->mode = dest_mode(...)` for
-                // directories, and set_file_attrs() (rsync.c:658) chmods
+                // directories, and set_file_attrs() (rsync.c:812) chmods
                 // the dir to it. A new dir therefore lands the source mode
                 // masked by dflt_perms (so a source 0700 dir stays 0700 rather
                 // than the mkdir umask default); an existing dir keeps its own
@@ -1365,7 +1365,7 @@ pub(super) fn apply_permissions_from_entry(
                     &fresh_meta
                 };
                 let current_mode = current_meta.permissions().mode();
-                // upstream: rsync.c:512-516 - a freshly-created dir (no
+                // upstream: rsync.c:641-645 - a freshly-created dir (no
                 // pre-transfer stat) that inherited S_ISGID from a setgid
                 // parent keeps that bit even though dest_mode() dropped it.
                 if pre_transfer_meta.is_none() && (current_mode & 0o2000) != 0 {
@@ -1387,7 +1387,7 @@ pub(super) fn apply_permissions_from_entry(
                     new_mode |= 0o700;
                 }
                 if (current_mode & 0o7777) != (new_mode & 0o7777) {
-                    // upstream: syscall.c:do_chmod():939-941 - when neither
+                    // upstream: syscall.c:do_chmod():1745-1746 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs() continues.
                     let _ = chmod_path_honoring_keep_dirlinks(
@@ -1420,7 +1420,7 @@ pub(super) fn apply_permissions_from_entry(
                 // symlink swapped into any parent component cannot redirect
                 // the chmod outside the receiver's confinement (testsuite
                 // chdir-symlink-race). Under `--keep-dirlinks` the helper
-                // follows symlinked parents to mirror upstream `generator.c:1356`.
+                // follows symlinked parents to mirror upstream `generator.c:1745`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     mode,
@@ -1473,7 +1473,7 @@ pub(super) fn apply_permissions_from_entry(
             if (new_mode & 0o7777) != (current_mode & 0o7777) {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
-                // mirror upstream `generator.c:1356`.
+                // mirror upstream `generator.c:1745`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     new_mode,
@@ -1486,7 +1486,7 @@ pub(super) fn apply_permissions_from_entry(
             && !options.permissions()
             && entry.file_type().is_regular()
         {
-            // upstream: rsync.c:457-465 dest_mode() - `-E` without `-p` and
+            // upstream: rsync.c:472-480 dest_mode() - `-E` without `-p` and
             // without `--chmod` transfers only the executability bits from
             // source to destination, layered on top of the pre-transfer
             // destination mode (or the source-mode-masked-by-dflt-perms when
@@ -1519,7 +1519,7 @@ pub(super) fn apply_permissions_from_entry(
             if (current_meta.permissions().mode() & 0o7777) != destination_permissions {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
-                // mirror upstream `generator.c:1356`.
+                // mirror upstream `generator.c:1745`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     destination_permissions,
@@ -1568,7 +1568,7 @@ mod tests {
     use super::*;
     use crate::MetadataOptions;
 
-    /// upstream: syscall.c:do_chmod():939-941 - when neither --perms nor
+    /// upstream: syscall.c:do_chmod():1745-1746 - when neither --perms nor
     /// --executability is active, do_chmod returns 0 on failure.
     /// Verify that a chmod ENOENT is swallowed in the !perms path.
     #[test]

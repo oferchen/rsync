@@ -3,6 +3,9 @@
 //! This module implements a typestate pattern for tracking the rsync protocol lifecycle,
 //! making invalid state transitions a compile-time error where possible.
 //!
+//! Deviation from upstream: upstream tracks these phases implicitly in its control flow;
+//! this tracker is oc-only.
+//!
 //! # Protocol Phases
 //!
 //! The rsync protocol progresses through these phases in strict forward order:

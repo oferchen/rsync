@@ -6,13 +6,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.c:87-147` `setup_iconv` - opens `ic_chck`, `ic_send`, `ic_recv`.
-//! - `rsync.c:99-110` (`DEBUG_GTE(ICONV, 2)`) - `ic_chck` message-charset
+//! - `rsync.c:88-148` `setup_iconv` - opens `ic_chck`, `ic_send`, `ic_recv`.
+//! - `rsync.c:100-111` (`DEBUG_GTE(ICONV, 2)`) - `ic_chck` message-charset
 //!   probe; emits one of two shapes depending on whether `iconv_open`
 //!   succeeded.
-//! - `rsync.c:142-145` (`DEBUG_GTE(ICONV, 1)`) - peer charset announcement
+//! - `rsync.c:143-146` (`DEBUG_GTE(ICONV, 1)`) - peer charset announcement
 //!   after `ic_send`/`ic_recv` are both opened.
-//! - `options.c:306` - `DEBUG_WORD(ICONV, W_CLI|W_SRV, ...)` flag table
+//! - `options.c:322` - `DEBUG_WORD(ICONV, W_CLI|W_SRV, ...)` flag table
 //!   entry, capping emissions at level 2.
 
 use logging::debug_log;
@@ -21,7 +21,7 @@ use logging::debug_log;
 ///
 /// `setup_iconv` runs while `am_starting_up == 1`, so upstream's
 /// `who_am_i()` returns `"client"` or `"server"` (see
-/// `rsync.c:823-830`). The sender/receiver/generator labels do not apply
+/// `rsync.c:987-995`). The sender/receiver/generator labels do not apply
 /// because the iconv contexts are opened before those roles are assigned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconvRole {
@@ -50,14 +50,14 @@ impl std::fmt::Display for IconvRole {
 
 /// Charset placeholder for an unset/locale-default charset.
 ///
-/// Upstream renders `*charset ? charset : "[LOCALE]"` (`rsync.c:144`); a
+/// Upstream renders `*charset ? charset : "[LOCALE]"` (`rsync.c:145`); a
 /// `None` charset means the iconv setup walked the
 /// `default_charset()` branch (locale-derived UTF-8).
 const LOCALE_PLACEHOLDER: &str = "[LOCALE]";
 
 /// Traces the peer charset announcement (level 1).
 ///
-/// upstream: `rsync.c:142-145` - `"[%s] charset: %s\n"`. Emitted once
+/// upstream: `rsync.c:143-146` - `"[%s] charset: %s\n"`. Emitted once
 /// per process after `ic_send` and `ic_recv` are both opened. Pass
 /// `charset = None` to render the upstream `[LOCALE]` placeholder for
 /// the locale-default branch.
@@ -71,7 +71,7 @@ pub fn trace_peer_charset(role: IconvRole, charset: Option<&str>) {
 
 /// Traces a successful message-charset probe (level 2).
 ///
-/// upstream: `rsync.c:106-108` - `"msg checking charset: %s\n"`. Emitted
+/// upstream: `rsync.c:107-109` - `"msg checking charset: %s\n"`. Emitted
 /// when `iconv_open(defset, defset)` opens `ic_chck` for `isprint()`
 /// validation, only when `!am_server && !allow_8bit_chars`.
 #[inline]
@@ -81,7 +81,7 @@ pub fn trace_msg_checking_charset(defset: &str) {
 
 /// Traces a failed message-charset probe (level 2).
 ///
-/// upstream: `rsync.c:101-104` -
+/// upstream: `rsync.c:101-105` -
 /// `"msg checking via isprint() (iconv_open(\"%s\", \"%s\") errno: %d)\n"`.
 /// Emitted when `iconv_open(defset, defset)` returns `(iconv_t)-1`,
 /// indicating that the locale charset is unknown to the system iconv
@@ -98,18 +98,18 @@ pub fn trace_msg_checking_via_isprint(defset: &str, errno: i32) {
     );
 }
 
-/// Traces a filename conversion warning at ICONV level 1.
+/// Traces a filename conversion failure at ICONV level 1.
 ///
-/// Emitted when a lossy conversion replaces unconvertible bytes. This
-/// corresponds to upstream's `rprintf(FERROR_UTF8, ...)` or
-/// `rprintf(FERROR_XFER, ...)` warnings in `flist.c:971-974` and
-/// `flist.c:1822-1825`.
+/// Deviation from upstream: upstream has no ICONV-gated line for this. It
+/// prints the failure unconditionally as an error (`FERROR_UTF8` /
+/// `FERROR_XFER`) with `strerror(errno)` in the parenthetical, which
+/// `crate::iconv::skip` reproduces; this debug line names the encoding pair instead.
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:971-974` (recv): `"[%s] cannot convert filename: %s (%s)\n"`
-/// - `flist.c:1822-1825` (send): `"[%s] cannot convert filename: %s (%s)\n"`
-/// - `flist.c:1367-1370` (symlink): `"[%s] cannot convert symlink data for: %s (%s)\n"`
+/// - `flist.c:1065-1069` (recv): `"[%s] cannot convert filename: %s (%s)\n"`
+/// - `flist.c:2019-2022` (send): `"[%s] cannot convert filename: %s (%s)\n"`
+/// - `flist.c:2034-2037` (symlink): `"[%s] cannot convert symlink data for: %s (%s)\n"`
 #[inline]
 pub fn trace_conversion_warning(
     role: IconvRole,
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn role_renders_upstream_tokens() {
-        // upstream: rsync.c:823-830 - who_am_i() returns "client" or
+        // upstream: rsync.c:987-995 - who_am_i() returns "client" or
         // "server" during am_starting_up.
         assert_eq!(IconvRole::Client.as_str(), "client");
         assert_eq!(IconvRole::Server.as_str(), "server");
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn level1_peer_charset_named() {
-        // upstream: rsync.c:142-145 - "[%s] charset: %s\n".
+        // upstream: rsync.c:143-146 - "[%s] charset: %s\n".
         init_at(1);
         trace_peer_charset(IconvRole::Client, Some("UTF-8"));
         let m = iconv_messages();
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn level1_peer_charset_locale_placeholder_when_empty() {
-        // upstream: rsync.c:144 - "*charset ? charset : \"[LOCALE]\"".
+        // upstream: rsync.c:145 - "*charset ? charset : \"[LOCALE]\"".
         init_at(1);
         trace_peer_charset(IconvRole::Server, None);
         trace_peer_charset(IconvRole::Server, Some(""));
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn level2_msg_checking_success() {
-        // upstream: rsync.c:106-108 - "msg checking charset: %s\n".
+        // upstream: rsync.c:107-109 - "msg checking charset: %s\n".
         init_at(2);
         trace_msg_checking_charset("UTF-8");
         let m = iconv_messages();
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn level2_msg_checking_failure() {
-        // upstream: rsync.c:101-104 - "msg checking via isprint() (iconv_open(\"%s\", \"%s\") errno: %d)\n".
+        // upstream: rsync.c:101-105 - "msg checking via isprint() (iconv_open(\"%s\", \"%s\") errno: %d)\n".
         init_at(2);
         trace_msg_checking_via_isprint("BOGUS-CHARSET", 22);
         let m = iconv_messages();

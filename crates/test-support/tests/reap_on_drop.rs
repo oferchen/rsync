@@ -6,7 +6,8 @@
 //! path, so any panic between the spawn and those lines orphans it. And the
 //! orphan is not reliably removable by SIGTERM:
 //! `platform::signal::register_signal_handlers` converts SIGTERM into an
-//! atomic flag (upstream `main.c` defers signals the same way), so an orphan
+//! atomic flag (upstream rsync.c:843 sig_int() defers only for a server or
+//! receiver; a daemon listener exits at once), so an orphan
 //! that has stopped reaching that flag check survives every ordinary cleanup
 //! sweep and accumulates until the machine hits `ulimit -u`.
 //!

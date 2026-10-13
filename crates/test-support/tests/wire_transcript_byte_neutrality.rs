@@ -1,4 +1,4 @@
-//! Byte-neutrality transcript cells for the lazy-flist programme (LF-0b).
+//! Byte-neutrality transcript cells for the lazy flist producer.
 //!
 //! Every later flist-producer change must leave the wire byte-identical with
 //! its staging flag off. These cells prove the INSTRUMENT before anyone
@@ -13,15 +13,15 @@
 //!    transcript, and reverting that byte restores byte-identity to the
 //!    original capture. The revert arm is the mutation evidence: if the
 //!    comparison could not see the flipped byte, the `assert_ne` arm fails.
-//! 3. Flag-env - `OC_RSYNC_LAZY_FLIST=off` equals the-variable-unset. The
-//!    flag does not exist yet (LF-0c), so both arms are identical today by
-//!    construction; the cell runs BOTH arms unconditionally so it becomes
-//!    load-bearing the day the flag lands, rather than silently self-skipping
-//!    until then.
+//! 3. Flag-env - `OC_RSYNC_LAZY_FLIST=off` equals the-variable-unset. Both
+//!    arms run unconditionally, so the cell never self-skips.
+//! 4. Flag-on - `OC_RSYNC_LAZY_FLIST=1` equals the-variable-unset on this
+//!    push, where the flag is inert.
 //!
 //! The captures are the raw byte streams of both directions, multiplex
-//! framing included (upstream: io.c:1173 keeps the 4-byte frame headers
-//! inside the same stream), taken by the `capture-rsh` trampoline.
+//! framing included (upstream: io.c:776 perform_io() and io.c:1173
+//! send_msg() write the 4-byte frame headers into the same stream), taken by
+//! the `capture-rsh` trampoline.
 
 #![cfg(unix)]
 
@@ -209,12 +209,10 @@ fn transcript_moves_on_a_one_byte_fixture_change_and_reverts() {
     assert_transcripts_eq(&base, &reverted, "reverted fixture");
 }
 
-/// Cell 3: the LF-0c staging-flag gate, wired ahead of the flag.
+/// Cell 3: `OC_RSYNC_LAZY_FLIST=off` is byte-identical to the flag unset.
 ///
-/// `OC_RSYNC_LAZY_FLIST` does not exist in the binary yet, so both arms are
-/// identical by construction today. Both arms still RUN - the cell never
-/// self-skips - so the day the flag lands, `off` diverging from unset fails
-/// here first.
+/// Both arms always RUN - the cell never self-skips - so `off` diverging from
+/// unset fails here first.
 #[test]
 fn transcript_unchanged_by_lazy_flist_env_off() {
     let src = test_support::create_tempdir();
@@ -230,13 +228,13 @@ fn transcript_unchanged_by_lazy_flist_env_off() {
     assert_transcripts_eq(&unset, &off, "OC_RSYNC_LAZY_FLIST=off vs unset");
 }
 
-/// Cell 4 (LF-2c): setting `OC_RSYNC_LAZY_FLIST=1` does not perturb the wire.
+/// Cell 4: setting `OC_RSYNC_LAZY_FLIST=1` does not perturb the wire.
 ///
 /// The lazy producer is gated behind BOTH the staging flag AND a negotiated
-/// INC_RECURSE (`GeneratorContext::lazy_producer_eligible`). INC_RECURSE is not
-/// yet negotiated on a live oc transfer - the wire pull-conversion is a separate
-/// pending track - so on this push the flag is inert and both arms take the same
-/// eager path. This cell therefore guards that turning the flag on never leaks a
+/// INC_RECURSE (`GeneratorContext::lazy_producer_eligible`). On this push the
+/// oc server receiver enables INC_RECURSE only under its own test-only flag
+/// (`transfer::compute_allow_inc_recurse`), so the lazy flag is inert and both
+/// arms take the same eager path. This cell therefore guards that turning the flag on never leaks a
 /// change into the currently-reachable path; it does NOT yet exercise the lazy
 /// producer end-to-end.
 ///
@@ -245,8 +243,7 @@ fn transcript_unchanged_by_lazy_flist_env_off() {
 /// non-vacuously at the unit level, where INC_RECURSE and the lazy decision are
 /// forced:
 /// `transfer::generator::tests::lazy_producer_reproduces_eager_partition_segments`
-/// and `lazy_producer_scales_past_lookahead_boundary_and_matches_eager`. Once
-/// the wire negotiation lands, this cell becomes the end-to-end gate unchanged.
+/// and `lazy_producer_scales_past_lookahead_boundary_and_matches_eager`.
 #[test]
 fn transcript_unchanged_by_lazy_flist_env_on() {
     let src = test_support::create_tempdir();

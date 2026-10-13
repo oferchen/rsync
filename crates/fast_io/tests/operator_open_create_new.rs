@@ -7,7 +7,7 @@
 //!
 //! The cross-uid refusal itself needs a symlink owned by a third uid, which only
 //! root can plant, so it is covered by the `operator-path-temp-dir` cell of the
-//! upstream 3.5.0 testsuite (run as root in CI). What is pinned here is
+//! upstream 3.5.1 testsuite (run as root in CI). What is pinned here is
 //! everything that is reachable unprivileged: the create, the exclusivity the
 //! caller's retry loop depends on, and the FOLLOW direction - without that last
 //! one a future "refuse every symlink" simplification would look correct.

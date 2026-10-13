@@ -14,8 +14,8 @@
 //! # Upstream Reference
 //!
 //! The flag-byte encoding is implemented in upstream
-//! `flist.c:send_file_entry()` between lines 639 and 658 of
-//! `target/interop/upstream-src/rsync-3.5.0/flist.c`:
+//! `flist.c:send_file_entry()` between lines 869 and 882 of
+//! `target/interop/upstream-src/rsync-3.5.1/flist.c`:
 //!
 //! ```c
 //! if (xfer_flags_as_varint)
@@ -33,7 +33,7 @@
 //! }
 //! ```
 //!
-//! and the per-bit xflag composition in lines 406-540 of the same function.
+//! and the per-bit xflag composition in lines 726-866 of the same function.
 //!
 //! For protocol 28 and 29 the flag prelude is always a fixed 1- or 2-byte
 //! quantity; protocol 30+ encodes it as a varint when
@@ -139,7 +139,7 @@ fn flag_bytes(buf: &[u8], offsets: [usize; 3]) -> [u8; 3] {
 /// Golden flag-byte sequence at protocol 28.
 ///
 /// Protocol 28 takes the `protocol_version >= 28` branch in upstream
-/// `flist.c:776-783` and never sets `XMIT_USER_NAME_FOLLOWS`
+/// `flist.c:871-878` and never sets `XMIT_USER_NAME_FOLLOWS`
 /// (`calculate_owner_name_flags` early-returns for `< 30`), so the prelude is
 /// a single byte per entry equal to the primary xflag mask.
 #[test]

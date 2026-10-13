@@ -1,31 +1,27 @@
 //! Protocol 30+ capability negotiation.
 //!
 //! This module implements the `negotiate_the_strings()` function from upstream
-//! rsync (compat.c:534-585), which negotiates checksum and compression algorithms
+//! rsync (compat.c:538-574), which negotiates checksum and compression algorithms
 //! between client and server for Protocol 30+.
 //!
 //! # Protocol Flow
 //!
 //! For protocol versions >= 30, after the compatibility flags exchange, peers
-//! negotiate which checksum and compression algorithms to use. The flow differs
-//! between SSH mode and daemon mode:
-//!
-//! ## SSH Mode (Bidirectional)
+//! negotiate which checksum and compression algorithms to use. When the peer
+//! advertised `CF_VARINT_FLIST_FLAGS`, the exchange is the same in SSH and
+//! daemon mode:
 //!
 //! 1. Both sides send their supported algorithm lists
 //! 2. Both sides read each other's lists
-//! 3. Both independently select the first mutually supported algorithm
+//! 3. Each side independently selects a mutually supported algorithm
 //!
-//! ## Daemon Mode (Unidirectional)
-//!
-//! 1. Server sends its supported algorithm lists and uses defaults locally
-//! 2. Client reads server's lists and selects from them
-//! 3. Client does NOT send a response (unidirectional flow)
+//! Without that flag no lists cross the wire and both sides fall back to the
+//! old-style defaults.
 //!
 //! # References
 //!
-//! - Upstream: `compat.c:534-585` (negotiate_the_strings)
-//! - Upstream: `compat.c:332-391` (parse_negotiate_str, recv_negotiate_str)
+//! - Upstream: `compat.c:538-574` (negotiate_the_strings)
+//! - Upstream: `compat.c:333-407` (parse_negotiate_str, recv_negotiate_str)
 
 mod algorithms;
 mod env_list;

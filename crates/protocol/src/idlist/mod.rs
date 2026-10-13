@@ -16,12 +16,13 @@
 //! - ID lists use variable-length integers
 //! - `(varint id, byte name_len, name_bytes)` tuples, terminated by `varint 0`
 //!
-//! With the `ID0_NAMES` compat flag (protocol 30+), an additional name for id=0
-//! follows the terminator.
+//! With the `CF_ID0_NAMES` compat flag (protocol 30+), the name for id=0
+//! (`byte name_len, name_bytes`) follows the terminator.
 //!
 //! # Upstream Reference
 //!
-//! - `uidlist.c` - UID/GID list management
+//! - `uidlist.c:373-407` - `send_one_name()` / `send_one_list()`
+//! - `uidlist.c:462-481` - `recv_id_list()`
 //! - `io.h:21-43` - `read_varint30()`/`write_varint30()` inline functions
 
 pub mod trace;
@@ -38,8 +39,8 @@ use std::io::{self, Read, Write};
 /// unbounded allocations by sending millions of id-name pairs without ever
 /// sending the terminating zero.
 ///
-/// upstream: uidlist.c `recv_id_list()` loops until id==0 with no explicit
-/// count cap; relies on the sender eventually terminating.
+/// Deviation from upstream: `uidlist.c:recv_id_list()` loops until id==0 with
+/// no explicit count cap and relies on the sender eventually terminating.
 const MAX_WIRE_ID_LIST_ENTRIES: usize = 65536;
 
 /// A mapping from a remote ID to its name and resolved local ID.
@@ -170,7 +171,7 @@ impl IdList {
     /// Only ids that carried a name on the wire are included. Used by the
     /// receiver to key `--usermap`/`--groupmap` rules on the sender-transmitted
     /// name while it rewrites the file list, mirroring upstream `recv_add_id`'s
-    /// use of the wire `name` (uidlist.c:255-268) rather than a receiver-local
+    /// use of the wire `name` (uidlist.c:255-270) rather than a receiver-local
     /// reverse lookup of the raw id.
     #[must_use]
     pub fn names_snapshot(&self) -> HashMap<u32, Vec<u8>> {
@@ -206,7 +207,7 @@ impl IdList {
     ///
     /// # Upstream Reference
     ///
-    /// - `uidlist.c:382` - `send_user_name()` uses `write_varint30()`
+    /// - `uidlist.c:382` - `send_one_name()` uses `write_varint30()`
     /// - `io.h:37` - `write_varint30()` switches between int and varint at protocol 30
     pub fn write<W: Write>(
         &self,
@@ -269,7 +270,7 @@ impl IdList {
     ///
     /// # Upstream Reference
     ///
-    /// - `uidlist.c:467` - `recv_id_list()` uses `read_varint30()`
+    /// - `uidlist.c:469` - `recv_id_list()` uses `read_varint30()`
     /// - `io.h:21` - `read_varint30()` switches between int and varint at protocol 30
     pub fn read<R: Read + ?Sized, F>(
         &mut self,
@@ -294,7 +295,7 @@ impl IdList {
     /// # Upstream Reference
     ///
     /// - `uidlist.c:243-294` - `recv_add_id()` performs the resolution and
-    ///   emits `"%sid %u(%s) maps to %u"` at level 2 (line 287).
+    ///   emits `"%sid %u(%s) maps to %u"` at level 2 (line 288).
     pub fn read_with_kind<R: Read + ?Sized, F>(
         &mut self,
         reader: &mut R,
@@ -376,7 +377,7 @@ impl IdList {
         reader.read_exact(&mut name)?;
 
         // Try to resolve the name to a local ID. A resolver that cannot answer
-        // (upstream: a name converter that has died, clientserver.c:1333)
+        // (upstream: a name converter that has died, clientserver.c:1327-1332)
         // propagates instead of degrading into "keep the sender's id".
         let local_id = name_to_id(&name)?.unwrap_or(remote_id);
 
@@ -398,8 +399,8 @@ impl IdList {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1229` - `uid = recv_user_name(f, uid)` on the entry decode
-    /// - `uidlist.c:418-433` - `recv_user_name()` -> `recv_add_id()`
+    /// - `flist.c:1230` - `uid = recv_user_name(f, uid)` on the entry decode
+    /// - `uidlist.c:418-436` - `recv_user_name()` -> `recv_add_id()`
     pub fn register_inline_name<F>(&mut self, id: u32, name: &[u8], name_to_id: F) -> io::Result<()>
     where
         F: Fn(&[u8]) -> io::Result<Option<u32>>,

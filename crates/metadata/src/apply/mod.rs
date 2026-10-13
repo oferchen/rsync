@@ -47,7 +47,8 @@ pub(crate) type ParentDirFd<'a> = Option<&'a ()>;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ParentWalk<'a> {
     /// `--keep-dirlinks`: resolve through `AT_FDCWD`, following dest-side
-    /// symlinked directories like upstream `generator.c:1356`'s `link_stat`.
+    /// symlinked directories like upstream's
+    /// `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)` (generator.c:1745).
     Follow,
     /// Anchor the op on a confined parent dirfd (see [`confined_parent`]).
     ///
@@ -211,10 +212,10 @@ pub fn apply_directory_metadata_with_options(
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, None, Some(&options))?;
     }
-    // upstream: rsync.c:589 - directories skip atime (`ATTRS_SKIP_ATIME`)
+    // upstream: rsync.c:725-726 - directories skip atime (`ATTRS_SKIP_ATIME`)
     // regardless of `--atimes`; only files get atime preservation.
     //
-    // crtime is NOT subject to that rule. upstream: rsync.c:726-730 - the
+    // crtime is NOT subject to that rule. upstream: rsync.c:725-729 - the
     // `S_ISDIR` test that forces `ATTRS_SKIP_ATIME` belongs to atime alone;
     // the only directory that skips `ATTRS_SKIP_CRTIME` is the root folder of
     // an HFS+ volume. So a directory's creation time is preserved exactly as a
@@ -230,7 +231,7 @@ pub fn apply_directory_metadata_with_options(
 /// Reports whether `destination` is the root folder of an HFS+ volume, which
 /// upstream refuses to stamp with a creation time.
 ///
-/// upstream: rsync.c:728-730 - `if (sxp->st.st_ino == 2 && S_ISDIR(sxp->st.st_mode))`.
+/// upstream: rsync.c:728-729 - `if (sxp->st.st_ino == 2 && S_ISDIR(sxp->st.st_mode))`.
 /// `sxp` is the *destination's* stat, so this consults the destination rather
 /// than the source metadata the caller already holds. The extra stat is only
 /// issued under `--crtimes`, and a stat failure answers "not a volume root" so
@@ -280,11 +281,11 @@ pub fn apply_file_metadata_with_options(
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, options, None)?;
-    // upstream: rsync.c:587-612 - mtime and atime are handled independently
+    // upstream: rsync.c:719-749 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, None, Some(options))?;
     } else if options.atimes() {
-        // upstream: rsync.c:604-612 - atime applied when SKIP_MTIME but not SKIP_ATIME
+        // upstream: rsync.c:740-749 - atime applied when SKIP_MTIME but not SKIP_ATIME
         timestamps::apply_atime_only_from_metadata(
             metadata,
             destination,
@@ -381,7 +382,7 @@ pub fn apply_file_metadata_with_fd(
     fd: BorrowedFd<'_>,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like_with_fd(metadata, destination, options, fd, None)?;
-    // upstream: rsync.c:587-612 - mtime and atime are handled independently
+    // upstream: rsync.c:719-749 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_with_fd(metadata, destination, fd, None, Some(options))?;
     } else if options.atimes() {
@@ -410,7 +411,7 @@ pub fn apply_file_metadata_if_changed(
 ) -> Result<(), MetadataError> {
     let restat_after_chown =
         ownership::set_owner_like(metadata, destination, true, options, Some(existing))?;
-    // upstream: rsync.c:564-567 - the chown may have cleared setuid/setgid bits,
+    // upstream: rsync.c:694-704 - the chown may have cleared setuid/setgid bits,
     // so re-stat before the chmod compare so they get re-applied.
     let refreshed;
     let existing = if restat_after_chown {
@@ -421,7 +422,7 @@ pub fn apply_file_metadata_if_changed(
     } else {
         existing
     };
-    // upstream: rsync.c:587-612 - mtime and atime are handled independently
+    // upstream: rsync.c:719-749 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, Some(existing), Some(options))?;
     } else if options.atimes() {
@@ -455,7 +456,7 @@ pub fn apply_file_metadata_with_fd_if_changed(
 ) -> Result<(), MetadataError> {
     let restat_after_chown =
         ownership::set_owner_like_with_fd(metadata, destination, options, fd, Some(existing))?;
-    // upstream: rsync.c:564-567 - the chown may have cleared setuid/setgid bits,
+    // upstream: rsync.c:694-704 - the chown may have cleared setuid/setgid bits,
     // so re-stat before the chmod compare so they get re-applied.
     let refreshed;
     let existing = if restat_after_chown {
@@ -466,7 +467,7 @@ pub fn apply_file_metadata_with_fd_if_changed(
     } else {
         existing
     };
-    // upstream: rsync.c:587-612 - mtime and atime are handled independently
+    // upstream: rsync.c:719-749 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_with_fd(
             metadata,
@@ -506,10 +507,10 @@ pub fn apply_file_metadata_with_fd_if_changed(
 /// ([`permissions::set_permissions_like`] and `apply_permissions_from_entry`)
 /// derives it from the POSIX owner-write bit, so a mode with `0o200` clear is
 /// read-only. This collapses upstream's full-mode `perms_differ()`
-/// (generator.c:418) to a single read-only-bit compare, mirroring the Unix
+/// (generator.c:424-433) to a single read-only-bit compare, mirroring the Unix
 /// arm's permission leg. Kept as a pure, platform-independent helper so it is
 /// unit-testable on Linux even though it only gates the `cfg(not(unix))` path.
-/// upstream: generator.c:418 perms_differ() - the mode compare behind
+/// upstream: generator.c:424 perms_differ() - the mode compare behind
 /// unchanged_attrs()'s `if perms_differ(...)` leg.
 #[cfg(any(not(unix), test))]
 pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly: bool) -> bool {
@@ -519,7 +520,7 @@ pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly:
 
 /// Fast check whether all metadata attributes already match the destination.
 ///
-/// Mirrors upstream `generator.c:468 unchanged_attrs()` - a pure in-memory
+/// Mirrors upstream `generator.c:474 unchanged_attrs()` - a pure in-memory
 /// comparison that avoids the function-call overhead of the full
 /// [`apply_metadata_with_cached_stat`] path. Returns `true` when every
 /// preserved attribute (permissions, ownership, mtime) matches the
@@ -533,15 +534,15 @@ pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly:
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:474-512` - `unchanged_attrs()` checks `perms_differ`,
+/// - `generator.c:474-515` - `unchanged_attrs()` checks `perms_differ`,
 ///   `ownership_differs`, `any_time_differs`, `acls_differ`, `xattrs_differ`
-/// - `generator.c:1822-1827` - quick-check match calls `set_file_attrs` only
+/// - `generator.c:2246` - quick-check match calls `set_file_attrs` only
 ///   when `unchanged_attrs` would fail (implicit - upstream always calls
 ///   `set_file_attrs` but its internal guards skip every syscall when nothing
 ///   differs)
 ///
 /// `modify_window` carries the `--modify-window` tolerance so the mtime leg
-/// matches upstream `mtime_differs()` -> `same_time()` (util1.c:1573) exactly:
+/// matches upstream `mtime_differs()` -> `same_time()` (util1.c:1744) exactly:
 /// the default zero window keeps whole-second equality, a positive window
 /// tolerates that many seconds of drift, and a negative window compares
 /// nanoseconds too. Passing the same `ModifyWindow` the quick-check used keeps
@@ -557,15 +558,15 @@ pub fn metadata_unchanged(
     {
         use std::os::unix::fs::MetadataExt;
 
-        // upstream: generator.c:494-495 - perms_differ(file, sxp)
+        // upstream: generator.c:500-501 - perms_differ(file, sxp)
         if options.permissions() && (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777)
         {
             return false;
         }
 
-        // upstream: generator.c:418-426 perms_differ() - without --perms,
+        // upstream: generator.c:424-433 perms_differ() - without --perms,
         // --executability compares only executability presence. dest_mode()
-        // (rsync.c:449-473) tweaks x-bits solely for regular files, so
+        // (rsync.c:472-480) tweaks x-bits solely for regular files, so
         // non-regular entries never differ on this leg.
         if !options.permissions()
             && options.executability()
@@ -575,7 +576,7 @@ pub fn metadata_unchanged(
             return false;
         }
 
-        // upstream: generator.c:496-497 - ownership_differs(file, sxp)
+        // upstream: generator.c:502-503 - ownership_differs(file, sxp)
         if options.owner()
             && let Some(uid) = entry.uid()
             && cached_meta.uid() != uid
@@ -589,10 +590,10 @@ pub fn metadata_unchanged(
             return false;
         }
 
-        // upstream: generator.c:492-493 - any_time_differs(sxp, file, fname)
+        // upstream: generator.c:498-499 - any_time_differs(sxp, file, fname)
         // -> mtime_differs() -> same_time(), so the `--modify-window` tolerance
         // governs this leg. Pass the sub-second component from both sides; a
-        // negative window compares it (util1.c:1577) while the default zero
+        // negative window compares it (util1.c:1749) while the default zero
         // window reduces to whole-second equality.
         if options.times()
             && !modify_window.same_time(
@@ -608,7 +609,7 @@ pub fn metadata_unchanged(
 
     #[cfg(not(unix))]
     {
-        // upstream: generator.c:494-495 perms_differ(). Windows preserves only
+        // upstream: generator.c:500-501 perms_differ(). Windows preserves only
         // the read-only attribute, so the full-mode compare collapses to a
         // single read-only-bit compare (`windows_readonly_differs`). The apply
         // path (permissions::set_permissions_like /
@@ -623,7 +624,7 @@ pub fn metadata_unchanged(
 
         if options.times() {
             let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
-            // upstream: util1.c:1573 same_time() - apply the `--modify-window`
+            // upstream: util1.c:1744 same_time() - apply the `--modify-window`
             // tolerance rather than an exact FileTime compare.
             if !modify_window.same_time(
                 current_mtime.unix_seconds(),
@@ -692,8 +693,8 @@ pub fn metadata_unchanged(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:727-732` - `ATTRS_SKIP_ATIME` when `!atimes_ndx || S_ISDIR`
-/// - `rsync.c:738-748` - `flags & ATTRS_ACCURATE_TIME || !same_time(...)`
+/// - `rsync.c:725-726` - `ATTRS_SKIP_ATIME` when `!atimes_ndx || S_ISDIR`
+/// - `rsync.c:740-749` - `flags & ATTRS_ACCURATE_TIME || !same_time(...)`
 /// - `generator.c:1646`, `2246` - a `-c` match passes `ATTRS_ACCURATE_TIME`
 #[inline]
 pub fn atime_needs_set(
@@ -805,8 +806,8 @@ pub fn apply_symlink_metadata_with_options_and_pre_transfer(
 ///   (`lchmod()`, then `setattrlist(FSOPT_NOFOLLOW)`). The mode reaching that
 ///   chmod is never `--chmod`-tweaked for a link (flist.c:1966-1967,
 ///   flist.c:1221-1222 and rsync.c:647-648 all gate on `!S_ISLNK`).
-/// - `rsync.c:set_times()` - uses `lutimes` when the target is a symlink
-/// - `generator.c:1604` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
+/// - `util1.c:set_times()` - uses `lutimes` when the target is a symlink
+/// - `generator.c:2003` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
 ///   after `atomic_create` -> `do_symlink` so the new symlink's mtime matches
 ///   the sender's `F_MOD_NSEC_or_0(file)`.
 pub fn apply_symlink_metadata_from_entry(
@@ -961,11 +962,11 @@ pub fn apply_metadata_with_pre_transfer_stat(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:574-625` - `set_file_attrs()` uses `flags` parameter to govern
+/// - `rsync.c:719-749` - `set_file_attrs()` uses `flags` parameter to govern
 ///   which timestamps are applied and whether the comparison is exact.
-/// - `rsync.c:585` - `flags |= ATTRS_SKIP_MTIME | ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME`
+/// - `rsync.c:719-721` - `flags |= ATTRS_SKIP_MTIME | ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME`
 ///   when `omit_dir_times` or `omit_link_times` is active.
-/// - `generator.c:1827` - Passes `maybe_ATTRS_REPORT | maybe_ATTRS_ACCURATE_TIME`
+/// - `generator.c:2246` - Passes `maybe_ATTRS_REPORT | maybe_ATTRS_ACCURATE_TIME`
 ///   on quick-check match paths.
 pub fn apply_metadata_with_attrs_flags(
     destination: &Path,
@@ -1037,7 +1038,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         parent_dirfd,
     )?;
 
-    // upstream: rsync.c:564-567 - the chown may have cleared setuid/setgid bits,
+    // upstream: rsync.c:694-704 - the chown may have cleared setuid/setgid bits,
     // so refresh the cached stat before the chmod compare re-applies them.
     let cached_meta = if restat_after_chown {
         fs::metadata(destination).ok().or(cached_meta)
@@ -1045,13 +1046,13 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         cached_meta
     };
 
-    // upstream: rsync.c:632 `set_times()` runs BEFORE rsync.c:658 `do_chmod_at()`,
+    // upstream: rsync.c:781 `set_times()` runs BEFORE rsync.c:812 `do_chmod_at()`,
     // so timestamps are applied ahead of the permission change. This ordering is
     // observable (upstream sets the mtime/atime, then the mode) and it also keeps
     // a read-only target mode from blocking the utimes call that would otherwise
     // follow it.
 
-    // upstream: rsync.c:727-729 - set_file_attrs() itself adds
+    // upstream: rsync.c:723-724 - set_file_attrs() itself adds
     // ATTRS_SKIP_MTIME without --times; the atime leg below still runs.
     let attrs_flags = if options.times() {
         attrs_flags
@@ -1059,7 +1060,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         attrs_flags | AttrsFlags::SKIP_MTIME
     };
 
-    // upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
+    // upstream: rsync.c:733 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
     if !attrs_flags.skip_mtime() {
         timestamps::apply_timestamps_from_entry(
             destination,
@@ -1071,7 +1072,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         )?;
     }
 
-    // upstream: rsync.c:604 - atime applied independently when SKIP_MTIME is set
+    // upstream: rsync.c:740 - atime applied independently when SKIP_MTIME is set
     // but SKIP_ATIME is not, since apply_timestamps_from_entry handles both together
     if options.atimes() && attrs_flags.skip_mtime() && !attrs_flags.skip_atime() {
         timestamps::apply_atime_only_from_entry(
@@ -1103,7 +1104,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         timestamps::apply_crtime_from_entry(destination, entry)?;
     }
 
-    // upstream: rsync.c:658 - `do_chmod_at()` is the last attribute upstream
+    // upstream: rsync.c:812 - `do_chmod_at()` is the last attribute upstream
     // applies, after times (and after ACLs, which oc applies in the caller).
     permissions::apply_permissions_from_entry(
         destination,

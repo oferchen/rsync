@@ -1,4 +1,4 @@
-//! Byte-identical regression for the io_uring data path (IUD-8, #2368).
+//! Byte-identical regression for the io_uring data path.
 //!
 //! This integration test asserts that the io_uring data path produces a
 //! byte-identical transfer to the standard library path for a representative

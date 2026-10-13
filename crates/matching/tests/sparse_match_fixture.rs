@@ -40,12 +40,12 @@
 //!   the only block-aligned matches available are at offsets
 //!   `0, block_size, ..., (K-1) * block_size`. After matching each
 //!   planted block the generator jumps forward by `block_size` bytes
-//!   (upstream `match.c:297-343`), so non-aligned sliding windows
+//!   (upstream `match.c:336-344`), so non-aligned sliding windows
 //!   inside the planted prefix are never probed.
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.1/match.c:224-378` -
+//! - `target/interop/upstream-src/rsync-3.5.1/match.c:229-273` -
 //!   `hash_search()` two-stage gate (rolling sum then strong sum).
 //! - zsync `librcksum/rsum.c:362-366` - bithash probe before the
 //!   hash-table descent (planned in #2059).

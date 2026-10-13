@@ -212,6 +212,10 @@ impl SyncReader {
     ///
     /// A buffered remainder from a previous oversized chunk is served without
     /// touching the channel, so `budget` only bounds the wait for fresh data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::ErrorKind::TimedOut` when no data arrives within `budget`.
     pub fn read_with_timeout(&mut self, buf: &mut [u8], budget: Duration) -> io::Result<usize> {
         if self.offset >= self.buffered.len() {
             match self.rx.recv_timeout(budget) {

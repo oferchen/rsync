@@ -21,7 +21,7 @@ use super::constants::NO_ENTRY;
 ///
 /// # Upstream Reference
 ///
-/// Corresponds to `id_access` struct in `acls.c` lines 57-60.
+/// Corresponds to `id_access` struct in `acls.c` lines 61-64.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct IdAccess {
     /// User ID or group ID for this entry.
@@ -39,9 +39,9 @@ pub struct IdAccess {
     ///
     /// # Upstream Reference
     ///
-    /// In upstream rsync, names are resolved from UID/GID via `uid_to_name()`
-    /// and `gid_to_name()` before sending. The receiver uses names for
-    /// UID/GID remapping on the destination system.
+    /// Upstream resolves names via `add_uid()` / `add_gid()` (`uidlist.c`)
+    /// inside `send_ida_entries()` (`acls.c:821-826`). The receiver uses names
+    /// for UID/GID remapping on the destination system.
     pub name: Option<Vec<u8>>,
 }
 
@@ -101,7 +101,7 @@ impl IdAccess {
 
 /// List of named user/group ACL entries.
 ///
-/// Corresponds to upstream's `ida_entries` struct in `acls.c` lines 62-65.
+/// Corresponds to upstream's `ida_entries` struct in `acls.c` lines 66-69.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct IdaEntries {
     entries: Vec<IdAccess>,
@@ -148,8 +148,8 @@ impl IdaEntries {
 
     /// Computes the combined mask bits from all entries.
     ///
-    /// Used by the receiver to compute the effective mask when
-    /// `XMIT_MASK_OBJ` was not explicitly sent.
+    /// Same OR as upstream's `computed_mask_bits` in `recv_ida_entries()`
+    /// (`acls.c:955-958`).
     #[must_use]
     pub fn computed_mask_bits(&self) -> u8 {
         let mut mask: u8 = 0;
@@ -175,7 +175,7 @@ impl FromIterator<IdAccess> for IdaEntries {
 ///
 /// # Upstream Reference
 ///
-/// Corresponds to `rsync_acl` struct in `acls.c` lines 72-79.
+/// Corresponds to `rsync_acl` struct in `acls.c` lines 76-83.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RsyncAcl {
     /// Named user and group entries.
@@ -193,7 +193,7 @@ pub struct RsyncAcl {
 impl Default for RsyncAcl {
     /// Creates an empty ACL with all entries set to `NO_ENTRY`.
     ///
-    /// Matches upstream's `empty_rsync_acl` at `acls.c` lines 86-88.
+    /// Matches upstream's `empty_rsync_acl` at `acls.c` lines 90-92.
     fn default() -> Self {
         Self {
             names: IdaEntries::new(),
@@ -280,8 +280,9 @@ impl RsyncAcl {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors the blob written by `set_rsync_acl()` (`acls.c` lines 933-970)
-    /// via `set_xattr_acl()` (`xattrs.c` lines 1112-1125).
+    /// Mirrors the blob written by the `am_root < 0` branch of `set_rsync_acl()`
+    /// (`acls.c` lines 1228-1250) via `set_xattr_acl()` (`xattrs.c` lines
+    /// 1196-1207).
     #[must_use]
     pub fn to_fake_super_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(16 + self.names.len() * 8);
@@ -300,12 +301,12 @@ impl RsyncAcl {
     ///
     /// Returns `None` when `buf` is shorter than the 16-byte base header or
     /// its length is not `16 + 8*n` for some named-entry count `n`, mirroring
-    /// `get_rsync_acl()`'s length validation (`acls.c` lines 483-486).
+    /// `get_rsync_acl()`'s length validation (`acls.c` lines 609-611).
     ///
     /// # Upstream Reference
     ///
     /// Mirrors the `am_root < 0` branch of `get_rsync_acl()` in `acls.c`
-    /// lines 472-509.
+    /// lines 601-635.
     #[must_use]
     pub fn from_fake_super_bytes(buf: &[u8]) -> Option<Self> {
         if buf.len() < 16 {
@@ -349,7 +350,8 @@ impl RsyncAcl {
 ///
 /// # Upstream Reference
 ///
-/// Used by `rsync_acl_get_perms()` in `acls.c` lines 139-155.
+/// Same bit positions as `rsync_acl_fake_perms()` (`acls.c` lines 162-167)
+/// and its inverse `rsync_acl_get_perms()` (`acls.c` lines 133-138).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AclTagType {
     /// Owner permissions - bits 8-6 of mode.
@@ -371,12 +373,14 @@ pub enum AclTagType {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `rsync_acl_get_perms()` in `acls.c` lines 139-155.
+/// Upstream has no single counterpart: `rsync_acl_fake_perms()` (`acls.c`
+/// lines 162-167) does the same shifts inline, and `rsync_acl_get_perms()`
+/// (`acls.c` lines 133-138) performs the inverse, ACL to mode.
 #[must_use]
 pub const fn get_perms(mode: u32, tag_type: AclTagType) -> u8 {
     let shift = match tag_type {
         AclTagType::UserObj => 6,
-        // upstream: acls.c - mask uses same bits as group per POSIX.1e
+        // upstream: acls.c:136 - mask uses same bits as group per POSIX.1e
         AclTagType::GroupObj | AclTagType::MaskObj => 3,
         AclTagType::OtherObj => 0,
     };
@@ -400,7 +404,9 @@ impl RsyncAcl {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `rsync_acl_fake_perms()` in `acls.c` lines 157-170.
+    /// Mirrors `rsync_acl_fake_perms()` in `acls.c` lines 162-167. Upstream
+    /// only ever applies it to a freshly created ACL, so it leaves the mask
+    /// and names alone; this method resets them explicitly.
     pub fn fake_perms(&mut self, mode: u32) {
         self.user_obj = get_perms(mode, AclTagType::UserObj);
         self.group_obj = get_perms(mode, AclTagType::GroupObj);
@@ -417,7 +423,7 @@ impl RsyncAcl {
     ///
     /// # Upstream Reference
     ///
-    /// Equivalent to `rsync_acl_fake_perms()` in `acls.c` lines 157-170,
+    /// Equivalent to `rsync_acl_fake_perms()` in `acls.c` lines 162-167,
     /// but as a standalone constructor.
     #[must_use]
     pub fn from_mode(mode: u32) -> Self {
@@ -431,6 +437,9 @@ impl RsyncAcl {
     }
 
     /// Strips an ACL down to just the base permission entries.
+    ///
+    /// Not an upstream function; for the wire-send strip see
+    /// `strip_perms_for_send`.
     ///
     /// Removes all named user/group entries and clears the mask_obj.
     /// After stripping, only user_obj, group_obj, and other_obj remain.
@@ -462,28 +471,31 @@ impl RsyncAcl {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `rsync_acl_strip_perms()` in `acls.c` lines 138-155.
+    /// Mirrors `rsync_acl_strip_perms()` in `acls.c` lines 142-159.
+    ///
+    /// Deviation from upstream: the mask strip is applied unconditionally;
+    /// upstream compiles it out under `HAVE_SOLARIS_ACLS`.
     pub fn strip_perms_for_send(&mut self, mode: u32) {
-        // upstream: acls.c:142 - user_obj always stripped
+        // upstream: acls.c:146 - user_obj always stripped
         self.user_obj = NO_ENTRY;
 
         if self.mask_obj == NO_ENTRY {
-            // upstream: acls.c:143-144 - no mask means group_obj is redundant
+            // upstream: acls.c:147-148 - no mask means group_obj is redundant
             self.group_obj = NO_ENTRY;
         } else {
             let group_perms = ((mode >> 3) & 7) as u8;
-            // upstream: acls.c:147-148
+            // upstream: acls.c:150-152
             if self.group_obj == group_perms {
                 self.group_obj = NO_ENTRY;
             }
-            // upstream: acls.c:150-151 - mask stripped when it matches group perms
+            // upstream: acls.c:153-156 - mask stripped when it matches group perms
             // and named entries exist
             if !self.names.is_empty() && self.mask_obj == group_perms {
                 self.mask_obj = NO_ENTRY;
             }
         }
 
-        // upstream: acls.c:154 - other_obj always stripped
+        // upstream: acls.c:158 - other_obj always stripped
         self.other_obj = NO_ENTRY;
     }
 
@@ -500,7 +512,7 @@ impl RsyncAcl {
     /// 1. the sender's strip (`acls.c:888` `send_acl()` calling
     ///    `rsync_acl_strip_perms()`), which blanks the slots recoverable from
     ///    the file mode, and
-    /// 2. the receiver's mask restoration (`acls.c:1000-1006`
+    /// 2. the receiver's mask restoration (`acls.c:1000-1007`
     ///    `recv_rsync_acl()`), which puts back a mask that named entries
     ///    require - for an access ACL from the mode's group bits.
     ///
@@ -515,7 +527,7 @@ impl RsyncAcl {
     pub fn condense_for_fake_super_store(&mut self, mode: u32) {
         self.strip_perms_for_send(mode);
 
-        // upstream: acls.c:1000-1006 recv_rsync_acl() - "Mask must be non-empty
+        // upstream: acls.c:1000-1007 recv_rsync_acl() - "Mask must be non-empty
         // with lists", and for SMB_ACL_TYPE_ACCESS the replacement value is
         // `(mode >> 3) & 7` rather than the OR of the named entries' bits.
         if !self.names.is_empty() && self.mask_obj == NO_ENTRY {
@@ -530,10 +542,10 @@ impl RsyncAcl {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `rsync_acl_equal()` in `acls.c` lines 190-197.
+    /// Mirrors `rsync_acl_equal()` in `acls.c` lines 195-202.
     #[must_use]
     pub fn equal(&self, other: &RsyncAcl) -> bool {
-        // upstream: acls.c:192-196 - all four permission objects plus the named
+        // upstream: acls.c:197-201 - all four permission objects plus the named
         // entries must match (ida_entries_equal compares count and each
         // (access, id) pair in order).
         self.user_obj == other.user_obj
@@ -563,20 +575,20 @@ impl RsyncAcl {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `rsync_acl_equal_enough()` in `acls.c` lines 205-224.
+    /// Mirrors `rsync_acl_equal_enough()` in `acls.c` lines 209-228.
     #[must_use]
     pub fn equal_enough(&self, other: &RsyncAcl, mode: u32) -> bool {
-        // upstream: acls.c:208-209 - one has a mask and the other doesn't.
+        // upstream: acls.c:212-213 - one has a mask and the other doesn't.
         // NO_ENTRY (0x80) is the sole bit distinguishing a real perm (0-7)
         // from an absent entry, so the XOR isolates a mask/no-mask mismatch.
         if (self.mask_obj ^ other.mask_obj) & NO_ENTRY != 0 {
             return false;
         }
 
-        // upstream: acls.c:211-222 - when there's a mask, the group_obj
+        // upstream: acls.c:215-226 - when there's a mask, the group_obj
         // becomes an extended entry and must be compared.
         if self.mask_obj != NO_ENTRY {
-            // upstream: acls.c:216-221 - a condensed ACL with a mask omits
+            // upstream: acls.c:217-225 - a condensed ACL with a mask omits
             // group_obj only when it equalled the mask, hence also the mode's
             // group bits; recover that comparison from the mode. Otherwise
             // compare the group_obj values directly.
@@ -589,7 +601,7 @@ impl RsyncAcl {
             }
         }
 
-        // upstream: acls.c:223 - ida_entries_equal: the named user/group
+        // upstream: acls.c:227 - ida_entries_equal: the named user/group
         // entries must have equal count and equal (access, id) pairs. The
         // resolved name is not part of the comparison.
         if self.names.len() != other.names.len() {
@@ -659,8 +671,12 @@ impl AclCache {
     ///
     /// # Upstream Reference
     ///
-    /// See `acls.c:find_matching_rsync_acl()` lines 448-470 - the same
-    /// resume-at-last-match cursor over `rsync_acl_list`.
+    /// See `acls.c:find_matching_rsync_acl()` lines 452-474 - the same
+    /// resume-at-last-match cursor over `racl_list`.
+    ///
+    /// Deviation from upstream: equality is the derived `PartialEq`, which
+    /// also compares each entry's `name`; upstream's `rsync_acl_equal()`
+    /// compares only ids and access bits.
     fn find_matching(
         acls: &[RsyncAcl],
         acl: &RsyncAcl,
@@ -732,7 +748,7 @@ impl AclCache {
     ///
     /// Used by the sender to feed each named entry's user/group id into the
     /// shared uid/gid id-list, mirroring upstream `add_uid`/`add_gid` in
-    /// `send_ida_entries` (`acls.c:592-595`).
+    /// `send_ida_entries` (`acls.c:821-826`).
     pub fn iter_acls(&self) -> impl Iterator<Item = &RsyncAcl> {
         self.access_acls.iter().chain(self.default_acls.iter())
     }

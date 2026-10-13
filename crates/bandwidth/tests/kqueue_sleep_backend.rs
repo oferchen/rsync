@@ -1,5 +1,5 @@
 //! Darwin-only regression test for the kqueue `EVFILT_TIMER` sleep
-//! backend (`KQ-S.4`).
+//! backend.
 //!
 //! Exercises [`bandwidth::BandwidthLimiter`] through its public API
 //! at `--bwlimit=1k` and asserts that the actual pacing duration

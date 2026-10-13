@@ -9,7 +9,7 @@ use super::round_up_1024;
 /// Built through [`MessageHeader`] so the tag encoding has exactly one
 /// definition, and folded at compile time so the back-fill in [`OutBuf::flush`]
 /// is the infallible `tag | length` OR that upstream writes with `SIVAL`
-/// (io.c:705-706).
+/// (io.c:775-776).
 const DATA_HEADER_TAG: u32 = match MessageHeader::new(MessageCode::Data, 0) {
     Ok(header) => header.encode_raw(),
     Err(_) => panic!("a zero-length MSG_DATA header is always representable"),
@@ -19,28 +19,28 @@ const DATA_HEADER_TAG: u32 = match MessageHeader::new(MessageCode::Data, 0) {
 ///
 /// upstream: `io.c:1567` `alloc_xbuf(&iobuf.out, ROUND_UP_1024(IO_BUFFER_SIZE * 2))`
 /// with `IO_BUFFER_SIZE = 32*1024` (`rsync.h:160`). Never reallocated
-/// (io.c:612 "We never resize the circular output buffer.").
+/// (io.c:678 "We never resize the circular output buffer.").
 pub const OUT_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Circular output buffer with an in-place `MSG_DATA` header reservation.
 ///
-/// Mirrors upstream's `iobuf.out` (`xbuf` in `rsync.h:1098-1103`, driven by
-/// `io.c:write_buf()` and the drain block at io.c:856-895):
+/// Mirrors upstream's `iobuf.out` (`xbuf` in `rsync.h:1118-1123`, driven by
+/// `io.c:write_buf()` and the drain block at io.c:946-994):
 ///
 /// * `pos` is the offset of the next byte owed to the wire, `len` the number of
 ///   buffered bytes, and both wrap around `size`.
 /// * When multiplexing is active, `out_empty_len` is 4 and the first four bytes
 ///   of the buffered run are a *reserved* `MSG_DATA` header. "Empty" therefore
 ///   means `len == 4`, not `len == 0` - the pervasive off-by-4 that upstream
-///   spells `out_empty_len` (io.c:2495).
-/// * The header is back-filled only at flush time (io.c:705-706), so header and
+///   spells `out_empty_len` (io.c:2690).
+/// * The header is back-filled only at flush time (io.c:775-776), so header and
 ///   payload are contiguous bytes of one buffer before any syscall runs.
 ///
 /// The buffer is allocated once and never grows. `size` may be *temporarily
 /// reduced* so a 4-byte header never straddles the physical end of the buffer
-/// (io.c:498-531 `reduce_iobuf_size` / `restore_iobuf_size`); because every
+/// (io.c:565-597 `reduce_iobuf_size` / `restore_iobuf_size`); because every
 /// allocation is a whole number of 1024-byte units, the low byte of `size` is
-/// free to act as the "was reduced" marker (io.c:136-143).
+/// free to act as the "was reduced" marker (io.c:200-201).
 pub struct OutBuf {
     buf: Vec<u8>,
     pos: usize,
@@ -56,7 +56,7 @@ pub struct OutBuf {
     /// End (as an unwrapped `pos + len`) of the run currently being flushed, or
     /// 0 when no flush is in progress. upstream: `iobuf.raw_flushing_ends_before`,
     /// which "can point off the end of the iobuf.out buffer for a while, for
-    /// easier subtracting" (io.c:702-703).
+    /// easier subtracting" (io.c:771-772).
     flush_ends_before: usize,
 }
 
@@ -92,7 +92,7 @@ impl OutBuf {
 
     /// Reserves the first `MSG_DATA` header in place, activating multiplexing.
     ///
-    /// upstream: `io.c:2493-2500` `io_start_multiplex_out()` - after a full
+    /// upstream: `io.c:2680-2696` `io_start_multiplex_out()` - after a full
     /// flush it sets `out_empty_len = 4`, records `raw_data_header_pos` and
     /// bumps `out.len` by 4 without writing anything.
     ///
@@ -120,7 +120,7 @@ impl OutBuf {
 
     /// Returns `true` when nothing but a reserved header is buffered.
     ///
-    /// upstream: `out.len == out_empty_len` (io.c:699, io.c:1498). This is the
+    /// upstream: `out.len == out_empty_len` (io.c:798, io.c:1658). This is the
     /// only correct emptiness test on a multiplexed buffer.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -135,15 +135,14 @@ impl OutBuf {
 
     /// Appends `data` to the buffered run without performing any I/O.
     ///
-    /// This is the memcpy half of upstream `write_buf()` (io.c:2304-2317),
-    /// including the split copy that wraps the circular end. Requirement 13 of
-    /// the port - "a write whose bytes fit performs no I/O at all" - is a
-    /// property of this function having no writer argument at all.
+    /// This is the memcpy half of upstream `write_buf()` (io.c:2490-2502),
+    /// including the split copy that wraps the circular end. "A write whose bytes
+    /// fit performs no I/O" holds by construction: this function takes no writer.
     ///
     /// # Panics
     ///
     /// Panics if `data` does not fit; upstream's caller guarantees room by
-    /// draining first (io.c:2301-2302), and so must ours.
+    /// draining first (io.c:2487-2488), and so must ours.
     pub fn push(&mut self, data: &[u8]) {
         assert!(
             self.len + data.len() <= self.size,
@@ -155,7 +154,7 @@ impl OutBuf {
             pos -= self.size;
         }
 
-        // upstream: io.c:2308-2314 - split the copy when it wraps the end.
+        // upstream: io.c:2494-2499 - split the copy when it wraps the end.
         if pos >= self.pos {
             let contiguous = self.size - pos;
             if contiguous < data.len() {
@@ -172,7 +171,7 @@ impl OutBuf {
 
     /// Back-fills the reserved header and reserves the next one.
     ///
-    /// upstream: io.c:700-726. The header records everything buffered since the
+    /// upstream: io.c:768-794. The header records everything buffered since the
     /// last flush (`out.len - 4`), the run being flushed is pinned by
     /// `flush_ends_before`, and a fresh 4-byte header is reserved immediately
     /// after it - reducing the buffer's size first if those four bytes would
@@ -184,14 +183,14 @@ impl OutBuf {
 
         self.flush_ends_before = self.pos + self.len;
 
-        // upstream: io.c:705-706 - SIVAL(buf + raw_data_header_pos, 0,
+        // upstream: io.c:775-776 - SIVAL(buf + raw_data_header_pos, 0,
         // ((MPLEX_BASE + MSG_DATA) << 24) + out.len - 4).
         let raw = DATA_HEADER_TAG | (self.len - HEADER_LEN) as u32;
         // The reserved slot never straddles the end: begin_flush relocates it.
         self.buf[self.raw_data_header_pos..self.raw_data_header_pos + HEADER_LEN]
             .copy_from_slice(&raw.to_le_bytes());
 
-        // upstream: io.c:713-725 - reserve room for the next MSG_DATA header.
+        // upstream: io.c:783-794 - reserve room for the next MSG_DATA header.
         let mut next = self.flush_ends_before;
         if next >= self.size {
             next -= self.size;
@@ -206,10 +205,10 @@ impl OutBuf {
 
     /// Writes one contiguous run to `writer` and accounts for what left.
     ///
-    /// Mirrors upstream's single `write()` inside `perform_io` (io.c:856-895):
+    /// Mirrors upstream's single `write()` inside `perform_io` (io.c:946-994):
     /// at most one contiguous span is offered, `pos`/`len` advance by exactly
     /// the accepted byte count, and `EINTR` is reported as a zero-byte write
-    /// rather than an error (io.c:858-859). Any other error leaves `pos`/`len`
+    /// rather than an error (io.c:957-958). Any other error leaves `pos`/`len`
     /// describing precisely what is still owed, so the caller may retry without
     /// ever re-sending or dropping a byte.
     fn drain_once<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
@@ -239,12 +238,12 @@ impl OutBuf {
                 ));
             }
             Ok(n) => n,
-            // upstream: io.c:858-859 - EINTR is n = 0, not an error.
+            // upstream: io.c:957-958 - EINTR is n = 0, not an error.
             Err(ref err) if err.kind() == io::ErrorKind::Interrupted => 0,
             Err(err) => return Err(err),
         };
 
-        // upstream: io.c:887-895 - advance pos with wrap, then len; reaching
+        // upstream: io.c:982-994 - advance pos with wrap, then len; reaching
         // out_empty_len rewinds the buffer and relocates the reserved header.
         self.pos += n;
         if self.pos == self.size {
@@ -271,7 +270,7 @@ impl OutBuf {
 
     /// Drains everything buffered, back-filling the `MSG_DATA` header first.
     ///
-    /// upstream: `io_flush(FULL_FLUSH)` (io.c:2174-2185) driving `perform_io`.
+    /// upstream: `io_flush(FULL_FLUSH)` (io.c:2359-2370) driving `perform_io`.
     /// The header is written into the buffer *before* the first syscall, so a
     /// short write can split the frame anywhere - including mid-header, exactly
     /// as upstream's can - without ever exposing a header whose payload is not
@@ -280,7 +279,7 @@ impl OutBuf {
     ///
     /// Bytes appended while a run was stalled become their own `MSG_DATA`
     /// frame, exactly as upstream's next pass through the fd-selection test
-    /// (io.c:698-726) pins a fresh run behind the reserved header.
+    /// (io.c:768-794) pins a fresh run behind the reserved header.
     pub fn flush<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
         loop {
             if self.flush_ends_before == 0 {
@@ -298,14 +297,14 @@ impl OutBuf {
         self.out_empty_len != 0
     }
 
-    /// upstream: `io.c:498-513 reduce_iobuf_size()`.
+    /// upstream: `io.c:565-580 reduce_iobuf_size()`.
     fn reduce_size(&mut self, new_size: usize) {
         if new_size < self.size {
             self.size = new_size;
         }
     }
 
-    /// upstream: `io.c:515-531 restore_iobuf_size()` - the low byte of a
+    /// upstream: `io.c:582-597 restore_iobuf_size()` - the low byte of a
     /// 1024-aligned size is non-zero only while the size is reduced.
     fn restore_size(&mut self) {
         if self.size & 0xFF != 0 {

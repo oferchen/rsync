@@ -67,7 +67,7 @@ fn algorithm_kind_all() {
 
 #[test]
 fn algorithm_kind_for_protocol_version() {
-    // upstream: compat.c:556-563 - pre-30 has no vstring negotiation; zlib.
+    // upstream: compat.c:560-567 - pre-30 has no vstring negotiation; zlib.
     assert_eq!(
         CompressionAlgorithmKind::for_protocol_version(28),
         CompressionAlgorithmKind::Zlib
@@ -77,7 +77,7 @@ fn algorithm_kind_for_protocol_version() {
         CompressionAlgorithmKind::Zlib
     );
 
-    // upstream: compat.c:101-102 - zstd first when SUPPORT_ZSTD is defined.
+    // upstream: compat.c:102-103 - zstd first when SUPPORT_ZSTD is defined.
     #[cfg(feature = "zstd")]
     {
         assert_eq!(
@@ -364,7 +364,7 @@ fn selector_protocol_version_28_returns_zlib() {
 
 #[test]
 fn selector_protocol_version_legacy_below_30_always_zlib() {
-    // upstream: compat.c:556-563 - no vstring negotiation; defaults to zlib.
+    // upstream: compat.c:560-567 - no vstring negotiation; defaults to zlib.
     for v in 0..30u8 {
         let strategy = CompressionStrategySelector::for_protocol_version(v);
         assert_eq!(
@@ -378,7 +378,7 @@ fn selector_protocol_version_legacy_below_30_always_zlib() {
 #[cfg(feature = "zstd")]
 #[test]
 fn selector_protocol_version_modern_30_plus_zstd() {
-    // upstream: compat.c:101-102 valid_compressions_items[] - zstd first.
+    // upstream: compat.c:102-103 valid_compressions_items[] - zstd first.
     for v in [30u8, 31, 32, 40, 100, 255] {
         let strategy = CompressionStrategySelector::for_protocol_version(v);
         assert_eq!(
@@ -416,7 +416,7 @@ fn kind_for_protocol_below_30_always_zlib() {
 #[cfg(feature = "zstd")]
 #[test]
 fn kind_for_protocol_30_and_above_zstd() {
-    // upstream: compat.c:101-102 - zstd first when SUPPORT_ZSTD is defined.
+    // upstream: compat.c:102-103 - zstd first when SUPPORT_ZSTD is defined.
     for v in [30u8, 31, 32, 40, 100, 255] {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(v),
@@ -806,7 +806,7 @@ fn negotiate_none_kind_roundtrip() {
 
 #[test]
 fn kind_for_protocol_version_boundary_29_is_zlib() {
-    // upstream: compat.c:556-563.
+    // upstream: compat.c:560-567.
     assert_eq!(
         CompressionAlgorithmKind::for_protocol_version(29),
         CompressionAlgorithmKind::Zlib

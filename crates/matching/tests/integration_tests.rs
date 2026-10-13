@@ -38,9 +38,9 @@
 //!
 //! ## Upstream Reference
 //!
-//! - `match.c:55` - `build_hash_table()` - Hash table construction
-//! - `match.c:140` - `hash_search()` - Rolling checksum matching
-//! - `match.c:362` - `match_sums()` - Main delta generation entry point
+//! - `match.c:78` - `build_hash_table()` - Hash table construction
+//! - `match.c:163` - `hash_search()` - Rolling checksum matching
+//! - `match.c:395` - `match_sums()` - Main delta generation entry point
 
 use matching::{
     DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta,
@@ -814,7 +814,7 @@ fn index_strong_length_accessor() {
 ///
 /// Upstream builds its hash table and searches for any `s->count > 0`
 /// (`match.c:match_sums()`), and reaches the lone short block through the
-/// short-block rule at `match.c:222-224`. Refusing the index here made the
+/// short-block rule at `match.c:254-256`. Refusing the index here made the
 /// sender re-send every sub-block-size file entirely as literal data.
 #[test]
 fn index_builds_for_a_lone_partial_block() {
@@ -1536,7 +1536,7 @@ mod algorithm_correctness {
         let block_len = index.block_length();
         // Count every signature block, including the short final one. A
         // `basis.len() / block_len` count would omit it, and the scan does
-        // match it (`match.c:222-224`).
+        // match it (`match.c:254-256`).
         let num_blocks = index.block_count();
 
         let input = basis.clone();

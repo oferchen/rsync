@@ -25,7 +25,7 @@
 /// `clean_fname(name, CFN_COLLAPSE_DOT_DOT_DIRS)`.
 ///
 /// Transcribed verbatim from the `cases[]` array in upstream's own
-/// `t_clean_fname.c` (rsync 3.5.0), so the expectations are upstream's, not a
+/// `t_clean_fname.c` (rsync 3.5.1), so the expectations are upstream's, not a
 /// re-derivation. Every entry exercises a `..` that must consume the component
 /// before it: interior (`a/b/../c`), absolute (`/x/y/../z`), single-component
 /// (`a/../b`), consecutive (`p/q/r/../../s`), and trailing (`d/e/..`).

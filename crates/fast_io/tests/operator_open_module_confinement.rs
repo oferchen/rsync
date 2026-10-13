@@ -26,7 +26,7 @@
 //! reach one identical confinement check. A plant owned by our own euid
 //! exercises the same code as a root-owned one and needs no privilege, which is
 //! why these run unprivileged. The distinct third-uid REFUSAL - the arm that
-//! does need a second uid - stays with the root leg of the upstream 3.5.0
+//! does need a second uid - stays with the root leg of the upstream 3.5.1
 //! testsuite, matching the convention already written down in
 //! `tests/owner_walk.rs`.
 //!

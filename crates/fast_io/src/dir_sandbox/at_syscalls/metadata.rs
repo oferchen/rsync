@@ -169,8 +169,9 @@ impl AtMetadata {
     /// [`std::fs::Metadata::created`] returning `Err` on a filesystem that does
     /// not record one.
     ///
-    /// upstream: `rsync-3.5.1/rsync.h:1014` - `ST_CRTIME` is defined only where
-    /// configure found `st_birthtime`, which is what gates `--crtimes`.
+    /// upstream: `rsync-3.5.1/syscall.c:2493` `get_create_time()` - the crtime source is
+    /// chosen at configure time (`st_birthtime`, `getattrlist()`, ...), and that
+    /// choice is what gates `--crtimes`.
     #[must_use]
     pub fn birthtime(&self) -> Option<(i64, i64)> {
         birthtime_of(&self.stat)

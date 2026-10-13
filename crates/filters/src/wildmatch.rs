@@ -1,7 +1,7 @@
 //! Faithful port of upstream rsync's shell-style wildcard matcher.
 //!
 //! This is a direct translation of `lib/wildmatch.c:dowild()` from rsync
-//! 3.4.4. It exists because globset's `**` semantics diverge from upstream's
+//! 3.5.1. It exists because globset's `**` semantics diverge from upstream's
 //! `dowild()` in edge cases (multi-star runs, `**` adjacency, abort codes),
 //! which the overnight differential fuzzer surfaces. Matching upstream byte for
 //! byte is the only way to stay wire-compatible.
@@ -28,7 +28,7 @@ const NEGATE_CLASS2: u8 = b'^';
 
 /// POSIX character-class predicates used inside `[[:class:]]`.
 ///
-/// upstream: `lib/wildmatch.c:85-225` `CC_EQ` dispatch. The `ISASCII` guard in
+/// upstream: `lib/wildmatch.c:189-224` `CC_EQ` dispatch. The `ISASCII` guard in
 /// upstream is a no-op under `STDC_HEADERS`, so these mirror the C `is*`
 /// functions restricted to ASCII (bytes >= 0x80 never satisfy a class).
 fn cc_matches(class: &[u8], ch: u8) -> Option<bool> {
@@ -80,7 +80,7 @@ const fn maybe_fold(ch: u8, fold: bool) -> u8 {
 /// upstream: `lib/wildmatch.c:64` `static int dowild(...)` (single-string case;
 /// the `a` virtual-join array is always empty here). `fold` stands in for
 /// upstream's `force_lower_case` file-static, which `iwildmatch()` raises
-/// around its `dowild()` call (`lib/wildmatch.c:298`).
+/// around its `dowild()` call (`lib/wildmatch.c:318`).
 fn dowild(p: &[u8], text: &[u8], fold: bool) -> i32 {
     let mut pi = 0usize;
     let mut ti = 0usize;
@@ -271,7 +271,7 @@ fn dowild(p: &[u8], text: &[u8], fold: bool) -> i32 {
 /// `?` matches any byte but `/`, `*` matches within a path segment, `**`
 /// matches across `/`, `[...]` is a character class, and `\` escapes.
 ///
-/// upstream: `lib/wildmatch.c:288` `int wildmatch(const char *pattern, const
+/// upstream: `lib/wildmatch.c:301` `int wildmatch(const char *pattern, const
 /// char *text)`.
 pub fn wildmatch(pattern: &[u8], text: &[u8]) -> bool {
     dowild(pattern, text, false) == TRUE
@@ -292,7 +292,7 @@ pub fn wildmatch(pattern: &[u8], text: &[u8]) -> bool {
 /// deliberately *not* special-cased: they test the already-folded text byte, so
 /// `[[:upper:]]` never matches under this entry point, exactly as upstream.
 ///
-/// upstream: `lib/wildmatch.c:298` `int iwildmatch(const char *pattern, const
+/// upstream: `lib/wildmatch.c:311` `int iwildmatch(const char *pattern, const
 /// char *text)`. rsync 3.5.0 added the four pattern-side folds inside
 /// `dowild()`: the literal/escaped default arm, the escaped bracket member, the
 /// bracket range end, and the plain bracket member.
@@ -304,7 +304,7 @@ pub fn iwildmatch(pattern: &[u8], text: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    /// Upstream's canonical `wildtest.txt` corpus (rsync 3.4.4). Each tuple is
+    /// Upstream's canonical `wildtest.txt` corpus (rsync 3.5.1). Each tuple is
     /// `(expected_match, text, pattern)`, transcribed verbatim from the file's
     /// first and remaining columns (the second column, fnmatch-parity, is not
     /// relevant to wildmatch and is dropped). Comment and non-portable 8-bit

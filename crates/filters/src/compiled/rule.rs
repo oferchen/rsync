@@ -30,10 +30,10 @@ pub(crate) struct CompiledRule {
     /// Descendant matchers (`{core}/**`) that must fire ONLY on the deletion
     /// (receiver) path. Populated for directory-only unanchored wildcard
     /// excludes such as `foo/*/`. Upstream's sender walk prunes the excluded
-    /// directory and never emits a `foo/*/**` transfer rule (exclude.c:938-939
+    /// directory and never emits a `foo/*/**` transfer rule (exclude.c:1037-1038
     /// FILTRULE_DIRECTORY returns "no match" for a non-dir candidate), so these
     /// must stay invisible to the Transfer path to preserve the `foo/*/`
-    /// per-directory wildcard semantics that #6015 fixed. The receiver's
+    /// per-directory wildcard semantics. The receiver's
     /// per-candidate deletion scan has no traversal-pruning side effect, so it
     /// needs these descendants live to protect children of an excluded
     /// directory from over-deletion.
@@ -56,7 +56,7 @@ pub(crate) struct CompiledRule {
     /// Source-definition order across the whole rule stream, assigned by
     /// [`FilterSet::from_rules`](crate::FilterSet::from_rules). Upstream keeps
     /// every rule in one list and `check_filter()` walks it first-match-wins
-    /// (exclude.c:1038); oc partitions include/exclude and protect/risk into
+    /// (exclude.c:1192-1211); oc partitions include/exclude and protect/risk into
     /// separate chains, so this index lets the deletion decision merge the two
     /// first-matches back into a single source-ordered pass. Zero for rules
     /// built outside `from_rules` (per-dir implied includes), which never mix
@@ -65,8 +65,8 @@ pub(crate) struct CompiledRule {
     /// Provenance of [`Self::pattern`], carried from the parse so the match
     /// trace can decide whether the text may be shown.
     ///
-    /// upstream keeps the same thing on its own rule (`ent->rflags &
-    /// FILTRULE_FROM_FILE`, `exclude.c:259-275`) precisely because
+    /// upstream keeps the provenance bit on its own rule (`ent->rflags &
+    /// FILTRULE_FROM_FILE`, set at `exclude.c:1264-1265`) precisely because
     /// `report_filter_result` (`exclude.c:1099`) runs at MATCH time, when the
     /// merge file that supplied the rule is long closed.
     pub(crate) source: OwnedRuleSource,
@@ -112,7 +112,7 @@ impl CompiledRule {
     ) -> bool {
         let pattern_matched = self.pattern_matches_impl(path, is_dir, check_descendants);
 
-        // upstream: exclude.c:906 - ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1
+        // upstream: exclude.c:1005 - ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1
         if self.negate {
             debug_log!(
                 Filter,
@@ -132,8 +132,8 @@ impl CompiledRule {
     ///
     /// The synthetic `pattern/**` matchers stand in for upstream's
     /// `XFLG_DIR2WILD3` rewrite, which appends `/***` to a *directory-form*
-    /// rule only (exclude.c:307-313). A rule written without the trailing
-    /// slash keeps upstream's exact `strcmp` semantics (exclude.c:1002), so its
+    /// rule only (exclude.c:308-314). A rule written without the trailing
+    /// slash keeps upstream's exact `strcmp` semantics (exclude.c:1067-1069), so its
     /// descendants must stay dormant here. `directory_only` is exactly the
     /// record of which form the rule was written in.
     ///
@@ -156,8 +156,7 @@ impl CompiledRule {
     /// scan evaluates each candidate in isolation - it has no traversal-pruning
     /// side effect to suppress, and the local-copy delete pass calls with
     /// `check_descendants = false`. Keeping them out of [`Self::matches`]
-    /// preserves the `foo/*/` per-directory wildcard transfer semantics fixed
-    /// in #6015.
+    /// preserves the `foo/*/` per-directory wildcard transfer semantics.
     ///
     /// upstream: exclude.c:rule_matches() / name_is_excluded() subtree pruning
     pub(crate) fn matches_for_deletion(
@@ -460,7 +459,6 @@ mod tests {
     /// upstream: exclude.c:rule_matches - an anchored wildcard `/*` matches
     /// single-component root-level names only. `down/file.txt` must NOT match
     /// because the pattern is anchored and `*` does not cross `/` boundaries.
-    /// Regression test for #5421.
     #[test]
     fn anchored_wildcard_exclude_does_not_match_nested_paths() {
         let rule = FilterRule {
@@ -486,8 +484,8 @@ mod tests {
         assert!(compiled.matches(Path::new("file.txt"), false, true));
         assert!(compiled.matches(Path::new("down"), true, true));
 
-        // Nested paths must NOT match - this was the bug in #5421 where
-        // descendant matchers (`*/**`) incorrectly matched any nested path.
+        // Nested paths must NOT match: descendant matchers (`*/**`) must not
+        // match any nested path.
         assert!(!compiled.matches(Path::new("down/file.txt"), false, true));
         assert!(!compiled.matches(Path::new("down/sub/deep.txt"), false, true));
     }
@@ -694,7 +692,7 @@ mod tests {
         assert!(!compiled.matches(Path::new("subdir/delete.txt"), false, true));
     }
 
-    /// upstream: exclude.c:936-937 - `FILTRULE_WILD3_SUFFIX` causes `dir/***`
+    /// upstream: exclude.c:1033-1036 - `FILTRULE_WILD3_SUFFIX` causes `dir/***`
     /// to match both the directory itself (when `is_dir=true`) and everything
     /// inside it. `dir/**` (double star) only matches contents, not the
     /// directory entry itself.

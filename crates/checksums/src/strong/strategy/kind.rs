@@ -2,8 +2,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `checksum.c` - algorithm selection based on protocol version
-//! - `compat.c` - checksum negotiation via capability strings
+//! - `checksum.c:parse_csum_name()` - algorithm selection based on protocol version
+//! - `compat.c:negotiate_the_strings()` - checksum negotiation via name lists
 
 use std::fmt;
 
@@ -20,7 +20,7 @@ pub enum ChecksumAlgorithmKind {
     /// MD5 - default for rsync protocol >= 30.
     ///
     /// Upstream rsync switched to MD5 in protocol 30. Supports seeded hashing
-    /// with configurable ordering via `CHECKSUM_SEED_FIX`.
+    /// with configurable ordering via `CF_CHKSUM_SEED_FIX`.
     Md5,
     /// SHA-1 - negotiated via checksum capability strings (protocol 31+).
     Sha1,
@@ -79,7 +79,7 @@ impl ChecksumAlgorithmKind {
     /// Parses an algorithm from a string name used in upstream negotiation.
     ///
     /// Accepts canonical names and common aliases (case-insensitive).
-    /// See upstream `compat.c` for the negotiation protocol.
+    /// See upstream `compat.c:negotiate_the_strings()` for the negotiation protocol.
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "md4" => Some(Self::Md4),

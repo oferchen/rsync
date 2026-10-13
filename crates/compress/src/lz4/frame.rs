@@ -68,7 +68,7 @@ where
     ///
     /// # Upstream Reference
     ///
-    /// See `token.c:send_deflated_token()` - upstream rsync flushes the
+    /// upstream: token.c:446 `send_deflated_token()` flushes the
     /// compressor after each token so the receiver can decompress incrementally.
     pub fn flush(&mut self) -> io::Result<()> {
         self.inner.flush().map_err(io::Error::other)
@@ -310,7 +310,7 @@ mod tests {
         assert!(restored.is_empty(), "empty input should round-trip");
     }
 
-    // upstream: token.c:send_deflated_token() flushes the compressor after each
+    // upstream: token.c:446 send_deflated_token() flushes the compressor after each
     // token so the receiver can decompress incrementally.
 
     #[test]

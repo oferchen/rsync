@@ -112,7 +112,7 @@ impl SshClientHandler {
         }
     }
 
-    /// Create a handler from the full resolved [`HostKeyOptions`].
+    /// Create a handler from the full resolved `HostKeyOptions`.
     pub fn with_options(opts: HostKeyOptions) -> Self {
         Self {
             strict_host_key_checking: opts.strict_host_key_checking,
@@ -821,7 +821,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // --- Host-key verification family (task 237m) ---
+    // Host-key verification family
 
     /// Build options for a single check/learn file with the family knobs.
     fn opts(

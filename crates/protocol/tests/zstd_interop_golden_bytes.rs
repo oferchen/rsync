@@ -1,7 +1,7 @@
 // `| 0` used deliberately in wire format constants to document the offset field.
 #![allow(clippy::identity_op)]
 #![cfg(feature = "zstd")]
-//! Zstd interop golden byte tests against upstream rsync 3.4.1 compressed token stream.
+//! Zstd interop golden byte tests against the upstream rsync 3.5.1 compressed token stream.
 //!
 //! Verifies wire compatibility between our zstd compressed token encoder/decoder
 //! and upstream rsync's CPRES_ZSTD mode (token.c:send_zstd_token / recv_zstd_token).
@@ -9,23 +9,25 @@
 //! tests pin exact upstream-compatible byte sequences and verify cross-codec
 //! decompression of raw zstd payloads.
 //!
-//! ## Upstream zstd framing specifics (token.c lines 678-776)
+//! ## Upstream zstd framing specifics (token.c:send_zstd_token() lines 735-835)
 //!
-//! - `ZSTD_CCtx` created once per session, never reset between files (line 688)
-//! - `ZSTD_e_continue` for literal data accumulation (implicit in compressStream2)
-//! - `ZSTD_e_flush` at every token boundary: block match or end-of-file (line 741)
-//! - Output buffered in `MAX_DATA_COUNT`-sized buffer (line 695, 735-736)
-//! - DEFLATED_DATA blocks written when buffer full OR on flush (line 755)
-//! - `flush_pending` flag tracks whether unflushed data exists (line 769)
+//! - `ZSTD_CCtx` created once per session, never reset between files (line 743)
+//! - `ZSTD_e_continue` for literal data accumulation (line 738)
+//! - `ZSTD_e_flush` at every token boundary: block match or end-of-file (lines 798-799)
+//! - Output buffer limited to `MAX_DATA_COUNT` per call (line 794)
+//! - A DEFLATED_DATA block is written after every compress call that produced
+//!   output (lines 815-821). Deviation from upstream: oc writes a block only when
+//!   the buffer is full or on flush; both framings decode to the same bytes.
+//! - `flush_pending` flag tracks whether unflushed data exists (line 828)
 //! - No sync marker stripping (unlike zlib mode)
 //!
-//! ## Upstream zstd decoder behavior (token.c lines 780-870)
+//! ## Upstream zstd decoder behavior (token.c:recv_zstd_token() lines 839-924)
 //!
-//! - `ZSTD_DCtx` created once, never reset (line 788)
-//! - Reads DEFLATED_DATA header, then `n` bytes of compressed data (lines 814-821)
-//! - Calls `ZSTD_decompressStream` and returns decompressed output (line 850-851)
-//! - Transitions to `r_idle` when input consumed and output not full (line 862-863)
-//! - Token bytes (TOKEN_REL, TOKEN_LONG, etc.) handled identically to zlib (line 831)
+//! - `ZSTD_DCtx` created once, never reset (line 847)
+//! - Reads DEFLATED_DATA header, then `n` bytes of compressed data (lines 873-875)
+//! - Calls `ZSTD_decompressStream` and returns decompressed output (lines 899-900)
+//! - Transitions to `r_idle` when input consumed and output not full (lines 911-912)
+//! - Token bytes (TOKEN_REL, TOKEN_LONG, etc.) handled identically to zlib (line 890)
 
 use std::io::{Cursor, Read};
 
@@ -42,7 +44,7 @@ use zstd::stream::raw::{Decoder as ZstdRawDecoder, Operation};
 /// without a frame-end marker. The streaming `zstd::stream::read::Decoder`
 /// reports "incomplete frame" on EOF without a frame end, but the raw decoder
 /// handles flush-point streams correctly - matching upstream's incremental
-/// `ZSTD_decompressStream` usage (token.c:850).
+/// `ZSTD_decompressStream` usage (token.c:899).
 fn decompress_raw_zstd(data: &[u8]) -> Vec<u8> {
     let mut decoder = ZstdRawDecoder::new().unwrap();
     let mut result = Vec::new();
@@ -72,9 +74,7 @@ fn decompress_raw_zstd(data: &[u8]) -> Vec<u8> {
     result
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Decodes all tokens from a zstd-encoded byte buffer.
 fn decode_all_zstd(data: &[u8]) -> (Vec<u8>, Vec<u32>) {
@@ -175,7 +175,6 @@ fn extract_deflated_payloads(wire: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
     (payloads, non_deflated)
 }
 
-// ===========================================================================
 // Section 1: Raw zstd payload cross-codec verification
 //
 // Extract the raw zstd compressed payload from our DEFLATED_DATA framing
@@ -183,16 +182,15 @@ fn extract_deflated_payloads(wire: &[u8]) -> (Vec<Vec<u8>>, Vec<u8>) {
 // is valid, standard zstd data that any conforming decompressor can handle.
 // This proves interop with upstream rsync's ZSTD_decompressStream call.
 //
-// upstream: token.c:846-851 - recv side calls ZSTD_decompressStream on the
+// upstream: token.c:895-900 - recv side calls ZSTD_decompressStream on the
 // raw payload bytes read after the DEFLATED_DATA header.
-// ===========================================================================
 
 /// Verify that the raw zstd payload extracted from our wire format can be
 /// decompressed by the standalone zstd crate (simulating upstream's decoder).
 /// This is the core interop guarantee: our encoder produces standard zstd
 /// frames that any ZSTD_decompressStream implementation can consume.
 ///
-/// upstream: token.c:850 - ZSTD_decompressStream(zstd_dctx, &out, &in)
+/// upstream: token.c:899 - ZSTD_decompressStream(zstd_dctx, &out, &in)
 #[test]
 fn interop_raw_payload_decompressible_by_standalone_zstd() {
     let input = b"upstream rsync 3.4.1 compatibility test data for zstd interop";
@@ -222,7 +220,7 @@ fn interop_raw_payload_decompressible_by_standalone_zstd() {
 /// typical of directory listing transfers. The repetitive structure
 /// exercises zstd's back-reference decompression across blocks.
 ///
-/// upstream: token.c:729-730 - data mapped and fed to compressStream2
+/// upstream: token.c:788-789 - data mapped and fed to compressStream2
 #[test]
 fn interop_raw_payload_medium_repetitive_data() {
     let mut input = Vec::with_capacity(800);
@@ -265,7 +263,6 @@ fn interop_raw_payload_incompressible_data() {
     assert_eq!(decompressed, input);
 }
 
-// ===========================================================================
 // Section 2: Per-token ZSTD_e_flush boundary verification
 //
 // Upstream rsync flushes the zstd encoder at every token boundary (block
@@ -274,15 +271,14 @@ fn interop_raw_payload_incompressible_data() {
 // verify this flush-per-token invariant by checking that each DEFLATED_DATA
 // block between token bytes produces complete, decompressible output.
 //
-// upstream: token.c:740-741 - if (token != -2) flush = ZSTD_e_flush
-// upstream: token.c:743 - ZSTD_compressStream2(cctx, &out, &in, flush)
-// ===========================================================================
+// upstream: token.c:798-799 - if (token != -2) flush = ZSTD_e_flush
+// upstream: token.c:801 - ZSTD_compressStream2(cctx, &out, &in, flush)
 
 /// Verify that a literal followed by a block match produces a flush boundary.
 /// The DEFLATED_DATA block(s) before the token byte must contain all the
 /// literal data in a decompressible form.
 ///
-/// upstream: token.c:727 - nb != 0 triggers compress path, flush at token
+/// upstream: token.c:786 - nb != 0 triggers compress path, flush at token
 #[test]
 fn interop_flush_boundary_literal_then_block() {
     let literal = b"data before block match - verifies flush at token boundary";
@@ -315,7 +311,7 @@ fn interop_flush_boundary_literal_then_block() {
 /// Each literal segment must be flushed before its following token, and
 /// the cumulative zstd stream must decompress to all literal data in order.
 ///
-/// upstream: token.c:700-723 - run state logic, then compress+flush at 727-768
+/// upstream: token.c:759-782 - run state logic, then compress+flush at 786-829
 #[test]
 fn interop_flush_boundary_interleaved_pattern() {
     let encoded = encode_mixed(
@@ -351,7 +347,7 @@ fn interop_flush_boundary_interleaved_pattern() {
 /// complete stream. After finish(), the DEFLATED_DATA blocks must form
 /// a fully decompressible zstd stream terminated properly.
 ///
-/// upstream: token.c:772-775 - token == -1 triggers END_FLAG write
+/// upstream: token.c:831-834 - token == -1 triggers END_FLAG write
 #[test]
 fn interop_flush_at_eof_produces_complete_stream() {
     let input = b"end-of-file flush verification for upstream interop";
@@ -377,17 +373,15 @@ fn interop_flush_at_eof_produces_complete_stream() {
     assert_eq!(decompressed, input);
 }
 
-// ===========================================================================
 // Section 3: Upstream-format hand-crafted wire byte decoding
 //
 // These tests construct raw wire byte sequences that match exactly what
-// upstream rsync 3.4.1 would produce for known inputs, then verify our
+// upstream rsync 3.5.1 would produce for known inputs, then verify our
 // decoder handles them correctly. The byte sequences are built from
 // first principles using the upstream wire format specification.
 //
-// upstream: token.c lines 321-329 - flag byte definitions
-// upstream: token.c:758-760 - DEFLATED_DATA header encoding
-// ===========================================================================
+// upstream: token.c:333-341 - flag byte definitions
+// upstream: token.c:818-820 - DEFLATED_DATA header encoding
 
 /// Hand-craft a DEFLATED_DATA block containing a known zstd-compressed
 /// payload, followed by END_FLAG. Verify our decoder extracts the
@@ -395,7 +389,7 @@ fn interop_flush_at_eof_produces_complete_stream() {
 ///
 /// This simulates receiving a single-block compressed file from upstream.
 ///
-/// upstream: token.c:755-760 - write DEFLATED_DATA header + payload
+/// upstream: token.c:815-820 - write DEFLATED_DATA header + payload
 #[test]
 fn interop_decode_handcrafted_deflated_data_block() {
     let input = b"handcrafted upstream wire bytes";
@@ -425,8 +419,8 @@ fn interop_decode_handcrafted_deflated_data_block() {
 /// This matches upstream's output for a literal followed by a single
 /// block match at index 0.
 ///
-/// upstream: token.c:712 - write_byte(f, TOKEN_REL + r) where r=0
-/// upstream: token.c:758-760 - DEFLATED_DATA header before token
+/// upstream: token.c:771 - write_byte(f, TOKEN_REL + r) where r=0
+/// upstream: token.c:818-820 - DEFLATED_DATA header before token
 #[test]
 fn interop_decode_handcrafted_literal_then_block_match() {
     let input = b"literal data before block";
@@ -454,7 +448,7 @@ fn interop_decode_handcrafted_literal_then_block_match() {
 /// Hand-craft a wire stream with TOKEN_LONG for a large block index.
 /// Upstream uses TOKEN_LONG when the relative offset exceeds 63.
 ///
-/// upstream: token.c:714 - write_byte(f, TOKEN_LONG); write_int(f, run_start)
+/// upstream: token.c:773-774 - write_byte(f, TOKEN_LONG); write_int(f, run_start)
 #[test]
 fn interop_decode_handcrafted_token_long_block() {
     // TOKEN_LONG + 4-byte LE index (1000) + END_FLAG
@@ -471,7 +465,7 @@ fn interop_decode_handcrafted_token_long_block() {
 /// Hand-craft a wire stream with TOKENRUN_REL for consecutive blocks.
 /// Upstream encodes runs of consecutive block matches as a single token.
 ///
-/// upstream: token.c:712 - TOKENRUN_REL + r, followed by 16-bit LE count
+/// upstream: token.c:771,776-779 - TOKENRUN_REL + r, followed by 16-bit LE count
 #[test]
 fn interop_decode_handcrafted_tokenrun_rel() {
     // TOKENRUN_REL|5, count=9 (LE16) -> blocks 5,6,7,8,9,10,11,12,13,14
@@ -491,7 +485,7 @@ fn interop_decode_handcrafted_tokenrun_rel() {
 /// Hand-craft a wire stream with TOKENRUN_LONG for consecutive blocks
 /// starting at a large index.
 ///
-/// upstream: token.c:714 - TOKENRUN_LONG + 32-bit LE run_start + 16-bit LE count
+/// upstream: token.c:773-779 - TOKENRUN_LONG + 32-bit LE run_start + 16-bit LE count
 #[test]
 fn interop_decode_handcrafted_tokenrun_long() {
     // TOKENRUN_LONG, run_start=500 (LE32), n=3 (LE16) -> blocks 500,501,502,503
@@ -515,7 +509,7 @@ fn interop_decode_handcrafted_tokenrun_long() {
 /// TOKENRUN_REL, and TOKEN_LONG to verify our decoder handles the full
 /// upstream wire vocabulary in a single stream.
 ///
-/// upstream: token.c:700-723 - run detection and token emission
+/// upstream: token.c:765-782 - run detection and token emission
 #[test]
 fn interop_decode_handcrafted_complex_mixed_stream() {
     let literal1 = b"first segment";
@@ -562,19 +556,17 @@ fn interop_decode_handcrafted_complex_mixed_stream() {
     assert_eq!(blocks, vec![0, 100]);
 }
 
-// ===========================================================================
 // Section 4: DEFLATED_DATA header encoding interop
 //
 // Verify exact header byte encoding matches upstream's formula:
 //   obuf[0] = DEFLATED_DATA + (n >> 8)
 //   obuf[1] = n
-// (upstream token.c lines 758-759)
-// ===========================================================================
+// (upstream token.c:818-819)
 
 /// Verify DEFLATED_DATA header encoding for small payloads where the
 /// length fits entirely in the second byte (high bits are zero).
 ///
-/// upstream: token.c:758-759 - obuf[0] = DEFLATED_DATA + (n >> 8), obuf[1] = n
+/// upstream: token.c:818-819 - obuf[0] = DEFLATED_DATA + (n >> 8), obuf[1] = n
 #[test]
 fn interop_deflated_header_small_payload() {
     let encoded = encode_literal(b"x", 3);
@@ -604,7 +596,7 @@ fn interop_deflated_header_small_payload() {
 /// length field for larger payloads. With incompressible data, zstd
 /// output can exceed 256 bytes.
 ///
-/// upstream: token.c:758 - obuf[0] = DEFLATED_DATA + (n >> 8) where n > 255
+/// upstream: token.c:818 - obuf[0] = DEFLATED_DATA + (n >> 8) where n > 255
 #[test]
 fn interop_deflated_header_large_payload_uses_high_bits() {
     // Generate ~1KB of incompressible data (will compress to > 256 bytes)
@@ -658,7 +650,6 @@ fn interop_deflated_header_large_payload_uses_high_bits() {
     );
 }
 
-// ===========================================================================
 // Section 5: Multi-file session interop - persistent zstd context
 //
 // Upstream rsync maintains a single ZSTD_CCtx / ZSTD_DCtx for the entire
@@ -666,17 +657,16 @@ fn interop_deflated_header_large_payload_uses_high_bits() {
 // token run-encoding state resets. This means the second file benefits
 // from dictionary/history built during the first file.
 //
-// upstream: token.c:686-698 - CCtx created once, comp_init_done flag
-// upstream: token.c:700-703 - only last_token/run_start/flush_pending reset
-// upstream: token.c:787-803 - DCtx created once, decomp_init_done flag
-// ===========================================================================
+// upstream: token.c:742-757 - CCtx created once, comp_init_done flag
+// upstream: token.c:759-762 - only last_run_end/run_start/flush_pending reset
+// upstream: token.c:846-862 - DCtx created once, decomp_init_done flag
 
 /// Verify that our encoder/decoder can handle a multi-file session where
 /// the zstd context persists. Encode three files with one encoder, decode
 /// with one decoder, verify each file's data independently.
 ///
-/// upstream: token.c:688 - CCtx created once, persists across files
-/// upstream: token.c:788 - DCtx created once, persists across files
+/// upstream: token.c:743 - CCtx created once, persists across files
+/// upstream: token.c:847 - DCtx created once, persists across files
 #[test]
 fn interop_multi_file_session_persistent_context() {
     let files: &[&[u8]] = &[
@@ -721,7 +711,7 @@ fn interop_multi_file_session_persistent_context() {
 /// better than in isolation, proving the zstd context carries dictionary
 /// history across file boundaries.
 ///
-/// upstream: token.c:686-698 - CCtx never recreated, dictionary persists
+/// upstream: token.c:742-757 - CCtx never recreated, dictionary persists
 #[test]
 fn interop_cross_file_dictionary_improves_compression() {
     let shared_line = b"drwxr-xr-x  2 root root 4096 shared_module_data.txt\n";
@@ -753,18 +743,16 @@ fn interop_cross_file_dictionary_improves_compression() {
     );
 }
 
-// ===========================================================================
 // Section 6: Zstd frame magic and structural invariants
 //
 // Verify that the zstd compressed payloads contain valid zstd frame
 // structure, matching what upstream rsync's zstd encoder produces.
-// ===========================================================================
 
 /// Verify that the first DEFLATED_DATA payload starts with the zstd
 /// frame magic number (0xFD2FB528 in little-endian). This is a
 /// fundamental structural requirement for zstd interop.
 ///
-/// upstream: token.c:694 - ZSTD_CCtx_setParameter, standard frame output
+/// upstream: token.c:751 - ZSTD_CCtx_setParameter, standard frame output
 #[test]
 fn interop_zstd_frame_magic_in_first_payload() {
     let encoded = encode_literal(b"verify zstd frame magic for interop", 3);
@@ -790,7 +778,7 @@ fn interop_zstd_frame_magic_in_first_payload() {
 /// (0x00 0x00 0xFF 0xFF). This distinguishes zstd mode from zlib mode
 /// on the wire and is critical for mode detection.
 ///
-/// upstream: token.c:685 - zstd never strips sync markers because it
+/// upstream: token.c:815-820 - zstd never strips sync markers because it
 /// never produces them
 #[test]
 fn interop_no_zlib_sync_markers_in_zstd_payload() {
@@ -816,11 +804,11 @@ fn interop_no_zlib_sync_markers_in_zstd_payload() {
 }
 
 /// Verify all DEFLATED_DATA blocks respect the MAX_DATA_COUNT limit.
-/// Upstream writes output only when the buffer is full (MAX_DATA_COUNT)
-/// or on flush.
+/// Upstream caps each compress call's output at MAX_DATA_COUNT and writes
+/// whatever the call produced.
 ///
-/// upstream: token.c:735-736 - zstd_out_buff.size = MAX_DATA_COUNT
-/// upstream: token.c:755 - write when pos == size or on flush
+/// upstream: token.c:794-795 - zstd_out_buff.size = MAX_DATA_COUNT
+/// upstream: token.c:815-821 - write when the call produced output
 #[test]
 fn interop_all_deflated_blocks_within_max_data_count() {
     // Generate large data that will produce multiple DEFLATED_DATA blocks
@@ -852,21 +840,19 @@ fn interop_all_deflated_blocks_within_max_data_count() {
     }
 }
 
-// ===========================================================================
 // Section 7: Compression level interop
 //
 // Upstream rsync respects the --compress-level flag, defaulting to
-// ZSTD_CLEVEL_DEFAULT (3) for daemon mode. Verify that different
+// ZSTD_CLEVEL_DEFAULT (3, token.c:75). Verify that different
 // compression levels all produce valid, decodable output.
 //
-// upstream: token.c:694 - ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, level)
-// ===========================================================================
+// upstream: token.c:751 - ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, level)
 
 /// Verify that compression levels 1 through 6 all produce valid
 /// interoperable output. These are the most commonly used levels
 /// in production rsync daemon configurations.
 ///
-/// upstream: token.c:694 - compression level applied via CCtx parameter
+/// upstream: token.c:751 - compression level applied via CCtx parameter
 #[test]
 fn interop_compression_levels_all_produce_valid_output() {
     let input = b"compression level interop test - verify all levels produce valid zstd frames";
@@ -891,7 +877,7 @@ fn interop_compression_levels_all_produce_valid_output() {
 /// for compressible data, matching upstream's behavior where level
 /// affects compression ratio but not wire format correctness.
 ///
-/// upstream: token.c:694 - level controls zstd internal strategy
+/// upstream: token.c:751 - level controls zstd internal strategy
 #[test]
 fn interop_higher_level_better_compression() {
     let mut input = Vec::with_capacity(2000);
@@ -924,19 +910,17 @@ fn interop_higher_level_better_compression() {
     );
 }
 
-// ===========================================================================
 // Section 8: Round-trip integrity with diverse data patterns
 //
 // Verify that our encoder produces output that our decoder can consume
 // correctly for various data patterns representative of real rsync
 // transfers. Each test encodes, then decodes, then verifies exact
 // data and block-match recovery.
-// ===========================================================================
 
 /// Round-trip a mixed stream representing a typical incremental file
 /// transfer: changed header, unchanged middle blocks, changed footer.
 ///
-/// upstream: token.c:678-776 - send path, 780-870 - recv path
+/// upstream: token.c:735-835 - send path, 839-924 - recv path
 #[test]
 fn interop_roundtrip_incremental_transfer_pattern() {
     let encoded = encode_mixed(
@@ -962,7 +946,7 @@ fn interop_roundtrip_incremental_transfer_pattern() {
 /// Round-trip with zero-length input (empty file transfer).
 /// Must produce only END_FLAG with no DEFLATED_DATA blocks.
 ///
-/// upstream: token.c:772-775 - token==-1 with no preceding data
+/// upstream: token.c:831-834 - token==-1 with no preceding data
 #[test]
 fn interop_roundtrip_empty_file() {
     let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
@@ -983,7 +967,7 @@ fn interop_roundtrip_empty_file() {
 /// Round-trip with block-match-only stream (basis file unchanged).
 /// No DEFLATED_DATA blocks should appear - only token bytes.
 ///
-/// upstream: token.c:706-723 - token emission without preceding literals
+/// upstream: token.c:765-782 - token emission without preceding literals
 #[test]
 fn interop_roundtrip_blocks_only_no_deflated_data() {
     let encoded = encode_mixed(
@@ -1009,9 +993,10 @@ fn interop_roundtrip_blocks_only_no_deflated_data() {
 
 /// Round-trip with a single large literal (64 KB) that exceeds
 /// `MAX_DATA_COUNT`, forcing multiple DEFLATED_DATA blocks.
-/// Verifies our chunking matches upstream's buffer-full write behavior.
+/// Upstream also splits it, writing one block per compress call that
+/// produced output, so block boundaries can differ while decoding identically.
 ///
-/// upstream: token.c:755 - write when zstd_out_buff.pos == zstd_out_buff.size
+/// upstream: token.c:794, 815-821
 #[test]
 fn interop_roundtrip_large_literal_multiple_blocks() {
     // Compressible data that still produces multiple output blocks
@@ -1038,7 +1023,7 @@ fn interop_roundtrip_large_literal_multiple_blocks() {
 /// verifying that the flush-per-token pattern preserves all data
 /// through many interleaving cycles.
 ///
-/// upstream: token.c:727-768 - compress+flush loop per token
+/// upstream: token.c:786-829 - compress+flush loop per token
 #[test]
 fn interop_roundtrip_many_small_interleaved_tokens() {
     let mut tokens = Vec::new();

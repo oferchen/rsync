@@ -3,10 +3,10 @@ use std::str::FromStr;
 
 use super::flags::CompatibilityFlags;
 
-/// Enumerates the compatibility flags defined by upstream rsync 3.4.1.
+/// Enumerates the compatibility flags defined by upstream rsync 3.5.1.
 ///
 /// The variants mirror the canonical `CF_*` identifiers from the C
-/// implementation (see upstream `compat.c:117` for the bit definitions). They
+/// implementation (see upstream `compat.c:118-126` for the bit definitions). They
 /// serve as a strongly-typed view that avoids leaking raw bit positions into
 /// higher layers while still supporting inexpensive conversions back into
 /// [`CompatibilityFlags`]. The iterator returned by
@@ -43,7 +43,7 @@ pub enum KnownCompatibilityFlag {
 }
 
 impl KnownCompatibilityFlag {
-    /// Canonical ordering of compatibility flags defined by upstream rsync 3.4.1.
+    /// Canonical ordering of compatibility flags defined by upstream rsync 3.5.1.
     ///
     /// The array lists variants in ascending bit order so it can be used to
     /// populate [`CompatibilityFlags::ALL_KNOWN`] or iterate over every

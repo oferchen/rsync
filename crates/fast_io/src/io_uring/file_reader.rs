@@ -104,6 +104,11 @@ impl IoUringReader {
     /// Submits a single SQE on the per-thread ring and waits for completion.
     /// For bulk reads, prefer `read_all_batched` which amortizes syscall
     /// overhead across many SQEs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the SQE cannot be queued, the submit fails, no completion arrives,
+    /// or the kernel reports a negative result.
     pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         if offset >= self.size {
             return Ok(0);
@@ -157,6 +162,11 @@ impl IoUringReader {
     /// completes in a single syscall instead of 16. Always uses plain
     /// `IORING_OP_READ`; the `READ_FIXED` fast path returns with IUR-3.e via
     /// the per-thread bgid lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an SQE cannot be queued, the submit fails, a completion is
+    /// missing, or a read reports a negative result.
     pub fn read_all_batched(&mut self) -> io::Result<Vec<u8>> {
         let size = self.size as usize;
         if size == 0 {

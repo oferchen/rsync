@@ -23,10 +23,14 @@ use super::types::{AclType, RecvAclResult};
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `recv_ida_entries()` in `acls.c` lines 697-729.
+/// Mirrors `recv_ida_entries()` in `acls.c` lines 927-959.
+///
+/// Deviation from upstream: ids are returned as sent, together with any name
+/// bytes; upstream maps them through `recv_user_name()` / `match_uid()` /
+/// `match_gid()` inside this function.
 pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntries, u8)> {
-    // upstream: acls.c:700 recv_ida_entries() reads the count via
-    // read_varint_bounded(f, 0, MAX_WIRE_ACL_COUNT, "ACL count") (io.c:1942-1951),
+    // upstream: acls.c:930 recv_ida_entries() reads the count via
+    // read_varint_bounded(f, 0, MAX_WIRE_ACL_COUNT, "ACL count") (io.c:2112-2121),
     // which aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on an over-range
     // value. Tag it so the core exit-code mapper yields RERR_PROTOCOL, not the
     // RERR_STREAMIO (12) that a bare InvalidData maps to.
@@ -73,7 +77,7 @@ pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntr
 ///
 /// # Upstream Reference
 ///
-/// Mirrors the `recv_acl_access(f, NULL)` calls in `acls.c` lines 753-760.
+/// Mirrors the `recv_acl_access(f, NULL)` calls in `acls.c` lines 983-990.
 fn recv_obj_access<R: Read + ?Sized>(reader: &mut R) -> io::Result<u8> {
     let encoded = read_varint(reader)? as u32;
     let (access, _) = decode_access(encoded, false)?;
@@ -89,13 +93,15 @@ fn recv_obj_access<R: Read + ?Sized>(reader: &mut R) -> io::Result<u8> {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `recv_rsync_acl()` in `acls.c` lines 731-800.
+/// Mirrors the wire-reading part of `recv_rsync_acl()` in `acls.c`
+/// lines 961-1014. Unlike upstream it neither validates a cache index against
+/// the list length nor stores the literal ACL; `receive_acl_cached` does both.
 pub fn recv_rsync_acl<R: Read + ?Sized>(
     reader: &mut R,
     acl_type: AclType,
 ) -> io::Result<RecvAclResult> {
     let ndx_plus_one = read_varint(reader)?;
-    // upstream: acls.c:966-970 reads `int ndx = read_varint(f)` and rejects
+    // upstream: acls.c:966-972 reads `int ndx = read_varint(f)` and rejects
     // out-of-range indices with an error. The wire value is an index + 1, so a
     // malicious peer can send i32::MIN, making `ndx_plus_one - 1` underflow and
     // panic under overflow-checks builds. Reject that edge with a protocol
@@ -130,18 +136,17 @@ pub fn recv_rsync_acl<R: Read + ?Sized>(
         let (entries, computed_mask) = recv_ida_entries(reader)?;
         acl.names = entries;
 
-        // upstream: acls.c:770-779 recv_rsync_acl(). When named entries are
+        // upstream: acls.c:999-1008 recv_rsync_acl(). When named entries are
         // present but no explicit mask was transmitted, the mask must be
         // reconstructed - a POSIX ACL with named entries requires one.
         //
         // For an ACCESS ACL upstream derives the mask from the file mode group
         // bits, `(mode >> 3) & 7`: the sender's rsync_acl_strip_perms()
-        // (acls.c:150) drops the mask *only* when it equals those bits, so the
+        // (acls.c:154-155) drops the mask *only* when it equals those bits, so the
         // mode is the authoritative source. That reconstruction is deferred to
         // reconstruct_acl() at apply time, which has the mode, so the ACCESS
-        // mask is left as NO_ENTRY here. Folding the OR of the named-entry
-        // access bits in instead (the previous behaviour) silently narrowed the
-        // mask to the named user's perms whenever the true mask exceeded them.
+        // mask is left as NO_ENTRY here; folding in the OR of the named-entry
+        // access bits would narrow the mask whenever the true mask exceeded them.
         //
         // For a DEFAULT ACL no mode is available (upstream passes mode 0), so
         // upstream folds the group object into the OR of the named-entry access
@@ -164,7 +169,7 @@ pub fn recv_rsync_acl<R: Read + ?Sized>(
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `receive_acl()` in `acls.c` (implicit in the flist receive path).
+/// Mirrors the wire reads of `receive_acl()` in `acls.c` lines 1016-1022.
 pub fn recv_acl<R: Read + ?Sized>(
     reader: &mut R,
     is_directory: bool,
@@ -193,7 +198,7 @@ pub fn recv_acl<R: Read + ?Sized>(
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `recv_rsync_acl()` in `acls.c` lines 731-783, which both
+/// Mirrors `recv_rsync_acl()` in `acls.c` lines 961-1014, which both
 /// reads from wire and appends to `racl_list`, returning the index.
 fn recv_rsync_acl_cached<R: Read + ?Sized>(
     reader: &mut R,
@@ -204,7 +209,7 @@ fn recv_rsync_acl_cached<R: Read + ?Sized>(
 
     match result {
         RecvAclResult::CacheHit(ndx) => {
-            // upstream: acls.c:738 validates ndx < racl_list->count
+            // upstream: acls.c:968 rejects a wire index above racl_list->count
             let count = match acl_type {
                 AclType::Access => cache.access_count(),
                 AclType::Default => cache.default_count(),
@@ -256,7 +261,7 @@ fn recv_rsync_acl_cached<R: Read + ?Sized>(
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `receive_acl()` in `acls.c` lines 786-792.
+/// Mirrors `receive_acl()` in `acls.c` lines 1016-1022.
 pub fn receive_acl_cached<R: Read + ?Sized>(
     reader: &mut R,
     is_directory: bool,
@@ -280,7 +285,7 @@ mod edg_panic_tests {
     use std::io;
 
     /// A malicious peer must not crash the parser by sending a cache index that
-    /// underflows the `wire_value - 1` remap. upstream: acls.c:736-740 reads the
+    /// underflows the `wire_value - 1` remap. upstream: acls.c:966-972 reads the
     /// index and rejects out-of-range values; the varint i32::MIN drives
     /// `ndx_plus_one - 1` past i32::MIN, so the hardened decode must return a
     /// clean InvalidData error rather than panicking under overflow-checks.

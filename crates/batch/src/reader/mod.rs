@@ -144,7 +144,7 @@ impl BatchReader {
             // `open_no_attacker_symlinks()`. The path is operator-supplied and
             // may transit attacker-writable parents, so a planted symlink would
             // feed the replay a batch stream the operator never named.
-            // upstream: batch.c:268-271 - `rsyserr(FERROR, errno, "Batch file %s
+            // upstream: batch.c:269-272 - `rsyserr(FERROR, errno, "Batch file %s
             // open error", full_fname(batch_name))` then
             // `exit_cleanup(RERR_FILEIO)`. `full_fname` double-quotes the name
             // and `rsyserr` appends `strerror(errno) (errno)`, so the rendered
@@ -190,7 +190,7 @@ impl BatchReader {
     /// failing `fstat` is not itself a refusal - upstream only rejects when the
     /// stat succeeds and reports another mode.
     ///
-    /// upstream: `rsync-3.5.1/batch.c:274-282`
+    /// upstream: `rsync-3.5.1/batch.c:274-283`
     fn classify(file: &File, path: &Path) -> BatchResult<BatchInput> {
         let Ok(meta) = file.metadata() else {
             return Ok(BatchInput::Regular);
@@ -251,7 +251,7 @@ impl BatchReader {
             // A batch recorded at a newer protocol than the reader runs cannot
             // be replayed correctly. The ceiling is the configured protocol,
             // which `--protocol` lowers below this build's newest.
-            // upstream: compat.c:611-614 setup_protocol() - `remote_protocol >
+            // upstream: compat.c:611-615 setup_protocol() - `remote_protocol >
             // protocol_version` under read_batch exits RERR_PROTOCOL.
             let ceiling = self.config.protocol_version;
             if header.protocol_version > ceiling {
@@ -363,7 +363,7 @@ impl BatchReader {
     /// Mirrors upstream `--read-batch`, where the batch fd itself becomes the
     /// receiving client's `f_in` once `read_stream_flags()` and
     /// `setup_protocol()` have consumed the header values
-    /// (`main.c:652-664`, `compat.c:604-613`).
+    /// (`main.c:652-664`, `compat.c:602-615`).
     ///
     /// # Errors
     ///

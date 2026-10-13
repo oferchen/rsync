@@ -204,6 +204,10 @@ pub fn send_file_to_fd(source: &File, _dest_fd: i32, length: u64) -> io::Result<
 /// a buffered `read`/`write` loop. `Auto` and `Enabled` route to the
 /// existing [`send_file_to_fd`] which auto-selects `sendfile` for transfers
 /// above the platform threshold.
+///
+/// # Errors
+///
+/// Returns any I/O error from the zero-copy path or its read/write fallback.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn send_file_to_fd_with_policy(
     source: &File,

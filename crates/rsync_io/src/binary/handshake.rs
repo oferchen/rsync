@@ -111,6 +111,10 @@ impl<R> BinaryHandshake<R> {
     ///
     /// Invokes [`NegotiationPrologueSniffer::rehydrate_from_parts`] without
     /// unpacking the parts structure or replaying the underlying transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the sniffer's buffer cannot grow to hold the snapshot.
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,
@@ -244,6 +248,11 @@ impl<R> BinaryHandshake<R> {
     ///
     /// On failure the closure returns `(error, original_reader)`, mirroring
     /// [`NegotiatedStream::try_map_inner`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryMapInnerError` carrying the closure's error and the original value when
+    /// `map` fails.
     pub fn try_map_stream_inner<F, T, E>(
         self,
         map: F,

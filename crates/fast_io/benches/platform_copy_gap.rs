@@ -46,7 +46,7 @@
 //! This bench measures the synchronous in-process whole-file copy primitive
 //! that the local-copy executor uses for unchanged files and `-W`/whole-file
 //! transfers. The kernel-async path (io_uring vs IOCP) is covered by
-//! [`iocp_vs_iouring_matched`] (#1868); the two benches are intentionally
+//! [`iocp_vs_iouring_matched`]; the two benches are intentionally
 //! independent because they exercise different syscalls (`copy_file_range` and
 //! `clonefile` here, `io_uring_setup` / `CreateIoCompletionPort` there).
 //!

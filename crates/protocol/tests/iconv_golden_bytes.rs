@@ -4,10 +4,10 @@
 // is applied at flist write/read time, so future regressions in the sender or
 // receiver filename pipeline are caught at the byte level.
 //
-// upstream: rsync-3.4.1/flist.c
-//   - send: lines 1580-1602 - ic_send applied to file->dirname and file->basename
+// upstream: rsync-3.5.1/flist.c
+//   - send: lines 2004-2025 - ic_send applied to file->dirname and file->basename
 //           before they reach the wire (raw filename bytes are in remote charset).
-//   - recv: lines 738-753 - ic_recv applied after read_sbuf() into thisname,
+//   - recv: lines 1058-1073 - ic_recv applied after read_sbuf() into thisname,
 //           before clean_fname() and before the entry is materialized.
 //
 // Wire layout for a single entry on protocol 32 (no compatibility flags, no
@@ -141,7 +141,7 @@ fn sender_name_on_wire(writer: &mut FileListWriter, entry: &FileEntry) -> Vec<u8
 /// for `--iconv=.,ISO-8859-1` must hit the wire as ISO-8859-1: 63 61 66 e9
 /// (4 bytes). This is the canonical iconv test case from upstream's docs.
 ///
-/// upstream: flist.c:1805-1827 - iconvbufs(ic_send, ...) on file->basename
+/// upstream: flist.c:2004-2025 - iconvbufs(ic_send, ...) on file->basename
 /// before it is appended to the lastname-shared prefix and emitted by the
 /// XMIT_SAME_NAME / suffix_len machinery.
 #[test]
@@ -239,8 +239,8 @@ fn golden_sender_identity_converter_preserves_utf8() {
 /// Greek letter alpha, U+03B1) through verbatim. The writer cannot renumber ndx
 /// values, so dropping at this layer would desync the peer.
 ///
-/// Upstream's strict drop (`send_file1()` `return NULL` on
-/// `iconvbufs(ic_send, ..., ICB_INIT)` failure, flist.c:1849-1863) is mirrored
+/// Upstream's strict drop (`send_file_name()` `return NULL` on
+/// `iconvbufs(ic_send, ..., ICB_INIT)` failure, flist.c:2017-2024) is mirrored
 /// one layer up, at file-list build time, in
 /// `generator::file_list::drop_unconvertible_entries` - before ndx assignment,
 /// so sender/receiver ndx stay aligned - and is covered by that module's
@@ -307,7 +307,7 @@ fn build_wire_with_name(name_bytes: &[u8]) -> Vec<u8> {
 /// ISO-8859-1 bytes `63 61 66 e9` ("café") arriving over the wire must be
 /// converted by an iconv-enabled receiver into UTF-8 `63 61 66 c3 a9`.
 ///
-/// upstream: flist.c:963-978 - ic_recv invoked on thisname after the raw
+/// upstream: flist.c:1058-1073 - ic_recv invoked on thisname after the raw
 /// bytes have been read into the buffer, before clean_fname runs.
 #[cfg(unix)]
 #[test]
@@ -387,10 +387,10 @@ fn golden_receiver_ascii_passthrough_under_iconv() {
 /// received filename rather than aborting the file-list read.
 ///
 /// The receiver flist name path is STRICT: upstream converts the name with
-/// `iconvbufs(ic_recv, ..., ICB_INIT)` (flist.c:982) - NOT the lossy
+/// `iconvbufs(ic_recv, ..., ICB_INIT)` (flist.c:1065) - NOT the lossy
 /// `ICB_INCLUDE_BAD` used by `read_line(RL_CONVERT)`/`send_protected_args`.
 /// On an EILSEQ it prints an `FERROR_UTF8` warning, sets `io_error`, and sets
-/// `outbuf.len = 0` to empty the name (flist.c:984-987). The entry is kept
+/// `outbuf.len = 0` to empty the name (flist.c:1066-1070). The entry is kept
 /// with an empty name; the transfer continues.
 #[cfg(unix)]
 #[test]
@@ -416,7 +416,7 @@ fn golden_receiver_invalid_remote_bytes_empties_name() {
     );
     let entry = result.unwrap().expect("entry must be present");
 
-    // upstream flist.c:986 `outbuf.len = 0` empties the name on EILSEQ.
+    // upstream flist.c:1070 `outbuf.len = 0` empties the name on EILSEQ.
     assert!(
         entry.name_bytes().is_empty(),
         "unconvertible remote name must be emptied (flist.c:986), got {:?}",

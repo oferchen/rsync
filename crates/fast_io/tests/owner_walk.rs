@@ -2,7 +2,7 @@
 //!
 //! The refusal arm - a symlink component owned by neither uid 0 nor our euid -
 //! needs a second uid to plant, so it is covered by the root leg of the upstream
-//! 3.5.0 testsuite (`backup-dir-symlink-race`) rather than duplicated here with
+//! 3.5.1 testsuite (`backup-dir-symlink-race`) rather than duplicated here with
 //! a privilege check that would pass vacuously for an unprivileged runner.
 //! What this file pins is everything reachable as an ordinary user: that the
 //! walk still *works* (it must not become a blanket refusal), and that its two

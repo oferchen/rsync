@@ -6,7 +6,7 @@
 //!
 //! Special keywords ALL and NONE are also supported for convenience.
 //!
-//! Reference: rsync 3.4.1 options.c for --info flag parsing behavior.
+//! Reference: rsync 3.5.1 options.c for --info flag parsing behavior.
 
 use logging::{InfoFlag, VerbosityConfig, info_gte, init};
 

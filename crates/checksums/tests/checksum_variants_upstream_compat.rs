@@ -1,4 +1,4 @@
-//! Upstream rsync --checksum variants compatibility tests (task #60).
+//! Upstream rsync --checksum variants compatibility tests.
 //!
 //! This test suite validates that all checksum algorithm variants match upstream
 //! rsync behavior, including:
@@ -6,7 +6,7 @@
 //! 1. RFC/NIST test vectors for all cryptographic algorithms
 //! 2. Protocol version -> algorithm mapping (MD4 < v30, MD5 >= v30)
 //! 3. Algorithm name parsing and roundtrip (matching upstream wire names)
-//! 4. Seed handling (proper vs legacy ordering, CHECKSUM_SEED_FIX)
+//! 4. Seed handling (proper vs legacy ordering, CF_CHKSUM_SEED_FIX)
 //! 5. Cross-algorithm consistency (strategy vs direct API)
 //! 6. XXHash reference implementation compatibility
 
@@ -403,7 +403,7 @@ fn algorithm_kind_display_matches_name() {
         );
     }
 }
-// Upstream rsync's CHECKSUM_SEED_FIX (bit 5 of compat flags) controls
+// Upstream rsync's CF_CHKSUM_SEED_FIX (bit 5 of compat flags) controls
 // whether the MD5 seed is hashed before or after the data:
 // - proper_order=true: hash(seed || data) -- protocol 30+ with fix
 // - proper_order=false: hash(data || seed) -- legacy behavior
@@ -505,7 +505,7 @@ fn checksum_seed_propagated_through_strategy_selector() {
 
     // for_protocol_version has no knowledge of CF_CHKSUM_SEED_FIX negotiation,
     // so it must default to legacy ordering to stay wire-compatible with peers
-    // that predate rsync 3.2.x (which introduced the seed-fix flag).
+    // that predate rsync 3.1.2 (which introduced the seed-fix flag).
     // Callers that have negotiated CF_CHKSUM_SEED_FIX must use
     // for_protocol_version_with_seed_order(..., true) explicitly.
     let strategy = ChecksumStrategySelector::for_protocol_version(30, seed);
@@ -921,7 +921,8 @@ fn compute_into_matches_compute_all_algorithms() {
         );
     }
 }
-// Upstream rsync 3.4.1 preference order: xxh128 xxh3 xxh64 md5 md4 sha1 none
+// upstream: checksum.c valid_checksums_items[] preference order (3.5.1):
+// xxh128 xxh3 xxh64 md5 md4 sha1 none
 // We verify that our algorithm enumeration covers all of these.
 
 #[test]
@@ -1120,9 +1121,9 @@ fn different_seeds_produce_different_xxhash_digests() {
         }
     }
 }
-// Upstream rsync: seed=0 is a valid seed value that differs from "no seed".
-// For MD5, seed=0 hashes 4 zero bytes before/after data, producing a different
-// result than hashing data alone.
+// XXH64/XXH3 take the seed as a hash parameter, so seed 0 is a distinct seed.
+// MD4/MD5 differ: upstream `checksum.c:get_checksum2()` appends no seed bytes
+// when the seed is 0 (`if (checksum_seed)`).
 
 #[test]
 fn xxhash_seed_zero_differs_from_nonzero_seeds() {
@@ -1273,7 +1274,7 @@ fn md5_seeded_empty_data_produces_valid_digest() {
 // CF_CHKSUM_SEED_FIX active) vs legacy (seed-after-data) ordering, ensuring
 // that regressions in seed mixing are caught immediately.
 //
-// upstream: checksum.c:342-354 get_checksum2()
+// upstream: checksum.c:356-374 get_checksum2() CSUM_MD5 branch
 
 #[test]
 fn cf_chksum_seed_fix_golden_proper_order() {
@@ -1423,7 +1424,7 @@ fn cf_chksum_seed_fix_strategy_selector_legacy_matches_direct() {
 fn cf_chksum_seed_fix_default_protocol_30_uses_legacy_order_by_default() {
     // for_protocol_version() does not receive negotiated compat flags.
     // It must default to legacy seed ordering (seed appended after data) so that
-    // transfers with rsync peers that predate CF_CHKSUM_SEED_FIX (rsync < 3.2.x)
+    // transfers with rsync peers that predate CF_CHKSUM_SEED_FIX (rsync < 3.1.2)
     // produce matching digests.  Callers with negotiated caps must use
     // for_protocol_version_with_seed_order(..., proper_seed_order) explicitly.
     let data = b"cf_chksum_seed_fix default ordering";

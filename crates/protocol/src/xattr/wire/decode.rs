@@ -51,11 +51,15 @@ use super::types::{RecvXattrResult, XattrDefinition, XattrSet};
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c:receive_xattr()` lines 790-860 - the entry-reading loop
+/// See `xattrs.c:receive_xattr()` lines 826-915 - the entry-reading loop
 /// after `ndx == 0` and before `rsync_xal_store()`.
+///
+/// Deviation from upstream: values are bounded by `--max-alloc` only, not by
+/// `MAX_XATTR_VALUE_BYTES` / `MAX_XATTR_LIST_BYTES` (`xattrs.c:839-851`), and
+/// no namespace filtering or name sorting is done (`xattrs.c:868-918`).
 pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
-    // upstream: xattrs.c:793 receive_xattr() reads the count via
-    // read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT, ...) (io.c:1942-1951),
+    // upstream: xattrs.c:826 receive_xattr() reads the count via
+    // read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT, ...) (io.c:2112-2121),
     // which aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on a negative or
     // over-range value. Tag both rejections so the core exit-code mapper yields
     // RERR_PROTOCOL, not the RERR_STREAMIO (12) that a bare InvalidData maps to.
@@ -67,7 +71,7 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
     for _ in 0..count {
         // upstream: name_len = read_varint_size(f, MAX_WIRE_XATTR_NAMELEN, ...);
         // datum_len = read_varint_size(f, MAX_WIRE_XATTR_DATALEN, ...) at
-        // xattrs.c:802-803. read_varint_size (io.c:1955-1964) aborts with
+        // xattrs.c:835-836. read_varint_size (io.c:2125-2134) aborts with
         // exit_cleanup(RERR_PROTOCOL) (exit 2) on a negative or over-max value,
         // so tag these to reproduce exit 2 rather than RERR_STREAMIO (12).
         let name_len = read_varint(reader)? as usize;
@@ -78,7 +82,7 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
                 "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
             )));
         }
-        // upstream: xattrs.c:808 new_array() -> my_alloc() aborts once the
+        // upstream: xattrs.c:854 new_array() -> my_alloc() aborts once the
         // datum reaches the negotiated `--max-alloc` (util2.c:75). Bounding by
         // `effective_max_alloc()` accepts a peer that raised `--max-alloc` up to
         // the `0x7fffffff` field ceiling, while a negative varint (which cannot
@@ -93,7 +97,7 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
         let mut name = vec![0u8; name_len];
         reader.read_exact(&mut name)?;
 
-        // upstream: xattrs.c:811-814 receive_xattr() - `name_len < 1 ||
+        // upstream: xattrs.c:857-860 receive_xattr() - `name_len < 1 ||
         // name[name_len-1] != '\0'` prints "Invalid xattr name received" and
         // calls exit_cleanup(RERR_FILEIO) (exit 11), a file-IO error, not a
         // protocol (2) or stream (12) error. io::Error::other maps to
@@ -102,7 +106,6 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
             return Err(io::Error::other("invalid xattr name: missing trailing NUL"));
         }
 
-        // Strip the NUL terminator for internal storage
         name.truncate(name_len - 1);
 
         let abbreviated = datum_len > MAX_FULL_DATUM;
@@ -138,11 +141,15 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c:receive_xattr()` - reads `ndx = read_varint(f)`, branches
-/// on `ndx != 0` for cache hit vs literal data.
+/// See `xattrs.c:receive_xattr()` lines 803-923 - reads `ndx = read_varint(f)`,
+/// branches on `ndx != 0` for cache hit vs literal data.
+///
+/// Deviation from upstream: a name without its trailing NUL is accepted
+/// rather than refused with `RERR_FILEIO` (`xattrs.c:857-860`), and the same
+/// `read_xattr_definitions` deviations apply.
 pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
     let ndx_plus_one = read_varint(reader)?;
-    // upstream: xattrs.c:812-814 reads `int ndx = read_varint(f)` and rejects
+    // upstream: xattrs.c:812-819 reads `int ndx = read_varint(f)` and rejects
     // out-of-range indices with an error. The wire value is an index + 1, so a
     // malicious peer can send i32::MIN, making `ndx_plus_one - 1` underflow and
     // panic under overflow-checks builds. Reject that edge with a protocol
@@ -155,7 +162,7 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
         return Ok(RecvXattrResult::CacheHit(ndx as u32));
     }
 
-    // upstream: xattrs.c:793 read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT,
+    // upstream: xattrs.c:826 read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT,
     // ...) aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on an over-range
     // count; tag it so the mapper yields RERR_PROTOCOL, not RERR_STREAMIO (12).
     let count =
@@ -163,8 +170,8 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
     let mut list = XattrList::new();
 
     for _ in 0..count {
-        // upstream: name_len/datum_len via read_varint_size (xattrs.c:802-803,
-        // io.c:1955-1964) -> exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun.
+        // upstream: name_len/datum_len via read_varint_size (xattrs.c:835-836,
+        // io.c:2125-2134) -> exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun.
         let name_len = read_varint(reader)? as usize;
         let datum_len = read_varint(reader)? as usize;
 
@@ -173,7 +180,7 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
                 "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
             )));
         }
-        // upstream: xattrs.c:808 new_array() -> my_alloc() bounds the datum by
+        // upstream: xattrs.c:854 new_array() -> my_alloc() bounds the datum by
         // the negotiated `--max-alloc` (util2.c:75), not by a fixed per-field
         // cap. A negative varint still overruns this check as RERR_PROTOCOL.
         let max_datum = effective_max_alloc();
@@ -219,8 +226,12 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c:recv_xattr_request()` - reads 1-based `num` values with
-/// delta encoding: `ndx = read_varint(f) + prior_req`.
+/// See the sender path of `xattrs.c:recv_xattr_request()` (lines 709-777) -
+/// accumulates 1-based `num` values from deltas, `num += rel_pos`.
+///
+/// Deviation from upstream: an unknown `num` is skipped silently; upstream
+/// exits with `RERR_PROTOCOL` ("could not find xattr", `xattrs.c:763-772`)
+/// and also rejects accumulation overflow (`xattrs.c:730-734`).
 pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::Result<Vec<usize>> {
     let mut indices = Vec::new();
     let mut prior_req = 0i32;
@@ -232,7 +243,7 @@ pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::
             break;
         }
 
-        // upstream: ndx = read_varint(f) + prior_req (1-based)
+        // upstream: xattrs.c:735 num += rel_pos (1-based)
         let num = prior_req + rel;
         let idx = (num - 1) as usize;
         if idx < list.len() {
@@ -257,15 +268,18 @@ pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c` - receiver reads full values for entries marked `XSTATE_ABBREV`.
+/// No direct upstream counterpart: upstream's receiver reads values inside
+/// `recv_xattr_request()` (`xattrs.c:779-794`), each preceded by its
+/// delta-encoded `num` and ended by a zero. This function pairs with
+/// `send_xattr_values` and reads length and value only.
 pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::Result<()> {
     for entry in list.entries_mut() {
         if entry.state().needs_request() {
-            // upstream: xattrs.c:752 recv_xattr_request() reads the resolved
+            // upstream: xattrs.c:780 recv_xattr_request() reads the resolved
             // datum_len via read_varint_size(f_in, MAX_WIRE_XATTR_DATALEN, ...)
-            // (io.c:1955-1964) -> exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun.
+            // (io.c:2125-2134) -> exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun.
             let len = read_varint(reader)? as usize;
-            // upstream: xattrs.c:756 new_array(rxa->datum_len + name_len) ->
+            // upstream: xattrs.c:788 new_array(rxa->datum_len + name_len) ->
             // my_alloc() bounds the resolved full value by the negotiated
             // `--max-alloc` (util2.c:75). This path allocates `len` bytes up
             // front, so the ceiling is a real allocation bound.
@@ -295,7 +309,7 @@ pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::R
 ///
 /// # Upstream Reference
 ///
-/// `xattrs.c:xattr_diff()` compares the sender's `datum + 1` abbreviation
+/// `xattrs.c:xattr_diff()` (lines 575-647) compares the sender's `datum + 1` abbreviation
 /// against the receiver's locally computed digest to decide which values
 /// must be requested from the sender.
 #[must_use]
@@ -313,7 +327,7 @@ mod edg_panic_tests {
     use std::io;
 
     /// A malicious peer must not crash the parser by sending a cache index that
-    /// underflows the `wire_value - 1` remap. upstream: xattrs.c:773-775 reads
+    /// underflows the `wire_value - 1` remap. upstream: xattrs.c:812-819 reads
     /// the index and rejects out-of-range values; the varint i32::MIN drives
     /// `ndx_plus_one - 1` past i32::MIN, so the hardened decode must return a
     /// clean InvalidData error rather than panicking under overflow-checks.

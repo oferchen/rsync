@@ -9,12 +9,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1856` `send_file1()` - sender: `rprintf(FERROR_XFER, "[%s]
+//! - `flist.c:2016-2023` `send_file_name()` - sender: `rprintf(FERROR_XFER, "[%s]
 //!   cannot convert filename: %s (%s)\n", who_am_i(), f_name(file, fbuf),
 //!   strerror(errno))`.
-//! - `flist.c:982` `recv_file_entry()` - receiver: same message via
+//! - `flist.c:1065-1069` `recv_file_entry()` - receiver: same message via
 //!   `rprintf(FERROR_UTF8, ...)`.
-//! - `log.c:239` `filtered_fwrite()` - non-printable bytes render as `\#%03o`.
+//! - `log.c:256` `filtered_fwrite()` - non-printable bytes render as `\#%03o`.
 
 /// Formats the upstream `cannot convert filename` diagnostic for `name_bytes`.
 ///
@@ -42,10 +42,10 @@ pub fn cannot_convert_filename_message(role: &str, name_bytes: &[u8]) -> String 
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1873-1875` `send_file1()` - sender: `rprintf(FERROR_XFER, "[%s]
+/// - `flist.c:2033-2037` `send_file_name()` - sender: `rprintf(FERROR_XFER, "[%s]
 ///   cannot convert symlink data for: %s (%s)\n", who_am_i(),
 ///   full_fname(fbuf), strerror(errno))`.
-/// - `flist.c:1396-1398` `recv_file_entry()` - receiver: same message via
+/// - `flist.c:1540-1545` `recv_file_entry()` - receiver: same message via
 ///   `full_fname(thisname)`.
 #[must_use]
 pub fn cannot_convert_symlink_message(role: &str, name_bytes: &[u8]) -> String {
@@ -58,10 +58,13 @@ pub fn cannot_convert_symlink_message(role: &str, name_bytes: &[u8]) -> String {
 }
 
 /// Escapes non-printable bytes in a filename for terminal output, matching
-/// upstream rsync's `filtered_fwrite()` octal escape (`log.c:239` `"\#%03o"`).
+/// upstream rsync's `filtered_fwrite()` octal escape (`log.c:256` `"\#%03o"`).
 ///
 /// Printable ASCII (`0x20..=0x7e`) and horizontal tab pass through verbatim;
-/// every other byte is rendered as a three-digit octal escape.
+/// every other byte is rendered as a three-digit octal escape. Deviation from
+/// upstream: `filtered_fwrite()` decides printability with the locale's
+/// `isprint()` and also escapes the backslash of a literal `\#ddd` sequence;
+/// this helper uses a fixed ASCII range and leaves such a backslash as is.
 #[must_use]
 pub fn escape_filename(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len());

@@ -8,13 +8,13 @@ use super::openssl_support;
 /// Seed configuration for MD5 checksum calculation.
 ///
 /// Rsync uses seeded MD5 checksums for file list validation. The
-/// `CHECKSUM_SEED_FIX` compatibility flag (protocol 30+) determines whether the
+/// `CF_CHKSUM_SEED_FIX` compatibility flag (protocol 30+) determines whether the
 /// seed is hashed before or after the file data.
 ///
 /// # Upstream Reference
 ///
 /// - `checksum.c:get_checksum2()` - seed ordering logic
-/// - `compat.c` - `CHECKSUM_SEED_FIX` negotiation
+/// - `compat.c:736` - `CF_CHKSUM_SEED_FIX` negotiation
 ///
 /// The flag controls:
 ///
@@ -56,7 +56,7 @@ pub struct Md5Seed {
     pub value: Option<i32>,
     /// Whether to hash the seed before the data (`true`) or after (`false`).
     ///
-    /// Protocol 30+ with `CHECKSUM_SEED_FIX` uses proper ordering (seed first).
+    /// Protocol 30+ with `CF_CHKSUM_SEED_FIX` uses proper ordering (seed first).
     /// Older protocols hash the seed after the data (legacy ordering).
     /// See upstream `checksum.c:get_checksum2()`.
     pub proper_order: bool,
@@ -85,7 +85,8 @@ impl Md5Seed {
         }
     }
 
-    /// Creates a seed configuration with seed-before-data ordering (protocol 30+ with CHECKSUM_SEED_FIX).
+    /// Creates a seed configuration with seed-before-data ordering (protocol 30+ with
+    /// `CF_CHKSUM_SEED_FIX`).
     ///
     /// # Examples
     ///
@@ -153,7 +154,7 @@ impl Default for Md5Seed {
 ///
 /// - `checksum.c:get_checksum2()` - strong checksum computation (MD5 for protocol >= 30)
 /// - `checksum.c:file_checksum()` - whole-file MD5 for file list validation
-/// - `compat.c` - `CHECKSUM_SEED_FIX` controls seed ordering
+/// - `compat.c:759` - `CF_CHKSUM_SEED_FIX` sets `proper_seed_order`
 ///
 /// # Examples
 ///
@@ -211,7 +212,7 @@ impl Default for Md5Seed {
 #[derive(Clone)]
 pub struct Md5 {
     inner: Md5Backend,
-    /// Deferred seed for legacy (pre-CHECKSUM_SEED_FIX) ordering.
+    /// Deferred seed for legacy (pre-CF_CHKSUM_SEED_FIX) ordering.
     pending_seed: Option<i32>,
 }
 
@@ -391,10 +392,10 @@ impl StrongDigest for Md5 {
             && value != 0
         {
             if seed.proper_order {
-                // upstream: checksum.c:get_checksum2() - CHECKSUM_SEED_FIX (protocol 30+)
+                // upstream: checksum.c:get_checksum2() - CF_CHKSUM_SEED_FIX (protocol 30+)
                 md5.update(&value.to_le_bytes());
             } else {
-                // upstream: checksum.c:get_checksum2() - pre-CHECKSUM_SEED_FIX ordering
+                // upstream: checksum.c:get_checksum2() - pre-CF_CHKSUM_SEED_FIX ordering
                 md5.pending_seed = Some(value);
             }
         }
@@ -673,7 +674,7 @@ mod tests {
 
     // CSM-8 parity: seeded hashing must also match upstream byte-for-byte
     // regardless of backend selection. Covers the proper (protocol >= 30) and
-    // legacy (pre-CHECKSUM_SEED_FIX) seed orderings.
+    // legacy (pre-CF_CHKSUM_SEED_FIX) seed orderings.
     #[test]
     fn md5_active_backend_matches_pure_rust_reference_seeded() {
         let seed_value: i32 = 0x12345678;

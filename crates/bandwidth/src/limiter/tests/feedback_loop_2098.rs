@@ -1,4 +1,4 @@
-//! Feedback-loop convergence tests for `--bwlimit` (#2098).
+//! Feedback-loop convergence tests for `--bwlimit`.
 //!
 //! These tests drive the [`BandwidthLimiter`] with synthetic byte streams
 //! representative of real-world load profiles and assert that the requested
@@ -7,7 +7,7 @@
 //! rsync's `io.c:sleep_for_bwlimit()`; each scenario below targets a
 //! specific feedback-loop property of that algorithm.
 //
-// upstream: io.c sleep_for_bwlimit
+// upstream: io.c:2323 sleep_for_bwlimit()
 use super::{BandwidthLimiter, recorded_sleep_session};
 use std::num::NonZeroU64;
 use std::time::Duration;

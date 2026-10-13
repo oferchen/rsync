@@ -140,6 +140,10 @@ impl SshConnection {
     /// after receiving the remote rsync version greeting). If the watchdog has
     /// already fired, this returns an error indicating the timeout expired.
     /// If no watchdog was armed, this is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the watchdog cannot be stopped.
     pub fn cancel_connect_watchdog(&mut self) -> io::Result<()> {
         if let Some(watchdog) = self.connect_watchdog.take() {
             watchdog.cancel()
@@ -160,6 +164,10 @@ impl SshConnection {
     }
 
     /// Flushes and closes the stdin pipe, signalling EOF to the subprocess.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from flushing stdin.
     pub fn close_stdin(&mut self) -> io::Result<()> {
         if let Some(mut stdin) = self.stdin.take() {
             stdin.flush()?;
@@ -168,6 +176,11 @@ impl SshConnection {
     }
 
     /// Waits for the subprocess to exit, consuming the connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns the wait error, or `io::ErrorKind::InvalidInput` when the child was already
+    /// reaped.
     pub fn wait(mut self) -> io::Result<ExitStatus> {
         let _ = self.close_stdin();
         let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
@@ -199,6 +212,11 @@ impl SshConnection {
     /// into a single call, ensuring the drain thread is joined and all stderr is
     /// captured before the connection is consumed. This is the preferred method
     /// when callers need to surface SSH error messages to the user on failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the wait error, or `io::ErrorKind::InvalidInput` when the child was already
+    /// reaped.
     pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
         let _ = self.close_stdin();
         let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
@@ -226,6 +244,11 @@ impl SshConnection {
     }
 
     /// Attempts to retrieve the subprocess exit status without blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns the wait error, or `io::ErrorKind::InvalidInput` when the child was already
+    /// reaped.
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_mut() {
@@ -250,6 +273,11 @@ impl SshConnection {
     ///
     /// Returns `(reader, writer, child_handle)` on success.
     /// Returns an error if stdin, stdout, or the child process has already been taken.
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::ErrorKind::BrokenPipe` when stdin or stdout was already taken, or another
+    /// error when the halves cannot be set up.
     pub fn split(mut self) -> io::Result<(SshReader, SshWriter, SshChildHandle)> {
         let stdin = self.stdin.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "stdin has already been closed")
@@ -331,6 +359,10 @@ impl Write for SshWriter {
 
 impl SshWriter {
     /// Flushes and closes the stdin pipe, signalling EOF to the subprocess.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from flushing stdin.
     pub fn close(mut self) -> io::Result<()> {
         self.stdin.flush()
     }
@@ -524,6 +556,10 @@ impl SshChildHandle {
     /// after receiving the remote rsync version greeting). If the watchdog has
     /// already fired, this returns an error indicating the timeout expired.
     /// If no watchdog was armed, this is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the watchdog cannot be stopped.
     pub fn cancel_connect_watchdog(&mut self) -> io::Result<()> {
         if let Some(watchdog) = self.connect_watchdog.take() {
             watchdog.cancel()
@@ -567,6 +603,10 @@ impl SshChildHandle {
     ///
     /// Joins the stderr drain thread after the child exits to ensure all
     /// error output has been forwarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns the wait error.
     pub fn wait(mut self) -> io::Result<ExitStatus> {
         // Cancel stall detection before reaping so it cannot kill the child
         // during a legitimate final lull.
@@ -586,6 +626,10 @@ impl SshChildHandle {
     /// This combines [`wait`](Self::wait) and [`stderr_output`](Self::stderr_output)
     /// into a single call, ensuring all stderr is captured before the handle
     /// is consumed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the wait error.
     pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
         drop(self.io_stall_watchdog.take());
         let status = self.take_and_wait_child();

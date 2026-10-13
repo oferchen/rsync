@@ -17,7 +17,7 @@
 //! the multiplex framing layer are tracked separately as task #1797.
 //! The async connect-watchdog is likewise deferred: connect timeouts are
 //! enforced by the `-o ConnectTimeout=N` option that the shared builder
-//! already injects. An async stderr drain has since landed (SSE-4, #2373):
+//! already injects. An async stderr drain has since landed:
 //! under the `ssh-socketpair-stderr` feature on Unix a socketpair is
 //! installed and drained by `AsyncStderrDrain`, so only default builds
 //! (feature off, or non-Unix) still inherit stderr from the parent.
@@ -124,7 +124,7 @@ pub struct AsyncSshTransport {
     /// `Some` only when both `async-ssh` and `ssh-socketpair-stderr` are
     /// enabled and the socketpair was successfully installed at spawn
     /// time. When `None`, the transport falls back to the `Stdio::inherit`
-    /// path that preceded SSE-4 (PR #2373).
+    /// path that preceded SSE-4.
     #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
     stderr_drain: Option<AsyncStderrDrain>,
 }
@@ -177,7 +177,7 @@ impl AsyncSshTransport {
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
 
-        // Socketpair-backed stderr drain (SSE-4, #2373). When both
+        // Socketpair-backed stderr drain. When both
         // `async-ssh` and `ssh-socketpair-stderr` are enabled on Unix,
         // install a `socketpair(AF_UNIX, SOCK_STREAM, 0)` whose child end
         // becomes the spawned ssh's fd 2; the parent end is wrapped in a

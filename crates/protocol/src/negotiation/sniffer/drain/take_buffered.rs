@@ -30,6 +30,10 @@ impl NegotiationPrologueSniffer {
 
     /// Drains the buffered bytes (including any remainder beyond the detection prefix) into an
     /// existing vector supplied by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] when `target` cannot grow.
     pub fn take_buffered_into(&mut self, target: &mut Vec<u8>) -> Result<usize, TryReserveError> {
         if self.requires_more_data() {
             if self.buffered.capacity() > LEGACY_DAEMON_PREFIX_LEN {
@@ -60,6 +64,11 @@ impl NegotiationPrologueSniffer {
 
     /// Drains the buffered bytes (prefix and any captured remainder) into the caller-provided
     /// slice without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     pub fn take_buffered_into_slice(
         &mut self,
         target: &mut [u8],
@@ -80,6 +89,11 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered bytes into a vectored slice supplied by the caller without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     #[inline]
     pub fn take_buffered_into_vectored(
         &mut self,
@@ -97,6 +111,11 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered bytes into an array supplied by the caller without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferedPrefixTooSmall`] when the destination is too small; nothing
+    /// is drained in that case.
     pub fn take_buffered_into_array<const N: usize>(
         &mut self,
         target: &mut [u8; N],
@@ -105,6 +124,10 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Drains the buffered bytes into an arbitrary [`Write`] implementation without allocating.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from writing to `target`.
     pub fn take_buffered_into_writer<W: Write>(&mut self, target: &mut W) -> io::Result<usize> {
         if self.requires_more_data() {
             return Ok(0);

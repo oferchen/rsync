@@ -59,6 +59,10 @@ impl StrictHostKeyChecking {
     /// (openssh/readconf.c:1114). An unrecognised value is an error rather than a
     /// silent fallback: upstream reports `unsupported option` and counts a
     /// bad option, which terminates the run (openssh/readconf.c:1270-1275).
+    ///
+    /// # Errors
+    ///
+    /// Returns `UnknownStrictHostKeyChecking` for an unrecognised spelling.
     pub fn parse(value: &str) -> Result<Self, UnknownStrictHostKeyChecking> {
         // upstream: openssh/readconf.c:1019-1028 multistate_strict_hostkey[]
         if value.eq_ignore_ascii_case("yes") || value.eq_ignore_ascii_case("true") {

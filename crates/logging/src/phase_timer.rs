@@ -1,7 +1,10 @@
 //! RAII timer for measuring transfer phase durations.
 //!
-//! Logs elapsed time via `debug_log!(Time, ...)` on drop, matching upstream
-//! rsync's `--debug=TIME` output (upstream: options.c TIME flag).
+//! Logs elapsed time via `debug_log!(Time, ...)` on drop, gated on the
+//! `--debug=TIME` category (upstream: options.c:329).
+//!
+//! Deviation from upstream: upstream's `TIME` category traces modified-time
+//! handling and has no phase-duration output; the phase timer is oc-only.
 
 use std::time::Instant;
 

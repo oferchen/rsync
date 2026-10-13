@@ -91,14 +91,14 @@ pub struct FilterChain {
     /// rules expanded from merge files acquire an implicit FILTRULE_SENDER_SIDE
     /// flag so that the receiver's delete-pass does not skip matching files.
     ///
-    /// upstream: exclude.c:1324-1332 parse_rule_tok - the OR fires for every
+    /// upstream: exclude.c:1478-1481 parse_rule_tok - the OR fires for every
     /// parsed rule under --delete-excluded except the merge/dir-merge wrappers
     /// themselves.
     delete_excluded: bool,
     /// Transfer-root directory used to re-anchor leading-`/` rules read from a
     /// per-directory merge file to the merge file's own directory.
     ///
-    /// upstream: exclude.c:200-228 add_rule - under `XFLG_ANCHORED2ABS` a
+    /// upstream: exclude.c:297-306 add_rule - under `XFLG_ANCHORED2ABS` a
     /// leading-`/` rule in a per-dir merge file is rewritten so its pattern is
     /// prefixed with the merge file's directory (relative to the module root).
     /// `/file1` read from `foo/.filt` therefore matches `foo/file1`, not a
@@ -169,7 +169,7 @@ impl FilterChain {
     ///
     /// When enabled, rules expanded out of per-directory merge files acquire
     /// an implicit sender-side flag, mirroring upstream's per-token OR in
-    /// `exclude.c:1324-1332 parse_rule_tok`. Without this, the receiver's
+    /// `exclude.c:1478-1481 parse_rule_tok`. Without this, the receiver's
     /// delete-pass would treat merge-expanded excludes as receiver-side
     /// excludes and skip the matching files instead of deleting them.
     #[must_use]
@@ -276,7 +276,7 @@ impl FilterChain {
     /// `is_dir` should be `true` when the path refers to a directory.
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
-        // upstream: exclude.c:1046-1050 check_filter() walks one list and
+        // upstream: exclude.c:1195-1200 check_filter() walks one list and
         // consults a FILTRULE_PERDIR_MERGE entry at its own position. A global
         // rule defined BEFORE the dir-merge directive (smaller order than the
         // directive's recorded position) therefore wins over the merge file's
@@ -345,7 +345,7 @@ impl FilterChain {
         // still protects it). Mirror that by OR-ing in the
         // "excluded-removed" decision whenever `delete_excluded` is set, on
         // whichever scope (or the global set) decides the path.
-        // upstream: exclude.c:1046-1050 - as on the transfer path, a global rule
+        // upstream: exclude.c:1195-1200 - as on the transfer path, a global rule
         // preceding the dir-merge directive wins over the merge file's rules. The
         // scope decides only when its directive position is at or before the
         // global deletion first-match order.
@@ -423,7 +423,7 @@ impl FilterChain {
         let depth = self.current_depth;
         let mut pushed_count = 0;
 
-        // upstream: exclude.c:200-228 - leading-`/` rules in a per-dir merge
+        // upstream: exclude.c:297-306 - leading-`/` rules in a per-dir merge
         // file are re-anchored to the merge file's directory (relative to the
         // module root). Compute that directory once for every merge file read
         // in this directory.
@@ -461,13 +461,13 @@ impl FilterChain {
                 }
             };
 
-            // upstream: exclude.c:1252-1254 - dir-merge files registered as
+            // upstream: exclude.c:1402-1409 - dir-merge files registered as
             // `:C` (FILTRULE_CVS_IGNORE) parse their content as whitespace
             // separated tokens with every token implicitly an exclude.
             // Standard parse_rules would reject names like `one-in-one-out`
             // as "Unknown filter rule", aborting the walk.
             let rules = if config.no_prefixes() {
-                // upstream: exclude.c:1116-1133 - the `-`/`+` modifier on the
+                // upstream: exclude.c:1273-1275 - the `-`/`+` modifier on the
                 // dir-merge template skips short-prefix dispatch, so each
                 // line becomes a literal exclude (or include for `+`). When
                 // CVS_IGNORE is also inherited (e.g. `:-C`), a bare `!` line
@@ -483,9 +483,9 @@ impl FilterChain {
             } else if config.cvs_mode() {
                 parse_cvs_ignore_tokens(&content)
             } else if config.word_split() {
-                // upstream: exclude.c:1499 - the `w` modifier splits the merge
+                // upstream: exclude.c:1772-1773 - the `w` modifier splits the merge
                 // file on any whitespace and parses every token as its own
-                // rule (comments are not stripped, line 1514).
+                // rule (comments are not stripped, line 1806).
                 match parse_rules_word_split(&content, &merge_path) {
                     Ok(rules) => rules,
                     Err(e) => {
@@ -511,7 +511,7 @@ impl FilterChain {
                 }
             };
 
-            // upstream: exclude.c:1419-1428 - a `:` (FILTRULE_PERDIR_MERGE)
+            // upstream: exclude.c:1573-1582 - a `:` (FILTRULE_PERDIR_MERGE)
             // directive inside a merge file registers a new per-directory
             // merge that takes effect for the current directory and below.
             // `:C` is the common case: register `.cvsignore` as a CVS-style
@@ -521,7 +521,7 @@ impl FilterChain {
             // its tokens into this scope.
             let (rules, mut dir_merge_descriptors) = split_dir_merge_rules(rules);
 
-            // upstream: exclude.c:1393-1401 parse_filter_str() - a `!`
+            // upstream: exclude.c:1542-1551 parse_filter_str() - a `!`
             // (FILTRULE_CLEAR_LIST) in a per-directory merge file runs
             // `pop_filter_list(listp)` and THEN `listp->head = NULL`, so it
             // drops the mergelist's inherited ancestor rules, not just this
@@ -542,7 +542,7 @@ impl FilterChain {
             let config = &self.merge_configs[config_index];
             let delete_excluded = self.delete_excluded;
 
-            // upstream: exclude.c:1293-1303 - a `dir-merge` directive parsed from
+            // upstream: exclude.c:1447-1456 - a `dir-merge` directive parsed from
             // inside a side-restricted per-directory merge (e.g. `:s .filt`)
             // inherits the container's FILTRULES_SIDES, so the rules it later
             // loads (and every descendant reload of the registered config) become
@@ -559,7 +559,7 @@ impl FilterChain {
                 }
             }
 
-            // upstream: exclude.c:200-228 add_rule - FILTRULE_ABS_PATH keeps a
+            // upstream: exclude.c:297-306 add_rule - FILTRULE_ABS_PATH keeps a
             // leading `/` anchored to the transfer root, so a dir-merge declared
             // with the `/` modifier skips the merge-directory re-anchoring.
             let reanchor_dir = if config.is_anchor_root() {
@@ -593,7 +593,7 @@ impl FilterChain {
                 }
             };
 
-            // upstream: exclude.c:1393-1401 - drop the inherited ancestor rules
+            // upstream: exclude.c:1542-1551 - drop the inherited ancestor rules
             // of THIS mergelist (same `config_index`) before the current
             // directory's own section is pushed. The removed scopes are stashed
             // in `cleared_scopes` and restored when this directory is left, so a
@@ -617,13 +617,13 @@ impl FilterChain {
                 pushed_count += 1;
             }
 
-            // upstream: exclude.c:1419-1428 - for each `:`/`:C` directive
+            // upstream: exclude.c:1573-1582 - for each `:`/`:C` directive
             // encountered in the merge file body, attempt to load the named
             // file from the current directory now. The dir-merge rule itself
             // carries the modifier flags (cvs_mode, no_inherit) that decide
             // how to parse the file and whether descendant scopes inherit.
             for descriptor in dir_merge_descriptors {
-                // upstream: exclude.c:294 - a `dir-merge` directive parsed from
+                // upstream: exclude.c:391 - a `dir-merge` directive parsed from
                 // inside a merge file is appended to the global
                 // `mergelist_parents`, so `push_local_filters()` re-reads it in
                 // every descendant directory. An inheriting dir-merge must
@@ -631,7 +631,7 @@ impl FilterChain {
                 // a one-shot read of the current directory. Non-inheriting
                 // (`:C`, no-inherit) variants stay one-shot to avoid leaking
                 // into sibling subtrees. Dedupe by filename like upstream's
-                // "already mentioned" guard (exclude.c:262-279).
+                // "already mentioned" guard (exclude.c:359-376).
                 if !descriptor.no_inherit
                     && !self
                         .merge_configs
@@ -674,7 +674,7 @@ impl FilterChain {
     /// standard rule parser. The scope inherits to descendant directories
     /// only when the source rule does not carry the no-inherit modifier.
     ///
-    /// upstream: exclude.c:1419-1428 - a `:` directive inside a merge file
+    /// upstream: exclude.c:1573-1582 - a `:` directive inside a merge file
     /// expands to a fresh per-directory merge for the current scope.
     fn load_inline_dir_merge(
         &mut self,
@@ -711,7 +711,7 @@ impl FilterChain {
             }
         };
 
-        // upstream: exclude.c:1116-1133 - a dir-merge template carrying
+        // upstream: exclude.c:1273-1275 - a dir-merge template carrying
         // FILTRULE_NO_PREFIXES (`-`/`+`) skips the short-prefix dispatch and
         // consumes each line as a literal exclude (or include for `+`).
         let rules = if descriptor.no_prefixes {
@@ -786,7 +786,7 @@ impl FilterChain {
         let directive_order =
             config_index.map_or(0, |index| self.merge_configs[index].directive_order());
 
-        // upstream: exclude.c:1248-1254 - `:C` implies FILTRULE_NO_INHERIT,
+        // upstream: exclude.c:1402-1409 - `:C` implies FILTRULE_NO_INHERIT,
         // so the loaded rules apply only to the directory containing the
         // outer merge file, not to descendants. Other dir-merge variants
         // preserve their explicit no-inherit setting.
@@ -891,7 +891,7 @@ impl FilterChain {
     /// Removes the inherited ancestor scopes of the given merge config,
     /// stashing them for restoration when the clearing directory is left.
     ///
-    /// Mirrors upstream `exclude.c:1393-1401`, where a per-directory `!`
+    /// Mirrors upstream `exclude.c:1542-1551`, where a per-directory `!`
     /// clears the mergelist's inherited head. Only scopes with the same
     /// `config_index` are removed, matching `pop_filter_list(listp)` operating
     /// on a single list; scopes belonging to other per-directory merge files
@@ -963,7 +963,7 @@ impl FilterChain {
 /// Splits the content on whitespace and treats each token as an exclude
 /// pattern (no `+`/`-` filter prefixes honoured). Blank input produces no
 /// rules. This mirrors upstream rsync's CVS-mode merge parsing for
-/// `.cvsignore` files registered via `:C` (`exclude.c:1250-1254`).
+/// `.cvsignore` files registered via `:C` (`exclude.c:1249-1255`).
 fn parse_cvs_ignore_tokens(content: &str) -> Vec<FilterRule> {
     content
         .split_whitespace()
@@ -975,7 +975,7 @@ fn parse_cvs_ignore_tokens(content: &str) -> Vec<FilterRule> {
 /// Applies upstream's per-token implicit FILTRULE_SENDER_SIDE flip to a rule
 /// expanded from a merge file when `--delete-excluded` is active.
 ///
-/// Mirrors `exclude.c:1324-1332 parse_rule_tok`: the OR fires for every
+/// Mirrors `exclude.c:1478-1481 parse_rule_tok`: the OR fires for every
 /// include/exclude rule produced by the parser unless the user explicitly
 /// requested a side via the `s` or `r` modifier, in which case the
 /// FILTRULES_SIDES bit is already set and the OR is skipped. Merge and
@@ -1001,7 +1001,7 @@ fn apply_merge_implicit_sender_side(rule: FilterRule, delete_excluded: bool) -> 
 /// or inherited from a side-restricted container per-directory merge), the
 /// rules it loads default to that side unless they carry their own. Only
 /// two-sided include/exclude rules are adjusted, matching upstream's
-/// `FILTRULES_SIDES` inheritance (exclude.c:1293-1303); a rule that already
+/// `FILTRULES_SIDES` inheritance (exclude.c:1447-1456); a rule that already
 /// specifies a side keeps it.
 fn apply_dir_merge_inherited_side(rule: FilterRule, descriptor: &InlineDirMerge) -> FilterRule {
     if !descriptor.sender_only && !descriptor.receiver_only {
@@ -1036,7 +1036,7 @@ struct InlineDirMerge {
     /// Set from the source `dir-merge` rule's own `s` modifier, then OR-ed
     /// with the side of the containing per-directory merge so a `dir-merge`
     /// nested inside a `:s` merge inherits sender-side. upstream:
-    /// `exclude.c:1293-1303` inherits `FILTRULES_SIDES` from the template.
+    /// `exclude.c:1447-1456` inherits `FILTRULES_SIDES` from the template.
     sender_only: bool,
     /// Receiver-side counterpart of [`Self::sender_only`] (`r` modifier).
     receiver_only: bool,
@@ -1071,7 +1071,7 @@ fn path_to_forward_slash(path: &Path) -> String {
 
 /// Re-anchors a single rule read from a per-directory merge file.
 ///
-/// upstream: exclude.c:200-228 add_rule - under `XFLG_ANCHORED2ABS`, a rule
+/// upstream: exclude.c:297-306 add_rule - under `XFLG_ANCHORED2ABS`, a rule
 /// whose pattern begins with `/` is rewritten to be anchored at the merge
 /// file's directory rather than the module root. oc-rsync expresses root
 /// anchoring as a leading `/` in the pattern, so `/file1` from merge directory
@@ -1100,7 +1100,7 @@ fn reanchor_merge_rule(mut rule: FilterRule, rel_dir: Option<&str>) -> FilterRul
 /// mirroring upstream's `:` directive that registers a fresh per-directory
 /// merge from inside another merge file.
 ///
-/// upstream: exclude.c:1419-1428 - `FILTRULE_PERDIR_MERGE` inside
+/// upstream: exclude.c:1573-1582 - `FILTRULE_PERDIR_MERGE` inside
 /// `parse_filter_str()` adds a new per-dir rule rather than expanding the
 /// file at parse time.
 fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<InlineDirMerge>) {

@@ -24,7 +24,7 @@ use super::IncrementalFileList;
 /// # Upstream Reference
 ///
 /// This mirrors the decision logic in upstream rsync's `recv_generator()`
-/// (generator.c:1450) which dispatches based on entry type and filter rules.
+/// (generator.c:1608) which dispatches based on entry type and filter rules.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ReadyEntryAction {
     /// Create a directory at the entry's path.
@@ -161,7 +161,9 @@ where
     } else if entry.is_special() {
         ReadyEntryAction::CreateSpecial(entry)
     } else {
-        // Unknown type - treat as file transfer (matches upstream fallback).
+        // Unknown type - treat as file transfer. Deviation from upstream:
+        // recv_generator() skips any non-regular type it does not handle
+        // (generator.c:2113 "skipping non-regular file").
         debug_log!(
             Flist,
             1,

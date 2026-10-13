@@ -8,7 +8,7 @@
 //! rsync warning: <text> (code N) at <basename>(<line>) [<role>=<version>]
 //! ```
 //!
-//! Reference: upstream `log.c:rwrite()`, `errcode.h` (rsync 3.4.1).
+//! upstream: log.c:956-960 `log_exit()`, errcode.h.
 //!
 //! The `rsync_error_fmt!` and `rsync_warning_fmt!` macros produce strings
 //! in this format. They capture `file!()` and `line!()` at the call site,
@@ -51,7 +51,7 @@ fn find_crates_prefix(path: &str) -> Option<usize> {
 
 /// Extracts the filename component from a `file!()` path.
 ///
-/// Mirrors upstream rsync's `log.c:rwrite()` which appends `at <basename>(<line>)`
+/// Mirrors upstream rsync's `log.c:log_exit()`, which appends `at <basename>(<line>)`
 /// to diagnostic messages (e.g. `at io.c(234)`). Handles both Unix (`/`) and
 /// Windows (`\`) path separators so the helper works on compile-time paths from
 /// either host.

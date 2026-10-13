@@ -79,6 +79,11 @@ impl<R> NegotiatedStream<R> {
     /// with the supplied message. Centralising the logic keeps the error
     /// strings used across the transport crate in sync and avoids drift when
     /// additional call sites are introduced.
+    ///
+    /// # Errors
+    ///
+    /// Returns `io::ErrorKind::UnexpectedEof` when the prologue is still undecided, or
+    /// `io::ErrorKind::InvalidData` with `error_message` when it is the other style.
     pub fn ensure_decision(
         &self,
         expected: NegotiationPrologue,
@@ -155,6 +160,11 @@ impl<R> NegotiatedStream<R> {
     }
 
     /// Attempts to transform the inner reader while keeping the buffered negotiation state intact.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryMapInnerError` carrying the closure's error and the original value when
+    /// `map` fails.
     pub fn try_map_inner<F, T, E>(
         self,
         map: F,
@@ -169,6 +179,10 @@ impl<R> NegotiatedStream<R> {
     }
 
     /// Clones the replaying stream by duplicating the inner reader through the provided closure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `clone_inner`.
     #[doc(alias = "try_clone")]
     pub fn try_clone_with<F, T, E>(&self, clone_inner: F) -> Result<NegotiatedStream<T>, E>
     where

@@ -32,9 +32,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///
 /// No-op on non-Unix platforms.
 ///
-/// upstream: clientserver.c:979-980 (3.4.2) - `tzset()` called immediately
-/// before `chroot(module_chdir)`; same fix at clientserver.c:1306 before
-/// the daemon-level `chroot(lp_daemon_chroot())`.
+/// upstream: clientserver.c:1042 `rsync_module()` calls `tzset()` before
+/// `chroot(module_chdir)` at clientserver.c:1050; `start_daemon()` does the
+/// same before the daemon-level `chroot(lp_daemon_chroot())` at
+/// clientserver.c:1473-1474.
 #[cfg(unix)]
 #[allow(unsafe_code)]
 pub fn apply_chroot(path: &Path) -> io::Result<()> {
@@ -73,7 +74,8 @@ pub fn enter_directory(dir: std::os::fd::BorrowedFd<'_>) -> io::Result<()> {
 /// Windows does not support chroot. Logs a warning via stderr so daemon
 /// operators know the `use chroot` directive has no effect.
 ///
-/// upstream: clientserver.c - chroot is Unix-only; Windows daemon skips it.
+/// Deviation from upstream: upstream has no Windows build; this port skips
+/// the chroot with a warning.
 #[cfg(not(unix))]
 pub fn apply_chroot(_path: &Path) -> io::Result<()> {
     eprintln!("WARNING: chroot is not supported on this platform - skipping");
@@ -112,11 +114,11 @@ pub fn probe_chroot_capability() -> io::Result<()> {
 /// `nobody` default). An empty slice leaves the group identity untouched.
 ///
 /// The call sequence follows upstream's security-critical ordering:
-/// 1. `setgid(gids[0])` - drop the primary group (clientserver.c:1022)
+/// 1. `setgid(gids[0])` - drop the primary group (clientserver.c:1098)
 /// 2. `setgroups(gids)` - install the group set, clearing every inherited
-///    supplementary group (clientserver.c:1029)
+///    supplementary group (clientserver.c:1105)
 /// 3. `setuid()` - drop user privileges (irreversible, must be last;
-///    clientserver.c:1046)
+///    clientserver.c:1123)
 ///
 /// upstream: `clientserver.c:rsync_module()` - setgid/setgroups/setuid after
 /// chroot.
@@ -292,8 +294,9 @@ pub fn real_uid() -> u32 {
 /// `ImpersonateLoggedOnUser` to assume that identity. The `account_name`
 /// parameter accepts `DOMAIN\user` or plain `user` format.
 ///
-/// upstream: `clientserver.c:rsync_module()` - uid/gid are resolved to
-/// account names and used for impersonation on Windows.
+/// Deviation from upstream: upstream has no Windows build; this replaces the
+/// `setgid()`/`setuid()` drop in `clientserver.c:rsync_module()` with
+/// impersonation of a named account.
 #[cfg(windows)]
 pub fn drop_privileges_windows(
     uid: Option<u32>,
@@ -449,7 +452,7 @@ mod tests {
     /// fails (e.g., non-existent path, non-root caller) the function must
     /// still surface the original chroot error verbatim.
     ///
-    /// upstream: clientserver.c:979-980 (3.4.2) - `tzset()` before chroot.
+    /// upstream: clientserver.c:1042 - `tzset()` before chroot.
     #[cfg(unix)]
     #[test]
     fn apply_chroot_tzset_does_not_mask_chroot_failure() {
@@ -475,8 +478,8 @@ mod tests {
     ///   3. Convert a fixed UTC epoch with `localtime_r` and assert the
     ///      local hour matches EST5.
     ///
-    /// upstream: clientserver.c rsync_module / start_accept_loop with tzset
-    /// before chroot.
+    /// upstream: clientserver.c:1042 `rsync_module()` and clientserver.c:1473
+    /// `start_daemon()` call `tzset()` before chroot.
     #[cfg(unix)]
     #[test]
     #[allow(unsafe_code)]

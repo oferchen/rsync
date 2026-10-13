@@ -5,7 +5,7 @@
 //! (flag bytes, DEFLATED_DATA headers, token run encoding) is shared
 //! across all algorithms - only the payload compression differs.
 //!
-//! - upstream: token.c:send_compressed_token() (algorithm dispatch)
+//! - upstream: token.c:send_token() (algorithm dispatch)
 
 use std::io::{self, Write};
 
@@ -66,7 +66,7 @@ impl CompressedTokenEncoder {
     /// `workers` plumbs `--compress-threads=N` through to zstd's
     /// `ZSTD_c_nbWorkers`. `None` keeps the encoder single-threaded.
     ///
-    /// upstream: token.c:send_zstd_token(), token.c:749
+    /// upstream: token.c:send_zstd_token(), token.c:752
     #[cfg(feature = "zstd")]
     pub fn new_zstd(level: i32, workers: Option<std::num::NonZeroU8>) -> io::Result<Self> {
         Ok(Self {
@@ -91,7 +91,7 @@ impl CompressedTokenEncoder {
     /// For zstd, only resets token run-encoding state - the compression
     /// context is preserved across files (one continuous stream).
     ///
-    /// upstream: token.c:756-759 (zstd), token.c:387 (zlib deflateReset)
+    /// upstream: token.c:759-762 (zstd), token.c:390 (zlib deflateReset)
     pub fn reset(&mut self) {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.reset(),
@@ -147,7 +147,8 @@ impl CompressedTokenEncoder {
 
     /// Feeds block data into the compressor's history without producing output.
     ///
-    /// Only needed for CPRES_ZLIB mode. Noop for zlibx, zstd, and lz4.
+    /// Only needed for CPRES_ZLIB mode. Noop for zlibx, zstd, and lz4
+    /// (upstream: `token.c:see_token()`).
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.see_token(data),

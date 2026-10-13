@@ -21,7 +21,7 @@
 //!
 //! Design note: upstream's `rule_text_len` returns one of two rotated static
 //! buffers so that two calls in a single `rprintf` do not alias
-//! (`exclude.c:104-109`). Owned/borrowed returns make that unnecessary here,
+//! (`exclude.c:106-110`). Owned/borrowed returns make that unnecessary here,
 //! but the property it protects is real - five upstream messages interpolate
 //! two of these calls - so it is pinned by test rather than assumed.
 
@@ -136,10 +136,9 @@ impl<'a> RuleSource<'a> {
 /// An owned [`RuleSource`], retained on a rule so its provenance outlives the
 /// parse that produced it.
 ///
-/// upstream keeps the same information on the rule itself - the
-/// `FILTRULE_FROM_FILE` bit plus the retained `elt` location
-/// (`exclude.c:259-275`) - and it has to live there because the redaction
-/// decision is not always made at parse time. `report_filter_result`
+/// upstream keeps the provenance bit on the rule itself - `FILTRULE_FROM_FILE`,
+/// set in `parse_rule_tok()` (`exclude.c:1264-1265`) - and it has to live there
+/// because the redaction decision is not always made at parse time. `report_filter_result`
 /// (`exclude.c:1099`) runs when a rule MATCHES A PATH, long after the file that
 /// supplied the rule was read and closed; a deferred per-directory merge is
 /// parsed later still. [`RuleSource`] borrows its strings from the parse, so it
@@ -469,7 +468,7 @@ mod tests {
 
     #[test]
     fn two_texts_in_one_message_do_not_alias() {
-        // upstream needs two rotated static buffers for this (exclude.c:104-109,
+        // upstream needs two rotated static buffers for this (exclude.c:106-110,
         // "so two calls in one rprintf() are safe"); five of its messages
         // interpolate two of these. Pinned rather than assumed, because a future
         // refactor to a shared scratch buffer would silently reintroduce the

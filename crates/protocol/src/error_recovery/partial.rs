@@ -1,7 +1,8 @@
 //! Partial transfer tracking for resume operations.
 //!
-//! Records incomplete transfers so they can be retried or resumed later,
-//! matching upstream rsync's partial transfer handling.
+//! Records incomplete transfers so they can be retried or resumed later.
+//! Deviation from upstream: upstream keeps no in-memory partial log; a partial
+//! file is retained on disk only under `--partial` / `--partial-dir`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

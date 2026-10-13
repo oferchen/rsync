@@ -95,7 +95,7 @@ impl DestinationRoot {
     /// stops a run of files in one directory from resolving it once per
     /// attribute per file. A directory swapped for a symlink after it was
     /// resolved keeps resolving to the held inode, as upstream's held dirfd
-    /// does. upstream: syscall.c:3703-3720, dpc_dir_fd().
+    /// does. upstream: syscall.c:3702-3720 and `dpc_dir_fd()` (syscall.c:3744).
     #[cfg(unix)]
     pub(crate) fn held_dir_beneath(&self, tail: &Path) -> std::io::Result<Arc<OwnedFd>> {
         let anchor = self.anchor()?;

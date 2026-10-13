@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 //! Filename decoding with shared-prefix decompression.
 //!
-//! upstream: flist.c:recv_file_entry() name branch (lines 800-850).
+//! upstream: flist.c:recv_file_entry() name branch (lines 1036-1056).
 
 use std::io::{self, Read};
 
@@ -11,7 +11,8 @@ use super::super::file_entry::{XMIT_LONG_NAME, XMIT_SAME_NAME};
 
 /// Maximum total file name length on the wire.
 ///
-/// Matches upstream rsync's `MAXPATHLEN` (4096). Upstream checks
+/// Matches upstream rsync's `MAXPATHLEN` (the system value, 4096 on Linux;
+/// `rsync.h:761-762` falls back to 1024). Upstream checks
 /// `l2 >= MAXPATHLEN - l1` before allocating the name buffer.
 ///
 /// upstream: rsync.h `MAXPATHLEN`, flist.c:recv_file_entry()
@@ -75,7 +76,7 @@ pub(crate) fn name_overflow_error(
 ///
 /// # Upstream Reference
 ///
-/// See `flist.c:recv_file_entry()` lines 800-850
+/// See `flist.c:recv_file_entry()` lines 1036-1056
 pub fn decode_name<R: Read>(
     reader: &mut R,
     flags: u32,

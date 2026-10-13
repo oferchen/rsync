@@ -26,7 +26,7 @@
 //! - `compat.c:281-331 parse_nni_str()` - validates, de-duplicates and reorders
 //!   the names, canonicalising aliases and emitting `INVALID` when no name
 //!   survives.
-//! - `compat.c:506-533 send_negotiate_str()` - advertises the parsed list,
+//! - `compat.c:506-536 send_negotiate_str()` - advertises the parsed list,
 //!   falling back to `get_default_nno_list()` when the value is empty.
 
 use std::io;
@@ -60,7 +60,7 @@ pub(super) struct EnvOverride {
 /// `write_batch` replaces the variable outright with the single old-style
 /// choice, so a `--write-batch` recording is decodable by a `--read-batch`
 /// replay - which negotiates nothing and has only the batch header to go on.
-/// upstream: `compat.c:412-414 getenv_nstr()`.
+/// upstream: `compat.c:413-415 getenv_nstr()`.
 pub(super) fn checksum_candidates(
     is_server: bool,
     write_batch: bool,
@@ -78,7 +78,7 @@ pub(super) fn checksum_candidates(
 ///
 /// `write_batch` pins the list to `zlib` for the same reason
 /// [`checksum_candidates`] pins the checksum.
-/// upstream: `compat.c:412-414 getenv_nstr()`.
+/// upstream: `compat.c:413-415 getenv_nstr()`.
 pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Option<EnvOverride> {
     if write_batch {
         return parse_list("zlib", resolve_compression_name);
@@ -91,7 +91,7 @@ pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Opti
 ///
 /// Only the server validates, and only when the client explicitly forced the
 /// choice - the caller gates on `is_server` and `checksum_override.is_some()`,
-/// mirroring `checksum.c:185-186 parse_checksum_choice`
+/// mirroring `checksum.c:203-204 parse_checksum_choice`
 /// (`if (am_server && checksum_choice) validate_choice_vs_env(...)`). When the
 /// variable is unset or holds only whitespace this is a no-op and any choice is
 /// accepted, so the default (unset-env) path is unchanged.
@@ -107,8 +107,8 @@ pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Opti
 ///
 /// # Upstream reference
 ///
-/// - `compat.c:426-449 validate_choice_vs_env()` - the refusal check itself.
-/// - `checksum.c:185-186` - the server-only call site.
+/// - `compat.c:426-455 validate_choice_vs_env()` - the refusal check itself.
+/// - `checksum.c:203-204` - the server-only call site.
 pub(super) fn validate_checksum_choice(choice: &str) -> io::Result<()> {
     validate_choice(CHECKSUM_LIST_ENV, "checksum", choice, resolve_checksum_name)
 }
@@ -122,7 +122,7 @@ pub(super) fn validate_checksum_choice(choice: &str) -> io::Result<()> {
 ///
 /// # Upstream reference
 ///
-/// - `compat.c:426-449 validate_choice_vs_env()`.
+/// - `compat.c:426-455 validate_choice_vs_env()`.
 /// - `compat.c:193-194` - the server-only call site.
 pub(super) fn validate_compress_choice(choice: &str) -> io::Result<()> {
     validate_choice(
@@ -136,7 +136,7 @@ pub(super) fn validate_compress_choice(choice: &str) -> io::Result<()> {
 /// Refuses the forced fallback default checksum on the non-negotiated path when
 /// `RSYNC_CHECKSUM_LIST` excludes it.
 ///
-/// upstream: `compat.c:541-555 negotiate_the_strings` - when the peer is too old
+/// upstream: `compat.c:544-558 negotiate_the_strings` - when the peer is too old
 /// to negotiate (`do_negotiated_strings == 0`) and no `--checksum-choice` is
 /// forced, `send_negotiate_str` still parses the env list into `nno->saw`, then
 /// `recv_negotiate_str` runs `parse_negotiate_str` with the prefilled default
@@ -158,9 +158,9 @@ pub(super) fn validate_default_checksum(default: &str, is_server: bool) -> io::R
 /// path when `RSYNC_COMPRESS_LIST` excludes it.
 ///
 /// The compression counterpart of [`validate_default_checksum`], mirroring the
-/// `valid_compressions.saw` / `"zlib"` prefill branch (`compat.c:557-564`). Only
+/// `valid_compressions.saw` / `"zlib"` prefill branch (`compat.c:560-568`). Only
 /// reached when compression is active (`do_compression`), matching upstream's
-/// gate on `send_negotiate_str` at `compat.c:544`.
+/// gate on `send_negotiate_str` at `compat.c:547`.
 pub(super) fn validate_default_compress(default: &str, is_server: bool) -> io::Result<()> {
     validate_default(
         COMPRESS_LIST_ENV,
@@ -212,7 +212,7 @@ fn env_membership(
 /// On refusal, emits the byte-exact upstream message and fails with an
 /// [`io::ErrorKind::Unsupported`] error, which the core exit-code mapper turns
 /// into `RERR_UNSUPPORTED` (exit 4) - the code `validate_choice_vs_env` passes to
-/// `exit_cleanup` (`compat.c:449`).
+/// `exit_cleanup` (`compat.c:450`).
 fn validate_choice(
     key: &str,
     kind: &str,
@@ -222,7 +222,7 @@ fn validate_choice(
     // upstream: compat.c:432-445 - unset/blank accepts; saw[num] must be set.
     match env_membership(key, true, choice, resolve) {
         EnvMembership::Unset | EnvMembership::Present => Ok(()),
-        // upstream: compat.c:446-448 rprintf(FERROR, "Your --%s-choice value
+        // upstream: compat.c:447-449 rprintf(FERROR, "Your --%s-choice value
         // (%s) was refused by the server.\n", ...). The trailing newline is
         // added by the diagnostic layer, not embedded in the message.
         EnvMembership::Absent => Err(io::Error::new(
@@ -238,7 +238,7 @@ fn validate_choice(
 /// A no-op when the variable is unset or the default is a member. On refusal,
 /// emits upstream's full `recv_negotiate_str` block via
 /// [`super::failure::negotiation_failure`] - the `Failed to negotiate a %s
-/// choice.` line plus the offered Server/Client lists (`compat.c:381-405`) -
+/// choice.` line plus the offered Server/Client lists (`compat.c:384-403`) -
 /// with [`io::ErrorKind::Unsupported`], which the core exit-code mapper turns
 /// into `RERR_UNSUPPORTED` (exit 4), matching `exit_cleanup(RERR_UNSUPPORTED)`
 /// at `compat.c:406`. The non-negotiated path prints the lists on both sides.
@@ -250,7 +250,7 @@ fn validate_default(
     resolve: impl Fn(&str) -> Option<&'static str>,
 ) -> io::Result<()> {
     // upstream: compat.c:369-406 recv_negotiate_str - the non-negotiated path
-    // prefills `tmpbuf` with the old-style default (compat.c:551-563) and, when
+    // prefills `tmpbuf` with the old-style default (compat.c:553-566) and, when
     // the env-parsed saw list rejects it, prints the offered lists on BOTH
     // sides (do_negotiated_strings == 0 makes `!am_server || ...` always true).
     match env_membership(key, is_server, default, &resolve) {

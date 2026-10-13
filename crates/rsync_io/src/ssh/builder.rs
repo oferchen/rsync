@@ -62,7 +62,7 @@ pub enum SshAddressFamily {
 /// The comparison is exact (like upstream `strcmp`), so ssh-family wrappers or
 /// paths embedding those names are not matched.
 ///
-/// upstream: main.c:613 `do_cmd()` - `strcmp(t, "rsh") == 0 || strcmp(t,
+/// upstream: main.c:617 `do_cmd()` - `strcmp(t, "rsh") == 0 || strcmp(t,
 /// "remsh") == 0`.
 fn program_forces_blocking_io(basename: &str) -> bool {
     matches!(basename, "rsh" | "remsh")
@@ -164,7 +164,7 @@ impl SshCommand {
     /// unset so `SshCommand::resolved_blocking_io` can apply upstream's
     /// `rsh`/`remsh` auto-enable.
     ///
-    /// upstream: options.c:144,842-843 - `blocking_io` defaults to `-1` (unset)
+    /// upstream: options.c:150,856-857 - `blocking_io` defaults to `-1` (unset)
     /// and is set to `1`/`0` by `--blocking-io`/`--no-blocking-io`.
     pub const fn set_blocking_io(&mut self, blocking: Option<bool>) -> &mut Self {
         self.blocking_io = blocking;
@@ -414,6 +414,10 @@ impl SshCommand {
     /// socketpair creation fails for any reason (e.g., file-descriptor
     /// exhaustion), the spawn transparently falls back to the conventional
     /// `Stdio::piped()` anonymous pipe. Windows always uses the pipe path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the child cannot be spawned or its stdio pipes are missing.
     pub fn spawn(&self) -> io::Result<SshConnection> {
         let (program, args) = self.command_parts();
 
@@ -432,7 +436,7 @@ impl SshCommand {
             trace_cmd_argv(&full_argv);
         }
 
-        // upstream: main.c:613-614 do_cmd() forces blocking_io for rsh/remsh
+        // upstream: main.c:617-618 do_cmd() forces blocking_io for rsh/remsh
         // when unset; pipe.c:80-82 then sets the child stdout blocking. Our
         // `Stdio::piped()` child descriptors are already unconditionally
         // blocking, so this only records the resolved mode for diagnostics.
@@ -706,7 +710,7 @@ impl SshCommand {
     /// upstream. `blocking_io` is a purely local child-fd concern and is never
     /// forwarded on the wire (upstream `server_options()` does not emit it).
     ///
-    /// upstream: main.c:613-614 `do_cmd()` - `if (blocking_io < 0 && (strcmp(t,
+    /// upstream: main.c:617-618 `do_cmd()` - `if (blocking_io < 0 && (strcmp(t,
     /// "rsh") == 0 || strcmp(t, "remsh") == 0)) blocking_io = 1;` and
     /// pipe.c:80-82 where `blocking_io > 0` sets the child stdout blocking.
     pub(crate) fn resolved_blocking_io(&self) -> bool {

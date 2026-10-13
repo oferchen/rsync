@@ -220,7 +220,7 @@ fn receiver_chown_succeeds_on_clean_path() {
 /// anchor must refuse the symlinked parent (ELOOP/EXDEV/ENOTDIR) before any
 /// syscall fires. As a non-root caller, upstream never attempts a chown to a
 /// uid it cannot own in the first place (`change_uid = am_root && ...`,
-/// rsync.c:526), so `gate_preserved_owner` skips the chown before
+/// rsync.c:655), so `gate_preserved_owner` skips the chown before
 /// `secure_chown_at` is ever reached and the call succeeds with the
 /// destination untouched - the sandbox is simply never exercised because
 /// there is nothing left to attempt.

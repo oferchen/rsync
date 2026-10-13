@@ -179,6 +179,11 @@ fn dontcache_write(fd: RawFd, chunk: &[u8]) -> io::Result<usize> {
 /// Uses positioned reads, so the file's seek offset is left untouched.
 ///
 /// Mirrors `dontcache_write` on the read side.
+///
+/// # Errors
+///
+/// Returns the `preadv2` error, or `io::ErrorKind::UnexpectedEof` when the file ends after the
+/// first read but before `dst` is filled.
 #[cfg(all(target_os = "linux", feature = "dontcache"))]
 #[allow(unsafe_code)]
 pub fn dontcache_read_exact(file: &File, offset: u64, dst: &mut [u8]) -> io::Result<bool> {

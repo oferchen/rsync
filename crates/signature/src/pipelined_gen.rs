@@ -7,8 +7,8 @@
 //! # Performance Benefits
 //!
 //! For CPU-intensive checksums (MD4/MD5/SHA1) with large files on fast storage,
-//! pipelined generation can provide 20-40% throughput improvement by hiding
-//! I/O latency behind computation.
+//! pipelined generation can improve throughput by hiding I/O latency behind
+//! computation.
 
 use std::io::{self, Read};
 
@@ -36,6 +36,9 @@ impl PipelinedSignatureConfig {
     }
 
     /// Sets the block size for double-buffering.
+    ///
+    /// [`generate_signature_pipelined`] ignores this value and reads in units of
+    /// the layout's block length.
     #[must_use]
     pub fn with_block_size(mut self, size: usize) -> Self {
         self.pipeline.block_size = size;

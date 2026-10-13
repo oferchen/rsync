@@ -1,13 +1,13 @@
 //! Guards the delta scanner's `--debug=DELTASUM` emissions against upstream
-//! rsync 3.4.4.
+//! rsync 3.5.1.
 //!
 //! Upstream's sender prints exactly two things while scanning, and they live at
 //! different debug levels:
 //!
 //! - `DELTASUM >= 2`, once per file, at the end of `match_sums()`:
-//!   `false_alarms=%d hash_hits=%d matches=%d` (match.c:428-431).
-//! - `DELTASUM >= 1`, once per RUN, from `match_report()` (match.c:439-448),
-//!   called from a single place - `sender.c:492`, after `send_files()` has
+//!   `false_alarms=%d hash_hits=%d matches=%d` (match.c:469-472).
+//! - `DELTASUM >= 1`, once per RUN, from `match_report()` (match.c:480-489),
+//!   called from a single place - `sender.c:818`, after `send_files()` has
 //!   finished every file:
 //!   `total: matches=%d  hash_hits=%d  false_alarms=%d data=%s`.
 //!
@@ -112,7 +112,7 @@ fn scan() {
 /// At `-vv` (DELTASUM level 1) the scanner must stay silent.
 ///
 /// upstream: the only level-1 delta output is `match_report()`'s `total:` line,
-/// which is a once-per-run summary printed from `sender.c:492` - not from the
+/// which is a once-per-run summary printed from `sender.c:818` - not from the
 /// per-file scan. A per-file emission here is both an invented line and a
 /// second `total:` emitter competing with the one in the client renderer.
 #[test]
@@ -132,9 +132,9 @@ fn level_1_scan_emits_nothing() {
 /// At `-vvv` (DELTASUM level 2) the scan reports its milestones but NOT the
 /// per-file counter line.
 ///
-/// upstream orders the three level-2 lines `done hash search` (match.c:441),
-/// `sending file_sum` (match.c:465), `false_alarms=... hash_hits=...
-/// matches=...` (match.c:468) - the counters come AFTER the checksum trailer.
+/// upstream orders the three level-2 lines `done hash search` (match.c:442-443),
+/// `sending file_sum` (match.c:465-466), `false_alarms=... hash_hits=...
+/// matches=...` (match.c:469-472) - the counters come AFTER the checksum trailer.
 /// The scan does not write that trailer, so it cannot own the line without
 /// printing it in the wrong place; it hands the numbers back through
 /// `ScanCounters` and the driver that writes the trailer emits them. MEASURED:
@@ -164,7 +164,7 @@ fn level_2_scan_emits_milestones_but_not_the_counter_line() {
 /// The counters the scan hands back are the ones the driver prints, so a scan
 /// that matched a block and left a literal run must report both.
 ///
-/// upstream: match.c:472-475 - the same three values fold into the run totals.
+/// upstream: match.c:474-476 - the same three values fold into the run totals.
 #[test]
 fn scan_counters_describe_the_work_done() {
     init_deltasum(0);

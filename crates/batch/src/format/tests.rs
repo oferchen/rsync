@@ -417,7 +417,7 @@ fn test_batch_stats_zero_values() {
 /// Golden byte layout: a protocol 28 batch stats section is three fixed 4-byte
 /// little-endian longints (no flist times), NOT varlong.
 ///
-/// upstream: main.c:374 `write_varlong30(batch_fd, x, 3)` -> io.h:46 falls back
+/// upstream: main.c:381 `write_varlong30(batch_fd, x, 3)` -> io.h:46 falls back
 /// to `write_longint()` for protocol < 30. A proto-28 `--read-batch` peer reads
 /// these with `read_longint()`, so the varlong form would desync it.
 #[test]
@@ -447,7 +447,7 @@ fn test_batch_stats_upstream_byte_layout_protocol_28() {
 /// Golden byte layout: a protocol 29 batch stats section is five fixed 4-byte
 /// little-endian longints (flist times included), NOT varlong.
 ///
-/// upstream: main.c:378-382 adds `flist_buildtime`/`flist_xfertime` for
+/// upstream: main.c:384-387 adds `flist_buildtime`/`flist_xfertime` for
 /// protocol >= 29; each still encodes via `write_longint()` when protocol < 30.
 #[test]
 fn test_batch_stats_upstream_byte_layout_protocol_29() {
@@ -702,7 +702,7 @@ fn test_batch_header_all_flags_byte_layout() {
 
 /// Verify multi-byte varint compat_flags encoding.
 ///
-/// upstream: io.c:2561 write_varint(batch_fd, compat_flags) - uses the
+/// upstream: io.c:2756 write_varint(batch_fd, compat_flags) - uses the
 /// same varint encoding as io.c:write_varint() where values >= 0x80 use
 /// multiple bytes.
 #[test]

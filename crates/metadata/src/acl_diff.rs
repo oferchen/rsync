@@ -1,10 +1,10 @@
 //! Destination-side ACL comparison for the itemize `a` column
 //! (`ITEM_REPORT_ACL`).
 //!
-//! Mirrors upstream's `itemize()` ACL leg (`generator.c:557-563`), which reads
+//! Mirrors upstream's `itemize()` ACL leg (`generator.c:563-570`), which reads
 //! the destination's current ACL (`get_acl`) and probes whether applying the
 //! sender's cached ACL would change it (`set_acl(NULL, file, sxp, mode)`,
-//! `acls.c:1013-1057`). The single destination read plus comparison lives here
+//! `acls.c:1376-1428`). The single destination read plus comparison lives here
 //! so both the network receiver and any future local path share one mechanism,
 //! matching the placement of [`crate::dest_xattrs_differ`].
 
@@ -15,7 +15,7 @@ use std::path::Path;
 /// Clones `acl`, remapping every named-entry id through `id_map` so the
 /// comparison sees the same local ids the apply path would write.
 ///
-/// Mirrors upstream `match_acl_ids()` (`acls.c:1059-1081`), which converts each
+/// Mirrors upstream `match_acl_ids()` (`acls.c:1430-1451`), which converts each
 /// named entry id through the uid/gid table before the cached ACL is used. Only
 /// the id changes; the access bits (including [`NAME_IS_USER`]) and any carried
 /// name are preserved. With no mapper the ACL is returned unchanged.
@@ -44,7 +44,7 @@ fn remap_named_ids(acl: &RsyncAcl, id_map: Option<&AclIdMapper>) -> RsyncAcl {
 /// the destination, i.e. whether the itemize `a` column must light.
 ///
 /// Mirrors upstream `itemize()` -> `set_acl(NULL, file, sxp, mode)`
-/// (`generator.c:561`, `acls.c:1024-1054`): the access ACL is compared with
+/// (`generator.c:567`, `acls.c:1388-1420`): the access ACL is compared with
 /// [`RsyncAcl::equal_enough`] (the extended entries plus a mask-gated
 /// `group_obj`, the rest left to mode preservation), and a directory's default
 /// ACL - transmitted un-stripped - is compared for strict equality with
@@ -75,7 +75,7 @@ pub fn dest_acl_differs(
     if let Some(sender) = sender_access {
         let dest = crate::get_rsync_acl(path, mode, false);
         let mut sender = remap_named_ids(sender, id_map);
-        // upstream: acls.c:773-776 recv_rsync_acl() - an ACCESS ACL that carries
+        // upstream: acls.c:1002-1003 recv_rsync_acl() - an ACCESS ACL that carries
         // named entries but no transmitted mask is cached with
         // `mask_obj = (mode >> 3) & 7`, because a POSIX ACL with named entries
         // must have a mask. oc leaves the received access mask NO_ENTRY and
@@ -90,7 +90,7 @@ pub fn dest_acl_differs(
         }
     }
 
-    // upstream: acls.c:1039-1054 - the default ACL leg runs for directories only
+    // upstream: acls.c:1403-1420 - the default ACL leg runs for directories only
     // and uses strict `rsync_acl_equal`.
     if is_dir && let Some(sender) = sender_default {
         let dest = crate::get_rsync_acl(path, mode, true);

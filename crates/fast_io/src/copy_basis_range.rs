@@ -15,7 +15,7 @@
 //!   matching the `copy_file_range` contract.
 //! - **Other**: Returns `Ok(0)` so callers fall back to `map_ptr` + write.
 //!
-//! Upstream rsync 3.4.1 itself does not use `copy_file_range(2)` in the
+//! Upstream rsync 3.5.1 itself does not use `copy_file_range(2)` in the
 //! receiver - it walks `map_ptr` and `write(2)`. This is an oc-rsync
 //! optimization that produces byte-identical output; it is invisible on the
 //! wire and changes no protocol behavior.

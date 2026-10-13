@@ -97,10 +97,10 @@ impl FilterSet {
         let mut order = 0usize;
 
         for rule in rules.into_iter() {
-            // upstream: exclude.c:914 rule_matches() - an `x`-modifier rule
+            // upstream: exclude.c:1013 rule_matches() - an `x`-modifier rule
             // matches xattr names only, never a path. Route it into its own
             // chain instead of dropping it so `--filter='-x user.foo'` can be
-            // honoured by xattr-name matching (upstream: xattrs.c:250).
+            // honoured by xattr-name matching (upstream: xattrs.c:262-263).
             if rule.is_xattr_only() {
                 // `CompiledXattrRule` owns which actions carry an xattr
                 // decision: the four side-bound spellings all collapse onto
@@ -166,7 +166,7 @@ impl FilterSet {
     ///
     /// Callers gate xattr-name filtering on this so a transfer without any `x`
     /// rules keeps upstream's "no `saw_xattr_filter`" fast path (upstream:
-    /// xattrs.c:250 only calls `name_is_excluded` when `saw_xattr_filter`).
+    /// xattrs.c:262 only calls `name_is_excluded` when `saw_xattr_filter`).
     #[must_use]
     pub fn has_xattr_rules(&self) -> bool {
         !self.inner.xattr.is_empty()
@@ -178,8 +178,8 @@ impl FilterSet {
     /// Only rules carrying the `x` modifier participate; ordinary path rules
     /// never affect the verdict. Evaluation is first-match-wins and a name that
     /// matches no rule is allowed. Mirrors upstream rsync's
-    /// `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)` (exclude.c:914,
-    /// consulted from xattrs.c:250).
+    /// `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)` (exclude.c:1109,
+    /// consulted from xattrs.c:263).
     #[must_use]
     pub fn xattr_name_allowed(&self, name: &str, side: XattrSide) -> bool {
         self.inner.xattr_name_allowed(name, side)
@@ -274,7 +274,7 @@ impl FilterSet {
     ///
     /// The per-directory [`FilterChain`](crate::FilterChain) uses this to
     /// interleave a `dir-merge` scope against these global rules by source
-    /// order, mirroring upstream `check_filter()` (exclude.c:1046-1050).
+    /// order, mirroring upstream `check_filter()` (exclude.c:1195-1200).
     #[must_use]
     pub(crate) fn transfer_match_order_during_traversal(
         &self,
@@ -536,7 +536,7 @@ impl From<FilterError> for FilterSetError {
 /// only removes the local section of the rule list and leaves inherited
 /// (parent-scope) rules in place.
 ///
-/// upstream: exclude.c:574 pop_filter_list() — frees the local section of
+/// upstream: exclude.c:671-687 pop_filter_list() - frees the local section of
 /// the rule list, leaving inherited rules intact.
 fn expand_merge_rules(
     rules: Vec<FilterRule>,
@@ -650,9 +650,9 @@ mod tests {
     /// | `/excluded/`   | excluded   | excluded         |
     /// | `/excluded/***`| excluded   | excluded         |
     ///
-    /// The bare form is an exact `strcmp` (exclude.c:1002); the other two are
+    /// The bare form is an exact `strcmp` (exclude.c:1067-1069); the other two are
     /// the same `pattern/***` wildcard after `XFLG_DIR2WILD3`
-    /// (exclude.c:307-313). A predicate that answers the same for all three
+    /// (exclude.c:308-314). A predicate that answers the same for all three
     /// rows is wrong in one direction or the other, which is why neither
     /// `allows` nor `allows_during_traversal` can serve here.
     fn name_set(pattern: &str) -> FilterSet {
@@ -900,7 +900,7 @@ mod tests {
         assert!(!set.allows(Path::new("._other"), false));
     }
 
-    /// upstream: exclude.c:936-937 - `- new/lose/***` excludes the directory
+    /// upstream: exclude.c:1033-1036 - `- new/lose/***` excludes the directory
     /// itself and everything inside. `- new/keep/**` excludes only contents.
     /// Regression test for exclude-lsh upstream testsuite failure.
     #[test]
@@ -923,7 +923,7 @@ mod tests {
         assert!(set.allows(Path::new("new/lose"), false));
     }
 
-    /// upstream: exclude.c:914 - rule_matches() gates every rule on
+    /// upstream: exclude.c:1013 - rule_matches() gates every rule on
     /// `!(name_flags & NAME_IS_XATTR) ^ !(ex->rflags & FILTRULE_XATTR)`. An
     /// `x`-modifier rule must match xattr NAMES (and only xattr names), so a
     /// `-x user.foo` rule excludes the `user.foo` xattr during an `-X`
@@ -944,7 +944,7 @@ mod tests {
         assert!(set.allows(Path::new("user.foo"), false));
     }
 
-    /// upstream: exclude.c:914 - the include (`+x`) variant makes an otherwise
+    /// upstream: exclude.c:1013 - the include (`+x`) variant makes an otherwise
     /// excluded xattr name pass, first-match-wins.
     #[test]
     fn xattr_modifier_include_wins_over_later_exclude() {
@@ -958,7 +958,7 @@ mod tests {
         assert!(!set.xattr_name_allowed("user.drop", XattrSide::Receiver));
     }
 
-    /// upstream: exclude.c:914 - a rule WITHOUT the `x` modifier never
+    /// upstream: exclude.c:1013 - a rule WITHOUT the `x` modifier never
     /// participates in xattr-name matching. It governs paths only.
     #[test]
     fn plain_rule_does_not_affect_xattr_names() {

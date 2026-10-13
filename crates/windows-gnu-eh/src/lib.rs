@@ -41,7 +41,7 @@
 //!
 //! # Maintenance burden
 //!
-//! **Minimal.** The crate is ~180 lines of self-contained code with no
+//! **Minimal.** The crate is a small, self-contained file with no
 //! dependencies beyond `core` and `kernel32`. It uses only stable Rust features
 //! and Windows API calls (`GetModuleHandleA`, `LoadLibraryA`, `GetProcAddress`)
 //! that have been stable since Windows XP. No updates are required unless Rust

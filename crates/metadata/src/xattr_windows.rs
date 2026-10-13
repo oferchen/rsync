@@ -33,7 +33,7 @@
 //!
 //! # Upstream Reference
 //!
-//! Upstream rsync 3.4.1 has no native Windows xattr backend; the closest
+//! Upstream rsync 3.5.1 has no native Windows xattr backend; the closest
 //! Unix counterpart is `xattrs.c:rsync_xal_get()`/`set_xattr()`, which we
 //! mirror at the higher [`crate::xattr`] layer. This module supplies the
 //! per-attribute primitives that the cross-platform layer requires.

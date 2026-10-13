@@ -36,10 +36,8 @@ use thiserror::Error;
 ///
 /// # Relation to Upstream rsync
 ///
-/// Upstream rsync reports buffer capacity errors when replaying sniffed bytes into the
-/// greeting parser. This type mirrors that behavior, ensuring that insufficient buffer
-/// allocations are surfaced with actionable diagnostic information rather than silently
-/// truncating data or triggering undefined behavior.
+/// No upstream counterpart: upstream never sniffs the prologue, so it never replays
+/// buffered bytes (see [`NegotiationPrologue`]).
 ///
 /// # Examples
 ///
@@ -132,13 +130,10 @@ impl BufferedPrefixTooSmall {
 
     /// Returns how many additional bytes are required to hold the buffered prefix.
     ///
-    /// When callers supply a scratch buffer that is too small to receive the sniffed
-    /// negotiation prefix, upstream rsync reports the exact deficit so operators can
-    /// size their allocations appropriately. Mirroring that behavior keeps diagnostics
-    /// consistent across implementations and allows higher layers to surface actionable
-    /// guidance without reimplementing the subtraction logic. The value is saturated at
-    /// zero to tolerate defensive checks that may construct the error even when the
-    /// provided capacity already exceeds the requirement.
+    /// Lets callers size a retry buffer without reimplementing the subtraction.
+    /// The value is saturated at zero to tolerate defensive checks that may
+    /// construct the error even when the provided capacity already exceeds the
+    /// requirement.
     ///
     /// # Return Value
     ///
@@ -249,17 +244,20 @@ impl From<BufferedPrefixTooSmall> for io::Error {
 
 /// Classification of the negotiation prologue received from a peer.
 ///
-/// Upstream rsync distinguishes between two negotiation styles:
+/// Upstream rsync has two handshake styles:
 ///
-/// * Legacy ASCII greetings that begin with `@RSYNCD:`. These are produced by
-///   peers that only understand protocols older than 30.
-/// * Binary handshakes used by newer clients and daemons.
+/// * The ASCII `@RSYNCD:` greeting of the daemon (`rsync://`) transport, used at
+///   every protocol version (upstream `compat.c:844-857 output_daemon_greeting()`,
+///   `clientserver.c:209`).
+/// * The binary 4-byte protocol-version exchange of the remote-shell transport.
 ///
-/// The detection helper mirrors upstream's lightweight peek: if the very first
-/// byte equals `b'@'`, the stream is treated as a legacy greeting (subject to
-/// later validation). Otherwise the exchange proceeds in binary mode. When no
-/// data has been observed yet, the helper reports
+/// If the very first byte equals `b'@'`, the stream is treated as a daemon
+/// greeting (subject to later validation); otherwise the exchange proceeds in
+/// binary mode. When no data has been observed yet, the helper reports
 /// [`NegotiationPrologue::NeedMoreData`].
+///
+/// Deviation from upstream: upstream knows the transport before it reads a byte
+/// and never sniffs the prologue; this classification is oc-only.
 ///
 /// # Examples
 ///
@@ -278,7 +276,7 @@ impl From<BufferedPrefixTooSmall> for io::Error {
 pub enum NegotiationPrologue {
     /// There is not enough buffered data to determine the negotiation style.
     NeedMoreData,
-    /// The peer is speaking the legacy ASCII `@RSYNCD:` protocol.
+    /// The peer opened with the ASCII `@RSYNCD:` daemon greeting.
     LegacyAscii,
     /// The peer is speaking the modern binary negotiation protocol.
     Binary,
@@ -302,11 +300,6 @@ impl NegotiationPrologue {
     }
 
     /// Returns `true` when the negotiation style has been determined.
-    ///
-    /// Upstream rsync peeks at the initial byte(s) and proceeds immediately once the
-    /// transport yields a decision. Centralizing the predicate keeps higher layers from
-    /// duplicating `matches!` checks and mirrors the explicit boolean helpers commonly
-    /// found in the C implementation.
     #[must_use = "check whether the negotiation style has been determined"]
     #[inline]
     pub const fn is_decided(self) -> bool {
@@ -327,7 +320,7 @@ impl NegotiationPrologue {
         matches!(self, Self::LegacyAscii)
     }
 
-    /// Returns `true` when the peer is using the binary negotiation introduced in protocol 30.
+    /// Returns `true` when the peer is using the binary remote-shell negotiation.
     #[must_use = "check whether the peer selected the binary negotiation"]
     #[inline]
     pub const fn is_binary(self) -> bool {
@@ -337,12 +330,8 @@ impl NegotiationPrologue {
     /// Classifies a negotiation prologue using the very first byte observed on
     /// the transport.
     ///
-    /// Upstream rsync performs a single-byte peek: a leading `b'@'` selects the
-    /// legacy ASCII `@RSYNCD:` handshake, while any other value triggers the
-    /// binary negotiation introduced in protocol 30. The helper mirrors that
-    /// branch so call sites that already ensured at least one byte is buffered
-    /// can reuse the canonical mapping without duplicating the literal or
-    /// resorting to ad-hoc comparisons.
+    /// A leading `b'@'` selects the ASCII `@RSYNCD:` handshake; any other value
+    /// selects the binary negotiation.
     #[must_use = "determine the negotiation mode selected by the first byte"]
     #[inline]
     pub const fn from_initial_byte(byte: u8) -> Self {
@@ -361,8 +350,8 @@ impl From<NegotiationPrologue> for &'static str {
 }
 
 impl Default for NegotiationPrologue {
-    /// Returns [`NegotiationPrologue::NeedMoreData`], matching the undecided state upstream
-    /// rsync uses before the first byte is observed.
+    /// Returns [`NegotiationPrologue::NeedMoreData`], the undecided state before the first
+    /// byte is observed.
     fn default() -> Self {
         Self::NeedMoreData
     }
@@ -401,12 +390,13 @@ impl FromStr for NegotiationPrologue {
 /// the modern binary handshake.
 ///
 /// The caller provides the initial bytes read from the transport without
-/// consuming them. The helper follows upstream rsync's logic:
+/// consuming them. Deviation from upstream: upstream never sniffs the prologue
+/// (see [`NegotiationPrologue`]). The classification is:
 ///
 /// * If no data has been received yet, more bytes are required before a
 ///   decision can be made.
-/// * If the first byte is `b'@'`, the peer is assumed to speak the legacy
-///   protocol. Callers should then parse the banner via
+/// * If the first byte is `b'@'`, the peer is assumed to send the `@RSYNCD:`
+///   daemon greeting. Callers should then parse the banner via
 ///   [`parse_legacy_daemon_greeting_bytes`](crate::parse_legacy_daemon_greeting_bytes),
 ///   which will surface malformed input as
 ///   [`NegotiationError::MalformedLegacyGreeting`](crate::NegotiationError::MalformedLegacyGreeting).

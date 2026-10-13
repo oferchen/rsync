@@ -21,7 +21,8 @@ use crate::acl::constants::{ACCESS_SHIFT, ACL_VALID_NAME_BITS, ACL_VALID_OBJ_BIT
 ///
 /// # Upstream Reference
 ///
-/// See `acls.c` lines 48-53 for the encoding rationale.
+/// See `acls.c` lines 52-57 for the encoding rationale, and
+/// `send_ida_entries()` (`acls.c:819-833`) for the encoder.
 pub(crate) fn encode_access(access: u32, include_name: bool) -> u32 {
     let perms = access & !NAME_IS_USER;
     let mut encoded = perms << ACCESS_SHIFT;
@@ -57,9 +58,12 @@ pub(crate) fn encode_access(access: u32, include_name: bool) -> u32 {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `recv_acl_access()` in `acls.c` lines 672-695: named entries are
+/// Mirrors `recv_acl_access()` in `acls.c` lines 902-925: named entries are
 /// checked against `SMB_ACL_VALID_NAME_BITS` and object entries against
 /// `SMB_ACL_VALID_OBJ_BITS`, both `(4|2|1)` for POSIX ACLs.
+///
+/// Deviation from upstream: the range check is unconditional; upstream skips
+/// it when `am_root < 0` (`--fake-super`).
 pub(crate) fn decode_access(encoded: u32, is_name_entry: bool) -> io::Result<(u32, bool)> {
     if is_name_entry {
         let flags = encoded & 0x03;
@@ -88,7 +92,7 @@ pub(crate) fn decode_access(encoded: u32, is_name_entry: bool) -> io::Result<(u3
 
 /// Builds the out-of-range access-bit error.
 ///
-/// upstream: acls.c:919-922 `recv_acl_access()` prints "value out of range"
+/// upstream: acls.c:918-921 `recv_acl_access()` prints "value out of range"
 /// and calls `exit_cleanup(RERR_STREAMIO)`. A bare `InvalidData` io::Error maps
 /// to `RERR_STREAMIO` (exit 12) via the core exit-code mapper
 /// (`exit_code/codes.rs`), so no dedicated error variant is introduced.

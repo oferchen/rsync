@@ -1,6 +1,6 @@
-//! Cross-binary upstream-compat harness primitives (NXT-1).
+//! Cross-binary upstream-compat harness primitives.
 //!
-//! NXT-2..NXT-8 port high-value edge cases from
+//! The upstream-compat ports move high-value edge cases from
 //! `tools/ci/run_upstream_testsuite.sh` into nextest. Every port pits
 //! oc-rsync against an installed upstream rsync release. This module
 //! provides the shared primitives those ports use: env-var gate, version
@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Upstream rsync version pinned by an NXT-* test.
+/// Upstream rsync version pinned by an upstream-compat test.
 ///
 /// Versions correspond to the `target/interop/upstream-install/<version>/`
 /// layout produced by `tools/ci/run_interop.sh`.
@@ -24,7 +24,7 @@ pub enum UpstreamVersion {
     V3_0_9,
     /// rsync 3.1.3.
     V3_1_3,
-    /// rsync 3.4.4 - default for new NXT-* ports.
+    /// rsync 3.4.4.
     V3_4_4,
     /// rsync 3.5.0.
     V3_5_0,

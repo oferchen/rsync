@@ -115,7 +115,7 @@ fn algorithm_kind_default_levels() {
 
 #[test]
 fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
-    // upstream: compat.c:556-563 - no vstring negotiation before protocol 30; zlib.
+    // upstream: compat.c:560-567 - no vstring negotiation before protocol 30; zlib.
     for version in 27..30 {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(version),
@@ -124,7 +124,7 @@ fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
         );
     }
 
-    // upstream: compat.c:101-102 valid_compressions_items[] - zstd first when SUPPORT_ZSTD.
+    // upstream: compat.c:102-103 valid_compressions_items[] - zstd first when SUPPORT_ZSTD.
     #[cfg(feature = "zstd")]
     {
         for version in 30..40 {
@@ -362,14 +362,14 @@ fn lz4_strategy_empty_input() {
 
 #[test]
 fn selector_for_protocol_version_creates_correct_strategy() {
-    // upstream: compat.c:556-563 - pre-30 has no vstring negotiation; fallback is zlib.
+    // upstream: compat.c:560-567 - pre-30 has no vstring negotiation; fallback is zlib.
     let strategy = CompressionStrategySelector::for_protocol_version(28);
     assert_eq!(strategy.algorithm_name(), "zlib");
 
     let strategy = CompressionStrategySelector::for_protocol_version(29);
     assert_eq!(strategy.algorithm_name(), "zlib");
 
-    // upstream: compat.c:101-102 valid_compressions_items[] - zstd first when SUPPORT_ZSTD.
+    // upstream: compat.c:102-103 valid_compressions_items[] - zstd first when SUPPORT_ZSTD.
     let strategy = CompressionStrategySelector::for_protocol_version(30);
     #[cfg(feature = "zstd")]
     assert_eq!(strategy.algorithm_name(), "zstd");

@@ -518,9 +518,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: Protect rules block deletion
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
@@ -564,14 +562,12 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: Internal slash uses tail-matching (NOT anchored)
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
-    /// upstream: exclude.c:rule_matches() lines 947-951 - a pattern with
+    /// upstream: exclude.c:rule_matches() lines 1046-1050 - a pattern with
     /// internal slashes but no leading `/` tail-matches against the last
     /// N+1 path components. Both the direct path and the nested path match.
     #[test]

@@ -7,7 +7,7 @@
 //! escape `keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree`
 //! catches at the engine level.
 //!
-//! upstream: `rsync-3.5.0/receiver.c` has no CoW fast path - it always stages
+//! upstream: `rsync-3.5.1/receiver.c` has no CoW fast path - it always stages
 //! into a temp and commits with `do_rename_at()`. These pin oc's optimisation
 //! to the same invariant.
 //!

@@ -93,7 +93,7 @@ where
     /// `Some(_)` when the `zstdmt` Cargo feature is disabled returns
     /// `Unsupported` so callers can fall back gracefully.
     ///
-    /// upstream: `token.c:749`, `options.c:89`.
+    /// upstream: token.c:752 `send_zstd_token()`, options.c:93.
     pub fn with_sink_workers(
         sink: W,
         level: CompressionLevel,
@@ -122,7 +122,7 @@ where
     ///
     /// # Upstream Reference
     ///
-    /// See `token.c:send_deflated_token()` - upstream rsync flushes the
+    /// upstream: token.c:799 `send_zstd_token()` flushes the
     /// compressor after each token so the receiver can decompress incrementally.
     pub fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
@@ -257,7 +257,8 @@ pub const fn default_algorithm() -> CompressionAlgorithm {
     CompressionAlgorithm::Zstd
 }
 
-// upstream: token.c:749 - ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads).
+// upstream: token.c:752 send_zstd_token() -
+// ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads).
 fn configure_workers<W: Write>(
     encoder: &mut ZstdEncoder<'static, CountingWriter<W>>,
     workers: Option<NonZeroU8>,
@@ -300,7 +301,7 @@ pub fn level_to_i32(level: CompressionLevel) -> i32 {
         CompressionLevel::Default => ZSTD_DEFAULT_LEVEL,
         CompressionLevel::Best => ZSTD_BEST_LEVEL,
         CompressionLevel::Precise(value) => i32::from(value.get()),
-        // upstream: token.c:73,748 - negative "fast" levels pass straight to
+        // upstream: token.c:73,751 - negative "fast" levels pass straight to
         // ZSTD_c_compressionLevel; forward the signed value unchanged.
         CompressionLevel::PreciseSigned(value) => value,
     }
@@ -350,7 +351,7 @@ mod tests {
     fn encoder_accepts_negative_zstd_levels() {
         // WHY: upstream passes do_compression_level (which can be a negative
         // "fast" level for zstd) straight to ZSTD_c_compressionLevel
-        // (token.c:748). This drives the level through the real encoder pipeline
+        // (token.c:751). This drives the level through the real encoder pipeline
         // - clamp_level -> CompressionLevel -> level_to_i32 - proving the signed
         // value survives representation AND is a usable encoder input, never
         // raised to 1. A live encode/decode round trip confirms it.
@@ -563,7 +564,7 @@ mod tests {
         }
     }
 
-    // upstream: token.c:send_deflated_token() - per-token flush enables
+    // upstream: token.c:799 send_zstd_token() - per-token flush enables
     // incremental decompression on the receiver. Tests below verify the
     // encoder mirrors that contract.
 
