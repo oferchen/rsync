@@ -44,6 +44,11 @@ where
 /// sessions). The sniffer is reset before it observes any bytes from the
 /// transport, guaranteeing that stale state from a previous negotiation cannot
 /// leak into the new session.
+///
+/// # Errors
+///
+/// Returns an I/O error when reading the prologue fails or the peer does not speak the expected
+/// negotiation style.
 pub fn negotiate_binary_session_with_sniffer<R>(
     reader: R,
     desired_protocol: ProtocolVersion,

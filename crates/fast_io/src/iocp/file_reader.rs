@@ -122,7 +122,7 @@ impl IocpReader {
         // ERROR_IO_PENDING (997) is the documented "operation queued" status;
         // any other error is fatal.
         if err.raw_os_error() != Some(997) {
-            // Issue #1930: upgrade ERROR_INVALID_PARAMETER to a typed error
+            // upgrade ERROR_INVALID_PARAMETER to a typed error
             // pointing at the most likely cause - handle not opened with
             // FILE_FLAG_OVERLAPPED.
             return Err(classify_overlapped_error(err, "ReadFile"));

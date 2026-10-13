@@ -32,7 +32,7 @@ impl<R> LegacyDaemonHandshake<R> {
     /// symmetry with the binary handshake. Note this is the negotiated
     /// (post-clamp) protocol, not the version placed in the greeting line - the
     /// greeting advertises the caller's own newest/`--protocol` cap ahead of
-    /// reading the server (upstream: clientserver.c:157), which may be higher.
+    /// reading the server (upstream: clientserver.c:181), which may be higher.
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
@@ -124,6 +124,10 @@ impl<R> LegacyDaemonHandshake<R> {
     ///
     /// Invokes [`NegotiationPrologueSniffer::rehydrate_from_parts`] without
     /// decomposing the session into parts or replaying the underlying transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the sniffer's buffer cannot grow to hold the snapshot.
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,
@@ -193,6 +197,11 @@ impl<R> LegacyDaemonHandshake<R> {
     ///
     /// The closure returns the replacement reader on success or a tuple containing the error and
     /// original reader on failure, matching [`NegotiatedStream::try_map_inner`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryMapInnerError` carrying the closure's error and the original value when
+    /// `map` fails.
     pub fn try_map_stream_inner<F, T, E>(
         self,
         map: F,

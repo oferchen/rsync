@@ -234,6 +234,10 @@ impl SplicePipe {
     /// # Returns
     ///
     /// The number of bytes actually transferred.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `splice` error.
     pub fn splice_to_file(
         &self,
         source_fd: std::os::fd::RawFd,
@@ -257,6 +261,10 @@ impl SplicePipe {
     /// # Returns
     ///
     /// The number of bytes actually transferred.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first non-`EINTR` `vmsplice`/`splice` error.
     pub fn vmsplice_to_file(
         &self,
         buf: &[u8],

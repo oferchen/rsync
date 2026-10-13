@@ -52,6 +52,11 @@ impl<R> Parts<R> {
     ///
     /// When the mapping fails the original reader is returned alongside the error, ensuring callers
     /// retain access to the sniffed bytes without needing to re-run negotiation detection.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryMapInnerError` carrying the closure's error and the original value when
+    /// `map` fails.
     pub fn try_map_inner<F, T, E>(self, map: F) -> Result<Parts<T>, TryMapInnerError<Parts<R>, E>>
     where
         F: FnOnce(R) -> Result<T, (E, R)>,
@@ -108,6 +113,10 @@ impl<R> Parts<R> {
     ///     .expect("cloned parts replay buffered bytes");
     /// assert_eq!(replay, b"@RSYNCD: 30.0\nhello");
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `clone_inner`.
     #[doc(alias = "try_clone")]
     pub fn try_clone_with<F, T, E>(&self, clone_inner: F) -> Result<Parts<T>, E>
     where

@@ -28,7 +28,7 @@
 //! - [`ThreadLocalRingPool`] - one ring per OS thread, lazily constructed on
 //!   first acquire. Zero locking on the submit path because the ring never
 //!   leaves the thread that built it. See
-//!   `docs/design/iouring-per-thread-rings.md` (#2243).
+//!   `docs/design/iouring-per-thread-rings.md`.
 //!
 //! Consumers pick the primitive that matches their concurrency model. Rayon
 //! workers, the disk-commit thread, and any other pinned thread benefit from
@@ -155,6 +155,10 @@ impl SessionRingPool {
     /// rings so the caller never sees a half-initialised pool. Use
     /// [`try_new`](Self::try_new) if the caller prefers `Option`-style
     /// failure handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first ring construction error.
     pub fn new(config: SessionPoolConfig) -> std::io::Result<Self> {
         let count = config.ring_count.max(1);
         let mut rings = Vec::with_capacity(count);
@@ -324,7 +328,7 @@ static NEXT_POOL_ID: AtomicUsize = AtomicUsize::new(1);
 /// thread-local storage and never crosses thread boundaries, so the submit and
 /// reap path holds no lock at all. The trade-off is more pinned kernel pages
 /// at high thread fan-in - the design note at
-/// `docs/design/iouring-per-thread-rings.md` (#2243) covers the resource
+/// `docs/design/iouring-per-thread-rings.md` covers the resource
 /// accounting and the work-stealing alternative that was rejected on the
 /// grounds that stolen SQEs cannot reference the owning ring's registered
 /// buffers or fixed-file table.

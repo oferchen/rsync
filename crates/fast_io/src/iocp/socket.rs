@@ -77,7 +77,7 @@ const DEFAULT_SOCKET_COMPLETION_KEY: usize = 2;
 /// from the completion port - Windows performs that cleanup when the socket
 /// handle is closed.
 ///
-/// Mirrors the buffering shape of upstream rsync's `safe_read` (`io.c:257`)
+/// Mirrors the buffering shape of upstream rsync's `safe_read` (`io.c:310`)
 /// in that the function returns whatever bytes the kernel hands back, leaving
 /// the multiplex layer above (`crates/protocol`) responsible for assembling
 /// frames.
@@ -224,7 +224,7 @@ impl IocpSocketReader {
 /// Async socket writer backed by `WSASend` and the shared IOCP pump.
 ///
 /// Like [`IocpSocketReader`], the writer does not own the SOCKET. It is the
-/// caller's job to close it. Mirrors upstream `safe_write` (`io.c:330`) in
+/// caller's job to close it. Mirrors upstream `safe_write` (`io.c:387`) in
 /// that a partial write returns the byte count and lets the caller loop -
 /// the multiplex layer above performs that loop in
 /// `crates/protocol/src/multiplex.rs`.

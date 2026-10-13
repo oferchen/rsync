@@ -313,7 +313,7 @@ pub fn secure_chmod_at(path: &Path, mode: u32, follow_symlinks: bool) -> io::Res
 /// does not own the target is refused for the setgid-free mode too, and that
 /// error propagates.
 ///
-/// upstream: rsync-3.5.0 syscall.c:900 `do_chmod()` -> `chmod(2)`; rsync.c:658-668
+/// upstream: rsync-3.5.1 syscall.c:1705 `do_chmod()` -> `chmod(2)`; rsync.c:806-818
 /// `set_file_attrs()` treats the chmod result as fatal for a non-symlink, which
 /// is why the refusal must not reach it.
 fn chmodat_with_chmod_setgid_semantics(
@@ -343,7 +343,7 @@ fn chmodat_with_chmod_setgid_semantics(
 /// attributes are applied to one file in a row (`fchownat`/`utimensat`/`fchmodat`
 /// all anchored on one resolved parent instead of three). `name` must be a
 /// single-component leaf beneath `parent`. Preserves the macOS set-group-ID
-/// retry via [`chmodat_with_chmod_setgid_semantics`].
+/// retry via `chmodat_with_chmod_setgid_semantics`.
 ///
 /// # Errors
 ///

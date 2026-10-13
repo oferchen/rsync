@@ -114,11 +114,11 @@ fn io_uring_reads_tolerate_mmap_madv_dontneed() {
         }
     };
 
-    // ---- Pass 1: pages resident -------------------------------------
+    // Pass 1: pages resident
     let mut bufs_pass1: Vec<Vec<u8>> = (0..READ_COUNT).map(|_| vec![0u8; READ_LEN]).collect();
     submit_and_verify_reads(&mut ring, &offsets, &mut bufs_pass1, &payload, "pass-1");
 
-    // ---- Drop every resident page ----------------------------------
+    // Drop every resident page
     // Direct `libc::madvise(MADV_DONTNEED)` call: the advice is best-effort,
     // and the assertion below only requires that subsequent io_uring reads
     // still succeed, regardless of how many pages the kernel actually
@@ -140,7 +140,7 @@ fn io_uring_reads_tolerate_mmap_madv_dontneed() {
         );
     }
 
-    // ---- Pass 2: pages evicted, page-fault path under io_uring ------
+    // Pass 2: pages evicted, page-fault path under io_uring
     let mut bufs_pass2: Vec<Vec<u8>> = (0..READ_COUNT).map(|_| vec![0u8; READ_LEN]).collect();
     submit_and_verify_reads(
         &mut ring,

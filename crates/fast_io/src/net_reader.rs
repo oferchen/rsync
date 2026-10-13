@@ -39,6 +39,10 @@ impl<T: Read + Send> NetReader for T {}
 /// `fd` must be a valid socket file descriptor. Ownership is not transferred:
 /// the caller must keep the owning socket alive for the lifetime of the
 /// returned reader, exactly as [`crate::socket_reader_from_fd`] requires.
+///
+/// # Errors
+///
+/// Returns the error from building the selected reader.
 #[cfg(unix)]
 pub fn for_socket(
     fd: std::os::unix::io::RawFd,

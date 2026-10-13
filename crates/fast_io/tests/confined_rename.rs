@@ -96,7 +96,7 @@ fn an_out_of_tree_source_does_not_disable_destination_confinement() {
 /// the destination.
 ///
 /// Planting a foreign-owned component needs a second uid, so the refusal itself
-/// is proven by the root leg of the upstream 3.5.0 suite
+/// is proven by the root leg of the upstream 3.5.1 suite
 /// (`temp-dir-symlink-injection`). What an unprivileged run can prove - and what
 /// this pins - is the direction that a blanket refusal would break: the walk
 /// must still *follow* a component the operator owns, because an operator path

@@ -35,6 +35,10 @@ pub struct CompletionPump {
 
 impl CompletionPump {
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn new() -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -43,6 +47,10 @@ impl CompletionPump {
     }
 
     /// Returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an `io::ErrorKind::Unsupported` error on this platform.
     pub fn with_config(_config: IocpPumpConfig) -> io::Result<Self> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -63,6 +71,10 @@ impl CompletionPump {
     }
 
     /// Always returns `Ok(())` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Never fails on this platform.
     pub fn shutdown(self) -> io::Result<()> {
         Ok(())
     }

@@ -23,6 +23,10 @@ impl<R> NegotiatedStreamParts<R> {
     /// The helper mirrors [`Self::buffered_remainder`] while returning an owned buffer. It is
     /// particularly useful for diagnostics that snapshot the unread portion of the transcript without
     /// mutating the decomposed parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the destination buffer cannot grow to hold the bytes.
     pub fn buffered_remaining_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
         NegotiationBufferAccess::buffered_remaining_to_vec(self)
     }
@@ -38,6 +42,10 @@ impl<R> NegotiatedStreamParts<R> {
     /// The helper mirrors [`Self::buffered`] but allocates a new vector sized for the captured
     /// transcript. Allocation failures propagate as [`TryReserveError`], matching the semantics of
     /// [`crate::negotiation::NegotiatedStream::buffered_to_vec`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the destination buffer cannot grow to hold the bytes.
     pub fn buffered_to_vec(&self) -> Result<Vec<u8>, TryReserveError> {
         NegotiationBufferAccess::buffered_to_vec(self)
     }
@@ -54,6 +62,10 @@ impl<R> NegotiatedStreamParts<R> {
     /// allowing callers to rebuild a sniffer without replaying the underlying
     /// transport. This keeps the high-level session APIs aligned with the
     /// protocol crate helpers that operate on sniffers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TryReserveError` when the sniffer's buffer cannot grow to hold the snapshot.
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,

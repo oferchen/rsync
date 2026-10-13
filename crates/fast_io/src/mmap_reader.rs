@@ -142,6 +142,10 @@ impl MmapReader {
     /// Advises the kernel about access patterns.
     ///
     /// This is a hint to the kernel for prefetching.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `madvise` error.
     #[cfg(unix)]
     pub fn advise_sequential(&self) -> io::Result<()> {
         self.mmap.advise(memmap2::Advice::Sequential)?;
@@ -149,6 +153,10 @@ impl MmapReader {
     }
 
     /// Advises the kernel that the file will be accessed randomly.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `madvise` error.
     #[cfg(unix)]
     pub fn advise_random(&self) -> io::Result<()> {
         self.mmap.advise(memmap2::Advice::Random)?;
@@ -156,6 +164,10 @@ impl MmapReader {
     }
 
     /// Advises the kernel to prefetch the specified range.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `madvise` error.
     #[cfg(unix)]
     pub fn advise_willneed(&self, offset: usize, len: usize) -> io::Result<()> {
         self.mmap

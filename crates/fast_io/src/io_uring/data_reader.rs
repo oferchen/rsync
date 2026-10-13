@@ -1,4 +1,4 @@
-//! Sender/reader-side io_uring slurp wrapper (IUD-6 #2366).
+//! Sender/reader-side io_uring slurp wrapper.
 //!
 //! `IoUringFileReader` is a thin, opt-in entry point that delegates to the
 //! batched `IORING_OP_READ` slurp path already implemented by

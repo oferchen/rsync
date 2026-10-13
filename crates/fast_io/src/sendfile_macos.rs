@@ -92,6 +92,10 @@ impl std::error::Error for PartialSend {}
 /// `sendfile(2)` audit. Upstream rsync remains the authoritative
 /// reference for wire framing; this wrapper only substitutes a
 /// faster transport for the file-region bytes.
+///
+/// # Errors
+///
+/// Returns the `sendfile` error, or `io::ErrorKind::Unsupported` off macOS.
 #[cfg(unix)]
 pub fn sendfile_macos(
     in_fd: BorrowedFd<'_>,

@@ -343,7 +343,7 @@ fn poll_writable(
 /// `opcode::Write` and omits file offsets (stream sockets have no position).
 ///
 /// To prevent the receive side from starving when the kernel send buffer is
-/// full (issue #1872), each batch is gated by a `IORING_OP_POLL_ADD(POLLOUT)`
+/// full, each batch is gated by a `IORING_OP_POLL_ADD(POLLOUT)`
 /// SQE. The SEND SQEs are only submitted once the socket reports writable,
 /// mirroring the bidirectional `select()` strategy in upstream rsync's
 /// `perform_io()`. This keeps `submit_and_wait` from being held hostage by a

@@ -1,6 +1,6 @@
-//! Integration test for SSE-7 (#2376) covering the SSH child-exit and
-//! stderr-capture contract established by SSE-3 (#2372) and SSE-4
-//! (#2373). The socketpair-backed stderr drain configured under the
+//! Integration test for SSE-7 covering the SSH child-exit and
+//! stderr-capture contract established by SSE-3 and SSE-4.
+//! The socketpair-backed stderr drain configured under the
 //! `ssh-socketpair-stderr` feature must surface both the non-zero
 //! `ExitStatus` returned by the spawned child and the bytes the child
 //! wrote to its stderr endpoint before exiting. Losing either signal
