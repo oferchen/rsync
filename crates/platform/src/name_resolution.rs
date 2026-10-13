@@ -11,8 +11,9 @@
 //!
 //! # Upstream Reference
 //!
-//! `clientserver.c:rsync_module()` - uid/gid are resolved to account names
-//! and used for impersonation on Windows.
+//! `uidlist.c:uid_to_user()` / `user_to_uid()` - uid/gid to name mapping.
+//! Deviation from upstream: upstream has no Windows build; this module maps
+//! numeric ids to Windows account RIDs.
 
 /// Resolves a Windows account name to its relative identifier (RID).
 ///
@@ -99,7 +100,7 @@ pub fn name_to_rid(_name: &str) -> Option<u32> {
 /// Enumerates local user accounts via `NetUserEnum` and matches by RID.
 /// Returns `None` on non-Windows platforms or if no account matches.
 ///
-/// upstream: uidlist.c - reverse lookup for uid/gid to name mapping.
+/// upstream: uidlist.c `uid_to_user()` / `gid_to_group()` - reverse id-to-name lookup.
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn rid_to_account_name(rid: u32) -> Option<String> {
@@ -171,7 +172,7 @@ pub fn rid_to_account_name(_rid: u32) -> Option<String> {
 /// Returns `(rid, is_group)` where `is_group` is `true` for group/alias accounts.
 /// Accepts `DOMAIN\name` or plain `name` format.
 ///
-/// upstream: clientserver.c - resolves uid/gid names for privilege dropping.
+/// upstream: uidlist.c `user_to_uid()` / `group_to_gid()` - name-to-id lookup.
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn lookup_account_info(name: &str) -> Option<(u32, bool)> {
