@@ -1,12 +1,13 @@
-//! Receive-side file-list growth bound, mirroring upstream `flist_expand()`.
+//! File-list growth bound, mirroring upstream `flist_expand()`.
 //!
-//! Upstream stores a received list as an array of `file_struct *` that
-//! `flist_expand()` grows through `realloc_array()`, and therefore through
-//! `my_alloc()`, which refuses any request of `max_alloc / sizeof(pointer)`
-//! elements or more and exits `RERR_MALLOC`. That refusal is what bounds how
-//! many entries a hostile sender can make a receiver hold. oc keeps entries in
-//! its own containers, so it replays upstream's `used` / `malloced` arithmetic
-//! to refuse at exactly the same entry.
+//! Upstream stores every file list, sent or received, as an array of
+//! `file_struct *` that `flist_expand()` grows through `realloc_array()`, and
+//! therefore through `my_alloc()`, which refuses any request of
+//! `max_alloc / sizeof(pointer)` elements or more and exits `RERR_MALLOC`.
+//! That refusal bounds how many entries a hostile peer can make a receiver
+//! hold, and how large a list a sender builds. oc keeps entries in its own
+//! containers, so it replays upstream's `used` / `malloced` arithmetic to
+//! refuse at exactly the same entry.
 
 use std::io;
 
@@ -15,8 +16,10 @@ use crate::max_alloc::{effective_max_alloc, malloc_failure};
 
 /// upstream: rsync.h:966 `#define FLIST_START (32)`.
 const FLIST_START: usize = 32;
+/// Capacity `send_file_list()` and `recv_file_list()` reserve up front.
+///
 /// upstream: rsync.h:967 `#define FLIST_START_LARGE (32 * 1024)`.
-pub(super) const FLIST_START_LARGE: usize = 32 * 1024;
+pub const FLIST_START_LARGE: usize = 32 * 1024;
 /// upstream: rsync.h:968 `#define FLIST_LINEAR (FLIST_START_LARGE * 512)`.
 const FLIST_LINEAR: usize = FLIST_START_LARGE * 512;
 /// upstream: flist.c:591-639 does its overflow arithmetic in `int`.
@@ -36,29 +39,37 @@ enum Refusal {
 /// Only the counts are kept: the entries themselves live in the caller's
 /// containers. A zeroed value is a list that has not been created yet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct FlistGrowth {
+pub struct FlistGrowth {
     used: usize,
     malloced: usize,
 }
 
 impl FlistGrowth {
     /// Whether the list has had its initial `flist_expand()`.
-    pub(super) const fn is_started(self) -> bool {
+    pub const fn is_started(self) -> bool {
         self.malloced != 0
     }
 
     /// Reserves room for one more entry and counts it, as
     /// `flist_expand(flist, 1)` followed by `flist->used++` does.
-    pub(super) fn push(&mut self, role: ProcessRole) -> io::Result<()> {
-        self.expand(1, role)?;
-        self.used += 1;
+    pub fn push(&mut self, role: ProcessRole) -> io::Result<()> {
+        self.append(1, role)
+    }
+
+    /// Reserves room for `count` entries at once and counts them, as
+    /// `add_dirs_to_tree()` does for the sender's `dir_flist`.
+    ///
+    /// upstream: flist.c:2198,2207.
+    pub fn append(&mut self, count: usize, role: ProcessRole) -> io::Result<()> {
+        self.expand(count, role)?;
+        self.used += count;
         Ok(())
     }
 
     /// Mirrors `flist_expand(flist, extra)`.
     ///
     /// upstream: flist.c:591-639.
-    pub(super) fn expand(&mut self, extra: usize, role: ProcessRole) -> io::Result<()> {
+    pub fn expand(&mut self, extra: usize, role: ProcessRole) -> io::Result<()> {
         self.grow(extra, effective_max_alloc())
             .map_err(|refusal| refusal_error(refusal, role))
     }

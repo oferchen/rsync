@@ -34,9 +34,9 @@
 use std::io::{self, Cursor};
 
 use super::FileListReader;
-use super::expand::FlistGrowth;
 use crate::acl::AclCache;
 use crate::flist::entry::FileEntry;
+use crate::flist::growth::FlistGrowth;
 use crate::flist::state::{FileListCompressionState, FileListStats};
 use crate::xattr::XattrCache;
 

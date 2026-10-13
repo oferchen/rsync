@@ -314,6 +314,11 @@ pub(crate) struct IncrementalState {
     /// sends back. Without INC_RECURSE it holds a single segment and every
     /// lookup is the identity.
     pub(crate) ndx_map: NdxMap,
+    /// Growth of the sender's `dir_flist`, which under INC_RECURSE holds every
+    /// directory sent for the whole transfer.
+    ///
+    /// upstream: flist.c:2780-2781,2198
+    pub(crate) dir_flist_growth: protocol::flist::FlistGrowth,
 }
 
 /// On-demand INC_RECURSE sub-list producer state (LF-2c).
@@ -359,6 +364,7 @@ impl IncrementalState {
             flist_writer_cache: None,
             initial_segment_count: None,
             ndx_map: NdxMap::new(initial_ndx_start),
+            dir_flist_growth: protocol::flist::FlistGrowth::default(),
         }
     }
 }

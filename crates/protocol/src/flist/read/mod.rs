@@ -10,7 +10,6 @@
 
 #[cfg(feature = "tokio-transfer")]
 mod async_read;
-mod expand;
 mod extras;
 mod flags;
 mod metadata;
@@ -35,10 +34,10 @@ use crate::xattr::XattrCache;
 
 use super::entry::FileEntry;
 use super::flags::FileFlags;
+use super::growth::{FLIST_START_LARGE, FlistGrowth};
 use super::intern::PathInterner;
 use super::state::{FileListCompressionState, FileListStats};
 use super::trace::ProcessRole;
-use expand::{FLIST_START_LARGE, FlistGrowth};
 
 pub use flags::FlagsResult;
 pub(crate) use metadata::MetadataResult;
