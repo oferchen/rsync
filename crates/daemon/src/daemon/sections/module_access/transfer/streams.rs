@@ -450,13 +450,10 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
         log_transfer(fmt, &log_ctx, self.log);
     }
 
-    fn on_message(&mut self, line: &str) {
-        // upstream: log.c:328 - logit() writes the message text as-is behind
-        // the log file's own timestamp and pid prefix.
-        log_message(
-            self.log,
-            &rsync_info!(line.to_owned()).with_role(Role::Daemon),
-        );
+    fn on_message(&mut self, line: &[u8]) {
+        // upstream: log.c:136 - logit() writes the message bytes behind the log
+        // file's own timestamp and pid prefix.
+        log_raw_line(self.log, line);
     }
 }
 

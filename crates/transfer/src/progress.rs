@@ -109,7 +109,10 @@ pub trait DaemonFileLog {
     /// upstream: log.c:312-331 `rwrite()` - a daemon passes every `FINFO`,
     /// `FWARNING`, `FERROR` and `FERROR_XFER` message to `logit()` before the
     /// server frames it for the peer; only `FCLIENT` skips the log.
-    fn on_message(&mut self, line: &str);
+    ///
+    /// `line` is raw bytes without its trailing newline, so a file name that
+    /// is not valid UTF-8 reaches the log exactly as upstream writes it.
+    fn on_message(&mut self, line: &[u8]);
 }
 
 /// One line a server receiver queued for the daemon's module log.
@@ -117,8 +120,9 @@ pub trait DaemonFileLog {
 pub enum DaemonLogEntry {
     /// A per-entry `log_item()` / `log_delete()` row.
     Row(DaemonLogRow),
-    /// A diagnostic `rwrite()` also logs, without its trailing newline.
-    Message(String),
+    /// A diagnostic `rwrite()` also logs, as raw bytes without its trailing
+    /// newline.
+    Message(Vec<u8>),
 }
 
 /// The per-file fields one daemon transfer-log line renders.

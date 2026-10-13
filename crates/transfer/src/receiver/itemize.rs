@@ -303,7 +303,7 @@ impl ReceiverContext {
             use std::io::Write as _;
             std::io::stdout().write_all(line.as_bytes())
         } else {
-            self.log_daemon_message(line);
+            self.log_daemon_message(line.as_bytes());
             writer.send_msg_info(line.as_bytes())
         }
     }
@@ -343,7 +343,7 @@ impl ReceiverContext {
             std::io::stderr().write_all(line.as_ref())
         } else {
             let line = line.as_ref();
-            self.log_daemon_message(&String::from_utf8_lossy(line));
+            self.log_daemon_message(line);
             writer.send_msg_error_xfer(line)
         }
     }
@@ -471,7 +471,7 @@ impl ReceiverContext {
             use std::io::Write as _;
             return std::io::stderr().write_all(line.as_bytes());
         }
-        self.log_daemon_message(line);
+        self.log_daemon_message(line.as_bytes());
         if self.protocol.supports_generator_messages() {
             writer.send_msg_warning(line.as_bytes())
         } else {
@@ -498,7 +498,7 @@ impl ReceiverContext {
             use std::io::Write as _;
             std::io::stderr().write_all(line.as_bytes())
         } else {
-            self.log_daemon_message(line);
+            self.log_daemon_message(line.as_bytes());
             writer.send_msg_error(line.as_bytes())
         }
     }
@@ -507,12 +507,14 @@ impl ReceiverContext {
     ///
     /// upstream: log.c:312-331 - `rwrite()` hands the message to `logit()` on
     /// `am_daemon` before the `am_server` branch frames it for the peer, so the
-    /// daemon's log and the client both receive it.
-    fn log_daemon_message(&self, line: &str) {
+    /// daemon's log and the client both receive it. The bytes are kept as
+    /// sent, so a file name that is not valid UTF-8 is logged verbatim.
+    fn log_daemon_message(&self, line: &[u8]) {
         if self.daemon_log_messages {
-            self.daemon_log_generator_entries.borrow_mut().push(
-                crate::progress::DaemonLogEntry::Message(line.trim_end_matches('\n').to_owned()),
-            );
+            let body = line.strip_suffix(b"\n").unwrap_or(line);
+            self.daemon_log_generator_entries
+                .borrow_mut()
+                .push(crate::progress::DaemonLogEntry::Message(body.to_vec()));
         }
     }
 

@@ -100,7 +100,8 @@ fn spawn_daemon_with(binary: &Path, conf: &Path, port: u16, args: &[&str]) -> Re
 fn wait_for_lines(log: &Path, op: &str, want: usize) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
-        if let Ok(text) = fs::read_to_string(log) {
+        if let Ok(bytes) = fs::read(log) {
+            let text = String::from_utf8_lossy(&bytes);
             let count = text.lines().filter(|l| l.contains(op)).count();
             if count >= want {
                 return;
@@ -687,6 +688,29 @@ fn run_module_log(
     marker: &str,
     tail: &str,
 ) -> Option<(String, std::process::ExitStatus)> {
+    run_module_log_bytes(
+        module_params,
+        daemon_args,
+        client_args,
+        push,
+        prepare,
+        marker,
+        tail,
+    )
+    .map(|(log, status)| (String::from_utf8(log).expect("UTF-8 log"), status))
+}
+
+/// [`run_module_log`] returning the log's raw bytes, for names that are not
+/// valid UTF-8.
+fn run_module_log_bytes(
+    module_params: &str,
+    daemon_args: &[&str],
+    client_args: &[&str],
+    push: bool,
+    prepare: impl FnOnce(&Path, &Path),
+    marker: &str,
+    tail: &str,
+) -> Option<(Vec<u8>, std::process::ExitStatus)> {
     let port = free_port()?;
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path();
@@ -731,7 +755,7 @@ fn run_module_log(
         .expect("run client");
     wait_for_lines(&log, marker, 1);
     drop(daemon);
-    Some((fs::read_to_string(&log).expect("read log"), status))
+    Some((fs::read(&log).expect("read log"), status))
 }
 
 fn assert_has_line(lines: &[String], want: &str) {
@@ -1249,4 +1273,40 @@ fn refusal_is_logged_without_transfer_logging() {
         assert_eq!(lines_from(&text, needle), [needle], "log:\n{text}");
     }
     assert!(!text.contains("recv"), "no per-file rows, log:\n{text}");
+}
+
+/// A refusal naming a file that is not valid UTF-8 reaches the module log byte
+/// for byte. upstream's logit() hands the raw name to filtered_fwrite()
+/// (log.c:136), which escapes only control and C1 bytes, so 0xff stays raw.
+#[cfg(target_os = "linux")]
+#[test]
+fn refusal_logs_a_non_utf8_name_verbatim() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let name = OsStr::from_bytes(b"x\xff");
+    let Some((log, status)) = run_module_log_bytes(
+        "",
+        &[],
+        &["-rt"],
+        true,
+        |src, module| {
+            fs::write(src.join(name), b"x").expect("src file");
+            fs::create_dir_all(module.join(name)).expect("mkdir");
+            fs::write(module.join(name).join("a"), b"a").expect("a");
+        },
+        "could not make way",
+        "",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let shown = String::from_utf8_lossy(&log).into_owned();
+    assert_eq!(status.code(), Some(23), "log:\n{shown}");
+    let want: &[u8] = b"could not make way for new regular file: x\xff\n";
+    assert!(
+        log.windows(want.len()).any(|w| w == want),
+        "raw name expected, log:\n{}",
+        shown.escape_debug()
+    );
 }
