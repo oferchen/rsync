@@ -28,10 +28,7 @@ use super::operand_is_remote;
 /// lone operand. Operands that are remote, not valid Unicode, or free of
 /// metacharacters pass through unchanged.
 pub(crate) fn expand_source_operands(operands: Vec<OsString>) -> Vec<OsString> {
-    if operands.len() < 2 {
-        return operands;
-    }
-    let last = operands.len() - 1;
+    let last = operands.len().saturating_sub(1);
     let mut expanded = Vec::with_capacity(operands.len());
     for (index, operand) in operands.into_iter().enumerate() {
         match operand.to_str() {
