@@ -14,7 +14,8 @@ fn serve_connections(
     // Use externally injected signal flags (from the Windows Service dispatcher)
     // when available, otherwise register platform signal handlers so SIGPIPE is
     // ignored and SIGHUP/SIGTERM/SIGINT flags are captured from the start.
-    // upstream: main.c SIGACT(SIGPIPE, SIG_IGN) and rsync_panic_handler setup.
+    // upstream: main.c:1928 ignores SIGPIPE; main.c:1919-1921 route
+    // SIGINT/SIGHUP/SIGTERM to sig_int().
     let signal_flags = match external_signal_flags {
         Some(flags) => SignalFlags::from(flags),
         None => register_signal_handlers().map_err(|error| {
@@ -108,7 +109,8 @@ fn serve_connections(
     apply_startup_hardening(log_sink.as_ref());
 
     // Open syslog connection when no log file is configured (matching upstream
-    // rsync's behaviour: log.c routes to syslog when logfile_name is NULL).
+    // rsync's behaviour: log.c:214-221 log_init() falls back to syslog_init()
+    // when no log file is set).
     // The guard is held for the daemon's lifetime; dropping it calls closelog(3).
     #[cfg(unix)]
     let _syslog_guard = if log_sink.is_none() {
@@ -138,7 +140,7 @@ fn serve_connections(
     let modules: Arc<Vec<ModuleRuntime>> = Arc::new(modules);
     let motd_lines = Arc::new(motd_lines);
 
-    // LSM-CAP.5: verify required Linux capabilities are present before binding
+    // Verify required Linux capabilities are present before binding
     // the listener. A module configured with `uid = root` cannot honour
     // ownership-changing transfers (`--chown`, `--owner`, `--group`) without
     // CAP_CHOWN; exiting here with an explicit operator-facing message is
@@ -209,7 +211,7 @@ fn serve_connections(
         let backlog = listen_backlog.map_or(DEFAULT_LISTEN_BACKLOG, |v| v as i32);
 
         // Per-family bind failure handling mirrors upstream rsync's
-        // `socket.c::open_socket_in` (rsync-3.4.1, lines 428-498): the loop
+        // `socket.c:560-658` `open_socket_in()`: the loop
         // attempts every getaddrinfo result, emits a per-family diagnostic
         // via warn_per_family_bind_failure, and only fails the daemon when
         // zero sockets bound. A dual-stack startup on a kernel where one
@@ -267,7 +269,7 @@ fn serve_connections(
         Vec::new()
     };
 
-    // LSM-CAP.2: CAP_NET_BIND_SERVICE is no longer needed once the listener
+    // CAP_NET_BIND_SERVICE is no longer needed once the listener
     // has bound. Drop it from effective, permitted, and bounding sets so a
     // compromised worker cannot rebind another privileged port. No-op on
     // non-Linux targets and on builds that never held the capability.
@@ -284,7 +286,8 @@ fn serve_connections(
     // Detach from terminal if --detach is active (Unix default).
     // Must happen after binding so startup errors reach stderr, and before
     // PID file creation so the file records the child's PID.
-    // upstream: clientserver.c:1568-1571 -- become_daemon() called before accept loop.
+    // upstream: clientserver.c:1779-1782 - become_daemon() is called before
+    // the accept loop.
     #[cfg(unix)]
     if detach {
         become_daemon()?;
@@ -299,7 +302,7 @@ fn serve_connections(
     // Announce the daemon BEFORE any readiness signal an observer can act on.
     //
     // upstream: clientserver.c:1791 logs "rsyncd version %s starting, listening
-    // on port %d" and only then calls start_accept_loop() (:1776), which is
+    // on port %d" and only then calls start_accept_loop() (:1797), which is
     // where socket.c binds AND listens. So upstream guarantees the banner is in
     // the log before the port can complete a handshake.
     //
@@ -310,7 +313,7 @@ fn serve_connections(
     // readiness signal is the pid file - it is what an operator, an init system
     // and upstream's own `daemon-standalone-detach` cell wait on - so the banner
     // is emitted before it is written. That inverts upstream's line order
-    // (pid file at :1759/:1705, banner at :1770) and is the deliberate cost of
+    // (pid file at :1780/:1705, banner at :1791) and is the deliberate cost of
     // the earlier bind; the property upstream actually provides is preserved.
     if let Some(log) = log_sink.as_ref() {
         let text = format!("rsyncd version {version} starting, listening on port {port}");
@@ -319,7 +322,8 @@ fn serve_connections(
     }
 
     // Write the PID file after binding so the file only appears once the port
-    // is ready to accept connections - matching upstream main.c write_pid_file().
+    // is ready to accept connections. Deviation from upstream: upstream writes
+    // it before start_accept_loop() binds (clientserver.c:1779-1782).
     let pid_guard = if let Some(path) = pid_file {
         Some(PidFileGuard::create(path)?)
     } else {
@@ -331,9 +335,10 @@ fn serve_connections(
     // PID file. Order matches upstream: chroot first (while still root), then
     // setgid, then setuid. Any failure is fatal so the daemon never continues
     // running as root after a partial privilege drop.
-    // upstream: clientserver.c:1337-1389 start_accept_loop() applies
-    // lp_daemon_chroot() then lp_daemon_gid()/lp_daemon_uid() before the accept
-    // loop services any client.
+    // upstream: clientserver.c:1470-1520 start_daemon() applies
+    // lp_daemon_chroot() then lp_daemon_gid()/lp_daemon_uid() in the same
+    // order. Deviation from upstream: upstream does it per connection in the
+    // forked child; oc does it once in the parent before the accept loop.
     if daemon_chroot.is_some() || daemon_uid.is_some() || daemon_gid.is_some() {
         let fallback_sink = open_privilege_fallback_sink();
         let sink = log_sink.as_ref().unwrap_or(&fallback_sink);
@@ -425,7 +430,7 @@ fn serve_connections(
 
     // Select the accept engine once from the bound listener topology, then run
     // the shared accept loop. The engine hides the readiness mechanism
-    // (non-blocking accept vs acceptor-thread fan-in) behind a uniform poll.
+    // (`poll(2)` or kqueue) behind a uniform poll.
     let mut engine = build_accept_engine(
         listeners,
         &bound_addresses,

@@ -209,10 +209,11 @@ fn join_backing(handle: thread::JoinHandle<WorkerResult>) -> SessionOutcome {
     }
 }
 
-/// Joins finished worker threads.
+/// Reaps finished workers.
 ///
-/// Iterates through the worker list, joining any that have completed. This
-/// prevents unbounded thread handle accumulation in long-running daemons.
+/// Iterates through the worker list, collecting any whose session has ended.
+/// This prevents unbounded accumulation of finished children or thread handles
+/// in long-running daemons.
 fn reap_finished_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSink>) {
     let mut still_running = Vec::with_capacity(workers.len());
     for worker in workers.drain(..) {
@@ -227,14 +228,14 @@ fn reap_finished_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&Sha
     *workers = still_running;
 }
 
-/// Waits for all remaining worker threads to complete.
+/// Waits for all remaining workers to complete.
 fn drain_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSink>) {
     while let Some(worker) = workers.pop() {
         report_worker_outcome(worker.wait(), log_sink);
     }
 }
 
-/// Joins a single worker thread and reports its outcome.
+/// Reports the outcome of one reaped worker.
 ///
 /// A worker runs exactly one session against one accepted socket, so every
 /// outcome it can carry - an I/O failure on that socket, a rejected protocol
@@ -252,8 +253,8 @@ fn drain_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSi
 /// `sigchld_handler()` reaps it with `waitpid(-1, NULL, WNOHANG)` - a NULL
 /// status pointer, so the parent discards the session's outcome without ever
 /// inspecting it. The `while (1)` loop at socket.c:732 has no error exit;
-/// `poll` failure (:738), `accept` failure (:748) and even `fork` failure
-/// (:766) each keep the loop running. Only listener setup is fatal, via
+/// `poll` failure (:746), `accept` failure (:756) and even `fork` failure
+/// (:774) each keep the loop running. Only listener setup is fatal, via
 /// `exit_cleanup(RERR_SOCKETIO)` at socket.c:707 and socket.c:723.
 fn report_worker_outcome(outcome: SessionOutcome, log_sink: Option<&SharedLogSink>) {
     match outcome {
