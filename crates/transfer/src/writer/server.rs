@@ -84,7 +84,7 @@ impl<W: Write> ServerWriter<W> {
     }
 
     /// Like [`activate_compression`](Self::activate_compression) but plumbs
-    /// `--compress-threads=N` into `ZSTD_c_nbWorkers`. upstream: `token.c:749`.
+    /// `--compress-threads=N` into `ZSTD_c_nbWorkers`. upstream: `token.c:752`.
     pub fn activate_compression_with_workers(
         self,
         algorithm: CompressionAlgorithm,
@@ -214,8 +214,8 @@ impl<W: Write> ServerWriter<W> {
     /// (returns `false`) in plain mode, when no `--timeout` is configured, or
     /// when the lull has not yet elapsed.
     ///
-    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1479-1507), invoked from the
-    /// generator/sender loop during an I/O lull (e.g. generator.c:2139).
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1639-1667), invoked from the
+    /// generator/sender loop during an I/O lull (e.g. generator.c:2824).
     pub fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         match self {
             Self::Multiplex(mux) => mux.maybe_send_keepalive(),
@@ -243,7 +243,7 @@ impl<W: Write> ServerWriter<W> {
     /// `--timeout` is set or the stream is not multiplexed.
     ///
     /// Callers use this to derive upstream's `lull_mod = allowed_lull * 5`
-    /// cadence (sender.c:77) when poking keepalives inside a long read loop.
+    /// cadence (sender.c:341) when poking keepalives inside a long read loop.
     pub fn allowed_lull(&self) -> Option<Duration> {
         match self {
             Self::Multiplex(mux) => mux.allowed_lull(),
@@ -260,9 +260,9 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:368-369`: `send_msg_int(MSG_NO_SEND, ndx)` when file open fails
+    /// - `sender.c:670,725,753`: `send_msg_int(MSG_NO_SEND, ndx)` when file open fails
     ///   and `protocol_version >= 30`.
-    /// - `io.c:1644-1653`: receiver-side handling of `MSG_NO_SEND`.
+    /// - `io.c:1847-1856`: receiver-side handling of `MSG_NO_SEND`.
     ///
     /// # Errors
     ///
@@ -279,8 +279,8 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1109-1113`: `send_msg_int(MSG_REDO, ndx)` on checksum failure
-    /// - `io.c:1561-1566`: generator-side handler queues index to `redo_list`
+    /// - `receiver.c:1375`: `send_msg_int(MSG_REDO, ndx)` on checksum failure
+    /// - `io.c:1733-1739`: generator-side handler queues index to `redo_list`
     ///
     /// # Errors
     ///
@@ -302,10 +302,10 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1089-1104`: `send_msg_success()` -> `send_msg_int(MSG_SUCCESS, ndx)`.
-    /// - `receiver.c:1079-1085`: emitted on `recv_ok == 1` (finish_transfer succeeded).
-    /// - `generator.c:1834-1839`: emitted for an already up-to-date source.
-    /// - `io.c:1649-1663`: sender-side handler runs `successful_send(ndx)`.
+    /// - `io.c:1194`: `send_msg_success()` -> `send_msg_int(MSG_SUCCESS, ndx)`.
+    /// - `receiver.c:1345-1347`: emitted on `recv_ok == 1` (finish_transfer succeeded).
+    /// - `generator.c:2257`: emitted for an already up-to-date source.
+    /// - `io.c:1831-1846`: sender-side handler runs `successful_send(ndx)`.
     ///
     /// # Errors
     ///
@@ -326,9 +326,9 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:486-487`: `if (io_error != save_io_error && protocol_version >= 30)
+    /// - `sender.c:811-812`: `if (io_error != save_io_error && protocol_version >= 30)
     ///   send_msg_int(MSG_IO_ERROR, io_error);` immediately before `write_ndx(NDX_DONE)`.
-    /// - `io.c:1568-1575`: receiver handler ORs the value into `io_error`.
+    /// - `io.c:1740-1747`: receiver handler ORs the value into `io_error`.
     ///
     /// # Errors
     ///
@@ -416,9 +416,10 @@ impl<W: Write> ServerWriter<W> {
     /// multiplex stream is fully drained and any subsequent writes go through
     /// the plain multiplex path.
     ///
-    /// upstream: `token.c:send_deflated_token()` issues `Z_FINISH` via
-    /// `deflateEnd()` when the sender tears down its compression context at
-    /// end of transfer. Without this finalisation, the receiver's
+    /// Deviation from upstream: upstream never finalises the stream;
+    /// `token.c:send_deflated_token()` ends each file with `Z_SYNC_FLUSH`
+    /// (token.c:446-447) and zstd with `ZSTD_e_flush` (token.c:799). Without
+    /// this finalisation, the receiver's
     /// `CompressedReader` (`crate::compressed_reader::CompressedReader`) may be
     /// waiting on the closing block of the deflate stream while the daemon
     /// has already shut down the socket, producing the "connection
@@ -481,7 +482,7 @@ impl<W: Write> ServerWriter<W> {
     /// - `cleanup.c::handle_cleanup()` brackets the sender's final
     ///   `io_flush(FULL_FLUSH)` with the process exit so every user-space
     ///   byte hits the wire before the kernel queues `FIN`.
-    /// - `main.c:996` calls `io_flush(FULL_FLUSH)` after
+    /// - `main.c:1007` calls `io_flush(FULL_FLUSH)` after
     ///   `read_final_goodbye()` returns, mirroring the same barrier intent.
     ///
     /// # Errors
@@ -587,7 +588,7 @@ impl<W: Write> Write for ServerWriter<W> {
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:961-981 noop_io_until_death()` keeps the sender's read side
+/// - `io.c:1066 noop_io_until_death()` keeps the sender's read side
 ///   open until the peer FINs.
 /// - `cleanup.c:265 close_all()` finally drops the fds; the kernel
 ///   queues `FIN` on the write side as a side effect of the exit.
