@@ -275,6 +275,20 @@ fn from_io_error_maps_tagged_protocol_violation_to_protocol() {
 }
 
 #[test]
+fn from_io_error_maps_tagged_malloc_failure_to_malloc() {
+    // WHY: upstream's my_alloc() exits RERR_MALLOC (22) when a peer drives an
+    // allocation past --max-alloc (util2.c:75-80). The OutOfMemory kind alone
+    // maps to FileIo (11), so without the MallocFailure tag a refused flist
+    // would report the wrong exit code to scripts and to the peer.
+    let err = protocol::malloc_failure(
+        "[Receiver] exceeded --max-alloc=1048576 setting (file=flist.c, line=626)",
+    );
+    assert_eq!(err.kind(), std::io::ErrorKind::OutOfMemory);
+    assert_eq!(ExitCode::from_io_error(&err), ExitCode::Malloc);
+    assert_eq!(ExitCode::from_io_error(&err).as_i32(), 22);
+}
+
+#[test]
 fn from_io_error_maps_signal_interruption() {
     use std::io::{Error, ErrorKind};
 

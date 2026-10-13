@@ -7831,3 +7831,129 @@ mod pre29_sort_order {
         );
     }
 }
+
+/// `--max-alloc=1M` on a 64-bit build: the pointer array my_alloc() refuses
+/// first holds 131072 entries, so the largest list upstream builds is half
+/// that.
+const ONE_MIB: usize = 1024 * 1024;
+const LARGEST_LIST_AT_ONE_MIB: usize = ONE_MIB / size_of::<*const u8>() / 2;
+const SENDER_MAX_ALLOC_REFUSAL: &str =
+    "[sender] exceeded --max-alloc=1048576 setting (file=flist.c, line=626)";
+
+/// Runs `body` with `--max-alloc` lowered to 1 MiB, restoring the previous
+/// ceiling afterwards.
+fn with_one_mib_max_alloc<T>(body: impl FnOnce() -> T) -> T {
+    let restore = protocol::effective_max_alloc();
+    protocol::set_max_alloc(ONE_MIB);
+    let result = body();
+    protocol::set_max_alloc(restore);
+    result
+}
+
+fn assert_sender_max_alloc_refusal(err: &io::Error) {
+    assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::MallocFailure>()),
+        "refusal must carry the RERR_MALLOC tag: {err}"
+    );
+    assert_eq!(err.to_string(), SENDER_MAX_ALLOC_REFUSAL);
+}
+
+fn files(prefix: &str, count: usize) -> Vec<protocol::flist::FileEntry> {
+    (0..count)
+        .map(|i| protocol::flist::FileEntry::new_file(format!("{prefix}{i:06}").into(), 0, 0o644))
+        .collect()
+}
+
+fn dirs(prefix: &str, count: usize) -> Vec<protocol::flist::FileEntry> {
+    (0..count)
+        .map(|i| protocol::flist::FileEntry::new_directory(format!("{prefix}{i:06}").into(), 0o755))
+        .collect()
+}
+
+#[test]
+fn sender_file_list_is_bounded_by_max_alloc_like_send_file_name() {
+    // WHY: upstream's send_file_name() grows the sender's list through
+    // flist_expand() -> my_alloc() (flist.c:2094, util2.c:75) and exits
+    // RERR_MALLOC once the pointer array would reach --max-alloc. Without the
+    // bound an oc sender builds and sends lists upstream refuses to.
+    let (_handshake, mut ctx) = test_generator();
+    for entry in files("f", LARGEST_LIST_AT_ONE_MIB) {
+        ctx.file_list.push(entry);
+    }
+    let accepted = with_one_mib_max_alloc(|| ctx.send_file_list(&mut Vec::new()));
+    assert_eq!(accepted.unwrap(), LARGEST_LIST_AT_ONE_MIB);
+
+    let (_handshake, mut ctx) = test_generator();
+    for entry in files("f", LARGEST_LIST_AT_ONE_MIB + 1) {
+        ctx.file_list.push(entry);
+    }
+    let refused = with_one_mib_max_alloc(|| ctx.send_file_list(&mut Vec::new()));
+    assert_sender_max_alloc_refusal(&refused.unwrap_err());
+}
+
+/// Builds an INC_RECURSE sender whose initial list is empty, ready to send
+/// sub-lists drawn from `file_list`.
+fn inc_recurse_sender(entries: Vec<protocol::flist::FileEntry>) -> GeneratorContext {
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(protocol::CompatibilityFlags::INC_RECURSE);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+    ctx.incremental.ndx_map = NdxMap::new(0);
+    ctx.incremental.initial_segment_count = Some(0);
+    for entry in entries {
+        ctx.file_list.push(entry);
+    }
+    ctx
+}
+
+/// Sends the initial list, then each `(start, count)` range as a sub-list.
+fn send_sub_lists(ctx: &mut GeneratorContext, ranges: &[(usize, usize)]) -> io::Result<()> {
+    ctx.send_file_list(&mut Vec::new())?;
+    let mut flist_writer = ctx.build_flist_writer();
+    let mut ndx_codec = protocol::codec::create_ndx_codec(ctx.protocol().as_u8());
+    for (dir_ndx, &(flist_start, count)) in ranges.iter().enumerate() {
+        let segment = super::PendingSegment {
+            parent_dir_ndx: dir_ndx as i32,
+            parent_flat_idx: 0,
+            flist_start,
+            count,
+        };
+        ctx.encode_and_send_segment(&mut Vec::new(), &segment, &mut flist_writer, &mut ndx_codec)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn each_inc_recurse_sub_list_is_bounded_by_max_alloc() {
+    // WHY: send_extra_file_list() starts every sub-list as a fresh flist_new()
+    // (flist.c:2657) that send_file_name() grows one entry at a time, so the
+    // bound applies per sub-list - one directory past it is refused while the
+    // same number of files spread over two sub-lists is not.
+    let mut ctx = inc_recurse_sender(files("f", LARGEST_LIST_AT_ONE_MIB + 1));
+    let split = [(0, LARGEST_LIST_AT_ONE_MIB), (LARGEST_LIST_AT_ONE_MIB, 1)];
+    with_one_mib_max_alloc(|| send_sub_lists(&mut ctx, &split)).unwrap();
+
+    let mut ctx = inc_recurse_sender(files("f", LARGEST_LIST_AT_ONE_MIB + 1));
+    let whole = [(0, LARGEST_LIST_AT_ONE_MIB + 1)];
+    let refused = with_one_mib_max_alloc(|| send_sub_lists(&mut ctx, &whole));
+    assert_sender_max_alloc_refusal(&refused.unwrap_err());
+}
+
+#[test]
+fn inc_recurse_dir_flist_is_bounded_by_max_alloc_across_sub_lists() {
+    // WHY: add_dirs_to_tree() appends every sent directory to the sender's
+    // dir_flist, which lives for the whole transfer (flist.c:2198). Two
+    // sub-lists that each fit still exhaust --max-alloc through dir_flist.
+    let half = LARGEST_LIST_AT_ONE_MIB / 2 + 1;
+    let mut entries = dirs("a", half);
+    entries.extend(dirs("b", half));
+    let mut ctx = inc_recurse_sender(entries);
+    let refused = with_one_mib_max_alloc(|| send_sub_lists(&mut ctx, &[(0, half), (half, half)]));
+    assert_sender_max_alloc_refusal(&refused.unwrap_err());
+
+    let mut entries = dirs("a", half);
+    entries.extend(files("b", half));
+    let mut ctx = inc_recurse_sender(entries);
+    with_one_mib_max_alloc(|| send_sub_lists(&mut ctx, &[(0, half), (half, half)])).unwrap();
+}

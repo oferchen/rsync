@@ -18,6 +18,9 @@
 //! - `util2.c:73-81` - `my_alloc()` aborts with `RERR_MALLOC` once a request
 //!   reaches `max_alloc`.
 
+use std::error::Error;
+use std::fmt;
+use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Default `--max-alloc` ceiling in bytes (1 GiB).
@@ -115,6 +118,31 @@ pub fn set_max_alloc(bytes: usize) {
 #[must_use]
 pub fn effective_max_alloc() -> usize {
     MAX_ALLOC.load(Ordering::Relaxed)
+}
+
+/// Inner marker error identifying an allocation refusal that upstream exits
+/// with `RERR_MALLOC` (22).
+///
+/// Constructed via [`malloc_failure`] and detected by the exit-code mapper.
+/// Its [`Display`](fmt::Display) renders exactly the wrapped message.
+///
+/// upstream: errcode.h `RERR_MALLOC = 22`; util2.c:75-80 `my_alloc()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MallocFailure(pub String);
+
+impl fmt::Display for MallocFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Error for MallocFailure {}
+
+/// Builds an [`io::Error`] of kind [`OutOfMemory`](io::ErrorKind::OutOfMemory)
+/// tagged as a [`MallocFailure`], so the exit-code mapper reports
+/// `RERR_MALLOC` (22) where upstream's `my_alloc()` would `exit_cleanup()`.
+pub fn malloc_failure(msg: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::OutOfMemory, MallocFailure(msg.into()))
 }
 
 #[cfg(test)]
