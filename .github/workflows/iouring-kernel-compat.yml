@@ -142,6 +142,19 @@ jobs:
           echo "$IOURING_LINE" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
+      - name: Verify iouring-send-zc is compiled in
+        run: |
+          set -euo pipefail
+          # The `--io-uring-status` capability matrix is the canonical report
+          # of which io_uring cargo features the binary was built with (the
+          # plain `--version` banner only carries a one-line io_uring summary).
+          STATUS_OUTPUT=$(cargo run --locked --all-features -- --io-uring-status 2>&1 || true)
+          printf '%s\n' "$STATUS_OUTPUT"
+          if ! printf '%s\n' "$STATUS_OUTPUT" | grep -q "iouring-send-zc:.*on"; then
+            echo "::error::iouring-send-zc feature not reported as 'on' in --io-uring-status output"
+            exit 1
+          fi
+
       - name: Validate io_uring expectations
         env:
           KERNEL_MAJOR: ${{ steps.kernel.outputs.major }}
