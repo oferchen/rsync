@@ -241,6 +241,7 @@ include!("tests/chunks/run_daemon_rejects_push_to_default_read_only_module.rs");
 include!("tests/chunks/daemon_pre_xfer_exec_rejects_on_nonzero_exit.rs");
 include!("tests/chunks/run_daemon_requests_authentication_for_protected_module.rs");
 include!("tests/chunks/run_daemon_auth_failure_rejects_wrong_credentials.rs");
+include!("tests/chunks/run_daemon_deny_rule_refuses_before_checking_the_password.rs");
 include!("tests/chunks/run_daemon_sends_motd_before_unknown_module_error.rs");
 include!("tests/chunks/run_daemon_rejects_unknown_hash_command.rs");
 include!("tests/chunks/run_daemon_serves_single_legacy_connection.rs");

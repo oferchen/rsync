@@ -329,6 +329,15 @@ fn perform_module_authentication(
         }
     };
     let auth_user = auth_match.user;
+    // upstream: authenticate.c:411-417 - a matching `:deny` rule refuses with
+    // "denied by rule" before check_secret() runs, so the secret is never
+    // consulted for a denied user.
+    if auth_user.access_level == UserAccessLevel::Deny {
+        return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
+            user: username.to_owned(),
+            rule: AuthUserRule::DeniedByRule,
+        }));
+    }
 
     // upstream: authenticate.c:318 - check_secret() receives the group name only
     // when the client was authorized via a matching `@group` token in
@@ -350,14 +359,6 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
-    // upstream: authenticate.c:334-335 - `opt_ch == 'd'` ("deny") reports
-    // "denied by rule" and auth_server() returns NULL (auth failure).
-    if auth_user.access_level == UserAccessLevel::Deny {
-        return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
-            user: username.to_owned(),
-            rule: AuthUserRule::DeniedByRule,
-        }));
-    }
 
     // upstream: authenticate.c:340-343 - the `:ro` / `:rw` suffix travels back
     // to rsync_module() via the `read_only` global; carry the parsed access
