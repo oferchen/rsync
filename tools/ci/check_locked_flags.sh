@@ -14,7 +14,7 @@
 #   - builds are byte-for-byte reproducible at a given commit,
 #   - transitive-dep drift surfaces in its own PR rather than silently
 #     riding along on an unrelated change,
-#   - the weekly cron PR (`cargo-lockfile-weekly.yml`) is the single
+#   - the weekly Dependabot PRs (`.github/dependabot.yml`) are the single
 #     intentional path for dep bumps.
 #
 # CIM-LOCKFILE-1..4 audited and fixed every cargo invocation that should
@@ -96,9 +96,9 @@ GATED_SUBCOMMANDS=(
 # the repo-relative path. Add new entries only with reviewer signoff
 # and document the rationale here.
 #
-# The lockfile-sync workflows (`cargo-lockfile-weekly.yml`,
-# `cargo-lockfile-sync.yml`) only invoke `cargo update`, which is not a
-# gated subcommand, so they need no explicit allowlist entry.
+# The lockfile-sync workflow (`cargo-lockfile-sync.yml`) only invokes
+# `cargo update`, which is not a gated subcommand, so it needs no explicit
+# allowlist entry.
 #
 # check_fuzz_workspaces.sh:43 - the fuzz-workspace guard runs `cargo check`
 # WITHOUT --locked on purpose. Its whole job is to tolerate lockfile drift

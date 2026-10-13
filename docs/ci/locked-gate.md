@@ -3,7 +3,7 @@
 `Cargo.lock` is committed and every CI build is meant to honour it via
 `--locked`. That guarantees byte-for-byte reproducible builds at a given
 commit, surfaces transitive-dep drift in its own PR rather than letting
-it ride along on an unrelated change, and keeps `cargo-lockfile-weekly`
+it ride along on an unrelated change, and keeps the weekly Dependabot PRs
 as the single intentional path for dep bumps.
 
 CIM-LOCKFILE-1..4 audited and fixed every cargo invocation in CI that
@@ -42,7 +42,7 @@ inspect them:
 | `cargo fmt` | Does not consume the workspace lockfile. |
 | `cargo doc` | Already lock-aware where it matters (see `pages.yml`); semantically a docs build. |
 | `cargo bench` | Benchmarks run against the workspace as resolved; lock state is incidental. |
-| `cargo update` | The lockfile-mutation entry point itself (used by `cargo-lockfile-weekly.yml`). |
+| `cargo update` | The lockfile-mutation entry point itself (used by `cargo-lockfile-sync.yml`). |
 | `cargo tree`, `cargo metadata`, `cargo fetch` | Read-only inspection. |
 | `cargo install` | Installs a third-party CLI; carries `--locked` where the upstream supports it, but the gate does not enforce. |
 | `cargo xtask` | Workspace task runner; the underlying build is already gated. |
