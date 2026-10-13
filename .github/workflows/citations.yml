@@ -77,18 +77,13 @@ name: Citations
 
 on:
   pull_request:
-  push:
-    branches:
-      - master
 
 permissions:
   contents: read
 
 concurrency:
   group: citations-${{ github.ref }}
-  # Superseded pull request pushes cancel; pushes to master do not, so every
-  # merge commit keeps a completed run for bisection.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always

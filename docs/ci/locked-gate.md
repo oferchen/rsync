@@ -9,10 +9,9 @@ as the single intentional path for dep bumps.
 CIM-LOCKFILE-1..4 audited and fixed every cargo invocation in CI that
 should carry `--locked`. The gate that prevents regressions is
 `tools/ci/check_locked_flags.sh`, run as a step of
-[`pr-lint.yml`](../../.github/workflows/pr-lint.yml) on every PR and on
-push to master. It inspects every `.yml`/`.yaml`/`.sh` under
-`.github/workflows/` and `tools/ci/` regardless of what changed in the
-PR, so renames, merge-commit sneak-ins and drift in shell helpers are
+[`pr-lint.yml`](../../.github/workflows/pr-lint.yml) on every PR. It
+inspects every `.yml`/`.yaml`/`.sh` under `.github/workflows/` and
+`tools/ci/` regardless of what changed in the PR, so renames, merge-commit sneak-ins and drift in shell helpers are
 all caught. An earlier diff-only fast gate covered a strict subset of
 these files and was retired.
 

@@ -33,17 +33,12 @@ name: PR lint
 # checksum-verified upstream tarball for the citation audit.
 on:
   pull_request:
-  push:
-    branches:
-      - master
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-lint-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
-  # Superseded pull request pushes cancel; each master commit gets its own
-  # group, so every merge keeps a completed run.
+  group: pr-lint-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
