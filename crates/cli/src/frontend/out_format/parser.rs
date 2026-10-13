@@ -129,7 +129,7 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
             continue;
         }
 
-        // upstream log.c:756 - a `%` escape whose letter has no case (and `%u`
+        // upstream: log.c:791-792 log_formatted() - an escape whose letter has no case (and `%u`
         // off-daemon, where `auth_user` is empty) leaves `n` NULL and is copied
         // through verbatim. `%u` is the daemon auth user (handled by the daemon
         // log formatter), never the file owner; `%g`/`%N` are not upstream
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn parse_out_format_unrecognized_placeholder_is_literal() {
-        // upstream log.c:756 copies an unrecognized %escape through verbatim.
+        // upstream: log.c:791-792 copies an unrecognized %escape through verbatim.
         assert_single_literal("%z", "%z");
     }
 
@@ -658,12 +658,11 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    //
     // These tests verify that each placeholder letter maps to the correct
     // OutFormatPlaceholder variant, not just that parsing succeeds.
 
     /// upstream logs before the transfer unless the format needs a value only
-    /// known afterwards (options.c:2502-2505); `--progress` output order
+    /// known afterwards (options.c:2501-2504); `--progress` output order
     /// depends on which side of the progress block the line lands.
     #[test]
     fn logs_before_transfer_unless_format_needs_post_transfer_values() {

@@ -28,7 +28,7 @@ impl OutFormat {
 
     /// Returns `true` when the format renders the itemized-changes string.
     ///
-    /// upstream: options.c:2363 - `stdout_format_has_i` is derived from the
+    /// upstream: options.c:2499-2500 - `stdout_format_has_i` is derived from the
     /// resolved format string, and it is what puts the client into itemizing
     /// mode. Read it from the parsed tokens rather than re-scanning the raw
     /// text so the emit gate and the renderer cannot disagree about whether a
@@ -45,7 +45,7 @@ impl OutFormat {
 
     /// Returns `true` when upstream logs each entry before transferring it.
     ///
-    /// upstream: options.c:2502-2505 - `log_before_transfer` holds unless the
+    /// upstream: options.c:2501-2504 - `log_before_transfer` holds unless the
     /// format asks for a value only known afterwards: `%b`, `%c` or `%C`.
     pub(crate) fn logs_before_transfer(&self) -> bool {
         !self.tokens().any(|token| {
@@ -97,24 +97,43 @@ impl PlaceholderToken {
 /// Placeholder kinds supported by `--out-format`.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum OutFormatPlaceholder {
+    /// `%n`: the file name, with a trailing `/` for a directory.
     FileName,
+    /// `%f`: the full path, leading `/` stripped.
     FullPath,
+    /// `%i`: the itemized-changes string.
     ItemizedChanges,
+    /// `%l`: the file length in bytes.
     FileLength,
+    /// `%b`: bytes transferred for this file.
     BytesTransferred,
+    /// `%c`: the opposite-direction byte count for this file.
     ChecksumBytes,
+    /// `%o`: the operation word (`send`, `recv` or `del.`).
     Operation,
+    /// `%M`: the modification time, with spaces replaced by `-`.
     ModifyTime,
+    /// `%B`: the permission bits as an `ls -l` style string.
     PermissionString,
+    /// `%t`: the current date and time.
     CurrentTime,
+    /// `%L`: ` -> target` for a symlink or ` => leader` for a hard link.
     SymlinkTarget,
+    /// `%U`: the numeric owner uid.
     OwnerUid,
+    /// `%G`: the numeric group gid, or `DEFAULT`.
     OwnerGid,
+    /// `%p`: the process id.
     ProcessId,
+    /// `%h`: the remote host name (daemon only).
     RemoteHost,
+    /// `%a`: the remote address (daemon only).
     RemoteAddress,
+    /// `%m`: the module name (daemon only).
     ModuleName,
+    /// `%P`: the module path (daemon only).
     ModulePath,
+    /// `%C`: the whole-file checksum as hex.
     FullChecksum,
 }
 
@@ -185,15 +204,19 @@ pub(super) enum HumanizeMode {
 /// Context values used when rendering `--out-format` placeholders.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct OutFormatContext {
+    /// Remote host name rendered by `%h`.
     pub(super) remote_host: Option<String>,
+    /// Remote address rendered by `%a`.
     pub(super) remote_address: Option<String>,
+    /// Module name rendered by `%m`.
     pub(super) module_name: Option<String>,
+    /// Module path rendered by `%P`.
     pub(super) module_path: Option<String>,
     /// Whether the local side is the sender (push transfer).
     ///
     /// Controls the direction indicator in itemized output:
     /// `<` for sender (push), `>` for receiver (pull).
-    /// (upstream: log.c:704 - uses `<` when am_sender && !am_server)
+    /// (upstream: log.c:739-742 - `<` when `!local_server && *op == 's'`)
     pub(super) is_sender: bool,
     /// Whether the transfer is a pull (at least one remote source).
     ///
@@ -203,16 +226,16 @@ pub(crate) struct OutFormatContext {
     /// copy renders `>` yet reports `send`.
     pub(super) is_pull: bool,
     /// Whether `-o`/`--owner` is active (upstream `uid_ndx`). `%U` renders the
-    /// numeric uid only when set, and `0` otherwise (log.c:570-573).
+    /// numeric uid only when set, and `0` otherwise (log.c:600-605).
     pub(super) preserve_owner: bool,
     /// Whether `-g`/`--group` is active (upstream `gid_ndx`). `%G` renders the
     /// numeric gid only when set, and the literal `DEFAULT` otherwise
-    /// (log.c:574-576).
+    /// (log.c:606-615).
     pub(super) preserve_group: bool,
     /// Whether `INFO_GTE(NAME, 2)` is in effect (i.e. `-vv` or
     /// `--info=name2`).
     ///
-    /// Upstream `generator.c:582-583` keeps emitting itemize lines for
+    /// Upstream `generator.c:588` keeps emitting itemize lines for
     /// entries whose `iflags == 0` when this is set, so unchanged dirs,
     /// files, and symlinks still surface as all-dot rows. The render path
     /// uses this to bypass the empty-change-set suppression that mirrors
@@ -221,7 +244,7 @@ pub(crate) struct OutFormatContext {
     /// Whether `-ii` (the `-i` flag repeated) is in effect, i.e. upstream
     /// `stdout_format_has_i > 1`.
     ///
-    /// Upstream `generator.c:589-590` ORs `stdout_format_has_i > 1` into the
+    /// Upstream `generator.c:589` ORs `stdout_format_has_i > 1` into the
     /// itemize emit gate as a term separate from `INFO_GTE(NAME, 2)`. Two
     /// `-i` flags therefore surface unchanged (`iflags == 0`) entries as
     /// all-dot rows even without `-vv`. The render path uses this to bypass
@@ -235,20 +258,20 @@ pub(crate) struct OutFormatContext {
     /// preserved.
     ///
     /// Controls whether `--list-only` output appends ` -> <target>` to a
-    /// symlink row. Upstream `generator.c:1183` only sets the arrow when
+    /// symlink row. Upstream `generator.c:1346` `list_file_entry()` only sets the arrow when
     /// `preserve_links && S_ISLNK(f->mode)`; without `-l` the symlink is
     /// still listed (with its target-length size) but no target string.
     pub(super) preserve_links: bool,
     /// Negotiated strong-checksum algorithm applied to the `%C` placeholder.
     ///
-    /// Upstream `log.c:687-690` renders `%C` from the negotiated checksum
+    /// Upstream `log.c:717-731` renders `%C` from the negotiated checksum
     /// (`file_sum_nni` under `--checksum`, otherwise `xfer_sum_nni`). `None`
     /// means the default negotiated algorithm (auto, i.e. xxh128 for a modern
-    /// protocol-31+ transfer - `checksum.c` `negotiate_the_strings`).
+    /// protocol-31+ transfer - `compat.c:negotiate_the_strings()`).
     pub(super) full_checksum_algorithm: Option<StrongChecksumAlgorithm>,
     /// `--checksum` / `-c` (upstream `always_checksum`).
     ///
-    /// Upstream `log.c:687-688` renders `%C` from the file-list checksum
+    /// Upstream `log.c:720-721` renders `%C` from the file-list checksum
     /// (`F_SUM`) for every regular file when this is set; otherwise `%C` is
     /// only populated for a transferred file (`ITEM_TRANSFER`).
     pub(super) always_checksum: bool,
@@ -259,7 +282,7 @@ impl OutFormatContext {
     ///
     /// Used by the transfer driver to thread the sender role from the parsed
     /// `ClientConfig` through to the itemize renderer so the direction arrow
-    /// matches upstream `log.c:701-704`.
+    /// matches upstream `log.c:739-742`.
     #[must_use]
     pub(crate) fn with_is_sender(is_sender: bool) -> Self {
         Self {
@@ -291,7 +314,7 @@ impl OutFormatContext {
 
     /// Sets the `INFO_GTE(NAME, 2)` flag (`-vv` / `--info=name2`).
     ///
-    /// Upstream `generator.c:588-589` ORs `INFO_GTE(NAME, 2)` into the
+    /// Upstream `generator.c:588` ORs `INFO_GTE(NAME, 2)` into the
     /// itemize emit gate; mirroring that semantic locally requires the
     /// renderer to skip the "no change set, no creation" suppression so
     /// unchanged entries still print as all-dot rows.
@@ -310,7 +333,7 @@ impl OutFormatContext {
 
     /// Sets the `-ii` flag (`stdout_format_has_i > 1`).
     ///
-    /// Upstream `generator.c:589-590` ORs `stdout_format_has_i > 1` into the
+    /// Upstream `generator.c:589` ORs `stdout_format_has_i > 1` into the
     /// itemize emit gate; mirroring it locally makes the renderer skip the
     /// "no change set, no creation" suppression for `-ii` even without `-vv`.
     #[must_use]
@@ -327,7 +350,7 @@ impl OutFormatContext {
     }
 
     /// Sets the sink's `filtered_fwrite` escape rule for the out-format
-    /// renderer (upstream: log.c:132 for the log file, log.c:425 for stdout).
+    /// renderer (upstream: log.c:136 for the log file, log.c:425 for stdout).
     #[must_use]
     pub(crate) fn with_escape_style(mut self, escape: EscapeStyle) -> Self {
         self.escape = escape;
@@ -336,7 +359,7 @@ impl OutFormatContext {
 
     /// Sets the `--links` / `-l` (preserve-symlinks) flag.
     ///
-    /// upstream: generator.c:1183 - the ` -> <target>` arrow in `--list-only`
+    /// upstream: generator.c:1346 - the ` -> <target>` arrow in `--list-only`
     /// output is gated on `preserve_links`.
     #[must_use]
     pub(crate) fn with_preserve_links(mut self, preserve_links: bool) -> Self {
@@ -354,7 +377,7 @@ impl OutFormatContext {
 
     /// Sets the negotiated `%C` checksum algorithm and the `--checksum` flag.
     ///
-    /// upstream: log.c:687-690 - `%C` renders the negotiated file/transfer
+    /// upstream: log.c:717-731 - `%C` renders the negotiated file/transfer
     /// checksum, not a hardcoded MD5. The algorithm selects the digest length
     /// and byte order (`util2.c:sum_as_hex`), and `always_checksum` decides
     /// whether an untransferred regular file still shows its file-list sum.

@@ -16,7 +16,7 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
     use ClientEventKind::*;
 
     if matches!(event.kind(), ClientEventKind::EntryDeleted) {
-        // upstream: log.c:697 - padded to 11 chars to match YXcstpoguax width
+        // upstream: log.c:734-737 - padded to 11 chars to match YXcstpoguax width
         return "*deleting  ".to_owned();
     }
 
@@ -41,9 +41,9 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         });
     let is_regular = matches!(entry_kind, ClientEntryKind::File);
 
-    // upstream: log.c:704 - '<' when am_sender && !am_server, '>' otherwise
+    // upstream: log.c:739-742 - '<' when `!local_server && *op == 's'`, '>' otherwise
     fields[0] = match event.kind() {
-        // upstream: log.c:704-710 - the transfer direction ('<'/'>') is only
+        // upstream: log.c:739-742 - the transfer direction ('<'/'>') is only
         // emitted for a regular-file data transfer (ITEM_TRANSFER). A
         // non-regular entry - including a --fake-super device/FIFO/socket
         // placeholder whose real type comes from the `%stat` xattr - carries
@@ -57,8 +57,8 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         }
         DataCopied => 'c',
         HardLink => 'h',
-        // upstream: generator.c:1039 - copy-dest reconstruction itemizes with
-        // ITEM_LOCAL_CHANGE, rendered as 'c' by log.c:707-708.
+        // upstream: generator.c:1178 - copy-dest reconstruction itemizes with
+        // ITEM_LOCAL_CHANGE, rendered as 'c' by log.c:739-740.
         ReferenceCopied => 'c',
         DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         MetadataReused
@@ -89,7 +89,7 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
 
     let change_set = event.change_set();
 
-    // upstream: log.c:730-734 - ITEM_MISSING_DATA fills attribute positions with '?'
+    // upstream: log.c:768-772 - ITEM_MISSING_DATA fills attribute positions with '?'
     if change_set.missing_data() {
         for slot in fields.iter_mut().skip(2) {
             *slot = '?';
@@ -102,7 +102,7 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         attr[0] = 'c';
     }
 
-    // upstream: log.c:706 - only regular files report size changes; symlinks,
+    // upstream: generator.c:527-528 - only regular files report size changes; symlinks,
     // devices, FIFOs, and sockets (including --fake-super placeholders that
     // virtualise to those types) never set the 's' column.
     if is_regular && change_set.size_changed() {
@@ -138,7 +138,7 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         attr[8] = 'x';
     }
 
-    // upstream: log.c:735-744 - when update type is '.', 'h', or 'c' and all
+    // upstream: log.c:773-783 - when update type is '.', 'h', or 'c' and all
     // attribute positions (2-10) are dots, collapse them to spaces.
     if matches!(fields[0], '.' | 'h' | 'c') && fields[2..].iter().all(|&ch| ch == '.') {
         for slot in fields[2..].iter_mut() {

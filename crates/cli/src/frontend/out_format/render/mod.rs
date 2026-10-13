@@ -57,14 +57,14 @@ impl OutFormat {
 
 /// Returns `true` when the event should be suppressed from `--out-format` output.
 ///
-/// Mirrors the upstream emit gate in `generator.c:582-583`: when `iflags == 0`
+/// Mirrors the upstream emit gate in `generator.c:588-589`: when `iflags == 0`
 /// (no significant attribute changes and the file was not transferred), the
 /// itemize line is suppressed UNLESS `INFO_GTE(NAME, 2)` is in effect (`-vv`
 /// or `--info=name2`). In the local-copy path the unchanged case corresponds
 /// to `MetadataReused` events whose `change_set` reports no changes and that
 /// were not newly created.
 ///
-/// upstream: generator.c:582-583 - emit when `iflags & (SIGNIFICANT_ITEM_FLAGS
+/// upstream: generator.c:588-589 - emit when `iflags & (SIGNIFICANT_ITEM_FLAGS
 /// | ITEM_REPORT_XATTR) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
 /// || (xname && *xname)`.
 fn should_suppress_event(
@@ -74,12 +74,12 @@ fn should_suppress_event(
 ) -> bool {
     if event.itemize_override().is_some() {
         // A remote transfer supplies a row only when the sender's own emit gate
-        // fired (generator.c:582-583 on the remote side), and it has no local
+        // fired (generator.c:588-589 on the remote side), and it has no local
         // `change_set` to re-derive the gate from - so never re-suppress it.
         return false;
     }
     if context.emit_unchanged() || context.itemize_repeated() {
-        // upstream: generator.c:582-583 - two separate arms force the itemize
+        // upstream: generator.c:588-589 - two separate arms force the itemize
         // line for unchanged entries: `INFO_GTE(NAME, 2)` (`-vv`, threaded as
         // `emit_unchanged`) and `stdout_format_has_i > 1` (`-ii`, threaded as
         // `itemize_repeated`). Either one surfaces dirs, files, and symlinks
@@ -109,7 +109,7 @@ fn should_suppress_event(
     // Placed below the `-vv` / `-ii` arms above so their existing
     // force-emission precedence is unchanged.
     //
-    // upstream: log.c:838-841 `maybe_log_item()` - the client-side emit gate is
+    // upstream: log.c:885-886 `maybe_log_item()` - the client-side emit gate is
     // `see_item || local_change || *buf || (S_ISDIR(file->mode) && significant_flags)`.
     // `see_item` needs `itemizing`, so a non-`%i` format drops attribute-only
     // FILE changes (the chmod case above), but the `S_ISDIR && significant_flags`
@@ -131,7 +131,7 @@ fn should_suppress_event(
         return true;
     }
 
-    // upstream: generator.c:582-583 + rsync.h:258 - a `--copy-dest`
+    // upstream: generator.c:588-589 + rsync.h:265 - a `--copy-dest`
     // reconstruction that exactly matches the basis is itemized with only
     // ITEM_LOCAL_CHANGE, which is excluded from `SIGNIFICANT_ITEM_FLAGS`. At
     // plain `-i` (NAME < 2, no `-ii`) the emit gate therefore drops the row.
@@ -154,7 +154,7 @@ fn should_suppress_event(
         return true;
     }
 
-    // upstream: generator.c:1119-1147 - a `--link-dest` symlink hard-linked
+    // upstream: generator.c:1297-1303 try_dests_non() - a `--link-dest` symlink hard-linked
     // from the basis (`hL`) carries only ITEM_LOCAL_CHANGE and no `=> leader`
     // xname, so it is suppressed at plain `-i`. Its `-> target` is the `%L`
     // field, not an xname, so it does not force emission.
@@ -169,7 +169,7 @@ fn should_suppress_event(
         return true;
     }
 
-    // upstream: hlink.c:215-227 + generator.c:581-583 - a hardlink alias is
+    // upstream: hlink.c:224-252 + generator.c:588-589 - a hardlink alias is
     // itemized via `itemize(..., ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0,
     // xname)`. The generator writes the row only when a significant attribute
     // flag is set, `INFO_GTE(NAME, 2)` (handled above via `emit_unchanged`),
@@ -179,7 +179,7 @@ fn should_suppress_event(
     //      xname) - a fresh `--link-dest`/basis hardlink.
     //   2. An already-shared-inode cluster alias (`is_hardlink_uptodate`): even
     //      though it carries a `=> leader` trailer for the `-vv` view, upstream
-    //      itemizes it with an EMPTY xname (hlink.c:219-221), so the plain-`-i`
+    //      itemizes it with an EMPTY xname (hlink.c:232-235), so the plain-`-i`
     //      gate drops it.
     // A hard-linked symlink's `-> target` is handled by the earlier Symlink rule.
     if !matches!(event.kind(), ClientEventKind::HardLink)
@@ -203,7 +203,7 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
     writer: &mut W,
 ) -> io::Result<()> {
     for event in events {
-        // upstream: generator.c:1721-1724 - a file skipped by `--update`
+        // upstream: generator.c:2135-2138 - a file skipped by `--update`
         // because the destination is newer never reaches the itemize call.
         // The generator emits `"%s is newer"` only at INFO_GTE(SKIP, 1) and
         // then `goto cleanup`, so the itemized row is suppressed regardless
@@ -215,7 +215,7 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
             }
             continue;
         }
-        // upstream: generator.c:1704-1719 - a file skipped by `--max-size` /
+        // upstream: generator.c:2118-2133 - a file skipped by `--max-size` /
         // `--min-size` never reaches the itemize call. The generator emits the
         // notice only at INFO_GTE(SKIP, 1) and then `goto cleanup`, so the
         // itemized row is suppressed regardless of `-i`/`-ii`.

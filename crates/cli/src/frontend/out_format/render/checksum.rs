@@ -28,14 +28,14 @@ enum SumByteOrder {
 
 /// Computes and formats the `%C` full-file checksum for an event.
 ///
-/// Mirrors upstream `log.c:685-697`: `%C` reports the negotiated checksum
+/// Mirrors upstream `log.c:717-732`: `%C` reports the negotiated checksum
 /// (`file_sum_nni` under `--checksum`, otherwise `xfer_sum_nni`) of a regular
 /// file, using the digest length and byte order of `util2.c:sum_as_hex`. A
 /// non-regular entry, an untransferred file without `--checksum`, or a
 /// non-canonical algorithm renders `sum_len * 2` spaces.
 ///
 /// The digest is recomputed over the committed destination. Every canonical
-/// algorithm's whole-file sum is unseeded (`checksum.c:558 sum_init` resets the
+/// algorithm's whole-file sum is unseeded (`checksum.c:576 sum_init()` resets the
 /// xxHash state with seed `0`; `file_checksum` likewise resets with `0`; MD5/MD4
 /// take no seed), so the recomputed bytes are identical to the `F_SUM` /
 /// `sender_file_sum` the protocol carries for the same content.
@@ -43,14 +43,14 @@ pub(super) fn format_full_checksum(event: &ClientEvent, context: &OutFormatConte
     let algorithm = context.full_checksum_algorithm();
     let spaces = || " ".repeat(hex_width(algorithm));
 
-    // upstream: log.c:686 - only a regular file (`S_ISREG`) carries a %C sum.
+    // upstream: log.c:719 - only a regular file (`S_ISREG`) carries a %C sum.
     if let Some(metadata) = event.metadata()
         && metadata.kind() != ClientEntryKind::File
     {
         return spaces();
     }
 
-    // upstream: log.c:687-690 - render `F_SUM` for any regular file under
+    // upstream: log.c:720-723 - render `F_SUM` for any regular file under
     // `--checksum`, else `sender_file_sum` only for a transferred file
     // (`ITEM_TRANSFER`, i.e. a `DataCopied` event).
     let emit_sum = context.always_checksum() || matches!(event.kind(), ClientEventKind::DataCopied);
@@ -58,8 +58,8 @@ pub(super) fn format_full_checksum(event: &ClientEvent, context: &OutFormatConte
         return spaces();
     }
 
-    // upstream: util2.c:98 - `sum_as_hex` returns NULL for a non-canonical
-    // algorithm, which `log.c:691-696` renders as spaces.
+    // upstream: util2.c:101-102 - `sum_as_hex` returns NULL for a non-canonical
+    // algorithm, which `log.c:725-731` renders as spaces.
     let Some(order) = canonical_order(algorithm) else {
         return spaces();
     };
@@ -93,7 +93,7 @@ fn render_hex(digest: &[u8], order: SumByteOrder) -> String {
 
 /// Returns the space-padded field width (`sum_len * 2`) for an algorithm.
 ///
-/// upstream: log.c:691-694 - the empty `%C` field is `csum_len_for_type(...) * 2`
+/// upstream: log.c:726-729 - the empty `%C` field is `csum_len_for_type(...) * 2`
 /// spaces wide.
 const fn hex_width(algorithm: StrongChecksumAlgorithm) -> usize {
     digest_len(algorithm) * 2
@@ -109,14 +109,14 @@ const fn digest_len(algorithm: StrongChecksumAlgorithm) -> usize {
         | StrongChecksumAlgorithm::Md4 => 16,
         StrongChecksumAlgorithm::Sha1 => 20,
         StrongChecksumAlgorithm::Xxh64 | StrongChecksumAlgorithm::Xxh3 => 8,
-        // upstream: checksum.c:217 - `csum_len_for_type(CSUM_NONE)` is 1.
+        // upstream: checksum.c:235-236 - `csum_len_for_type(CSUM_NONE)` is 1.
         StrongChecksumAlgorithm::None => 1,
     }
 }
 
 /// Byte order for an algorithm, or `None` when it is non-canonical.
 ///
-/// upstream: checksum.c:255-278 `canonical_checksum`.
+/// upstream: checksum.c:274-296 `canonical_checksum()`.
 const fn canonical_order(algorithm: StrongChecksumAlgorithm) -> Option<SumByteOrder> {
     match algorithm {
         StrongChecksumAlgorithm::Md5
