@@ -48,7 +48,9 @@ fn run_daemon_deny_rule_refuses_before_checking_the_password() {
     stream
         .write_all(b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n")
         .expect("send handshake response");
-    stream.write_all(b"protected\n").expect("send module request");
+    stream
+        .write_all(b"protected\n")
+        .expect("send module request");
     stream.flush().expect("flush module request");
     line.clear();
     reader.read_line(&mut line).expect("auth request");
@@ -69,7 +71,8 @@ fn run_daemon_deny_rule_refuses_before_checking_the_password() {
     assert!(result.is_ok());
     let log = fs::read_to_string(&log_path).expect("read daemon log");
     assert!(
-        log.contains("auth failed on module protected") && log.contains("for alice: denied by rule"),
+        log.contains("auth failed on module protected")
+            && log.contains("for alice: denied by rule"),
         "the :deny rule, not the password, must decide the refusal; log:\n{log}"
     );
 }

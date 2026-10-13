@@ -359,7 +359,6 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
-
     // upstream: authenticate.c:340-343 - the `:ro` / `:rw` suffix travels back
     // to rsync_module() via the `read_only` global; carry the parsed access
     // level so the caller can apply it to the session's effective `read only`.

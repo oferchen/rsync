@@ -153,10 +153,8 @@ fn set_auth_users_stores_empty_as_explicit_no_restriction() {
 #[test]
 fn set_auth_users_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder
-        .set_auth_users(vec![AuthUser::new("alice".to_owned())]);
-    builder
-        .set_auth_users(vec![AuthUser::new("bob".to_owned())]);
+    builder.set_auth_users(vec![AuthUser::new("alice".to_owned())]);
+    builder.set_auth_users(vec![AuthUser::new("bob".to_owned())]);
     assert_eq!(
         builder.auth_users,
         Some(vec![AuthUser::new("bob".to_owned())])
