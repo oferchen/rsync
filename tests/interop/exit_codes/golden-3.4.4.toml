@@ -1,0 +1,18 @@
+version = "3.4.4"
+
+[exit_codes]
+permission_denied_read = 23
+conflicting_options = 1
+invalid_option = 1
+max_delete_limit = 1
+daemon_connection_refused = 10
+dry_run_success = 0
+partial_transfer = 23
+exclude_all_files = 0
+protocol_version_mismatch = 2
+remote_not_found = 14
+missing_source = 23
+help_requested = 0
+version_requested = 0
+source_not_found = 23
+permission_denied_write = 3

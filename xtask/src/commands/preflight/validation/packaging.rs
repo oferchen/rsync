@@ -151,18 +151,18 @@ fn validate_bin_manifest_packaging(
     )?;
 
     let rpm = metadata
-        .get("rpm")
+        .get("generate-rpm")
         .and_then(Value::as_table)
         .ok_or_else(|| {
             validation_error(format!(
-                "{} missing [package.metadata.rpm] table",
+                "{} missing [package.metadata.generate-rpm] table",
                 manifest_path.display()
             ))
         })?;
     ensure(
         rpm_assets_include(rpm, daemon_config.as_str()),
         format!(
-            "{} package.metadata.rpm.assets must install {} with config=true",
+            "{} package.metadata.generate-rpm.assets must install {} with config=true",
             manifest_path.display(),
             branding.daemon_config.display()
         ),
@@ -170,7 +170,7 @@ fn validate_bin_manifest_packaging(
     ensure(
         rpm_assets_include(rpm, daemon_secrets.as_str()),
         format!(
-            "{} package.metadata.rpm.assets must install {} with config=true",
+            "{} package.metadata.generate-rpm.assets must install {} with config=true",
             manifest_path.display(),
             branding.daemon_secrets.display()
         ),
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn rpm_asset_helper_requires_config_flag() {
         let manifest = r#"
-            [package.metadata.rpm]
+            [package.metadata.generate-rpm]
             assets = [
                 { path = "src", dest = "/etc/oc-rsync/oc-rsyncd.conf", mode = "0644", config = true },
                 { path = "src2", dest = "/etc/oc-rsync/oc-rsyncd.secrets", mode = "0600", config = true }
@@ -420,7 +420,7 @@ mod tests {
             .and_then(Value::as_table)
             .and_then(|package| package.get("metadata"))
             .and_then(Value::as_table)
-            .and_then(|metadata| metadata.get("rpm"))
+            .and_then(|metadata| metadata.get("generate-rpm"))
             .and_then(Value::as_table)
             .expect("rpm table present");
 
@@ -428,7 +428,7 @@ mod tests {
         assert!(rpm_assets_include(rpm, "/etc/oc-rsync/oc-rsyncd.secrets"));
 
         let manifest_missing_flag = r#"
-            [package.metadata.rpm]
+            [package.metadata.generate-rpm]
             assets = [
                 { path = "src", dest = "/etc/oc-rsync/oc-rsyncd.conf", mode = "0644" }
             ]
@@ -440,7 +440,7 @@ mod tests {
             .and_then(Value::as_table)
             .and_then(|package| package.get("metadata"))
             .and_then(Value::as_table)
-            .and_then(|metadata| metadata.get("rpm"))
+            .and_then(|metadata| metadata.get("generate-rpm"))
             .and_then(Value::as_table)
             .expect("rpm table present");
         assert!(!rpm_assets_include(rpm, "/etc/oc-rsync/oc-rsyncd.conf"));

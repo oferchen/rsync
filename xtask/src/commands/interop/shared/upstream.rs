@@ -4,7 +4,7 @@ use crate::error::{TaskError, TaskResult};
 use std::path::{Path, PathBuf};
 
 /// Supported upstream rsync versions for interop testing.
-pub const UPSTREAM_VERSIONS: &[&str] = &["3.0.9", "3.1.3", "3.4.1"];
+pub const UPSTREAM_VERSIONS: &[&str] = &["3.0.9", "3.1.3", "3.4.4", "3.5.0", "3.5.1"];
 
 /// Root under which `tools/ci/run_interop.sh` installs the pinned upstream
 /// builds, one `<version>/bin/rsync` per entry. This is the single place any
