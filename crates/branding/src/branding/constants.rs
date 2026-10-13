@@ -16,7 +16,10 @@ pub const fn brand_override_env_var() -> &'static str {
 #[doc(alias = "rsync")]
 pub const UPSTREAM_CLIENT_PROGRAM_NAME: &str = workspace::metadata().legacy_client_program_name();
 
-/// Canonical program name used by upstream `rsync` daemon releases.
+/// Upstream-compatible daemon program name (`rsyncd`).
+///
+/// Upstream itself ships a single `rsync` binary that runs the daemon via
+/// `rsync --daemon`.
 #[doc(alias = "rsync")]
 pub const UPSTREAM_DAEMON_PROGRAM_NAME: &str = workspace::metadata().legacy_daemon_program_name();
 
