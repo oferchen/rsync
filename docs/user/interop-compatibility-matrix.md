@@ -11,12 +11,12 @@ request and nightly.
 
 | Upstream Version | Protocol | Daemon Push | Daemon Pull | SSH | Status |
 |------------------|----------|-------------|-------------|-----|--------|
-| rsync 2.6.9      | 28-29    | Pass        | Pass        | -   | Non-blocking |
-| rsync 3.0.9      | 30       | Pass        | Pass        | -   | Required CI |
-| rsync 3.1.3      | 31       | Pass        | Pass        | -   | Required CI |
-| rsync 3.4.1      | 32       | Pass        | Pass        | Pass | Required CI |
-| rsync 3.4.2      | 32       | Pass        | Pass        | Pass | Required CI |
-| rsync 3.4.3      | 32       | Pass        | Pass        | Pass | Required CI |
+| rsync 2.6.9     | 28-29    | Pass        | Pass        | -   | Non-blocking |
+| rsync 3.0.9     | 30       | Pass        | Pass        | -   | Required CI |
+| rsync 3.1.3     | 31       | Pass        | Pass        | -   | Required CI |
+| rsync 3.4.4     | 32       | Pass        | Pass        | Pass | Required CI |
+| rsync 3.5.0     | 32       | Pass        | Pass        | Pass | Required CI |
+| rsync 3.5.1     | 33       | Pass        | Pass        | Pass | Required CI |
 
 **Legend**: "Push" = oc-rsync client sends to upstream daemon. "Pull" =
 upstream client pulls from oc-rsync daemon. Both directions are tested for
@@ -26,26 +26,27 @@ every version.
 
 ## Protocol Version Support
 
-oc-rsync supports protocol versions 28 through 32. It advertises protocol 32
+oc-rsync supports protocol versions 28 through 33. It advertises protocol 33
 and negotiates downward when connecting to older peers.
 
 | Protocol | Introduced In | Default Checksum | Compat Flags | Inc. Recurse | Status |
 |----------|---------------|------------------|--------------|--------------|--------|
-| 28       | rsync 2.6.0   | MD4              | Legacy 4-byte LE | No       | Supported |
-| 29       | rsync 2.6.6   | MD4              | Legacy 4-byte LE | No       | Supported |
+| 28       | rsync 2.6.0   | MD4              | Legacy 4-byte LE | No           | Supported |
+| 29       | rsync 2.6.6   | MD4              | Legacy 4-byte LE | No           | Supported |
 | 30       | rsync 3.0.0   | MD5              | Varint       | Yes          | Supported |
 | 31       | rsync 3.1.0   | MD5              | Varint       | Yes          | Supported |
-| 32       | rsync 3.4.0   | MD5              | Varint       | Yes          | Supported (primary) |
+| 32       | rsync 3.4.0   | MD5              | Varint       | Yes          | Supported |
+| 33       | rsync 3.5.1   | MD5              | Varint       | Yes          | Supported (primary) |
 
 ### Forced Protocol Testing
 
-CI forces each protocol version (28-32) against the newest upstream binary
-(3.4.3 or 3.4.2) to verify backward compatibility. Results:
+CI forces each protocol version (28-32) against each extended-matrix upstream
+binary (3.4.4, 3.5.0, 3.5.1) to verify backward compatibility. Results:
 
 | Forced Protocol | Transfer | Delete | Compress | Hardlinks | Filters | Status |
 |-----------------|----------|--------|----------|-----------|---------|--------|
 | `--protocol=28` | Pass     | Pass   | Pass     | Pass      | Limited | Supported |
-| `--protocol=29` | Pass     | Pass   | Pass     | Pass      | Limited | Supported |
+| `--protocol=29` | Pass     | Pass   | Pass     | Pass      | Pass    | Supported |
 | `--protocol=30` | Pass     | Pass   | Pass     | Pass      | Pass    | Supported |
 | `--protocol=31` | Pass     | Pass   | Pass     | Pass      | Pass    | Supported |
 | `--protocol=32` | Pass     | Pass   | Pass     | Pass      | Pass    | Supported |
@@ -72,47 +73,47 @@ transfers. Without it, transfers fall back to MD5.
 ## Feature Compatibility by Upstream Version
 
 Each feature below is tested bidirectionally: upstream client pushing to
-oc-rsync daemon, and oc-rsync client pushing to upstream daemon. Rsync 3.4.2
-and 3.4.3 use the same protocol (32) as 3.4.1 and pass the identical test
-matrix.
+oc-rsync daemon, and oc-rsync client pushing to upstream daemon. The 3.4.x
+series shares protocol 32; 3.4.4 supersedes 3.4.1/3.4.2/3.4.3 as the only
+tracked 3.4.x cell.
 
 ### Transfer Modes
 
-| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
-|---------|-------|-------|-------|-------|
-| Archive mode | `-av` | Pass | Pass | Pass |
-| Recursive only | `-rv` | Pass | Pass | Pass |
-| Whole file | `-avW` | Pass | Pass | Pass |
-| Whole file replace | `-avW` (stale dest) | - | - | Pass |
-| Delta transfer | `-av --no-whole-file -I` | Pass | Pass | Pass |
-| Inplace | `-av --inplace` | Pass | Pass | Pass |
-| Compression (zlib) | `-avz` | Pass | Pass | Pass |
-| Compress level 1 | `-avz --compress-level=1` | - | - | Pass |
-| Compress level 9 | `-avz --compress-level=9` | - | - | Pass |
-| Compressed delta | `-avz --no-whole-file -I` | - | - | Pass |
-| Compress zstd | `-avz --compress-choice=zstd` | - | - | Pass (1) |
-| Compress lz4 | `-avz --compress-choice=lz4` | - | - | Pass (1) |
-| Sparse files | `-avS` | Pass | Pass | Pass |
-| Append mode | `-av --append` | - | - | Pass |
-| Partial transfer | `-av --partial` | - | - | Pass |
-| Bandwidth limit | `-av --bwlimit=10000` | - | - | Pass |
-| Delay updates | `-av --delay-updates` | - | - | Pass |
-| Dry run | `-avn` | - | - | Pass |
-| Inc. recursive | `-av --inc-recursive` | Pass | Pass | Pass |
+| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x | 3.5.0 | 3.5.1 |
+|---------|-------|-------|-------|-------|-------|-------|
+| Archive mode | `-av` | Pass | Pass | Pass | Pass | Pass |
+| Recursive only | `-rv` | - | - | Pass | Pass | Pass |
+| Whole file | `-avW` | Pass | Pass | Pass | Pass | Pass |
+| Whole file replace | `-avW (stale dest)` | - | - | Pass | Pass | Pass |
+| Delta transfer | `-av --no-whole-file -I` | Pass | Pass | Pass | Pass | Pass |
+| Inplace | `-av --inplace` | Pass | Pass | Pass | Pass | Pass |
+| Compression (zlib) | `-avz` | Pass | Pass | Pass | Pass | Pass |
+| Compress level 1 | `-avz --compress-level=1` | - | - | Pass | Pass | Pass |
+| Compress level 9 | `-avz --compress-level=9` | - | - | Pass | Pass | Pass |
+| Compressed delta | `-avz --no-whole-file -I` | - | - | Pass | Pass | Pass |
+| Compress zstd | `-avz --compress-choice=zstd` | - | - | Pass | Pass | Pass |
+| Compress lz4 | `-avz --compress-choice=lz4` | - | - | Pass | Pass | Pass |
+| Sparse files | `-avS` | - | - | Pass | Pass | Pass |
+| Append mode | `-av --append` | - | - | Pass | Pass | Pass |
+| Partial transfer | `-av --partial` | - | - | Pass | Pass | Pass |
+| Bandwidth limit | `-av --bwlimit=10000` | - | - | Pass | Pass | Pass |
+| Delay updates | `-av --delay-updates` | - | - | Pass | Pass | Pass |
+| Dry run | `-avn` | - | - | Pass | Pass | Pass |
+| Inc. recursive | `-av --inc-recursive` | Pass | Pass | Pass | Pass | Pass |
 
 (1) Requires upstream built with zstd/lz4 support (`libzstd-dev`/`liblz4-dev`
 at configure time). Skipped when upstream lacks the codec.
 
 ### Metadata and Attributes
 
-| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
-|---------|-------|-------|-------|-------|
-| Permissions | `-rlpv` | Pass | Pass | Pass |
-| Numeric IDs | `-av --numeric-ids` | Pass | Pass | Pass |
-| Devices | `-avD` | - | - | Pass |
-| ACLs | `-avA` | Known limitation | Known limitation | Known limitation |
-| Extended attrs | `-avX` | - | - | Known limitation |
-| Itemize changes | `-avi` | Pass | Pass | Pass |
+| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x | 3.5.0 | 3.5.1 |
+|---------|-------|-------|-------|-------|-------|-------|
+| Permissions | `-rlpv` | Pass | Pass | Pass | Pass | Pass |
+| Numeric IDs | `-av --numeric-ids` | Pass | Pass | Pass | Pass | Pass |
+| Devices | `-avD` | - | - | Pass | Pass | Pass |
+| ACLs | `-avA` | Pass | Pass | Pass | Pass | Pass |
+| Extended attrs | `-avX` | - | - | - | - | - |
+| Itemize changes | `-avi` | Pass | Pass | Pass | Pass | Pass |
 
 ACL and xattr limitations: transfer succeeds but metadata fidelity depends
 on upstream build options (`--enable-acl-support`, `--enable-xattr-support`)
@@ -120,62 +121,62 @@ and platform support.
 
 ### Links
 
-| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
-|---------|-------|-------|-------|-------|
-| Symlinks | `-rlptv` | Pass | Pass | Pass |
-| Hard links | `-avH` | Pass | Pass | Pass |
-| Copy links | `-avL` | - | - | Pass |
-| Safe links | `-rlptv --safe-links` | - | - | Pass |
-| Hardlinks + relative | `-avHR` | - | - | Pass |
-| Hardlinks + delete | `-avH --delete` | - | - | Pass |
-| Hardlinks + numeric IDs | `-avH --numeric-ids` | - | - | Pass |
-| Hardlinks + checksum | `-avHc` | - | - | Pass |
-| Hardlinks + existing | `-avH --existing` | - | - | Pass |
-| Hardlinks + inc. recurse | `-avH --inc-recursive` | - | - | Pass |
-| Cross-dir hardlinks | `-avH --inc-recursive` | - | - | Pass |
+| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x | 3.5.0 | 3.5.1 |
+|---------|-------|-------|-------|-------|-------|-------|
+| Symlinks | `-rlptv` | Pass | Pass | Pass | Pass | Pass |
+| Hard links | `-avH` | Pass | Pass | Pass | Pass | Pass |
+| Copy links | `-avL` | - | - | Pass | Pass | Pass |
+| Safe links | `-rlptv --safe-links` | - | - | Pass | Pass | Pass |
+| Hardlinks + relative | `-avHR` | - | - | Pass | Pass | Pass |
+| Hardlinks + delete | `-avH --delete` | - | - | Pass | Pass | Pass |
+| Hardlinks + numeric IDs | `-avH --numeric-ids` | - | - | Pass | Pass | Pass |
+| Hardlinks + checksum | `-avHc` | - | - | Pass | Pass | Pass |
+| Hardlinks + existing | `-avH --existing` | - | - | Pass | Pass | Pass |
+| Hardlinks + inc. recurse | `-avH --inc-recursive` | - | - | Pass | Pass | Pass |
+| Cross-dir hardlinks | `-avH --inc-recursive` | - | - | Pass | Pass | Pass |
 
 ### Comparison and Selection
 
-| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
-|---------|-------|-------|-------|-------|
-| Checksum mode | `-avc` | Pass | Pass | Pass |
-| Checksum skip (identical) | `-avc` (pre-populated) | - | - | Pass |
-| Checksum content detect | `-avc` (same size, diff content) | - | - | Pass |
-| Size only | `-av --size-only` | - | - | Pass |
-| Ignore times | `-av --ignore-times` | - | - | Pass |
-| Update mode | `-av --update` | - | - | Pass |
-| Existing only | `-av --existing` | - | - | Pass |
-| One file system | `-avx` | - | - | Pass |
+| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x | 3.5.0 | 3.5.1 |
+|---------|-------|-------|-------|-------|-------|-------|
+| Checksum mode | `-avc` | Pass | Pass | Pass | Pass | Pass |
+| Checksum skip (identical) | `-avc (pre-populated)` | - | - | Pass | Pass | Pass |
+| Checksum content detect | `-avc (same size, diff content)` | - | - | Pass | Pass | Pass |
+| Size only | `-av --size-only` | - | - | Pass | Pass | Pass |
+| Ignore times | `-av --ignore-times` | - | - | Pass | Pass | Pass |
+| Update mode | `-av --update` | - | - | Pass | Pass | Pass |
+| Existing only | `-av --existing` | - | - | Pass | Pass | Pass |
+| One file system | `-avx` | - | - | Pass | Pass | Pass |
 
 ### Delete and Backup
 
-| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
-|---------|-------|-------|-------|-------|
-| Delete | `-av --delete` | Pass | Pass | Pass |
-| Delete after | `-av --delete-after` | - | - | Pass |
-| Delete during | `-av --delete-during` | - | - | Pass |
-| Delete + inc. recurse | `-av --inc-recursive --delete` | - | - | Pass |
-| Max delete | `-av --delete --max-delete=1` | - | - | Pass |
-| Backup | `-av --backup` | - | - | Pass |
-| Backup dir | `-av --backup --backup-dir=.backups` | - | - | Pass |
-| Compare dest | `-av --compare-dest=ref` | - | - | Pass |
-| Link dest | `-av --link-dest=ref` | - | - | Pass |
+| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x | 3.5.0 | 3.5.1 |
+|---------|-------|-------|-------|-------|-------|-------|
+| Delete | `-av --delete` | Pass | Pass | Pass | Pass | Pass |
+| Delete after | `-av --delete-after` | - | - | Pass | Pass | Pass |
+| Delete during | `-av --delete-during` | - | - | Pass | Pass | Pass |
+| Delete + inc. recurse | `-av --inc-recursive --delete` | - | - | Pass | Pass | Pass |
+| Max delete | `-av --delete --max-delete=1` | - | - | Pass | Pass | Pass |
+| Backup | `-av --backup` | - | - | Pass | Pass | Pass |
+| Backup dir | `-av --backup --backup-dir=.backups` | - | - | Pass | Pass | Pass |
+| Compare dest | `-av --compare-dest=ref` | - | - | Pass | Pass | Pass |
+| Link dest | `-av --link-dest=ref` | - | - | Pass | Pass | Pass |
 
 ### Filters and Paths
 
-| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
-|---------|-------|-------|-------|-------|
-| Exclude pattern | `-av --exclude=*.log` | Pass | Pass | Pass |
-| Include/exclude precedence | `--include=*.txt --exclude=*` | - | - | Pass |
-| Filter rule | `-av --exclude=*.tmp` | - | - | Pass |
-| Merge filter | `-av -FF` (.rsync-filter) | - | - | Pass |
-| Exclude from file | `-av --exclude-from=file` | - | - | Pass |
-| Relative paths | `-avR` | Pass | Pass | Pass |
-| Files from | `-av --files-from=list` | - | - | Pass |
-| Delete + exclude | `-av --delete --exclude=*.log` | - | - | Pass |
-| Delete excluded | `-av --delete-excluded` | - | - | Pass |
-| Delete + P filter (protect) | `-av --delete -f 'P *.log'` | - | - | Pass |
-| Delete + R filter (risk) | `-av --delete -f 'R *.log'` | - | - | Pass |
+| Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x | 3.5.0 | 3.5.1 |
+|---------|-------|-------|-------|-------|-------|-------|
+| Exclude pattern | `-av --exclude=*.log` | Pass | Pass | Pass | Pass | Pass |
+| Include/exclude precedence | `--include=*.txt --exclude=*` | - | - | Pass | Pass | Pass |
+| Filter rule | `-av --exclude=*.tmp` | - | - | Pass | Pass | Pass |
+| Merge filter | `-av -FF (.rsync-filter)` | - | - | Pass | Pass | Pass |
+| Exclude from file | `-av --exclude-from=file` | - | - | Pass | Pass | Pass |
+| Relative paths | `-avR` | Pass | Pass | Pass | Pass | Pass |
+| Files from | `-av --files-from=list` | - | - | Pass | Pass | Pass |
+| Delete + exclude | `-av --delete --exclude=*.log` | - | - | - | - | - |
+| Delete excluded | `-av --delete-excluded` | - | - | - | - | - |
+| Delete + P filter (protect) | `-av --delete -f 'P *.log'` | - | - | - | - | - |
+| Delete + R filter (risk) | `-av --delete -f 'R *.log'` | - | - | - | - | - |
 
 ---
 
@@ -187,8 +188,8 @@ Every version is tested in both directions on every CI run:
 
 | Direction | Description | Versions Tested |
 |-----------|-------------|-----------------|
-| oc-rsync client -> upstream daemon | oc-rsync pushes files to upstream rsync daemon | 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3 |
-| Upstream client -> oc-rsync daemon | Upstream rsync pulls files from oc-rsync daemon | 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3 |
+| oc-rsync client -> upstream daemon | oc-rsync pushes files to upstream rsync daemon | 2.6.9, 3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1 |
+| Upstream client -> oc-rsync daemon | Upstream rsync pulls files from oc-rsync daemon | 2.6.9, 3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1 |
 | rsync 2.6.9 client -> oc-rsync daemon | 2.6.9 as client, oc-rsync as daemon (RP28.e.2) | 2.6.9 |
 | oc-rsync client -> rsync 2.6.9 daemon | oc-rsync as client, 2.6.9 as daemon (RP28.f.2) | 2.6.9 |
 
@@ -231,8 +232,8 @@ these files correctly.
 
 | Platform | Workflow | Interop Scope | Status |
 |----------|----------|---------------|--------|
-| Linux x86_64 (Ubuntu) | `ci.yml`, `_interop.yml` | Full multi-version (2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3), SSH, daemon, standalone | Required |
-| Linux x86_64 (Ubuntu) | `interop-validation.yml` | Exit codes, messages, behavior, batch, filters, compression, inc. recurse | Required |
+| Linux x86_64 (Ubuntu) | `ci.yml`, `_interop.yml` | Full multi-version (2.6.9, 3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1), SSH, daemon, standalone | Required |
+| Linux x86_64 (Ubuntu) | `interop-validation.yml` | Exit codes, messages, behavior, batch, filters, compression, INC_RECURSE | Required |
 | macOS (latest) | `_interop-macos.yml` | Smoke: push, pull, quick-check, delta, list-only (Homebrew rsync) | Required |
 | Windows (latest) | `_interop-windows.yml` | Smoke: push, pull, quick-check, delta (MSYS2 rsync, best-effort) | Non-blocking |
 
@@ -302,15 +303,16 @@ specific edge cases and advanced features:
 | Batch with compression | Compressed batch write/read roundtrip | Pass |
 | Batch framing (multifile) | Multi-file batch framing correctness | Pass |
 | Compressed batch delta | Delta transfers in compressed batch files | Pass |
-| `--info=progress2` | Progress output format | Known limitation |
-| 2 GB+ file transfer | Large file transfer via daemon | Known limitation |
-| File vanished | `--files-from` with vanished files | Known limitation |
+| Upstream compressed batch self-roundtrip | Upstream rsync's own compressed delta batch read | Known limitation |
+| `--info=progress2` | Progress output format | Pass |
+| 2 GB+ file transfer | Large file transfer via daemon | Pass |
+| File vanished | `--files-from` with vanished files | Pass |
 | Copy unsafe + safe links | Symlink safety interaction | Pass |
 | Pre/post xfer exec | Daemon hooks | Pass |
 | Read-only module | Module permission enforcement | Pass |
 | Wrong password auth | Authentication rejection | Pass |
-| `--iconv` charset | Character set conversion | Known limitation |
-| `--iconv` upstream interop | iconv interop with upstream daemon | Known limitation |
+| `--iconv` charset | Character set conversion | Pass |
+| `--iconv` upstream interop | iconv interop with upstream daemon | Pass |
 | Hardlinks comprehensive | Deep hardlink scenarios | Pass |
 | Inc. recurse comprehensive | Deep INC_RECURSE scenarios | Pass |
 | Inc. recurse sender push | Sender-side INC_RECURSE | Pass |
@@ -335,6 +337,7 @@ specific edge cases and advanced features:
 | Daemon filter (directive types) | All daemon filter directive types | Pass |
 | Daemon filter (overlapping) | Overlapping daemon filter rules | Pass |
 | Daemon filter (from files) | Daemon filter `merge` from files | Pass |
+| Daemon filter (include from files) | Daemon filter `include merge` from files | Pass |
 | Daemon filter (doublestar) | `**` patterns in daemon filters | Pass |
 | Daemon filter (charclass) | Character class `[...]` in daemon filters | Pass |
 | Daemon filter (question mark) | `?` wildcard in daemon filters | Pass |
@@ -342,6 +345,32 @@ specific edge cases and advanced features:
 | Link dest (standalone) | `--link-dest` with daemon | Pass |
 | Copy dest (standalone) | `--copy-dest` with daemon | Pass |
 | Numeric IDs (standalone) | `--numeric-ids` with daemon | Pass |
+| Delete after (standalone) | `--delete-after` standalone scenario | Pass |
+| Hardlinks (standalone) | Hardlink preservation standalone | Pass |
+| Sparse (standalone) | Sparse file standalone | Pass |
+| Whole file (standalone) | Whole file standalone | Pass |
+| Dry run (standalone) | Dry run standalone | Pass |
+| Filter rules (standalone) | Filter rule standalone | Pass |
+| No-change upstream | Upstream no-op re-run | Pass |
+| No-change oc-rsync | oc-rsync no-op re-run | Pass |
+| Inplace (standalone) | Inplace standalone | Pass |
+| Append (standalone) | Append standalone | Pass |
+| Delay updates (standalone) | Delay updates standalone | Pass |
+| Compress level (standalone) | Compress level standalone | Pass |
+| Files from (standalone) | Files from standalone | Pass |
+| Include/exclude precedence (standalone) | Include/exclude precedence standalone | Pass |
+| Delete with filters (standalone) | Delete with filter standalone | Pass |
+| Delete filter protect (standalone) | P filter protect standalone | Pass |
+| Delete filter risk (standalone) | R filter risk standalone | Pass |
+| FF filter shortcut | FF shorthand for -F -F | Pass |
+| ACL/xattr graceful degradation | ACL/xattr graceful degradation with 3.0.9 | Pass |
+| Symlinks upstream | Upstream symlink interop | Pass |
+| Symlinks oc-rsync | oc-rsync symlink interop | Pass |
+| Delete excluded (standalone) | --delete-excluded standalone | Pass |
+| `--iconv` local SSH | iconv via SSH loopback | Pass |
+| Compress via SSH | Compression over SSH transport | Pass |
+| Upstream compressed batch read | oc-rsync reads upstream compressed batch | Pass |
+| oc-rsync compressed batch read | upstream reads oc-rsync compressed batch | Pass |
 
 ---
 
@@ -375,7 +404,7 @@ specific edge cases and advanced features:
 
 | Workflow | File | Scope |
 |----------|------|-------|
-| CI (interop job) | `ci.yml` + `_interop.yml` | Full bidirectional daemon interop (3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3), SSH push/pull, protocol forcing (28-32), standalone tests, 2.6.9 push/pull cells, upstream testsuite |
+| CI (interop job) | `ci.yml` + `_interop.yml` | Full bidirectional daemon interop (3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1), SSH push/pull, protocol forcing (28-32), standalone tests, 2.6.9 push/pull cells, upstream testsuite |
 | Interop Validation | `interop-validation.yml` | Exit code validation, message format validation, behavior comparison, batch mode, filter rules, compression codecs, INC_RECURSE. Runs on push, PR, and nightly schedule |
 | macOS Interop | `_interop-macos.yml` | Portable smoke harness against Homebrew rsync |
 | Windows Interop | `_interop-windows.yml` | Portable smoke harness against MSYS2 rsync (best-effort) |
@@ -404,6 +433,12 @@ OC_RSYNC=target/release/oc-rsync UPSTREAM_RSYNC=rsync \
 
 # Build upstream binaries without running tests
 bash tools/ci/run_interop.sh build-only
+
+# Regenerate this matrix from a CI log file
+python3 tools/ci/regenerate_interop_matrix.py interop-output.log
+
+# Regenerate from the latest GitHub Actions run
+python3 tools/ci/regenerate_interop_matrix.py --from-gh-run
 ```
 
 Upstream rsync binaries are obtained automatically via multi-tier fallback:
