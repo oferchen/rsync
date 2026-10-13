@@ -1222,3 +1222,40 @@ fn modern_ndx_still_accepts_an_ordinary_short_diff() {
         "prev_positive starts at -1, so a diff of 1 yields index 0"
     );
 }
+
+/// Fuzz reproducer (ndx_codec, `fe ff ff ff ff`): a peer may send index
+/// `MAX_INT32` in the full 4-byte form, which upstream's read_ndx() accepts.
+/// Echoing it back through a fresh encoder (prev_positive = -1) overflows the
+/// int32 diff; upstream wraps to a negative diff and picks the full 4-byte
+/// form (io.c:write_ndx()), so the encoder must do the same, not panic.
+#[test]
+fn modern_ndx_echoes_peer_max_index_without_overflow() {
+    let wire = [0xFEu8, 0xFF, 0xFF, 0xFF, 0xFF];
+    let decoded = ModernNdxCodec::new(32)
+        .read_ndx(&mut Cursor::new(&wire[..]))
+        .expect("upstream accepts MAX_INT32");
+    assert_eq!(decoded, i32::MAX);
+
+    let mut codec_out = Vec::new();
+    ModernNdxCodec::new(32)
+        .write_ndx(&mut codec_out, decoded)
+        .unwrap();
+    let mut state_out = Vec::new();
+    state_write_ndx(&mut NdxState::new(), &mut state_out, decoded).unwrap();
+
+    assert_eq!(codec_out, wire, "full 4-byte form, as upstream emits it");
+    assert_eq!(state_out, wire, "NdxState must encode identically");
+}
+
+/// The negative branch negates before diffing; `i32::MIN` has no int32
+/// magnitude, and upstream's `ndx = -ndx` wraps it back to itself. The encoder
+/// must not panic on it.
+#[test]
+fn modern_ndx_write_of_i32_min_does_not_panic() {
+    let mut out = Vec::new();
+    ModernNdxCodec::new(32)
+        .write_ndx(&mut out, i32::MIN)
+        .unwrap();
+    state_write_ndx(&mut NdxState::new(), &mut Vec::new(), i32::MIN).unwrap();
+    assert_eq!(out[0], 0xFF, "negative indices lead with 0xFF");
+}
