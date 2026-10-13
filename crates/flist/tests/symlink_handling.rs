@@ -5,11 +5,14 @@
 //! `--copy-links` (follow symlinks) and default (preserve symlinks) modes.
 //!
 //! Upstream rsync handles symlinks via:
-//! - `readlink_stat()` in flist.c line 207-234
-//! - `link_stat()` in flist.c line 455-473
-//! - Cycle detection to prevent infinite loops
+//! - `readlink_stat()` in flist.c line 482
+//! - `link_stat()` in flist.c line 511
 //!
-//! Reference: rsync 3.4.1 flist.c
+//! Deviation from upstream: the walker's canonical-path cycle detection is
+//! oc-only; upstream keeps no visited set and stops a symlink loop only when
+//! a path lookup fails (for example with `ELOOP`).
+//!
+//! Reference: rsync 3.5.1 flist.c
 //!
 //! Note: These tests are Unix-only as symlinks behave differently on Windows.
 
@@ -250,8 +253,8 @@ fn symlink_preserves_relative_paths_when_following() {
 /// Verifies that symlink cycles are detected and prevented.
 ///
 /// When a symlink points back to an ancestor directory, the walker must
-/// detect this to prevent infinite loops. This matches upstream rsync's
-/// behavior using canonical path tracking.
+/// detect this to prevent infinite loops. It uses canonical path tracking,
+/// which upstream does not have.
 #[test]
 fn symlink_cycle_to_self_detected() {
     let temp = test_support::create_tempdir();

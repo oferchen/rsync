@@ -51,8 +51,8 @@ impl FstatResult {
     /// Constructs from the typed `fstatat(2)` result `fast_io` returns.
     pub(crate) fn from_at_metadata(at: &fast_io::AtMetadata) -> Self {
         // dev_t is u64 on Linux but i32 on macOS; `AtMetadata::rdev` widens by
-        // sign extension, so reject a negative bit pattern the same way the
-        // previous `i32::try_into().unwrap_or_default()` did.
+        // sign extension, so a negative bit pattern fails the u32 conversion
+        // and maps to 0.
         #[cfg(target_os = "linux")]
         let rdev = at.rdev();
         #[cfg(not(target_os = "linux"))]

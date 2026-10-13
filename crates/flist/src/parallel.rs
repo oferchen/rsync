@@ -16,10 +16,10 @@ use crate::file_list_walker::FileListWalker;
 
 /// Collects all file list entries sequentially from the walker.
 ///
-/// Enumerates all paths using the sequential walker (traversal order
-/// must be deterministic for protocol compatibility). For parallel
-/// metadata fetching, use [`collect_paths_then_metadata_parallel`] or
-/// [`collect_with_batched_stats`] instead.
+/// Enumerates all paths using the sequential walker, so traversal order
+/// is deterministic. For parallel metadata fetching, use
+/// [`collect_paths_then_metadata_parallel`] or [`collect_with_batched_stats`]
+/// instead.
 ///
 /// # Errors
 ///
@@ -37,10 +37,13 @@ use crate::file_list_walker::FileListWalker;
 /// let entries = collect_entries(walker)?;
 /// println!("Found {} entries", entries.len());
 /// ```
-/// Enumeration is silent: upstream announces a completed file list only via the
-/// `sending incremental file list` FCLIENT banner (flist.c:2488) or the
-/// `building file list ... done` progress pair (flist.c:2486/2764), never as an
-/// entry count, so a count emitted here would have no upstream analog on stdout.
+///
+/// Enumeration is silent: upstream announces a file list only via the
+/// `sending incremental file list` FCLIENT banner (`flist.c:2764`,
+/// `send_file_list()`) or the `building file list ... done` progress pair
+/// (`start_filelist_progress()` at `flist.c:2762`, `finish_filelist_progress()`
+/// at `flist.c:3040`), never as an entry count, so a count emitted here would
+/// have no upstream analog on stdout.
 pub fn collect_entries(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
     walker.collect()
 }
@@ -124,9 +127,9 @@ pub fn collect_paths_then_metadata_parallel(
 ) -> Result<Vec<FileListEntry>, Vec<(PathBuf, std::io::Error)>> {
     let paths = collect_paths_recursive(&root, &root, follow_symlinks);
 
-    // Ordering: wire protocol requires file list sorted by name for deterministic indices.
-    // Parallel metadata fetch does not preserve traversal order, so sort_file_entries()
-    // is applied after collection. Omitting the sort breaks file-list index agreement.
+    // Ordering: rayon's indexed collect keeps input order, and the path walk is
+    // already name-sorted per directory; the final sort_file_entries() makes
+    // the output order (component-wise relative path) explicit.
     let results: Vec<_> = paths
         .into_par_iter()
         .map(|(full_path, relative_path, depth, is_root)| {
@@ -175,6 +178,11 @@ use crate::lazy_entry::LazyFileListEntry;
 /// lazily when accessed. This enables efficient filtering before
 /// incurring the cost of `stat()` syscalls.
 ///
+/// # Errors
+///
+/// Never returns `Err` today: unreadable directories and entries are
+/// skipped silently by the path walk.
+///
 /// # Example
 ///
 /// ```ignore
@@ -216,7 +224,10 @@ pub fn collect_lazy_parallel(
 /// The batched stat cache reduces syscall overhead by:
 /// - Avoiding redundant stats of the same path
 /// - Parallelizing stat operations across CPU cores
-/// - Using efficient syscalls (statx on Linux)
+///
+/// # Errors
+///
+/// Returns every metadata failure, paired with the path that failed.
 ///
 /// # Example
 ///
@@ -286,9 +297,9 @@ pub fn collect_with_batched_stats(
 ///
 /// Unlike [`collect_paths_then_metadata_parallel`], this variant processes
 /// directory entries in chunks of `chunk_size`, fetching metadata for each
-/// chunk in parallel before moving to the next. This bounds peak memory
-/// overhead to `O(chunk_size)` rather than `O(total_files)`, making it
-/// suitable for trees with millions of files.
+/// chunk in parallel before moving to the next. Only the per-chunk result
+/// buffer is bounded by `chunk_size`: the full path list and the returned
+/// entries still grow with the tree size.
 ///
 /// # Arguments
 ///
@@ -296,10 +307,13 @@ pub fn collect_with_batched_stats(
 /// * `follow_symlinks` - Whether to follow symlinks
 /// * `chunk_size` - Number of paths to stat in each parallel batch
 ///
-/// # Performance
+/// # Errors
 ///
-/// Same throughput as `collect_paths_then_metadata_parallel` for most workloads,
-/// with significantly lower peak memory usage on large trees (>100K files).
+/// Returns every metadata failure, paired with the path that failed.
+///
+/// # Panics
+///
+/// Panics if `chunk_size` is zero.
 pub fn collect_paths_chunked_parallel(
     root: PathBuf,
     follow_symlinks: bool,
@@ -310,9 +324,9 @@ pub fn collect_paths_chunked_parallel(
     let mut entries = Vec::with_capacity(paths.len());
     let mut errors = Vec::new();
 
-    // Ordering: same as collect_paths_then_metadata_parallel - post-sort required.
-    // Each chunk's par_iter preserves intra-chunk order, but final sort_file_entries()
-    // establishes the canonical wire order. Omitting the sort breaks index agreement.
+    // Ordering: as in collect_paths_then_metadata_parallel, each chunk's
+    // indexed collect keeps input order and the final sort_file_entries()
+    // makes the output order explicit.
     for chunk in paths.chunks(chunk_size) {
         let results: Vec<_> = chunk
             .par_iter()
@@ -380,9 +394,8 @@ pub fn collect_paths_chunked_parallel(
 pub fn resolve_metadata_parallel(
     entries: Vec<LazyFileListEntry>,
 ) -> Result<Vec<FileListEntry>, Vec<(PathBuf, std::io::Error)>> {
-    // Ordering: wire protocol requires sorted file list for deterministic indices.
-    // Parallel metadata resolution does not preserve input order, so
-    // sort_file_entries() is applied after. Omitting the sort breaks index agreement.
+    // Ordering: callers may pass entries in any order, so sort_file_entries()
+    // restores the component-wise relative-path order after resolution.
     let results: Vec<_> = entries
         .into_par_iter()
         .map(|entry| {
@@ -413,6 +426,10 @@ pub fn resolve_metadata_parallel(
 }
 
 /// Recursively collects paths without fetching metadata.
+///
+/// Unreadable directories and entries are skipped silently, and there is no
+/// visited-set cycle guard (unlike `FileListWalker`), so a directory symlink
+/// loop is followed until `read_dir` fails.
 fn collect_paths_recursive(
     root: &PathBuf,
     current: &PathBuf,

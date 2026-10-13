@@ -8,7 +8,7 @@
 //! - Transfer operations with long filenames
 //! - Edge cases around the 255-byte boundary
 //!
-//! Reference: rsync 3.4.1 flist.c, POSIX NAME_MAX (255 bytes)
+//! Reference: rsync 3.5.1 flist.c, POSIX NAME_MAX (255 bytes)
 
 use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::ffi::OsStr;

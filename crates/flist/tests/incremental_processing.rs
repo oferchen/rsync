@@ -2,9 +2,8 @@
 //!
 //! These tests verify that the file list walker supports incremental/streaming
 //! consumption -- processing entries one at a time as they are yielded rather
-//! than collecting the entire list first. This mirrors upstream rsync's
-//! `INC_RECURSE` mode where entries are processed as soon as they become
-//! available.
+//! than collecting the entire list first. This is an in-process iterator
+//! pattern only; it does not implement upstream's `INC_RECURSE` wire mode.
 //!
 //! The tests cover:
 //! - Entry-by-entry streaming consumption
@@ -15,7 +14,7 @@
 //! - Large file list incremental processing
 //! - LazyFileListEntry deferred metadata patterns
 //!
-//! Reference: rsync 3.4.1 flist.c, io.c (INC_RECURSE)
+//! Reference: rsync 3.5.1 flist.c, io.c (INC_RECURSE)
 
 use flist::{FileListBuilder, FileListEntry, FileListError, LazyFileListEntry};
 use std::ffi::OsStr;

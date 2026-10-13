@@ -28,14 +28,14 @@ impl FileListWalker {
     ) -> Result<Self, FileListError> {
         let root = absolutize(root)?;
         // The walk root is deliberately not announced: upstream's counterpart
-        // (flist.c:2484 `rprintf(FLOG, "building file list\n")`) is an FLOG
-        // message that log.c:rwrite() drops for a client with no --log-file,
-        // whereas every DiagnosticEvent from this crate reaches stdout. Once
-        // the renderer routes by `DiagnosticEvent::code()`, the banner can be
-        // emitted as a `LogCode::Log` event for --log-file parity.
+        // (flist.c:2760 send_file_list() `rprintf(FLOG, "building file list\n")`)
+        // is an FLOG message that log.c:rwrite() drops for a client with no
+        // --log-file, whereas every DiagnosticEvent from this crate reaches
+        // stdout. Once the renderer routes by `DiagnosticEvent::code()`, the
+        // banner can be emitted as a `LogCode::Log` event for --log-file parity.
 
-        // upstream: flist.c:readlink_stat() - use stat() when copy_links is
-        // set, lstat() otherwise.
+        // upstream: flist.c:link_stat() (via readlink_stat()) - use stat() when
+        // copy_links is set, lstat() otherwise.
         let metadata = if copy_links {
             fs::metadata(&root)
         } else {
@@ -96,8 +96,8 @@ impl FileListWalker {
     ) -> Result<Option<FileListEntry>, FileListError> {
         debug_log!(Flist, 3, "processing entry: {:?}", relative_path);
 
-        // upstream: flist.c:readlink_stat() - use stat() when copy_links is
-        // set, lstat() otherwise. stat() follows symlinks so the metadata
+        // upstream: flist.c:link_stat() (via readlink_stat()) - use stat() when
+        // copy_links is set, lstat() otherwise. stat() follows symlinks so the metadata
         // reflects the target file/directory, not the symlink itself.
         let metadata = if self.copy_links {
             fs::metadata(&full_path)

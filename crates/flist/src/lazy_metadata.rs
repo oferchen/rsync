@@ -7,9 +7,12 @@
 //!
 //! # Design
 //!
-//! The pattern follows rsync's approach of deferring work until necessary.
 //! During directory enumeration, only the path is recorded. The expensive
 //! `stat()` syscall is deferred until the metadata is actually accessed.
+//!
+//! Deviation from upstream: `flist.c:make_file()` stats every scanned entry
+//! (via `readlink_stat()`) before filtering, because the exclude check needs
+//! the directory bit; there is no deferred-stat path upstream.
 //!
 //! # Example
 //!
@@ -94,7 +97,8 @@ impl LazyMetadata {
     ///
     /// # Errors
     ///
-    /// Returns the cached error if metadata fetch previously failed.
+    /// Returns the `stat()` error from the first fetch; later calls return
+    /// the same cached error without retrying.
     pub fn get(&mut self) -> Result<&fs::Metadata, &io::Error> {
         if let Self::Pending {
             path,
