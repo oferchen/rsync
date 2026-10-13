@@ -452,10 +452,10 @@ fn find_reference_symlink(
 /// directories are never hard-linked, so all three kinds behave identically
 /// here.
 ///
-/// upstream: generator.c:1117-1148 try_dests_non() - a match itemizes with
+/// upstream: generator.c:1258-1303 try_dests_non() - a match itemizes with
 /// ITEM_LOCAL_CHANGE and never sets ITEM_IS_NEW (the LINK_DEST hard-link branch
-/// is skipped for directories at line 1126, and COMPARE_DEST forces
-/// ITEM_LOCAL_CHANGE for directories at line 1140).
+/// is skipped for directories at line 1268, and COMPARE_DEST forces
+/// ITEM_LOCAL_CHANGE for directories at lines 1299-1300).
 pub(crate) fn find_copy_dest_basis(
     context: &CopyContext<'_>,
     destination: &Path,

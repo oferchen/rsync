@@ -2506,7 +2506,7 @@ fn sub_window_interior_zero_run_is_punched() {
     // A 4 KB..8 KB..4 KB layout has an 8 KB interior zero run smaller than the
     // former 32 KB scan window. With the upstream 1 KB window the interior run
     // is seeked over and left unallocated; the old 32 KB window wrote it as
-    // literal data, allocating the blocks upstream deallocates (issue #257).
+    // literal data, allocating the blocks upstream deallocates.
     use std::os::unix::fs::MetadataExt;
     let tmp = NamedTempFile::new().expect("tempfile");
     let mut file = tmp.reopen().expect("reopen");

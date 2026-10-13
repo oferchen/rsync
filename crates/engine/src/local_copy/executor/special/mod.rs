@@ -109,8 +109,8 @@ fn try_hard_link_basis(
 /// Returns `false` when the destination refused the link, so the caller creates
 /// the node from the source instead (see [`try_hard_link_basis`]).
 ///
-/// upstream: generator.c:1105-1137 try_dests_non() match_level 3 - the basis is
-/// hard-linked via `do_link()` and itemized with
+/// upstream: generator.c:1258-1302 try_dests_non() match_level 3 - the basis is
+/// hard-linked via `do_link_at()` and itemized with
 /// `ITEM_LOCAL_CHANGE|ITEM_XNAME_FOLLOWS|ITEM_MATCHED` and an empty xname, which
 /// log.c:701-744 renders as `h` in position 0 with every attribute slot
 /// collapsed to a space because nothing changed relative to the basis.

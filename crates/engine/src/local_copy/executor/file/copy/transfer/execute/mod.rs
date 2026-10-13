@@ -75,7 +75,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // When `Some`, the copy reconstructs the file from a `--copy-dest` basis.
     // The transfer itemizes as a local change (`c`) compared against the basis
     // rather than a network transfer (`>`).
-    // upstream: generator.c:1039 - itemize(..., ITEM_LOCAL_CHANGE, ...).
+    // upstream: generator.c:1178 try_dests_reg() -
+    // itemize(..., ITEM_LOCAL_CHANGE, ...).
     reference_basis: Option<PathBuf>,
 ) -> Result<TransferOutcome, LocalCopyError> {
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
@@ -517,7 +518,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         destination,
     );
 
-    // IUD-5 opt-in: route eligible whole-file writes through the io_uring
+    // Opt-in (`iouring-data-writes`): route eligible whole-file writes through the io_uring
     // registered-buffer path.
     #[cfg(all(target_os = "linux", feature = "iouring-data-writes"))]
     if iouring::eligible(
@@ -817,8 +818,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
 
-    // upstream: generator.c:1039 - a `--copy-dest` reconstruction itemizes the
-    // attribute columns against the alternate basis (`sxp->st`), not the
+    // upstream: generator.c:1178 try_dests_reg() - a `--copy-dest` reconstruction
+    // itemizes the attribute columns against the alternate basis (`sxp->st`), not the
     // (absent) prior destination, and never sets ITEM_IS_NEW. Comparing source
     // against the basis with `destination_previously_existed = true` keeps the
     // size/time/perm slots blank when the source already matched the basis.

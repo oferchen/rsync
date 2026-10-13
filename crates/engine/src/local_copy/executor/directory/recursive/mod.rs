@@ -426,10 +426,10 @@ fn copy_directory_recursive_inner(
     {
         // upstream: generator.c:563-576 - ACL/xattr drift is computed by
         // `set_acl(NULL, ...)` and `xattr_diff(...)`, both of which compare
-        // the actual on-disk attribute payloads. The local-copy fast path
-        // does not yet thread that comparison through, so leave these flags
-        // clear here; the existing-directory row stays accurate for the
-        // common `-iplrt` case the upstream `itemize.test` golden exercises.
+        // the actual on-disk attribute payloads. Deviation from upstream: this
+        // existing-directory row always leaves the ACL and xattr flags clear,
+        // so `-A`/`-X` drift on a directory is not itemized; it stays accurate
+        // for the common `-iplrt` case the upstream `itemize.test` golden exercises.
         let change_set = LocalCopyChangeSet::for_existing_directory(
             metadata,
             existing_meta,

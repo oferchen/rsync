@@ -468,7 +468,7 @@ pub(super) fn process_links(
         // from here as well produced a second, absolute-path copy of a line the
         // renderer had already written correctly.
 
-        // upstream: hlink.c:474-521 finish_hard_link() - every alias in a cohort
+        // upstream: hlink.c:496-537 finish_hard_link() - every alias in a cohort
         // is linked against the group's data-holder (`our_name` stays fixed for
         // the whole `F_HL_PREV` walk), so all aliases itemize `=> <holder>` (a
         // star), never chaining to the most recently created alias. The holder is
@@ -927,15 +927,13 @@ mod tests {
         );
     }
 
-    /// Windows-only regression test for POST-4 / WAS-6 (#2415, audit PR
-    /// #4399). The `--copy-dest` Link branch hardlinks every cohort follower
-    /// to the same reference inode. On NTFS the DACL lives on the MFT
-    /// record, so each `SetNamedSecurityInfoW` call writes to the shared
-    /// inode regardless of which alias was opened.
+    /// Windows-only regression test: the `--copy-dest` Link branch hardlinks
+    /// every cohort follower to the same reference inode. On NTFS the DACL
+    /// lives on the MFT record, so each `SetNamedSecurityInfoW` call writes to
+    /// the shared inode regardless of which alias was opened.
     ///
-    /// Before the fix the loop invoked `sync_acls_if_requested` once per
-    /// follower (O(N) per N-link cohort). The cohort gate routes the write
-    /// through the first call only; followers inherit through the inode.
+    /// The cohort gate routes the write through the first call only instead of
+    /// once per follower; followers inherit through the inode.
     ///
     /// upstream: hlink.c::hard_link_check returns 1 for followers so the
     /// generator never calls `set_file_attrs()` -> `set_acl()` on a

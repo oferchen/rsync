@@ -123,15 +123,14 @@ fn is_delete_mount_point(
 ///
 /// Routes through [`delete_extraneous_entries_via_emitter`] so the
 /// [`crate::delete::DeleteEmitter`] is the live unlink path for every
-/// `--delete-*` timing mode (DDP-E1..E5, #2265-#2269). The legacy
-/// pre-DDP-E batched sweep was removed in DDP-F3 (#2272).
+/// `--delete-*` timing mode.
 pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
     context: &mut CopyContext,
     destination: &Path,
     relative: Option<&Path>,
     source_entries: &[S],
 ) -> Result<(), LocalCopyError> {
-    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in.
+    // The `parallel-delete-consumer` feature opts into the parallel consumer.
     // `RealDeleteFs` is passed by value so the parallel consumer's
     // `Sync + Send + 'static` bound is satisfied; the sequential path is
     // unaffected because it takes the dispatcher generically by value too.
@@ -566,7 +565,7 @@ fn remove_entry_capped(
             // directory instead enters `delete_item` WITHOUT DEL_DIR_IS_EMPTY,
             // so its survived contents take the `goto check_ret` path
             // (delete.c:212-213) and it is never counted. Count the nested case
-            // to match upstream's skipped total exactly (issue #212).
+            // to match upstream's skipped total exactly.
             //
             // Only count it when the cap is the reason the contents survived. A
             // directory that survived solely because it pins a `--one-file-system`
@@ -574,7 +573,7 @@ fn remove_entry_capped(
             // not touch `skipped_deletes`; counting it would falsely trip
             // RERR_DEL_LIMIT. `cap_reached` is true exactly when a cap skip
             // occurred, so it distinguishes the two without changing the
-            // no-mount behaviour verified by issue #212.
+            // no-mount behaviour.
             if nested && cap_reached(context) {
                 *skipped = skipped.saturating_add(1);
             }
@@ -723,7 +722,7 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     relative: Option<&Path>,
     source_entries: &[S],
 ) -> Result<Option<DeletePlan>, LocalCopyError> {
-    // upstream: delete.c:106 / generator.c:314 - the delete pass calls
+    // upstream: generator.c:314 delete_in_dir() - the delete pass calls
     // `change_local_filter_dir(fbuf, F_DEPTH(file))` with the destination
     // directory so the receiver applies any per-dir merge rules found in the
     // directory being scanned, INHERITING an ancestor directory's rules into

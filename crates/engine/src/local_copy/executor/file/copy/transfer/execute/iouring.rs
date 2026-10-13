@@ -1,4 +1,4 @@
-//! IUD-5 opt-in: io_uring registered-buffer data-write fast path.
+//! Opt-in io_uring registered-buffer data-write fast path.
 //!
 //! Routes eligible whole-file writes through `fast_io::write_file_with_io_uring`
 //! so the kernel can submit the write via the io_uring submission queue with

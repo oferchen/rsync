@@ -564,7 +564,7 @@ mod tests {
         assert!(!result.checksums_match());
     }
 
-    /// Ground-truth parity for the SIGBUS-safe read-window path (issue #192).
+    /// Ground-truth parity for the SIGBUS-safe read-window path.
     ///
     /// The whole-file checksum path streams the file through a bounded read
     /// window (upstream fileio.c:255-359 `map_file`/`map_ptr`), NOT `mmap(2)`.

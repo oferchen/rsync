@@ -447,12 +447,9 @@ pub(crate) fn copy_device(
         }
     }
 
-    // WIND-2: on non-Unix targets the receiver cannot materialise a device
-    // node. Emit a one-shot warning and skip the post-creation bookkeeping
-    // entirely. Previously this arm fell through to
-    // `register_created_path(CreatedEntryKind::Device, ...)` and
-    // `apply_file_metadata_with_options(...)` against an inode that was
-    // never written, silently recording a fake success.
+    // On non-Unix targets the receiver cannot materialise a device node, so
+    // the post-creation bookkeeping is skipped rather than recording a
+    // success for an inode that was never written.
     #[cfg(not(unix))]
     {
         let _ = (metadata_options, destination_previously_existed);
@@ -578,10 +575,11 @@ pub(crate) fn copy_device(
     Ok(())
 }
 
-/// Builds the WIND-2 skip-with-warn message for a device entry the Windows
-/// receiver cannot materialise. Exposed for regression tests so they can
-/// assert the wording without capturing stderr.
-/// WIND-2: docs/design/windows-device-file-strategy.md
+/// Builds the skip-with-warn message for a device entry the Windows receiver
+/// cannot materialise.
+///
+/// Exposed for regression tests so they can assert the wording without
+/// capturing stderr. Design note: `docs/design/windows-device-file-strategy.md`.
 #[cfg(not(unix))]
 pub(crate) fn format_skip_device_message(destination: &Path) -> String {
     format!(

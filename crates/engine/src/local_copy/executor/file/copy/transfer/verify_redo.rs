@@ -104,7 +104,7 @@ pub(in crate::local_copy) fn execute_transfer(
                 Some(&retained),
                 // The destination existed before this pass: upstream counts
                 // `stats.created_files++` only on the non-redo leg
-                // (receiver.c:794).
+                // (receiver.c:961-970 recv_files()).
                 true,
                 file_type,
                 relative,
