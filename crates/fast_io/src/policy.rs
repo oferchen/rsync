@@ -259,11 +259,11 @@ pub type ZeroCopyPolicy = BackendPolicy;
 /// - [`ZeroCopyPolicy::Disabled`] - never. `--no-zero-copy` is a hard off.
 /// - [`ZeroCopyPolicy::Enabled`] - always attempt; an unsupported kernel
 ///   still degrades to plain `IORING_OP_SEND` inside the writer.
-/// - [`ZeroCopyPolicy::Auto`] - attempt only in builds carrying the
-///   `iouring-send-zc` cargo feature. That feature is the IUS-4 release gate
-///   (it raises the socket-send kernel floor from 5.6 to 6.0), so a stock
-///   build keeps `Auto` on the plain socket write path and is byte-identical
-///   to a build without this predicate.
+/// - [`ZeroCopyPolicy::Auto`] - attempt in builds carrying the
+///   `iouring-send-zc` cargo feature, which is in the default feature set.
+///   The writer factory still keeps `Auto` on the plain socket write path
+///   when the kernel lacks the opcode, and a build without the feature never
+///   attempts it.
 ///
 /// Mirrors the shape of `is_splice_enabled`, which applies the same
 /// policy gate to `splice(2)`.
@@ -511,14 +511,39 @@ mod tests {
         assert!(send_zc_policy_permits(ZeroCopyPolicy::Enabled));
     }
 
-    /// `Auto` is the arm the IUS-4 release gate governs: it permits SEND_ZC
-    /// exactly when the build carries `iouring-send-zc`, so a stock build's
-    /// default socket-send path is unchanged.
+    /// `Auto` permits SEND_ZC exactly when the build carries
+    /// `iouring-send-zc`, so dropping the feature restores the plain path.
     #[test]
     fn send_zc_policy_permits_auto_follows_the_feature_gate() {
         assert_eq!(
             send_zc_policy_permits(ZeroCopyPolicy::Auto),
             cfg!(feature = "iouring-send-zc")
+        );
+    }
+
+    /// SEND_ZC is on by default: the default `Auto` policy must dispatch it
+    /// whenever the feature is compiled in. Re-narrowing the `Auto` arm would
+    /// silently put the daemon back on plain sends.
+    #[cfg(feature = "iouring-send-zc")]
+    #[test]
+    fn send_zc_policy_permits_auto_in_default_builds() {
+        assert!(send_zc_policy_permits(ZeroCopyPolicy::default()));
+        assert!(!send_zc_policy_permits(ZeroCopyPolicy::Disabled));
+    }
+
+    /// The feature gate above only bites if the feature is actually in the
+    /// default set. Checked against the manifest so it holds whatever
+    /// feature set this test binary was compiled with.
+    #[test]
+    fn iouring_send_zc_is_a_default_feature() {
+        let manifest = include_str!("../Cargo.toml");
+        let default_line = manifest
+            .lines()
+            .find(|line| line.starts_with("default = "))
+            .expect("fast_io Cargo.toml declares a default feature list");
+        assert!(
+            default_line.contains("\"iouring-send-zc\""),
+            "iouring-send-zc must stay in fast_io's default features: {default_line}"
         );
     }
 

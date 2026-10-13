@@ -8,10 +8,10 @@
 //! design doc section 1.1, row "`socket_writer` factory" in section 1.2).
 //!
 //! The SEND_ZC opcode dispatch is preserved: when the `iouring-send-zc` cargo
-//! feature is enabled and the running kernel advertises `IORING_OP_SEND_ZC`,
-//! payloads at or above [`SEND_ZC_MIN_BYTES`] are submitted through the
-//! zero-copy primitive; sub-threshold payloads stay on regular
-//! `IORING_OP_SEND` over the per-thread ring.
+//! feature is enabled (the default) and the running kernel advertises
+//! `IORING_OP_SEND_ZC`, payloads at or above [`SEND_ZC_MIN_BYTES`] are
+//! submitted through the zero-copy primitive; sub-threshold payloads stay on
+//! regular `IORING_OP_SEND` over the per-thread ring.
 //!
 //! SEND_ZC sends split by buffer ownership, because the opcode's page-release
 //! notification is what makes it fast or slow:
@@ -49,7 +49,7 @@ use super::send_zc_pipeline::SendZcPipeline;
 /// The default 16 KiB threshold comes from `docs/design/iouring-send-zc.md`
 /// section 5 (workload B regression guard). With the `iouring-send-zc`
 /// cargo feature enabled the threshold drops to
-/// [`send_zc::SEND_ZC_DISPATCH_MIN_BYTES`] (4 KiB) so the opt-in transport
+/// [`send_zc::SEND_ZC_DISPATCH_MIN_BYTES`] (4 KiB) so the transport
 /// dispatch matches the user-facing contract documented on
 /// [`crate::ZeroCopySender`].
 #[cfg(not(feature = "iouring-send-zc"))]
@@ -114,6 +114,9 @@ impl IoUringSocketWriter {
         with_ring(|_| Ok(()))?;
         let send_zc_active =
             config.allow_send_zc() && send_zc::is_supported() && socket_accepts_send_zc(fd);
+        if config.allow_send_zc() && !send_zc_active {
+            crate::send_zc_stats::record_fallback();
+        }
 
         Ok(Self {
             fd,
@@ -162,6 +165,7 @@ impl IoUringSocketWriter {
                     // but turning off the per-writer flag avoids a futile
                     // syscall on every subsequent flush.
                     self.send_zc_active = false;
+                    crate::send_zc_stats::record_fallback();
                 }
             }
         }
@@ -248,6 +252,7 @@ impl IoUringSocketWriter {
                     // No ring, no zero-copy. Stop retrying so every later
                     // flush goes straight to the batched SEND path.
                     self.send_zc_active = false;
+                    crate::send_zc_stats::record_fallback();
                     return Ok(false);
                 }
             }

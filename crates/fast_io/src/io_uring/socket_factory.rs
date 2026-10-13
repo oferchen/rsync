@@ -165,15 +165,18 @@ pub fn socket_writer_from_fd(
 /// into zero-copy sends. Unlike [`socket_writer_from_fd`], it is keyed on
 /// [`ZeroCopyPolicy`](crate::ZeroCopyPolicy) so the caller expresses SEND_ZC
 /// intent directly rather than through the orthogonal io_uring on/off axis.
-/// `Disabled` always yields the plain fd writer; `Auto` does so too unless
-/// the build carries the `iouring-send-zc` cargo feature, which keeps a
-/// stock build's default transfer path byte-identical.
+/// `Disabled` always yields the plain fd writer. `Auto` yields the io_uring
+/// writer only when the kernel advertises `IORING_OP_SEND_ZC` (Linux 6.0+);
+/// on an older kernel it keeps the plain fd writer rather than switching to
+/// io_uring `IORING_OP_SEND`, so the pre-SEND_ZC write path is unchanged
+/// there. `Enabled` always tries the io_uring writer, which degrades to
+/// plain `IORING_OP_SEND` when the opcode is absent. Every permitted request
+/// that ends on a plain send is counted in [`crate::send_zc_stats`].
 ///
-/// The buffer-lifetime contract of SEND_ZC is upheld inside the returned
-/// writer: `IoUringSocketWriter::submit_send` drains both the transfer and
-/// notification CQEs before returning, so the caller may reuse or drop the
-/// send buffer immediately. This makes it safe behind `MultiplexWriter`,
-/// which clears and reuses its frame buffer after each flush.
+/// The returned writer owns the SEND_ZC buffer-lifetime contract: the
+/// caller may reuse or drop its send buffer as soon as a `write` returns.
+/// This makes it safe behind `MultiplexWriter`, which clears and reuses its
+/// frame buffer after each flush.
 ///
 /// The `fd` must be a valid socket file descriptor. The caller retains
 /// ownership - this function does not close the fd.
@@ -199,16 +202,19 @@ pub fn socket_writer_from_fd_zero_copy(
     // resolving `send_zc_active` from the kernel probe. If io_uring is
     // unavailable or the writer cannot be built, fall back to the plain fd
     // writer so the transfer still proceeds with byte-identical framing.
-    let config = IoUringConfig {
-        buffer_size: buffer_capacity,
-        zero_copy_policy: policy,
-        ..IoUringConfig::default()
-    };
-    if is_io_uring_available()
-        && let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config)
-    {
-        return Ok(IoUringOrStdSocketWriter::IoUring(writer));
+    let auto_without_opcode =
+        policy == crate::ZeroCopyPolicy::Auto && !super::send_zc::is_supported();
+    if !auto_without_opcode && is_io_uring_available() {
+        let config = IoUringConfig {
+            buffer_size: buffer_capacity,
+            zero_copy_policy: policy,
+            ..IoUringConfig::default()
+        };
+        if let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config) {
+            return Ok(IoUringOrStdSocketWriter::IoUring(writer));
+        }
     }
+    crate::send_zc_stats::record_fallback();
     let writer = FdWriter(fd);
     Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
 }

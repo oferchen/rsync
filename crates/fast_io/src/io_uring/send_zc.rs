@@ -281,6 +281,7 @@ fn submit_and_drain(
     if result < 0 {
         return Err(io::Error::from_raw_os_error(-result));
     }
+    crate::send_zc_stats::record_send(result as usize);
     Ok(result as usize)
 }
 
@@ -654,19 +655,20 @@ mod tests {
     /// observed (the call would not return otherwise).
     #[test]
     fn send_zc_roundtrip_64kib_loopback() {
-        if !super::super::config::is_io_uring_available() {
-            println!("skipping: io_uring unavailable on this host");
-            return;
-        }
-        if !is_supported() {
-            println!("skipping: IORING_OP_SEND_ZC unsupported on this kernel");
+        use super::super::send_zc_test_env::{SendZcEnv, classify, report, report_setup_failure};
+        const TEST: &str = "send_zc_roundtrip_64kib_loopback";
+        let env = classify(
+            super::super::config::is_io_uring_available(),
+            is_supported(),
+        );
+        if report(TEST, env) != SendZcEnv::Ok {
             return;
         }
 
         let listener = match TcpListener::bind("127.0.0.1:0") {
             Ok(l) => l,
             Err(e) => {
-                println!("skipping: cannot bind loopback ({e})");
+                eprintln!("[send_zc env] SKIP {TEST}: cannot bind loopback ({e})");
                 return;
             }
         };
@@ -688,8 +690,15 @@ mod tests {
         });
 
         let sender = TcpStream::connect(addr).unwrap();
-        let mut ring = IoUringConfig::default().build_ring().unwrap();
+        let mut ring = match IoUringConfig::default().build_ring() {
+            Ok(ring) => ring,
+            Err(e) => {
+                report_setup_failure(TEST, "build ring", &e);
+                return;
+            }
+        };
         let payload: Vec<u8> = (0..64 * 1024).map(|i| (i & 0xff) as u8).collect();
+        let before = crate::send_zc_stats();
 
         let mut sent_total = 0usize;
         while sent_total < payload.len() {
@@ -699,9 +708,14 @@ mod tests {
             sent_total += n;
         }
         drop(sender);
+        let after = crate::send_zc_stats();
 
         let received = reader_thread.join().unwrap();
         assert_eq!(received.len(), payload.len());
         assert_eq!(received, payload, "round-tripped bytes must match");
+        assert!(
+            after.bytes - before.bytes >= payload.len() as u64,
+            "every SEND_ZC byte must be counted: before {before:?}, after {after:?}"
+        );
     }
 }

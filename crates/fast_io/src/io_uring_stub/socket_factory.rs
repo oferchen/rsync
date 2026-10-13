@@ -155,7 +155,9 @@ pub fn socket_writer_from_fd_zero_copy(
     policy: crate::ZeroCopyPolicy,
 ) -> io::Result<IoUringOrStdSocketWriter> {
     let _ = buffer_capacity;
-    let _ = policy;
+    if crate::send_zc_policy_permits(policy) {
+        crate::send_zc_stats::record_fallback();
+    }
     let writer = FdWriter(fd);
     Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
 }

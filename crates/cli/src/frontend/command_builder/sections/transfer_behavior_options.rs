@@ -285,12 +285,10 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                         "Allow I/O-level zero-copy syscalls (sendfile, \
                          splice, copy_file_range) when supported by the \
                          kernel. Default policy is auto/enabled. Under the \
-                         auto policy the io_uring SEND_ZC socket dispatch \
-                         additionally requires the `iouring-send-zc` cargo \
-                         feature, which is not in the default feature set; \
-                         without it the socket path uses plain io_uring \
-                         SEND. Independent of filesystem-level reflink/CoW \
-                         cloning.",
+                         auto policy the daemon's socket sends use io_uring \
+                         SEND_ZC when the kernel supports it (Linux 6.0+) \
+                         and plain writes otherwise. Independent of \
+                         filesystem-level reflink/CoW cloning.",
                     )
                     .action(ArgAction::SetTrue)
                     .overrides_with("no-zero-copy"),

@@ -3,7 +3,22 @@
 Date: 2026-06-01
 Scope: implementation plan for promoting `iouring-send-zc` from opt-in to
 the default Cargo feature set, contingent on SZC.f promote decision.
-Status: ready to execute once SZC.f decides "promote".
+Status: **executed 2026-10-13** for the daemon-sender write side.
+
+> **Update 2026-10-13.** The project owner decided default-on directly,
+> without waiting for the SZC.c numbers. What shipped differs from the plan
+> below in three places:
+>
+> - `Auto` on a kernel without the opcode keeps the plain socket write path
+>   (`TcpStream` in the daemon), not io_uring `IORING_OP_SEND`, so pre-6.0
+>   kernels run exactly the pre-flip code.
+> - There is no `OC_RSYNC_NO_SEND_ZC` variable; `--no-zero-copy` is the
+>   runtime off switch.
+> - `fast_io::send_zc_stats()` counts SEND_ZC sends, bytes and fallbacks,
+>   and `--io-uring-status` prints the opcode probe and the counters.
+>
+> Follow-ups: client push wiring, read-side io_uring RECV wiring, and
+> retiring `send-zc-5-15-lts.yml`.
 Predecessor: SZC.f (`docs/design/send-zc-decision-revisit.md`) - decision
 framework. This document is the implementation plan for the promote branch.
 Successor: release notes entry in the next minor version.
