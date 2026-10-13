@@ -8,7 +8,7 @@
 //! # Upstream Reference
 //!
 //! - `match.c` - Block matching and delta generation
-//! - `sender.c:355-431` - File transfer with delta or whole-file paths
+//! - `sender.c:488-821` - File transfer with delta or whole-file paths
 //! - `token.c` - Token encoding with optional compression
 
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -42,7 +42,7 @@ use crate::role_trailer::error_location;
 /// `ZSTD_c_nbWorkers`. Ignored for non-zstd algorithms.
 ///
 /// upstream: token.c dispatches on `do_compression` to select the codec.
-/// upstream: token.c:701 - `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
+/// upstream: token.c:752 - `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
 pub(super) fn create_token_encoder(
     algo: CompressionAlgorithm,
     level: CompressionLevel,
@@ -51,7 +51,7 @@ pub(super) fn create_token_encoder(
 ) -> io::Result<Option<CompressedTokenEncoder>> {
     match algo {
         CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX => {
-            // upstream: token.c:378 - deflateInit2() uses per_file_default_level
+            // upstream: token.c:381 - deflateInit2() uses per_file_default_level
             // (= the negotiated do_compression_level). The negotiated protocol
             // version gates send_deflate_token()'s `offset += n1` (token.c:482),
             // which must stay symmetric with the receiver's see_deflate_token()
@@ -63,7 +63,7 @@ pub(super) fn create_token_encoder(
             Ok(Some(enc))
         }
         #[cfg(feature = "zstd")]
-        // upstream: token.c:748 - ZSTD_CCtx_setParameter(.., ZSTD_c_compressionLevel,
+        // upstream: token.c:751 - ZSTD_CCtx_setParameter(.., ZSTD_c_compressionLevel,
         // do_compression_level). Negative "fast" levels pass through unchanged.
         CompressionAlgorithm::Zstd => Ok(Some(CompressedTokenEncoder::new_zstd(
             compress::zstd::level_to_i32(level),
@@ -91,9 +91,9 @@ pub(super) fn create_token_encoder(
 ///
 /// upstream: token.c:206-211 `init_set_compression()` - a bare `*` in the
 /// sender's dont-compress match list sets `per_file_default_level =
-/// skip_compression_level` (`Z_NO_COMPRESSION` for zlib), which token.c:378
+/// skip_compression_level` (`Z_NO_COMPRESSION` for zlib), which token.c:381
 /// feeds into `deflateInit2()` to store the whole stream. zstd/lz4 keep
-/// `do_compression_level` (token.c:748), so the match-all case never lowers
+/// `do_compression_level` (token.c:751), so the match-all case never lowers
 /// their level.
 pub(super) fn whole_stream_compression_level(
     match_all: bool,
@@ -197,7 +197,7 @@ fn short_read_error() -> io::Error {
 ///
 /// # Upstream Reference
 ///
-/// - `fileio.c:341-348` - `if (nread <= 0) { status = ...; memset(...); break; }`
+/// - `fileio.c:403-410` - `if (nread <= 0) { status = ...; memset(...); break; }`
 fn read_window<R: Read>(source: &mut R, dst: &mut [u8]) -> Option<io::Error> {
     let mut filled = 0;
     while filled < dst.len() {
@@ -230,7 +230,7 @@ fn read_window<R: Read>(source: &mut R, dst: &mut [u8]) -> Option<io::Error> {
 ///
 /// # Upstream Reference
 ///
-/// - `match.c:414-423` - `for (i = 0; i < xfer_sum_len && sender_file_sum[i] == 0; i++) {}`
+/// - `match.c:455-464` - `for (i = 0; i < xfer_sum_len && sender_file_sum[i] == 0; i++) {}`
 ///   / `memset(sender_file_sum, 0, xfer_sum_len)` / `if (i == xfer_sum_len) sender_file_sum[i-1]++`
 pub(super) fn poison_file_checksum(checksum_buf: &mut [u8], checksum_len: usize) {
     let sum = &mut checksum_buf[..checksum_len];
@@ -252,13 +252,13 @@ pub(super) fn poison_file_checksum(checksum_buf: &mut [u8], checksum_len: usize)
 /// on to `file_size`.
 ///
 /// A clean EOF is *not* an error here. Upstream maps the size it fstat'ed at
-/// send time (`sender.c:405`), so a source that shrank after the file list was
+/// send time (`sender.c:729-745`), so a source that shrank after the file list was
 /// built is simply sent short; the scan must keep stopping at the real EOF and
 /// leave the digest untouched.
 ///
 /// # Upstream Reference
 ///
-/// - `fileio.c:341-348 map_ptr()` - zero-fill and continue on a failed read
+/// - `fileio.c:403-410 map_ptr()` - zero-fill and continue on a failed read
 pub(super) struct ScanSource<R> {
     inner: R,
     /// File-list size, used only after an error to know how far to zero-fill.
@@ -475,13 +475,13 @@ fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSi
     let block_count = config.sig_blocks.len() as u64;
 
     // The remainder is NOT unknown from the wire format. The receiver sends it
-    // in the sum_head - `io.c:2099` `sum->remainder = read_int(f);` - and
-    // `io.c:2100-2102` range-checks it, rejecting `< 0` or `> blength` with
+    // in the sum_head - `io.c:2284` `sum->remainder = read_int(f);` - and
+    // `io.c:2285-2288` range-checks it, rejecting `< 0` or `> blength` with
     // "Invalid remainder length". It is the only field that distinguishes the
     // last block's true length from `blength`, and upstream's sender applies it
     // to exactly one block, and only when non-zero:
     //
-    //   sender.c:113-114 (receive_sums)
+    //   sender.c:374-375 (receive_sums)
     //     if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;
     //     else                                      s->sums[i].len = s->blength;
     //
@@ -520,7 +520,7 @@ fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSi
         })
         .collect();
 
-    // upstream: generator.c:755-756 - `remainder = len % blength` and
+    // upstream: generator.c:760-761 - `remainder = len % blength` and
     // `count = len/blength + (remainder != 0)`, inverted here to recover the
     // basis length the sum_head describes.
     let total_bytes = if remainder == 0 {
@@ -571,10 +571,10 @@ fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
     }
 }
 
-/// Computes upstream's per-file `updating_basis_file` flag (`sender.c:338`).
+/// Computes upstream's per-file `updating_basis_file` flag (`sender.c:629-630`).
 ///
 /// This gates the delta generator's backward-`Copy` suppression
-/// ([`DeltaGenerator::with_updating_basis_file`], `match.c:211`): when the
+/// ([`DeltaGenerator::with_updating_basis_file`], `match.c:235`): when the
 /// receiver rewrites the basis in place, the basis being matched is the
 /// destination itself, so a `Copy` whose basis offset precedes the source
 /// cursor would read a region the receiver has already overwritten. The bytes
@@ -602,7 +602,7 @@ fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
 /// clause carries the same rule for the legacy protocol < 29 path, which has
 /// no basis-type byte on the wire.
 ///
-/// upstream: sender.c:338 `updating_basis_file`.
+/// upstream: sender.c:629-630 `updating_basis_file`.
 pub(crate) fn updating_basis_file(
     inplace: bool,
     inplace_partial: bool,
@@ -671,7 +671,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
         );
     }
 
-    // upstream: checksum.c:558 sum_init() - the legacy MD4 whole-file sum
+    // upstream: checksum.c:576 sum_init() - the legacy MD4 whole-file sum
     // (CSUM_MD4_OLD, proto 27-29) prepends the 4-byte LE seed before file
     // data; MD5 and the modern algorithms do not. Mirror the receiver's
     // ChecksumVerifier::new so both sides agree at protocol < 30.
@@ -684,9 +684,9 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let read_size = (file_size as usize).clamp(1, MAX_READ_SIZE);
 
     let mut remaining = file_size;
-    // upstream: fileio.c:341-348 - a failed source read zeroes the window and
+    // upstream: fileio.c:403-410 - a failed source read zeroes the window and
     // the send continues; the error only surfaces later as a poisoned file
-    // checksum plus `read errors mapping` (sender.c:465-472).
+    // checksum plus `read errors mapping` (sender.c:791-798).
     let mut read_error: Option<io::Error> = None;
 
     if let Some(encoder) = encoder {
@@ -753,7 +753,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 ///
 /// - `match.c:371-390 match_sums()` - prefix `sum_update` gated on `append_mode == 2`,
 ///   `s->count = 0`, `last_match = s->flength`.
-/// - `sender.c:90-99 receive_sums()` - append mode derives `flength` and reads no blocks.
+/// - `sender.c:355-364 receive_sums()` - append mode derives `flength` and reads no blocks.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn stream_append_transfer<R: Read, W: Write>(
     writer: &mut W,
@@ -772,11 +772,11 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
 
     const MAX_READ_SIZE: usize = 256 * 1024;
 
-    // upstream: match.c:372-390 - consume the existing prefix. append_mode == 2
+    // upstream: match.c:405-431 - consume the existing prefix. append_mode == 2
     // folds it into the whole-file checksum (verify); append_mode == 1 skips the
     // sum (trust). Either way the prefix bytes are never sent as tokens.
     let mut prefix_remaining = flength.min(file_size);
-    // upstream: fileio.c:341-348 - a failed source read zeroes the window and
+    // upstream: fileio.c:403-410 - a failed source read zeroes the window and
     // the send continues; the error surfaces as a poisoned file checksum.
     let mut read_error: Option<io::Error> = None;
     if prefix_remaining > 0 {
@@ -964,7 +964,7 @@ pub(super) struct InlineChecksumResult {
     /// Number of valid bytes in `checksum_buf`.
     pub checksum_len: usize,
     /// Bytes covered by Copy tokens (block matches) on this file.
-    /// upstream: `match.c:118` `stats.matched_data += s2length`.
+    /// upstream: `match.c:144` `stats.matched_data += s2length`.
     pub matched_data: u64,
     /// Bytes sent as literal data on this file.
     /// upstream: `match.c:330` `stats.literal_data += s->sums[j].len`.
@@ -1000,7 +1000,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     checksum_seed: i32,
     protocol: protocol::ProtocolVersion,
 ) -> io::Result<InlineChecksumResult> {
-    // upstream: checksum.c:558 sum_init() - prepend the 4-byte LE seed for the
+    // upstream: checksum.c:576 sum_init() - prepend the 4-byte LE seed for the
     // legacy MD4 whole-file sum (CSUM_MD4_OLD, proto 27-29); MD5 and modern
     // algorithms are unseeded. Keeps the sender symmetric with the receiver's
     // ChecksumVerifier so protocol < 30 peers accept the reconstructed file.
@@ -1021,7 +1021,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     // and stats.literal_data as each token is emitted on the sender.
     let mut matched_data: u64 = 0;
     let mut literal_data: u64 = 0;
-    // upstream: fileio.c:341-348 - a failed source read zeroes the window and
+    // upstream: fileio.c:403-410 - a failed source read zeroes the window and
     // token emission continues; the file checksum is poisoned by the caller.
     let mut read_error: Option<io::Error> = None;
 
@@ -1129,9 +1129,9 @@ mod tests {
     use super::*;
 
     // WHY: a daemon module's `dont compress = *` must store the whole zlib
-    // stream (level 0), because upstream token.c:206-211 sets
+    // stream (level 0), because upstream token.c:213-218 sets
     // per_file_default_level = skip_compression_level for a `*` match list and
-    // token.c:378 feeds it into deflateInit2(). Compressing per block instead
+    // token.c:381 feeds it into deflateInit2(). Compressing per block instead
     // would diverge from upstream's observable "no compression savings" output.
     #[test]
     fn whole_stream_store_forces_level_none_for_zlib() {
@@ -1154,7 +1154,7 @@ mod tests {
     }
 
     // WHY: upstream feeds per_file_default_level only into deflateInit2() (zlib).
-    // zstd/lz4 use do_compression_level unconditionally (token.c:748), so the
+    // zstd/lz4 use do_compression_level unconditionally (token.c:751), so the
     // match-all case must NOT lower their level.
     #[test]
     fn whole_stream_store_leaves_non_zlib_codecs_unchanged() {
@@ -1183,8 +1183,8 @@ mod tests {
 
     // WHY: token framing is a session-level concern, not a per-file one. Once a
     // codec is negotiated (`-z`), EVERY file is framed with that codec on the
-    // wire - upstream token.c:1065 send_token() dispatches purely on the global
-    // `do_compression`, and token.c:225 set_compression()'s per-file suffix
+    // wire - upstream token.c:1068 send_token() dispatches purely on the global
+    // `do_compression`, and token.c:232 set_compression()'s per-file suffix
     // lookup is compiled out under `#if 0`. A `--skip-compress` suffix must NOT
     // switch a file to plain 4-byte-LE tokens: the receiver builds one
     // session-level token reader from the negotiated codec and always expects
@@ -1450,7 +1450,7 @@ mod tests {
 
     /// The append streamer must transmit only the tail past `flength` and fold
     /// the existing prefix into the whole-file checksum only under append-verify
-    /// (append_mode == 2). Mirrors upstream match.c:371-390.
+    /// (append_mode == 2). Mirrors upstream match.c:404-431.
     #[test]
     fn stream_append_transfer_tail_and_prefix_checksum() {
         let file: Vec<u8> = (0..100u32).map(|i| (i % 256) as u8).collect();
@@ -1534,7 +1534,7 @@ mod tests {
 
     // WHY: the sender must activate the in-place guard exactly when the receiver
     // rewrites the basis (the destination) in place, i.e. it is matching against
-    // FNAMECMP_FNAME under --inplace. This is the core of upstream sender.c:338
+    // FNAMECMP_FNAME under --inplace. This is the core of upstream sender.c:629-630
     // at protocol >= 29 (proto 32 here): a missing basis-type byte and an
     // explicit FNAMECMP_FNAME both mean "the destination itself", so the guard
     // must engage. Without it a backward Copy would tell the receiver to read a
@@ -1566,7 +1566,7 @@ mod tests {
     // WHY: upstream keeps fnamecmp_type == FNAMECMP_FNAME under --inplace
     // --backup at protocol >= 29 - the generator copies the destination aside as
     // a backup but still reads the basis from, and rewrites, the destination in
-    // place (generator.c:1862,1898). So the guard MUST stay active with
+    // place (generator.c:2281,1898). So the guard MUST stay active with
     // --backup. The legacy `make_backups <= 0` clause only governs protocol < 29,
     // where a backup instead turns the guard off. Both directions are pinned so a
     // future refactor cannot collapse the protocol split.
@@ -1608,7 +1608,7 @@ mod tests {
         );
     }
 
-    // WHY: the partial-dir branch of sender.c:338 is independent of --inplace: it
+    // WHY: the partial-dir branch of sender.c:629-630 is independent of --inplace: it
     // fires only when the CF_INPLACE_PARTIAL_DIR capability was negotiated
     // (inplace_partial) AND the basis is the partial file (FNAMECMP_PARTIAL_DIR),
     // which the receiver resumes into in place. Without the negotiated capability
@@ -1874,12 +1874,12 @@ mod tests {
     /// The wire `remainder` must land on the LAST reconstructed block, and only
     /// there.
     ///
-    /// upstream: `sender.c:113-114` (receive_sums)
+    /// upstream: `sender.c:374-375` (receive_sums)
     ///   `if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;`
     ///   `else                                      s->sums[i].len = s->blength;`
     ///
-    /// The field is on the wire (`io.c:2099`) and range-checked
-    /// (`io.c:2100-2102`); dropping it made every block claim `blength`, which
+    /// The field is on the wire (`io.c:2284`) and range-checked
+    /// (`io.c:2285-2288`); dropping it made every block claim `blength`, which
     /// is what left the basis's short final block unmatchable.
     #[test]
     fn wire_remainder_shortens_only_the_final_reconstructed_block() {
@@ -2127,7 +2127,7 @@ mod tests {
     /// both halves: the caller sees exactly file_size bytes (zeros where the
     /// device failed) and the error is remembered instead of propagated.
     ///
-    /// upstream: fileio.c:341-348.
+    /// upstream: fileio.c:403-410.
     #[test]
     fn scan_source_zero_fills_and_records_the_read_error() {
         let mut inner = FailingReader::new(vec![7u8; 100], 1);
@@ -2151,7 +2151,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 
-    /// WHY: upstream maps the size it fstat'ed at send time (sender.c:405), so a
+    /// WHY: upstream maps the size it fstat'ed at send time (sender.c:729-745), so a
     /// source that shrank after the file list was built is simply sent short and
     /// verifies normally. Treating that clean EOF as a read error would poison
     /// - and so discard - every legitimately shrinking file.
@@ -2177,8 +2177,8 @@ mod tests {
     /// the peer stays in lockstep, then poisons the checksum so the receiver
     /// discards the file and the run continues to the next entry (exit 23).
     ///
-    /// upstream: fileio.c:341-348 (zero-fill and continue), match.c:414-423
-    /// (poison), sender.c:465-472 (io_error |= IOERR_GENERAL, keep going).
+    /// upstream: fileio.c:403-410 (zero-fill and continue), match.c:414-423
+    /// (poison), sender.c:791-798 (io_error |= IOERR_GENERAL, keep going).
     #[test]
     fn stream_whole_file_transfer_survives_a_read_error_and_poisons() {
         let file_size: u64 = 8 * 1024;
@@ -2270,7 +2270,7 @@ mod tests {
     /// source is shorter than the script claims, which upstream records as
     /// ENODATA) must zero-fill, finish the token stream and poison - not abort.
     ///
-    /// upstream: fileio.c:344 `map->status = nread ? errno : ENODATA`.
+    /// upstream: fileio.c:405 `map->status = nread ? errno : ENODATA`.
     #[test]
     fn write_delta_inline_checksum_survives_a_read_error_and_poisons() {
         use std::io::Write;

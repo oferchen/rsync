@@ -356,7 +356,7 @@ impl GeneratorContext {
         // upstream: flist.c:make_file() -> get_xattr() reads xattrs for -X mode
         #[cfg(unix)]
         if self.config.flags.xattrs {
-            // upstream: xattrs.c:303-334 - get_xattr() only reads for regular files,
+            // upstream: xattrs.c:319-352 - get_xattr() only reads for regular files,
             // dirs, symlinks (if preserve_links), specials (if preserve_specials),
             // and devices (if preserve_devices).
             let should_read = file_type.is_file()
@@ -373,7 +373,7 @@ impl GeneratorContext {
                 let opts = metadata::XattrSendOptions {
                     role: metadata::XattrRole::Sender,
                     follow_symlinks: follow,
-                    // upstream: xattrs.c:237 - `am_sender` forces user_only = 0,
+                    // upstream: xattrs.c:249 - `am_sender` forces user_only = 0,
                     // so the sender transmits every namespace but system.*, and
                     // never claims root, so system.* stays local.
                     am_root: false,
@@ -416,9 +416,9 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1805-1806 send_file_name() applies the client
+        // upstream: flist.c:2030-2031 send_file_name() applies the client
         // `--chmod` (chmod_modes) to each entry's mode as the sender builds the
-        // file list, and clientserver.c:1217 appends the daemon module
+        // file list, and clientserver.c:1299 appends the daemon module
         // `outgoing chmod` to that same `chmod_modes` list. On a push oc is the
         // sender, so both modifier sources must rewrite the wire-emitted mode
         // here; only then does the remote receiver materialise the transformed
@@ -443,9 +443,9 @@ impl GeneratorContext {
 
         // upstream: flist.c:1669-1672 - `always_checksum && am_sender &&
         // S_ISREG(st.st_mode)` computes the per-file checksum with
-        // `file_checksum()` (checksum.c:401, unseeded) and stores it in
+        // `file_checksum()` (checksum.c:419, unseeded) and stores it in
         // `F_SUM(file)` so it travels in the flist (send_file_entry writes it
-        // at flist.c:1228). The receiver's quick-check (generator.c:633,
+        // at flist.c:1228). The receiver's quick-check (generator.c:640,
         // quick_check_ok) compares its own `file_checksum()` of the basis file
         // against this value to decide whether the file is unchanged. Without
         // it the sender emits an all-zero checksum, the receiver's `-c`
@@ -462,7 +462,7 @@ impl GeneratorContext {
     }
 
     /// Computes the unseeded whole-file checksum stored in the flist under
-    /// `--checksum`, mirroring upstream `file_checksum()` (checksum.c:401).
+    /// `--checksum`, mirroring upstream `file_checksum()` (checksum.c:419).
     ///
     /// The algorithm matches the receiver's quick-check hash
     /// ([`get_checksum_algorithm`](Self::get_checksum_algorithm)); both sides
@@ -506,8 +506,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `xattrs.c:1127 get_stat_xattr()`
-    /// - `xattrs.c:1258 x_lstat()` (called from `flist.c:link_stat()`)
+    /// - `xattrs.c:1216 get_stat_xattr()`
+    /// - `xattrs.c:1359 x_lstat()` (called from `flist.c:link_stat()`)
     #[cfg(unix)]
     fn fake_super_override(
         &self,
@@ -703,7 +703,7 @@ mod fake_super_round_trip_tests {
     /// plain file), not as a device node. Verified against `/dev/zero`, a char
     /// device present on every supported Unix. Without the conversion the receiver
     /// would create a device node and then block waiting for file data that never
-    /// arrives (issue #229 deadlock).
+    /// arrives, deadlocking the transfer.
     #[cfg(unix)]
     #[test]
     fn copy_devices_encodes_char_device_as_regular_file() {
@@ -802,7 +802,7 @@ mod fake_super_round_trip_tests {
 
     #[test]
     fn fake_super_decoded_format_matches_upstream_byte_for_byte() {
-        // upstream: xattrs.c:1233 - snprintf("%o %u,%u %u:%u", ...)
+        // upstream: xattrs.c:1341 - snprintf("%o %u,%u %u:%u", ...)
         let stat = FakeSuperStat {
             mode: 0o100644,
             uid: 1234,
@@ -914,7 +914,7 @@ mod client_chmod_tests {
     //! Client `--chmod` push regression: on a push the local client IS the
     //! sender, so `create_entry` must rewrite each outgoing flist entry's mode
     //! with the parsed `--chmod` modifiers. Mirrors upstream
-    //! `flist.c:1805-1806 send_file_name() -> tweak_mode()`, where the sender
+    //! `flist.c:2030-2031 send_file_name() -> tweak_mode()`, where the sender
     //! applies `chmod_modes` to `file->mode` before serialising the entry. The
     //! transformed mode is what the remote receiver materialises on disk and
     //! compares against for the itemize `p` (perms-changed) flag; without the
@@ -1447,8 +1447,7 @@ mod windows_reparse_tests {
     /// `create_entry` emits a `Symlink` FileEntry whose target is preserved.
     ///
     /// Mirrors upstream rsync Cygwin behaviour (every reparse point becomes
-    /// a POSIX symbolic link on the wire) while exercising the wiring that
-    /// PR #5579 + PR #5592 deferred behind the classifier API.
+    /// a POSIX symbolic link on the wire).
     #[test]
     fn junction_is_emitted_as_symlink_entry() {
         let tmp = TempDir::new().expect("tempdir");
@@ -1653,9 +1652,9 @@ mod flist_checksum_tests {
     //! Sender-side `--checksum` (`-c`) per-file flist checksum regression.
     //!
     //! upstream: flist.c:1815 - `always_checksum && am_sender && S_ISREG`
-    //! computes `file_checksum()` (checksum.c:401, unseeded) and stores it in
+    //! computes `file_checksum()` (checksum.c:419, unseeded) and stores it in
     //! `F_SUM(file)`; send_file_entry (flist.c:1228) writes it into the flist.
-    //! The receiver's quick-check (generator.c:633 `quick_check_ok`) compares
+    //! The receiver's quick-check (generator.c:639 `quick_check_ok`) compares
     //! its own unseeded `file_checksum()` of the basis against this value to
     //! decide the file is unchanged and skip the transfer.
     //!

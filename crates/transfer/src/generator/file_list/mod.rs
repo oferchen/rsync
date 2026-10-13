@@ -14,7 +14,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2463` - `send_file_list()` main file list builder
+//! - `flist.c:2739` - `send_file_list()` main file list builder
 //! - `flist.c:1681` - `send_file_entry()` per-file encoding
 //! - `hlink.c:match_hard_links()` - post-sort hardlink index assignment
 
@@ -42,14 +42,14 @@ pub(super) use self::entry::rdev_to_major_minor;
 
 /// Marks a directory entry as an implied parent directory on the wire.
 ///
-/// upstream: flist.c:2174 - `send_implied_dirs()` sets each implied parent's
+/// upstream: flist.c:2456 - `send_implied_dirs()` sets each implied parent's
 /// flags to `(flags | FLAG_IMPLIED_DIR) & ~(FLAG_TOP_DIR | FLAG_CONTENT_DIR)`,
 /// clearing CONTENT_DIR so the receiver does NOT scan the dir for `--delete`.
 /// upstream: flist.c:2659 - the `--files-from`/`--relative` transfer-root `.`
-/// is sent the same way (`& ~FLAG_CONTENT_DIR`). At encode time (flist.c:651)
+/// is sent the same way (`& ~FLAG_CONTENT_DIR`). At encode time (flist.c:735)
 /// a dir with FLAG_IMPLIED_DIR and no FLAG_CONTENT_DIR serializes as
 /// `XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR`, which the receiver decodes back to
-/// FLAG_IMPLIED_DIR (flist.c:1342-1343) - never FLAG_CONTENT_DIR. In oc's flat
+/// FLAG_IMPLIED_DIR (flist.c:1481-1484) - never FLAG_CONTENT_DIR. In oc's flat
 /// encoding that wire pair is `top_dir = true` + `content_dir = false`
 /// (write/xflags.rs:93,284). A real content dir keeps `content_dir = true`.
 ///
@@ -69,7 +69,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2463` - `send_file_list()` - Main file list builder
+    /// - `flist.c:2739` - `send_file_list()` - Main file list builder
     /// - `flist.c:1681` - `send_file_entry()` - Per-file encoding
     ///
     /// Mirrors upstream recursive directory scanning and file list construction behavior.
@@ -79,7 +79,7 @@ impl GeneratorContext {
 
         self.clear_file_list();
 
-        // LF-2c: decide up front whether the lazy on-demand producer will build
+        // Decide up front whether the lazy on-demand producer will build
         // this transfer. When it does, the top-level walk below scans only ONE
         // level (subdirectories are emitted but not descended, upstream
         // FLAG_DIVERT_DIRS); each subdirectory is scanned on demand from the
@@ -110,10 +110,10 @@ impl GeneratorContext {
             .map(Path::to_path_buf);
         // upstream: flist.c:send_implied_dirs() - every parent directory of a
         // --relative source must be present in the file list so the receiver
-        // can find it via flist_find_name() (generator.c:1313). We track
+        // can find it via flist_find_name() (generator.c:1702). We track
         // emitted ancestors across sources to avoid duplicate entries.
         let mut implied_ancestors: HashSet<PathBuf> = HashSet::new();
-        // upstream: flist.c:2608 - a positional operand whose transmitted name
+        // upstream: flist.c:2880 - a positional operand whose transmitted name
         // begins with a bare `./` sets `implied_dot_dir`, which fires the
         // synthetic `.` transfer-root emission below (once per build).
         let mut implied_dot_dir = false;
@@ -128,7 +128,7 @@ impl GeneratorContext {
                 self.report_change_dir_failure(&dir, &error);
                 continue;
             }
-            // upstream: flist.c:2578-2589 - non-relative mode splits each
+            // upstream: flist.c:2850-2861 - non-relative mode splits each
             // positional on the LAST `/`: `dir = strrchr(fbuf, '/')` becomes
             // the parent and `fn` becomes the basename, then `chdir(dir)`
             // walks `fn`. This makes the wire-side relative names carry the
@@ -137,7 +137,7 @@ impl GeneratorContext {
             // would be empty for the source dir and `one` for its child,
             // mismatching upstream's wire output and tripping the
             // receiver's `rejecting unrequested file-list name` check).
-            // upstream: flist.c:2556 - --relative additionally honours the
+            // upstream: flist.c:2863 - --relative additionally honours the
             // `/./` anchor and emits implied parent directories.
             let (base, path) = if relative_paths {
                 relative_walk_base(base_path, daemon_module_root.as_deref())
@@ -176,13 +176,13 @@ impl GeneratorContext {
             if relative_paths && !implied_dot_dir && operand_sets_implied_dot(base_path) {
                 implied_dot_dir = true;
             }
-            // upstream: flist.c:2496-2497 - `if (relative_paths &&
+            // upstream: flist.c:2769 - `if (relative_paths &&
             // protocol_version >= 30) implied_dirs = 1;` forces the sender to
             // emit flagged implied parent dirs at protocol >= 30 regardless of
             // --no-implied-dirs. At protocol < 30 the flag is honoured
-            // (flist.c:2708 `else if (implied_dirs && ...)`), so
+            // (flist.c:2983 `else if (implied_dirs && ...)`), so
             // --no-implied-dirs omits the implied parents from the flist and the
-            // receiver recreates them via make_path (generator.c:1329) without
+            // receiver recreates them via make_path (generator.c:1718) without
             // their source metadata. Mirror both: emit when implied dirs are on
             // OR the protocol forces them.
             if relative_paths && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
@@ -191,12 +191,12 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:2657-2659 - a positional operand beginning with a
+        // upstream: flist.c:2897-2899 - a positional operand beginning with a
         // bare `./` (implied_dot_dir) makes send_file_list() emit a single
         // synthetic `.` transfer-root entry via
         // send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR).
         // Upstream routes that call through send_file1(), which drops a
-        // directory when xfer_dirs is off (flist.c:2691, printing "skipping
+        // directory when xfer_dirs is off (flist.c:2931, printing "skipping
         // directory ."), so the `.` rides the wire ONLY when directories are
         // transferred (`-r` / `-d` / list-only; --files-from forces xfer_dirs on
         // and takes the build_file_list_with_base path instead). Mirror both:
@@ -226,7 +226,7 @@ impl GeneratorContext {
         self.drop_unconvertible_entries();
 
         // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
-        // --qsort uses unstable sort (flist.c:3234). flist.c:3803 - below
+        // --qsort uses unstable sort (flist.c:3803). flist.c:3803 - below
         // protocol 29 a directory sorts as a plain item.
         {
             let pre29 = self.protocol.as_u8() < 29;
@@ -268,15 +268,15 @@ impl GeneratorContext {
     /// `split_files_from_entry`.
     /// Each entry's wire-side relative name is computed by stripping its own
     /// `base`, matching upstream rsync's `chdir(dir)` + transmit-`fn` split
-    /// (`flist.c:2556-2570`). The `base_dir` argument is the source argument
+    /// (`flist.c:2863-2876`). The `base_dir` argument is the source argument
     /// shared by entries without a `/./` anchor and, in `--relative` mode with
     /// a leading `./` anchor, roots the implied transfer-root `.` entry.
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2514-2539` - `change_dir(argv[0])` then read relative filenames
-    /// - `flist.c:2556-2570` - per-entry `/./` anchor split
-    /// - `flist.c:2608-2659` - `implied_dot_dir` gates the transfer-root `.`
+    /// - `flist.c:2754-2779` - `change_dir(argv[0])` then read relative filenames
+    /// - `flist.c:2863-2876` - per-entry `/./` anchor split
+    /// - `flist.c:2848-2899` - `implied_dot_dir` gates the transfer-root `.`
     ///   emission via `send_file_name(".", ..., FLAG_IMPLIED_DIR & ~FLAG_CONTENT_DIR, ...)`
     pub fn build_file_list_with_base(
         &mut self,
@@ -288,7 +288,7 @@ impl GeneratorContext {
         self.clear_file_list();
 
         // --files-from always uses the eager whole-tree build; the lazy producer
-        // (LF-2c) covers only single-source `-r` transfers.
+        // covers only single-source `-r` transfers.
         self.lazy_producer_active = false;
 
         const FLIST_START: usize = 4096;
@@ -311,9 +311,9 @@ impl GeneratorContext {
         // preserves (data loss).
         //
         // Wire encoding: FLAG_IMPLIED_DIR with FLAG_CONTENT_DIR cleared
-        // serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR (flist.c:651-652);
+        // serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR (flist.c:735-737);
         // the receiver decodes that pair back to FLAG_IMPLIED_DIR
-        // (flist.c:1342-1343), never FLAG_TOP_DIR/FLAG_CONTENT_DIR. In oc's flat
+        // (flist.c:1481-1484), never FLAG_TOP_DIR/FLAG_CONTENT_DIR. In oc's flat
         // encoding that is `set_top_dir(true)` + `set_content_dir(false)`
         // (`calculate_basic_flags`/`calculate_directory_flags`).
         //
@@ -358,7 +358,7 @@ impl GeneratorContext {
         // upstream: flist.c:send_implied_dirs() - creates directory entries
         // for every intermediate path component of a --files-from entry.
         //
-        // upstream: flist.c:2175 - `filter_list.head = filter_list.tail = NULL;
+        // upstream: flist.c:2457 - `filter_list.head = filter_list.tail = NULL;
         // /* Don't filter implied dirs. */`. The implied-parent emission is
         // structurally exempt from the filter chain: it stats and pushes each
         // ancestor directly, never consulting the exclude rules. Seeding this
@@ -367,13 +367,13 @@ impl GeneratorContext {
         // filtered top-level walk, so an `--exclude` matching that parent
         // dropped it from the list entirely and a real upstream receiver
         // rejected the orphaned child ("ABORTING due to invalid path from
-        // sender", flist.c:2933 exit 4 under inc-recurse, generator.c:1326
+        // sender", flist.c:3228 exit 4 under inc-recurse, generator.c:1715
         // exit 2 without it). Starting empty restores the exemption and
         // reproduces upstream's two `make_file()` calls for a directory that is
         // both an implied parent and an unfiltered explicit argument: the
         // duplicate rides the wire exactly as upstream sends it and the
         // receiver merges the pair in `flist_sort_and_clean()`
-        // (flist.c:3316-3319, oc: `flist::sort::resolve_duplicate`).
+        // (flist.c:3559-3562, oc: `flist::sort::resolve_duplicate`).
         //
         // The loop records every ancestor it pushes; the difference set
         // `implied_only_dirs` is later consulted by
@@ -383,15 +383,15 @@ impl GeneratorContext {
         // upstream: options.c:2216-2217 - `if (!relative_paths) implied_dirs = 0;`.
         // Under --no-relative (relative_paths == 0) the sender FLATTENS every
         // --files-from entry to its transmitted name and emits NO implied parent
-        // directories (flist.c:2708 gates the send on `implied_dirs`, which is
+        // directories (flist.c:2983 gates the send on `implied_dirs`, which is
         // forced off). Without this gate oc emits an intermediate `sub` dir that
         // an upstream receiver rejects as an unrequested file-list name (exit 4).
-        // upstream: flist.c:2496-2497 - `if (relative_paths && protocol_version
+        // upstream: flist.c:2769 - `if (relative_paths && protocol_version
         // >= 30) implied_dirs = 1;` forces flagged implied parent dirs at
         // protocol >= 30 regardless of --no-implied-dirs; at protocol < 30 the
-        // flag is honoured (flist.c:2708 `else if (implied_dirs && ...)`), so
+        // flag is honoured (flist.c:2983 `else if (implied_dirs && ...)`), so
         // --no-implied-dirs omits the implied parents from the --files-from
-        // flist and the receiver recreates them via make_path (generator.c:1329)
+        // flist and the receiver recreates them via make_path (generator.c:1718)
         // without their source metadata. Mirror the same gate as the positional
         // path (build_file_list): emit only in relative mode, and then when
         // implied dirs are on OR the protocol forces them. When suppressed,
@@ -412,13 +412,13 @@ impl GeneratorContext {
                             continue;
                         }
                         let full = entry.base.join(&ancestor);
-                        // upstream: flist.c:2208-2210 - send_implied_dirs() sets
+                        // upstream: flist.c:2444-2446 - send_implied_dirs() sets
                         // `copy_links = xfer_dirs = 1` around the ancestor loop, so
                         // the implied-parent stat FOLLOWS symlinks. symlink_metadata
                         // reports a symlinked ancestor as a non-directory and drops
                         // it, leaving the receiver with `link/file` and no `link`;
                         // an upstream receiver rejects that with "ABORTING due to
-                        // invalid path from sender" (flist.c:2931, exit 4).
+                        // invalid path from sender" (flist.c:3228, exit 4).
                         let meta = match std::fs::metadata(&full).map(SourceMetadata::from) {
                             Ok(m) if m.is_dir() => m,
                             _ => continue,
@@ -430,7 +430,7 @@ impl GeneratorContext {
                         else {
                             continue;
                         };
-                        // upstream: flist.c:2174 - implied parents clear
+                        // upstream: flist.c:2456 - implied parents clear
                         // FLAG_CONTENT_DIR so a real upstream receiver does
                         // not scan them for --delete (over-delete data loss).
                         mark_implied_dir(&mut file_entry);
@@ -453,7 +453,7 @@ impl GeneratorContext {
         // reached from the argument loop); `send_implied_dirs()` emits an
         // ancestor as a bare entry and never recurses into it. Walking one here
         // would inject its whole subtree, and those names ARE unrequested -
-        // upstream's `implied_filter_list` check (flist.c:1251) rejects them.
+        // upstream's `implied_filter_list` check (flist.c:1368) rejects them.
         // Explicit --files-from dirs stay walkable so their recursive contents
         // continue to flow normally.
         let implied_only_dirs: HashSet<(PathBuf, PathBuf)> =
@@ -487,7 +487,7 @@ impl GeneratorContext {
                 continue;
             }
 
-            // upstream: flist.c:2569 - SLASH_ENDING_NAME / DOTDIR_NAME entries
+            // upstream: flist.c:2823 - SLASH_ENDING_NAME / DOTDIR_NAME entries
             // recurse into their children even when global `-r` is off. Plain
             // `try_walk_source_entry_dedup` honours the global `recursive` flag
             // so the trailing-slash directories would otherwise stop at the
@@ -496,7 +496,7 @@ impl GeneratorContext {
             // emit `bin-lt-list`, etc.). DOTDIR entries (`from/./` and
             // `from/.`) produce `entry.path == entry.base`; they still need
             // the rescan because `flags.recursive` is cleared whenever
-            // `--files-from` is active (upstream `options.c:2198`), so
+            // `--files-from` is active (upstream `options.c:2464-2467`), so
             // `walk_path_with_metadata` would emit only the root entry.
             if entry.recurse
                 && let Ok(meta) = std::fs::symlink_metadata(&entry.path)
@@ -506,7 +506,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1839-1863 send_file1() - drop entries whose names
+        // upstream: flist.c:2064-2088 send_file1() - drop entries whose names
         // cannot be strictly transcoded under --iconv before ndx assignment and
         // INC_RECURSE segmentation, so sender/receiver ndx values stay aligned.
         // The --files-from build path runs send_file_name() per source exactly
@@ -549,15 +549,15 @@ impl GeneratorContext {
     ///
     /// Without inc-recurse, upstream rsync requires every parent directory of
     /// a relative source to be present in the file list so the receiver's
-    /// `flist_find_name()` lookup at `generator.c:1313` succeeds. This walks
+    /// `flist_find_name()` lookup at `generator.c:1702` succeeds. This walks
     /// from the path closest to `base` down to the source itself (exclusive),
     /// stat-ing each ancestor and recording it once via `implied_seen` to
     /// deduplicate across multiple source arguments.
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2162-2241` - `send_implied_dirs()`
-    /// - `generator.c:1300-1315` - parent dir presence check
+    /// - `flist.c:2398-2477` - `send_implied_dirs()`
+    /// - `generator.c:1689-1704` - parent dir presence check
     fn emit_implied_parents(
         &mut self,
         base: &Path,
@@ -598,7 +598,7 @@ impl GeneratorContext {
             };
             // upstream: flist.c:2616 - implied dirs are sent with ALL_FILTERS (2).
             if let Ok(mut entry) = self.create_entry(&full, relative_ancestor, &meta, 2) {
-                // upstream: flist.c:2174 - implied parents clear FLAG_CONTENT_DIR
+                // upstream: flist.c:2456 - implied parents clear FLAG_CONTENT_DIR
                 // so a real upstream receiver does not scan them for --delete.
                 mark_implied_dir(&mut entry);
                 self.push_file_item(entry, full);
@@ -738,7 +738,7 @@ fn clean_relative_name(path: &Path) -> PathBuf {
 
 /// Splits a source path for `--relative` mode into (base, full path).
 ///
-/// Mirrors upstream rsync's `--relative` handling in `flist.c:2556-2590`:
+/// Mirrors upstream rsync's `--relative` handling in `flist.c:2863-2896`:
 ///
 /// - When the path contains `/./`, everything before the anchor becomes the
 ///   base (treated as `dir` upstream) and everything after becomes the
@@ -758,7 +758,7 @@ fn clean_relative_name(path: &Path) -> PathBuf {
 /// absolute operand there: `glob_expand_module()` (`util1.c:884`) strips the
 /// `MODULE/` prefix the client sent and `sanitize_path(NULL, argv[i], "", 0,
 /// SP_KEEP_DOT_DIRS)` (`options.c:2414`) re-roots whatever is left at the
-/// module, so the positional reaching `flist.c:2850` is already
+/// module, so the positional reaching `flist.c:3395` is already
 /// module-relative and the `curr_dir` it is named against is the module root
 /// the server `chdir()`ed into (`clientserver.c:1059`).
 ///
@@ -805,7 +805,7 @@ fn relative_walk_base(path: &Path, module_root: Option<&Path>) -> (PathBuf, Path
         return (root.to_path_buf(), path.to_path_buf());
     }
 
-    // upstream: flist.c:2569 - no "/./" anchor: the entire path is the
+    // upstream: flist.c:2823 - no "/./" anchor: the entire path is the
     // relative name. Use "/" as base for absolute paths (the leading slash is
     // stripped by the receiver per flist.c:3314) and "." for relative paths.
     let base = if path.has_root() {
@@ -847,7 +847,7 @@ fn find_dot_dir_anchor(path: &Path) -> Option<usize> {
 }
 
 /// Picks the `(base, path)` pair for a non-`--relative` positional, matching
-/// upstream `flist.c:2578-2589`: split the path on its LAST `/`, take the
+/// upstream `flist.c:2850-2861`: split the path on its LAST `/`, take the
 /// prefix as the base directory and the suffix as the file name. The full
 /// path is preserved so callers can pass it to `link_stat`, but `base` is
 /// what `walk_path_with_metadata` strips to compute the wire-side relative
@@ -862,7 +862,7 @@ fn find_dot_dir_anchor(path: &Path) -> Option<usize> {
 ///   * `/`             -> base=`/`,         path=`/`             (dotdir)
 ///   * `foo`           -> base=`.`,         path=`foo`
 fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
-    // Upstream's DOTDIR_NAME branch (flist.c:2552-2562) preserves the marker
+    // Upstream's DOTDIR_NAME branch (flist.c:2823-2845) preserves the marker
     // to signal "transfer the contents only". Preserve base == path so
     // `walk_path_with_metadata`'s `relative.is_empty()` branch still emits `.`
     // for the source root. Both spellings of the marker take this branch: a

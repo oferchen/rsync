@@ -6,9 +6,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.h:214-236` - `ITEM_*` flag definitions and `SIGNIFICANT_ITEM_FLAGS`
-//! - `rsync.c:227` - `read_ndx_and_attrs()` reads iflags from wire
-//! - `log.c:695-746` - `%i` expansion uses these flags for itemize output
+//! - `rsync.h:244-266` - `ITEM_*` flag definitions and `SIGNIFICANT_ITEM_FLAGS`
+//! - `rsync.c:323` - `read_ndx_and_attrs()` reads iflags from wire
+//! - `log.c:733-782` - `%i` expansion uses these flags for itemize output
 
 use std::io::{self, Read};
 
@@ -22,9 +22,9 @@ use crate::role_trailer::error_location;
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.h:214-233` - Item flag definitions
-/// - `rsync.c:227` - `read_ndx_and_attrs()` reads iflags
-/// - `sender.c:325` - Sender processes these flags
+/// - `rsync.h:244-261` - Item flag definitions
+/// - `rsync.c:323` - `read_ndx_and_attrs()` reads iflags
+/// - `sender.c:521` - Sender processes these flags
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemFlags {
     /// Raw flags value. Lower 16 bits are on-wire; bits 16-18 are log-only.
@@ -32,7 +32,7 @@ pub struct ItemFlags {
 }
 
 impl ItemFlags {
-    // Wire flags (bits 0-15) - upstream rsync.h:214-229
+    // Wire flags (bits 0-15) - upstream rsync.h:244-259
     /// Item reports access time change.
     pub const ITEM_REPORT_ATIME: u32 = 1 << 0; // 0x0001
     /// Item reports generic change (itemized output).
@@ -43,8 +43,8 @@ impl ItemFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.h:217` - `ITEM_REPORT_TIMEFAIL (1<<2) /* symlinks only */`
-    /// - `log.c:709-710` - checked to emit `T` instead of `t` for symlink time position
+    /// - `rsync.h:247` - `ITEM_REPORT_TIMEFAIL (1<<2) /* symlinks only */`
+    /// - `log.c:746-748` - checked to emit `T` instead of `t` for symlink time position
     pub const ITEM_REPORT_TIMEFAIL: u32 = 1 << 2; // 0x0004
     /// Item reports mtime change.
     pub const ITEM_REPORT_TIME: u32 = 1 << 3; // 0x0008
@@ -86,7 +86,7 @@ impl ItemFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.h:235-236` - `SIGNIFICANT_ITEM_FLAGS`
+    /// - `rsync.h:265-266` - `SIGNIFICANT_ITEM_FLAGS`
     pub const SIGNIFICANT_ITEM_FLAGS: u32 =
         !(Self::ITEM_BASIS_TYPE_FOLLOWS | Self::ITEM_XNAME_FOLLOWS | Self::ITEM_LOCAL_CHANGE);
 
@@ -116,8 +116,8 @@ impl ItemFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.h:235-236` - `SIGNIFICANT_ITEM_FLAGS` definition
-    /// - `generator.c:574-575` - Applied before wire send in `itemize()`
+    /// - `rsync.h:265-266` - `SIGNIFICANT_ITEM_FLAGS` definition
+    /// - `generator.c:587-588` - Applied before wire send in `itemize()`
     #[must_use]
     pub const fn significant_wire_bits(&self) -> u16 {
         (self.raw & Self::SIGNIFICANT_ITEM_FLAGS) as u16
@@ -132,7 +132,7 @@ impl ItemFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
+    /// - `generator.c:588` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
     #[must_use]
     pub const fn has_significant_flags(&self) -> bool {
         self.raw & (Self::SIGNIFICANT_ITEM_FLAGS | Self::ITEM_REPORT_XATTR) != 0
@@ -170,7 +170,7 @@ impl ItemFlags {
     ///
     /// - `rsync.c:383-384` - `iflags = protocol_version >= 29 ?
     ///   read_shortint(f_in) : ITEM_TRANSFER | ITEM_MISSING_DATA`
-    /// - `log.c:736-737` - `ITEM_MISSING_DATA` renders `?` in columns 2..10
+    /// - `log.c:768-769` - `ITEM_MISSING_DATA` renders `?` in columns 2..10
     pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
         if protocol_version >= 29 {
             let mut buf = [0u8; 2];
@@ -196,7 +196,7 @@ impl ItemFlags {
     ///
     /// - `rsync.c:403-418` - `read_ndx_and_attrs()` reads the basis-type byte,
     ///   then the xname via `read_vstring(f_in, buf, MAXPATHLEN)`.
-    /// - `io.c:2042-2058` - `read_vstring()`: the length prefix is a 1- or
+    /// - `io.c:2212-2229` - `read_vstring()`: the length prefix is a 1- or
     ///   2-byte vstring (NOT a varint). The high bit of the first byte flags a
     ///   second byte and `len = (first & ~0x80) * 0x100 + second`. A length of
     ///   `>= MAXPATHLEN` (4096) is a protocol error, not a value to truncate.
@@ -273,5 +273,5 @@ impl ItemFlags {
 
 /// Upstream `MAXPATHLEN` ceiling passed to `read_vstring()` for the xname
 /// field (`rsync.c:408`). A vstring whose length reaches this bound is a
-/// protocol error (`io.c:2048-2052`).
+/// protocol error (`io.c:2218-2222`).
 const MAX_XNAME_VSTRING_LEN: usize = 4096;
