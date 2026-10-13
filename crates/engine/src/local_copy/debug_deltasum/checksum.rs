@@ -1,8 +1,8 @@
 //! Checksum generation trace functions.
 //!
-//! Traces block checksum computation that corresponds to upstream rsync's
-//! `checksum.c`. All tracing is conditionally compiled behind the `tracing`
-//! feature flag.
+//! Traces basis block checksum computation, which upstream performs in
+//! `generator.c:generate_and_send_sums()`. All tracing is conditionally
+//! compiled behind the `tracing` feature flag.
 
 use std::time::Duration;
 
@@ -12,7 +12,8 @@ use super::DELTASUM_TARGET;
 /// Traces the start of checksum generation for a file.
 ///
 /// Emits a tracing event when beginning to compute checksums for basis file
-/// blocks. Corresponds to checksum generation in upstream `checksum.c`.
+/// blocks. Counterpart of the `count=... blength=...` line upstream prints from
+/// `generator.c:sum_sizes_sqroot()`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_checksum_start(file_name: &str, block_count: usize, block_size: u32) {

@@ -237,7 +237,7 @@ fn resolve_deferred_creates_links() {
     tracker.apply_follower(70, &follower2).unwrap();
 
     std::fs::write(&leader, "resolved content").unwrap();
-    // Re-insert deferred into tracker for resolve_deferred to handle
+    // record_leader drains and returns the deferred followers.
     let deferred_list = tracker.record_leader(70, leader.clone());
 
     // Manually re-defer them for the resolve path
