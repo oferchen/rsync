@@ -37,9 +37,9 @@ pub enum FileMessage {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:481-490` - `updating_basis_or_equiv && offset == offset2`
+    /// - `receiver.c:640-650` - `updating_basis_or_equiv && offset == offset2`
     ///   dispatches to `skip_matched()` instead of `write_file()`.
-    /// - `fileio.c:200-253` - `skip_matched()` flushes then `lseek`s past the
+    /// - `fileio.c:294` - `skip_matched()` flushes then `lseek`s past the
     ///   in-place bytes (or feeds the sparse processor with the seek flag).
     SkipMatched(Vec<u8>),
     /// Matched basis bytes that must be written, but that are not literal data
@@ -55,17 +55,17 @@ pub enum FileMessage {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:405-416` - `if (i > 0) { ...; cleanup_got_literal = 1; }`;
-    ///   the matched branch at `receiver.c:426+` deliberately does not.
+    /// - `receiver.c:563-575` - `if (i > 0) { ...; cleanup_got_literal = 1; }`;
+    ///   the matched branch at `receiver.c:586+` deliberately does not.
     /// - `cleanup.c:159` - retention is gated on `cleanup_got_literal`;
-    ///   `cleanup.c:199-200` unlinks the temp otherwise.
+    ///   `cleanup.c:200-201` unlinks the temp otherwise.
     MatchedChunk(Vec<u8>),
     /// Finalize the current file: compute the whole-file checksum, verify it
     /// against the sender's trailing sum, and only then flush, fsync, and
     /// rename into place.
     ///
     /// The expected checksum travels with this message so the disk thread can
-    /// verify BEFORE committing, mirroring upstream `receiver.c:521-535` where
+    /// verify BEFORE committing, mirroring upstream `receiver.c:677-690` where
     /// `receive_data()` compares `sum_end()` against the sender's sum before
     /// `recv_files()` calls `finish_transfer()`.
     Commit {
@@ -132,7 +132,7 @@ pub struct BeginMessage {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:385-386` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    /// - `receiver.c:544-545` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
     pub append_offset: u64,
     /// Xattr list resolved from the wire protocol cache for this file.
     ///
@@ -156,7 +156,7 @@ pub struct BeginMessage {
     ///
     /// # Upstream Reference
     ///
-    /// - `xattrs.c:944-1009` `rsync_xal_set(fname, ..., fnamecmp, ...)` - the
+    /// - `xattrs.c:994` `rsync_xal_set(fname, ..., fnamecmp, ...)` - the
     ///   abbreviated resolution re-reads `fnamecmp`, the basis actually used.
     pub xattr_basis: Option<PathBuf>,
     /// Flist entry whose metadata (permissions, ownership, timestamps, ACL
@@ -183,7 +183,7 @@ pub struct BeginMessage {
 ///
 /// A `len` of 0 means the caller supplied no checksum, so verification is
 /// skipped and the file always commits. This mirrors the `fd == -1`
-/// short-circuit at upstream `receiver.c:534` where the memcmp is not
+/// short-circuit at upstream `receiver.c:690` where the memcmp is not
 /// performed.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ExpectedChecksum {
@@ -240,7 +240,7 @@ pub struct CommitResult {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1066-1067`: `bitbag_set_bit(delayed_bits, ndx)`
+    /// - `receiver.c:1330`: `bitbag_set_bit(delayed_bits, ndx)`
     pub delayed_path: Option<PathBuf>,
     /// Backup notice when `--backup` renamed a pre-existing file. The main
     /// thread emits this as `INFO_GTE(BACKUP, 1)` so the `--info=backup`
