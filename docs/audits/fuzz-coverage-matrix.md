@@ -27,38 +27,42 @@ ordinary builds:
 
 | Target | Workspace | Subsystem | Input shape | Assertions | Last finding | CI schedule |
 |--------|-----------|-----------|-------------|------------|--------------|-------------|
-| `protocol_wire` | `fuzz/` | multiplex `BorrowedMessageFrames` iterator | raw `&[u8]` | panic-only | none recorded (no `fuzz/artifacts/`) | on-demand |
-| `simd_checksum_parity` | `fuzz/` | rolling + MD4/MD5 batch SIMD vs scalar | raw `&[u8]` | byte-equal parity across all dispatchers and 17 lanes | none recorded | on-demand |
+| `protocol_wire` | `fuzz/` | multiplex `BorrowedMessageFrames` iterator | raw `&[u8]` | panic-only | none recorded (no `fuzz/artifacts/`) | daily sweep |
+| `simd_checksum_parity` | `fuzz/` | rolling + MD4/MD5 batch SIMD vs scalar | raw `&[u8]` | byte-equal parity across all dispatchers and 17 lanes | none recorded | daily sweep |
 | `filter_differential` | `fuzz/` | `filters::FilterSet` decisions vs upstream 3.4.2 (`--dry-run --recursive --verbose --out-format=I:%n`) | `Arbitrary` (rules + path + dir flag) | verdict equality with upstream child | none recorded | **nightly 02:00 UTC** (`filter-fuzzer-overnight.yml`, 3600 s/target/run) |
 | `filter_rules_vs_upstream` | `fuzz/` | `filters::FilterSet` vs upstream `--list-only`; adds `!` clear directive | `Arbitrary` (rules + path + dir flag) | verdict equality with upstream child | none recorded | **nightly 02:00 UTC** (same workflow) |
-| `fuzz_varint` | `crates/protocol/fuzz/` | `read_varint`, `read_varlong`, `read_varlong30`, `decode_varint` | raw `&[u8]` | panic-only | none recorded | on-demand |
-| `varint_roundtrip` | `crates/protocol/fuzz/` | varint/varlong/longint/varint30 + `TransferStats` + `DeleteStats` encode/decode | `Arbitrary` (typed values + raw bytes) | encode-then-decode equality, panic-only on raw bytes | none recorded | on-demand |
-| `fuzz_delta` | `crates/protocol/fuzz/` | `wire::read_token`, `wire::read_delta`, `wire::read_int`, `wire::read_signature` | raw `&[u8]` | panic-only | none recorded | on-demand |
-| `fuzz_multiplex_frame` | `crates/protocol/fuzz/` | `BorrowedMessageFrame::decode_from_slice`, `MessageHeader::decode`, `recv_msg`, `recv_msg_into` | raw `&[u8]` | panic-only | none recorded | on-demand |
-| `multiplex_frame_roundtrip` | `crates/protocol/fuzz/` | `MessageFrame`/`BorrowedMessageFrame` encode-decode roundtrip + oversize rejection | `Arbitrary` (code selector + payload + raw bytes) | code + payload equality, oversize rejection, panic-only on raw bytes | none recorded | on-demand |
-| `fuzz_legacy_greeting` | `crates/protocol/fuzz/` | `parse_legacy_daemon_greeting{,_bytes,_details,_owned}`, error/warning message parsers | raw `&[u8]` (plus UTF-8 string variants) | panic-only | none recorded | on-demand |
-| `file_entry_roundtrip` | `crates/protocol/fuzz/` | `wire::file_entry::encode_*` + `wire::file_entry_decode::decode_*` (flags, size, mtime, mode, uid, gid, name, symlink, atime, crtime, checksum, end marker) | `Arbitrary` (typed field values + protocol selector 28-32) | per-field encode-decode equality | none recorded | on-demand |
-| `fuzz_filter_parse` | `crates/filters/fuzz/` | `filters::parse_rules` + `FilterSet::from_rules` | raw `&[u8]` filtered to UTF-8 | panic-only | none recorded | on-demand (seed corpus 39 files under `corpus/filter_parse/`) |
-| `fuzz_filter_chain` | `crates/filters/fuzz/` | `parse_rules` + `FilterSet::{allows,allows_deletion,allows_deletion_when_excluded_removed,excluded_dir_by_non_dir_rule,is_empty}` | `Arbitrary` (rule text + path entries) | panic-only across every decision method | none recorded (seed corpus 10 files under `corpus/filter_chain/`) | on-demand |
+| `fuzz_varint` | `crates/protocol/fuzz/` | `read_varint`, `read_varlong`, `read_varlong30`, `decode_varint` | raw `&[u8]` | panic-only | none recorded | daily sweep |
+| `varint_roundtrip` | `crates/protocol/fuzz/` | varint/varlong/longint/varint30 + `TransferStats` + `DeleteStats` encode/decode | `Arbitrary` (typed values + raw bytes) | encode-then-decode equality, panic-only on raw bytes | none recorded | daily sweep |
+| `fuzz_delta` | `crates/protocol/fuzz/` | `wire::read_token`, `wire::read_delta`, `wire::read_int`, `wire::read_signature` | raw `&[u8]` | panic-only | none recorded | daily sweep |
+| `fuzz_multiplex_frame` | `crates/protocol/fuzz/` | `BorrowedMessageFrame::decode_from_slice`, `MessageHeader::decode`, `recv_msg`, `recv_msg_into` | raw `&[u8]` | panic-only | none recorded | daily sweep |
+| `multiplex_frame_roundtrip` | `crates/protocol/fuzz/` | `MessageFrame`/`BorrowedMessageFrame` encode-decode roundtrip + oversize rejection | `Arbitrary` (code selector + payload + raw bytes) | code + payload equality, oversize rejection, panic-only on raw bytes | none recorded | daily sweep |
+| `fuzz_legacy_greeting` | `crates/protocol/fuzz/` | `parse_legacy_daemon_greeting{,_bytes,_details,_owned}`, error/warning message parsers | raw `&[u8]` (plus UTF-8 string variants) | panic-only | none recorded | daily sweep |
+| `file_entry_roundtrip` | `crates/protocol/fuzz/` | `wire::file_entry::encode_*` + `wire::file_entry_decode::decode_*` (flags, size, mtime, mode, uid, gid, name, symlink, atime, crtime, checksum, end marker) | `Arbitrary` (typed field values + protocol selector 28-32) | per-field encode-decode equality | none recorded | daily sweep |
+| `fuzz_filter_parse` | `crates/filters/fuzz/` | `filters::parse_rules` + `FilterSet::from_rules` | raw `&[u8]` filtered to UTF-8 | panic-only | none recorded | daily sweep (seed corpus 39 files under `corpus/fuzz_filter_parse/`) |
+| `fuzz_filter_chain` | `crates/filters/fuzz/` | `parse_rules` + `FilterSet::{allows,allows_deletion,allows_deletion_when_excluded_removed,excluded_dir_by_non_dir_rule,is_empty}` | `Arbitrary` (rule text + path entries) | panic-only across every decision method | none recorded (seed corpus 10 files under `corpus/fuzz_filter_chain/`) | daily sweep |
 
 Total targets: **13** across 3 workspaces.
 
-Total scheduled targets: **2** (both filter differential targets, nightly).
-The remaining 11 targets run only on demand via
-`tools/ci/run_filter_fuzz.sh`, `tools/ci/run_filter_differential_fuzz.sh`,
-or direct `cargo +nightly fuzz run` invocation.
+Every target is scheduled. The five differential targets run in the
+overnight workflows (`filter-fuzzer-overnight.yml`, 3600 s/target, and
+`differential-fuzzer-overnight.yml`, 1800 s/target). Every other target in the
+three workspaces runs in the daily sweep described below.
 
-### Nightly coverage report (informational)
+### Daily fuzz sweep
 
-The `Fuzz Coverage Report` workflow (`.github/workflows/fuzz-coverage-report.yml`)
-runs `cargo fuzz coverage <target> -- -max_total_time=300` for every target
-in the three fuzz workspaces nightly at 03:30 UTC. Each run uploads a
-`coverage/<target>.lcov` artifact with 30-day retention, and the GitHub step
-summary lists per-target line-coverage percentages. The job is marked
-`continue-on-error: true` while baseline thresholds stabilise; promote it to
-a required check once each target has a documented minimum line-coverage
-target and the lcov totals trend monotonically upward across consecutive
-nightly runs.
+The `Fuzz Daily Sweep` workflow (`.github/workflows/fuzz-coverage-report.yml`)
+runs daily at 03:30 UTC. `tools/ci/fuzz_target_matrix.py` builds its matrix
+from the `[[bin]]` tables of the three fuzz workspaces, minus the targets the
+overnight workflows already fuzz, so a new target is picked up without a
+workflow edit. Targets are grouped per workspace into shards of at most 8.
+
+Each target runs `cargo fuzz run <target> -- -max_total_time=120`, seeded
+from `corpus/<target>/` when one is committed, and its corpus is then
+replayed under `cargo fuzz coverage`. A crash, sanitizer report, timeout or
+OOM fails the shard and uploads `<workspace>/artifacts/` as the
+`fuzz-findings-*` artifact. Each target also uploads
+`coverage/<target>.lcov` (30-day retention), and the step summary lists
+per-target line coverage.
 
 Maturity signals:
 
@@ -68,7 +72,7 @@ Maturity signals:
 - `crates/protocol/fuzz/corpus/` and `crates/protocol/fuzz/artifacts/`
   are absent - same story for the per-crate protocol targets.
 - `crates/filters/fuzz/corpus/` is the only seeded corpus (49 files
-  across `filter_parse/` and `filter_chain/`); no artifacts directory.
+  across `fuzz_filter_parse/` and `fuzz_filter_chain/`); no artifacts directory.
 - No target has a recorded finding committed to the tree. The nightly
   workflow uploads `fuzz/artifacts/**` on failure and fails the job, so
   any historic find would have been triaged through the artifact path
@@ -177,7 +181,7 @@ Gap-by-gap priority queue for FCV-3+:
 11. **`acl_xattr_wire`** (P2, SHIPPED). Consolidated target that fans the
     same input into `read_acl_definition`, `read_xattr_definitions`,
     `recv_xattr`, `recv_xattr_request`, and `recv_xattr_values`. Wired
-    into the nightly `fuzz-coverage-report` workflow.
+    into the daily fuzz sweep (`fuzz-coverage-report.yml`).
 12. **`files_from`** (P2). `read_files_from_stream` + the forwarding
     path.
 13. **`iconv_spec`** (P2). `IconvSpec::parse` accepts user-supplied

@@ -129,11 +129,22 @@ fn round_trip(data: &[u8]) {
         let mut cursor = Cursor::new(buf.as_slice());
         let decoded =
             read_varlong(&mut cursor, min_bytes).expect("varlong round-trip must succeed");
-        assert_eq!(
-            decoded, input.varlong_value,
-            "varlong round-trip diverged for value={} min_bytes={}",
-            input.varlong_value, min_bytes,
-        );
+        // upstream: io.c read_varlong() reads at most min_bytes + 6 bytes
+        // (int_byte_extra[] tops out at 6), while write_varlong() may emit up
+        // to 9. Longer encodings do not round-trip in upstream either, so the
+        // inverse property only holds within that reach.
+        if buf.len() <= usize::from(min_bytes) + 6 {
+            assert_eq!(
+                decoded, input.varlong_value,
+                "varlong round-trip diverged for value={} min_bytes={}",
+                input.varlong_value, min_bytes,
+            );
+            assert_eq!(
+                cursor.position() as usize,
+                buf.len(),
+                "varlong left trailing bytes"
+            );
+        }
     }
 
     // Fixed 4-byte int round-trip (protocol < 30 path).

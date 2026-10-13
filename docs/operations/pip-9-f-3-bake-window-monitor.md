@@ -81,7 +81,7 @@ A single FAIL on any check is a disqualifying signal; jump to section
   green.
 
 - **D2: Nightly Fuzz Coverage - green with no new panics.** Confirm
-  last night's Fuzz Coverage workflow ran green and surfaced no new
+  last night's Fuzz Daily Sweep workflow ran green and surfaced no new
   panics from the parallel path. A panic from any other code path is
   noted but does not count against the bake window.
 

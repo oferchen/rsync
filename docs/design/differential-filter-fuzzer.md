@@ -219,7 +219,7 @@ unit-level fuzzing for free.
 
 The fuzzer's seed corpus is NOT random; it encodes known-tricky inputs
 distilled from the existing `crates/filters/tests/` suite, the merge
-fuzz corpus at `crates/filters/fuzz/corpus/filter_parse/`, and the
+fuzz corpus at `crates/filters/fuzz/corpus/fuzz_filter_parse/`, and the
 historical bug record. Each seed is a single deterministic
 (rule-set, tree) pair.
 
@@ -449,7 +449,7 @@ must remain confined to the transfer root. Those inputs become the
 - They cleanly differentiate "filter elides path" from "evaluator
   panics or escapes".
 
-The seed importer reads `crates/filters/fuzz/corpus/filter_parse/` and
+The seed importer reads `crates/filters/fuzz/corpus/fuzz_filter_parse/` and
 the path-escaping seed list from #1062's audit attachment, deduplicates
 on rule-set hash, and writes the merged set into
 `crates/filters/fuzz/corpus/filter_differential/`. The existing 17

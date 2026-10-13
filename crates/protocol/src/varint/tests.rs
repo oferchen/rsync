@@ -2072,3 +2072,25 @@ fn read_varint_size_propagates_truncated_read() {
     let err = read_varint_size(&mut cursor, 1024, "len").expect_err("truncated input must error");
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
+
+/// Fuzz reproducer (varint_decode): with min_bytes=2 a value whose top byte is
+/// set needs 9 encoded bytes, but upstream's reader can take at most
+/// `min_bytes + 6` (int_byte_extra caps at 6), so it stops one byte short and
+/// rebuilds the top byte from the flag bits. Bytes and decoded value below
+/// come from a byte-exact model of io.c write_varlong()/read_varlong(); oc must
+/// match them, not "fix" the round trip, or it would desync from upstream.
+#[test]
+fn varlong_matches_upstream_where_upstream_cannot_round_trip() {
+    let value = -2_170_205_185_142_300_191_i64;
+    let mut encoded = Vec::new();
+    write_varlong(&mut encoded, value, 2).expect("encoding succeeds");
+    assert_eq!(
+        encoded,
+        [0xFE, 0xE1, 0xE1, 0xE1, 0xE1, 0xE1, 0xE1, 0xE1, 0xE1]
+    );
+
+    let mut cursor = Cursor::new(&encoded);
+    let decoded = read_varlong(&mut cursor, 2).expect("decoding succeeds");
+    assert_eq!(decoded, 207_695_418_109_321_697);
+    assert_eq!(cursor.position(), 8, "upstream consumes min_bytes + 6");
+}

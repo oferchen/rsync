@@ -1,37 +1,48 @@
-# Nightly Fuzz Coverage Report - Informational
+# Daily Fuzz Sweep
 #
-# Runs `cargo fuzz coverage` for every target across the three fuzz workspaces
-# (`fuzz/`, `crates/protocol/fuzz/`, `crates/filters/fuzz/`) and uploads the
-# generated `.lcov` files as workflow artifacts. Marked `continue-on-error: true`
-# while we establish baseline thresholds per target. Promote to a required
-# check once each target has a stable minimum line coverage documented in
-# `docs/audits/fuzz-coverage-matrix.md`.
+# Fuzzes every cargo-fuzz target in the three fuzz workspaces (`fuzz/`,
+# `crates/protocol/fuzz/`, `crates/filters/fuzz/`) once a day, then replays the
+# resulting corpus under `cargo fuzz coverage` and uploads one `.lcov` per
+# target.
+#
+# Target list:
+#   - Built by `tools/ci/fuzz_target_matrix.py` from the workspaces'
+#     `[[bin]]` tables, so a new target is swept without a workflow edit.
+#   - Targets the overnight workflows already fuzz for 30-60 minutes
+#     (differential-fuzzer-overnight.yml, filter-fuzzer-overnight.yml) are
+#     left out; the script reads their matrices to find them.
+#   - Targets are grouped per workspace into shards of at most 8. A shard
+#     builds its workspace once and runs its targets in series.
 #
 # Budget:
-#   - 5 minutes per target (-max_total_time=300) keeps the matrix under the
-#     90-minute job timeout even as targets are added.
-#   - Targets run in a matrix so a single regression does not block siblings
-#     (fail-fast: false).
+#   - FUZZ_DURATION seconds per target (default 120). 31 targets x 120 s is
+#     62 minutes of fuzzing a day, spread over 5 shards of at most 16
+#     minutes each. Setup, the sanitizer build and the coverage build add
+#     roughly 10 minutes per shard (the coverage build alone measured 2m42s
+#     on the fuzz/ workspace with a warm cache).
+#   - The overnight differential targets keep their longer budgets; this
+#     sweep is for breadth, so every target sees new inputs every day.
 #
-# Outputs:
-#   - One `coverage/<target>.lcov` per matrix entry, uploaded with
-#     `retention-days: 30` so historical comparisons survive a full sprint.
-#   - A "Coverage summary (informational)" step greps line-hit totals from
-#     each lcov file into the GitHub step summary for at-a-glance review.
+# Failure policy:
+#   - A crash, sanitizer report, timeout or OOM fails the shard and uploads
+#     `<workspace>/artifacts/` so the reproducer is kept. Remaining targets in
+#     the shard still run, so one finding does not hide another.
+#   - An empty committed corpus is fine: the fuzzer creates the inputs that
+#     the coverage replay then reads.
 
-name: Fuzz Coverage Report
+name: Fuzz Daily Sweep
 
 on:
   schedule:
-    # Nightly at 03:30 UTC: after Filter Fuzzer Overnight (02:00 UTC) so the
+    # Daily at 03:30 UTC: after Filter Fuzzer Overnight (02:00 UTC) so the
     # two jobs do not compete for the same fuzz workspace lock.
     - cron: '30 3 * * *'
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Seconds per fuzz target (default 300 = 5 min)'
+        description: 'Seconds per fuzz target (default 120)'
         required: false
-        default: '300'
+        default: '120'
 
 concurrency:
   group: fuzz-coverage-report
@@ -43,66 +54,40 @@ permissions:
 env:
   APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev lcov libidn2-dev
   CARGO_TERM_COLOR: always
-  FUZZ_DURATION: ${{ github.event.inputs.duration || '300' }}
+  FUZZ_DURATION: ${{ github.event.inputs.duration || '120' }}
 
 jobs:
-  coverage:
-    name: ${{ matrix.target }} (informational)
+  plan:
+    name: Plan fuzz shards
     runs-on: ubuntu-latest
-    # 5 min per target + 25 min for toolchain install, upstream build, and
-    # cargo-fuzz coverage compilation overhead.
-    timeout-minutes: 30
-    continue-on-error: true
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: List fuzz targets
+        id: plan
+        run: |
+          set -euo pipefail
+          matrix=$(python3 tools/ci/fuzz_target_matrix.py)
+          echo "matrix=${matrix}" >>"$GITHUB_OUTPUT"
+          echo "${matrix}" | python3 -m json.tool
+
+  fuzz:
+    name: ${{ matrix.shard }}
+    needs: plan
+    runs-on: ubuntu-latest
+    # At most 8 targets x 120 s of fuzzing, plus setup, the sanitizer build and
+    # the coverage build.
+    timeout-minutes: 60
+    env:
+      TARGETS: ${{ matrix.targets }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - workspace: fuzz
-            target: protocol_wire
-          - workspace: fuzz
-            target: simd_checksum_parity
-          - workspace: fuzz
-            target: filter_differential
-            needs_upstream: true
-          - workspace: fuzz
-            target: filter_rules_vs_upstream
-            needs_upstream: true
-          - workspace: fuzz
-            target: multiplex_frame_parse
-          - workspace: fuzz
-            target: flist_entry_decode
-          - workspace: fuzz
-            target: decompressor_zstd
-          - workspace: fuzz
-            target: decompressor_zlib
-          - workspace: fuzz
-            target: zlib_token_decode
-          - workspace: fuzz
-            target: acl_xattr_wire
-          - workspace: fuzz
-            target: differential_multiplex
-          - workspace: fuzz
-            target: differential_flist
-          - workspace: fuzz
-            target: buffered_map
-          - workspace: crates/protocol/fuzz
-            target: fuzz_varint
-          - workspace: crates/protocol/fuzz
-            target: varint_roundtrip
-          - workspace: crates/protocol/fuzz
-            target: fuzz_delta
-          - workspace: crates/protocol/fuzz
-            target: fuzz_multiplex_frame
-          - workspace: crates/protocol/fuzz
-            target: multiplex_frame_roundtrip
-          - workspace: crates/protocol/fuzz
-            target: fuzz_legacy_greeting
-          - workspace: crates/protocol/fuzz
-            target: file_entry_roundtrip
-          - workspace: crates/filters/fuzz
-            target: fuzz_filter_parse
-          - workspace: crates/filters/fuzz
-            target: fuzz_filter_chain
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -123,7 +108,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
-          key: fuzz-coverage-${{ matrix.target }}
+          key: fuzz-sweep-${{ matrix.shard }}
 
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
@@ -142,135 +127,111 @@ jobs:
         with:
           tool: cargo-fuzz
 
-      - name: Cache upstream rsync
-        if: matrix.needs_upstream
-        id: cache-rsync
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-3.4.4-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-3.4.4-${{ runner.os }}-
-
-      - name: Fetch upstream rsync tarballs
-        if: matrix.needs_upstream && steps.cache-rsync.outputs.cache-hit != 'true'
-        uses: ./.github/actions/fetch-upstream-rsync
-        with:
-          versions: '2.6.9 3.0.9 3.1.3 3.4.4 3.5.0'
-
-      - name: Build upstream rsync
-        if: matrix.needs_upstream && steps.cache-rsync.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
-
-      - name: Locate upstream rsync
-        if: matrix.needs_upstream
-        id: upstream
-        run: |
-          set -euo pipefail
-          for candidate in \
-              "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.4/bin/rsync"; do
-              if [[ -x "${candidate}" ]]; then
-                  echo "upstream=${candidate}" >>"$GITHUB_OUTPUT"
-                  echo "located upstream rsync at ${candidate}"
-                  exit 0
-              fi
-          done
-          echo "error: no upstream rsync binary built" >&2
-          exit 1
-
       - name: Detect host triple
         id: host
         run: echo "triple=$(rustc -vV | awk '/^host:/ { print $2 }')" >>"$GITHUB_OUTPUT"
 
-      - name: Run cargo fuzz coverage (${{ matrix.target }})
-        env:
-          OC_RSYNC_UPSTREAM_BIN: ${{ steps.upstream.outputs.upstream }}
+      - name: Build fuzz targets
+        working-directory: ${{ matrix.workspace }}
+        run: cargo +nightly fuzz build --target "${{ steps.host.outputs.triple }}"
+
+      - name: Fuzz targets
+        working-directory: ${{ matrix.workspace }}
         run: |
           set -uo pipefail
-          cd "${{ matrix.workspace }}"
-          cargo +nightly fuzz coverage "${{ matrix.target }}" \
-              --target "${{ steps.host.outputs.triple }}" \
-              -- -max_total_time="${FUZZ_DURATION}"
-          status=$?
-          echo "coverage_status=${status}" >>"$GITHUB_ENV"
-          if [[ "${status}" -ne 0 ]]; then
-              echo "warning: cargo fuzz coverage exited ${status}" >&2
+          if ! [[ "${FUZZ_DURATION}" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::duration must be a positive integer, got '${FUZZ_DURATION}'"
+              exit 1
+          fi
+          failed=()
+          for target in ${TARGETS}; do
+              echo "::group::fuzz ${target}"
+              # The committed corpus/<target>/ seeds the run, if present, and
+              # receives every new input. -timeout bounds a single input so
+              # one hang cannot eat the shard's budget; it is reported as a
+              # finding like a crash.
+              if ! cargo +nightly fuzz run "${target}" \
+                  --target "${{ steps.host.outputs.triple }}" \
+                  -- -max_total_time="${FUZZ_DURATION}" -timeout=60; then
+                  failed+=("${target}")
+              fi
+              echo "::endgroup::"
+          done
+          if [[ "${#failed[@]}" -gt 0 ]]; then
+              echo "::error::fuzz findings in: ${failed[*]} (reproducers in the fuzz-findings artifact)"
+              exit 1
           fi
 
-      - name: Convert profdata to lcov
-        if: always()
+      - name: Replay corpus under coverage
+        if: ${{ !cancelled() }}
+        working-directory: ${{ matrix.workspace }}
         run: |
           set -uo pipefail
-          workspace="${{ matrix.workspace }}"
-          target="${{ matrix.target }}"
-          profdata="${workspace}/coverage/${target}/coverage.profdata"
-          mkdir -p coverage
-          if [[ ! -f "${profdata}" ]]; then
-              echo "no profdata for ${target}; emitting empty placeholder" >&2
-              : >"coverage/${target}.lcov"
-              exit 0
+          host_triple="${{ steps.host.outputs.triple }}"
+          llvm_cov="$(rustc +nightly --print sysroot)/lib/rustlib/${host_triple}/bin/llvm-cov"
+          mkdir -p "${GITHUB_WORKSPACE}/coverage"
+          failed=()
+          for target in ${TARGETS}; do
+              echo "::group::coverage ${target}"
+              if ! cargo +nightly fuzz coverage "${target}" --target "${host_triple}"; then
+                  failed+=("${target}")
+                  echo "::endgroup::"
+                  continue
+              fi
+              # The instrumented binary lives under a coverage/ directory of
+              # the target dir; its exact nesting differs across cargo-fuzz
+              # releases, so find it rather than hard-code it.
+              binary=$(find target -type f -perm -u+x -name "${target}" -path '*/coverage/*' | head -n 1)
+              if [[ -z "${binary}" ]] || ! "${llvm_cov}" export --format=lcov \
+                  --instr-profile="coverage/${target}/coverage.profdata" "${binary}" \
+                  >"${GITHUB_WORKSPACE}/coverage/${target}.lcov"; then
+                  failed+=("${target}")
+              fi
+              echo "::endgroup::"
+          done
+          if [[ "${#failed[@]}" -gt 0 ]]; then
+              echo "::error::coverage replay failed for: ${failed[*]}"
+              exit 1
           fi
-          # cargo fuzz writes the instrumented binary under
-          # <workspace>/target/<host-triple>/coverage/<host-triple>/release/<target>.
-          host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
-          binary="${workspace}/target/${host_triple}/coverage/${host_triple}/release/${target}"
-          if [[ ! -x "${binary}" ]]; then
-              # Fallback layout for older cargo-fuzz releases.
-              binary="${workspace}/target/${host_triple}/release/${target}"
-          fi
-          if [[ ! -x "${binary}" ]]; then
-              echo "warning: instrumented binary missing for ${target}" >&2
-              : >"coverage/${target}.lcov"
-              exit 0
-          fi
-          cargo +nightly cov -- export \
-              --format=lcov \
-              --instr-profile="${profdata}" \
-              "${binary}" \
-              >"coverage/${target}.lcov" || {
-              echo "warning: cargo cov export failed for ${target}" >&2
-              : >"coverage/${target}.lcov"
-          }
 
-      - name: Coverage summary (informational)
-        if: always()
+      - name: Coverage summary
+        if: ${{ !cancelled() }}
         run: |
           set -uo pipefail
-          target="${{ matrix.target }}"
-          lcov_file="coverage/${target}.lcov"
           {
-              echo "## Fuzz coverage: ${target}"
+              echo "## Fuzz coverage: ${{ matrix.shard }}"
               echo ""
-              if [[ ! -s "${lcov_file}" ]]; then
-                  echo "_No coverage data emitted; see job log for details._"
-                  exit 0
-              fi
-              # LF = lines found, LH = lines hit. Aggregate across source files
-              # in the lcov record so the summary reflects total target coverage.
-              lf=$(grep -c '^LF:' "${lcov_file}" || true)
-              lh_total=$(awk -F: '/^LH:/ { sum += $2 } END { print sum + 0 }' "${lcov_file}")
-              lf_total=$(awk -F: '/^LF:/ { sum += $2 } END { print sum + 0 }' "${lcov_file}")
-              if [[ "${lf_total}" -gt 0 ]]; then
-                  pct=$(awk -v h="${lh_total}" -v f="${lf_total}" \
-                      'BEGIN { printf "%.2f", (h / f) * 100 }')
-              else
-                  pct="n/a"
-              fi
-              echo "| Metric | Value |"
-              echo "|--------|-------|"
-              echo "| Source records | ${lf} |"
-              echo "| Lines found | ${lf_total} |"
-              echo "| Lines hit | ${lh_total} |"
-              echo "| Line coverage | ${pct}% |"
+              echo "| Target | Lines found | Lines hit | Line coverage |"
+              echo "|--------|-------------|-----------|---------------|"
+              for target in ${TARGETS}; do
+                  lcov_file="coverage/${target}.lcov"
+                  if [[ ! -s "${lcov_file}" ]]; then
+                      echo "| ${target} | - | - | no data |"
+                      continue
+                  fi
+                  # LF = lines found, LH = lines hit, summed over source files.
+                  lh=$(awk -F: '/^LH:/ { s += $2 } END { print s + 0 }' "${lcov_file}")
+                  lf=$(awk -F: '/^LF:/ { s += $2 } END { print s + 0 }' "${lcov_file}")
+                  pct=$(awk -v h="${lh}" -v f="${lf}" \
+                      'BEGIN { if (f > 0) printf "%.2f%%", (h / f) * 100; else print "n/a" }')
+                  echo "| ${target} | ${lf} | ${lh} | ${pct} |"
+              done
           } >>"${GITHUB_STEP_SUMMARY}"
 
-      - name: Upload lcov artifact
-        if: always()
+      - name: Upload fuzz findings
+        if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuzz-coverage-${{ matrix.target }}-${{ github.run_id }}
+          name: fuzz-findings-${{ matrix.shard }}-${{ github.run_id }}
           retention-days: 30
-          path: coverage/${{ matrix.target }}.lcov
+          path: ${{ matrix.workspace }}/artifacts/
+          if-no-files-found: warn
+
+      - name: Upload lcov artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-coverage-${{ matrix.shard }}-${{ github.run_id }}
+          retention-days: 30
+          path: coverage/
           if-no-files-found: warn
