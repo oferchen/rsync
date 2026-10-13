@@ -1,43 +1,42 @@
-// Resolution of the connecting peer's address for the two stdio daemon entry
-// points, mirroring upstream's `client_addr()`.
-//
-// upstream: clientname.c:55-84 - `client_addr(int fd)` has two arms, chosen by
-// the sign of `am_daemon`:
-//
-// ```c
-// if (am_daemon < 0) {              /* daemon over --rsh mode */
-//     strlcpy(ipaddr_buf, "0.0.0.0", sizeof ipaddr_buf);
-//     if ((env_str = getenv("REMOTE_HOST"))    != NULL
-//      || (env_str = getenv("SSH_CONNECTION")) != NULL
-//      || (env_str = getenv("SSH_CLIENT"))     != NULL
-//      || (env_str = getenv("SSH2_CLIENT"))    != NULL) {
-//         strlcpy(ipaddr_buf, env_str, sizeof ipaddr_buf);
-//         if ((p = strchr(ipaddr_buf, ' ')) != NULL) *p = '\0';
-//     }
-//     if (valid_ipaddr(ipaddr_buf, True)) return ipaddr_buf;
-// }
-// client_sockaddr(fd, &ss, &length);
-// getnameinfo(..., NI_NUMERICHOST);
-// ```
-//
-// and `client_sockaddr()` (clientname.c:37-45) does NOT invent a fallback when
-// the socket cannot name its peer - it aborts the connection:
-//
-// ```c
-// if (getpeername(fd, (struct sockaddr *) ss, ss_len)) {
-//     rsyserr(FLOG, errno, "getpeername on fd%d failed", fd);
-//     exit_cleanup(RERR_SOCKETIO);
-// }
-// ```
-//
-// The two entry points are therefore NOT the same case, which is what made the
-// previous code look defensible: under inetd, fd 0 *is* the connected socket
-// and `getpeername` succeeds, so there is a real address to be had; under a
-// remote shell, fd 0 is a pipe and the address can only come from the
-// environment. Fabricating `127.0.0.1` for both made every `hosts allow` /
-// `hosts deny` rule evaluate against a synthetic localhost - admitting every
-// client under the canonical `hosts allow = 127.0.0.1`, and rejecting every
-// legitimate client under an allow-list naming real subnets.
+//! Resolution of the connecting peer's address for the two stdio daemon entry
+//! points, mirroring upstream's `client_addr()`.
+//!
+//! upstream: clientname.c:55-84 - `client_addr(int fd)` has two arms, chosen by
+//! the sign of `am_daemon`:
+//!
+//! ```c
+//! if (am_daemon < 0) {              /* daemon over --rsh mode */
+//!     strlcpy(ipaddr_buf, "0.0.0.0", sizeof ipaddr_buf);
+//!     if ((env_str = getenv("REMOTE_HOST"))    != NULL
+//!      || (env_str = getenv("SSH_CONNECTION")) != NULL
+//!      || (env_str = getenv("SSH_CLIENT"))     != NULL
+//!      || (env_str = getenv("SSH2_CLIENT"))    != NULL) {
+//!         strlcpy(ipaddr_buf, env_str, sizeof ipaddr_buf);
+//!         if ((p = strchr(ipaddr_buf, ' ')) != NULL) *p = '\0';
+//!     }
+//!     if (valid_ipaddr(ipaddr_buf, True)) return ipaddr_buf;
+//! }
+//! client_sockaddr(fd, &ss, &length);
+//! getnameinfo(..., NI_NUMERICHOST);
+//! ```
+//!
+//! and `client_sockaddr()` (clientname.c:319-327) does NOT invent a fallback
+//! when the socket cannot name its peer - it aborts the connection:
+//!
+//! ```c
+//! if (getpeername(fd, (struct sockaddr *) ss, ss_len)) {
+//!     rsyserr(FLOG, errno, "getpeername on fd%d failed", fd);
+//!     exit_cleanup(RERR_SOCKETIO);
+//! }
+//! ```
+//!
+//! The two entry points are therefore NOT the same case: under inetd, fd 0 *is*
+//! the connected socket and `getpeername` succeeds, so there is a real address
+//! to be had; under a remote shell, fd 0 is a pipe and the address can only come
+//! from the environment. A synthetic `127.0.0.1` for both would make every
+//! `hosts allow` / `hosts deny` rule evaluate against a fake localhost -
+//! admitting every client under the canonical `hosts allow = 127.0.0.1`, and
+//! rejecting every legitimate client under an allow-list naming real subnets.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -261,7 +260,7 @@ pub(in crate::daemon) fn remote_shell_peer_addr() -> RemoteShellPeer {
 /// lookup, so the normalisation is part of the ACL contract rather than
 /// cosmetic.
 ///
-/// upstream: clientname.c:47-74 - `client_sockaddr()` rewrites a V4MAPPED
+/// upstream: clientname.c:329-356 - `client_sockaddr()` rewrites a V4MAPPED
 /// `sockaddr_in6` into a `sockaddr_in` before any lookup or comparison.
 ///
 /// Gated to Unix because its only caller is [`inherited_socket_peer_addr`],
@@ -279,28 +278,26 @@ fn normalize_v4_mapped(addr: IpAddr) -> IpAddr {
 
 /// Reads the real peer address from the socket inherited on stdin.
 ///
-/// Used by the inetd / socket-activation / `RSYNC_CONNECT_PROG` entry point,
-/// where fd 0 is the connected socket and the address is genuinely available.
+/// Used by the inetd / socket-activation entry point, where fd 0 is the
+/// connected socket and the address is genuinely available.
 ///
 /// `socket2::SockRef::from(&io::Stdin)` borrows the descriptor through `AsFd`
 /// without taking ownership, so nothing closes stdin and no `unsafe` is needed
 /// - the same construction `is_stdin_socket()` already uses to classify fd 0.
 ///
-/// A peer that HAS an address but not an IP one - an `AF_UNIX` socketpair, as
-/// used by systemd socket activation with `Accept=yes` and by
-/// `RSYNC_CONNECT_PROG` - degrades to [`REMOTE_SHELL_DEFAULT_ADDR`] rather than
-/// failing. Upstream serves such a connection: `getpeername` succeeds, and the
-/// `getnameinfo` that follows fails but its return value is never checked
-/// (clientname.c:81), so `ipaddr_buf` is simply left empty. Both "" and
-/// `0.0.0.0` match no realistic `hosts allow` token, so the ACL outcome is the
-/// same; using the sentinel keeps oc from inventing an address it does not have
-/// while still serving a configuration upstream supports.
+/// A peer that HAS an address but not an IP one (an `AF_UNIX` socket) degrades
+/// to [`REMOTE_SHELL_DEFAULT_ADDR`] rather than failing. `is_stdin_socket()`
+/// admits only `AF_INET`/`AF_INET6` peers, as upstream's `is_inetd_socket()`
+/// does (clientserver.c:1727-1743), so this arm is a defensive fallback. Were
+/// it reached, upstream's `getnameinfo` would fail unchecked (clientname.c:81)
+/// and leave `ipaddr_buf` empty; both "" and `0.0.0.0` match no realistic
+/// `hosts allow` token, so the ACL outcome is the same.
 ///
 /// # Errors
 ///
 /// Returns the `getpeername` error unchanged when the call itself fails. The
 /// caller must abort the session rather than substitute a placeholder; upstream
-/// treats that as `RERR_SOCKETIO` (clientname.c:41-45).
+/// treats that as `RERR_SOCKETIO` (clientname.c:323-327).
 #[cfg(unix)]
 pub(in crate::daemon) fn inherited_socket_peer_addr() -> std::io::Result<SocketAddr> {
     let stdin = std::io::stdin();
@@ -485,7 +482,7 @@ mod tests {
         assert_ne!(REMOTE_SHELL_DEFAULT_ADDR, IpAddr::V4(Ipv4Addr::LOCALHOST));
     }
 
-    /// upstream: clientname.c:47-74 - a V4MAPPED peer is rewritten to IPv4
+    /// upstream: clientname.c:329-356 - a V4MAPPED peer is rewritten to IPv4
     /// before any ACL comparison, so `hosts allow = 192.0.2.0/24` matches an
     /// IPv4 client arriving on a dual-stack listener.
     /// Unix-only for the same reason the function is: it has no Windows caller.

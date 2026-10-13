@@ -8,7 +8,7 @@
 //!
 //! `daemon` implements the rsync daemon mode (`--daemon`), providing a TCP
 //! listener that accepts rsync protocol connections, performs `@RSYNCD:`
-//! greeting negotiation with protocol `32`, serves `#list` module listings,
+//! greeting negotiation with protocol `33`, serves `#list` module listings,
 //! authenticates `auth users` via challenge/response backed by a secrets
 //! file (with strict-modes permission enforcement), and executes file
 //! transfers natively using the Rust transfer engine.
@@ -48,23 +48,18 @@
 //!
 //! # Process Model
 //!
-//! Upstream rsync forks a child process per connection (`main.c`), so a crash
-//! in one transfer only kills that child while the parent continues accepting
-//! connections. oc-rsync uses OS threads (sync mode) or tokio tasks (async
-//! mode) instead, sharing one process across all connections.
+//! Upstream rsync forks a child process per connection
+//! (`socket.c:start_accept_loop()`), so a crash in one transfer only kills
+//! that child while the parent continues accepting connections. The TCP
+//! daemon forks per connection on Unix as well.
 //!
-//! To match upstream's crash-isolation guarantee, every session handler is
-//! wrapped in `std::panic::catch_unwind`.  A panic in one connection is
-//! caught, logged to the daemon log file, and the thread exits cleanly.  The
-//! daemon continues serving all other connections.  A second defense layer in
-//! `join_worker` catches any panics that escape `catch_unwind` via
+//! Deviation from upstream: Windows has no `fork`, and the opt-in async
+//! listener (`run_async_daemon`) runs sessions inside the daemon process.
+//! There each session handler is wrapped in `std::panic::catch_unwind`: a
+//! panic in one connection is caught, logged to the daemon log file, and the
+//! thread exits while the daemon keeps serving other connections. A second
+//! layer in `join_worker` catches any panic that escapes `catch_unwind` via
 //! `JoinHandle::join`.
-//!
-//! The thread model was chosen over `fork` for cross-platform portability
-//! (Windows has no `fork`), lower per-connection overhead, and efficient
-//! shared-state access via `Arc`.  Rust's ownership model and
-//! `#![deny(unsafe_code)]` on this crate eliminate the memory-corruption risks
-//! that make fork's address-space isolation valuable in C.
 //!
 //! See `docs/DAEMON_PROCESS_MODEL.md` for a full comparison including
 //! operational recommendations.
@@ -162,7 +157,7 @@
 //! reader.read_line(&mut line)?;
 //! assert!(line.starts_with("@ERROR:"));
 //! // Upstream never follows @ERROR with @RSYNCD: EXIT: the client treats
-//! // @ERROR as fatal (clientserver.c:381-385), so the socket just closes.
+//! // @ERROR as fatal (clientserver.c:424-430), so the socket just closes.
 //! line.clear();
 //! assert_eq!(reader.read_line(&mut line)?, 0);
 //!
@@ -175,7 +170,7 @@
 #[cfg(feature = "async-daemon")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
 pub mod async_listener;
-/// Daemon mode challenge-response authentication matching upstream rsync 3.4.4.
+/// Daemon mode challenge-response authentication matching upstream rsync 3.5.1.
 pub mod auth;
 mod cli;
 mod config;

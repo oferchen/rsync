@@ -1,8 +1,7 @@
 //! Hybrid async listener skeleton: tokio accept + sync workers on a
 //! dedicated OS thread per connection.
 //!
-//! This is the implementation slice tracked under issue #1935. It satisfies
-//! the design recorded in
+//! It follows the design recorded in
 //! `docs/design/daemon-tokio-async-listener-impl.md` and the runtime choice
 //! captured in `docs/design/daemon-async-runtime-choice.md`: keep the
 //! synchronous per-connection worker untouched while replacing the
@@ -58,8 +57,8 @@ pub type SyncWorker = Arc<dyn Fn(TcpStream, SocketAddr) -> io::Result<()> + Send
 ///
 /// Each connection runs its sync worker on a dedicated OS thread (required for
 /// the seccomp-filter lifetime invariant). Unlike tokio's `spawn_blocking`
-/// pool - which the accept loop used previously and which caps itself at 512
-/// threads, queueing excess tasks - a raw thread-per-connection has no ceiling,
+/// pool - which caps itself at 512 threads, queueing excess tasks - a raw
+/// thread-per-connection has no ceiling,
 /// so a connect flood (e.g. slowloris) would spawn unbounded blocked-on-read
 /// threads. This semaphore restores that backpressure: at the cap the accept
 /// task parks until an in-flight worker completes, matching tokio's historical
@@ -177,7 +176,7 @@ async fn accept_loop(
 
             // Run the synchronous worker on a dedicated OS thread rather than
             // tokio's shared `spawn_blocking` pool. The worker installs a
-            // per-thread seccomp filter (LSM-SECCOMP) that is a one-way latch:
+            // per-thread seccomp filter that is a one-way latch:
             // once armed, the thread denies every unlisted syscall for the rest
             // of its life. tokio's blocking pool reuses threads across tasks,
             // so a filter armed by one session would fail the *next* session's
