@@ -4,7 +4,7 @@
 //! sides of the rsync transfer: sender-side (show/hide) and receiver-side
 //! (protect/risk), as well as rules modified with `with_sender`/`with_receiver`.
 //!
-//! Reference: rsync 3.4.1 exclude.c lines 1194-1207 for side modifiers.
+//! Reference: rsync 3.5.1 exclude.c lines 1345-1358 and 1423-1432 for side modifiers.
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;

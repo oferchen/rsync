@@ -1,12 +1,12 @@
 //! Compiled xattr-name filter rules (the `x` rule modifier).
 //!
-//! upstream: exclude.c:914 rule_matches() gates every rule on
+//! upstream: exclude.c:1013 rule_matches() gates every rule on
 //! `!(name_flags & NAME_IS_XATTR) ^ !(ex->rflags & FILTRULE_XATTR)`: a rule
 //! carrying the `x` modifier (`FILTRULE_XATTR`) matches ONLY when the candidate
 //! is an xattr name (`NAME_IS_XATTR`), and a rule WITHOUT `x` never participates
 //! in xattr-name matching. These rules are therefore kept out of the ordinary
 //! path include/exclude chain and evaluated separately, first-match-wins,
-//! against xattr names alone (upstream: xattrs.c:250 rsync_xal_get() consults
+//! against xattr names alone (upstream: xattrs.c:262-263 rsync_xal_get() consults
 //! `name_is_excluded(name, NAME_IS_XATTR, ALL_FILTERS)`).
 
 use std::path::Path;
@@ -18,7 +18,7 @@ use crate::{FilterAction, FilterError, FilterRule};
 ///
 /// This is upstream's `am_sender`. Upstream expresses the same distinction
 /// indirectly: `send_rules()` stamps each rule's `elide` field from its side
-/// flags and `am_sender` (exclude.c:1903-1911), and `rule_matches()` then skips
+/// flags and `am_sender` (exclude.c:1904-1912), and `rule_matches()` then skips
 /// any rule whose `elide` equals `cur_elide_value` (exclude.c:1010). Working
 /// the four combinations through, that reduces to one rule - a side-flagged
 /// rule participates only on its own side - which is what this enum selects.
@@ -102,7 +102,7 @@ impl CompiledXattrRule {
 
     /// Tests whether `name` matches this rule, honouring the `!` negate modifier.
     ///
-    /// upstream: exclude.c:906 - `ret_match = FILTRULE_NEGATE ? 0 : 1`.
+    /// upstream: exclude.c:1005 - `ret_match = FILTRULE_NEGATE ? 0 : 1`.
     pub(crate) fn matches(&self, name: &str) -> bool {
         let candidate = Path::new(name);
         let matched = self.matchers.iter().any(|m| m.is_match(candidate));

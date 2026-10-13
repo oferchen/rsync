@@ -262,7 +262,7 @@ fn perishable_cvs_protects_deletion_context() {
     assert!(!set.allows(Path::new("main.o"), false));
 
     // For deletion (receiver context): the top-level scan runs with
-    // `ignore_perishable` unset (upstream exclude.c:1044 / delete.c:147), so
+    // `ignore_perishable` unset (upstream exclude.c:1193-1194 / delete.c:208), so
     // perishable CVS patterns protect a matching entry - `--cvs-exclude
     // --delete` preserves a pre-existing `*.o` at the transfer root.
     assert!(!set.allows_deletion(Path::new("main.o"), false));

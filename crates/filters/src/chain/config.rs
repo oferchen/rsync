@@ -47,7 +47,7 @@ pub struct DirMergeConfig {
     /// Treats the merge file as a CVS-style ignore list: each whitespace
     /// separated token is an exclude rule with no filter prefixes.
     cvs_mode: bool,
-    /// upstream: exclude.c:1116-1133 - FILTRULE_NO_PREFIXES (`-`/`+` modifier
+    /// upstream: exclude.c:1381-1391 - FILTRULE_NO_PREFIXES (`-`/`+` modifier
     /// on a dir-merge rule). When set, each line in the per-dir merge file is
     /// consumed as a literal pattern: the short-prefix dispatch (`+`, `-`,
     /// `:`, `.`, modifiers) is skipped entirely.
@@ -57,7 +57,7 @@ pub struct DirMergeConfig {
     /// When `no_prefixes && no_prefixes_include`, each literal line becomes
     /// an include rule; otherwise it becomes an exclude rule.
     no_prefixes_include: bool,
-    /// upstream: exclude.c:1279-1283 - FILTRULE_WORD_SPLIT (`w` modifier on a
+    /// upstream: exclude.c:1433-1437 - FILTRULE_WORD_SPLIT (`w` modifier on a
     /// dir-merge rule). When set, the per-directory merge file is tokenised on
     /// any whitespace with each token parsed as its own rule, rather than one
     /// rule per line.
@@ -65,7 +65,7 @@ pub struct DirMergeConfig {
     /// Number of order-bearing global rules that preceded this `dir-merge`
     /// directive in the source rule stream.
     ///
-    /// upstream: exclude.c:1046-1050 - `check_filter()` walks one list and
+    /// upstream: exclude.c:1195-1200 - `check_filter()` walks one list and
     /// consults a `FILTRULE_PERDIR_MERGE` entry at its own position, so a global
     /// rule defined before the directive is checked before the merge file's
     /// rules and one defined after is checked afterwards. This index records
@@ -106,7 +106,7 @@ impl DirMergeConfig {
     /// protect/risk) that preceded the directive, matching the units of
     /// `CompiledRule::order`. Global rules with a smaller order are checked
     /// before this scope's rules; those with an equal-or-greater order are
-    /// checked after. Mirrors upstream `exclude.c:1046-1050`, where a
+    /// checked after. Mirrors upstream `exclude.c:1195-1200`, where a
     /// `FILTRULE_PERDIR_MERGE` entry is consulted at its own list position.
     #[must_use]
     pub const fn with_directive_order(mut self, order: usize) -> Self {
@@ -190,7 +190,7 @@ impl DirMergeConfig {
     /// (`FILTRULE_CVS_IGNORE`), which is set when the wire delivers
     /// `:C .cvsignore`.
     ///
-    /// upstream: exclude.c:1248 - `C` modifier toggles FILTRULE_NO_PREFIXES |
+    /// upstream: exclude.c:1402-1409 - `C` modifier sets FILTRULE_NO_PREFIXES |
     /// FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT | FILTRULE_CVS_IGNORE.
     #[must_use]
     pub const fn with_cvs_mode(mut self, cvs_mode: bool) -> Self {
@@ -222,7 +222,7 @@ impl DirMergeConfig {
     /// whitespace (space, tab, newline) with each token parsed as its own
     /// rule, mirroring upstream rsync's FILTRULE_WORD_SPLIT.
     ///
-    /// upstream: exclude.c:1279-1283 - `w` modifier sets FILTRULE_WORD_SPLIT.
+    /// upstream: exclude.c:1433-1437 - `w` modifier sets FILTRULE_WORD_SPLIT.
     #[must_use]
     pub const fn with_word_split(mut self, word_split: bool) -> Self {
         self.word_split = word_split;
@@ -241,7 +241,7 @@ impl DirMergeConfig {
     /// parser. `include` selects the `+` variant (literal includes); the
     /// default and `-` variant emit literal excludes.
     ///
-    /// upstream: exclude.c:1116-1133 parse_rule_tok - prefix dispatch is
+    /// upstream: exclude.c:1273-1275 parse_rule_tok - prefix dispatch is
     /// skipped when FILTRULE_NO_PREFIXES is set on the template.
     #[must_use]
     pub const fn with_no_prefixes(mut self, no_prefixes: bool, include: bool) -> Self {
@@ -273,7 +273,7 @@ impl DirMergeConfig {
     ///
     /// Used to propagate the `s` modifier of a side-restricted per-directory
     /// merge into any `dir-merge` directives nested inside it, mirroring
-    /// upstream `exclude.c:1293-1303` (`rflags |= template->rflags & SIDES`).
+    /// upstream `exclude.c:1447-1456` (`rflags |= template->rflags & SIDES`).
     #[must_use]
     pub(super) const fn is_sender_only(&self) -> bool {
         self.sender_only && !self.receiver_only
@@ -302,7 +302,7 @@ impl DirMergeConfig {
     ///
     /// upstream: exclude.c:1229-1231 FILTRULES_FROM_CONTAINER
     /// upstream: exclude.c:1261-1263 parse_rule_tok()
-    /// upstream: exclude.c:297-305 add_rule()
+    /// upstream: exclude.c:297-306 add_rule()
     /// upstream: exclude.c:1016-1021 rule_matches()
     pub(super) fn apply_modifiers(&self, mut rule: FilterRule) -> FilterRule {
         if self.perishable {

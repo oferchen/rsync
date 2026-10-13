@@ -54,6 +54,5 @@ fuzz_target!(|input: FuzzInput| {
         let _ = set.excluded_dir_by_non_dir_rule(path);
     }
 
-    // Also test is_empty for completeness.
     let _ = set.is_empty();
 });
