@@ -330,7 +330,10 @@ impl NdxCodec for ModernNdxCodec {
         let mut cnt = 0;
 
         let (diff, ndx_positive) = if ndx >= 0 {
-            let diff = ndx - self.prev_positive;
+            // upstream: io.c:write_ndx() computes the diff in int32; a value the
+            // peer may legally send (up to MAX_INT32, io.c:read_ndx()) wraps
+            // to a negative diff there and selects the full 4-byte form.
+            let diff = ndx.wrapping_sub(self.prev_positive);
             self.prev_positive = ndx;
             (diff, ndx)
         } else if ndx == NDX_DONE {
@@ -342,8 +345,8 @@ impl NdxCodec for ModernNdxCodec {
             // Upstream io.c:2301-2306
             buf[cnt] = 0xFF;
             cnt += 1;
-            let ndx_abs = -ndx;
-            let diff = ndx_abs - self.prev_negative;
+            let ndx_abs = ndx.wrapping_neg();
+            let diff = ndx_abs.wrapping_sub(self.prev_negative);
             self.prev_negative = ndx_abs;
             (diff, ndx_abs)
         };
