@@ -20,6 +20,7 @@ use crate::local_copy::{
 
 use super::super::file::remove_existing_destination;
 use super::super::non_empty_path;
+use super::super::refuse_populated_directory;
 use super::super::{
     emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
 };
@@ -1623,6 +1624,16 @@ pub(super) fn delete_missing_source_entry(
     let file_type = metadata.file_type();
 
     if !context.allows_deletion(relative.as_path(), file_type.is_dir()) {
+        return Ok(());
+    }
+
+    // upstream: generator.c:1749-1753 - the missing operand reaches
+    // `delete_item(fname, mode, del_opts)`, and `del_opts` carries
+    // `DEL_RECURSE` only for `delete_mode || force_delete` (generator.c:1629).
+    // Without it a populated directory is kept, even under `--dry-run`.
+    let recurse = context.force_replacements_enabled() || context.options().delete_extraneous();
+    if file_type.is_dir() && refuse_populated_directory(&target, Some(relative.as_path()), recurse)?
+    {
         return Ok(());
     }
 

@@ -205,6 +205,27 @@ fn peel_or_probe(
     Ok(true)
 }
 
+/// Refuses a populated directory when `recurse` (`DEL_RECURSE`) is clear.
+///
+/// Returns `true` after printing `cannot delete non-empty directory: %s` when
+/// `directory` has entries and must be kept; the caller then leaves it alone
+/// and the run still succeeds.
+///
+/// # Upstream Reference
+///
+/// - `delete.c:115-118` - without `DEL_RECURSE`, any entry is `DR_NOT_EMPTY`
+/// - `delete.c:178-181` - the notice, with no error and no exit-code change
+pub(crate) fn refuse_populated_directory(
+    directory: &Path,
+    relative: Option<&Path>,
+    recurse: bool,
+) -> Result<bool, LocalCopyError> {
+    if recurse || directory_is_empty(directory)? {
+        return Ok(false);
+    }
+    report_not_empty(directory, relative);
+    Ok(true)
+}
 /// Reports whether `directory` holds no entries at all.
 ///
 /// A directory that vanished counts as empty: upstream maps the `ENOENT` that

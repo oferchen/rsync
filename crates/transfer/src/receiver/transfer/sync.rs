@@ -108,6 +108,7 @@ impl ReceiverContext {
             &dest_dir,
             #[cfg(unix)]
             sandbox.as_deref(),
+            writer,
         )?;
 
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());

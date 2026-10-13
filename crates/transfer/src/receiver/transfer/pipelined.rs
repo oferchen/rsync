@@ -137,6 +137,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            writer,
         )?;
 
         // upstream: receiver.c:669-670 DEBUG_GTE(RECV, 1)
