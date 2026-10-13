@@ -3,8 +3,20 @@ name: Pages
 on:
   push:
     branches: [master]
+    # Only what `cargo doc --workspace` reads: every member's sources and
+    # manifest (the root package, crates/, xtask, tools/dhat-profile), the
+    # build scripts it runs, and the crate READMEs pulled in by
+    # `#![doc = include_str!("../README.md")]`.
     paths:
-      - "crates/**"
+      - "src/**"
+      - "xtask/src/**"
+      - "xtask/Cargo.toml"
+      - "tools/dhat-profile/src/**"
+      - "tools/dhat-profile/Cargo.toml"
+      - "crates/**/src/**"
+      - "crates/**/Cargo.toml"
+      - "crates/*/build.rs"
+      - "crates/*/README.md"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
