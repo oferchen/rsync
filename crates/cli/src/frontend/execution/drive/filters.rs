@@ -24,7 +24,7 @@ use crate::frontend::filter_rules::{
 pub(crate) struct FilterInputs {
     pub(crate) order: Vec<FilterOrderToken>,
     /// `--from0`/`-0`: makes `--exclude-from`/`--include-from` files
-    /// NUL-delimited (upstream exclude.c:1501 parse_filter_file eol_nulls).
+    /// NUL-delimited (upstream exclude.c:1774 parse_filter_file() eol_nulls).
     pub(crate) from0: bool,
 }
 
@@ -99,7 +99,8 @@ fn push_filter_directive(
     merge_stack: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     // The operator typed this `--filter` value, so its text is theirs to see:
-    // `rule_text` returns an argument-sourced rule unchanged (exclude.c:110-116).
+    // `rule_text` returns an argument-sourced rule unchanged
+    // (exclude.c:111-113 rule_text_len()).
     match parse_filter_directive(rule.as_os_str(), RuleSource::Argument)? {
         FilterDirective::Rule(spec) => filter_rules.push(spec),
         FilterDirective::Merge(directive) => {
@@ -128,7 +129,7 @@ fn push_filter_directive(
 /// Adds a CLI-supplied `--exclude`/`--include` pattern to `destination`,
 /// honoring upstream's `XFLG_OLD_PREFIXES` compatibility mode.
 ///
-/// upstream: options.c:1518-1525 routes `--exclude`/`--include` through
+/// upstream: options.c:1625-1633 routes `--exclude`/`--include` through
 /// `parse_filter_str(..., XFLG_OLD_PREFIXES)`, so a value of `- pat` (or
 /// `+ pat`) flips the rule kind and `!` clears the list. Plain patterns
 /// retain `default_kind`.

@@ -93,12 +93,12 @@ where
 
 /// Parses and resolves the `--protocol` argument into a [`ProtocolVersion`].
 ///
-/// upstream: `setup_protocol` (compat.c:629-637) runs for local copies too, so
-/// upstream accepts `--protocol` on a local transfer (protocol `20..=32` all
+/// upstream: `setup_protocol` (compat.c:631-640) runs for local copies too, so
+/// upstream accepts `--protocol` on a local transfer (protocol `20..=33` all
 /// exit 0; local output is identical regardless). This build never negotiates a
 /// protocol for a local copy, so any accepted value is simply ignored there
 /// (`Ok(None)`). Only a remote transfer carries a concrete version, and it must
-/// fall within this build's wire range (`28..=32`); a legacy value (`20..=27`)
+/// fall within this build's wire range (`28..=33`); a legacy value (`20..=27`)
 /// that upstream would negotiate is refused because this build cannot speak it.
 pub(crate) fn resolve_desired_protocol<Err>(
     protocol: Option<&OsString>,
@@ -113,7 +113,7 @@ where
     };
     match parse_protocol_version_arg(value.as_os_str()) {
         // A local copy negotiates nothing, but upstream still runs it at the
-        // requested protocol, which gates its `--stats` lines (compat.c:629-637,
+        // requested protocol, which gates its `--stats` lines (compat.c:631-640,
         // main.c:434-448), so the version is kept for both.
         Ok(ProtocolArg::Supported(version)) => Ok(Some(version)),
         Ok(ProtocolArg::LegacyLocalOnly(raw)) => {
@@ -149,7 +149,7 @@ where
 ///
 /// `show_version` is a count: 1 = human-readable output (upstream `-V`),
 /// 2+ = machine-readable JSON (upstream `-VV`).
-/// upstream: options.c:1946-1948 - version_opt_cnt selects JSON vs human-readable
+/// upstream: options.c:2062-2063 - version_opt_cnt selects JSON vs human-readable
 pub(crate) fn maybe_print_help_or_version<Out>(
     show_help: bool,
     show_version: u8,

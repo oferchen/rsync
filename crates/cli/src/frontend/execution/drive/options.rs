@@ -116,7 +116,7 @@ struct InfoFlagsResult {
 
 /// Applies upstream's `--progress` ⇒ `--info=name` implication.
 ///
-/// upstream: options.c:2360-2364 - when the `--progress`/`-P` flag set
+/// upstream: options.c:2511-2515 - when the `--progress`/`-P` flag set
 /// `do_progress` (and the run is not a server), an unset NAME level is bumped to
 /// 1 via `parse_output_words("name", DEFAULT_PRIORITY)`. That `DEFAULT_PRIORITY`
 /// assignment cannot override a USER_PRIORITY one, so an explicit `--info=name0`
@@ -239,7 +239,7 @@ where
             // upstream: options.c set_output_verbosity / parse_output_words
             settings.apply_to_thread_local();
 
-            // upstream: options.c:2957 make_output_option() - forward the
+            // upstream: options.c:3126-3128 make_output_option() - forward the
             // explicitly-set info categories to the peer. Normalize to
             // `name{level}` tokens; the remote builders apply the role `where`
             // filter.
@@ -380,7 +380,7 @@ where
         None => None,
     };
 
-    // upstream: options.c:1698-1701 - `--block-size=0` yields no override and
+    // upstream: options.c:1801-1811 - `--block-size=0` yields no override and
     // falls back to the default, so a `None` here covers both "unset" and
     // "explicit 0".
     let block_size_override = match inputs.block_size.as_ref() {
@@ -473,7 +473,7 @@ where
                 compress_level_setting = Some(CompressLevelArg::Disable);
                 compress_disabled_by_choice = true;
             }
-            // upstream: options.c:2019-2022 - `--compress-choice=auto` is nulled
+            // upstream: options.c:2133-2136 - `--compress-choice=auto` is nulled
             // out, so it behaves as if `--compress-choice` had not been given:
             // no forced codec, no disable, normal negotiation.
             Ok(CompressChoice::Auto) => {}
@@ -489,9 +489,9 @@ where
         }
     }
 
-    // upstream: compat.c:820 parse_compress_choice(1) calls
+    // upstream: compat.c:831 parse_compress_choice(1) calls
     // init_compression_level() (token.c:55) AFTER negotiate_the_strings()
-    // (compat.c:809). When --compress-choice fixed the codec its range is known
+    // (compat.c:820). When --compress-choice fixed the codec its range is known
     // now, so clamp against it (level 0 disables zlib/zlibx). Otherwise the
     // negotiated codec - and whether level 0 means "off" - is unknown until
     // negotiation, so pass `None`: the raw level is carried forward and the
@@ -516,9 +516,9 @@ where
         }
     }
 
-    // upstream: options.c:150 - the `skip_compress` global is NULL unless the
+    // upstream: options.c:156 - the `skip_compress` global is NULL unless the
     // `--skip-compress` option is given, and only that explicit value is
-    // forwarded to the remote sender (options.c:2868-2870). The
+    // forwarded to the remote sender (options.c:3035-3036). The
     // `RSYNC_SKIP_COMPRESS` environment fallback is an oc extension that still
     // applies locally, but - like upstream - it is not forwarded on the wire.
     let mut skip_compress_spec = None;
@@ -767,9 +767,9 @@ mod compression_defer_tests {
 
     /// `-z --compress-level=0` with no `--compress-choice` must NOT disable
     /// compression at parse time. Upstream defers the off_level decision to the
-    /// negotiated codec: `init_compression_level()` (token.c:76-98) runs from
-    /// `parse_compress_choice(1)` (compat.c:820) only after
-    /// `negotiate_the_strings()` (compat.c:809). Even though the preliminary
+    /// negotiated codec: `init_compression_level()` (token.c:55-105) runs from
+    /// `parse_compress_choice(1)` (compat.c:831) only after
+    /// `negotiate_the_strings()` (compat.c:820). Even though the preliminary
     /// arg-layer estimate collapses level 0 against zlib (`compress_flag =
     /// false`), the authoritative parse keeps compression on, leaves the codec
     /// unresolved, and carries the raw level (0) forward for post-negotiation
@@ -818,7 +818,7 @@ mod compression_defer_tests {
 
     /// Control: an explicit `--compress-choice=zlib --compress-level=0` hits
     /// zlib's off_level (0) at parse time and disables compression - the
-    /// explicit-codec path is unchanged. upstream: token.c:66.
+    /// explicit-codec path is unchanged. upstream: token.c:67, 95-97.
     #[test]
     fn explicit_zlib_level_zero_disables() {
         let result = parse(true, 1, Some("0"), Some("zlib"));

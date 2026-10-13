@@ -32,7 +32,7 @@ use super::with_output_writer;
 ///
 /// The handle is wrapped in a [`LogFileWriter`] so every line the renderers
 /// produce is stamped with upstream's `"%Y/%m/%d %H:%M:%S [pid] "` prefix
-/// (upstream: log.c:122-132 `logit()`).
+/// (upstream: log.c:125-141 `logit()`).
 pub(crate) struct LogFileConfig {
     pub(crate) file: LogFileWriter<File>,
     pub(crate) format: OutFormat,
@@ -116,7 +116,7 @@ where
 
     // Capture the sender role before `config` is consumed by the client driver.
     // Threaded into `OutFormatContext` so the itemize renderer picks the correct
-    // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
+    // direction arrow (upstream: log.c:739-742 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
     // upstream: log.c `%o` reports `recv` on the receiving client (a pull) and
     // `send` otherwise (a push or a local copy) - a different split than the
@@ -171,14 +171,14 @@ where
     // conjunction uniquely identifies the in-process local-copy path whose
     // generator/sender diagnostics oc renders post-hoc.
     let is_local_transfer = !config.is_pull() && !is_sender;
-    // upstream: main.c:663-666 forces whole_file=1 for a local transfer unless
+    // upstream: main.c:666-670 forces whole_file=1 for a local transfer unless
     // the user passed --[no-]whole-file; the local-copy default is therefore
     // whole-file. This decides the `delta-transmission` wording.
     let whole_file = config.whole_file();
-    // upstream: generator.c:2291-2294 + match.c:439-446 - the delta-transmission
+    // upstream: generator.c:2762-2767 + match.c:480-483 - the delta-transmission
     // notice fires at DEBUG_GTE(FLIST, 1) and the match_report `total:` line at
     // DEBUG_GTE(DELTASUM, 1); both first activate at -vv and honour --debug
-    // overrides. Only wire them for the local-copy path (see #170); network
+    // overrides. Only wire them for the local-copy path; network
     // transfers emit them live from the generator/sender.
     let delta_state = if whole_file {
         DeltaTransmissionState::Disabled
@@ -187,7 +187,7 @@ where
     };
     let delta_notice = DeltaTransmissionSummary {
         notice: (is_local_transfer && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
-        // upstream: match_report() (match.c:440) is gated on DEBUG_GTE(DELTASUM, 1)
+        // upstream: match_report() (match.c:480-483) is gated on DEBUG_GTE(DELTASUM, 1)
         // alone - `--whole-file` does not suppress it, it just leaves the match
         // counters at zero. MEASURED against rsync 3.4.4: both `-rvv` and
         // `-rvv --no-whole-file` print the line.
@@ -195,10 +195,10 @@ where
     };
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
-    // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
+    // to symlink rows (upstream: generator.c:1346-1347 gates it on preserve_links).
     let preserve_links = config.links();
     // Capture the negotiated checksum before `config` is consumed so the `%C`
-    // renderer reports the negotiated algorithm's digest (upstream: log.c:687-690
+    // renderer reports the negotiated algorithm's digest (upstream: log.c:717-729
     // selects `file_sum_nni` under `--checksum`, else `xfer_sum_nni`).
     let always_checksum = config.checksum();
     let full_checksum_algorithm = if always_checksum {
@@ -459,8 +459,8 @@ struct EmitLogOutputParams<'a> {
     summary: &'a ClientSummary,
     log: &'a mut LogFileConfig,
     /// FLOG-classified diagnostic events consumed from the thread-local queue
-    /// (e.g. `building file list`, flist.c:2484). These lines belong to the
-    /// log file only (upstream: log.c:304-305).
+    /// (e.g. `building file list`, flist.c:2760). These lines belong to the
+    /// log file only (upstream: log.c:331-334).
     flog_events: Vec<logging::DiagnosticEvent>,
     verbosity: u8,
     stats_level: u8,
@@ -469,7 +469,7 @@ struct EmitLogOutputParams<'a> {
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
     /// Whether the local client is the sender. Threaded through so the
-    /// itemize direction arrow matches upstream `log.c:701-704`.
+    /// itemize direction arrow matches upstream `log.c:739-742`.
     is_sender: bool,
     /// Whether the transfer is a pull; drives the `%o` operation word.
     is_pull: bool,
@@ -484,9 +484,9 @@ struct EmitLogOutputParams<'a> {
     /// `--crtimes`: render the CRTIME column in `--list-only` log output.
     show_crtimes: bool,
     /// `--links` / `-l`: whether symlink rows in `--list-only` log output get
-    /// the ` -> <target>` arrow (upstream: generator.c:1183).
+    /// the ` -> <target>` arrow (upstream: generator.c:1346-1347).
     preserve_links: bool,
-    /// Negotiated `%C` checksum algorithm (upstream: log.c:687-690).
+    /// Negotiated `%C` checksum algorithm (upstream: log.c:717-729).
     full_checksum_algorithm: StrongChecksumAlgorithm,
     /// `--checksum` / `-c` (upstream `always_checksum`), gating `%C` for
     /// untransferred regular files.
@@ -529,17 +529,17 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_escape_style(EscapeStyle::passthrough())
         .with_preserve_links(preserve_links)
         .with_full_checksum(full_checksum_algorithm, always_checksum);
-    // upstream: log.c:290-305 - FLOG messages are written to the log file
+    // upstream: log.c:312-334 - FLOG messages are written to the log file
     // before any client-stream output and never reach stdout. The queue holds
-    // them in emission order, so "building file list" (flist.c:2484) or
-    // "receiving file list" (flist.c:2848) precedes the per-file lines.
+    // them in emission order, so "building file list" (flist.c:2760) or
+    // "receiving file list" (flist.c:3123) precedes the per-file lines.
     for event in &flog_events {
         match event {
             logging::DiagnosticEvent::Info { message, .. }
             | logging::DiagnosticEvent::Debug { message, .. } => writeln!(log.file, "{message}")?,
             // A byte-faithful notice reaches the log file as raw bytes; the
             // `LogFileWriter` escapes them once with its own log-file style
-            // (upstream: log.c:132 `logit`), so the filename operand survives
+            // (upstream: log.c:136 `logit()`), so the filename operand survives
             // and a control byte cannot forge a log line. The message boundary
             // is one `write`, so append the record's newline and write it whole.
             logging::DiagnosticEvent::Bytes { message, .. } => {

@@ -1,3 +1,5 @@
+//! Parsing of `--info=` and `--debug=` flag words.
+
 mod debug;
 mod info;
 mod output_words;

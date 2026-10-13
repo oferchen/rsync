@@ -1,3 +1,5 @@
+//! Client transfer workflow: operand checks, preflight validation and the run.
+
 #![deny(unsafe_code)]
 
 mod operands;

@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 
 /// Resolves a `--files-from` CLI value into a `FilesFromSource`.
 ///
-/// The resolution mirrors upstream rsync's `options.c:2456-2499`:
+/// The resolution mirrors upstream rsync's `options.c:2616-2676`:
 /// - `"-"` means stdin
 /// - `:path` (bare colon prefix) means a remote file opened by the server
 ///   using the host taken from the transfer operand
 /// - `host:path` (hostspec form) means a remote file opened by the named
-///   host (must match the transfer host, validated in `main.c:1438`)
+///   host (must match the transfer host, validated in `main.c:1494` and `:1518`)
 /// - Otherwise, a local file read by the client
 ///
 /// Only the last `--files-from` argument takes effect, matching upstream
@@ -21,10 +21,10 @@ use std::path::{Path, PathBuf};
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2467` - `check_for_hostspec()` detects `host:path` prefix
-/// - `options.c:2473-2474` - `files_from = p; filesfrom_host = h;`
-/// - `options.c:2475-2478` - `:-` (remote stdin) is rejected
-/// - `options.c:3122-3148` - `check_for_hostspec()` parses `host:path`
+/// - `options.c:2627` - `check_for_hostspec()` detects `host:path` prefix
+/// - `options.c:2633-2634` - `files_from = p; filesfrom_host = h;`
+/// - `options.c:2635-2639` - `:-` (remote stdin) is rejected
+/// - `options.c:3311-3335` - `check_for_hostspec()` parses `host:path`
 pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client::FilesFromSource {
     use core::client::FilesFromSource;
 
@@ -49,7 +49,7 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
     // module specs (`host::module`). The latter is for daemon transfers,
     // which we do not currently support for files-from.
     if let Some((host, path)) = split_hostspec(&text) {
-        // upstream: options.c:3122-3148 / options.c:2485-2492 -
+        // upstream: options.c:3311-3335 / options.c:3143-3147 -
         // check_for_hostspec strips the host prefix and forwards the path to
         // the remote server. When the host resolves to localhost AND the
         // stripped path is openable on this client, emit the hybrid variant.
@@ -79,9 +79,11 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
 
 /// Returns `true` when the parsed hostspec names the local machine.
 ///
-/// Matches upstream `main.c:1456 strcmp(filesfrom_host, shell_machine)`
-/// semantics: a hostspec of `localhost` (case-insensitive) refers to this
-/// client, allowing a hybrid local-open + wire-forward dispatch.
+/// A hostspec of `localhost` (case-insensitive) refers to this client,
+/// allowing a hybrid local-open + wire-forward dispatch.
+///
+/// Deviation from upstream: upstream only compares `filesfrom_host` with the
+/// transfer host (`main.c:1494`, `:1518`); it has no `localhost` special case.
 fn host_is_localhost(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
 }
@@ -90,11 +92,14 @@ fn host_is_localhost(host: &str) -> bool {
 /// hostspec. Returns `None` for local paths, Windows drive letters, daemon
 /// module specs (`::`), and URL forms.
 ///
-/// Mirrors `options.c:3122-3148 check_for_hostspec()`:
+/// Based on `options.c:3311-3335 check_for_hostspec()`:
 /// - Reject URL forms (`rsync://`); those are daemon URLs, handled elsewhere
 /// - Reject `host::module` (daemon module spec)
 /// - Reject paths beginning with `/` (no host part)
 /// - Reject Windows drive letters (`C:\foo`, `C:/foo`)
+///
+/// Deviation from upstream: `check_for_hostspec()` accepts both `rsync://` and
+/// `host::path` forms for `--files-from`; this classifier rejects them.
 fn split_hostspec(text: &str) -> Option<(&str, &str)> {
     if text.starts_with('/') {
         return None;
@@ -121,7 +126,7 @@ fn split_hostspec(text: &str) -> Option<(&str, &str)> {
         return None;
     }
 
-    // Reject `host:-` (upstream options.c:2475-2478 rejects remote stdin).
+    // Reject `host:-` (upstream options.c:2635-2639 rejects remote stdin).
     if rest == "-" {
         return None;
     }
@@ -152,5 +157,5 @@ pub(crate) fn transfer_requires_remote(
 /// on Windows, native path prefixes (drive letters `C:\...`, UNC, `\\?\`,
 /// `\\.\`) are local. One shared classifier keeps this front end, the core
 /// remote-invocation planner, and the local-copy executor from ever disagreeing
-/// on an operand (a #7153-class defect that shipped the wrong operand remote).
+/// on an operand.
 pub(crate) use engine::operand::operand_is_remote;
