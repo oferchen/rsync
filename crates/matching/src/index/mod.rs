@@ -11,8 +11,8 @@
 //! in-bucket discriminator - the ZSO-4 translation of zsync's
 //! `librcksum/hash.c:45` `rsum_a_mask` trick, which keeps the hottest lookup
 //! table cache-line resident across rolling-hash advances. Above it the table
-//! grows on upstream's `(count/8) * 10 + 11` rule (`match.c:84-88`) and
-//! addresses on the full rolling sum (`match.c:74` `BIG_SUM2HASH`), because a
+//! grows on upstream's `(s->count/8) * 10 + 11` rule (`match.c:86-88`) and
+//! addresses on the full rolling sum (`match.c:76` `BIG_SUM2HASH`), because a
 //! `sum2`-only key carries no entropy past `2^16`.
 
 mod bithash;
@@ -55,15 +55,15 @@ pub use trace::{
 /// and every entry is addressable.
 ///
 /// It is *not* the analogue of upstream's `hash_table`, whose size does track
-/// the block count (`match.c:84-88`); that role belongs to [`CompactLookup`].
-/// rsync 3.5.0 has no tag table of its own - upstream dropped the 2.x-era one
+/// the block count (`match.c:86-88`); that role belongs to [`CompactLookup`].
+/// rsync 3.5.1 has no tag table of its own - upstream dropped the 2.x-era one
 /// when `match.c` moved to a chained `hash_table`.
 const TAG_TABLE_SIZE: usize = 1 << 16;
 
 /// Maximum number of equal-weak-checksum candidates verified at a single
 /// source offset before the matcher gives up and rolls forward a byte.
 ///
-/// upstream: `match.c` `MAX_CHAIN_LEN` (rsync 3.5.0), added for
+/// upstream: match.c:47-68 `MAX_CHAIN_LEN`, added in rsync 3.5.0 for
 /// CVE-2026-70453. A weak checksum that collides thousands of times turns the
 /// per-offset chain walk into an `O(source_len * chain_len)` scan, and the
 /// signature that populates the chain is peer-supplied, so a hostile peer can
@@ -87,9 +87,9 @@ const NEXT_MATCH_NONE: u32 = u32::MAX;
 /// Per-run tally of the delta matcher's probe diagnostics, mirroring the two
 /// counters upstream reports on the `-vv` `total:` line.
 ///
-/// Semantics are oc-native. Upstream (`match.c:202`) increments `hash_hits`
+/// Semantics are oc-native. Upstream (`match.c:228`) increments `hash_hits`
 /// once per source offset whose `SUM2HASH` bucket is non-empty, and
-/// (`match.c:239`) `false_alarms` once per candidate whose weak sum matches but
+/// (`match.c:271`) `false_alarms` once per candidate whose weak sum matches but
 /// whose strong sum does not. oc has no such hashed-bucket table: instead
 /// `hash_hits` counts positives of the zsync bithash prefilter (the coarse gate
 /// analogous to a bucket hit) and `false_alarms` counts bithash positives that
@@ -131,7 +131,8 @@ pub struct DeltaSignatureIndex {
     /// the in-bucket discriminator. See the ZSO-4 module-level docs.
     lookup: CompactLookup,
     /// Tag table for O(1) rejection using sum1 (low 16 bits of rolling checksum).
-    /// upstream: match.c - `tag_table[s1]` check before hash probe.
+    /// Deviation from upstream: 3.5.1 `match.c` has no tag table; this is an
+    /// oc-only prefilter in front of the bucket probe.
     tag_table: Vec<bool>,
     /// Bithash prefilter mixing both rolling-sum halves.
     ///
@@ -165,7 +166,7 @@ pub struct DeltaSignatureIndex {
     has_duplicate_blocks: bool,
     /// Role used for `--debug=HASH` `[<role>]` prefixes on the create,
     /// grow, and destroy lifecycle emissions. Mirrors upstream
-    /// `who_am_i()` (`hashtable.c:51,61,101`).
+    /// `who_am_i()` (`hashtable.c:62,72,117`).
     role: HashtableRole,
     /// Slot count tracked across rebuilds for the matching destroy emission.
     last_traced_size: usize,
@@ -349,7 +350,7 @@ impl DeltaSignatureIndex {
     ///
     /// The rolling-checksum prefilter is a cheap two-word compare against
     /// the linked block's stored digest, so a miss here costs the same as
-    /// the existing `want_i` hint check in `match.c:144-190`.
+    /// the existing `want_i` hint check in `match.c:321-334`.
     #[inline]
     pub fn try_next_match_bytes(
         &self,
@@ -485,7 +486,7 @@ impl DeltaSignatureIndex {
             return None;
         }
 
-        // upstream: match.c - tag_table[s1] fast-path rejects most non-matching
+        // oc-only tag_table[s1] fast path (no 3.5.1 counterpart) rejects most non-matching
         // positions before the more expensive hash probe.
         if !self.tag_table[digest.sum1() as usize] {
             return None;
@@ -494,10 +495,10 @@ impl DeltaSignatureIndex {
         // zsync-style bithash prefilter: rejects ~7/8 of post-tag misses using
         // both sum halves before the hash-table probe. One-sided (no false
         // negatives) but it does admit false positives. A positive here is oc's
-        // analogue of upstream's coarse hash-bucket hit (match.c:202
+        // analogue of upstream's coarse hash-bucket hit (match.c:228
         // `hash_hits++`): it still has to pass the exact rolling-sum +
         // strong-sum verify below, and a positive that fails that verify is a
-        // false alarm (match.c:239). oc counts bithash positives rather than
+        // false alarm (match.c:271). oc counts bithash positives rather than
         // upstream's SUM2HASH bucket hits, so these two diagnostics are
         // oc-native - see [`ProbeCounters`].
         if !self.bithash.contains(digest.value()) {
@@ -512,7 +513,7 @@ impl DeltaSignatureIndex {
             return Some(index);
         }
         // A bithash positive that produced no confirmed match: the exact
-        // rolling-sum / strong-sum verify rejected it. upstream: match.c:239
+        // rolling-sum / strong-sum verify rejected it. upstream: match.c:271
         // `false_alarms++`.
         if let Some(counters) = counters.as_mut() {
             counters.false_alarms = counters.false_alarms.saturating_add(1);
@@ -594,7 +595,7 @@ impl DeltaSignatureIndex {
     /// would always emit the source file's trailing partial block as literal
     /// data. Upstream rsync matches it: `hash_search()` shrinks its final
     /// window to `l = MIN(blength, len-offset)` and requires `l == s->sums[i].len`
-    /// (`match.c:222-224`), so a same-length short block still matches.
+    /// (`match.c:254-256`), so a same-length short block still matches.
     ///
     /// This method mirrors that tail case. The combined length of `first` and
     /// `second` must be shorter than `block_length` (a full-length window
@@ -669,7 +670,7 @@ impl DeltaSignatureIndex {
     /// checksum comparison (expensive) only on rolling match, bypassing the hash
     /// table entirely.
     ///
-    /// upstream: match.c:144-190 - `want_i` hint check before full hash search.
+    /// upstream: match.c:321-334 - `want_i` hint check before full hash search.
     #[inline]
     pub fn check_block_match_slices(
         &self,
@@ -716,9 +717,9 @@ impl DeltaSignatureIndex {
     /// [`Self::find_match_window`] that also tallies upstream-style
     /// `hash_hits`/`false_alarms` into `counters` for the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:180-244 hash_search()` maintains the same two counters
+    /// upstream: `match.c:163-378 hash_search()` maintains the same two counters
     /// while scanning a file; the local-copy delta loop calls this in place of
-    /// the uncounted probe so it can reproduce `match_report()` (`match.c:439`).
+    /// the uncounted probe so it can reproduce `match_report()` (`match.c:480`).
     pub fn find_match_window_counted(
         &self,
         digest: RollingDigest,
@@ -744,7 +745,7 @@ impl DeltaSignatureIndex {
     /// the local-copy delta matcher. `window` must be shorter than
     /// `block_length`; a full-length window belongs on
     /// [`Self::find_match_window`]. See [`Self::find_tail_match`] for the
-    /// upstream reference (`match.c:222-224`).
+    /// upstream reference (`match.c:254-256`).
     pub fn find_tail_match_window(
         &self,
         digest: RollingDigest,
@@ -834,7 +835,7 @@ impl DeltaSignatureIndex {
 
 impl Drop for DeltaSignatureIndex {
     /// Emits `--debug=HASH` level 1 destroy diagnostic, mirroring upstream
-    /// rsync's `hashtable_destroy` (`hashtable.c:60-63`).
+    /// rsync's `hashtable_destroy` (`hashtable.c:70-73`).
     ///
     /// Clones produced by `#[derive(Clone)]` carry the same `role` and
     /// `last_traced_size`, so each clone's drop fires an independent
@@ -901,8 +902,8 @@ impl DeltaSignatureIndex {
     /// Bucket-slot count of the underlying lookup table.
     ///
     /// A power of two at or below `2^16` while the ZSO-4 compact key
-    /// addresses the table, and upstream's `(count/8) * 10 + 11`
-    /// (`match.c:84`) once the basis grows past that. Bench harnesses use
+    /// addresses the table, and upstream's `(s->count/8) * 10 + 11`
+    /// (`match.c:86`) once the basis grows past that. Bench harnesses use
     /// this to bin index sizes against the local CPU cache hierarchy
     /// (L1 / L2 / LLC / main memory).
     #[must_use]
