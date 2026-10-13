@@ -135,15 +135,19 @@ impl ZlibTokenEncoder {
     /// Feeds block data into the compressor's dictionary.
     ///
     /// Only active in CPRES_ZLIB mode (noop for zlibx).
-    /// Reference: upstream token.c lines 472-508.
+    /// upstream: `token.c:send_deflated_token()` lines 475-511.
+    ///
+    /// Deviation from upstream: flate2 has no `Z_INSERT_ONLY`, so the insert
+    /// uses `Z_SYNC_FLUSH` and discards the output, which is what upstream
+    /// does when built against a system zlib (`token.c:39-41`).
     ///
     /// # Overflow handling
     ///
     /// `Z_SYNC_FLUSH` can emit a stored-block header + payload + sync trailer
-    /// that exceeds `compress_buf`. Upstream issue #951 (rsync 3.4.3) addressed
-    /// the symmetric bug in `send_deflated_token()`: a single matched-block
-    /// insert larger than the fixed `obuf` aborted with "deflate on token
-    /// returned 0 (N bytes left)". The fix is to loop until the compressor
+    /// that exceeds `compress_buf`. Upstream issue #951 (fixed in rsync 3.4.4,
+    /// `token.c:487-509`) hit the same problem in `send_deflated_token()`: a
+    /// single matched-block insert larger than the fixed `obuf` aborted with
+    /// "deflate on token returned 0 (N bytes left)". The fix is to loop until the compressor
     /// has consumed the chunk *and* has no pending output buffered. The
     /// discarded output stays inside the deflate dictionary so the receiver's
     /// matching `see_token()` (see [`ZlibTokenDecoder::see_token`]) stays in
@@ -258,7 +262,7 @@ impl ZlibTokenEncoder {
             }
         }
 
-        // upstream: strips trailing sync marker
+        // upstream: token.c:454-461 - trim the trailing 00 00 FF FF sync marker.
         if self.flush_buf.len() >= 4 {
             let len = self.flush_buf.len();
             if self.flush_buf[len - 4..] == [0x00, 0x00, 0xFF, 0xFF] {
@@ -428,14 +432,14 @@ impl DeflateSink for ZlibDeflate {
             // treats as end-of-drain rather than a reason to keep flushing.
             // Without this an adversarial stream whose inflate state can neither
             // advance on nor consume the marker spins here forever (a DoS).
-            // upstream: token.c:615-646 recv_deflated_token() r_inflated - a
+            // upstream: token.c:613-651 recv_deflated_token() r_inflated - a
             // single Z_SYNC_FLUSH per residual chunk, Z_BUF_ERROR ends the drain.
             if consumed == 0 && produced == 0 {
                 break;
             }
         }
 
-        // upstream: token.c:recv_deflated_token:638 - after draining a run the
+        // upstream: token.c:641-644 recv_deflated_token() - after draining a run the
         // decompressor must be at a Z_SYNC_FLUSH sync point, which upstream
         // checks with `if (!inflateSyncPoint(&rx_strm)) { rprintf(FERROR,
         // "decompressor lost sync!"); exit_cleanup(RERR_STREAMIO); }`. flate2
@@ -539,7 +543,7 @@ impl ZlibTokenDecoder {
     /// engine sees the complete stored block (header + payload) atomically,
     /// avoiding partial-block state issues between separate decompress calls.
     ///
-    /// upstream: token.c:see_deflate_token() lines 631-670 - feeds header then
+    /// upstream: token.c:see_deflate_token() lines 688-727 - feeds header then
     /// data in separate inflate() calls within the same do/while loop, relying
     /// on zlib's stateful stream. With flate2/miniz_oxide, a single call with
     /// the concatenated input is more robust.
@@ -547,14 +551,14 @@ impl ZlibTokenDecoder {
         if self.is_zlibx {
             return Ok(());
         }
-        // upstream: token.c:see_deflate_token() lines 694-714 - the `len`
+        // upstream: token.c:see_deflate_token() lines 697-717 - the `len`
         // counter always decrements by `blklen`, but the read pointer `buf`
         // only advances (`buf += blklen`) when protocol_version >= 31. At
         // proto < 31 the pointer deliberately stays put, so every 0xffff chunk
         // re-feeds the SAME leading bytes of the matched block - a
         // data-duplicating bug that upstream faithfully replicates on BOTH
         // sides. The matching send side gates its own `offset += n1` the same
-        // way (token.c:482, ZlibTokenEncoder::see_token). Advancing here
+        // way (token.c:485-486, ZlibTokenEncoder::see_token). Advancing here
         // unconditionally would feed the receiver's inflate dictionary
         // different bytes than an old (proto 28-30) peer's sender inserted,
         // desyncing the dictionary and corrupting decompression. So this gate
@@ -603,7 +607,7 @@ impl ZlibTokenDecoder {
                 }
             }
 
-            // upstream: token.c:710-712 - `if (protocol_version >= 31) buf +=
+            // upstream: token.c:713-715 - `if (protocol_version >= 31) buf +=
             // blklen;` then `len -= blklen;`. `len` always shrinks; `buf` (our
             // `offset`) only advances on the modern protocol.
             if self.protocol_version >= 31 {

@@ -24,8 +24,8 @@ use super::{CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, TOKEN_REL};
 /// Largest legal token index in the compressed stream. A run increment or
 /// relative token that pushes the running index past this is a malformed
 /// stream that must abort with a protocol violation rather than be accepted.
-/// upstream: token.c `#define MAX_TOKEN_INDEX ((int32)0x7ffffffe)` and
-/// `invalid_compressed_token()` -> `exit_cleanup(RERR_PROTOCOL)`.
+/// upstream: token.c:523 `#define MAX_TOKEN_INDEX ((int32)0x7ffffffe)` and
+/// `token.c:528 invalid_compressed_token()` -> `exit_cleanup(RERR_PROTOCOL)`.
 const MAX_TOKEN_INDEX: i32 = 0x7fff_fffe;
 
 /// The outcome of a single decoder step.
@@ -254,8 +254,8 @@ impl TokenDecodeCore {
 
     fn next_run_token(&mut self) -> io::Result<CompressedToken> {
         self.rx_run -= 1;
-        // upstream: token.c recv_deflated_token - a run increment past
-        // MAX_TOKEN_INDEX is invalid_compressed_token() -> RERR_PROTOCOL.
+        // upstream: token.c:561-562 recv_compressed_token_run() - a run increment
+        // past MAX_TOKEN_INDEX is invalid_compressed_token() -> RERR_PROTOCOL.
         self.rx_token = self
             .rx_token
             .checked_add(1)
@@ -394,7 +394,7 @@ impl TokenDecodeCore {
                     self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
                     self.phase = Phase::Idle;
                     if self.rx_run <= 0 {
-                        // upstream: token.c:548 recv_compressed_token_num -
+                        // upstream: token.c:551-552 recv_compressed_token_num() -
                         // `if (rx_run <= 0 ...) invalid_compressed_token()` ->
                         // exit_cleanup(RERR_PROTOCOL) (exit 2). A zero run count
                         // is malformed; abort instead of accepting it silently.
@@ -433,7 +433,7 @@ impl TokenDecodeCore {
                     self.rx_run = u16::from_le_bytes([input[0], input[1]]) as i32;
                     self.phase = Phase::Idle;
                     if self.rx_run <= 0 {
-                        // upstream: token.c:548 recv_compressed_token_num -
+                        // upstream: token.c:551-552 recv_compressed_token_num() -
                         // `if (rx_run <= 0 ...) invalid_compressed_token()` ->
                         // exit_cleanup(RERR_PROTOCOL) (exit 2). A zero run count
                         // is malformed; abort instead of accepting it silently.
@@ -463,7 +463,7 @@ impl TokenDecodeCore {
 
         if flag & TOKEN_REL != 0 {
             let rel = (flag & 0x3F) as i32;
-            // upstream: token.c invalid_compressed_token() -> RERR_PROTOCOL when
+            // upstream: token.c:538-539 invalid_compressed_token() -> RERR_PROTOCOL when
             // the relative token index exceeds MAX_TOKEN_INDEX.
             self.rx_token = self
                 .rx_token
@@ -485,7 +485,7 @@ impl TokenDecodeCore {
                 self.rx_token as u32,
             )))
         } else {
-            // upstream: token.c:539-543 recv_compressed_token_num - after the
+            // upstream: token.c:542-546 recv_compressed_token_num() - after the
             // DEFLATED_DATA, END_FLAG, and TOKEN_REL cases, the receiver treats
             // every remaining flag (0x01-0x3f) as an absolute long token via a
             // bare `else { rx_token = read_int(f) }`. A conforming encoder only
@@ -508,7 +508,7 @@ impl TokenDecodeCore {
     /// `Need(1)` for the next flag. A step that yields nothing on an unfinished
     /// block loops, as upstream's `break` back into its `for (;;)` does.
     ///
-    /// upstream: token.c:895-919 recv_zstd_token() r_inflating
+    /// upstream: token.c:895-918 recv_zstd_token() r_inflating
     fn decompress_step<S: DeflateSink>(&mut self, sink: &mut S) -> io::Result<TokenStep> {
         loop {
             self.decompress_buf.clear();

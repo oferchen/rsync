@@ -948,7 +948,7 @@ fn recv_token_eof_reading_deflated_data() {
 
 /// Low flag bytes 0x01-0x1F must decode as absolute long tokens, not errors.
 ///
-/// upstream: token.c:539-543 recv_compressed_token_num - the flag dispatch
+/// upstream: token.c:542-546 recv_compressed_token_num() - the flag dispatch
 /// handles DEFLATED_DATA (0x40-0x7F), END_FLAG (0x00), and TOKEN_REL
 /// (0x80-0xFF); every remaining flag falls to a bare `else { rx_token =
 /// read_int(f) }`, so 0x01-0x3F all read a 4-byte absolute token with bit 0
@@ -1610,7 +1610,7 @@ fn compressed_batch_multi_file_delta_roundtrip() {
     assert_eq!(f2_literals, f2_lit);
 }
 
-/// Regression test for task #2225 / upstream 3.4.2 token.c fix.
+/// Regression test for the upstream 3.4.2 token.c negative-token fix.
 ///
 /// A peer sending `TOKEN_LONG` followed by a negative `i32` previously
 /// wrapped the wire value into a large `u32` block index. After the
@@ -1620,8 +1620,8 @@ fn compressed_batch_multi_file_delta_roundtrip() {
 /// wire value at the decoder with `RERR_PROTOCOL`; oc-rsync now mirrors
 /// that by returning `io::ErrorKind::InvalidData`.
 ///
-/// Reference: upstream `token.c:595-598` (zlib), `token.c:844-847`
-/// (zlibx/lz4), `token.c:1013-1016` (zstd).
+/// Reference: upstream `token.c:543-545` `recv_compressed_token_num()`, shared
+/// by the zlib, zstd and lz4 decoders since 3.4.3 (3.4.2 had one copy per codec).
 fn assert_rejects_negative_token(mut decoder: CompressedTokenDecoder) {
     let mut wire = Vec::new();
     wire.push(TOKEN_LONG);
@@ -1684,7 +1684,7 @@ fn zlib_decoder_rejects_i32_min_token() {
 ///     invalid_compressed_token();
 /// ```
 ///
-/// Reference: upstream `token.c:548`. Both the long (`TOKENRUN_LONG`) and
+/// Reference: upstream `token.c:551-552`. Both the long (`TOKENRUN_LONG`) and
 /// relative (`TOKENRUN_REL`) run encodings feed the same check.
 fn assert_rejects_zero_run_count(wire: &[u8]) {
     let mut decoder = CompressedTokenDecoder::new();
@@ -1693,7 +1693,7 @@ fn assert_rejects_zero_run_count(wire: &[u8]) {
         .recv_token(&mut cursor)
         .expect_err("decoder must reject a zero run count");
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    // upstream token.c:548 invalid_compressed_token() exits RERR_PROTOCOL (2),
+    // upstream token.c:551-552 invalid_compressed_token() exits RERR_PROTOCOL (2),
     // not RERR_STREAMIO(12); the error must carry the ProtocolViolation marker.
     assert!(
         err.get_ref()

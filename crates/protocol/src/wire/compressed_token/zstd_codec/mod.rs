@@ -14,10 +14,12 @@
 //!
 //! Compressed output is accumulated in a `MAX_DATA_COUNT`-sized buffer and
 //! only written as a DEFLATED_DATA block when the buffer is full or a flush
-//! completes. This matches upstream's single-buffer output pattern.
+//! completes. Deviation from upstream: upstream writes a block after every
+//! `ZSTD_compressStream2()` call that produced output (token.c:815-821), so
+//! block boundaries can differ; the decompressed bytes are identical.
 //!
-//! - upstream: token.c:send_zstd_token() lines 678-776
-//! - upstream: token.c:recv_zstd_token() lines 780-870
+//! - upstream: token.c:send_zstd_token() lines 735-835
+//! - upstream: token.c:recv_zstd_token() lines 839-924
 
 mod decoder;
 mod encoder;

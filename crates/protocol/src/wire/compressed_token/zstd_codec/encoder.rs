@@ -4,7 +4,7 @@
 //! single persistent compression context across the entire transfer session,
 //! flushing at each token boundary with `ZSTD_e_flush`.
 //!
-//! - upstream: token.c:send_zstd_token() lines 732-832
+//! - upstream: token.c:send_zstd_token() lines 735-835
 
 use std::io::{self, Write};
 
@@ -23,7 +23,7 @@ use super::super::{
 /// with `ZSTD_e_flush` sync points at token boundaries.
 ///
 /// Between files, only the token run-encoding state (last_token, run_start,
-/// last_run_end, needs_flush) is reset, matching upstream token.c:756-778.
+/// last_run_end, needs_flush) is reset, matching upstream token.c:759-762.
 /// The compression context preserves cross-file dictionary/history.
 ///
 /// Literal data is streamed into the zstd context in `CHUNK_SIZE` (32 KiB)
@@ -34,17 +34,22 @@ use super::super::{
 ///
 /// Compressed output is accumulated in a `MAX_DATA_COUNT`-sized buffer.
 /// A DEFLATED_DATA block is written only when the buffer is full (during
-/// `ZSTD_e_continue`) or after each `ZSTD_e_flush` call, matching upstream's
-/// output pattern in token.c:send_zstd_token().
+/// `ZSTD_e_continue`) or after each `ZSTD_e_flush` call.
 ///
-/// upstream: token.c:send_zstd_token() - CCtx created once (line 740),
-/// never reset between files (line 756-778 only resets run state); literals fed
-/// through a bounded output buffer (line 783-823)
+/// Deviation from upstream: upstream writes a DEFLATED_DATA block after every
+/// `ZSTD_compressStream2()` call that produced output (token.c:815-821), so
+/// its block boundaries can differ from oc's. The decompressed bytes are the
+/// same and both framings decode identically.
+///
+/// upstream: token.c:send_zstd_token() - CCtx created once (line 743),
+/// never reset between files (lines 759-762 only reset run state); literals fed
+/// through a bounded output buffer (lines 786-829)
 pub(in crate::wire::compressed_token) struct ZstdTokenEncoder {
     /// Persistent zstd compression context.
     encoder: ZstdRawEncoder<'static>,
     /// Output buffer for compression results.
-    /// Sized to `MAX_DATA_COUNT` to match upstream's `obuf` (token.c line 746).
+    /// Sized to `MAX_DATA_COUNT` to match upstream's `zstd_out_buff.size`
+    /// (token.c:794).
     output_buf: Vec<u8>,
     /// Current write position in `output_buf`.
     /// upstream: zstd_out_buff.pos
@@ -69,7 +74,7 @@ pub(in crate::wire::compressed_token) struct ZstdTokenEncoder {
     /// been written to the wire.
     ///
     /// A literal run breaks the token run, so upstream writes that run
-    /// (token.c:762-779) before compressing the literal span (token.c:783).
+    /// (token.c:765-782) before compressing the literal span (token.c:786).
     /// Because oc streams literals eagerly, the run must be emitted when the
     /// first literal of a region arrives - before any DEFLATED_DATA block - so
     /// the wire order stays `[token run][literal data]`. This flag ensures the
@@ -84,7 +89,8 @@ impl ZstdTokenEncoder {
     /// `ZSTD_c_nbWorkers`. `None` keeps the encoder single-threaded,
     /// matching upstream's `do_compression_threads = 0` default.
     ///
-    /// upstream: token.c:749 - `ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads)`
+    /// upstream: token.c:752 -
+    /// `ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads)`
     pub(in crate::wire::compressed_token) fn new(
         level: i32,
         workers: Option<std::num::NonZeroU8>,
@@ -118,7 +124,7 @@ impl ZstdTokenEncoder {
     /// upstream rsync uses a single continuous stream across all files in the
     /// session.
     ///
-    /// upstream: token.c:756-778 - only resets last_run_end, run_start,
+    /// upstream: token.c:759-762 - only resets last_run_end, run_start,
     /// flush_pending when last_token == -1 (new file boundary)
     pub(in crate::wire::compressed_token) fn reset(&mut self) {
         self.literal_buf.clear();
@@ -140,12 +146,12 @@ impl ZstdTokenEncoder {
     /// flush still happens only at the token boundary.
     ///
     /// A literal region breaks any open token run, so upstream emits that run
-    /// before compressing the literal span (token.c:762-783). Because output is
+    /// before compressing the literal span (token.c:765-786). Because output is
     /// streamed eagerly here, the pending run is written when the first literal
     /// of the region arrives - before any DEFLATED_DATA block - preserving the
     /// `[token run][literal data]` wire order.
     ///
-    /// upstream: token.c:783-823 (the `if (nb || flush_pending)` block)
+    /// upstream: token.c:786-829 (the `if (nb || flush_pending)` block)
     pub(in crate::wire::compressed_token) fn send_literal<W: Write>(
         &mut self,
         writer: &mut W,
@@ -155,8 +161,8 @@ impl ZstdTokenEncoder {
             return Ok(());
         }
 
-        // upstream: token.c:762-779 - a literal run breaks the open token run,
-        // which must be written before the literal data (token.c:783).
+        // upstream: token.c:765-782 - a literal run breaks the open token run,
+        // which must be written before the literal data (token.c:786).
         if self.last_token >= 0 && !self.literal_pending_run_written {
             self.write_token_run(writer)?;
             self.literal_pending_run_written = true;
@@ -181,7 +187,7 @@ impl ZstdTokenEncoder {
     ) -> io::Result<()> {
         let token = block_index as i32;
 
-        // upstream: token.c lines 756-779 - same run encoding as zlib.
+        // upstream: token.c lines 759-782 - same run encoding as zlib.
         // A literal region's run was already written by `send_literal`
         // (`literal_pending_run_written`); the remaining branches mirror the
         // "output previous run" cases that are not triggered by literals.
@@ -216,7 +222,7 @@ impl ZstdTokenEncoder {
     /// compression context is preserved - upstream rsync maintains one
     /// continuous stream across all files.
     ///
-    /// upstream: token.c:828-831 - writes END_FLAG, does NOT reset CCtx
+    /// upstream: token.c:831-834 - writes END_FLAG, does NOT reset CCtx
     pub(in crate::wire::compressed_token) fn finish<W: Write>(
         &mut self,
         writer: &mut W,
@@ -229,7 +235,7 @@ impl ZstdTokenEncoder {
         }
         self.compress_and_flush(writer)?;
         writer.write_all(&[END_FLAG])?;
-        // upstream: token.c:756-778 - only run state resets between files
+        // upstream: token.c:759-762 - only run state resets between files
         self.last_token = -1;
         self.run_start = 0;
         self.last_run_end = 0;
@@ -239,7 +245,7 @@ impl ZstdTokenEncoder {
     }
 
     /// Noop for zstd - no dictionary synchronization needed.
-    /// upstream: token.c:1132-1134 (see_token for CPRES_ZSTD is empty)
+    /// upstream: token.c:1134-1137 (see_token for CPRES_ZSTD is empty)
     pub(in crate::wire::compressed_token) fn see_token(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
@@ -250,14 +256,14 @@ impl ZstdTokenEncoder {
     /// so the wire bytes are identical to feeding the whole literal run at once;
     /// only the staging buffer stays bounded to `CHUNK_SIZE`.
     ///
-    /// upstream: token.c:790-818 - the `ZSTD_e_continue` portion of the
+    /// upstream: token.c:793-826 - the `ZSTD_e_continue` portion of the
     /// do/while loop, which drains a bounded output buffer.
     fn compress_chunk_continue<W: Write>(&mut self, writer: &mut W, len: usize) -> io::Result<()> {
         self.needs_flush = true;
 
         let mut input_pos = 0;
         while input_pos < len {
-            // upstream: token.c:791-792 - reset the output buffer when full.
+            // upstream: token.c:794-795 - reset the output buffer.
             if self.output_pos == MAX_DATA_COUNT {
                 self.write_output_buffer(writer)?;
             }
@@ -273,7 +279,7 @@ impl ZstdTokenEncoder {
                 self.output_pos += out_buf.pos();
             }
 
-            // upstream: token.c:812-817 - write when the buffer is full.
+            // upstream: token.c:815-821 - write the produced output.
             if self.output_pos == MAX_DATA_COUNT {
                 self.write_output_buffer(writer)?;
             }
@@ -286,14 +292,14 @@ impl ZstdTokenEncoder {
     /// Drains any staged literals and flushes the zstd encoder at a token
     /// boundary.
     ///
-    /// Mirrors upstream token.c:783-823. Full `CHUNK_SIZE` pieces are already
+    /// Mirrors upstream token.c:786-829. Full `CHUNK_SIZE` pieces are already
     /// streamed by [`send_literal`](Self::send_literal); this drains the
     /// remaining sub-chunk tail with `ZSTD_e_continue`, then performs the single
     /// `ZSTD_e_flush` that produces a decompressible boundary. Output is
     /// accumulated in a single `MAX_DATA_COUNT` buffer and written as
     /// DEFLATED_DATA blocks only when the buffer fills or on flush.
     ///
-    /// upstream: token.c:783-823 (the `if (nb || flush_pending)` block)
+    /// upstream: token.c:786-829 (the `if (nb || flush_pending)` block)
     fn compress_and_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         // Drain the sub-chunk tail (at most one iteration; the loop also copes
         // with a direct call carrying more than a chunk).
@@ -307,7 +313,7 @@ impl ZstdTokenEncoder {
             return Ok(());
         }
 
-        // upstream: token.c:795-798 - ZSTD_e_flush produces a decompressible
+        // upstream: token.c:797-799 - ZSTD_e_flush produces a decompressible
         // boundary. After each flush call, write whatever is in the output
         // buffer (even if not full).
         loop {
@@ -319,7 +325,7 @@ impl ZstdTokenEncoder {
                 self.output_pos += out_buf.pos();
             }
 
-            // upstream: token.c:812-817 - write when buffer full OR flushing.
+            // upstream: token.c:815-821 - write whatever the flush produced.
             if self.output_pos > 0 {
                 self.write_output_buffer(writer)?;
             }
@@ -336,12 +342,12 @@ impl ZstdTokenEncoder {
     /// Writes the accumulated output buffer as a single DEFLATED_DATA block.
     ///
     /// Upstream writes the entire output buffer as one DEFLATED_DATA block
-    /// (token.c lines 813-817), then resets the buffer for the next chunk.
+    /// (token.c lines 815-821), then resets the buffer for the next chunk.
     /// The DEFLATED_DATA header uses 14-bit length encoding, so the maximum
     /// block size is `MAX_DATA_COUNT` (16383 bytes).
     fn write_output_buffer<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         debug_assert!(self.output_pos <= MAX_DATA_COUNT);
-        // upstream: token.c lines 815-817
+        // upstream: token.c lines 818-820
         write_deflated_data_header(writer, self.output_pos)?;
         writer.write_all(&self.output_buf[..self.output_pos])?;
         self.output_pos = 0;
