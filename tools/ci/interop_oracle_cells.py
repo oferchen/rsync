@@ -165,15 +165,14 @@ def expected_inc(cell: Cell, candidate: bool) -> bool:
     """Whether INC_RECURSE is negotiated on the wire for a cell's baseline or candidate run.
 
     Upstream negotiates it whenever the client did not turn it off (compat.c:
-    set_allow_inc_recurse, compat.c:724 on the server). oc never negotiates
-    it when oc is the receiver: an oc client does not put 'i' in its -e
-    string on a pull, and an oc server receiver does not set CF_INC_RECURSE on
-    a push, so those candidates run without it whatever was requested. The
-    cell pins that, so the day oc starts negotiating it the cell fails and
-    this line is deleted with the change.
+    set_allow_inc_recurse, compat.c:724 on the server). An oc server receiver
+    grants it on a push like upstream. An oc client does not put i in its -e
+    string on a pull, so that candidate runs without it whatever was requested.
+    The cell pins that, so the day the oc client starts negotiating it the
+    cell fails and this line is deleted with the change.
     """
-    oc_receives = cell.role == ("oc-client" if cell.direction == "pull" else "oc-server")
-    return cell.inc == "on" and not (candidate and oc_receives)
+    oc_client_receives = cell.direction == "pull" and cell.role == "oc-client"
+    return cell.inc == "on" and not (candidate and oc_client_receives)
 
 
 def _proto33(have: set[str]) -> list[Cell]:
