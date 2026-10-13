@@ -252,6 +252,18 @@ pub const CAN_CHMOD_SYMLINK: bool = cfg!(any(
     target_os = "dragonfly",
 ));
 
+/// Whether a received ACL is applied race-safely through a pinned parent
+/// directory fd and leaf name, rather than by path.
+///
+/// Mirrors the capability upstream reports as `ACL-at` (`usage.c:110-125`).
+/// A `SUPPORT_ACL_FD` build (Linux with POSIX ACLs) asks `lib/acl.c:423
+/// xacl_at_available()` whether the `*xattrat` syscalls or the
+/// `/proc/self/fd` compat let `set_acl()` apply an ACL by dirfd+leaf, so a
+/// swapped parent symlink cannot redirect it. oc's receiver applies ACLs by
+/// path through `exacl::setfacl` (`acl_exacl/apply.rs`), which has no such
+/// guarantee, so `--version` reports `no ACL-at`.
+pub const ACL_APPLY_IS_FD_PINNED: bool = false;
+
 pub use acl_idmap::AclIdMapper;
 
 #[cfg(all(

@@ -469,6 +469,11 @@ impl VersionInfoReport {
         items.push(capability_entry("inplace", config.supports_inplace));
         items.push(capability_entry("append", config.supports_append));
         items.push(capability_entry("ACLs", config.supports_acls));
+        // upstream: usage.c:110-125 - only a SUPPORT_ACL_FD build (Linux with
+        // POSIX ACLs) prints this token, as `ACL-at` or `no ACL-at`.
+        if cfg!(target_os = "linux") && config.supports_acls {
+            items.push(capability_entry("ACL-at", config.supports_acl_at));
+        }
         items.push(capability_entry("xattrs", config.supports_xattrs));
         items.push(InfoItem::Entry(Cow::Borrowed(
             config.secluded_args_mode.label(),
@@ -518,6 +523,9 @@ pub(crate) fn default_checksum_algorithms() -> Vec<Cow<'static, str>> {
         Cow::Borrowed("md5"),
         Cow::Borrowed("md4"),
         Cow::Borrowed("sha1"),
+        // upstream: compat.c:477-478 - get_default_nno_list() with a dup
+        // markup keeps the num-0 "none" entry, so both lists end with it.
+        Cow::Borrowed("none"),
     ]
 }
 
@@ -536,6 +544,7 @@ pub(crate) fn default_compress_algorithms() -> Vec<Cow<'static, str>> {
 
     algorithms.push(Cow::Borrowed("zlibx"));
     algorithms.push(Cow::Borrowed("zlib"));
+    algorithms.push(Cow::Borrowed("none"));
     algorithms
 }
 
@@ -896,21 +905,9 @@ mod tests {
     }
 
     #[test]
-    fn default_checksum_algorithms_excludes_none() {
-        let algorithms = default_checksum_algorithms();
-        assert!(!algorithms.iter().any(|a| a == "none"));
-    }
-
-    #[test]
     fn default_compress_algorithms_includes_zlib() {
         let algorithms = default_compress_algorithms();
         assert!(algorithms.iter().any(|a| a == "zlib"));
-    }
-
-    #[test]
-    fn default_compress_algorithms_excludes_none() {
-        let algorithms = default_compress_algorithms();
-        assert!(!algorithms.iter().any(|a| a == "none"));
     }
 
     #[test]
