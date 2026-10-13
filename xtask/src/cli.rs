@@ -93,7 +93,7 @@ pub enum Command {
     /// (host `clippy -D warnings`, windows-gnu and linux-musl `cargo check`).
     /// Absent cross toolchains are skipped with a hint, never failed.
     ///
-    /// The upstream side of the comparison is the pinned rsync 3.4.4 built by
+    /// The upstream side of the comparison is the pinned rsync 3.5.1 built by
     /// `bash tools/ci/run_interop.sh` under
     /// `target/interop/upstream-install/`, verified by its
     /// `--version` banner and printed before the results. A missing or

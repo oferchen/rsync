@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mechanically diff enumerable "surfaces" between upstream rsync 3.4.4 and
+# Mechanically diff enumerable "surfaces" between upstream rsync 3.5.1 and
 # oc-rsync, so an audit can show it covered every member of a table instead of
 # asserting that it did.
 #
@@ -34,7 +34,7 @@ set -euo pipefail
 export LC_ALL=C
 
 REPO_ROOT="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.4}"
+UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.5.1}"
 
 # The single place that knows where a release's source lives. Every question -
 # the oc-vs-upstream diff, the release-to-release delta, the self-test - resolves
@@ -476,11 +476,12 @@ self_test() {
     "6:daemon unable to append to log-file" "$(oc_exit_codes | grep '^6:' || true)"
 
   # Alias guard: MSG_CLIENT is spelled as an alias of FCLIENT (=7). A naive
-  # numeric grep misses every logcode-aliased row and finds 8 of 18 values.
+  # numeric grep misses every logcode-aliased row and finds 8 of 19 values.
+  # 3.5.1 has 19: it adds MSG_BLOCK_STATS (rsync.h:302).
   check "msg-codes resolves logcode aliases (FCLIENT=7)" \
     "7" "$(up_msg_codes | grep -x '7' || true)"
-  check "msg-codes upstream extraction has all 18 values" \
-    "18" "$(up_msg_codes | wc -l | tr -d ' ')"
+  check "msg-codes upstream extraction has all 19 values" \
+    "19" "$(up_msg_codes | wc -l | tr -d ' ')"
 
   # Bit-position guard: ID0_NAMES is the highest upstream bit; the private oc
   # extension CONSECUTIVE_MATCH (0x0200_0000, bit 25) is written in hex

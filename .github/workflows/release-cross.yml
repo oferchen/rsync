@@ -445,6 +445,8 @@ jobs:
           VERSION="${{ needs.validate-version.outputs.version }}"
           ARCH="${{ matrix.arch }}"
           PKGVER="${VERSION}-r0"
+          UPSTREAM_VERSION="$(grep -E '^\s*upstream_version\s*=' Cargo.toml | head -1 | sed 's/.*=\s*"\([^"]*\)".*/\1/')"
+          [[ -n "${UPSTREAM_VERSION}" ]] || { echo "error: upstream_version missing from Cargo.toml" >&2; exit 1; }
 
           # Extract pre-built static binary from musl tarball
           mkdir -p /tmp/musl-extract
@@ -477,7 +479,7 @@ jobs:
           {
             printf 'pkgname = oc-rsync\n'
             printf 'pkgver = %s\n' "${PKGVER}"
-            printf 'pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.4\n'
+            printf 'pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream %s\n' "${UPSTREAM_VERSION}"
             printf 'url = https://github.com/oferchen/rsync\n'
             printf 'builddate = %s\n' "$(date +%s)"
             printf 'packager = oc-rsync CI <ci@github.com>\n'
