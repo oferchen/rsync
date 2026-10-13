@@ -1,13 +1,16 @@
 //! Protocol negotiation between rsync peers.
 //!
 //! This module implements the initial handshake that determines which protocol
-//! version and capabilities a session will use. Upstream rsync supports two
-//! negotiation styles:
+//! version and capabilities a session will use. Upstream rsync has two
+//! handshake styles:
 //!
-//! - **Legacy ASCII** (`@RSYNCD:` greeting) -- used by peers speaking protocol
-//!   versions older than 30.
-//! - **Binary handshake** -- introduced in protocol 30, where capabilities and
-//!   algorithm choices are exchanged as binary-encoded values.
+//! - **ASCII greeting** (`@RSYNCD:`) - the daemon (`rsync://`) transport, at
+//!   every protocol version.
+//! - **Binary handshake** - the remote-shell transport, which exchanges the
+//!   protocol version as a 4-byte integer.
+//!
+//! At protocol 30 and later both styles continue with the binary compatibility
+//! flags and algorithm negotiation.
 //!
 //! The [`detect_negotiation_prologue`] function and the incremental
 //! [`NegotiationPrologueDetector`] classify the exchange style from the first

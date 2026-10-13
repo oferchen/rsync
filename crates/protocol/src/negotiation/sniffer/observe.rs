@@ -9,6 +9,13 @@ use super::{NegotiationPrologueSniffer, map_reserve_error_for_io};
 
 impl NegotiationPrologueSniffer {
     /// Observes a chunk of bytes that were read from the transport.
+    ///
+    /// Returns the decision so far and how many bytes of `chunk` were consumed;
+    /// bytes past the decision point are left for the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] when the prefix buffer cannot grow.
     pub fn observe(
         &mut self,
         chunk: &[u8],
@@ -61,6 +68,10 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Observes a single byte that has already been read from the transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TryReserveError`] when the prefix buffer cannot grow.
     #[inline]
     pub fn observe_byte(&mut self, byte: u8) -> Result<NegotiationPrologue, TryReserveError> {
         let (decision, consumed) = self.observe(slice::from_ref(&byte))?;
@@ -75,6 +86,15 @@ impl NegotiationPrologueSniffer {
     }
 
     /// Reads from `reader` until the negotiation style can be determined.
+    ///
+    /// Bytes read past the decision point are kept as the buffered remainder.
+    /// `EINTR` is retried.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::UnexpectedEof`] when the reader closes before a
+    /// decision, [`io::ErrorKind::OutOfMemory`] when the buffer cannot grow, or
+    /// any other read error.
     pub fn read_from<R: Read>(&mut self, reader: &mut R) -> io::Result<NegotiationPrologue> {
         match self.detector.decision() {
             Some(decision) if !self.needs_more_legacy_prefix_bytes(decision) => {
