@@ -16,7 +16,6 @@ job covers performance.
 ## When does it run?
 
 - Tag push (`v*.*.*`).
-- Weekly cron (Sundays, 04:17 UTC).
 - Manual `workflow_dispatch` from the Benchmark workflow.
 
 The job is intentionally **not** in the required-checks list. Hosted
@@ -92,7 +91,7 @@ on NTFS, where MSYS2/Cygwin's path-translation layer is the variable
 we cannot control. A 50% band catches regressions without flagging
 runner noise.
 
-Sustained operation outside the band on the weekly cron is a signal,
+Sustained operation outside the band across releases is a signal,
 not a fault. Repeat locally before opening a regression issue:
 
 ```sh
