@@ -249,8 +249,8 @@ impl<'a> CopyContext<'a> {
     /// Used to make per-inode metadata writes (e.g. NTFS DACL writes via
     /// `SetNamedSecurityInfoW`) O(1) per cohort instead of O(N) per follower.
     ///
-    /// upstream: hlink.c::hard_link_check returns 1 for followers so
-    /// generator.c:1552 exits before `set_file_attrs()` and therefore never
+    /// upstream: hlink.c:300 `hard_link_check()` returns 1 for followers so
+    /// generator.c:1944 exits before `set_file_attrs()` and therefore never
     /// calls `set_acl()` on a follower alias.
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
@@ -271,7 +271,7 @@ impl<'a> CopyContext<'a> {
     /// Sets the source-tree confinement anchor for the operand about to be
     /// walked.
     ///
-    /// upstream: `rsync-3.5.0/sender.c` - the sender's content opens are
+    /// upstream: `rsync-3.5.1/sender.c:692-706` - the sender's content opens are
     /// confined beneath the transfer root, which is per source argument.
     pub(in crate::local_copy) fn set_source_anchor(&mut self, anchor: Option<PathBuf>) {
         #[cfg(unix)]
@@ -290,8 +290,9 @@ impl<'a> CopyContext<'a> {
     /// Opens `path` beneath the pinned anchor that holds it, or `None` when no
     /// recorded anchor prefixes it.
     ///
-    /// upstream: `rsync-3.5.1/sender.c:694-704` - a root whose identity
-    /// changed since the scan is refused with `ELOOP`.
+    /// upstream: `rsync-3.5.1/sender.c:695` opens through
+    /// `open_sender_source_path()`, and `flist.c:328-329` refuses a root whose
+    /// identity changed since the scan with `ELOOP`.
     pub(in crate::local_copy) fn open_beneath_pinned_anchor(
         &self,
         path: &Path,
@@ -423,7 +424,7 @@ impl<'a> CopyContext<'a> {
             destination_previously_existed,
         );
 
-        // upstream: receiver.c:980 - when `-p`/`--chmod` are off, the
+        // upstream: receiver.c:1208 - when `-p`/`--chmod` are off, the
         // receiver rewrites `file->mode` via `dest_mode()` BEFORE the
         // transfer; `set_file_attrs()` then chmods the freshly-renamed
         // temp file to that mode. Reproduce that chmod here so a re-
@@ -683,7 +684,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// Also suppresses deletions like any other general I/O error, matching
     /// upstream where `io_error |= IOERR_GENERAL` gates the delete pass.
-    /// upstream: flist.c:1856 send_file1() and flist.c:1692-1695 make_file()
+    /// upstream: flist.c:2017-2019 send_file_name() and flist.c:1692-1695 make_file()
     /// set io_error |= IOERR_GENERAL.
     pub(super) fn record_flist_io_error(&mut self) {
         self.flist_io_error = true;
@@ -710,8 +711,8 @@ impl<'a> CopyContext<'a> {
     /// but finishes `RERR_PARTIAL` (exit 23).
     ///
     /// upstream: `sender.c:successful_send()` sets `got_xfer_error` via
-    /// `FERROR_XFER` and returns without aborting; `main.c:1648` then exits
-    /// `RERR_PARTIAL`.
+    /// `FERROR_XFER` and returns without aborting; `cleanup.c:217-218` then
+    /// exits `RERR_PARTIAL`.
     pub(super) fn record_sender_remove_error(&mut self) {
         self.sender_remove_error = true;
     }
@@ -729,7 +730,7 @@ impl<'a> CopyContext<'a> {
     /// `RERR_PARTIAL` (23).
     ///
     /// upstream: `delete.c:283-285` emits `could not make way for %s %s` at
-    /// `FERROR_XFER`, `log.c:310-311` sets `got_xfer_error`, and
+    /// `FERROR_XFER`, `log.c:337-338` sets `got_xfer_error`, and
     /// `cleanup.c:217-218` lifts a zero exit to `RERR_PARTIAL`.
     pub(crate) fn record_make_way_error(&mut self) {
         self.make_way_error = true;
@@ -797,16 +798,19 @@ impl<'a> CopyContext<'a> {
     /// tree; this flag only forces the final `RERR_PARTIAL` (exit 23) exit
     /// code.
     ///
-    /// upstream: `delete.c:86-210` - `delete_dir_contents` / `delete_item`
-    /// log each un-removable entry via `rsyserr(FERROR_XFER, ...)` and set
-    /// `io_error |= IOERR_GENERAL`; `main.c` then exits `RERR_PARTIAL`.
+    /// upstream: `delete.c:264-267` - `delete_item()` logs each un-removable
+    /// entry via `rsyserr(FERROR_XFER, ...)`, which sets `got_xfer_error`
+    /// (`log.c:337-338`); `cleanup.c:217-218` then exits `RERR_PARTIAL`.
     pub(super) fn record_delete_io_error(&mut self) {
         self.delete_io_error = true;
     }
 
     /// Reports whether a swallowed delete-pass error must force
-    /// `RERR_PARTIAL` (exit 23). `--ignore-errors` suppresses it, matching
-    /// upstream where the flag clears `IOERR_GENERAL` for the delete pass.
+    /// `RERR_PARTIAL` (exit 23). `--ignore-errors` suppresses it.
+    ///
+    /// Deviation from upstream: `got_xfer_error` lifts the exit to
+    /// `RERR_PARTIAL` at `cleanup.c:217-218` whether or not `--ignore-errors`
+    /// is set.
     pub(super) const fn io_error_requires_partial_exit(&self) -> bool {
         self.delete_io_error && !self.options.ignore_errors_enabled()
     }
