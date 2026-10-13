@@ -31,7 +31,10 @@ use send_zc_test_env::{SendZcEnv, classify, report, report_setup_failure};
 /// Classifies the environment for `test` on stderr; `true` when the real
 /// opcode can be exercised.
 fn send_zc_runnable(test: &str) -> bool {
-    report(test, classify(is_io_uring_available(), send_zc::is_supported())) == SendZcEnv::Ok
+    report(
+        test,
+        classify(is_io_uring_available(), send_zc::is_supported()),
+    ) == SendZcEnv::Ok
 }
 
 /// Wraps `socketpair(AF_UNIX, SOCK_STREAM, 0)` and returns the two
@@ -250,10 +253,16 @@ fn default_auto_writer_sends_through_send_zc_over_tcp_loopback() {
     let after = fast_io::send_zc_stats();
 
     let received = reader.join().expect("reader thread");
-    assert_eq!(received, payload, "loopback transcript must equal the payload");
+    assert_eq!(
+        received, payload,
+        "loopback transcript must equal the payload"
+    );
 
     if runnable {
-        assert!(engaged, "the default Auto policy must engage SEND_ZC on this kernel");
+        assert!(
+            engaged,
+            "the default Auto policy must engage SEND_ZC on this kernel"
+        );
         assert!(
             after.sends > before.sends,
             "no IORING_OP_SEND_ZC completion was counted: {before:?} -> {after:?}"
@@ -263,7 +272,10 @@ fn default_auto_writer_sends_through_send_zc_over_tcp_loopback() {
             "most of the payload must travel through SEND_ZC: {before:?} -> {after:?}"
         );
     } else {
-        assert!(!engaged, "SEND_ZC cannot run here, so the writer must not claim it");
+        assert!(
+            !engaged,
+            "SEND_ZC cannot run here, so the writer must not claim it"
+        );
         assert_eq!(after.sends, before.sends, "no SEND_ZC may be counted here");
         assert_eq!(
             after.fallbacks - before.fallbacks,

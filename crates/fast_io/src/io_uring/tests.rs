@@ -1101,13 +1101,15 @@ fn zero_copy_auto_engages_only_where_send_zc_can_run() {
         "zero_copy_auto_engages_only_where_send_zc_can_run",
         classify(is_io_uring_available(), super::send_zc::is_supported()),
     );
-    let can_run = cfg!(feature = "iouring-send-zc") && env == super::send_zc_test_env::SendZcEnv::Ok;
+    let can_run =
+        cfg!(feature = "iouring-send-zc") && env == super::send_zc_test_env::SendZcEnv::Ok;
     let (fd_a, fd_b) = make_socket_pair();
     let before = crate::send_zc_stats();
     let writer =
         socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, crate::ZeroCopyPolicy::Auto).unwrap();
     let after = crate::send_zc_stats();
-    let picked_io_uring = matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active());
+    let picked_io_uring =
+        matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active());
     assert_eq!(
         picked_io_uring, can_run,
         "Auto must engage SEND_ZC exactly when the feature, io_uring and the opcode all allow it"
