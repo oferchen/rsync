@@ -645,9 +645,10 @@ pub use io_uring_depth::{
 pub use io_uring_ops::{hard_link, try_rename_via_io_uring, try_statx_batch_via_io_uring};
 pub use policy::{
     BackendPolicy, BasisReadBackend, CowPolicy, IoUringPolicy, IocpPolicy,
-    MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZeroCopyPolicy,
+    MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZERO_COPY_ENV, ZeroCopyPolicy,
     choose_basis_read_backend, choose_basis_read_backend_with_threshold,
-    mmap_to_sqpoll_threshold_bytes, send_zc_policy_permits,
+    mmap_to_sqpoll_threshold_bytes, resolve_server_zero_copy_policy, send_zc_policy_permits,
+    server_zero_copy_policy,
 };
 pub use send_zc_stats::{SendZcStats, send_zc_stats};
 pub use source_prefetch::{PREFETCH_MAX_FILE_LEN, PrefetchOpen, PrefetchRequest, prefetch_sources};

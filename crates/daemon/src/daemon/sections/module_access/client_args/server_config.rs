@@ -139,6 +139,9 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
     if module.open_noatime {
         cfg.write.open_noatime = true;
     }
+
+    // oc-only: the daemon's own startup policy, never the client's.
+    cfg.write.zero_copy_policy = module.zero_copy_policy;
 }
 
 /// Builds the server configuration from client arguments.

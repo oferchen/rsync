@@ -120,7 +120,10 @@ pub(super) struct ServerLongFlags {
     pub(super) io_uring_policy: fast_io::IoUringPolicy,
     /// Optional `--io-uring-depth=N` value forwarded by the client.
     pub(super) io_uring_depth: Option<String>,
-    pub(super) zero_copy_policy: fast_io::ZeroCopyPolicy,
+    /// This server's own `--zero-copy` / `--no-zero-copy`, e.g. from
+    /// `--rsync-path='oc-rsync --zero-copy'`. `None` defers to
+    /// `OC_RSYNC_ZERO_COPY`; a client never forwards its own policy.
+    pub(super) zero_copy_policy: Option<fast_io::ZeroCopyPolicy>,
     pub(super) write_devices: bool,
     pub(super) trust_sender: bool,
     /// Keep partially transferred files (upstream: `--partial`, long-form only).
@@ -545,7 +548,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         fsync: false,
         io_uring_policy: fast_io::IoUringPolicy::Auto,
         io_uring_depth: None,
-        zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
+        zero_copy_policy: None,
         write_devices: false,
         trust_sender: false,
         partial: false,
@@ -625,8 +628,8 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--fsync" => flags.fsync = true,
             "--io-uring" => flags.io_uring_policy = fast_io::IoUringPolicy::Enabled,
             "--no-io-uring" => flags.io_uring_policy = fast_io::IoUringPolicy::Disabled,
-            "--zero-copy" => flags.zero_copy_policy = fast_io::ZeroCopyPolicy::Enabled,
-            "--no-zero-copy" => flags.zero_copy_policy = fast_io::ZeroCopyPolicy::Disabled,
+            "--zero-copy" => flags.zero_copy_policy = Some(fast_io::ZeroCopyPolicy::Enabled),
+            "--no-zero-copy" => flags.zero_copy_policy = Some(fast_io::ZeroCopyPolicy::Disabled),
             "--write-devices" => flags.write_devices = true,
             "--trust-sender" => flags.trust_sender = true,
             // upstream: options.c:2903 - bare --partial (no compact 'P').

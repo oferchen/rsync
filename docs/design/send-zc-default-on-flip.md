@@ -13,9 +13,12 @@ runtime default was then turned back off (see below).
 > - The feature is compiled in by default, but the runtime default is off.
 >   A benchmark measured runtime default-on at +44% wall time on a 2 GiB
 >   daemon pull, so `Auto` keeps the plain socket write path (`TcpStream` in
->   the daemon) on every kernel and only an explicit `--zero-copy` dispatches
->   SEND_ZC. An oc client forwards `--zero-copy` / `--no-zero-copy` to an oc
->   daemon; an upstream peer never sees them.
+>   the daemon) on every kernel and only an explicit opt-in dispatches
+>   SEND_ZC. Zero-copy is a local decision on each node and is never
+>   forwarded: a client's `--zero-copy` covers only its own I/O, and a server
+>   opts in itself with `oc-rsync --daemon --zero-copy`, `--rsync-path='oc-rsync
+>   --zero-copy'` for an SSH server, or `OC_RSYNC_ZERO_COPY=on`. An upstream
+>   peer never sees any of it.
 > - There is no `OC_RSYNC_NO_SEND_ZC` variable; `--zero-copy` is the
 >   runtime on switch and `--no-zero-copy` a hard off.
 > - `fast_io::send_zc_stats()` counts SEND_ZC sends, bytes and fallbacks,

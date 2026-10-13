@@ -1,14 +1,15 @@
-/// A default daemon pull must deliver byte-identical files with SEND_ZC
-/// compiled into the daemon. The runtime default is off, so this pull takes
-/// the plain `TcpStream` writer on every kernel.
+/// A daemon pull must deliver byte-identical files with SEND_ZC compiled
+/// into the daemon, both by default (runtime off, the plain `TcpStream`
+/// writer on every kernel) and from a daemon started with `--zero-copy`
+/// (the SEND_ZC writer where the kernel can run it).
 ///
 /// A 4 MiB file of non-repeating bytes spans many 64 KiB frames, so a writer
 /// that reordered or recycled a buffer shows up as a content mismatch.
 ///
 /// The session runs in a forked child, so this test cannot read the child's
 /// `fast_io::send_zc_stats` counters; the in-process proofs are
-/// `daemon_socket_writer_default_never_dispatches_send_zc` and
-/// `daemon_socket_writer_dispatches_send_zc_on_request`.
+/// `daemon_started_without_zero_copy_never_dispatches_send_zc` and
+/// `daemon_started_with_zero_copy_dispatches_send_zc`.
 #[cfg(unix)]
 #[test]
 fn daemon_pull_default_send_zc_byte_identical() {
@@ -55,42 +56,48 @@ fn daemon_pull_default_send_zc_byte_identical() {
     )
     .expect("write daemon config");
 
-    let (port, held_listener) = allocate_test_port();
-    let daemon_config = DaemonConfig::builder()
-        .disable_default_paths()
-        .arguments([
+    for (daemon_flags, label) in [(&[][..], "default"), (&["--zero-copy"][..], "--zero-copy")] {
+        let dest_dir = dest_dir.join(label);
+        fs::create_dir(&dest_dir).expect("create dest");
+
+        let (port, held_listener) = allocate_test_port();
+        let mut arguments = vec![
             OsString::from("--config"),
             config_file.as_os_str().to_owned(),
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--max-sessions"),
             OsString::from("2"),
-        ])
-        .build();
-    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
-    drop(probe_stream);
+        ];
+        arguments.extend(daemon_flags.iter().map(OsString::from));
+        let daemon_config = DaemonConfig::builder()
+            .disable_default_paths()
+            .arguments(arguments)
+            .build();
+        let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+        drop(probe_stream);
 
-    let client_config = core::client::ClientConfig::builder()
-        .transfer_args([
-            OsString::from(format!("rsync://127.0.0.1:{port}/mod/")),
-            OsString::from(dest_dir.as_os_str()),
-        ])
-        .build();
-    let result = core::client::run_client(client_config);
-    if let Err(e) = &result {
+        let client_config = core::client::ClientConfig::builder()
+            .transfer_args([
+                OsString::from(format!("rsync://127.0.0.1:{port}/mod/")),
+                OsString::from(dest_dir.as_os_str()),
+            ])
+            .build();
+        if let Err(e) = core::client::run_client(client_config) {
+            let _ = finish_daemon(daemon_handle);
+            panic!("{label} daemon pull failed: {e}");
+        }
+
+        assert!(
+            fs::read(dest_dir.join("large.bin")).expect("read large") == large,
+            "large.bin differs after a {label} daemon pull"
+        );
+        assert_eq!(
+            fs::read(dest_dir.join("small.txt")).expect("read small"),
+            small,
+            "small.txt differs after a {label} daemon pull"
+        );
+
         let _ = finish_daemon(daemon_handle);
-        panic!("default daemon pull failed: {e}");
     }
-
-    assert!(
-        fs::read(dest_dir.join("large.bin")).expect("read large") == large,
-        "large.bin differs after a default daemon pull"
-    );
-    assert_eq!(
-        fs::read(dest_dir.join("small.txt")).expect("read small"),
-        small,
-        "small.txt differs after a default daemon pull"
-    );
-
-    let _ = finish_daemon(daemon_handle);
 }

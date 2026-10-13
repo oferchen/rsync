@@ -151,19 +151,6 @@ fn apply_long_form_args(
             "--fsync" => {
                 config.write.fsync = true;
             }
-            // oc-specific: `--zero-copy` opts the daemon-sender's socket write
-            // side into io_uring SEND_ZC. The client forwards it only when the
-            // user requested it; `--no-zero-copy` pins the policy to Disabled.
-            // Neither has an upstream `server_options()` counterpart, so they
-            // are only sent when both ends are oc-rsync (same precedent as
-            // `--io-uring-depth`). The default (flag absent) leaves the policy
-            // at `Auto`, keeping the transfer byte- and behavior-identical.
-            "--zero-copy" => {
-                config.write.zero_copy_policy = fast_io::ZeroCopyPolicy::Enabled;
-            }
-            "--no-zero-copy" => {
-                config.write.zero_copy_policy = fast_io::ZeroCopyPolicy::Disabled;
-            }
             // upstream: options.c:3006-3007 - --mkpath forwarded to the daemon
             // receiver on a push. Gates dest-arg path creation (main.c:751
             // make_path vs main.c:809 single do_mkdir).

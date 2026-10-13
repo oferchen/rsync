@@ -224,6 +224,7 @@ fn parse_module_definition(
         exclude_from: None,
         include_from: None,
         open_noatime: false,
+        zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
         reverse_lookup: true,
         lock_file: None,
         syslog_tag: None,
