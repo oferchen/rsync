@@ -8,7 +8,8 @@
 //! the overflow guards) is byte-for-byte identical to the sync leaves, so the
 //! two can never diverge on the value produced or the number of bytes consumed.
 //!
-//! Additive and unwired: these leaves are exercised only by the parity tests.
+//! The async codec dispatch (`read_stat_async`) consumes these leaves, and the
+//! parity tests pin them against their sync siblings.
 
 use std::io;
 
