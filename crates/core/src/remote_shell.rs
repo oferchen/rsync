@@ -26,16 +26,20 @@
 //!
 //! # Upstream Reference
 //!
-//! This module mirrors the shell command parsing in upstream rsync's `options.c`
-//! and the remote shell execution logic in `main.c`.
+//! The command splitting follows upstream `main.c:do_cmd()` (main.c:547-578).
+//!
+//! Deviation from upstream: `parse_shell_command` honours backslash escapes and
+//! splits on any whitespace; upstream splits on spaces only, has no backslash
+//! escape, treats a doubled quote inside quotes as a literal quote, and exits with
+//! `RERR_SYNTAX` on a missing trailing quote.
 
 use std::borrow::Cow;
 
 /// Remote shell configuration for executing rsync on remote hosts.
 ///
 /// Handles parsing of shell command strings (e.g., from `--rsh`/`-e` flag) and
-/// construction of full command lines for remote execution. Mirrors the shell
-/// handling in upstream `options.c:parse_arguments()` and `main.c:do_cmd()`.
+/// construction of full command lines for remote execution, following upstream
+/// `main.c:do_cmd()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteShell {
     program: String,
