@@ -3,7 +3,7 @@
 //! Builds an [`SshCommand`] from the parsed connection details and transfer
 //! config, spawns the remote process (upstream: `main.c:do_cmd()`), and ships
 //! secluded args over stdin when active (upstream:
-//! `rsync.c:283-320 send_protected_args()`).
+//! `rsync.c:284-321 send_protected_args()`).
 
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
@@ -69,11 +69,11 @@ pub(super) fn build_ssh_connection(
         ssh.set_bind_address(Some(bind_addr.socket().ip()));
     }
 
-    // upstream: main.c:600-607 do_cmd() - forward --ipv4/--ipv6 to the ssh
+    // upstream: main.c:604-611 do_cmd() - forward --ipv4/--ipv6 to the ssh
     // child as -4/-6 (only honoured when the remote shell is `ssh`).
     ssh.set_address_family(ssh_address_family(config.address_mode()));
 
-    // upstream: main.c:613-614 do_cmd() - force blocking_io for the rsh/remsh
+    // upstream: main.c:617-618 do_cmd() - force blocking_io for the rsh/remsh
     // remote shells when the user left --blocking-io/--no-blocking-io unset. The
     // builder applies the auto-enable from the resolved program basename.
     ssh.set_blocking_io(config.blocking_io());
@@ -85,7 +85,7 @@ pub(super) fn build_ssh_connection(
     let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
     ssh.set_connect_timeout(connect_timeout);
 
-    // upstream: options.c:2378 set_io_timeout(io_timeout) applies --timeout
+    // upstream: options.c:2520 set_io_timeout(io_timeout) applies --timeout
     // uniformly to every transport; on the SSH pipe it drives the stall
     // watchdog. 0/unset leaves it disabled.
     ssh.set_io_timeout(config.ssh_io_timeout());
@@ -106,12 +106,12 @@ pub(super) fn build_ssh_connection(
         )
     })?;
 
-    // upstream: rsync.c:283-320 send_protected_args() sends args as
+    // upstream: rsync.c:284-321 send_protected_args() sends args as
     // null-separated strings over the pipe before protocol negotiation begins,
     // applying iconvbufs(ic_send, ...) to each arg when iconv is configured
-    // (compat.c:799-806 filesfrom_convert / protect-args iconv gating).
+    // (compat.c:811-818 filesfrom_convert / protect-args iconv gating).
     if !stdin_args.is_empty() {
-        // upstream: rsync.c:296-297 - DEBUG_GTE(CMD, 1) emits
+        // upstream: rsync.c:297-298 - DEBUG_GTE(CMD, 1) emits
         // `print_child_argv("protected args:", args + i + 1)` right before the
         // per-arg `iconvbufs(ic_send, ...)` loop. `stdin_args` is the same
         // payload we are about to ship over stdin, carried as raw bytes so a

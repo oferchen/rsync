@@ -22,7 +22,7 @@ use crate::client::remote::output_option::{OutputWordKind, make_output_option};
 /// Sends daemon-mode arguments to the server.
 ///
 /// When `--protect-args` / `-s` is active, uses a two-phase protocol
-/// matching upstream `clientserver.c:393-408`:
+/// matching upstream `clientserver.c:439-454`:
 /// - Phase 1: role markers + `--secluded-args` + `--iconv=...` (when
 ///   configured) so the daemon knows to expect protected args and, for a
 ///   real upstream daemon, parses `--iconv` while `need_unsorted_flist`'s
@@ -46,7 +46,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 
     let full_args = build_full_daemon_args(config, request, protocol, is_sender);
 
-    // upstream: clientserver.c:395-407 - phase 1 sends args over the daemon text
+    // upstream: clientserver.c:439-451 - phase 1 sends args over the daemon text
     // protocol; with protect-args, only the minimal set is sent so the daemon
     // detects the secluded-args marker and expects phase-2 secluded args.
     let phase1_args: Vec<OsString> = if protect {
@@ -55,7 +55,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
             .map(OsString::from)
             .collect()
     } else {
-        // upstream: options.c:2617-3025 server_options() wraps every emitted
+        // upstream: options.c:2778-3200 server_options() wraps every emitted
         // option-with-value through `safe_arg()` before it enters the wire
         // path. Under non-protect_args the daemon responds with
         // `unbackslash_arg()` on its side. We mirror both halves here so a
@@ -66,8 +66,8 @@ pub(crate) fn send_daemon_arguments<W: Write>(
         // with `safe_arg(NULL, ...)` only under `if (!daemon_connection)`
         // (main.c:632), and its daemon agrees: `read_args()` un-escapes just
         // the args preceding the `.` and routes everything after it through
-        // `glob_expand()` untouched (io.c:1526-1532). Escaping an operand here
-        // would ship literal backslashes that no peer removes - upstream 3.5.0
+        // `glob_expand()` untouched (io.c:1523-1532). Escaping an operand here
+        // would ship literal backslashes that no peer removes - upstream
         // then splits the name on them, so `a b.txt` arrives as `/a/ b.txt`.
         let (options, operands) = split_at_operands(&full_args);
         options
@@ -77,7 +77,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
             .collect()
     };
 
-    // upstream: clientserver.c:348-349 - DEBUG_GTE(CMD, 1) emits
+    // upstream: clientserver.c:392-393 - DEBUG_GTE(CMD, 1) emits
     // `print_child_argv("sending daemon args:", sargs)` immediately before the
     // per-arg write loop. `sargs` is the same payload we are about to ship,
     // so emit against `phase1_args` regardless of the protect-args mode.
@@ -107,12 +107,12 @@ pub(crate) fn send_daemon_arguments<W: Write>(
         )
     })?;
 
-    // upstream: clientserver.c:407-408 send_protected_args(f_out, sargs) +
-    // rsync.c:283-320 send_protected_args() - phase 2 sends the real arguments
+    // upstream: clientserver.c:453-454 send_protected_args(f_out, sargs) +
+    // rsync.c:284-321 send_protected_args() - phase 2 sends the real arguments
     // via the secluded-args wire format (null-separated with empty terminator),
     // applying iconvbufs(ic_send, ...) per arg when --iconv is configured.
     if protect {
-        // upstream: options.c:2744-2755 - `--iconv=...` is emitted before the
+        // upstream: options.c:2909-2921 - `--iconv=...` is emitted before the
         // NULL cutoff, so it already travelled in phase 1
         // (`build_minimal_daemon_args`). Skip it here to avoid sending it
         // twice; `full_args` still carries it for the non-protect single-phase
@@ -124,13 +124,13 @@ pub(crate) fn send_daemon_arguments<W: Write>(
             .filter(|a| !daemon_arg_wire_bytes(a).starts_with(b"--iconv="))
             .map(OsString::as_os_str)
             .collect();
-        // upstream: rsync.c:296-297 - DEBUG_GTE(CMD, 1) emits
+        // upstream: rsync.c:297-298 - DEBUG_GTE(CMD, 1) emits
         // `print_child_argv("protected args:", args + i + 1)` right before the
         // per-arg `iconvbufs(ic_send, ...)` loop. Upstream's argv begins after
         // the original NULL terminator at `args + i + 1`, which is the
         // post-`"rsync"` payload - emit the matching shape here.
         protocol::cmd::trace_protected_args(&payload);
-        // upstream: rsync.c:283-296 send_protected_args() prepends argv[0]
+        // upstream: rsync.c:284-296 send_protected_args() prepends argv[0]
         // (`"rsync"`) ahead of the payload. Ship every arg as raw bytes so a
         // non-UTF-8 operand path survives verbatim (secluded_args writes bytes
         // unchanged; `send_secluded_args` accepts any `AsRef<[u8]>`).
@@ -161,14 +161,15 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 
 /// Builds the minimal phase-1 argument list for protect-args daemon mode.
 ///
-/// Upstream's phase 1 wire (`clientserver.c:395-402`) emits each `sargs[]`
+/// Upstream's phase 1 wire (`clientserver.c:439-446`) emits each `sargs[]`
 /// entry up to the `NULL` marker that `server_options()` inserts at
-/// `options.c:2755`. That marker sits AFTER the compact flag string and
+/// `options.c:2920-2921`. That marker sits AFTER the compact flag string and
 /// `--iconv=...` but BEFORE every post-NULL long-form option and the
-/// trailing `.` / module path which `do_cmd` appends at `clientserver.c:303`.
+/// trailing `.` / module path which `start_inband_exchange()` appends at
+/// `clientserver.c:345-388`.
 /// As a result upstream's phase 1 wire never contains a standalone `.` or
 /// a bare `-s`: the `s` for `--secluded-args` is embedded inside the
-/// compact flag string (`argstr[x++] = 's'`, `options.c:2631-2632`).
+/// compact flag string (`argstr[x++] = 's'`, `options.c:2795-2796`).
 ///
 /// We emit only the role markers, `--secluded-args`, and `--iconv=...` (when
 /// configured) here so that:
@@ -188,7 +189,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 ///    via `build_full_daemon_args`.
 /// 4. `--iconv=...`, when configured, is parsed by a real upstream daemon
 ///    while `protect_args` still reads `1` (not yet forced to `2` at
-///    `clientserver.c:1082`), so `options.c:2196-2201`'s `need_unsorted_flist
+///    `clientserver.c:1163`), so `options.c:2196-2201`'s `need_unsorted_flist
 ///    = 1` side effect fires. If `--iconv` were deferred to phase 2 (as
 ///    every other long-form option is), a real upstream daemon would parse
 ///    it under `protect_args == 2` and `options.c:2196`'s `protect_args !=
@@ -198,21 +199,21 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 ///    upstream daemon.
 ///
 /// Upstream daemons accept `--secluded-args` as the long-form alias of `-s`
-/// (`options.c:804`), so this remains wire-compatible with upstream rsync.
+/// (`options.c:818`), so this remains wire-compatible with upstream rsync.
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:303` - `sargs[sargc++] = "."` AFTER `server_options()`
-/// - `clientserver.c:395-402` - phase 1 wire writes args until `!sargs[i]`
-/// - `clientserver.c:1080-1082` - `protect_args = 2` only takes effect AFTER
+/// - `clientserver.c:345` - `sargs[sargc++] = "."` AFTER `server_options()`
+/// - `clientserver.c:439-446` - phase 1 wire writes args until `!sargs[i]`
+/// - `clientserver.c:1160-1163` - `protect_args = 2` only takes effect AFTER
 ///   phase 1's `parse_arguments()` returns
 /// - `options.c:2196-2201` - `need_unsorted_flist = 1` guarded by
 ///   `protect_args != 2`
-/// - `options.c:2631-2632` - `argstr[x++] = 's'` when `protect_args`
-/// - `options.c:2744-2751` - `--iconv=...` emitted immediately before the
+/// - `options.c:2795-2796` - `argstr[x++] = 's'` when `protect_args`
+/// - `options.c:2909-2918` - `--iconv=...` emitted immediately before the
 ///   NULL cutoff
-/// - `options.c:2754-2755` - NULL marker between phase 1 / phase 2 args
-/// - `options.c:804` - `--secluded-args` long-form alias for `-s`
+/// - `options.c:2920-2921` - NULL marker between phase 1 / phase 2 args
+/// - `options.c:818` - `--secluded-args` long-form alias for `-s`
 pub(super) fn build_minimal_daemon_args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
     let mut args = vec!["--server".to_owned()];
     if is_sender {
@@ -229,7 +230,7 @@ pub(super) fn build_minimal_daemon_args(config: &ClientConfig, is_sender: bool) 
 ///
 /// Shared by [`build_minimal_daemon_args`] (phase-1, when protect-args is
 /// active) and [`build_full_daemon_args`] (the non-protect single-phase send
-/// and phase-2's fallback carrier). Mirrors upstream `options.c:2744-2751`.
+/// and phase-2's fallback carrier). Mirrors upstream `options.c:2909-2918`.
 fn daemon_iconv_arg(config: &ClientConfig) -> Option<String> {
     match config.iconv() {
         IconvSetting::Unspecified | IconvSetting::Disabled => None,
@@ -243,7 +244,7 @@ fn daemon_iconv_arg(config: &ClientConfig) -> Option<String> {
 
 /// Builds the full argument list for daemon-mode transfer.
 ///
-/// Mirrors upstream `server_options()` (`options.c:2617-3025`) which builds
+/// Mirrors upstream `server_options()` (`options.c:2778-3200`) which builds
 /// the argument list sent from client to server.
 ///
 /// In upstream, `am_sender` refers to the CLIENT being the sender (push).
@@ -256,7 +257,7 @@ pub(super) fn build_full_daemon_args(
     is_sender: bool,
 ) -> Vec<OsString> {
     let mut args = Vec::new();
-    // upstream: options.c:2617-2619
+    // upstream: options.c:2786-2790
     args.push("--server".to_owned());
     if is_sender {
         args.push("--sender".to_owned());
@@ -267,10 +268,10 @@ pub(super) fn build_full_daemon_args(
     // (a PULL), so upstream's `am_sender` corresponds to `!is_sender`.
     let we_are_sender = !is_sender;
 
-    // upstream: options.c:2825-2826 server_options() forwards the RAW
+    // upstream: options.c:2991-2992 server_options() forwards the RAW
     // --checksum-choice string verbatim - both comma components - gated only on
     // `checksum_choice` being non-null. That pointer is nulled solely for the
-    // fully-auto forms (options.c:2003-2009), so forward the full choice
+    // fully-auto forms (options.c:2117-2123), so forward the full choice
     // whenever it is not fully-auto, mirroring the SSH path (invocation builder)
     // rather than collapsing to the transfer component alone.
     let checksum_choice = config.checksum_choice();
@@ -283,13 +284,13 @@ pub(super) fn build_full_daemon_args(
         ));
     }
 
-    // upstream: options.c:2621-2741 - single-character flag string (e.g., "-logDtprzc").
-    // upstream: options.c:2738 - maybe_add_e_option() appends the capability
+    // upstream: options.c:2792-2907 - single-character flag string (e.g., "-logDtprzc").
+    // upstream: options.c:2904 - maybe_add_e_option() appends the capability
     // string directly onto the compact flag string, producing a single argument
     // like `-logDtpre.iLsfxCIvu`. We follow the same format for interop.
     let mut flag_string = flags::build_server_flag_string(config);
 
-    // upstream: options.c:2650-2670 - server_options() packs a direction-
+    // upstream: options.c:2817-2836 - server_options() packs a direction-
     // specific branch of compact letters. `build_server_flag_string` is
     // role-agnostic and also feeds the local in-process ServerConfig parser
     // (server_config.rs), so the role-gated letters are applied here, on the
@@ -299,28 +300,28 @@ pub(super) fn build_full_daemon_args(
     // letters (L/k) ride to it instead and the local receiver applies
     // omit-dir/link-times, prune-empty-dirs, and fuzzy matching itself.
     if we_are_sender {
-        // upstream: options.c:2651-2652 - keep_dirlinks 'K'.
+        // upstream: options.c:2818-2819 - keep_dirlinks 'K'.
         if config.keep_dirlinks() {
             flag_string.push('K');
         }
-        // upstream: options.c:2653-2654 - prune_empty_dirs 'm'.
+        // upstream: options.c:2820-2821 - prune_empty_dirs 'm'.
         if config.prune_empty_dirs() {
             flag_string.push('m');
         }
-        // upstream: options.c:2655-2656 - omit_dir_times 'O'.
+        // upstream: options.c:2822-2823 - omit_dir_times 'O'.
         if config.omit_dir_times() {
             flag_string.push('O');
         }
-        // upstream: options.c:2657-2658 - omit_link_times 'J'.
+        // upstream: options.c:2824-2825 - omit_link_times 'J'.
         if config.omit_link_times() {
             flag_string.push('J');
         }
-        // upstream: options.c:2659-2664 - fuzzy_basis 'y', with a second 'y'
+        // upstream: options.c:2826-2830 - fuzzy_basis 'y', with a second 'y'
         // for level 2 (--fuzzy --fuzzy).
         for _ in 0..config.fuzzy_level() {
             flag_string.push('y');
         }
-        // upstream: options.c:2700-2703 - `if (preserve_perms) 'p'; else if
+        // upstream: options.c:2866-2869 - `if (preserve_perms) 'p'; else if
         // (preserve_executability && am_sender) 'E'`. build_server_flag_string
         // already packed 'p' when perms are on; 'E' is its mutually-exclusive
         // sender-only alternative. The local ServerConfig parser ignores 'E'
@@ -330,7 +331,7 @@ pub(super) fn build_full_daemon_args(
             flag_string.push('E');
         }
     } else {
-        // upstream: options.c:2665-2670 - the `!am_sender` (else) branch packs
+        // upstream: options.c:2831-2836 - the `!am_sender` (else) branch packs
         // copy_links 'L' and copy_dirlinks 'k'. On a daemon PULL the remote is
         // the sender, so these ride to it to dereference symlinks and
         // dir-symlinks; on a PUSH they are omitted (the local sender
@@ -346,7 +347,7 @@ pub(super) fn build_full_daemon_args(
 
     if protocol.as_u8() >= 30 {
         // upstream: compat.c:162-181 set_allow_inc_recurse() and
-        // options.c:3046 maybe_add_e_option() - `allow_inc_recurse` resolves
+        // options.c:3220-3221 maybe_add_e_option() - `allow_inc_recurse` resolves
         // the option state; a pull (`is_sender` = the daemon sends) advertises
         // 'i' only under the OC_RSYNC_PULL_INC_RECURSE staging flag (see
         // `pull_inc_recurse`).
@@ -360,14 +361,14 @@ pub(super) fn build_full_daemon_args(
         args.push(flag_string);
     }
 
-    // upstream: options.c:2757-2758 - `if (list_only > 1) "--list-only"`. Only
+    // upstream: options.c:2923-2924 - `if (list_only > 1) "--list-only"`. Only
     // the EXPLICIT `--list-only` is forwarded (the implicit single-source
     // listing is not). The compact 'n' is NOT packed for list-only.
     if config.list_only_arg() {
         args.push("--list-only".to_owned());
     }
 
-    // upstream: options.c:2792-2795 - `--msgs2stderr` (msgs2stderr == 1) or
+    // upstream: options.c:2958-2961 - `--msgs2stderr` (msgs2stderr == 1) or
     // `--no-msgs2stderr` (== 0); the default (2) forwards nothing.
     match config.msgs2stderr() {
         Some(true) => args.push("--msgs2stderr".to_owned()),
@@ -375,12 +376,12 @@ pub(super) fn build_full_daemon_args(
         None => {}
     }
 
-    // upstream: options.c:2946-2958 - `if (stdout_format && am_sender)` the
+    // upstream: options.c:2946-2956 - `if (stdout_format && am_sender)` the
     // server is told a little about the client's out-format via a `--log-format`
     // arg, in a first-match-wins chain. Only sent when the client is the sender
     // (push), matching upstream's `am_sender` guard. The `%i` branches key off
     // `stdout_format_has_i`, which upstream derives from the RESOLVED out-format
-    // string (options.c:2354-2367), not the `-i` flag: an explicit
+    // string (options.c:2496-2508), not the `-i` flag: an explicit
     // `--out-format` without `%i` clears it even under `-i`, while `-i` alone
     // installs the default `"%i %n%L"` format. `%i%I` is the `-ii` form
     // (stdout_format_has_i > 1) that itemizes unchanged entries too; `%o` is
@@ -418,21 +419,21 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("-B{}", bs.get()));
     }
 
-    // upstream: options.c:2803-2807 - --timeout=N so both peers enforce the
+    // upstream: options.c:2969-2973 - --timeout=N so both peers enforce the
     // same idle deadline.
     if let TransferTimeout::Seconds(secs) = config.timeout() {
         args.push(format!("--timeout={}", secs.get()));
     }
 
-    // upstream: options.c:2976 - `--bwlimit=%d` forwards the rate in whole KiB
-    // (options.c:1724), NOT bytes: the remote peer re-parses the value with a
+    // upstream: options.c:2975-2979 - `--bwlimit=%d` forwards the rate in whole KiB
+    // (options.c:1831), NOT bytes: the remote peer re-parses the value with a
     // default `K` suffix, so a byte count would be scaled up 1024x and the
     // throttle would effectively vanish.
     if let Some(bwlimit) = config.bandwidth_limit() {
         args.push(format!("--bwlimit={}", bwlimit.server_option_kib()));
     }
 
-    // upstream: options.c:2817-2849 - sender-specific args.
+    // upstream: options.c:3001-3033 - sender-specific args.
     if we_are_sender {
         if let Some(max_delete) = config.max_delete() {
             if max_delete > 0 {
@@ -442,7 +443,7 @@ pub(super) fn build_full_daemon_args(
             }
         }
 
-        // upstream: options.c:2828-2839 - explicit timing variants are always
+        // upstream: options.c:3012-3023 - explicit timing variants are always
         // sent; bare --delete (DuringDefault) is suppressed when
         // --delete-excluded is active.
         match config.delete_mode() {
@@ -464,12 +465,12 @@ pub(super) fn build_full_daemon_args(
             args.push("--force".to_owned());
         }
 
-        // upstream: options.c:2864-2865
+        // upstream: options.c:3030-3031
         if config.size_only() {
             args.push("--size-only".to_owned());
         }
 
-        // upstream: options.c:2842-2845 - --min-size / --max-size are emitted
+        // upstream: options.c:3008-3011 - --min-size / --max-size are emitted
         // only in the `am_sender` branch; the remote receiver's generator then
         // skips files outside the range exactly as the client would.
         if let Some(min) = config.min_file_size() {
@@ -479,13 +480,13 @@ pub(super) fn build_full_daemon_args(
             args.push(format!("--max-size={max}"));
         }
 
-        // upstream: options.c:2862-2867 - sender-only `--super` (am_root > 1)
+        // upstream: options.c:3028-3033 - sender-only `--super` (am_root > 1)
         // and `--stats` (do_stats). Shared with the SSH push builder via
         // flags::sender_super_stats_args so both transports forward the same
         // trailer on a push.
         args.extend(flags::sender_super_stats_args(config).map(str::to_owned));
     } else if let Some(spec) = config.skip_compress_spec() {
-        // upstream: options.c:2868-2870 - `else { if (skip_compress)
+        // upstream: options.c:3034-3037 - `else { if (skip_compress)
         // safe_arg("--skip-compress", skip_compress); }`. Forwarded only on a
         // PULL (the remote sender performs the compression). Only an
         // explicitly-set spec is sent; the built-in default list is never
@@ -500,7 +501,7 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("--max-alloc={arg}"));
     }
 
-    // upstream: options.c:2883-2888 - modify_window forwarded only when set AND
+    // upstream: options.c:3049-3054 - modify_window forwarded only when set AND
     // `am_sender` (the remote receiver's generator runs the mtime quick-check).
     // A negative window (nanosecond-exact) uses the short `-@%d` spelling; a
     // non-negative window uses `--modify-window=%d`.
@@ -512,29 +513,29 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2890-2894 - --checksum-seed=N so the remote uses the
+    // upstream: options.c:3056-3060 - --checksum-seed=N so the remote uses the
     // same seed for rolling and strong checksum generation. Not `am_sender`
     // gated.
     if let Some(seed) = config.checksum_seed() {
         args.push(format!("--checksum-seed={seed}"));
     }
 
-    // upstream: options.c:2906-2907
+    // upstream: options.c:3072-3073
     if config.ignore_errors() {
         args.push("--ignore-errors".to_owned());
     }
 
-    // upstream: options.c:2909-2910
+    // upstream: options.c:3075-3076
     if config.copy_unsafe_links() {
         args.push("--copy-unsafe-links".to_owned());
     }
 
-    // upstream: options.c:2912-2913
+    // upstream: options.c:3083-3084
     if config.safe_links() {
         args.push("--safe-links".to_owned());
     }
 
-    // upstream: options.c:2770-2775 - the compact 'D' letter now tracks
+    // upstream: options.c:2937-2942 - the compact 'D' letter tracks
     // preserve_devices only (build_server_flag_string). specials ride separately:
     // `if (preserve_devices) { if (!preserve_specials) --no-specials } else if
     // (preserve_specials) --specials`. --no-specials (not --devices) keeps
@@ -547,17 +548,17 @@ pub(super) fn build_full_daemon_args(
         args.push("--specials".to_owned());
     }
 
-    // upstream: options.c:2915-2916
+    // upstream: options.c:3086-3087
     if config.numeric_ids() {
         args.push("--numeric-ids".to_owned());
     }
 
-    // upstream: options.c:2918-2919
+    // upstream: options.c:3089-3090
     if config.qsort() {
         args.push("--use-qsort".to_owned());
     }
 
-    // upstream: options.c:2921-2953 - sender-only long-form args.
+    // upstream: options.c:3092-3124 - sender-only long-form args.
     if we_are_sender {
         if config.ignore_existing() {
             args.push("--ignore-existing".to_owned());
@@ -569,7 +570,7 @@ pub(super) fn build_full_daemon_args(
             args.push("--fsync".to_owned());
         }
 
-        // upstream: options.c:2943-2951 - --compare-dest/copy-dest/link-dest
+        // upstream: options.c:3114-3123 - --compare-dest/copy-dest/link-dest
         // sent only when client is sender (push).
         for ref_dir in config.reference_directories() {
             let flag = match ref_dir.kind() {
@@ -581,7 +582,7 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2955-2959 server_options() - make_output_option()
+    // upstream: options.c:3126-3130 server_options() - make_output_option()
     // forwards the explicitly-set --info / --debug levels so the daemon peer's
     // diagnostic output matches the client's request. `we_are_sender` (a push)
     // selects the receiving half of the role `where` filter.
@@ -595,7 +596,7 @@ pub(super) fn build_full_daemon_args(
         args.push(arg);
     }
 
-    // upstream: options.c:2876-2881 - --delete-missing-args needs the
+    // upstream: options.c:3042-3047 - --delete-missing-args needs the
     // cooperation of both sides, so it is always forwarded to the server.
     // --ignore-missing-args is forwarded only when the local side is the
     // receiver (`!am_sender`); a sender handles ignore by itself. Here
@@ -607,7 +608,7 @@ pub(super) fn build_full_daemon_args(
         args.push("--ignore-missing-args".to_owned());
     }
 
-    // upstream: options.c:2961-2970
+    // upstream: options.c:3132-3141
     if config.append() {
         args.push("--append".to_owned());
         if config.append_verify() {
@@ -617,7 +618,7 @@ pub(super) fn build_full_daemon_args(
         args.push("--inplace".to_owned());
     }
 
-    // upstream: options.c:2896-2904 - `if (partial_dir && am_sender) {
+    // upstream: options.c:3062-3070 - `if (partial_dir && am_sender) {
     // --partial-dir ...; if (delay_updates) --delay-updates } else if
     // (keep_partial && am_sender) --partial`. There is no compact 'P'. All are
     // `am_sender` (a daemon PUSH: `we_are_sender`). --delay-updates implies an
@@ -636,16 +637,16 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2935-2938 - `if (tmpdir) { --temp-dir; safe_arg("",
+    // upstream: options.c:3106-3109 - `if (tmpdir) { --temp-dir; safe_arg("",
     // tmpdir); }` inside the `am_sender` block, so the remote receiver writes
     // temp files under the requested directory.
     if we_are_sender && let Some(dir) = config.temp_directory() {
         args.push(format!("--temp-dir={}", dir.display()));
     }
 
-    // upstream: options.c:2657-2658 - `make_backups` rides in the compact
+    // upstream: options.c:2806-2807 - `make_backups` rides in the compact
     // flag string as `b` (added by `build_server_flag_string`). `--backup-dir`
-    // and `--suffix` remain long-form (`options.c:2817,2823`).
+    // and `--suffix` remain long-form (`options.c:2981-2989`).
     if config.backup() {
         if let Some(dir) = config.backup_directory() {
             args.push("--backup-dir".to_owned());
@@ -656,7 +657,7 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2992-2995 - `if (remove_source_files == 1)
+    // upstream: options.c:3163-3166 - `if (remove_source_files == 1)
     // "--remove-source-files"; else if (remove_source_files)
     // "--remove-sent-files"`. The deprecated alias is forwarded verbatim when
     // the user typed it, matching upstream byte-for-byte.
@@ -668,7 +669,7 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2989 - `if (write_devices && am_sender) args[ac++] =
+    // upstream: options.c:3160-3161 - `if (write_devices && am_sender) args[ac++] =
     // "--write-devices"`. Forwarded only when the local side is the sender
     // (`we_are_sender`, a push), so the remote receiver writes into existing
     // device destinations instead of recreating them with mknod.
@@ -676,7 +677,7 @@ pub(super) fn build_full_daemon_args(
         args.push("--write-devices".to_owned());
     }
 
-    // upstream: options.c:2997 - `if (copy_devices && !am_sender) args[ac++] =
+    // upstream: options.c:3168-3169 - `if (copy_devices && !am_sender) args[ac++] =
     // "--copy-devices"`. Forwarded only when the local side is the receiver
     // (a pull, where the daemon is the sender: `is_sender`), so the remote
     // sender reads device contents as regular file data. `is_sender == !am_sender`
@@ -693,14 +694,14 @@ pub(super) fn build_full_daemon_args(
         args.push("--mkpath".to_owned());
     }
 
-    // upstream: options.c:2986-2987 - `if (relative_paths && !implied_dirs &&
+    // upstream: options.c:3157-3158 - `if (relative_paths && !implied_dirs &&
     // (!am_sender || protocol_version >= 30)) --no-implied-dirs`. The flag is
     // forwarded only for relative transfers (implied dirs exist solely for
     // relative-rooted paths). The `(!am_sender || protocol_version >= 30)` guard
     // drops the flag on a PUSH below protocol 30 - reachable here because
     // `--protocol=N` caps the version negotiated from the `@RSYNCD:` greeting.
     // Without the relative_paths gate a non-relative transfer with
-    // implied_dirs=0 (options.c:2216) would wrongly forward the flag, which the
+    // implied_dirs=0 (options.c:2333-2334) would wrongly forward the flag, which the
     // remote sender then stats as a source path.
     if config.relative_paths()
         && !config.implied_dirs()
@@ -709,21 +710,21 @@ pub(super) fn build_full_daemon_args(
         args.push("--no-implied-dirs".to_owned());
     }
 
-    // upstream: options.c:3000-3001 - `if (preallocate_files && am_sender)
+    // upstream: options.c:3171-3172 - `if (preallocate_files && am_sender)
     // --preallocate`. Forwarded only on a PUSH (`we_are_sender`) so the remote
     // receiver preallocates the destination file extents.
     if we_are_sender && config.preallocate() {
         args.push("--preallocate".to_owned());
     }
 
-    // upstream: options.c:3003-3004 - `if (open_noatime && preserve_atimes <= 1)
+    // upstream: options.c:3174-3175 - `if (open_noatime && preserve_atimes <= 1)
     // --open-noatime`. Not `am_sender` gated; the side that opens source files
     // for reading suppresses atime updates.
     if config.open_noatime() {
         args.push("--open-noatime".to_owned());
     }
 
-    // upstream: options.c:2972-2990 - server_options() forwards the
+    // upstream: options.c:3143-3155 - server_options() forwards the
     // files-from arg only when the remote peer reads the list. `is_sender`
     // here means the daemon is the sender (PULL), so the local side pushes
     // when `!is_sender`. The direction-aware resolver collapses the single
@@ -738,9 +739,9 @@ pub(super) fn build_full_daemon_args(
             if plan.remote_from0 {
                 args.push("--from0".to_owned());
             }
-            // upstream: options.c:2982-2983 - `if (!relative_paths)
+            // upstream: options.c:3153-3154 - `if (!relative_paths)
             // --no-relative` inside the files-from block. A peer that reads the
-            // --files-from list defaults relative_paths=1 (options.c:2214-2215);
+            // --files-from list defaults relative_paths=1 (options.c:2331-2332);
             // when the client resolved relative off (explicit --no-relative),
             // emit --no-relative so the remote peer overrides that default and
             // flattens each entry to its basename with no implied parent dirs.
@@ -750,7 +751,7 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2922-2926 - --usermap / --groupmap are forwarded
+    // upstream: options.c:3092-3097 - --usermap / --groupmap are forwarded
     // verbatim. With `protect_args` (always on for daemon mode), upstream
     // `safe_arg()` returns the value unchanged (no shell escaping) because
     // the args are shipped over the secluded-args byte stream rather than a
@@ -764,12 +765,12 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("--groupmap={}", mapping.spec()));
     }
 
-    // upstream: options.c:2744-2751, options.c:2058-2060 - --iconv forwarding
+    // upstream: options.c:2909-2918, options.c:2196-2198 - --iconv forwarding
     // to the remote daemon. When iconv_opt contains a comma, only the
     // post-comma half (daemon's local charset) is forwarded; otherwise the
     // whole string is forwarded as-is. `--iconv=-` (Disabled) and the default
     // (Unspecified) forward nothing because upstream nulls iconv_opt at
-    // options.c:2058-2060 before this branch runs. Without this the daemon
+    // options.c:2196-2198 before this branch runs. Without this the daemon
     // never enables `ic_recv` and writes wire UTF-8 bytes verbatim.
     //
     // Under protect-args, `send_daemon_arguments` strips this entry back out
@@ -789,8 +790,7 @@ pub(super) fn build_full_daemon_args(
     //
     // Byte fidelity is bounded by this builder's `Vec<String>` argv, the same
     // constraint that already applies to --iconv, --usermap and
-    // --checksum-choice here; widening the whole vector to OsString is tracked
-    // separately.
+    // --checksum-choice here.
     for opt in config.remote_options() {
         args.push(opt.to_string_lossy().into_owned());
     }
@@ -805,7 +805,7 @@ pub(super) fn build_full_daemon_args(
     // non-UTF-8 byte (e.g. a 0xFF in the requested path), so it is built
     // byte-preserving and appended after the `Vec<String>` option stage - it
     // reaches the secluded-args wire verbatim rather than through a lossy
-    // `String`. upstream: clientserver.c:303 appends the module/path operand as
+    // `String`. upstream: clientserver.c:350-388 appends the module/path operand as
     // raw `char*`, mirroring the SSH path's end-to-end `OsString` operand
     // handling (invocation/builder.rs).
     let mut os_args: Vec<OsString> = args.into_iter().map(OsString::from).collect();
@@ -832,7 +832,7 @@ fn build_module_operand(request: &DaemonTransferRequest) -> OsString {
 /// These are client-local flags: upstream `options.c:server_options()` never
 /// emits `--write-batch` or `--read-batch` to the server. The sole exception
 /// is `--only-write-batch`, which upstream replaces with the literal token
-/// `--only-write-batch=X` at `options.c:2842-2843` to force the server into
+/// `--only-write-batch=X` at `options.c:3026-3027` to force the server into
 /// dry-run mode; the X value carries no real path.
 ///
 /// We never construct daemon argv with batch flags today, but stripping here
@@ -859,8 +859,8 @@ fn strip_client_only_batch_flags(args: &mut Vec<String>) {
             args.remove(i);
             // Drop the trailing batch FILE in the two-arg form, but never
             // consume `.` / `..` - those are the server-role indicators
-            // (upstream main.c:1160 sets local_name = "." when --server is
-            // a sender) and must reach the daemon-bound argv intact.
+            // (upstream main.c:990-994 do_server_sender() substitutes "." when
+            // the server sender gets no path operand) and must reach the daemon-bound argv intact.
             if i < args.len() && !args[i].starts_with('-') && args[i] != "." && args[i] != ".." {
                 args.remove(i);
             }
@@ -881,10 +881,10 @@ fn strip_client_only_batch_flags(args: &mut Vec<String>) {
 const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\n\r\\";
 
 /// Wildcard characters that the remote shell would expand. Mirrors upstream
-/// `options.c:2551` `WILD_CHARS`.
+/// `options.c:2706` `WILD_CHARS`.
 const WILD_CHARS: &str = "*?[]";
 
-/// Mirrors upstream `options.c:safe_arg()` (rsync 3.4.4) for non-protect_args
+/// Mirrors upstream `options.c:2703` `safe_arg()` for non-protect_args
 /// daemon transmission.
 ///
 /// Each argument is split at the first `=` (the upstream `opt = "--foo"` /
@@ -893,7 +893,7 @@ const WILD_CHARS: &str = "*?[]";
 /// backslash-escaped: `WILD_CHARS` + `SHELL_CHARS` for option values, and
 /// only `SHELL_CHARS` for the trailing filename / module-path argument.
 ///
-/// The daemon side (rsync 3.4.4 `io.c:1313-1332` `unbackslash_arg()`) collapses
+/// The daemon side (`io.c:1467` `unbackslash_arg()`) collapses
 /// every `\X` sequence back into `X` before option parsing, so this
 /// transformation is a strict inverse of the server-side reader.
 ///
@@ -901,9 +901,9 @@ const WILD_CHARS: &str = "*?[]";
 /// (e.g., `--server`, `--sender`, `--numeric-ids`) are returned verbatim
 /// to avoid allocation.
 /// The lone `.` that upstream pushes after `server_options()`
-/// (`clientserver.c:303`) to stand for the remote CWD. It is also the marker
+/// (`clientserver.c:345`) to stand for the remote CWD. It is also the marker
 /// that separates option args from path operands on the wire: the daemon's
-/// `read_args()` switches behaviour the moment it sees it (`io.c:1526-1532`).
+/// `read_args()` switches behaviour the moment it sees it (`io.c:1523-1532`).
 const DAEMON_ARG_SEPARATOR: &str = ".";
 
 /// Splits a daemon argument vector into `(option args, path operands)` at
@@ -984,7 +984,8 @@ fn daemon_arg_needs_escape(b: u8, is_filename_arg: bool) -> bool {
 ///   shell-expandable ([`daemon_arg_needs_escape`]).
 /// - `\` is doubled so `unbackslash_arg` recovers the literal, except in the
 ///   filename form where an existing `\` before a wildcard is left intact
-///   (upstream `options.c:2594`) to preserve a deliberate wildcard escape.
+///   (upstream `options.c:2731`, `options.c:2758`) to preserve a deliberate
+///   wildcard escape.
 /// - Every other byte - crucially including bytes >= 0x80 - passes through
 ///   untouched, exactly as upstream `safe_arg` leaves non-metacharacter bytes,
 ///   so a non-UTF-8 path round-trips through escape -> `unbackslash_arg`
@@ -1012,7 +1013,7 @@ fn escape_daemon_arg_bytes(arg: &[u8]) -> Vec<u8> {
     out.extend_from_slice(prefix);
     for (i, &b) in value.iter().enumerate() {
         if b == b'\\' {
-            // upstream: options.c:2594 - filename args preserve `\<wildcard>`
+            // upstream: options.c:2758 - filename args preserve `\<wildcard>`
             // sequences verbatim so the user's deliberate wildcard escape
             // survives. Option args always double the backslash.
             let next = value.get(i + 1).copied().unwrap_or(0);
@@ -1028,7 +1029,7 @@ fn escape_daemon_arg_bytes(arg: &[u8]) -> Vec<u8> {
 }
 
 // upstream: clientserver.c carries the daemon operand path as raw `char*`
-// end-to-end and io.c:send_secluded_args writes each arg's bytes verbatim, so a
+// end-to-end and rsync.c:284 send_protected_args() writes each arg's bytes verbatim, so a
 // non-UTF-8 operand (a legal filename) must survive the whole daemon-arg
 // emission byte-for-byte. These tests pin that on the wire; they need raw bytes
 // that no `String` can represent, so they are Unix-only.
@@ -1176,7 +1177,7 @@ mod safe_arg_tests {
             .expect("ASCII-only escape keeps the result valid UTF-8")
     }
 
-    // upstream: options.c:2548 safe_arg(NULL, arg) - filename args (no opt)
+    // upstream: options.c:2703-2708 safe_arg(NULL, arg) - filename args (no opt)
     // escape only SHELL_CHARS, leaving wildcards intact so the remote shell
     // can still expand them when no remote-shell wrapper is involved.
     #[test]
@@ -1185,7 +1186,7 @@ mod safe_arg_tests {
         assert_eq!(esc("question?path"), "question?path");
     }
 
-    // upstream: options.c:2548 safe_arg(NULL, arg) - SHELL_CHARS get backslash
+    // upstream: options.c:2703-2708 safe_arg(NULL, arg) - SHELL_CHARS get backslash
     // escaped even in filename args.
     #[test]
     fn filename_arg_escapes_shell_chars() {
@@ -1193,7 +1194,7 @@ mod safe_arg_tests {
         assert_eq!(esc("dangerous;rm -rf /"), "dangerous\\;rm\\ -rf\\ /");
     }
 
-    // upstream: options.c:2553 - option args escape WILD_CHARS + SHELL_CHARS
+    // upstream: options.c:2708 - option args escape WILD_CHARS + SHELL_CHARS
     // because the daemon receiver `unbackslash_arg`s before option parsing.
     #[test]
     fn option_arg_escapes_wildcards_in_value() {
@@ -1238,7 +1239,7 @@ mod safe_arg_tests {
         assert_eq!(esc("module/path"), "module/path");
     }
 
-    // upstream: options.c:2594 - filename args preserve `\<wildcard>` so the
+    // upstream: options.c:2758 - filename args preserve `\<wildcard>` so the
     // user's intentional wildcard escape passes through to the remote shell.
     #[test]
     fn filename_arg_preserves_escaped_wildcard() {
@@ -1247,7 +1248,7 @@ mod safe_arg_tests {
         assert_eq!(esc("file\\*"), "file\\*");
     }
 
-    // upstream: options.c:2592-2599 - option args always double an embedded
+    // upstream: options.c:2755-2761 - option args always double an embedded
     // backslash so the daemon's `unbackslash_arg` collapses both halves and
     // recovers the original literal `\` plus the wildcard.
     #[test]
@@ -1260,12 +1261,12 @@ mod safe_arg_tests {
         assert_eq!(escaped, "--groupmap=\\\\\\*:1234");
     }
 
-    // UTS-8.REOPEN: pin the client-side `--groupmap=*:GID` wire format.
-    // Mirrors upstream `options.c:2922-2926` which calls
+    // Pins the client-side `--groupmap=*:GID` wire format.
+    // Mirrors upstream `options.c:3096-3097` which calls
     // `safe_arg("--groupmap", value)` for the option-arg branch
     // (`is_filename_arg=false`, escape set = `WILD_CHARS + SHELL_CHARS`).
     // The escaped output must be reversible by the daemon's
-    // `unbackslash_arg` (mirrored from upstream `io.c:1313-1332`); any drift
+    // `unbackslash_arg` (mirrored from upstream `io.c:1467`); any drift
     // here would resurface upstream #829 for the wildcard.
     #[test]
     fn groupmap_wildcard_matches_upstream_safe_arg_byte_for_byte() {
@@ -1292,7 +1293,7 @@ mod safe_arg_tests {
         assert_eq!(String::from_utf8(decoded).unwrap(), original);
     }
 
-    // UTS-8.REOPEN: verify every escape character upstream `safe_arg`
+    // Verifies every escape character upstream `safe_arg`
     // emits for an option arg (`WILD_CHARS + SHELL_CHARS`) is backslash-escaped
     // on the wire AND survives the `safe_arg_for_daemon` -> daemon-side
     // `unbackslash_arg` round trip. Drift in either escape set would resurface
@@ -1542,7 +1543,7 @@ mod server_option_fidelity_tests {
 
     // WHY: explicitly-set --info / --debug levels must reach the daemon peer so
     // its diagnostic output matches the client's request (upstream
-    // make_output_option, options.c:2957). `del` is receiver-side, so it
+    // make_output_option, options.c:3128). `del` is receiver-side, so it
     // forwards on a push (`is_sender = false`, the daemon is the receiver);
     // `send` is sender-side, so it forwards on a pull (`is_sender = true`).
     #[test]
@@ -1586,7 +1587,7 @@ mod server_option_fidelity_tests {
         assert!(!flag.contains('P'), "daemon flag string packed 'P': {flag}");
     }
 
-    // upstream: options.c:2894-2903 - bare --partial on a PUSH (daemon receiver,
+    // upstream: options.c:3069-3070 - bare --partial on a PUSH (daemon receiver,
     // is_sender=false) without --partial-dir; never on a PULL.
     #[test]
     fn partial_long_form_on_push_only() {
@@ -1603,7 +1604,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2770-2775 - devices-without-specials sends --no-specials.
+    // upstream: options.c:2937-2940 - devices-without-specials sends --no-specials.
     #[test]
     fn devices_without_specials_emits_no_specials() {
         let config = ClientConfig::builder().devices(true).build();
@@ -1615,7 +1616,7 @@ mod server_option_fidelity_tests {
         assert!(!a.iter().any(|x| x == "--specials"));
     }
 
-    // upstream: options.c:2770-2775 - specials-only sends --specials.
+    // upstream: options.c:2941-2942 - specials-only sends --specials.
     #[test]
     fn specials_only_emits_specials() {
         let config = ClientConfig::builder().specials(true).build();
@@ -1661,7 +1662,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2757-2758 - explicit `--list-only` (list_only > 1) is
+    // upstream: options.c:2923-2924 - explicit `--list-only` (list_only > 1) is
     // forwarded; the implicit single-source listing is not.
     #[test]
     fn explicit_list_only_forwarded_but_not_implicit() {
@@ -1683,7 +1684,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2792-2795 - `--msgs2stderr` / `--no-msgs2stderr`
+    // upstream: options.c:2958-2961 - `--msgs2stderr` / `--no-msgs2stderr`
     // forwarded per the tri-state; the default (None) forwards nothing.
     #[test]
     fn msgs2stderr_tri_state_forwarding() {
@@ -1701,7 +1702,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2655-2656 - `if (quiet && msgs2stderr) 'q'`. The 'q'
+    // upstream: options.c:2804-2805 - `if (quiet && msgs2stderr) 'q'`. The 'q'
     // letter rides in the compact flag string.
     #[test]
     fn quiet_packs_compact_q() {
@@ -1735,7 +1736,7 @@ mod server_option_fidelity_tests {
             .unwrap_or_default()
     }
 
-    // upstream: options.c:2651-2652 - keep_dirlinks packs the sender-only 'K'.
+    // upstream: options.c:2818-2819 - keep_dirlinks packs the sender-only 'K'.
     // The remote receiver must honor -K or every per-file op under a dest
     // dir-symlink is refused by the dirfd sandbox (transfer/flags.rs:508-516),
     // so the letter has to reach the daemon receiver on a push.
@@ -1754,7 +1755,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2653-2654 - prune_empty_dirs packs sender-only 'm'.
+    // upstream: options.c:2820-2821 - prune_empty_dirs packs sender-only 'm'.
     #[test]
     fn prune_empty_dirs_packs_m_on_push_only() {
         let config = ClientConfig::builder().prune_empty_dirs(true).build();
@@ -1762,7 +1763,7 @@ mod server_option_fidelity_tests {
         assert!(!compact_flag(&config, true).contains('m'));
     }
 
-    // upstream: options.c:2655-2658 - omit_dir_times 'O' and omit_link_times 'J'
+    // upstream: options.c:2822-2825 - omit_dir_times 'O' and omit_link_times 'J'
     // are sender-only. The remote receiver's generator must see them to skip
     // stamping dir/symlink mtimes, so they ride the compact string on a push.
     #[test]
@@ -1781,7 +1782,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2659-2664 - one 'y' per fuzzy level; 'yy' for level 2.
+    // upstream: options.c:2826-2830 - one 'y' per fuzzy level; 'yy' for level 2.
     // The receiver needs the fuzzy count to enable basis-file guessing.
     #[test]
     fn fuzzy_level_two_packs_yy_on_push_only() {
@@ -1795,7 +1796,7 @@ mod server_option_fidelity_tests {
         assert_eq!(compact_flag(&config, true).matches('y').count(), 0);
     }
 
-    // upstream: options.c:2700-2703 - 'E' (preserve_executability) is packed
+    // upstream: options.c:2866-2869 - 'E' (preserve_executability) is packed
     // only when preserve_perms is off AND am_sender. It is the receiver's sole
     // signal to keep the executable bit when perms are not preserved.
     #[test]
@@ -1852,7 +1853,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2803-2807 - --timeout so both peers share the idle
+    // upstream: options.c:2969-2973 - --timeout so both peers share the idle
     // deadline.
     #[test]
     fn timeout_forwarded() {
@@ -1863,9 +1864,9 @@ mod server_option_fidelity_tests {
         assert!(args(&config, false).iter().any(|a| a == "--timeout=60"));
     }
 
-    // WHY: upstream options.c:2976 forwards `--bwlimit=%d` in whole KiB
-    // (options.c:1724 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The
-    // remote peer re-parses the value with a default `K` suffix (options.c:1720
+    // WHY: upstream options.c:2975-2979 forwards `--bwlimit=%d` in whole KiB
+    // (options.c:1831 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The
+    // remote peer re-parses the value with a default `K` suffix (options.c:1827
     // `parse_size_arg(bwlimit_arg, 'K', ...)`), so a byte count of 1048576 would
     // be read as 1048576 KiB and the throttle would balloon 1024x. A rate of
     // 1 MiB/s (1048576 B/s) must therefore travel as `--bwlimit=1024`.
@@ -1889,7 +1890,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2842-2845 - --min-size/--max-size are am_sender only;
+    // upstream: options.c:3008-3011 - --min-size/--max-size are am_sender only;
     // the remote receiver's generator skips out-of-range files.
     #[test]
     fn min_max_size_forwarded_on_push_only() {
@@ -1943,7 +1944,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2883-2888 - modify_window is am_sender only; a
+    // upstream: options.c:3049-3054 - modify_window is am_sender only; a
     // negative (nanosecond-exact) window uses the short `-@%d` spelling.
     #[test]
     fn modify_window_forwarded_on_push_only() {
@@ -1967,7 +1968,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2890-2894 - --checksum-seed shared so both sides
+    // upstream: options.c:3056-3060 - --checksum-seed shared so both sides
     // derive identical rolling/strong checksums.
     #[test]
     fn checksum_seed_forwarded() {
@@ -1995,7 +1996,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2896-2904 - --partial-dir and --delay-updates are
+    // upstream: options.c:3062-3070 - --partial-dir and --delay-updates are
     // am_sender only; the remote receiver stages partial/updated files there.
     #[test]
     fn partial_dir_and_delay_updates_forwarded_on_push_only() {
@@ -2014,7 +2015,7 @@ mod server_option_fidelity_tests {
         assert!(!pull.iter().any(|a| a == "--delay-updates"));
     }
 
-    // upstream: options.c:2935-2938 - --temp-dir is am_sender only; the remote
+    // upstream: options.c:3106-3109 - --temp-dir is am_sender only; the remote
     // receiver writes temp files under the requested directory.
     #[test]
     fn temp_dir_forwarded_on_push_only() {
@@ -2033,7 +2034,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2986-2987 - --no-implied-dirs forwarded only for a
+    // upstream: options.c:3157-3158 - --no-implied-dirs forwarded only for a
     // relative transfer with implied dirs disabled.
     #[test]
     fn no_implied_dirs_forwarded_when_relative_and_disabled() {
@@ -2081,7 +2082,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:3000-3001 - --preallocate is am_sender only.
+    // upstream: options.c:3171-3172 - --preallocate is am_sender only.
     #[test]
     fn preallocate_forwarded_on_push_only() {
         let config = ClientConfig::builder().preallocate(true).build();
@@ -2089,17 +2090,17 @@ mod server_option_fidelity_tests {
         assert!(!args(&config, true).iter().any(|a| a == "--preallocate"));
     }
 
-    // upstream: options.c:3003-3004 - --open-noatime forwarded (role-agnostic).
+    // upstream: options.c:3174-3175 - --open-noatime forwarded (role-agnostic).
     #[test]
     fn open_noatime_forwarded() {
         let config = ClientConfig::builder().open_noatime(true).build();
         assert!(args(&config, false).iter().any(|a| a == "--open-noatime"));
     }
 
-    // upstream: options.c:2825-2826 - server_options() forwards the RAW
+    // upstream: options.c:2991-2992 - server_options() forwards the RAW
     // --checksum-choice string with BOTH comma components. WHY: a daemon
     // receiver parses the transfer AND file sums from this string
-    // (checksum.c:178-189); dropping the second component - as the old
+    // (checksum.c:192 parse_checksum_choice()); dropping the second component - as the old
     // transfer-only override did - silently desyncs the file-sum algorithm
     // between client and daemon.
     #[test]
@@ -2114,8 +2115,8 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2003-2009 - "auto,md5" is NOT nulled (only bare
-    // "auto"/"auto,auto" are), so options.c:2825 forwards the full string. WHY:
+    // upstream: options.c:2117-2123 - "auto,md5" is NOT nulled (only bare
+    // "auto"/"auto,auto" are), so options.c:2991-2992 forwards the full string. WHY:
     // the transfer-only override returned None for a leading auto and forwarded
     // nothing, leaving the daemon to negotiate a checksum the client never
     // resolved.
@@ -2131,7 +2132,7 @@ mod server_option_fidelity_tests {
         );
     }
 
-    // upstream: options.c:2003-2009 + 2815 - the fully-auto forms null
+    // upstream: options.c:2117-2123 + 2991-2992 - the fully-auto forms null
     // checksum_choice, so nothing is forwarded and the daemon negotiates.
     #[test]
     fn daemon_omits_checksum_choice_when_fully_auto() {
@@ -2155,7 +2156,7 @@ mod oc_flag_forwarding_tests {
     use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
     use protocol::ProtocolVersion;
 
-    /// Long options recognized by upstream rsync 3.4.4 (options.c
+    /// Long options recognized by upstream rsync 3.5.1 (options.c
     /// long_options[]) that this arg builder may emit. Upstream's `--server`
     /// aborts the whole transfer on the first unknown option, so every `--`
     /// token the builder produces MUST appear in this allowlist. oc-invented
@@ -2234,7 +2235,7 @@ mod oc_flag_forwarding_tests {
         "--suffix",
         "--temp-dir",
         "--timeout",
-        // upstream: options.c:2918-2919 - server_options() spells the qsort
+        // upstream: options.c:3089-3090 - server_options() spells the qsort
         // request as `--use-qsort` even though the popt table entry is
         // `qsort`; we mirror the emitted spelling.
         "--use-qsort",
@@ -2260,7 +2261,7 @@ mod oc_flag_forwarding_tests {
 
     /// Sets every oc-invented tuning knob to a non-default value. These are
     /// local resource knobs with no upstream counterpart; a real upstream
-    /// 3.4.4 daemon rejects any of them with an unknown-option error.
+    /// 3.5.1 daemon rejects any of them with an unknown-option error.
     fn kitchen_sink_config() -> ClientConfig {
         ClientConfig::builder()
             .io_uring_policy(fast_io::IoUringPolicy::Enabled)

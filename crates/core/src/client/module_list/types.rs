@@ -50,9 +50,9 @@ impl DaemonAddress {
     ///
     /// The host is stored verbatim, so construction cannot fail. Upstream
     /// never rewrites it: an empty or whitespace-padded host reaches
-    /// `getaddrinfo` unchanged and fails there (`socket.c:150`
+    /// `getaddrinfo` unchanged and fails there (`socket.c:402`
     /// open_socket_out), and reaches `shell_unsafe_connect_host` unchanged
-    /// under `RSYNC_CONNECT_PROG` (`socket.c:204-215`), which refuses both.
+    /// under `RSYNC_CONNECT_PROG` (`socket.c:204-217`), which refuses both.
     /// Trimming or defaulting here would convert a host upstream refuses into
     /// one it accepts, so neither happens.
     #[must_use]
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn daemon_address_new_keeps_surrounding_whitespace() {
         // Trimming would convert a host upstream refuses as shell-unsafe
-        // (socket.c:204-215 - space is outside the allowed byte set) into one
+        // (socket.c:204-217 - space is outside the allowed byte set) into one
         // it accepts, so the padding has to survive to the validator.
         let addr = DaemonAddress::new("  example.com  ".to_owned(), 8873);
         assert_eq!(addr.host(), "  example.com  ");

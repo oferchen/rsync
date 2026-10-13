@@ -47,8 +47,8 @@ use transfer::setup::build_capability_string_suffix;
 /// -<flags>e.<caps> [--iconv=...]` - stays on the spawned command line, and
 /// only the remainder (long-form options, `.`, and the path arguments) is
 /// returned in `SecludedInvocation::stdin_args` for transmission over stdin
-/// after SSH connection establishment (upstream: `options.c:2755-2756`
-/// NULL cutoff, `rsync.c:283-320 send_protected_args()`).
+/// after SSH connection establishment (upstream: `options.c:2920-2921`
+/// NULL cutoff, `rsync.c:284-321 send_protected_args()`).
 pub struct RemoteInvocationBuilder<'a> {
     config: &'a ClientConfig,
     role: RemoteRole,
@@ -63,12 +63,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
     /// Returns the pre-negotiated protocol version that shapes the server argv.
     ///
-    /// upstream: `options.c:84` seeds the global `protocol_version` with
-    /// `PROTOCOL_VERSION` and `options.c:846` lets `--protocol=N` lower it
+    /// upstream: `options.c:88` seeds the global `protocol_version` with
+    /// `PROTOCOL_VERSION` and the `--protocol` popt entry (`options.c:860`) lowers it
     /// before `server_options()` runs, so the argv is derived from the
     /// *requested* ceiling rather than a negotiated value (which does not exist
-    /// yet - see the comment at `options.c:3035`). The actual session version is
-    /// `MIN(this, remote_protocol)` (compat.c:604-607), applied later by
+    /// yet - see the comment at `options.c:3206-3208`). The actual session version is
+    /// `MIN(this, remote_protocol)` (`compat.c:608-609`), applied later by
     /// `perform_handshake_with_max`; the request is therefore a cap composed
     /// with peer negotiation, never an override that could raise the version.
     fn requested_protocol(&self) -> protocol::ProtocolVersion {
@@ -116,12 +116,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors upstream `options.c:2613-2755 server_options()`, which keeps
+    /// Mirrors upstream `options.c:2778-2921 server_options()`, which keeps
     /// `--server`, `--sender`, the compact flag string (with `s` and the
     /// capability suffix), and `--iconv` on the actual spawned command line
     /// even under `--secluded-args`; only the arguments emitted after the
-    /// `protect_args && !local_server` NULL cutoff (`options.c:2755-2756`)
-    /// are deferred to `send_protected_args()` (`rsync.c:283-320`).
+    /// `protect_args && !local_server` NULL cutoff (`options.c:2920-2921`)
+    /// are deferred to `send_protected_args()` (`rsync.c:284-321`).
     pub fn build_secluded(self, remote_paths: &[&OsStr]) -> SecludedInvocation {
         if !self.config.protect_args().unwrap_or(false) {
             return SecludedInvocation {
@@ -155,8 +155,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// # Upstream Reference
     ///
     /// This is exactly the portion upstream emits after the `protect_args`
-    /// NULL cutoff and ships via `send_protected_args()` (`rsync.c:283-320`).
-    /// The leading `"rsync"` element mirrors `rsync.c:293 args[i] =
+    /// NULL cutoff and ships via `send_protected_args()` (`rsync.c:284-321`).
+    /// The leading `"rsync"` element mirrors `rsync.c:296 args[i] =
     /// "rsync";`, which overwrites the NULL-cutoff slot with a synthetic
     /// arg0 so the receiver's `read_args()`/`parse_arguments()` can skip
     /// argv\[0\] the same way it would for a real command line; the
@@ -177,9 +177,9 @@ impl<'a> RemoteInvocationBuilder<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// `options.c:2613-2755 server_options()` builds exactly this sequence
+    /// `options.c:2778-2921 server_options()` builds exactly this sequence
     /// before inserting the `protect_args && !local_server` NULL cutoff
-    /// (`options.c:2755-2756`) that splits the spawned command line from the
+    /// (`options.c:2920-2921`) that splits the spawned command line from the
     /// arguments `send_protected_args()` defers to stdin. This method
     /// returns the pre-cutoff portion, so it belongs on the actual process
     /// command line even when secluded-args defers the remainder
@@ -195,7 +195,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         let mut flags = self.build_flag_string();
 
-        // upstream: options.c:2613 - `if (protect_args) argstr[x++] = 's';`
+        // upstream: options.c:2795-2796 - `if (protect_args) argstr[x++] = 's';`
         // packs 's' as the FIRST transfer-flag letter, immediately after the
         // leading '-' and before verbosity. Embedding it here (rather than
         // emitting a standalone `-s` token) keeps the compact flag string a
@@ -204,20 +204,20 @@ impl<'a> RemoteInvocationBuilder<'a> {
             flags.insert(1, 's');
         }
 
-        // upstream: options.c:2738 - maybe_add_e_option() appends the `e.xxx`
+        // upstream: options.c:2904 - maybe_add_e_option() appends the `e.xxx`
         // capability string directly onto the compact flag string, producing a
         // single argument like `-logDtpre.iLsfxCIvu`. Emitting it as a separate
         // `-e.xxx` argument would confuse the server-side parser which treats
         // only the first short-flag argument as the compact flag string.
-        // upstream: compat.c:162-181 set_allow_inc_recurse(),
-        // options.c:3046 maybe_add_e_option() - `allow_inc_recurse` resolves
+        // upstream: compat.c:162-180 set_allow_inc_recurse(),
+        // options.c:3220-3221 maybe_add_e_option() - `allow_inc_recurse` resolves
         // the option state; a pull advertises 'i' only under the
         // OC_RSYNC_PULL_INC_RECURSE staging flag (see `pull_inc_recurse`).
         //
-        // upstream: options.c:3035-3038 maybe_add_e_option() - the whole `e.xxx`
+        // upstream: options.c:3206-3209 maybe_add_e_option() - the whole `e.xxx`
         // suffix is emitted ONLY when the pre-negotiated `protocol_version` is
-        // >= 30, "so that the user can use a --protocol=29 override to avoid the
-        // use of this -eFLAGS opt". At protocol 28/29 the compact flag string
+        // >= 30, which "allows the user to use a --protocol=29 override to avoid
+        // the use of this -eFLAGS opt". At protocol 28/29 the compact flag string
         // must end at the transfer letters (`-r`, not `-re.iLsfxCIvu`).
         if self.requested_protocol().as_u8() >= 30 {
             let am_sender = self.role != RemoteRole::Receiver;
@@ -228,7 +228,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 );
             flags.push_str(&build_capability_string_suffix(advertise_inc_recurse));
         }
-        // upstream: options.c:2740 - `if (x > 1) args[ac++] = argstr;`. A bare
+        // upstream: options.c:2906-2907 - `if (x > 1) args[ac++] = argstr;`. A bare
         // `-` is never emitted; below protocol 30 the capability suffix no
         // longer guarantees a non-empty letter set, so the guard matters.
         if flags.len() > 1 {
@@ -244,7 +244,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
     /// Builds the `--iconv=...` argument when configured, or `None`.
     ///
-    /// upstream: `options.c:2744-2751` - forwarded immediately before the
+    /// upstream: `options.c:2909-2918` - forwarded immediately before the
     /// `protect_args` NULL cutoff, so `--iconv` stays on the command line
     /// even under secluded-args.
     fn iconv_arg(&self) -> Option<OsString> {
@@ -276,13 +276,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
     ) -> Vec<OsString> {
         let mut args = self.build_head_args();
 
-        // Long-form options that cannot be expressed as single-char flags.
-        // Order mirrors upstream options.c server_options().
         self.append_long_form_args(&mut args);
 
         args.push(OsString::from("."));
 
-        // upstream: options.c:2560 safe_arg() - for a filename arg the escape
+        // upstream: options.c:2715 safe_arg() - for a filename arg the escape
         // gate reduces to `!protect_args && old_style_args == 0`, because the
         // `(!old_style_args || (!is_filename_arg && ...))` factor is only true at
         // level 0. So a single `--old-args` (level 1) already stops escaping
@@ -290,7 +288,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // also drop option-value escaping) leaves filenames unescaped as well.
         let old_style_args = self.config.old_args().unwrap_or(0);
 
-        // upstream: options.c:2562-2567 escape_leading_tilde is set only when
+        // upstream: options.c:2717-2722 escape_leading_tilde is set only when
         // local is NOT the sender (a pull, so the remote paths are the source)
         // and the sender's args are not trusted. The per-path shape test is
         // applied below.
@@ -299,8 +297,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         for path in remote_paths {
             if escape_for_shell && old_style_args == 0 {
-                // upstream: main.c:635 safe_arg(NULL, *remote_argv++)
-                // upstream: options.c:2564-2566 - escape a leading ~ for a
+                // upstream: main.c:639 do_cmd() - safe_arg(NULL, *remote_argv++)
+                // upstream: options.c:2717-2719 - escape a leading ~ for a
                 // relative path without a `/./` pivot, or a path with no `/`.
                 // The `/`-based shape tests are pure ASCII, so a lossy view is
                 // sufficient here and never touches the escaped bytes below.
@@ -325,12 +323,16 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// Appends long-form `--option=value` arguments to the argument vector.
     ///
     /// These are options that upstream rsync's `server_options()` emits as separate
-    /// `--key=value` tokens rather than single-character flags. The order mirrors
-    /// upstream for predictable interop testing.
+    /// tokens rather than single-character flags.
+    ///
+    /// Deviation from upstream: the emission order differs from
+    /// `options.c:2923-3193`, path-valued options are joined as `--opt=VAL`
+    /// instead of split into two argv slots, and option values are not passed
+    /// through `safe_arg()` escaping.
     fn append_long_form_args(&self, args: &mut Vec<OsString>) {
         // upstream: options.c server_options() - `am_sender` is true when the
         // local process is the sender (a PUSH). RemoteRole::Sender == am_sender.
-        // A large block of options (options.c:2835-2867, 2921-2953, 3000) is
+        // A large block of options (options.c:3001-3034, 3092-3124) is
         // emitted only inside `if (am_sender)` because they steer the remote
         // RECEIVER; forwarding them on a PULL makes the remote sender link_stat()
         // the flag as a source path or mutate its own send behaviour (the
@@ -338,14 +340,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // send_rules so excluded files vanish from the file list).
         let am_sender = self.role == RemoteRole::Sender;
 
-        // upstream: options.c:2906-2907 - `if (ignore_errors) --ignore-errors`,
+        // upstream: options.c:3072-3073 - `if (ignore_errors) --ignore-errors`,
         // well after the protect_args NULL cutoff, so under secluded-args this
         // rides the deferred stdin stream rather than the command line.
         if self.config.ignore_errors() {
             args.push(OsString::from("--ignore-errors"));
         }
 
-        // upstream: options.c:2940-2941 - `if (do_fsync) --fsync` lives inside
+        // upstream: options.c:3111-3112 - `if (do_fsync) --fsync` lives inside
         // the `if (am_sender)` block, so it is forwarded only on a PUSH
         // (RemoteRole::Sender): the remote receiver fsyncs the files it writes.
         // On a PULL the local receiver fsyncs its own writes and the remote
@@ -354,7 +356,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--fsync"));
         }
 
-        // upstream: options.c:2757-2758 - `if (list_only > 1) "--list-only"`.
+        // upstream: options.c:2923-2924 - `if (list_only > 1) "--list-only"`.
         // Only the EXPLICIT `--list-only` (list_only == 2) is forwarded; the
         // implicit single-source listing (list_only == 1) is not. The compact
         // 'n' letter is NOT packed for list-only (that tracks dry_run only), so
@@ -363,21 +365,21 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--list-only"));
         }
 
-        // upstream: options.c:2760-2763 - `if (xfer_dirs && !recurse &&
+        // upstream: options.c:2926-2929 - `if (xfer_dirs && !recurse &&
         // delete_mode && am_sender) args[ac++] = "--no-r"`. When a PUSH deletes
         // with --dirs but without recursion (`-d --delete` sans `-r`), the
         // remote receiver must be told recursion is off: the compact flag string
         // carries 'd' but no 'r', and older receivers gained `--no-r` at the
         // same time as `-d`, so the explicit negation guarantees the remote does
         // not re-enable recursion. `--files-from` resolves to xfer_dirs=1 and
-        // clears only the recursion `-a` implied (options.c:2197-2200), so an
+        // clears only the recursion `-a` implied (options.c:2313-2318), so an
         // explicit `-r` keeps `recurse` set and suppresses `--no-r` here just as
         // it keeps the compact `r` letter.
         if am_sender && self.config.dirs() && !self.config.recursive() && self.config.delete() {
             args.push(OsString::from("--no-r"));
         }
 
-        // upstream: options.c:2792-2795 - `if (msgs2stderr == 1) "--msgs2stderr";
+        // upstream: options.c:2958-2961 - `if (msgs2stderr == 1) "--msgs2stderr";
         // else if (msgs2stderr == 0) "--no-msgs2stderr"`. The default (2) is not
         // forwarded. Modelled as the tri-state `Option<bool>`.
         match self.config.msgs2stderr() {
@@ -386,18 +388,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
             None => {}
         }
 
-        // upstream: options.c:2835-2867 - the delete timing/limit and size
+        // upstream: options.c:3001-3034 - the delete timing/limit and size
         // filters all sit inside the `if (am_sender)` block, so they are
         // forwarded only on a PUSH; the remote receiver is what performs the
         // deletion and size-based skip decisions.
         if am_sender {
-            // upstream: options.c:2836-2841 - `if (max_delete > 0)
+            // upstream: options.c:3002-3007 - `if (max_delete > 0)
             // --max-delete=N; else if (max_delete == 0) --max-delete=-1`. A
-            // ceiling of 0 MUST be remapped to -1: the remote receiver reads
-            // `--max-delete=0` as UNLIMITED (max_delete <= 0 disables the cap at
-            // options.c:2191-2193), so forwarding `--max-delete=0` with --delete
-            // would delete every extraneous file instead of none. Placed first
-            // to match upstream's emission order within the am_sender block.
+            // ceiling of 0 is never sent literally: the receiver folds the
+            // negative value back to 0 ("no deletions", options.c:2308-2311) and
+            // delete.c:217 then refuses every deletion. Placed first to match
+            // upstream's emission order within the am_sender block.
             if let Some(max) = self.config.max_delete() {
                 if max > 0 {
                     args.push(OsString::from(format!("--max-delete={max}")));
@@ -406,7 +407,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 }
             }
 
-            // upstream: options.c:2842-2845 - --min-size / --max-size.
+            // upstream: options.c:3008-3011 - --min-size / --max-size.
             if let Some(min) = self.config.min_file_size() {
                 args.push(OsString::from(format!("--min-size={min}")));
             }
@@ -414,7 +415,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 args.push(OsString::from(format!("--max-size={max}")));
             }
 
-            // upstream: options.c:2846-2855 - delete timing variants. Explicit
+            // upstream: options.c:3012-3021 - delete timing variants. Explicit
             // --delete-before/during/after/delay are always sent. Bare --delete
             // (DuringDefault) is suppressed when --delete-excluded is active,
             // matching upstream: `else if (delete_mode && !delete_excluded)`.
@@ -431,27 +432,27 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 DeleteMode::Delay => args.push(OsString::from("--delete-delay")),
             }
 
-            // upstream: options.c:2856-2857 - --delete-excluded. On a PULL this
+            // upstream: options.c:3022-3023 - --delete-excluded. On a PULL this
             // must NOT be forwarded: it rewrites the remote sender's send_rules
             // so excluded files disappear from the file list entirely.
             if self.config.delete_excluded() {
                 args.push(OsString::from("--delete-excluded"));
             }
 
-            // upstream: options.c:2858-2859 - --force.
+            // upstream: options.c:3024-3025 - --force.
             if self.config.force_replacements() {
                 args.push(OsString::from("--force"));
             }
 
-            // upstream: options.c:2860-2861 - `if (write_batch < 0) args[ac++] =
+            // upstream: options.c:3026-3027 - `if (write_batch < 0) args[ac++] =
             // "--only-write-batch=X"`. The literal `X` is upstream's own
             // placeholder: the remote never opens a batch file, it only needs
-            // `write_batch < 0` so `main.c:1866` sets `dry_run = 1`. That leaves
-            // `do_xfers` at 1, so its generator still computes and sends real
-            // block checksums while the receiver writes nothing to the
-            // destination (receiver.c:827-833). The real batch is recorded by
-            // the local sender, which diverts the token stream into it rather
-            // than onto the wire (sender.c:220).
+            // `write_batch < 0` so `main.c:1946-1947` sets `dry_run = 1`. That
+            // leaves `do_xfers` at 1, so its generator still computes and sends
+            // real block checksums while dry-run keeps the destination
+            // unchanged. The real batch is recorded by the local sender, which
+            // diverts the token stream into it rather than onto the wire
+            // (sender.c:502).
             if self.config.only_write_batch() {
                 args.push(OsString::from("--only-write-batch=X"));
             }
@@ -465,7 +466,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--max-alloc={arg}")));
         }
 
-        // upstream: options.c:2883-2885 - server_options() forwards the
+        // upstream: options.c:3049-3054 - server_options() forwards the
         // modify_window value only when it was explicitly set AND the local
         // side is the sender (`modify_window_set && am_sender`): the remote
         // receiver's generator is what performs the mtime quick-check. A
@@ -489,7 +490,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 .chain(compress_request.choice_arg())
                 .map(OsString::from),
         );
-        // upstream: options.c - checksum_choice forwarded as
+        // upstream: options.c:2991-2992 - checksum_choice forwarded as
         // --checksum-choice=ALGO when not auto.
         let checksum_choice = self.config.checksum_choice();
         if checksum_choice.transfer() != StrongChecksumAlgorithm::Auto
@@ -501,7 +502,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             )));
         }
 
-        // upstream: options.c:2798 - block_size is forwarded as the SHORT
+        // upstream: options.c:2963-2967 - block_size is forwarded as the SHORT
         // `-B%u` token (e.g. `-B131072`), not a long `--block-size=` flag.
         // Emitting the upstream spelling keeps the wire byte-identical and is
         // recognised by the server parser's `-B<digits>` guard; the long form
@@ -521,8 +522,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // wall-clock time in its own timezone (options.c:parse_time() uses
         // mktime) and reject it as "not in the future".
 
-        // upstream: options.c:2976 - `--bwlimit=%d` forwards the rate in whole
-        // KiB (options.c:1724), NOT bytes: the remote peer re-parses the value
+        // upstream: options.c:2975-2979 - `--bwlimit=%d` forwards the rate in whole
+        // KiB (options.c:1826-1831), NOT bytes: the remote peer re-parses the value
         // with a default `K` suffix, so a byte count would be scaled up 1024x.
         if let Some(bwlimit) = self.config.bandwidth_limit() {
             args.push(OsString::from(format!(
@@ -531,7 +532,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             )));
         }
 
-        // upstream: options.c:2896-2904 server_options() -
+        // upstream: options.c:3062-3070 server_options() -
         //   if (partial_dir && am_sender) {
         //       if (partial_dir != tmp_partialdir) --partial-dir <dir>;
         //       if (delay_updates) --delay-updates;
@@ -556,7 +557,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2935-2938 - `if (tmpdir) { --temp-dir; ... }`
+        // upstream: options.c:3106-3109 - `if (tmpdir) { --temp-dir; ... }`
         // inside the `if (am_sender)` block. Forwarded only on a PUSH so the
         // remote receiver writes temp files under the requested directory; a
         // remote sender never writes temp files and must not receive it.
@@ -566,13 +567,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(arg);
         }
 
-        // upstream: options.c:2961-2970 server_options() - `if (append_mode)
+        // upstream: options.c:3132-3141 server_options() - `if (append_mode)
         // { --append... } else if (inplace) { --inplace }`. append_mode takes
         // precedence, so --inplace is suppressed when appending (the receiver
         // derives inplace from append); the two are mutually exclusive.
         if self.config.inplace() && !self.config.append() {
             args.push(OsString::from("--inplace"));
-            // upstream: options.c:server_options - `else if (inplace) {
+            // upstream: options.c:3136-3140 - `else if (inplace) {
             // --inplace; if (sparse_files && !whole_file && am_sender) --no-W }`.
             // Works around a bug in older remote receivers where --inplace
             // --sparse wrongly selected whole-file mode; a PUSH (am_sender)
@@ -585,7 +586,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2961-2964 server_options() - append_mode is sent
+        // upstream: options.c:3132-3135 server_options() - append_mode is sent
         // as one or two bare `--append` flags, never `--append-verify`. A
         // second `--append` is what tells the server-side receiver to run in
         // verify mode (append_mode == 2, OPT_APPEND increments it on am_server).
@@ -596,7 +597,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2770-2775 - the compact 'D' letter tracks
+        // upstream: options.c:2937-2942 - the compact 'D' letter tracks
         // preserve_devices only (see build_flag_string). specials are conveyed
         // separately: `if (preserve_devices) { if (!preserve_specials)
         // --no-specials } else if (preserve_specials) --specials`. Note
@@ -618,42 +619,41 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         // upstream: `--munge-links` is deliberately absent from server_options()
         // (options.c) - it is a local-side option applied where the symlink is
-        // written (options.c:2263 gates it on `!am_daemon`), so the remote is
-        // never told about it. Forwarding it made oc's server invocation differ
-        // from upstream's for every `--munge-links` transfer.
+        // written (options.c:2380 gates it on `!am_daemon`), so the remote is
+        // never told about it.
 
-        // upstream: options.c:2915-2916 - --numeric-ids is long-form only.
+        // upstream: options.c:3086-3087 - --numeric-ids is long-form only.
         if self.config.numeric_ids() {
             args.push(OsString::from("--numeric-ids"));
         }
 
-        // upstream: options.c:2918-2919 - `if (use_qsort) "--use-qsort"`.
+        // upstream: options.c:3089-3090 - `if (use_qsort) "--use-qsort"`.
         // Unconditional (not direction-gated): the peer sorts its file list
         // with the same comparator so both sides agree on ordering.
         if self.config.qsort() {
             args.push(OsString::from("--use-qsort"));
         }
 
-        // upstream: options.c:2520 - server_options() NEVER forwards
-        // --trust-sender. `parse_arguments()` only sets the internal
-        // `trust_sender_args`/`trust_sender` locals; the server side always
-        // trusts the client (am_server implies trust), so the flag is not a
-        // wire option. Forwarding it diverged from upstream.
+        // upstream: server_options() NEVER forwards --trust-sender.
+        // `parse_arguments()` only sets the internal `trust_sender_args` /
+        // `trust_sender_filter` globals, and the server side always trusts the
+        // client (`am_server` implies trust, options.c:2675-2676), so the flag
+        // is not a wire option.
 
-        // upstream: options.c:2902-2904 - --checksum-seed=N forwarded so the
+        // upstream: options.c:3056-3060 - --checksum-seed=N forwarded so the
         // server uses the same seed for rolling and strong checksum generation.
         if let Some(seed) = self.config.checksum_seed() {
             args.push(OsString::from(format!("--checksum-seed={seed}")));
         }
 
-        // upstream: options.c:2864-2865 - `if (size_only) --size-only` inside
+        // upstream: options.c:3030-3031 - `if (size_only) --size-only` inside
         // the `if (am_sender)` block (a PUSH), so the remote receiver's
         // generator applies the size-only quick-check the client requested.
         if am_sender && self.config.size_only() {
             args.push(OsString::from("--size-only"));
         }
 
-        // upstream: options.c:2868-2870 - `else { if (skip_compress)
+        // upstream: options.c:3034-3037 - `else { if (skip_compress)
         // safe_arg("--skip-compress", skip_compress); }`. The else is the
         // `!am_sender` branch, so `--skip-compress` is forwarded only on a PULL
         // (RemoteRole::Receiver): the remote sender performs the compression and
@@ -663,11 +663,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if !am_sender && let Some(spec) = self.config.skip_compress_spec() {
             args.push(OsString::from(format!("--skip-compress={spec}")));
         }
-        // upstream: options.c:2928-2933 - --ignore-existing and --existing
+        // upstream: options.c:3099-3104 - --ignore-existing and --existing
         // (sent as --existing for ignore_non_existing) both sit inside the
         // `if (am_sender)` block: they steer the remote receiver's generator,
         // so they are forwarded only on a PUSH.
-        // upstream: options.c:2721-2722 - --ignore-times is emitted as the
+        // upstream: options.c:2887-2888 - --ignore-times is emitted as the
         // compact `I` letter in build_flag_string(), not as a long-form arg.
         if am_sender {
             if self.config.ignore_existing() {
@@ -678,7 +678,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2876-2881 - "--delete-missing-args needs the
+        // upstream: options.c:3042-3047 - "--delete-missing-args needs the
         // cooperation of both sides, but the sender can handle
         // --ignore-missing-args by itself." So --delete-missing-args
         // (missing_args == 2) is ALWAYS forwarded, while --ignore-missing-args
@@ -692,7 +692,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--ignore-missing-args"));
         }
 
-        // upstream: options.c:2992-2995 - `if (remove_source_files == 1)
+        // upstream: options.c:3163-3166 - `if (remove_source_files == 1)
         // "--remove-source-files"; else if (remove_source_files)
         // "--remove-sent-files"`. The deprecated alias is forwarded verbatim so
         // a pre-3.0 remote sees the spelling the user typed; every supported
@@ -705,7 +705,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2986-2987 - `if (relative_paths && !implied_dirs
+        // upstream: options.c:3156-3158 - `if (relative_paths && !implied_dirs
         // && (!am_sender || protocol_version >= 30)) args[ac++] =
         // "--no-implied-dirs";`. The flag is forwarded to the peer only when
         // relative paths are active; implied dirs exist solely for
@@ -714,7 +714,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // on a PUSH below protocol 30, where the pre-30 receiver derives implied
         // dirs itself and does not understand the option. Without the
         // `relative_paths` gate a non-relative transfer with `implied_dirs = 0`
-        // (options.c:2216 forces this) would wrongly forward
+        // (options.c:2333-2334 forces this) would wrongly forward
         // `--no-implied-dirs`, which the remote sender then link_stat()s as a
         // source path (exit 23).
         if self.config.relative_paths()
@@ -724,7 +724,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--no-implied-dirs"));
         }
 
-        // upstream: options.c:2989 - `if (write_devices && am_sender) args[ac++]
+        // upstream: options.c:3160-3161 - `if (write_devices && am_sender) args[ac++]
         // = "--write-devices"`. Forwarded only on a PUSH (local process is the
         // sender), so the remote receiver writes file data into matching device
         // destinations instead of recreating them with mknod. `RemoteRole::Sender`
@@ -733,7 +733,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--write-devices"));
         }
 
-        // upstream: options.c:2997 - `if (copy_devices && !am_sender) args[ac++]
+        // upstream: options.c:3168-3169 - `if (copy_devices && !am_sender) args[ac++]
         // = "--copy-devices"`. Forwarded only on a PULL (local process is the
         // receiver), so the remote sender reads device contents as regular file
         // data. `RemoteRole::Receiver` is !am_sender (a pull).
@@ -741,7 +741,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--copy-devices"));
         }
 
-        // upstream: options.c:2862-2867 server_options() - inside the
+        // upstream: options.c:3028-3033 server_options() - inside the
         // `if (am_sender)` block: `--super` when `am_root > 1` (an explicit
         // --super, never mere root), then `--stats` when `do_stats`. Both are
         // forwarded only on a push (RemoteRole::Sender is am_sender), where the
@@ -756,14 +756,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.extend(flags::sender_super_stats_args(self.config).map(OsString::from));
         }
 
-        // upstream: options.c:2655-2658 - --omit-dir-times ('O') and
+        // upstream: options.c:2822-2825 - --omit-dir-times ('O') and
         // --omit-link-times ('J') are encoded as sender-only compact letters in
         // the transfer-flag string (see the `am_sender` block above), not as
         // standalone long options. Emitting them here would forward
         // `--omit-dir-times` to a remote sender (pull), which then stats it as a
         // source path.
 
-        // upstream: options.c:3006-3007 - `if (mkpath_dest_arg && am_sender)
+        // upstream: options.c:3177-3178 - `if (mkpath_dest_arg && am_sender)
         // args[ac++] = "--mkpath"`. The dest-arg path creation is a
         // receiver-side concern, so the option is forwarded only when the
         // local process is the sender (a PUSH to a remote receiver).
@@ -774,10 +774,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--mkpath"));
         }
 
-        // upstream: options.c:2657-2658 - bare `make_backups` is emitted as the
+        // upstream: options.c:2806-2807 - bare `make_backups` is emitted as the
         // `b` character in the compact flag string by `build_flag_string`. Only
         // `--backup-dir` and `--suffix` are forwarded as long-form arguments
-        // (`options.c:2817,2823`).
+        // (`options.c:2981-2989`). Deviation from upstream: `--backup-dir` is
+        // joined as one `--backup-dir=DIR` token rather than split (upstream
+        // splits it so the remote shell can expand `~/path`), and `--suffix` is
+        // sent whenever one is configured rather than only when non-default.
         if self.config.backup() {
             if let Some(dir) = self.config.backup_directory() {
                 let mut arg = OsString::from("--backup-dir=");
@@ -791,7 +794,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2921-2944 - the basis-dir args (--compare-dest,
+        // upstream: options.c:3114-3123 - the basis-dir args (--compare-dest,
         // --copy-dest, --link-dest via alt_dest_opt) live entirely inside the
         // `if (am_sender)` block: "the server only needs this option if it is
         // not the sender". On a PUSH (local is sender, RemoteRole::Sender) the
@@ -811,7 +814,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2955-2959 server_options() - make_output_option()
+        // upstream: options.c:3126-3130 server_options() - make_output_option()
         // forwards the explicitly-set --info / --debug levels to the peer so
         // its diagnostic output matches. `am_sender` (a push) selects the
         // receiving half of the role `where` filter.
@@ -826,7 +829,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(arg));
         }
 
-        // upstream: options.c:3003 - `if (open_noatime && preserve_atimes <= 1)
+        // upstream: options.c:3174-3175 - `if (open_noatime && preserve_atimes <= 1)
         // args[ac++] = "--open-noatime"`. When `-UU` (preserve_atimes == 2) is
         // active the flag is suppressed: at that level the receiver already
         // opens files with O_NOATIME implicitly, so forwarding it is redundant
@@ -835,7 +838,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--open-noatime"));
         }
 
-        // upstream: options.c:3000-3001 - `if (preallocate_files && am_sender)
+        // upstream: options.c:3171-3172 - `if (preallocate_files && am_sender)
         // --preallocate`. Forwarded only on a PUSH so the remote receiver
         // preallocates the destination file extents; a remote sender allocates
         // nothing and must not receive it.
@@ -843,11 +846,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--preallocate"));
         }
 
-        // upstream: options.c:2946-2958 - `if (stdout_format && am_sender)` the
+        // upstream: options.c:2946-2956 - `if (stdout_format && am_sender)` the
         // server is told a little about the client's out-format via a
         // `--log-format` arg, in a first-match-wins chain. The `%i` branches key
         // off `stdout_format_has_i`, which upstream derives from the RESOLVED
-        // out-format string (options.c:2354-2367), not the `-i` flag: an
+        // out-format string (options.c:2496-2509), not the `-i` flag: an
         // explicit `--out-format` without `%i` clears it even under `-i`, while
         // `-i` alone installs the default `"%i %n%L"` format. `%i%I` is the
         // `-ii` form (stdout_format_has_i > 1) that itemizes unchanged entries
@@ -869,7 +872,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2972-2984 - `if (files_from && (!am_sender ||
+        // upstream: options.c:3143-3155 - `if (files_from && (!am_sender ||
         // filesfrom_host))`. The server-side `--files-from` arg is only added
         // when we are NOT the sender (i.e. local is receiver, doing pull) OR
         // the files-from spec was a hostspec (remote filelist).
@@ -877,7 +880,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // - PUSH with local filelist: local sender reads the list locally and
         //   walks accordingly; the remote receiver gets no `--files-from`.
         // - PUSH with remote filelist: remote receiver opens the file and
-        //   forwards its bytes back to the local sender (main.c:1209-1216).
+        //   forwards its bytes back to the local sender (main.c:1226-1233).
         // - PULL with local filelist: local receiver forwards the file bytes
         //   on the wire; remote sender reads from `--files-from=-`.
         // - PULL with remote filelist: remote sender opens the file via
@@ -886,7 +889,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // `RemoteRole::Sender` here means the local process is the sender
         // (PUSH); `RemoteRole::Receiver` means the local process is the
         // receiver (PULL).
-        // upstream: options.c:2972 server_options() - the files-from arg is
+        // upstream: options.c:3143 server_options() - the files-from arg is
         // forwarded only when the remote peer reads the list (`!am_sender ||
         // filesfrom_host`). The direction-aware resolver collapses the single
         // files-from fd so a localhost:path hostspec is treated as a plain
@@ -901,27 +904,26 @@ impl<'a> RemoteInvocationBuilder<'a> {
             if plan.remote_from0 {
                 args.push(OsString::from("--from0"));
             }
-            // upstream: options.c:368-369 - a peer that reads the --files-from
-            // list defaults relative_paths=1 (options.c:2214-2215). When the
+            // upstream: options.c:3153-3154 - a peer that reads the --files-from
+            // list defaults relative_paths=1 (options.c:2331-2332). When the
             // client resolved relative paths off (explicit --no-relative), emit
             // --no-relative so the remote sender overrides that default and
-            // flattens each entry to its basename (flist.c:2578-2589) with no
+            // flattens each entry to its basename (flist.c:2850-2861) with no
             // implied parent dirs.
             if !self.config.relative_paths() {
                 args.push(OsString::from("--no-relative"));
             }
         }
 
-        // upstream: options.c:2922-2926 - --usermap / --groupmap are
+        // upstream: options.c:3093-3097 - --usermap / --groupmap are
         // forwarded as `--key=value` arguments. With `protect_args` the value
         // is shipped verbatim; without `protect_args`, upstream wraps it in
         // `safe_arg("--usermap", value)` which escapes shell + wildcard
         // characters so a downstream `eval "$@"` does not glob-expand them.
-        // We rely on `protect_args` being the default for SSH transports
-        // (matching upstream's `old_style_args = -1` default at options.c:115),
-        // so the verbatim form is correct and the wildcard `*` survives.
+        // Deviation from upstream: the value is always sent verbatim, even when
+        // `protect_args` is off (its default, options.c:2103-2113).
         //
-        // upstream: options.c:2921-2927 - both --usermap and --groupmap sit
+        // upstream: options.c:3092-3098 - both --usermap and --groupmap sit
         // inside the `if (am_sender)` block, so they are forwarded only on a
         // PUSH: the remote receiver applies the id remapping when it writes
         // ownership. On a PULL the local receiver owns the mapping and the
@@ -935,83 +937,84 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:2744-2751 - --iconv forwarding (post-comma half
+        // upstream: options.c:2909-2918 - --iconv forwarding (post-comma half
         // of iconv_opt when a comma is present, else the whole spec) is
         // emitted immediately before the protect_args NULL cutoff, so it
         // belongs in the protected head (`Self::build_head_args`/
         // `Self::iconv_arg`), not here.
 
-        // upstream: options.c:3014-3021 - remote_options[] are appended after
-        // all other server arguments. Each -M value is forwarded verbatim.
+        // upstream: options.c:3185-3193 - remote_options[] are appended after
+        // all other server arguments. Deviation from upstream: each -M value is
+        // forwarded verbatim, not through `safe_arg(SPLIT_ARG_WHEN_OLD, ...)`.
         for opt in self.config.remote_options() {
             args.push(opt.clone());
         }
     }
 
-    /// Builds the compact flag string from client configuration.
+    /// Builds the compact transfer-flag string (e.g. `-logDtpr`) from client
+    /// configuration.
     ///
-    /// Format: `-logDtpre.LsfxC` where:
-    /// - Transfer flags before `.` separator
-    /// - Info/debug flags after `.` separator
+    /// The `s` letter and the `e.xxx` capability suffix are added by
+    /// `build_head_args`, not here.
     fn build_flag_string(&self) -> String {
         let mut flags = String::from("-");
 
-        // upstream: options.c:2197-2200 - `if (files_from) { if (recurse == 1)
+        // upstream: options.c:2313-2318 - `if (files_from) { if (recurse == 1)
         // recurse = 0; if (xfer_dirs < 0) xfer_dirs = 1; }`. Only the recursion
         // `-a` implies is cleared; an explicit `-r` (recurse == 2) survives
         // --files-from. The CLI performs that resolution once, so
         // `config.recursive()` is already upstream's post-resolution
         // `recurse != 0` and must not be re-cleared here.
-        // options.c:2214-2215 - relative_paths defaults to 1 under --files-from.
+        // options.c:2331-2332 - relative_paths defaults to 1 under --files-from.
         let effective_recursive = self.config.recursive();
-        // upstream: options.c:109-110 - server_options() packs the compact `R`
+        // upstream: options.c:2889-2890 - server_options() packs the compact `R`
         // letter for the RESOLVED relative_paths. `relative_paths()` already
-        // folds in the --files-from default (options.c:2214-2215: relative
+        // folds in the --files-from default (options.c:2331-2332: relative
         // defaults to 1 under --files-from) at the CLI layer, so it must NOT be
         // re-forced with `|| files_from_active` - that wrongly packs `R` even
         // when the user passed --no-relative, defeating the --no-relative arg
         // emitted below and making the remote sender keep the leading path
         // components (`sub/file` instead of `file`).
         let effective_relative = self.config.relative_paths();
-        // upstream: options.c:2650 / :2655 - several compact letters live in a
+        // upstream: options.c:2817 / :2831 - several compact letters live in a
         // direction-specific branch. `am_sender` is true when the local process
         // is the sender (push); false on a pull. RemoteRole::Sender == push.
         let am_sender = self.role == RemoteRole::Sender;
 
         // The compact letter ORDER mirrors upstream `server_options()`
-        // (options.c:2628-2733) byte-for-byte so the server arg string matches
+        // (options.c:2801-2899) byte-for-byte so the server arg string matches
         // upstream rsync exactly. Letters are appended in upstream's source
         // order, NOT alphabetical or grouped-by-concern order.
 
-        // upstream: options.c:2801 - one 'v' per verbosity level, first.
+        // upstream: options.c:2801-2802 - one 'v' per verbosity level, capped at 9.
         flags::push_verbose_letters(&mut flags, self.config.verbosity());
-        // upstream: options.c:2655-2656 - `if (quiet && msgs2stderr) 'q'`. The
+        // upstream: options.c:2804-2805 - `if (quiet && msgs2stderr) 'q'`. The
         // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
         // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. Modelled as
         // `msgs2stderr() != Some(false)`.
         if self.config.quiet() && self.config.msgs2stderr() != Some(false) {
             flags.push('q');
         }
-        // upstream: options.c:2657-2658 - `make_backups` rides as `b`. Emitting
+        // upstream: options.c:2806-2807 - `make_backups` rides as `b`. Emitting
         // `--backup` as a long arg lands as a positional path on upstream
         // server parsers, so `b` is mandatory here.
         if self.config.backup() {
             flags.push('b');
         }
-        // upstream: options.c:2641-2642 - update_only.
+        // upstream: options.c:2808-2809 - update_only.
         if self.config.update() {
             flags.push('u');
         }
-        // upstream: options.c:2643-2644 - 'n' = dry_run (!do_xfers), NOT
+        // upstream: options.c:2810-2811 - 'n' = dry_run (!do_xfers), NOT
         // numeric_ids (which is long-form --numeric-ids).
         if self.config.dry_run() {
             flags.push('n');
         }
-        // upstream: options.c:2645-2646 - preserve_links.
+        // upstream: options.c:2812-2813 - preserve_links.
         if self.config.links() {
             flags.push('l');
         }
-        // upstream: options.c:2647-2649 - `if ((xfer_dirs >= 2 && xfer_dirs < 4)
+        // upstream: options.c:2814-2816 - `if ((xfer_dirs >= 2 && xfer_dirs < 4)
         // || (xfer_dirs && !recurse && (list_only || (delete_mode && am_sender))))
         // argstr[x++] = 'd';`. The letter tracks an EXPLICIT `-d`
         // (xfer_dirs == 2), not the `xfer_dirs = 1` that --files-from or
@@ -1024,14 +1027,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             flags.push('d');
         }
         if am_sender {
-            // upstream: options.c:2651-2664 - sender-only compact letters.
+            // upstream: options.c:2817-2830 - sender-only compact letters.
             if self.config.keep_dirlinks() {
                 flags.push('K');
             }
             if self.config.prune_empty_dirs() {
                 flags.push('m');
             }
-            // upstream: options.c:2655-2658 - 'O' = --omit-dir-times, 'J' =
+            // upstream: options.c:2822-2825 - 'O' = --omit-dir-times, 'J' =
             // --omit-link-times. These are sender-only compact letters (the
             // `if (am_sender)` block), placed after 'm' and before the fuzzy
             // 'y' letters. For a pull (remote is the sender) they are NOT sent;
@@ -1044,12 +1047,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
             if self.config.omit_link_times() {
                 flags.push('J');
             }
-            // upstream: options.c:2659-2664 - 'y' for fuzzy, 'yy' for level 2.
+            // upstream: options.c:2826-2830 - 'y' for fuzzy, 'yy' for level 2.
             for _ in 0..self.config.fuzzy_level() {
                 flags.push('y');
             }
         } else {
-            // upstream: options.c:2665-2670 - receiver-only compact letters.
+            // upstream: options.c:2831-2836 - receiver-only compact letters.
             // copy_links/copy_dirlinks dereference on the sender, so they are
             // forwarded to the remote only when the remote is the sender (pull).
             if self.config.copy_links() {
@@ -1059,81 +1062,82 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 flags.push('k');
             }
         }
-        // upstream: options.c:2672-2673 - only send 'W' when explicitly set
+        // upstream: options.c:2838-2842 - only send 'W' when explicitly set
         // (whole_file > 0). The default for remote transfers is no-whole-file;
         // upstream never sends --no-whole-file because it's the default.
         if self.config.whole_file_raw() == Some(true) {
             flags.push('W');
         }
-        // upstream: options.c:2678-2682 - preserve_hard_links.
+        // upstream: options.c:2844-2848 - preserve_hard_links. Deviation from
+        // upstream: a single 'H' is packed; the doubled 'HH' level is not sent.
         if self.config.preserve_hard_links() {
             flags.push('H');
         }
-        // upstream: options.c:2683-2684 - preserve_uid.
+        // upstream: options.c:2849-2850 - preserve_uid.
         if self.config.preserve_owner() {
             flags.push('o');
         }
-        // upstream: options.c:2685-2686 - preserve_gid.
+        // upstream: options.c:2851-2852 - preserve_gid.
         if self.config.preserve_group() {
             flags.push('g');
         }
-        // upstream: options.c:2687-2688 - `if (preserve_devices) argstr[x++] =
+        // upstream: options.c:2853-2854 - `if (preserve_devices) argstr[x++] =
         // 'D'; /* ignore preserve_specials here */`. The compact 'D' letter
         // tracks preserve_devices ONLY; specials ride separately as the
         // long-form --specials/--no-specials (emitted in append_long_form_args).
         if self.config.preserve_devices() {
             flags.push('D');
         }
-        // upstream: options.c:2689-2690 - preserve_mtimes.
+        // upstream: options.c:2855-2856 - preserve_mtimes.
         if self.config.preserve_times() {
             flags.push('t');
         }
-        // upstream: options.c:2691-2695 - `if (preserve_atimes) { 'U'; if
+        // upstream: options.c:2857-2861 - `if (preserve_atimes) { 'U'; if
         // (preserve_atimes > 1) 'U'; }`. Level 2 (`-UU`) doubles the letter so
         // the peer also preserves directory access times.
         for _ in 0..self.config.preserve_atimes_level().min(2) {
             flags.push('U');
         }
-        // upstream: options.c:2696-2699 - preserve_crtimes.
+        // upstream: options.c:2862-2865 - preserve_crtimes.
         if self.config.preserve_crtimes() {
             flags.push('N');
         }
         if self.config.preserve_permissions() {
-            // upstream: options.c:2700-2701 - preserve_perms.
+            // upstream: options.c:2866-2867 - preserve_perms.
             flags.push('p');
         } else if self.config.preserve_executability() && am_sender {
-            // upstream: options.c:2702-2703 - 'E' only when preserve_perms is
+            // upstream: options.c:2868-2869 - 'E' only when preserve_perms is
             // false AND we are the sender.
             flags.push('E');
         }
         #[cfg(all(any(unix, windows), feature = "acl"))]
         if self.config.preserve_acls() {
-            // upstream: options.c:2704-2707 - preserve_acls (after p/E).
+            // upstream: options.c:2870-2873 - preserve_acls (after p/E).
             flags.push('A');
         }
         #[cfg(all(unix, feature = "xattr"))]
-        // upstream: options.c:2708-2714 - `if (preserve_xattrs) { 'X'; if
+        // upstream: options.c:2874-2880 - `if (preserve_xattrs) { 'X'; if
         // (preserve_xattrs > 1) 'X'; }` (before r). Level 2 (`-XX`) doubles the
         // letter so the peer transfers xattrs even in a fake-super store.
         for _ in 0..self.config.preserve_xattrs_level().min(2) {
             flags.push('X');
         }
-        // upstream: options.c:2715-2716 - recurse.
+        // upstream: options.c:2881-2882 - recurse.
         if effective_recursive {
             flags.push('r');
         }
-        // upstream: options.c:2717-2718 - always_checksum.
+        // upstream: options.c:2883-2884 - always_checksum.
         if self.config.checksum() {
             flags.push('c');
         }
-        // upstream: options.c:2719-2720 - `if (cvs_exclude) argstr[x++] = 'C';`.
+        // upstream: options.c:2885-2886 - `if (cvs_exclude) argstr[x++] = 'C';`.
         // Forwarded so the remote peer runs get_cvs_excludes() itself (matching
         // upstream, which also forwards the letter alongside the transmitted CVS
         // rules); duplicate excludes are idempotent.
         if self.config.cvs_exclude() {
             flags.push('C');
         }
-        // upstream: options.c:2721-2722 - ignore_times rides in the compact
+        // upstream: options.c:2887-2888 - ignore_times rides in the compact
         // flag string as `I`, NOT as a long-form `--ignore-times`. Emitting the
         // long form lands `--ignore-times` as a positional path on the remote
         // server's arg parser (link_stat "--ignore-times" failed), so the
@@ -1141,15 +1145,15 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.ignore_times() {
             flags.push('I');
         }
-        // upstream: options.c:2723-2724 - relative_paths.
+        // upstream: options.c:2889-2890 - relative_paths.
         if effective_relative {
             flags.push('R');
         }
-        // upstream: options.c:2725-2729 - one_file_system ('x', 'xx').
+        // upstream: options.c:2891-2895 - one_file_system ('x', 'xx').
         for _ in 0..self.config.one_file_system_level() {
             flags.push('x');
         }
-        // upstream: options.c:2730-2731 - sparse_files.
+        // upstream: options.c:2896-2897 - sparse_files.
         if self.config.sparse() {
             flags.push('S');
         }
@@ -1158,8 +1162,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         // upstream: options.c has NO compact 'P' letter for --partial. keep_partial
         // rides as the long-form --partial (append_long_form_args), gated on
-        // am_sender && !partial_dir (options.c:2894-2903). Packing 'P' here
-        // diverged from every upstream server invocation.
+        // am_sender && !partial_dir (options.c:3062-3070).
 
         flags
     }
@@ -1178,7 +1181,7 @@ const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\n\r\\";
 
 /// Wildcard characters recognized by upstream rsync.
 ///
-/// upstream: options.c `WILD_CHARS` - when a backslash precedes one of these
+/// upstream: options.c:2706 `WILD_CHARS` - when a backslash precedes one of these
 /// characters in a filename argument, the backslash is kept as-is (it already
 /// serves as a wildcard escape), so we do not double-escape it.
 const WILD_CHARS: &str = "*?[]";
@@ -1195,7 +1198,7 @@ const WILD_CHARS: &str = "*?[]";
 ///
 /// This escaping is applied only when `protect_args` is not active and
 /// `old_style_args == 0`; the caller (`build_args_without_program`) evaluates
-/// that gate (upstream `options.c:2560`, where the filename branch reduces to
+/// that gate (upstream `options.c:2715`, where the filename branch reduces to
 /// `!protect_args && old_style_args == 0`) and calls this only when it holds.
 pub(super) fn shell_safe_filename_arg(arg: &OsStr) -> OsString {
     shell_safe_filename_arg_with_tilde(arg, false)
@@ -1207,7 +1210,7 @@ pub(super) fn shell_safe_filename_arg(arg: &OsStr) -> OsString {
 /// Behaves like [`shell_safe_filename_arg`]; when `escape_leading_tilde` is
 /// set and `arg` begins with `~`, a single backslash is prepended (`~foo` ->
 /// `\~foo`) so the remote shell does not tilde-expand a path literally named
-/// `~foo`. Mirrors upstream `options.c:2562-2567` / `:2581`, where the
+/// `~foo`. Mirrors upstream `options.c:2717-2722` / `:2754-2755`, where the
 /// `escape_leading_tilde` flag is set only on a pull (`!am_sender`) for an
 /// untrusted sender and a relative/no-slash path; the caller computes that
 /// gate and passes the result here.
@@ -1251,7 +1254,7 @@ fn escape_shell_bytes(arg: &[u8], escape_leading_tilde: bool) -> Vec<u8> {
     if leading_dash {
         out.extend_from_slice(b"./");
     } else if leading_tilde {
-        // upstream: options.c:2590 - a single backslash before a leading ~.
+        // upstream: options.c:2754-2755 - a single backslash before a leading ~.
         out.push(b'\\');
     }
 
@@ -1288,7 +1291,7 @@ fn escape_shell_str(arg: &str, escape_leading_tilde: bool) -> String {
     if leading_dash {
         out.push_str("./");
     } else if leading_tilde {
-        // upstream: options.c:2590 - a single backslash before a leading ~.
+        // upstream: options.c:2754-2755 - a single backslash before a leading ~.
         out.push('\\');
     }
 

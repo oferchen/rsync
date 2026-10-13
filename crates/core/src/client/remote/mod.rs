@@ -99,7 +99,7 @@ pub(crate) fn is_quic_url(operand: &str) -> bool {
 /// [`AddressMode::Default`] yields `None`, leaving the ssh child free to pick
 /// whichever family resolves first; the forced modes map to the matching flag.
 ///
-/// upstream: main.c:600-607 `do_cmd()` gates the `-4`/`-6` append on
+/// upstream: main.c:604-611 `do_cmd()` gates the `-4`/`-6` append on
 /// `default_af_hint` being set (and the remote-shell basename being `ssh`,
 /// which the builder enforces).
 pub(in crate::client::remote) const fn ssh_address_family(

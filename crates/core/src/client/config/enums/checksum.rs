@@ -9,8 +9,8 @@ use engine::signature::SignatureAlgorithm;
 pub enum StrongChecksumAlgorithm {
     /// Automatically selects the negotiated algorithm.
     ///
-    /// Mirrors upstream `checksum.c` negotiation (`negotiate_the_strings`,
-    /// `parse_checksum_choice`): when no explicit `--checksum-choice` is given
+    /// Mirrors upstream negotiation (`compat.c:538 negotiate_the_strings()`,
+    /// `checksum.c:192 parse_checksum_choice()`): when no explicit `--checksum-choice` is given
     /// and both peers advertise it, the strongest mutually supported checksum
     /// wins. For a local copy - where upstream still negotiates over the forked
     /// child's pipe with `do_negotiated_strings` set (protocol 31+) - that is
@@ -20,7 +20,7 @@ pub enum StrongChecksumAlgorithm {
     /// No transfer checksum; disables delta and forces whole-file transfers.
     ///
     /// Mirrors upstream `CSUM_NONE` (see `checksum.c:63`). When selected as the
-    /// transfer algorithm, upstream `checksum.c:197-198` unconditionally sets
+    /// transfer algorithm, upstream `checksum.c:215-216` unconditionally sets
     /// `whole_file = 1`.
     None,
     /// MD4 strong checksum.
@@ -110,7 +110,7 @@ impl StrongChecksumChoice {
     pub fn parse(text: &str) -> Result<Self, Message> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            // upstream: checksum.c:139 parse_checksum_choice returns
+            // upstream: checksum.c:157 parse_csum_name() exits
             // RERR_UNSUPPORTED (errcode.h:28) for an unusable name, not RERR_SYNTAX.
             return Err(rsync_error!(
                 4,
@@ -145,7 +145,7 @@ impl StrongChecksumChoice {
             "xxh64" | "xxhash" => Ok(StrongChecksumAlgorithm::Xxh64),
             "xxh3" | "xxh3-64" => Ok(StrongChecksumAlgorithm::Xxh3),
             "xxh128" | "xxh3-128" => Ok(StrongChecksumAlgorithm::Xxh128),
-            // upstream: checksum.c:139 parse_checksum_choice returns
+            // upstream: checksum.c:157 parse_csum_name() exits
             // RERR_UNSUPPORTED (errcode.h:28) for an unknown name, not RERR_SYNTAX.
             _ => Err(rsync_error!(
                 4,
@@ -170,11 +170,11 @@ impl StrongChecksumChoice {
 
     /// Resolves the file checksum algorithm into a [`SignatureAlgorithm`].
     ///
-    /// upstream: checksum.c:178-189 parse_checksum_choice - `file_sum_nni`
+    /// upstream: checksum.c:192-205 parse_checksum_choice - `file_sum_nni`
     /// comes from the second comma component. An `auto` sub-component resolves
     /// via `parse_csum_name` to the implied checksum, which is md5 at proto>=30
-    /// (checksum.c:118-122), but ONLY when the choice is "set". The fully-auto
-    /// forms (`auto` / `auto,auto`) null `checksum_choice` (options.c:2003-2009)
+    /// (checksum.c:136-141), but ONLY when the choice is "set". The fully-auto
+    /// forms (`auto` / `auto,auto`) null `checksum_choice` (options.c:2117-2123)
     /// and negotiate the strongest mutually supported checksum instead, which
     /// for a modern local copy is xxh128. Mirror that split: resolve a lone
     /// `auto` file sub-component to md5 on the suppressed path, and fall back to
@@ -207,7 +207,7 @@ impl StrongChecksumChoice {
 
     /// Reports whether the transfer algorithm is the `none` sentinel.
     ///
-    /// Upstream `checksum.c:216-217` forces `whole_file = 1` whenever the
+    /// Upstream `checksum.c:215-216` forces `whole_file = 1` whenever the
     /// negotiated transfer checksum is `CSUM_NONE`. The config builder uses
     /// this to promote `whole_file` at build time so the delta pipeline is
     /// never engaged when the user explicitly disables the transfer
@@ -220,12 +220,12 @@ impl StrongChecksumChoice {
     /// Returns the transfer-checksum override that drives protocol 30+
     /// negotiation, mirroring upstream's send-gate and `auto` resolution.
     ///
-    /// upstream: options.c:2003-2009 nulls `checksum_choice` only when the raw
+    /// upstream: options.c:2117-2123 nulls `checksum_choice` only when the raw
     /// string is exactly `auto` or `auto,auto`; any other value stays set and
-    /// suppresses the vstring exchange (compat.c:541 `if (!checksum_choice)`).
+    /// suppresses the vstring exchange (compat.c:544 `if (!checksum_choice)`).
     /// On that suppressed path `parse_checksum_choice` resolves the transfer
     /// (first) component with `parse_csum_name`, where `auto` becomes the
-    /// implied md5 at proto>=30 (checksum.c:118-122). Returns `None` only for
+    /// implied md5 at proto>=30 (checksum.c:136-141). Returns `None` only for
     /// the fully-auto choice so the negotiator's `send_checksum` gate
     /// (`checksum_override.is_none()`) stays true and the exchange picks the
     /// strongest mutual checksum (xxh128 for a modern peer). Every set choice
@@ -282,7 +282,7 @@ mod tests {
 
         #[test]
         fn auto_resolves_to_xxh128() {
-            // upstream: checksum.c negotiate_the_strings/parse_checksum_choice -
+            // upstream: compat.c negotiate_the_strings()/checksum.c parse_checksum_choice() -
             // the negotiated (auto) checksum is the strongest mutually supported,
             // which for a modern local copy is xxh128, not md5.
             assert_eq!(
@@ -453,10 +453,10 @@ mod tests {
             );
         }
 
-        // upstream: options.c:2003-2009 + compat.c:541 - "auto,md5" keeps
+        // upstream: options.c:2117-2123 + compat.c:544 - "auto,md5" keeps
         // checksum_choice non-null, so the vstring exchange is SUPPRESSED
         // (send_checksum = checksum_override.is_none() in negotiate.rs). The
-        // transfer "auto" resolves to implied md5 (checksum.c:118-122) and the
+        // transfer "auto" resolves to implied md5 (checksum.c:136-141) and the
         // file component is the explicit md5. WHY: returning None here would
         // re-enable the vstring and desync against an upstream peer that sends
         // nothing; resolving to xxh128 would compute the wrong whole-file sum.
@@ -477,9 +477,9 @@ mod tests {
             );
         }
 
-        // upstream: checksum.c:178-189 - the SECOND component of "md5,auto" is
+        // upstream: checksum.c:192-205 - the SECOND component of "md5,auto" is
         // parsed with parse_csum_name("auto"), which is implied md5 at proto>=30
-        // (checksum.c:118-122), NOT the negotiated xxh128. WHY: the choice is
+        // (checksum.c:136-141), NOT the negotiated xxh128. WHY: the choice is
         // "set" (checksum_choice non-null), so the file sum follows the
         // suppressed-path resolution, not the fully-auto negotiated one.
         #[test]
@@ -498,7 +498,7 @@ mod tests {
             );
         }
 
-        // upstream: options.c:2003-2009 - ONLY "auto" and "auto,auto" null
+        // upstream: options.c:2117-2123 - ONLY "auto" and "auto,auto" null
         // checksum_choice, leaving send_checksum true so negotiate_the_strings
         // exchanges lists and picks the strongest mutual checksum (xxh128 for a
         // modern local copy). WHY: these two forms must keep override == None,

@@ -31,7 +31,7 @@ pub(super) enum SocketOptionKind {
 /// wrapper. It runs on the pre-connect `socket2::Socket` (see
 /// `connect::connect_with_optional_bind`) rather than a connected
 /// `TcpStream` - upstream: socket.c:434 `set_socket_options(s, sockopts)`
-/// runs before `connect(s, ...)` at socket.c:280 so options that affect the
+/// runs before `connect(s, ...)` at socket.c:435 so options that affect the
 /// SYN (e.g. `SO_SNDBUF`/`SO_RCVBUF` window scaling) take effect.
 pub(super) struct ParsedSocketOption {
     pub(super) kind: SocketOptionKind,

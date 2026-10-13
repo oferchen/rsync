@@ -17,8 +17,8 @@ use crate::rsync_error;
 ///
 /// `sockopts`, when given, is applied to the socket used to reach the proxy
 /// before `connect(2)` - upstream `open_socket_out()` resolves and connects to
-/// the proxy host in place of the daemon host (socket.c:200-242), so
-/// `set_socket_options(s, sockopts)` at socket.c:279 runs against that same
+/// the proxy host in place of the daemon host (socket.c:355-397), so
+/// `set_socket_options(s, sockopts)` at socket.c:434 runs against that same
 /// proxy-bound socket before its `connect(2)`.
 pub(crate) fn connect_via_proxy(
     addr: &DaemonAddress,
@@ -46,7 +46,7 @@ pub(crate) fn connect_via_proxy(
         ));
     }
 
-    // upstream: socket.c:262-310 - open_socket_out() resolves and connects to
+    // upstream: socket.c:413-462 - open_socket_out() resolves and connects to
     // the proxy host in place of the daemon host, so the same per-address
     // --contimeout semantics (try each address, but abort immediately - not
     // move to the next address - once the alarm fires) apply here too.
@@ -77,7 +77,7 @@ pub(crate) fn establish_proxy_tunnel(
     addr: &DaemonAddress,
     proxy: &ProxyConfig,
 ) -> Result<(), ClientError> {
-    // upstream: socket.c:63-70 (3.5.0) rejects the host before it can be
+    // upstream: socket.c:63-70 rejects the host before it can be
     // interpolated into the CONNECT request line. A control byte in the host
     // would otherwise close the request line early and let the remainder be
     // read as attacker-chosen HTTP headers (CRLF request/header injection).
@@ -183,7 +183,7 @@ pub(crate) fn establish_proxy_tunnel(
 
 pub(crate) fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
     match env::var("RSYNC_PROXY") {
-        // upstream: socket.c:358-359 - `proxied = h != NULL && *h != '\0';`
+        // upstream: socket.c:357-358 - `proxied = h != NULL && *h != '\0';`
         // only a zero-length value is treated as "unset"; a whitespace-only
         // value is proxied (and then fails to parse), not silently ignored.
         Ok(value) => {
@@ -202,7 +202,7 @@ pub(crate) fn load_daemon_proxy() -> Result<Option<ProxyConfig>, ClientError> {
 /// Parses an `RSYNC_PROXY` value into a [`ProxyConfig`].
 ///
 /// Mirrors upstream's raw buffer-splitting parser exactly (upstream:
-/// socket.c:205-234 `open_socket_out()`): `[USER:PASS@]HOST:PORT`. There is
+/// socket.c:360-389 `open_socket_out()`): `[USER:PASS@]HOST:PORT`. There is
 /// no URL scheme, no percent-decoding, and no bracketed-IPv6 syntax in
 /// upstream's C parser - those all belong to the separate `rsync://` URL
 /// grammar, not `RSYNC_PROXY`. The `USER:PASS@` prefix is found by the LAST
@@ -333,7 +333,7 @@ const PROXY_BUF_SIZE: usize = 1024;
 
 /// Maximum size of a single CONNECT response line, matching upstream rsync's
 /// `PROXY_BUF_SIZE - 1` loop bound in `establish_proxy_connection()`
-/// (socket.c:86). Upstream's stack buffer is 1024 bytes, but its read loop
+/// (socket.c:100). Upstream's stack buffer is 1024 bytes, but its read loop
 /// (`cp < &buffer[PROXY_BUF_SIZE - 1]`) writes at most positions 0..=1022,
 /// then rejects when the post-loop cursor lands at `&buffer[1023]`. The
 /// effective cap is therefore 1023 non-newline bytes.
@@ -350,7 +350,7 @@ const MAX_PROXY_LINE_BYTES: usize = PROXY_BUF_SIZE - 1;
 enum ProxyLineKind {
     /// The `HTTP/1.x NNN` status line - upstream socket.c:100-112.
     Status,
-    /// One line of the response header block - upstream socket.c:130-146.
+    /// One line of the response header block - upstream socket.c:130-148.
     Header,
 }
 
@@ -429,7 +429,7 @@ mod tests {
         assert!(config.credentials.is_none());
     }
 
-    // upstream: socket.c:205-234 - RSYNC_PROXY has no URL-scheme concept at
+    // upstream: socket.c:360-389 - RSYNC_PROXY has no URL-scheme concept at
     // all; getenv()'s raw value is split directly on '@' and ':'. A
     // "scheme://" prefix is just more HOST text to upstream's parser, and
     // (since strchr(':') finds the FIRST ':', which lands right after the
@@ -472,7 +472,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // upstream: socket.c:202-203 - a whitespace-only value is non-empty, so
+    // upstream: socket.c:357-358 - a whitespace-only value is non-empty, so
     // it is "proxied" and fed to the parser (where it then fails to find a
     // ':' and errors), unlike an actually-empty value which upstream treats
     // as "no proxy configured" before ever reaching this parser.
@@ -670,7 +670,7 @@ mod tests {
 
         // Upstream `establish_proxy_connection()` exits its read loop and
         // rejects "too long" once the cursor reaches `&buffer[PROXY_BUF_SIZE -
-        // 1]` (socket.c:86-98), i.e. after 1023 non-newline bytes. A
+        // 1]` (socket.c:100-112), i.e. after 1023 non-newline bytes. A
         // 1024-byte newline-free response must therefore be refused.
         assert_eq!(MAX_PROXY_LINE_BYTES, 1023);
         let payload = vec![b'A'; MAX_PROXY_LINE_BYTES + 1];

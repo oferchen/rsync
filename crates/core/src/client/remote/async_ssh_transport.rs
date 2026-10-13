@@ -140,7 +140,7 @@ pub fn run_async_ssh_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    // upstream: main.c:1483-1484 - a remote source with a single operand sets
+    // upstream: main.c:1483-1485 - a remote source with a single operand sets
     // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
@@ -168,7 +168,7 @@ pub fn run_async_ssh_transfer(
                 Some(&remote_sources),
             )?;
             let mut server_config = build_pull_server_config(config, &[local_dest])?;
-            // upstream: main.c:1543,1567 / io.c:445,482 / flist.c:1251 - record
+            // upstream: main.c:1581,1605 / io.c:512,549 / flist.c:1368 - record
             // each requested source path (or local --files-from entry) as an
             // implied include so the receiver rejects any unrequested name
             // (CVE-2022-29154).
@@ -212,7 +212,7 @@ fn build_plan(
     };
 
     let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
-    // upstream: options.c:2378 set_io_timeout(io_timeout) applies --timeout to
+    // upstream: options.c:2520 set_io_timeout(io_timeout) applies --timeout to
     // every transport; on the SSH pipe it drives the stall watchdog. 0/unset
     // leaves it disabled.
     let connect_config = SshConnectConfig::new()
@@ -302,7 +302,7 @@ fn run_async_session(
 
         let (mut async_reader, mut async_writer) = transport_split(transport);
 
-        // upstream: rsync.c:283-320 send_protected_args() ships the
+        // upstream: rsync.c:284-321 send_protected_args() ships the
         // null-separated arg list over stdin before protocol negotiation.
         // Done here on the async side because AsyncSshTransport owns
         // stdin until we hand it to the pump below.
@@ -462,7 +462,7 @@ fn transport_split(
 /// instead of writing them, so the async pump can ship the buffer with
 /// `AsyncWriteExt::write_all`.
 ///
-/// upstream: rsync.c:283-320 send_protected_args() / iconvbufs(ic_send)
+/// upstream: rsync.c:284-321 send_protected_args() / iconvbufs(ic_send)
 /// uses `ICB_INCLUDE_BAD`: invalid bytes are passed through verbatim.
 /// We use lossy conversion which replaces unconvertible bytes with `?`.
 fn encode_secluded_args<A: AsRef<[u8]>>(
@@ -692,7 +692,7 @@ mod tests {
         // connect config with io_timeout: None, so a stalled remote could hang
         // the client forever despite an explicit --timeout. The parsed value
         // must reach the SshConnectConfig the stall watchdog reads.
-        // upstream: options.c:2378 set_io_timeout(io_timeout) on the SSH pipe.
+        // upstream: options.c:2520 set_io_timeout(io_timeout) on the SSH pipe.
         let config = crate::client::config::ClientConfigBuilder::default()
             .timeout(crate::client::config::TransferTimeout::Seconds(
                 std::num::NonZeroU64::new(37).unwrap(),

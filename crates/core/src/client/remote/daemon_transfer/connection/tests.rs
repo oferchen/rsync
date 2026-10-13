@@ -58,7 +58,7 @@ fn parse_protocol_from_greeting_extracts_version() {
 
 #[test]
 fn advertised_digests_strip_the_trailing_newline() {
-    // upstream: compat.c:843-844 - the level-2 NSTR echo must render the
+    // upstream: compat.c:855-856 - the level-2 NSTR echo must render the
     // digest list verbatim, without the greeting's trailing newline.
     assert_eq!(
         advertised_digests_in_greeting("@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n").names(),
@@ -76,9 +76,9 @@ fn advertised_digests_are_absent_for_a_version_only_greeting() {
     assert!(advertised_digests_in_greeting("@RSYNCD: 30.0\r\n").is_absent());
 }
 
-// upstream: clientserver.c:199-203 - a server greeting that ends in the
+// upstream: clientserver.c:228-233 - a server greeting that ends in the
 // separating space advertises an EMPTY list, which the client must NOT read as
-// "no list": upstream aborts on it (compat.c:383-406) instead of falling back to
+// "no list": upstream aborts on it (compat.c:384-406) instead of falling back to
 // the protocol-keyed default.
 #[test]
 fn a_trailing_space_in_the_server_greeting_advertises_an_empty_list() {
@@ -93,7 +93,7 @@ fn a_trailing_space_in_the_server_greeting_advertises_an_empty_list() {
 
 #[test]
 fn advertised_digests_preserve_unknown_tokens() {
-    // upstream: compat.c:844 emits the raw banner string, including
+    // upstream: compat.c:853-856 emits the raw banner string, including
     // unknown algorithm names. Parity matters for the diagnostic.
     assert_eq!(
         advertised_digests_in_greeting("@RSYNCD: 31.0 sha512 unknown sha1 bogus md4\n").names(),
@@ -540,7 +540,7 @@ mod early_input_roundtrip_tests {
 
 /// Pins the daemon `@ERROR` -> client mapping.
 ///
-/// Regression coverage for the UTS-22.b port of upstream's
+/// Regression coverage for the port of upstream's
 /// `testsuite/daemon-chroot-acl_test.py`. The python test greps the
 /// client's combined output for `@ERROR` to confirm the GHSA-rjfm-3w2m-jf4f
 /// hostname-deny path fired; if the client renders only its envelope
@@ -589,8 +589,8 @@ mod handle_at_error_tests {
 
     #[test]
     fn maps_to_client_server_protocol_exit_code() {
-        // upstream: main.c:1906 - @ERROR client-server handshake failures
-        // exit with RERR_PROTOCOL (code 5).
+        // upstream: main.c:1979-1981 - @ERROR client-server handshake failures
+        // exit with RERR_STARTCLIENT (code 5).
         let err = handle_daemon_at_error("@ERROR: auth failed on module foo");
         assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
     }
@@ -605,8 +605,9 @@ mod handle_at_error_tests {
     /// string matching no branch, and the loop spun forever emitting empty
     /// MOTD lines. The guard must convert EOF into a clean protocol error.
     ///
-    /// upstream: clientserver.c:359-361 - `read_line_old()` returning false
-    /// yields "didn't get server startup line" and `return -1` (RERR_PROTOCOL).
+    /// upstream: clientserver.c:402-406 - `read_line_old()` returning false
+    /// yields "didn't get server startup line" and `return -1`
+    /// (RERR_STARTCLIENT, main.c:1979-1981).
     #[test]
     fn handshake_errors_on_daemon_eof_instead_of_looping() {
         use std::io::{BufReader, Cursor};
@@ -651,7 +652,7 @@ mod handle_at_error_tests {
         perform_daemon_handshake(&mut reader, &mut writer, &request, true, None, None, None)
     }
 
-    // upstream: clientserver.c:189-194 (am_client == 1) - a server greeting at
+    // upstream: clientserver.c:217-224 (am_client == 1) - a server greeting at
     // protocol >= 30 that omits the ".subprotocol" suffix is fatal:
     // `rsync: the server omitted the subprotocol value: <buf>` + RERR_STARTCLIENT.
     // The gate fires at protocol 30, one below the shared parser's own leniency
@@ -670,7 +671,7 @@ mod handle_at_error_tests {
         );
     }
 
-    // upstream: clientserver.c:205-210 (am_client == 1) - a protocol > 31 greeting
+    // upstream: clientserver.c:234-240 (am_client == 1) - a protocol > 31 greeting
     // that omits the digest name list is fatal:
     // `rsync: the server omitted the digest name list: <buf>` + RERR_STARTCLIENT.
     #[test]
@@ -687,7 +688,7 @@ mod handle_at_error_tests {
         );
     }
 
-    // upstream: clientserver.c:196 - protocol < 30 defaults remote_sub to 0 and
+    // upstream: clientserver.c:225 - protocol < 30 defaults remote_sub to 0 and
     // needs no digest list, so the greeting is accepted and the handshake
     // proceeds (here it reaches the module-response phase and hits EOF). The
     // failure must NOT be the greeting-omission refusal.
@@ -705,7 +706,7 @@ mod handle_at_error_tests {
     #[test]
     fn ghsa_rjfm_3w2m_jf4f_payload_renders_intact() {
         // The exact wire string the daemon emits for the GHSA-rjfm-3w2m-jf4f
-        // hostname-deny ACL path. upstream: clientserver.c:733 -
+        // hostname-deny ACL path. upstream: clientserver.c:780 -
         // `@ERROR: access denied to %s from %s (%s)\n`.
         let wire = "@ERROR: access denied to chrootmod from 127.0.0.1 (127.0.0.1)";
         let err = handle_daemon_at_error(wire);
