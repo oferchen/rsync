@@ -117,10 +117,6 @@ fn shutdown_reason_provides_correct_exit_code() {
         core::exit_code::ExitCode::Signal
     );
     assert_eq!(
-        ShutdownReason::PipeBroken.exit_code(),
-        core::exit_code::ExitCode::SocketIo
-    );
-    assert_eq!(
         ShutdownReason::UserRequested.exit_code(),
         core::exit_code::ExitCode::Ok
     );
@@ -133,7 +129,6 @@ fn shutdown_reason_descriptions_are_clear() {
         ShutdownReason::Interrupted,
         ShutdownReason::Terminated,
         ShutdownReason::HangUp,
-        ShutdownReason::PipeBroken,
         ShutdownReason::UserRequested,
     ];
 

@@ -20,7 +20,7 @@ Features with proper, functional Windows implementations.
 
 ### Signal Handling - Core (`crates/core/src/signal/mod.rs`)
 
-- Unix: Full handler in `unix` submodule with SIGINT/SIGTERM/SIGHUP/SIGPIPE.
+- Unix: Full handler in `unix` submodule with SIGINT/SIGTERM/SIGHUP; SIGPIPE stays ignored.
 - Windows: Stub in `stub.rs` provides the same API with Ctrl+C support. Full `ShutdownReason` enum, `SignalHandler`, `install_signal_handlers`, and `wait_for_signal` are all present.
 
 ### Windows Service Manager (`crates/platform/src/windows_service.rs`)
