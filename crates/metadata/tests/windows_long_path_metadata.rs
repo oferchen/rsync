@@ -193,7 +193,7 @@ fn long_path_ads_round_trip() {
     // Read the xattrs back; the boundary path here is
     // `xattr_windows::path_to_wide` feeding `FindFirstStreamW`. The wire
     // encoder prefixes the local stream name with `user.` on non-Linux
-    // peers (matches upstream xattrs.c:518-530).
+    // peers (matches upstream xattrs.c:546-558).
     let wire = read_xattrs_for_wire(&file, &XattrSendOptions::new(XattrRole::Sender))
         .expect("read ADS on long path");
     let expected_wire_name: &[u8] = b"user.Zone.Identifier";

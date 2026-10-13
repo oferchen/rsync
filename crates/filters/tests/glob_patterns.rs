@@ -4,7 +4,7 @@
 //! the filters crate, including wildcards, character classes, and the
 //! special `**` recursive wildcard. Patterns follow rsync's glob semantics.
 //!
-//! Reference: rsync 3.4.1 exclude.c lines 236-250 for wildcard flag handling.
+//! Reference: rsync 3.5.1 exclude.c lines 333-347 for wildcard flag handling.
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
@@ -379,7 +379,7 @@ fn anchored_matches_only_root() {
 /// Verifies pattern with internal slash but no leading `/` is unanchored
 /// and tail-matches the last N+1 path components.
 ///
-/// upstream: exclude.c:rule_matches() lines 947-951 - "A non-anchored
+/// upstream: exclude.c:rule_matches() lines 1046-1050 - "A non-anchored
 /// match with an infix slash and no `**` needs to match the last
 /// slash_cnt+1 name elements." So `build/output` matches both root-level
 /// `build/output` AND any nested path whose last two components are
@@ -419,7 +419,7 @@ fn directory_pattern_includes_descendants() {
 
 /// Verifies nested directory patterns.
 ///
-/// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+/// upstream: `exclude.c:rule_matches()` lines 1037-1038 returns "no match"
 /// for a non-directory entry when the rule carries `FILTRULE_DIRECTORY`.
 /// A wildcard directory-only pattern like `**/node_modules/` matches the
 /// directory entry itself but does NOT match files under it - the sender

@@ -12,7 +12,7 @@
 //! uncached one. When a thread-local name converter is installed the cache is
 //! bypassed, because converter results are per-thread and must not be shared.
 //!
-//! upstream: uidlist.c:456-480 - add_uid()/add_gid() cache each id once.
+//! upstream: uidlist.c:340-371 - add_uid()/add_gid() cache each id once.
 
 use super::converter::has_name_converter;
 use super::error::LookupResult;

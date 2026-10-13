@@ -72,9 +72,9 @@ fn simd_available_arch() -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `checksum.c:82` - `get_checksum1()` - Rolling checksum computation
-/// - `match.c:39` - `build_hash_table()` - Block hash table construction
-/// - `match.c:193` - `hash_search()` - Fast block lookup using rolling checksum
+/// - `checksum.c:303` - `get_checksum1()` - Rolling checksum computation
+/// - `match.c:78` - `build_hash_table()` - Block hash table construction
+/// - `match.c:163` - `hash_search()` - Fast block lookup using rolling checksum
 ///
 /// This implementation provides CPU-accelerated SIMD variants (AVX2, SSE2, NEON)
 /// with scalar fallback, maintaining byte-for-byte compatibility with upstream.
@@ -333,7 +333,7 @@ impl RollingChecksum {
     pub fn roll(&mut self, outgoing: u8, incoming: u8) -> Result<(), RollingError> {
         let window_len = self.window_len_u32()?;
 
-        // upstream: checksum.c - schar interpretation sign-extends bytes to int
+        // upstream: checksum.c:307 - schar interpretation sign-extends bytes to int
         let out = ((outgoing as i8) as i32) as u32;
         let inn = ((incoming as i8) as i32) as u32;
 
@@ -408,7 +408,7 @@ impl RollingChecksum {
 
         let mut weight = count_i128;
         for (&out_b, &in_b) in outgoing.iter().zip(incoming.iter()) {
-            // upstream: checksum.c - schar interpretation sign-extends bytes
+            // upstream: checksum.c:307 - schar interpretation sign-extends bytes
             let outgoing_val = i128::from(out_b as i8);
             let incoming_val = i128::from(in_b as i8);
             let delta = incoming_val - outgoing_val;

@@ -1,6 +1,6 @@
 //! A `/` inside a `[...]` bracket expression counts toward upstream rsync's
 //! `slash_cnt` (exclude.c:292-294 `add_rule()`), even though a bracket can never
-//! match a `/` (lib/wildmatch.c:247 `dowild()`). For an unanchored, non-`**`
+//! match a `/` (lib/wildmatch.c:235 `dowild()`). For an unanchored, non-`**`
 //! rule upstream then requires the candidate to have `slash_cnt + 1` path
 //! components (exclude.c:1046-1050 `rule_matches()` picks
 //! `slash_handling = slash_cnt + 1`, and lib/wildmatch.c `trailing_N_elements`

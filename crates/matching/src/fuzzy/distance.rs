@@ -5,14 +5,14 @@
 //! selection loop in [`super::search`] keeps the candidate with the lowest
 //! distance, exactly mirroring `generator.c:find_fuzzy()`.
 //!
-//! upstream: util1.c:1683 `fuzzy_distance()`, util1.c:1623
-//! `find_filename_suffix()`, generator.c:890-895 (combined name+suffix score).
+//! upstream: util1.c:1854 `fuzzy_distance()`, util1.c:1794
+//! `find_filename_suffix()`, generator.c:895-900 (combined name+suffix score).
 
 /// One Levenshtein unit of edit distance. upstream: util1.c:1852 `#define UNIT (1 << 16)`.
 pub(super) const UNIT: u32 = 1 << 16;
 
 /// Distance sentinel returned when the length-difference heuristic proves the
-/// edit distance must exceed the caller's upper limit. upstream: util1.c:1694
+/// edit distance must exceed the caller's upper limit. upstream: util1.c:1865
 /// `return 0xFFFFU * UNIT + 1`.
 const DIST_TOO_FAR: u32 = 0xFFFFu32 * UNIT + 1;
 
@@ -29,18 +29,18 @@ const DIST_TOO_FAR: u32 = 0xFFFFu32 * UNIT + 1;
 /// This never changes selection (a candidate pruned this way could not have won)
 /// but preserves upstream's `--debug=FUZZY` distance output byte-for-byte.
 ///
-/// upstream: util1.c:1683 `fuzzy_distance()`.
+/// upstream: util1.c:1854 `fuzzy_distance()`.
 pub(super) fn fuzzy_distance(s1: &[u8], s2: &[u8], upperlimit: u32) -> u32 {
     let len1 = s1.len();
     let len2 = s2.len();
 
-    // upstream: util1.c:1693 - prune using the length-difference lower bound.
+    // upstream: util1.c:1864 - prune using the length-difference lower bound.
     let len_diff = len1.abs_diff(len2) as u32;
     if len_diff.wrapping_mul(UNIT) > upperlimit {
         return DIST_TOO_FAR;
     }
 
-    // upstream: util1.c:1696-1704 - one empty string: cost is the length in
+    // upstream: util1.c:1867-1875 - one empty string: cost is the length in
     // UNITs plus the sum of the other string's bytes.
     if len1 == 0 || len2 == 0 {
         let s = if len1 == 0 { s2 } else { s1 };
@@ -51,7 +51,7 @@ pub(super) fn fuzzy_distance(s1: &[u8], s2: &[u8], upperlimit: u32) -> u32 {
         return (s.len() as u32).wrapping_mul(UNIT).wrapping_add(cost);
     }
 
-    // upstream: util1.c:1706-1728 - single-row Levenshtein with ASCII weighting.
+    // upstream: util1.c:1877-1901 - single-row Levenshtein with ASCII weighting.
     let mut a = vec![0u32; len2];
     for (i2, slot) in a.iter_mut().enumerate() {
         *slot = ((i2 + 1) as u32).wrapping_mul(UNIT);
@@ -88,7 +88,7 @@ pub(super) fn fuzzy_distance(s1: &[u8], s2: &[u8], upperlimit: u32) -> u32 {
 }
 
 /// Distance below which the suffix bonus is still applied; at or above it the
-/// candidate has already been disqualified. upstream: generator.c:893
+/// candidate has already been disqualified. upstream: generator.c:898
 /// `if (dist < 0xFFFF0000U)`.
 const SUFFIX_APPLY_LIMIT: u32 = 0xFFFF_0000;
 
@@ -101,7 +101,7 @@ const SUFFIX_APPLY_LIMIT: u32 = 0xFFFF_0000;
 /// same-type files. `target_suffix` is precomputed by the caller since it is
 /// constant across the scan.
 ///
-/// upstream: generator.c:890-895.
+/// upstream: generator.c:895-900.
 pub(super) fn fuzzy_name_distance(
     candidate: &[u8],
     target: &[u8],
@@ -124,9 +124,9 @@ pub(super) fn fuzzy_name_distance(
 /// Direct port of upstream `find_filename_suffix()`; the returned slice points
 /// into `name`. An empty slice means no significant suffix was found.
 ///
-/// upstream: util1.c:1623 `find_filename_suffix()`.
+/// upstream: util1.c:1794 `find_filename_suffix()`.
 pub(super) fn find_filename_suffix(name: &[u8]) -> &[u8] {
-    // upstream: util1.c:1629 - one or more leading dots aren't a suffix.
+    // upstream: util1.c:1800 - one or more leading dots aren't a suffix.
     let mut start = 0usize;
     let mut fn_len = name.len();
     while fn_len > 0 && name[start] == b'.' {
@@ -134,16 +134,16 @@ pub(super) fn find_filename_suffix(name: &[u8]) -> &[u8] {
         fn_len -= 1;
     }
 
-    // upstream: util1.c:1632-1636 - ignore a trailing '~'.
+    // upstream: util1.c:1803-1807 - ignore a trailing '~'.
     let had_tilde = fn_len > 1 && name[start + fn_len - 1] == b'~';
     if had_tilde {
         fn_len -= 1;
     }
 
-    // upstream: util1.c:1638-1640 - assume no suffix.
+    // upstream: util1.c:1809-1811 - assume no suffix.
     let mut suffix: &[u8] = &[];
 
-    // upstream: util1.c:1643 - scan back through the significant suffixes.
+    // upstream: util1.c:1814 - scan back through the significant suffixes.
     while fn_len > 1 {
         // upstream: util1.c:1815 - `while (*--s != '.' && s != fn) {}`.
         let mut s = start + fn_len;
@@ -153,16 +153,16 @@ pub(super) fn find_filename_suffix(name: &[u8]) -> &[u8] {
                 break;
             }
         }
-        // upstream: util1.c:1645-1646 - reached the start with no dot.
+        // upstream: util1.c:1816-1817 - reached the start with no dot.
         if s == start {
             break;
         }
-        // upstream: util1.c:1647-1648.
+        // upstream: util1.c:1818-1819.
         let s_off = s - start;
         let s_len = fn_len - s_off;
         fn_len = s_off;
 
-        // upstream: util1.c:1649-1657 - skip insignificant suffixes. The
+        // upstream: util1.c:1820-1828 - skip insignificant suffixes. The
         // strcmp() compares against the NUL-terminated remainder of the full
         // name, so a trailing '~' left in the buffer defeats these matches.
         if s_len == 4 {
@@ -178,13 +178,13 @@ pub(super) fn find_filename_suffix(name: &[u8]) -> &[u8] {
             continue;
         }
 
-        // upstream: util1.c:1658-1661.
+        // upstream: util1.c:1829-1832.
         suffix = &name[s..s + s_len];
         if s_len == 1 {
             break;
         }
 
-        // upstream: util1.c:1662-1668 - an all-digit suffix is not significant;
+        // upstream: util1.c:1833-1839 - an all-digit suffix is not significant;
         // keep scanning for an earlier one.
         let all_digits = name[s + 1..s + s_len].iter().all(u8::is_ascii_digit);
         if !all_digits {
@@ -200,7 +200,7 @@ mod tests {
     use super::*;
 
     /// Hand-traced upstream `fuzzy_distance()` values pin the port to the C
-    /// implementation. Each expected value was derived by tracing util1.c:1683.
+    /// implementation. Each expected value was derived by tracing util1.c:1854.
     #[test]
     fn distance_identical_strings_is_zero() {
         // No edits: matrix diagonal stays at 0.
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn distance_empty_candidate_sums_target_bytes() {
-        // upstream: util1.c:1696-1704. len1 == 0 -> len*UNIT + sum(bytes).
+        // upstream: util1.c:1867-1875. len1 == 0 -> len*UNIT + sum(bytes).
         // "ab" = 97 + 98 = 195, len 2 -> 2*UNIT + 195.
         assert_eq!(fuzzy_distance(b"", b"ab", u32::MAX), 2 * UNIT + 195);
     }

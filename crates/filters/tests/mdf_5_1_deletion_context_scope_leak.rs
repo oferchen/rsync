@@ -7,8 +7,8 @@
 //! root-caused a Deletion-side bug where rules from a sibling `.rsync-filter`
 //! continued to fire after `leave_directory` because the deletion code path
 //! was promoting `pattern/**` descendant matchers across scopes. Upstream
-//! `exclude.c::rule_matches()` (3.4.1, lines 903-960) has NO descendant
-//! matching at all; `exclude.c::check_filter()` (around lines 770-820) walks
+//! `exclude.c::rule_matches()` (lines 1002-1081) has NO descendant
+//! matching at all; `exclude.c::check_filter()` (lines 1187-1214) walks
 //! the active per-scope lists only and falls through to outer scopes when
 //! the active scope is silent on the path. The in-tree wiring lives at
 //! `crates/filters/src/decision.rs` (DecisionContext::Deletion branch) and

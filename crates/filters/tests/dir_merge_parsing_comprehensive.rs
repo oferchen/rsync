@@ -62,7 +62,7 @@ fn dir_merge_exclude_self_modifier() {
     let rules_path = dir.path().join("rules.txt");
 
     // The `e` modifier (FILTRULE_EXCLUDE_SELF) is valid on a dir-merge rule.
-    // upstream: exclude.c:1256-1259 - `e` requires FILTRULE_MERGE_FILE and makes
+    // upstream: exclude.c:1410-1414 - `e` requires FILTRULE_MERGE_FILE and makes
     // the merge file's own name be excluded; exclude-self plumbing is applied at
     // the chain layer, so parsing simply yields a well-formed dir-merge rule.
     fs::write(&rules_path, ":e .rsync-filter\n").unwrap();
@@ -78,7 +78,7 @@ fn exclude_self_modifier_rejected_on_plain_rule() {
     let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
-    // upstream: exclude.c:1256-1258 - `e` on a non-merge rule jumps to `invalid`.
+    // upstream: exclude.c:1410-1414 - `e` on a non-merge rule jumps to `invalid`.
     // oc-rsync previously accepted `-e pattern` silently; pin the rejection.
     fs::write(&rules_path, "-e *.bak\n").unwrap();
 
@@ -119,9 +119,9 @@ fn dir_merge_requires_separator_before_pattern() {
     let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
-    // upstream: exclude.c:1226 - without a separator, the modifier loop reads
+    // upstream: exclude.c:1365-1379 - without a separator, the modifier loop reads
     // `.` (after the `n` modifier) as another modifier character and rejects
-    // it. The rule here is read from a FILE, so 3.5.0 redacts both the text
+    // it. The rule here is read from a FILE, so upstream redacts both the text
     // and the offending character (exclude.c:49-56, :127-131):
     //   invalid modifier in filter rule: <rule from rules.txt line 1>
     // The `'.' at position 2` form is the ARGUMENT arm and is pinned in the
@@ -218,7 +218,7 @@ fn dir_merge_with_leading_whitespace_is_rejected() {
     let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
-    // upstream: exclude.c:1211-1213 - leading whitespace is not a valid rule
+    // upstream: exclude.c:1325-1326,1363 - leading whitespace is not a valid rule
     // prefix and errors; it is never trimmed away.
     fs::write(&rules_path, "   : .rsync-filter\n").unwrap();
 
@@ -231,7 +231,7 @@ fn dir_merge_with_trailing_whitespace_kept() {
     let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
-    // upstream: exclude.c:1313 - the pattern (merge-file name) length is strlen,
+    // upstream: exclude.c:1465 - the pattern (merge-file name) length is strlen,
     // so trailing whitespace stays part of the pattern verbatim.
     fs::write(&rules_path, ": .rsync-filter   \n").unwrap();
 
@@ -245,10 +245,10 @@ fn dir_merge_mixed_case_long_form_rejected() {
     let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
-    // upstream: exclude.c:1069 rule_strcmp is a case-sensitive strncmp, so
+    // upstream: exclude.c:1218-1227 rule_strcmp is a case-sensitive strncmp, so
     // `Dir-Merge` never matches the `dir-merge` keyword. The leading `D` is not
     // a valid short-form prefix either, so upstream errors with RERR_SYNTAX
-    // (exclude.c:1210 "Unknown filter rule"). oc must reject it the same way.
+    // (exclude.c:1363 "Unknown filter rule"). oc must reject it the same way.
     fs::write(&rules_path, "Dir-Merge .rsync-filter\n").unwrap();
 
     assert!(filters::merge::read_rules(&rules_path).is_err());

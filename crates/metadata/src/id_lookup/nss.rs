@@ -80,7 +80,7 @@ pub fn lookup_user_by_name(name: &[u8]) -> LookupResult<RawUid> {
         return Ok(None);
     }
 
-    // upstream: uidlist.c:131-138 - the converter replaces getpwnam outright.
+    // upstream: uidlist.c:154-158 - the converter replaces getpwnam outright.
     if let Ok(name_str) = std::str::from_utf8(name)
         && let Some(outcome) = with_name_converter(|nc| nc.name_to_uid(name_str))
     {
@@ -136,7 +136,7 @@ pub fn lookup_user_by_name(name: &[u8]) -> LookupResult<RawUid> {
 /// Uses `getgrgid_r` for thread-safe lookup. When a name converter is
 /// installed via [`super::set_name_converter`], delegates to it instead.
 pub fn lookup_group_name(gid: RawGid) -> LookupResult<Vec<u8>> {
-    // upstream: uidlist.c:154-163 - the converter replaces getgrgid outright.
+    // upstream: uidlist.c:131-134 - the converter replaces getgrgid outright.
     if let Some(outcome) = with_name_converter(|nc| nc.gid_to_name(gid)) {
         return outcome
             .into_lookup()
@@ -251,9 +251,9 @@ pub fn lookup_group_by_name(name: &[u8]) -> LookupResult<RawGid> {
 /// introduced. Used by the daemon to implement a module `gid = *` directive,
 /// which installs the full group set with `setgroups`.
 ///
-/// upstream: uidlist.c:576 `getallgroups()` - `getpwuid()` then
+/// upstream: uidlist.c:578 `getallgroups()` - `getpwuid()` then
 /// `getgrouplist(pw->pw_name, pw->pw_gid, ...)`; consumed by
-/// clientserver.c:797 `want_all_groups()` for `gid = *`.
+/// clientserver.c:712 `want_all_groups()` (called at clientserver.c:849) for `gid = *`.
 pub fn supplementary_gids_for_uid(uid: RawUid) -> Result<Vec<u32>, io::Error> {
     use nix::unistd::{Uid, User};
 
@@ -289,7 +289,7 @@ pub fn supplementary_gids_for_uid(uid: RawUid) -> Result<Vec<u32>, io::Error> {
 /// Used by the rsync daemon to authorize an `auth users = @group` token: the
 /// token (minus the `@`) is `wildmatch`ed against each returned group name.
 ///
-/// upstream: authenticate.c:283-295 `auth_server()` - `user_to_uid()` then
+/// upstream: authenticate.c:384-392 `auth_server()` - `user_to_uid()` then
 /// `getallgroups()` then `gid_to_group()` for each gid.
 pub fn groups_for_user(username: &str) -> Result<Vec<String>, io::Error> {
     let Some(uid) = lookup_user_by_name(username.as_bytes())? else {

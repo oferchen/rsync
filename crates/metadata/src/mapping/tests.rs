@@ -155,7 +155,7 @@ fn parse_range_source() {
 #[test]
 fn parse_pattern_source() {
     // `root` is universally present, so the name target resolves and the rule
-    // survives parse-time resolution (upstream uidlist.c:547-561).
+    // survives parse-time resolution (upstream uidlist.c:550-564).
     let mapping = NameMapping::parse(MappingKind::User, "test*:root").expect("parse mapping");
     assert_eq!(mapping.len(), 1);
 }
@@ -198,7 +198,7 @@ const UNRESOLVABLE_NAME: &str = "oc_rsync_nonexistent_map_target_00000000";
 
 #[test]
 fn parse_unknown_user_target_drops_rule_non_fatally() {
-    // upstream: uidlist.c:547-561 - an unknown --usermap target name is warned
+    // upstream: uidlist.c:550-564 - an unknown --usermap target name is warned
     // about once and the rule is skipped; parse still succeeds (non-fatal).
     let spec = format!("100:{UNRESOLVABLE_NAME}");
     let mapping = NameMapping::parse(MappingKind::User, &spec).expect("parse must not fail");
@@ -744,7 +744,7 @@ fn parse_target_empty_fails() {
     assert!(error.to_string().contains("No name found after colon"));
 }
 
-// --- Sender-name-keyed resolution (upstream recv_add_id, uidlist.c:255-268) ---
+// --- Sender-name-keyed resolution (upstream recv_add_id, uidlist.c:255-270) ---
 
 #[test]
 fn map_uid_named_matches_sender_name_not_receiver_lookup() {

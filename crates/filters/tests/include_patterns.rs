@@ -5,7 +5,7 @@
 //! first-match-wins semantics, meaning include rules must come before
 //! exclude rules to create exceptions.
 //!
-//! Reference: rsync 3.4.1 exclude.c for pattern matching semantics.
+//! Reference: rsync 3.5.1 exclude.c for pattern matching semantics.
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;

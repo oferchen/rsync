@@ -85,7 +85,7 @@ fn read_rules_recursive_impl(
             // any `!` within the nested rule sequence here so it does not
             // leak into the current file's accumulated rules.
             //
-            // upstream: exclude.c:1393-1402 — FILTRULE_CLEAR_LIST inside a
+            // upstream: exclude.c:1542-1551 - FILTRULE_CLEAR_LIST inside a
             // nested parse_filter_file() invocation only frees the local
             // portion of that file's list before continuing.
             let nested = read_rules_recursive_impl(&merge_path, max_depth, current_depth + 1)?;
@@ -107,7 +107,7 @@ fn read_rules_recursive_impl(
 /// Callers emit the result into the outer scope's rule list so parent
 /// rules remain untouched.
 ///
-/// upstream: exclude.c:1393-1402 — `FILTRULE_CLEAR_LIST` calls
+/// upstream: exclude.c:1542-1551 - `FILTRULE_CLEAR_LIST` calls
 /// `pop_filter_list(listp)` and then sets `listp->head = NULL`, removing
 /// only the local-scope rules between `head` and `tail`. Inherited rules
 /// (which are parent-scope rules in our model) are preserved.

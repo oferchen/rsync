@@ -11,8 +11,8 @@
 //! # Upstream Reference
 //!
 //! - `uidlist.c` - Complete UID/GID mapping implementation
-//! - `uidlist.c:382` - `send_user_name()` / `send_group_name()`
-//! - `uidlist.c:460` - `recv_id_list()`
+//! - `uidlist.c:373-416` - `send_one_name()` / `send_id_lists()`
+//! - `uidlist.c:462` - `recv_id_list()`
 //! - `uidlist.c:add_uid()` / `add_gid()` - Building sender's ID lists
 
 #![cfg(unix)]

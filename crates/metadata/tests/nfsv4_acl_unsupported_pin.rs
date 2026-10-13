@@ -6,11 +6,11 @@
 //! The behavior being pinned mirrors upstream `acls.c`'s two-sided degradation
 //! intent:
 //!
-//! - READ (`get_acl`, acls.c:525-527): an unsupported filesystem is treated as
+//! - READ (`get_acl`, acls.c:748-751): an unsupported filesystem is treated as
 //!   "no ACL present" (upstream fakes a basic ACL) rather than an error. oc's
 //!   `get_nfsv4_acl` mirrors this: an absent / unsupported NFSv4 ACL decodes to
 //!   `None`, silently.
-//! - WRITE (`set_acl` -> `sys_acl_set_file`, acls.c:993-996): a failed apply is
+//! - WRITE (`set_acl` -> `sys_acl_set_file`, acls.c:1352-1355): a failed apply is
 //!   SURFACED via `rsyserr(FERROR_XFER, ...)` and `return -1` - it is never
 //!   silently swallowed as a success. oc's `set_nfsv4_acl` mirrors this: an
 //!   NFSv4 ACL that cannot be applied returns `Err`, so the receiver never

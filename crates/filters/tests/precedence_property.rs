@@ -7,15 +7,15 @@
 //! must preserve, with reference to upstream behaviour:
 //!
 //! - First-match-wins across arbitrary-length, mixed include/exclude
-//!   sequences. Mirrors `exclude.c:check_filter()` (line 1043) which
+//!   sequences. Mirrors `exclude.c:check_filter()` (lines 1187-1214) which
 //!   walks the rule list and returns on the first match.
 //! - Negation (`!` modifier) inverts the match outcome. Mirrors
-//!   `exclude.c:rule_matches()` line 906:
+//!   `exclude.c:rule_matches()` line 1005:
 //!   `int ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1;`
 //! - Double negation is a no-op.
 //! - Sender-only include (`show`) and sender-only exclude (`hide`)
 //!   participate in the transfer-side decision used by [`FilterSet::allows`].
-//!   Long forms map to action chars `S`/`H` per `exclude.c` lines 1151/1171.
+//!   Long forms map to action chars `S`/`H` per `exclude.c` lines 1302/1322.
 //! - Protect/Risk decisions follow the same first-match-wins rule on a
 //!   separate chain, per the second `check_filter()` call site.
 //! - Anchoring and dir-only modifiers compose with both `include` and
@@ -48,11 +48,9 @@ fn simple_pattern() -> impl Strategy<Value = String> {
     ]
 }
 
-// ---------------------------------------------------------------------------
 // Property: first-match-wins across arbitrary-length include/exclude sequences
-// ---------------------------------------------------------------------------
 //
-// upstream: exclude.c:1043 - check_filter() walks the rule list and returns
+// upstream: exclude.c:1187-1214 - check_filter() walks the rule list and returns
 // the first matching include/exclude as the decision.
 
 /// Reference oracle: walks `rules` in order, returning the first
@@ -134,9 +132,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: rule-order monotonicity for first-match-wins
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
@@ -175,11 +171,9 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: negation (`!` / FILTRULE_NEGATE) inverts the match outcome
-// ---------------------------------------------------------------------------
 //
-// upstream: exclude.c:906
+// upstream: exclude.c:1005
 //   int ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1;
 
 proptest! {
@@ -278,11 +272,9 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: show / hide are sender-side include / exclude
-// ---------------------------------------------------------------------------
 //
-// upstream: exclude.c:1151 'hide' -> 'H', 1171 'show' -> 'S'. Both set
+// upstream: exclude.c:1302 'hide' -> 'H', 1322 'show' -> 'S'. Both set
 // FILTRULE_SENDER_SIDE. The sender-side transfer decision (used by
 // `FilterSet::allows`) sees them; the receiver-side deletion decision does
 // not.
@@ -353,9 +345,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: protect / risk first-match-wins on a separate chain
-// ---------------------------------------------------------------------------
 //
 // upstream: exclude.c - protect_filter_list is a distinct rule chain; the
 // same first-match-wins evaluation in check_filter() applies independently.
@@ -418,9 +408,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: anchoring and dir-only modifiers compose with both actions
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
@@ -509,9 +497,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Property: clear (`!`) wipes prior rules; subsequent rules act fresh
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]

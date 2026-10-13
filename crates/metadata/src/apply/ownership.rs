@@ -40,7 +40,8 @@ use std::os::unix::fs::MetadataExt;
 /// When `--keep-dirlinks` is active the user has opted into following
 /// dest-side symlinks-to-dirs, so the sandbox refusal is wrong: fall back to
 /// the path-based `nix` chown (through `AT_FDCWD`) which resolves symlinked
-/// parents like upstream `generator.c:1356`'s `link_stat`.
+/// parents like upstream's `gen_entry_stat(..., keep_dirlinks && is_dir)`
+/// (generator.c:1745).
 ///
 /// Both branches perform the ownership change through the libc
 /// `chown`/`lchown`/`fchownat` symbol rather than a raw syscall. This is
@@ -50,8 +51,9 @@ use std::os::unix::fs::MetadataExt;
 /// returns `EPERM`, dropping every file to `0:0`. Only the parent-directory
 /// walk uses `openat2`, which fakeroot ignores because it tracks ownership per
 /// inode on the chown call, not on directory opens.
-/// upstream: syscall.c:do_lchown()/do_chown() call the lchown(2)/chown(2) libc
-/// symbols; rsync 3.4.3+ resolves them under the module dirfd (CVE-2026-29518).
+/// upstream: syscall.c:do_lchown() calls the lchown(2) libc symbol (chown(2)
+/// without `HAVE_LCHOWN`) and do_lchown_at() calls fchownat(2); rsync 3.4.3+
+/// resolves them under the module dirfd (CVE-2026-29518).
 ///
 /// `parent_dirfd` optionally carries the destination's parent directory,
 /// already resolved through the SAME `secure_open_dir` walk `secure_chown_at`
@@ -106,7 +108,7 @@ fn chown_path(
 /// Names a failed ownership change after what it altered, as upstream does:
 /// `chown` when the owner changes, `chgrp` when only the group does.
 ///
-/// upstream: rsync.c:682-684 - `change_uid ? "chown" : "chgrp"`, where
+/// upstream: rsync.c:685-687 - `change_uid ? "chown" : "chgrp"`, where
 /// `change_uid` compares the wanted owner with the current one (rsync.c:655).
 #[cfg(unix)]
 fn ownership_context(owner: Option<unix_fs::Uid>, current: Option<&fs::Metadata>) -> &'static str {
@@ -178,7 +180,7 @@ const IMPOSSIBLE_ID: u32 = u32::MAX;
 ///
 /// Kept pure so the exact wording can be pinned in a unit test. The path is
 /// quoted like upstream `full_fname`, and `kind` is `"uid"` or `"gid"`.
-/// upstream: rsync.c:691-694 - "uid 4294967295 (-1) is impossible to set on %s".
+/// upstream: rsync.c:690-693 - "uid 4294967295 (-1) is impossible to set on %s".
 #[cfg(unix)]
 fn impossible_id_message(kind: &str, destination: &Path) -> String {
     format!(
@@ -206,7 +208,7 @@ fn id_is_impossible(resolved: Option<u32>, pre_chown_id: Option<u32>) -> bool {
 /// Returns `true` when the pre-chown mode carried setuid/setgid, so the caller
 /// must re-stat: `chown` clears those bits on many systems and the later mode
 /// compare must observe the post-chown state to restore them.
-/// upstream: rsync.c:564-567 - `if (sxp->st.st_mode & (S_ISUID | S_ISGID)) link_stat(...)`.
+/// upstream: rsync.c:697-704 - `if (sxp->st.st_mode & (S_ISUID | S_ISGID)) link_stat(...)`.
 #[cfg(unix)]
 fn suid_sgid_needs_restat(pre_chown_mode: Option<u32>) -> bool {
     pre_chown_mode
@@ -216,13 +218,13 @@ fn suid_sgid_needs_restat(pre_chown_mode: Option<u32>) -> bool {
 
 /// Performs upstream's post-`do_lchown` bookkeeping from `set_file_attrs()`.
 ///
-/// After the chown succeeds upstream does two things (rsync.c:558-568): warns
+/// After the chown succeeds upstream does two things (rsync.c:690-704): warns
 /// when a resolved uid/gid is `(uid_t)-1`, and re-stats the destination when it
 /// carried setuid/setgid bits. `pre_chown` is the destination's stat captured
 /// before the chown. Returns `true` when the caller should refresh its cached
 /// destination stat before the permission comparison so the dropped
 /// setuid/setgid bits get re-applied.
-/// upstream: rsync.c:558-568 set_file_attrs() - impossible-id warning + suid/sgid re-stat.
+/// upstream: rsync.c:690-704 set_file_attrs() - impossible-id warning + suid/sgid re-stat.
 #[cfg(unix)]
 fn post_chown_bookkeeping(
     destination: &Path,
@@ -280,9 +282,9 @@ pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
 
 /// Gates a resolved owner UID against process privilege, whether it came from
 /// the *preserve* path (`-o`/`-a`) or an explicit `--chown`/`--usermap`
-/// override. Mirrors upstream `change_uid = am_root && ...` (rsync.c:526):
+/// override. Mirrors upstream `change_uid = am_root && ...` (rsync.c:655):
 /// `preserve_uid` is set identically by `-o`, `--chown`, and `--usermap`
-/// (options.c:1799,1817,1839), and upstream's gate makes no distinction
+/// (options.c:673,1906,1946), and upstream's gate makes no distinction
 /// between them - a non-root process never sets a file's owner uid, so the
 /// chown is skipped rather than attempted and failed. Before this gate
 /// oc-rsync attempted it and surfaced the resulting `EPERM` as a fatal
@@ -301,7 +303,7 @@ pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_f
 /// the *preserve* path (`-g`/`-a`) or an explicit `--chown`/`--groupmap`
 /// override. Mirrors upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284), which
 /// is set on the mapped id regardless of whether it was reached via
-/// `preserve_gid`, `--chown`, or `--groupmap` (options.c:1815,1838,1854): a
+/// `preserve_gid`, `--chown`, or `--groupmap` (options.c:676,1922,1962): a
 /// non-root process may only set a group it belongs to, so a non-member group
 /// is skipped rather than attempted and failed.
 #[cfg(unix)]
@@ -317,8 +319,8 @@ pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_f
 /// upstream: `uidlist.c:284` - `flag = idlist_ptr == &gidlist && !am_root
 /// && !is_in_group(id2) ? FLAG_SKIP_GROUP : 0`. The flag is the negation of
 /// this predicate, and its consumers test `!(file->flags & FLAG_SKIP_GROUP)`:
-/// the group chown itself (`rsync.c:527`), the itemize `g` column
-/// (`generator.c:434`, `:555`), and the `-vv` name line (`log.c:575`). A
+/// the group chown itself (`rsync.c:656`), the itemize `g` column
+/// (`generator.c:440`, `:561`), and the `-vv` name line (`log.c:607`). A
 /// non-root process that does not belong to `gid` can never set it, so
 /// upstream neither attempts the chown nor reports the group as changed.
 ///
@@ -349,7 +351,7 @@ pub fn group_is_settable(gid: u32) -> bool {
 /// `getpwuid(raw)` - which is wrong when the raw sender id is absent or bound to
 /// a different name locally. Without an inline name (local copy) the raw id is
 /// round-tripped through the receiver's database exactly as before.
-/// upstream: flist.c:1139 recv_user_name / uidlist.c:307 match_uid
+/// upstream: flist.c:1230 recv_user_name / uidlist.c:297 match_uid
 #[cfg(unix)]
 fn resolve_owner_uid(
     entry: &protocol::flist::FileEntry,
@@ -393,7 +395,7 @@ fn resolve_owner_uid(
 /// The group counterpart of [`resolve_owner_uid`]: `--groupmap` first, then the
 /// sender-transmitted group name (INC_RECURSE `XMIT_GROUP_NAME_FOLLOWS`) resolved
 /// against the receiver's group database.
-/// upstream: flist.c:1151 recv_group_name / uidlist.c:317 match_gid
+/// upstream: flist.c:1242 recv_group_name / uidlist.c:317 match_gid
 #[cfg(unix)]
 fn resolve_group_gid(
     entry: &protocol::flist::FileEntry,
@@ -516,7 +518,7 @@ pub(super) fn ownership_matches(
 ///
 /// Returns `true` when the destination carried setuid/setgid bits that the
 /// chown may have cleared, so the caller must re-stat before the permission
-/// comparison (upstream rsync.c:564-567). Returns `false` when no chown ran.
+/// comparison (upstream rsync.c:697-704). Returns `false` when no chown ran.
 /// upstream: rsync.c:set_file_attrs() - chownat with conditional AT_SYMLINK_NOFOLLOW
 pub(super) fn set_owner_like(
     metadata: &fs::Metadata,
@@ -555,7 +557,7 @@ pub(super) fn set_owner_like(
             return Ok(false);
         }
 
-        // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
+        // upstream: rsync.c:664-675 - DEBUG_GTE(OWN, 1) fires before do_lchown.
         trace_chown_change(destination, owner, group, existing);
 
         chown_path(
@@ -568,7 +570,7 @@ pub(super) fn set_owner_like(
         )
         .map_err(|error| error.with_context(ownership_context(owner, existing)))?;
 
-        // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
+        // upstream: rsync.c:690-704 - impossible-id warning + suid/sgid re-stat.
         Ok(post_chown_bookkeeping(destination, owner, group, existing))
     }
 
@@ -623,13 +625,13 @@ pub(super) fn set_owner_like_with_fd(
         return Ok(false);
     }
 
-    // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
+    // upstream: rsync.c:664-675 - DEBUG_GTE(OWN, 1) fires before do_lchown.
     trace_chown_change(destination, owner, group, existing);
 
     chown_fd(fd, destination, owner, group)
         .map_err(|error| error.with_context(ownership_context(owner, existing)))?;
 
-    // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
+    // upstream: rsync.c:690-704 - impossible-id warning + suid/sgid re-stat.
     Ok(post_chown_bookkeeping(destination, owner, group, existing))
 }
 
@@ -641,7 +643,7 @@ pub(super) fn set_owner_like_with_fd(
 ///
 /// Returns `true` when the destination carried setuid/setgid bits that the
 /// chown may have cleared, so the caller must re-stat before applying
-/// permissions (upstream rsync.c:564-567). Returns `false` when no chown ran.
+/// permissions (upstream rsync.c:697-704). Returns `false` when no chown ran.
 /// upstream: rsync.c:set_file_attrs() - chown path for receiver-side file entries
 #[cfg(unix)]
 pub(super) fn apply_ownership_from_entry(
@@ -713,7 +715,7 @@ pub(super) fn apply_ownership_from_entry(
         };
 
         if needs_chown {
-            // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
+            // upstream: rsync.c:664-675 - DEBUG_GTE(OWN, 1) fires before do_lchown.
             trace_chown_change(destination, owner, group, cached_meta);
 
             chown_path(
@@ -726,7 +728,7 @@ pub(super) fn apply_ownership_from_entry(
             )
             .map_err(|error| error.with_context(ownership_context(owner, cached_meta)))?;
 
-            // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
+            // upstream: rsync.c:690-704 - impossible-id warning + suid/sgid re-stat.
             return Ok(post_chown_bookkeeping(
                 destination,
                 owner,
@@ -813,7 +815,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
         )
         .map_err(|error| error.with_context(ownership_context(owner, cached_meta)))?;
 
-        // upstream: rsync.c:558-561 - impossible-id warning also fires for
+        // upstream: rsync.c:690-693 - impossible-id warning also fires for
         // symlink chowns. The suid/sgid re-stat is irrelevant here because
         // symlinks are never chmod'd, so the returned signal is discarded.
         let _ = post_chown_bookkeeping(destination, owner, group, cached_meta);
@@ -859,9 +861,9 @@ fn apply_ownership_via_fake_super(
         rdev,
     };
 
-    // upstream: xattrs.c:read_stat_xattr() consults the existing xattr so an
-    // unchanged stat skips the rewrite. Mirrors `set_file_attrs()`'s "no-op
-    // when current state already matches" fast path.
+    // upstream: xattrs.c:set_stat_xattr() compares the existing xattr
+    // (xattrs.c:1338-1339) so an unchanged stat skips the rewrite. Mirrors
+    // `set_file_attrs()`'s "no-op when current state already matches" fast path.
     if let Ok(Some(existing)) = load_fake_super(destination)
         && existing == stat
     {
@@ -936,7 +938,7 @@ mod own_debug_tests {
     //! These exercise the trace path without performing a real `chownat`
     //! (which would require root). The helper resolves the uid/gid pair
     //! and decides whether each side changed against `existing`; the
-    //! pinning is on the upstream wire shapes from `rsync.c:535-545`.
+    //! pinning is on the upstream wire shapes from `rsync.c:664-675`.
 
     use super::*;
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
@@ -971,7 +973,7 @@ mod own_debug_tests {
 
     #[test]
     fn level1_set_uid_emits_with_destination_path() {
-        // upstream: rsync.c:667-670 - "set uid of %s from %u to %u".
+        // upstream: rsync.c:666-668 - "set uid of %s from %u to %u".
         init_at(1);
 
         let tmp = test_support::create_tempdir();
@@ -998,7 +1000,7 @@ mod own_debug_tests {
 
     #[test]
     fn level1_set_gid_emits_with_destination_path() {
-        // upstream: rsync.c:672-676 - "set gid of %s from %u to %u".
+        // upstream: rsync.c:671-673 - "set gid of %s from %u to %u".
         init_at(1);
 
         let tmp = test_support::create_tempdir();
@@ -1062,7 +1064,7 @@ mod own_debug_tests {
     #[test]
     #[cfg(unix)]
     fn resolves_inline_owner_name_to_local_id() {
-        // upstream: flist.c:1139 recv_user_name - the receiver resolves the
+        // upstream: flist.c:1230 recv_user_name - the receiver resolves the
         // SENDER-transmitted user name to a LOCAL id so ownership follows the
         // NAME across hosts with differing id namespaces. A raw sender id that
         // does not exist locally must not leak through as the file owner.
@@ -1187,7 +1189,7 @@ mod own_debug_tests {
 #[cfg(all(test, unix))]
 mod post_chown_tests {
     //! Decision-path pins for the post-`do_lchown` bookkeeping upstream runs in
-    //! `set_file_attrs()` (rsync.c:558-568). These exercise the pure predicates
+    //! `set_file_attrs()` (rsync.c:690-704). These exercise the pure predicates
     //! without needing root so the setuid re-stat and impossible-id warning
     //! logic is covered on CI as well as under a privileged run.
 
@@ -1196,7 +1198,7 @@ mod post_chown_tests {
 
     #[test]
     fn setuid_or_setgid_mode_forces_restat() {
-        // upstream: rsync.c:564-567 - a destination carrying setuid/setgid must
+        // upstream: rsync.c:697-704 - a destination carrying setuid/setgid must
         // be re-stat'd after chown because the chown clears those bits; the mode
         // apply then restores them. Without the re-stat a `-p` transfer of a
         // setuid binary whose owner changes would silently drop the setuid bit,
@@ -1227,7 +1229,7 @@ mod post_chown_tests {
 
     #[test]
     fn resolved_minus_one_is_impossible_unless_dest_already_minus_one() {
-        // upstream: rsync.c:558-560 - chown treats (uid_t)-1 as "no change", so
+        // upstream: rsync.c:690-691 - chown treats (uid_t)-1 as "no change", so
         // an owner that resolves to -1 can never be applied and upstream warns,
         // but only when the destination is not already owned by -1.
         assert!(id_is_impossible(Some(u32::MAX), Some(1000)));
@@ -1248,7 +1250,7 @@ mod post_chown_tests {
 
     #[test]
     fn warning_wording_matches_upstream_verbatim() {
-        // upstream: rsync.c:558-561 - "uid 4294967295 (-1) is impossible to set
+        // upstream: rsync.c:690-691 - "uid 4294967295 (-1) is impossible to set
         // on %s\n" with the path quoted by full_fname.
         assert_eq!(
             impossible_id_message("uid", Path::new("/tmp/x")),

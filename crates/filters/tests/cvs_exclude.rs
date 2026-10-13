@@ -5,7 +5,7 @@
 //! editor backup files. The patterns match upstream rsync's default CVS
 //! exclusion list.
 //!
-//! Reference: rsync 3.4.1 options.c and exclude.c for CVS exclusion handling.
+//! Reference: rsync 3.5.1 options.c and exclude.c for CVS exclusion handling.
 
 use filters::{FilterRule, FilterSet, cvs_default_patterns, cvs_exclusion_rules};
 use std::path::Path;
@@ -311,7 +311,7 @@ fn perishable_cvs_rules_transfer_vs_deletion() {
     assert!(!set.allows(Path::new("file.bak"), false));
 
     // Deletion: the top-level scan runs with `ignore_perishable` unset
-    // (upstream delete.c:147), so perishable CVS rules protect a matching
+    // (upstream delete.c:208), so perishable CVS rules protect a matching
     // destination entry from `--delete` exactly like `--cvs-exclude --delete`
     // preserves a pre-existing `*.o` at the transfer root.
     assert!(!set.allows_deletion(Path::new("main.o"), false));

@@ -2,15 +2,13 @@
 //! path traversal patterns, deep nesting, case sensitivity, anchored vs
 //! unanchored rule interactions, and directory-only vs file-only semantics.
 //!
-//! Reference: rsync 3.4.1 exclude.c for filter evaluation semantics.
+//! Reference: rsync 3.5.1 exclude.c for filter evaluation semantics.
 
 use std::path::Path;
 
 use filters::{FilterChain, FilterRule, FilterSet};
 
-// ---------------------------------------------------------------------------
 // 1. Empty filter chain behavior
-// ---------------------------------------------------------------------------
 
 /// An empty chain (no global rules, no scopes) allows every path.
 #[test]
@@ -62,9 +60,7 @@ fn multiple_empty_scopes_allow_all() {
     assert!(chain.is_empty());
 }
 
-// ---------------------------------------------------------------------------
 // 2. Special characters in patterns
-// ---------------------------------------------------------------------------
 
 /// Patterns with spaces match filenames containing spaces.
 #[test]
@@ -120,9 +116,7 @@ fn pattern_with_consecutive_dots() {
     assert!(chain.allows(Path::new("file.bak"), false));
 }
 
-// ---------------------------------------------------------------------------
 // 3. CVE-related path traversal patterns
-// ---------------------------------------------------------------------------
 
 /// A filter excluding `../` patterns does not affect normal paths.
 #[test]
@@ -168,9 +162,7 @@ fn single_dot_pattern() {
     assert!(chain.allows(Path::new("a"), false));
 }
 
-// ---------------------------------------------------------------------------
 // 4. Deeply nested path matching
-// ---------------------------------------------------------------------------
 
 /// Double-star patterns match paths at arbitrary depth.
 #[test]
@@ -230,9 +222,7 @@ fn intermediate_double_star_pattern() {
     assert!(chain.allows(Path::new("src/foo/bar.snap"), false));
 }
 
-// ---------------------------------------------------------------------------
 // 5. Case sensitivity edge cases
-// ---------------------------------------------------------------------------
 
 /// Pattern matching is case-sensitive by default (upstream rsync behavior).
 #[test]
@@ -279,9 +269,7 @@ fn mixed_case_extension_pattern() {
     assert!(chain.allows(Path::new("photo.JPG"), false));
 }
 
-// ---------------------------------------------------------------------------
 // 6. Anchored vs unanchored rule interactions
-// ---------------------------------------------------------------------------
 
 /// An anchored exclude followed by an unanchored include - first-match-wins.
 #[test]
@@ -325,7 +313,7 @@ fn anchored_include_before_unanchored_exclude() {
 
 /// Patterns containing internal slashes use tail-matching, not anchoring.
 ///
-/// upstream: exclude.c:rule_matches() lines 947-951 - a pattern with internal
+/// upstream: exclude.c:rule_matches() lines 1046-1050 - a pattern with internal
 /// slashes but no leading `/` matches the last N+1 path components.
 #[test]
 fn internal_slash_tail_matches() {
@@ -356,9 +344,7 @@ fn scoped_exclude_overrides_global_anchored_include() {
     assert!(chain.allows(Path::new("data"), false));
 }
 
-// ---------------------------------------------------------------------------
 // 7. Directory-only vs file-only filter rules
-// ---------------------------------------------------------------------------
 
 /// A directory-only exclude (trailing `/`) does not match a file.
 #[test]
@@ -463,9 +449,7 @@ fn wildcard_directory_only_exclude() {
     assert!(chain.allows(Path::new("__pycache__"), false));
 }
 
-// ---------------------------------------------------------------------------
 // Interaction: scoped rules with directory-only and anchored patterns combined
-// ---------------------------------------------------------------------------
 
 /// Scoped anchored directory-only exclude is removed when scope is popped.
 #[test]

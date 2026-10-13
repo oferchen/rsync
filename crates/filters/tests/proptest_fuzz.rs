@@ -175,7 +175,7 @@ proptest! {
     }
 
     /// Blank inputs (empty or newline-only) produce no rules. upstream:
-    /// exclude.c:1514 parse_filter_file skips only truly empty lines.
+    /// exclude.c:1805-1806 parse_filter_file skips only truly empty lines.
     #[test]
     fn parse_rules_blank_lines_produce_no_rules(input in "\n*") {
         let result = parse_rules(&input, Path::new("<fuzz>"));
@@ -742,7 +742,7 @@ fn parse_rules_windows_line_endings() {
 
 #[test]
 fn parse_rules_trailing_whitespace() {
-    // upstream: exclude.c:1313 - trailing whitespace is part of the pattern
+    // upstream: exclude.c:1465 - trailing whitespace is part of the pattern
     // (strlen length), so the rules parse and keep the trailing spaces verbatim.
     let content = "- *.bak   \n+ *.txt   \n";
     let rules = parse_rules(content, Path::new("<test>")).unwrap();
@@ -753,7 +753,7 @@ fn parse_rules_trailing_whitespace() {
 
 #[test]
 fn parse_rules_leading_whitespace_is_rejected() {
-    // upstream: exclude.c:1211-1213 - leading whitespace is not a valid rule
+    // upstream: exclude.c:1325-1326,1363 - leading whitespace is not a valid rule
     // prefix and errors; it must not be trimmed away.
     let result = parse_rules("  - *.bak\n", Path::new("<test>"));
     assert!(result.is_err());
@@ -799,7 +799,7 @@ fn cvs_exclusion_rules_are_all_valid() {
     assert!(result.is_ok());
 }
 
-// upstream: exclude.c:1279-1283 - `w` (word-split) is valid only on a
+// upstream: exclude.c:1433-1437 - `w` (word-split) is valid only on a
 // merge-file rule. On an exclude rule upstream reports "invalid modifier
 // 'w'"; oc-rsync mirrors that rejection regardless of the trailing pattern.
 #[test]

@@ -69,7 +69,7 @@ fn distinct_basis(n_blocks: usize) -> Vec<u8> {
 /// The compact key governs the bucket array only up to `2^16` slots; past
 /// that the table grows on upstream's rule instead of pinning at the cap.
 ///
-/// upstream: match.c:84-88.
+/// upstream: match.c:86-88.
 #[test]
 fn bucket_size_follows_upstream_past_the_compact_key() {
     // 70 000 blocks: upstream's `(70000/8) * 10 + 11` = 87 511 exceeds

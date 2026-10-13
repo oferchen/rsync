@@ -11,7 +11,7 @@ use proptest::prelude::*;
 
 /// Naive reference for the pattern subset the generator below emits:
 /// literal bytes, `?` (one byte, not `/`), `*` (any run without `/`) and
-/// `**` (any run including `/`). upstream: lib/wildmatch.c:76-119.
+/// `**` (any run including `/`). upstream: lib/wildmatch.c:100-136.
 fn reference_match(pattern: &[u8], text: &[u8]) -> bool {
     match pattern.first() {
         None => text.is_empty(),

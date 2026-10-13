@@ -6,6 +6,9 @@
 //! these legacy algorithms.
 //!
 //! Availability is detected once via `OnceLock` and cached for the process lifetime.
+//!
+//! upstream: `checksum.c:csum_evp_md()` likewise routes MD4/MD5 through OpenSSL EVP when
+//! built with `USE_OPENSSL`, falling back to built-in code if EVP init fails.
 
 #![allow(clippy::module_name_repetitions)]
 

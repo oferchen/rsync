@@ -5,7 +5,7 @@
 //! matching destination paths from being removed, while risk rules undo
 //! protection. Both types operate independently of include/exclude decisions.
 //!
-//! Reference: rsync 3.4.1 exclude.c lines 1180-1207 for protect/risk handling.
+//! Reference: rsync 3.5.1 exclude.c lines 1352-1358 for protect/risk handling.
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;

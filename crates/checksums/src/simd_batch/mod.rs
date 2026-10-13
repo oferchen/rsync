@@ -11,6 +11,10 @@
 //! - **NEON**: 4 parallel lanes (aarch64)
 //! - **WASM SIMD**: 4 parallel lanes (wasm32)
 //! - **Scalar**: Fallback for other platforms
+//!
+//! Deviation from upstream: upstream hashes one block at a time in
+//! `checksum.c:get_checksum2()`; multi-buffer batching is an oc-only throughput
+//! design that produces the same digests.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

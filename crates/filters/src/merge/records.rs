@@ -37,7 +37,7 @@
 /// record; a trailing terminator does not manufacture an empty one.
 ///
 /// The records are otherwise verbatim - nothing is trimmed, so trailing
-/// whitespace stays part of the pattern (`exclude.c:1465`, `len = strlen(s)`).
+/// whitespace stays part of the pattern (`exclude.c:1465`, `len = strlen((char*)s)`).
 /// Whether a record then carries a rule is [`super::filter_file_line_is_rule`].
 ///
 /// NUL-delimited input (`--from0`, upstream's `eol_nulls`) is a different

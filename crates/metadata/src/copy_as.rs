@@ -276,7 +276,8 @@ pub fn become_copy_as_user(ids: &CopyAsIds) -> io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:do_as_root()` - POSIX equivalent that this routine mirrors.
+/// - `main.c:become_copy_as_user()` - the POSIX routine this mirrors; upstream
+///   has no Windows counterpart.
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn become_copy_as_user(_ids: &CopyAsIds) -> io::Result<()> {

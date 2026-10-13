@@ -43,7 +43,7 @@ where
             return Ok((D::digest(&data), size));
         }
 
-        // upstream: checksum.c:402 file_checksum() uses map_file() (mmap) for
+        // upstream: checksum.c:432 file_checksum() uses map_file() (mmap) for
         // zero-copy hashing. On Windows the legacy mmap_reader_stub slurps the
         // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
         // below so peak RSS stays bounded by the chunk size, not the file size.
@@ -55,7 +55,8 @@ where
             return Ok((D::digest(mmap.as_slice()), size));
         }
 
-        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe.
+        // upstream: checksum.c:file_checksum() reads a known length (CHUNK_SIZE
+        // loop plus remainder), so a pre-sized read loop avoids a trailing EOF probe.
         // Windows shadows `file` with the bounded-RSS WindowsChunkedReader; the
         // Unix streaming fallback continues to use the std::fs::File opened
         // above (mmap unavailable on NFS/FUSE/procfs).
@@ -243,7 +244,7 @@ where
             return Ok((D::digest_with_seed(seed, &data), size));
         }
 
-        // upstream: checksum.c:402 file_checksum() uses map_file() (mmap) for
+        // upstream: checksum.c:432 file_checksum() uses map_file() (mmap) for
         // zero-copy hashing. On Windows the legacy mmap_reader_stub slurps the
         // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
         // below so peak RSS stays bounded by the chunk size, not the file size.
@@ -255,7 +256,8 @@ where
             return Ok((D::digest_with_seed(seed, mmap.as_slice()), size));
         }
 
-        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe.
+        // upstream: checksum.c:file_checksum() reads a known length (CHUNK_SIZE
+        // loop plus remainder), so a pre-sized read loop avoids a trailing EOF probe.
         // Windows shadows `file` with the bounded-RSS WindowsChunkedReader; the
         // Unix streaming fallback continues to use the std::fs::File opened
         // above (mmap unavailable on NFS/FUSE/procfs).

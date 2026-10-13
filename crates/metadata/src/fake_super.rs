@@ -30,7 +30,7 @@ use std::path::Path;
 /// platforms use a flat xattr namespace, so upstream stores the attribute under
 /// bare `rsync.` there. Using the Linux name unconditionally would write an
 /// attribute literally called `user.rsync.%stat` on macOS/BSD and break
-/// fake-super interop and round-trip. upstream: xattrs.c:64-70 RSYNC_PREFIX
+/// fake-super interop and round-trip. upstream: xattrs.c:66-72 RSYNC_PREFIX
 /// (`HAVE_LINUX_XATTRS`).
 #[cfg(target_os = "linux")]
 pub const FAKE_SUPER_XATTR: &str = "user.rsync.%stat";
@@ -41,7 +41,7 @@ pub const FAKE_SUPER_XATTR: &str = "rsync.%stat";
 /// The xattr name used to store a fake-super access ACL.
 ///
 /// Follows the same platform-prefix rule as [`FAKE_SUPER_XATTR`].
-/// upstream: `xattrs.c:75-76` `XACC_ACL_ATTR` (`RSYNC_PREFIX "%aacl"`).
+/// upstream: `xattrs.c:77-78` `XACC_ACL_ATTR` (`RSYNC_PREFIX "%aacl"`).
 #[cfg(target_os = "linux")]
 pub const FAKE_SUPER_ACCESS_ACL_XATTR: &str = "user.rsync.%aacl";
 /// The fake-super access-ACL xattr name on non-Linux platforms.
@@ -51,7 +51,7 @@ pub const FAKE_SUPER_ACCESS_ACL_XATTR: &str = "rsync.%aacl";
 /// The xattr name used to store a fake-super default (directory) ACL.
 ///
 /// Follows the same platform-prefix rule as [`FAKE_SUPER_XATTR`].
-/// upstream: `xattrs.c:77-78` `XDEF_ACL_ATTR` (`RSYNC_PREFIX "%dacl"`).
+/// upstream: `xattrs.c:79-80` `XDEF_ACL_ATTR` (`RSYNC_PREFIX "%dacl"`).
 #[cfg(target_os = "linux")]
 pub const FAKE_SUPER_DEFAULT_ACL_XATTR: &str = "user.rsync.%dacl";
 /// The fake-super default-ACL xattr name on non-Linux platforms.
@@ -267,7 +267,7 @@ pub fn load_fake_super(path: &Path) -> io::Result<Option<FakeSuperStat>> {
 /// BSD/macOS (on Linux the two are the same errno). Either way the attribute is
 /// already gone, so the removal is a benign no-op. Mirrors the tolerant handling
 /// in `xattr_unix.rs` and upstream, which only removes `%stat` when it exists
-/// (upstream: xattrs.c:1229 `if (xst.st_mode && sys_lremovexattr(...))`).
+/// (upstream: xattrs.c:1328-1329 `if (xst.st_mode && sys_lremovexattr(...))`).
 #[cfg(all(unix, feature = "xattr"))]
 fn is_absent_xattr(err: &io::Error) -> bool {
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -546,7 +546,7 @@ mod tests {
     fn fake_super_xattr_name_matches_platform_namespace() {
         // Linux xattrs need the `user.` prefix; other platforms use a flat
         // namespace and store the attribute under bare `rsync.`.
-        // upstream: xattrs.c:64-70 RSYNC_PREFIX.
+        // upstream: xattrs.c:66-72 RSYNC_PREFIX.
         #[cfg(target_os = "linux")]
         assert_eq!(FAKE_SUPER_XATTR, "user.rsync.%stat");
         #[cfg(not(target_os = "linux"))]
@@ -729,7 +729,7 @@ mod tests {
     /// Removing fake-super metadata from a file that never had a `%stat` xattr
     /// must succeed. The removexattr syscall reports `ENODATA` (Linux) or
     /// `ENOATTR` (BSD/macOS), which must be treated as a benign no-op rather
-    /// than a hard error (upstream: xattrs.c:1229 only removes when present).
+    /// than a hard error (upstream: xattrs.c:1328-1329 only removes when present).
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn remove_fake_super_absent_xattr_is_ok() {
@@ -757,7 +757,7 @@ mod tests {
     }
 
     // Verifies the `%aacl`/`%dacl` xattr names follow the same platform-prefix
-    // rule as `%stat` (upstream: xattrs.c:64-78 RSYNC_PREFIX + XACC_ACL_ATTR /
+    // rule as `%stat` (upstream: xattrs.c:66-80 RSYNC_PREFIX + XACC_ACL_ATTR /
     // XDEF_ACL_ATTR).
     #[test]
     fn fake_super_acl_xattr_names_match_platform_namespace() {
@@ -897,7 +897,7 @@ mod tests {
 
     // A corrupt xattr value (bad length) must surface as an error, not a
     // silent `None`, mirroring upstream's `get_rsync_acl()` error path
-    // (acls.c:483-486).
+    // (acls.c:606-611).
     #[cfg(all(unix, feature = "xattr"))]
     #[test]
     fn load_fake_super_acl_rejects_corrupt_value() {

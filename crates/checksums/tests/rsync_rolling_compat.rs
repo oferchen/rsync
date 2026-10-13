@@ -1,7 +1,7 @@
 //! Upstream rsync rolling checksum compatibility tests.
 //!
 //! This module verifies that the RollingChecksum implementation produces
-//! identical output to upstream rsync 3.4.1's rolling checksum algorithm.
+//! identical output to upstream rsync 3.5.1's rolling checksum algorithm.
 //!
 //! # Algorithm Reference
 //!

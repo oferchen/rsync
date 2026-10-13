@@ -64,7 +64,10 @@ pub struct FilterRule {
     pub(crate) perishable: bool,
     pub(crate) xattr_only: bool,
     pub(crate) negate: bool,
-    /// `e` modifier: forces rule to act as exclude regardless of action.
+    /// `e` modifier, stored and round-tripped only; no matcher reads it.
+    /// Upstream's `e` is `FILTRULE_EXCLUDE_SELF` on a merge rule
+    /// (`exclude.c:1410-1414`), applied at parse time as an exclude of the merge
+    /// file's basename (`exclude.c:1558-1572`).
     pub(crate) exclude_only: bool,
     /// `n` modifier: on merge rules, do not inherit parent-directory rules.
     pub(crate) no_inherit: bool,
@@ -72,41 +75,42 @@ pub struct FilterRule {
     /// CVS-style ignores (whitespace-split, no comments, no prefixes,
     /// no inheritance).
     ///
-    /// upstream: exclude.c add_rule() ':C' modifier — CVS-ignore semantics
-    /// (sets `FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
+    /// upstream: exclude.c:1402-1409 parse_rule_tok() `C` modifier - CVS-ignore
+    /// semantics (sets `FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
     /// | FILTRULE_CVS_IGNORE`).
     pub(crate) cvs_mode: bool,
     /// `/` modifier on a merge / dir-merge rule: FILTRULE_ABS_PATH. Anchors the
     /// merged rules to the transfer root rather than the merge file's directory.
     ///
-    /// upstream: exclude.c:1238-1240 - `case '/': rule->rflags |= FILTRULE_ABS_PATH;`
+    /// upstream: exclude.c:1392-1394 - `case '/': rule->rflags |= FILTRULE_ABS_PATH;`
     pub(crate) abs_path: bool,
     /// `w` modifier on a merge / dir-merge rule: FILTRULE_WORD_SPLIT. The
     /// referenced file is tokenised on any whitespace (space, tab, newline)
     /// with each token parsed as its own rule, rather than one rule per line.
     ///
-    /// upstream: exclude.c:1279-1283 - `case 'w': rule->rflags |= FILTRULE_WORD_SPLIT;`
+    /// upstream: exclude.c:1433-1437 - `case 'w': rule->rflags |= FILTRULE_WORD_SPLIT;`
     pub(crate) word_split: bool,
     /// `-`/`+` modifier on a merge / dir-merge rule: FILTRULE_NO_PREFIXES.
     /// Consumes the merged file's lines as literal patterns instead of running
     /// them through the prefix dispatch.
     ///
     /// upstream: exclude.c:1381-1391 - the merge-file modifier `case '-'`/
-    /// `case '+'`, not the rule-prefix cases of the same letters at 1189-1193.
+    /// `case '+'`, not the rule-prefix cases of the same letters at 1340-1344.
     pub(crate) no_prefixes: bool,
     /// Pairs with [`Self::no_prefixes`] to select the `+` (include) variant.
     /// When both are set, literal lines become include rules; the `-` variant
     /// leaves this false and lines become exclude rules.
     ///
-    /// upstream: exclude.c:1232-1237 - the merge-file `+` modifier sets
+    /// upstream: exclude.c:1386-1391 - the merge-file `+` modifier sets
     /// `FILTRULE_NO_PREFIXES | FILTRULE_INCLUDE`.
     pub(crate) no_prefixes_include: bool,
     /// Where this rule's text came from, retained so diagnostics raised after
     /// the parse can still decide whether the text may be shown.
     ///
-    /// upstream: the `FILTRULE_FROM_FILE` bit plus the retained `elt` location
-    /// (`exclude.c:259-275`). It is carried on the rule rather than held in the
-    /// parser because `report_filter_result` (`exclude.c:1099`) fires when a
+    /// upstream: the `FILTRULE_FROM_FILE` bit, set in `parse_rule_tok()`
+    /// (`exclude.c:1264-1265`); the location itself lives in parser globals. It
+    /// is carried on the rule rather than held in the parser because
+    /// `report_filter_result` (`exclude.c:1099`) fires when a
     /// rule MATCHES A PATH - long after the merge file that supplied it was
     /// read and closed - and a deferred per-directory merge is parsed later
     /// still. Rules built from an operator argument keep the default
@@ -507,9 +511,9 @@ impl FilterRule {
     /// verbatim in diagnostics; anything sourced from a file's contents is
     /// replaced by `<rule from ...>`.
     ///
-    /// upstream: `add_rule` sets `FILTRULE_FROM_FILE` and retains the location
-    /// on the rule at parse time (`exclude.c:259-275`), because the diagnostics
-    /// that need it run much later - see [`FilterRule::source`].
+    /// upstream: `parse_rule_tok()` sets `FILTRULE_FROM_FILE` on the rule at parse
+    /// time (`exclude.c:1264-1265`), because the diagnostics that need it run
+    /// much later - see [`FilterRule::source`].
     #[must_use]
     pub fn with_source(mut self, source: OwnedRuleSource) -> Self {
         self.source = source;
@@ -559,17 +563,17 @@ impl FilterRule {
         self
     }
 
-    /// Returns whether the rule is exclude-only (`e` modifier).
+    /// Returns whether the rule carries the `e` modifier flag.
     ///
-    /// When true, the rule always acts as an exclude regardless of action.
+    /// No matcher consults this flag; see the field documentation.
     #[must_use]
     pub const fn is_exclude_only(&self) -> bool {
         self.exclude_only
     }
 
-    /// Marks the rule as exclude-only (`e` modifier).
+    /// Sets the `e` modifier flag on this rule.
     ///
-    /// Forces the rule to act as an exclude even if the action is Include.
+    /// The flag is stored only; it does not change how the rule matches.
     #[must_use]
     pub const fn with_exclude_only(mut self, exclude_only: bool) -> Self {
         self.exclude_only = exclude_only;
@@ -599,7 +603,7 @@ impl FilterRule {
     /// must be parsed as CVS-style ignores (whitespace-split, no prefixes,
     /// no inheritance).
     ///
-    /// upstream: exclude.c add_rule() ':C' modifier — CVS-ignore semantics
+    /// upstream: exclude.c:1402-1409 parse_rule_tok() `C` modifier
     #[must_use]
     pub const fn is_cvs_mode(&self) -> bool {
         self.cvs_mode
@@ -607,7 +611,7 @@ impl FilterRule {
 
     /// Sets the `C` (CVS-ignore) modifier on this rule.
     ///
-    /// upstream: exclude.c add_rule() ':C' modifier — CVS-ignore semantics
+    /// upstream: exclude.c:1402-1409 parse_rule_tok() `C` modifier
     #[must_use]
     pub const fn with_cvs_mode(mut self, cvs_mode: bool) -> Self {
         self.cvs_mode = cvs_mode;
@@ -619,7 +623,7 @@ impl FilterRule {
     /// On merge / dir-merge rules, this signals that the referenced file must
     /// be tokenised on any whitespace, with each token parsed as its own rule.
     ///
-    /// upstream: exclude.c:1279-1283 - `w` sets FILTRULE_WORD_SPLIT.
+    /// upstream: exclude.c:1433-1437 - `w` sets FILTRULE_WORD_SPLIT.
     #[must_use]
     pub const fn is_word_split(&self) -> bool {
         self.word_split
@@ -627,7 +631,7 @@ impl FilterRule {
 
     /// Sets the `w` (word-split) modifier on this rule.
     ///
-    /// upstream: exclude.c:1279-1283 - `w` sets FILTRULE_WORD_SPLIT.
+    /// upstream: exclude.c:1433-1437 - `w` sets FILTRULE_WORD_SPLIT.
     #[must_use]
     pub const fn with_word_split(mut self, word_split: bool) -> Self {
         self.word_split = word_split;
@@ -657,7 +661,7 @@ impl FilterRule {
     /// variant.
     ///
     /// upstream: exclude.c:1381-1391 - the merge-file modifier `case '-'`/
-    /// `case '+'`, not the rule-prefix cases of the same letters at 1189-1193.
+    /// `case '+'`, not the rule-prefix cases of the same letters at 1340-1344.
     #[must_use]
     pub const fn no_prefixes(&self) -> (bool, bool) {
         (self.no_prefixes, self.no_prefixes_include)

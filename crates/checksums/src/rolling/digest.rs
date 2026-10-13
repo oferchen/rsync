@@ -12,7 +12,7 @@ use super::error::RollingSliceError;
 /// # Upstream Reference
 ///
 /// - `checksum.c:get_checksum1()` - produces this packed format
-/// - `rsync.h:SIVALu()` - serialises the checksum as little-endian on the wire
+/// - `byteorder.h:SIVALu()` - serialises the checksum as little-endian on the wire
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RollingDigest {
     s1: u16,

@@ -9,15 +9,16 @@
 //!   [`checksums::RollingDigest::sum2`]) while the lower 16 bits
 //!   ([`checksums::RollingDigest::sum1`]) become the in-bucket discriminator.
 //!   This is zsync's `librcksum/hash.c` `rsum_a_mask` trick (ZSO-4);
-//!   upstream's own small-table hash (`match.c:71-72` `SUM2HASH`) is likewise
+//!   upstream's own small-table hash (`match.c:73-74` `SUM2HASH`) is likewise
 //!   a 16-bit function. Below the boundary oc sizes tighter than upstream's
 //!   flat `1<<16` floor, which keeps the hot table cache-line resident for
 //!   the small files that dominate a typical transfer.
 //! - **Wide** (above the boundary) - the address is the full 32-bit rolling
 //!   sum modulo the table size, exactly upstream's `BIG_SUM2HASH`
-//!   (`match.c:74`) over upstream's `(count/8) * 10 + 11` sizing
-//!   (`match.c:82-88`). A `sum2`-only key carries no entropy past `2^16`, so
-//!   growing the table requires widening the key just as upstream does.
+//!   (`match.c:76`), over a table sized by upstream's rule
+//!   (`match.c:86-88`, `(s->count/8) * 10 + 11`). A `sum2`-only key carries
+//!   no entropy past `2^16`, so growing the table requires widening the key
+//!   just as upstream does.
 //!
 //! The structure is intentionally chain-based rather than open-addressed:
 //!
@@ -57,7 +58,7 @@ const TRADITIONAL_TABLESIZE: usize = 1 << MAX_LOG2_BUCKETS;
 /// maximum block length) - about 2 000x past the point where the wide mode
 /// engages. Upstream has no equivalent guard; it simply asks `new_array()`
 /// for the allocation and dies if it fails. The value is odd so the guard
-/// preserves upstream's oddness requirement (`match.c:80-81`).
+/// preserves upstream's oddness requirement (`match.c:84-85`).
 const MAX_WIDE_BUCKETS: usize = (1 << 27) - 1;
 
 /// Minimum bucket count exponent (`2^4 = 16`).
@@ -112,18 +113,18 @@ enum BucketAddress {
     Compact { mask: u16 },
     /// `rsum % modulus` over upstream's dynamically grown table.
     ///
-    /// upstream: match.c:74 `#define BIG_SUM2HASH(sum) ((sum)%tablesize)`.
+    /// upstream: match.c:76 `#define BIG_SUM2HASH(sum) ((sum)%tablesize)`.
     Wide { modulus: u32 },
 }
 
 impl BucketAddress {
     /// Chooses the sizing and addressing rule for `n_entries` indexed blocks.
     ///
-    /// upstream: match.c:82-88 - `tablesize = (uint32)(s->count/8) * 10 + 11`,
+    /// upstream: match.c:83-88 - `tablesize = (uint32)(s->count/8) * 10 + 11`,
     /// raised to `TRADITIONAL_TABLESIZE` when it falls below it. The `* 10 / 8`
     /// factor targets an 80% hash load and the `+ 11` keeps the result odd,
     /// without which the upper sum half cannot span the whole table
-    /// (`match.c:80-81`). Reproducing the growth is what keeps the per-offset
+    /// (`match.c:84-85`). Reproducing the growth is what keeps the per-offset
     /// chain walk flat as the basis grows: pinning the table at
     /// `TRADITIONAL_TABLESIZE` instead makes the mean walk scale linearly with
     /// the block count (measured 9.0x upstream at 1 000 000 blocks).
@@ -274,7 +275,7 @@ impl CompactLookup {
     /// Returns the number of bucket slots.
     ///
     /// A power of two at or below `2^16` in compact mode, upstream's odd
-    /// `(count/8) * 10 + 11` above it. Reported as the bench harnesses'
+    /// `(s->count/8) * 10 + 11` above it. Reported as the bench harnesses'
     /// "lookup capacity" - the metric they pair against the local CPU cache
     /// hierarchy.
     pub(super) fn capacity(&self) -> usize {
@@ -426,7 +427,7 @@ mod tests {
     /// Upstream's table size for `n` blocks: `(n/8) * 10 + 11`, raised to
     /// `TRADITIONAL_TABLESIZE` when it falls below it.
     ///
-    /// upstream: match.c:84-88.
+    /// upstream: match.c:86-88.
     fn upstream_tablesize(n: usize) -> usize {
         ((n / 8) * 10 + 11).max(TRADITIONAL_TABLESIZE)
     }
@@ -439,7 +440,7 @@ mod tests {
     /// `n_entries / n_buckets`, so a fixed bucket count makes it grow without
     /// bound. Any policy that stops growing fails this at `100_000`.
     ///
-    /// upstream: match.c:84-88.
+    /// upstream: match.c:86-88.
     #[test]
     fn bucket_count_tracks_upstream_growth_above_the_floor() {
         // 52 424 is the first block count whose upstream size exceeds
@@ -485,7 +486,7 @@ mod tests {
     /// A grown table must be odd, or the upper sum half cannot span the whole
     /// set under `rsum % tablesize`.
     ///
-    /// upstream: match.c:80-81.
+    /// upstream: match.c:84-85.
     #[test]
     fn grown_bucket_count_is_odd() {
         for &n in &[52_424usize, 100_000, 999_999, 8_000_000, usize::MAX] {
@@ -514,7 +515,7 @@ mod tests {
     /// construction; a grown table that still keyed on `sum2` alone would
     /// keep them colliding and so gain nothing from the extra slots.
     ///
-    /// upstream: match.c:74 `BIG_SUM2HASH(sum) ((sum)%tablesize)`.
+    /// upstream: match.c:76 `BIG_SUM2HASH(sum) ((sum)%tablesize)`.
     #[test]
     fn wide_address_uses_the_full_rolling_sum() {
         let address = BucketAddress::for_entries(100_000);
