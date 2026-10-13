@@ -40,30 +40,40 @@ fn child_stdin_and_stdout_are_sockets() {
     assert_eq!(seen, "sock0 sock1 ", "child stdio must be socketpair ends");
 }
 
-/// The split halves - io_uring-driven where the kernel offers it - carry a
-/// multi-MiB stream through the child and back without loss or reordering.
+/// The split halves carry a multi-MiB stream through the child and back
+/// without loss or reordering, over the default plain `read`/`write` wire and,
+/// where the host has io_uring, over the explicit `--io-uring` wire.
 ///
 /// `cat` does not retry `EAGAIN`, so like any such `-e` program under
 /// upstream it needs `--blocking-io` to keep its stdout blocking.
 #[test]
 fn split_halves_round_trip_through_the_child() {
-    let mut builder = shell("exec cat");
-    builder.set_blocking_io(Some(true));
-    let connection = builder.spawn().expect("spawn cat child");
-    let (mut reader, mut writer, handle) = connection.split().expect("split");
+    let mut policies = vec![fast_io::IoUringPolicy::Auto];
+    if fast_io::is_io_uring_available() {
+        policies.push(fast_io::IoUringPolicy::Enabled);
+    } else {
+        eprintln!("io_uring unavailable: checking the default wire only");
+    }
+    for policy in policies {
+        let mut builder = shell("exec cat");
+        builder.set_blocking_io(Some(true));
+        builder.set_io_uring_policy(policy);
+        let connection = builder.spawn().expect("spawn cat child");
+        let (mut reader, mut writer, handle) = connection.split().expect("split");
 
-    let payload: Vec<u8> = (0..4 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
-    let expected = payload.clone();
-    let feeder = std::thread::spawn(move || {
-        writer.write_all(&payload).expect("write payload");
-        writer.close().expect("close stdin");
-    });
+        let payload: Vec<u8> = (0..4 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+        let expected = payload.clone();
+        let feeder = std::thread::spawn(move || {
+            writer.write_all(&payload).expect("write payload");
+            writer.close().expect("close stdin");
+        });
 
-    let mut echoed = Vec::with_capacity(expected.len());
-    reader.read_to_end(&mut echoed).expect("read echo");
-    feeder.join().expect("feeder thread");
-    let (status, _) = handle.wait_with_stderr().expect("reap child");
-    assert!(status.success());
-    assert_eq!(echoed.len(), expected.len());
-    assert!(echoed == expected, "echoed stream differs from the payload");
+        let mut echoed = Vec::with_capacity(expected.len());
+        reader.read_to_end(&mut echoed).expect("read echo");
+        feeder.join().expect("feeder thread");
+        let (status, _) = handle.wait_with_stderr().expect("reap child");
+        assert!(status.success());
+        assert_eq!(echoed.len(), expected.len(), "{policy:?}");
+        assert!(echoed == expected, "echoed stream differs under {policy:?}");
+    }
 }

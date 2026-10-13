@@ -224,18 +224,23 @@ const WIRE_WRITE_BUFFER: usize = 64 * 1024;
 
 /// Decides whether io_uring should drive a socketpair end.
 ///
-/// `Enabled` on a host without io_uring is an error, matching the `fast_io`
-/// socket factories; `Auto` quietly keeps plain `read`/`write`.
+/// Only an explicit `--io-uring` (`Enabled`) engages it: on the `AF_UNIX`
+/// wire io_uring `RECV`/`SEND` measured no gain over plain `read`/`write`,
+/// so `Auto`, `SqpollOff` and `Disabled` keep the plain syscalls. `Enabled`
+/// on a host without io_uring (old kernel, seccomp,
+/// `OC_RSYNC_DISABLE_IOURING`) is an error, matching the `fast_io` socket
+/// factories.
 #[cfg(unix)]
 fn io_uring_wanted(policy: fast_io::IoUringPolicy) -> io::Result<bool> {
-    let available = fast_io::is_io_uring_available();
     match policy {
-        fast_io::IoUringPolicy::Disabled => Ok(false),
-        fast_io::IoUringPolicy::Enabled if !available => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "io_uring requested but not available",
-        )),
-        _ => Ok(available),
+        fast_io::IoUringPolicy::Enabled if !fast_io::is_io_uring_available() => {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "io_uring requested but not available",
+            ))
+        }
+        fast_io::IoUringPolicy::Enabled => Ok(true),
+        _ => Ok(false),
     }
 }
 
@@ -558,24 +563,57 @@ mod tests {
         }
     }
 
-    /// io_uring engages on socketpair ends where the host has it, never on
-    /// pipes, and never when the policy disables it.
+    /// The default wire is plain `read`/`write` even where the host has
+    /// io_uring: on `AF_UNIX` io_uring measured no gain, so it must not engage
+    /// without an explicit `--io-uring`.
     #[test]
-    fn io_uring_engages_only_on_socketpair_ends() {
+    fn default_wire_uses_plain_read_write() {
+        let (a, b) = UnixStream::pair().unwrap();
+        let writer = WireWriter::new(
+            std::fs::File::from(OwnedFd::from(a)),
+            WirePrimitive::Socketpair,
+            WireIoPolicy::default(),
+        )
+        .unwrap();
+        let reader = WireReader::new(
+            std::fs::File::from(OwnedFd::from(b)),
+            WirePrimitive::Socketpair,
+            WireIoPolicy::default(),
+        )
+        .unwrap();
+        assert!(
+            !writer.uses_io_uring(),
+            "default writer must not use io_uring"
+        );
+        assert!(
+            !reader.uses_io_uring(),
+            "default reader must not use io_uring"
+        );
+    }
+
+    /// An explicit `--io-uring` engages io_uring on socketpair ends where the
+    /// host has it, never on pipes, and never when the policy disables it.
+    #[test]
+    fn io_uring_engages_only_on_explicit_request_and_socketpair_ends() {
+        if !fast_io::is_io_uring_available() {
+            eprintln!("skipping: io_uring unavailable on this host");
+            return;
+        }
         let (a, b) = UnixStream::pair().unwrap();
         let (a, b) = (
             std::fs::File::from(OwnedFd::from(a)),
             std::fs::File::from(OwnedFd::from(b)),
         );
         let (c, d) = (a.try_clone().unwrap(), b.try_clone().unwrap());
-        let available = fast_io::is_io_uring_available();
+        let requested = WireIoPolicy {
+            io_uring: fast_io::IoUringPolicy::Enabled,
+            zero_copy: fast_io::ZeroCopyPolicy::Auto,
+        };
 
-        let writer =
-            WireWriter::new(a, WirePrimitive::Socketpair, WireIoPolicy::default()).unwrap();
-        let reader =
-            WireReader::new(b, WirePrimitive::Socketpair, WireIoPolicy::default()).unwrap();
-        assert_eq!(writer.uses_io_uring(), available);
-        assert_eq!(reader.uses_io_uring(), available);
+        let writer = WireWriter::new(a, WirePrimitive::Socketpair, requested).unwrap();
+        let reader = WireReader::new(b, WirePrimitive::Socketpair, requested).unwrap();
+        assert!(writer.uses_io_uring());
+        assert!(reader.uses_io_uring());
 
         let disabled = WireIoPolicy {
             io_uring: fast_io::IoUringPolicy::Disabled,
@@ -587,19 +625,23 @@ mod tests {
                 .uses_io_uring()
         );
         assert!(
-            !WireReader::new(d, WirePrimitive::Pipe, WireIoPolicy::default())
+            !WireReader::new(d, WirePrimitive::Pipe, requested)
                 .unwrap()
                 .uses_io_uring()
         );
     }
 
-    /// Zero-copy requested over the `AF_UNIX` wire: the socket refuses
-    /// `SEND_ZC`, and the writer must still deliver every byte.
+    /// Zero-copy requested over the io_uring `AF_UNIX` wire: the socket
+    /// refuses `SEND_ZC`, and the writer must still deliver every byte.
     #[test]
     fn zero_copy_request_over_socketpair_delivers_bytes() {
+        if !fast_io::is_io_uring_available() {
+            eprintln!("skipping: io_uring unavailable on this host");
+            return;
+        }
         let (a, b) = UnixStream::pair().unwrap();
         let policy = WireIoPolicy {
-            io_uring: fast_io::IoUringPolicy::Auto,
+            io_uring: fast_io::IoUringPolicy::Enabled,
             zero_copy: fast_io::ZeroCopyPolicy::Enabled,
         };
         let mut writer = WireWriter::new(

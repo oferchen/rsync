@@ -72,9 +72,10 @@
 //! # io_uring on the wire
 //!
 //! The socketpair ends are sockets, so on Linux [`SshConnection::split`]
-//! drives them through the `fast_io` io_uring `RECV`/`SEND` paths when the
-//! io_uring policy and kernel allow it, falling back to `read`/`write`
-//! otherwise. When zero-copy is permitted the writer asks for
+//! can drive them through the `fast_io` io_uring `RECV`/`SEND` paths. It does
+//! so only under an explicit `--io-uring`: on this `AF_UNIX` wire io_uring
+//! measured no gain, so the default is plain `read`/`write`. When zero-copy
+//! is also requested the writer asks for
 //! `IORING_OP_SEND_ZC`; the kernel refuses it on `AF_UNIX` (`EOPNOTSUPP`),
 //! which the writer learns once at setup and then sends with plain `SEND`.
 //! The pipe fallback always uses `read`/`write`.

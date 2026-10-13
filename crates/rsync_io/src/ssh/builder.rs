@@ -229,8 +229,10 @@ impl SshCommand {
     }
 
     /// Selects whether the parent ends of the socketpair wire are driven
-    /// through io_uring `RECV`/`SEND` (default: `Auto`, i.e. when the kernel
-    /// offers it). Pipe-backed wires always use plain `read`/`write`.
+    /// through io_uring `RECV`/`SEND`. Only `Enabled` (`--io-uring`) does;
+    /// the default `Auto` keeps plain `read`/`write`, since io_uring showed no
+    /// gain on the `AF_UNIX` wire. Pipe-backed wires always use plain
+    /// `read`/`write`.
     pub const fn set_io_uring_policy(&mut self, policy: fast_io::IoUringPolicy) -> &mut Self {
         self.wire_io.io_uring = policy;
         self

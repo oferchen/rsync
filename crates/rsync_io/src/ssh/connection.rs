@@ -283,8 +283,9 @@ impl SshConnection {
     /// - An owned handle for waiting on the child process
     ///
     /// The stderr drain thread (if running) is transferred to the child handle.
-    /// On a socketpair wire the halves are driven through io_uring when the
-    /// configured policy and the kernel allow it.
+    /// On a socketpair wire the halves are driven through io_uring only under
+    /// an explicit `--io-uring` (`IoUringPolicy::Enabled`); otherwise they use
+    /// plain `read`/`write`.
     ///
     /// # Returns
     ///
