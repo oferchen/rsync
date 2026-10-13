@@ -16,6 +16,7 @@
 use std::cmp::Ordering;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use logging::{debug_log, info_log};
 use metadata::MetadataOptions;
@@ -633,6 +634,7 @@ impl ReceiverContext {
                         dest_dir,
                         sandbox_ref,
                         &metadata_opts,
+                        &self.backup_dir_cache,
                     )
                 }
                 #[cfg(not(unix))]
@@ -644,6 +646,7 @@ impl ReceiverContext {
                         &path,
                         dest_dir,
                         &metadata_opts,
+                        &self.backup_dir_cache,
                     )
                 }
             };
@@ -919,6 +922,7 @@ impl ReceiverContext {
         // inherits attrs from the source dir. Workers hold no `self`, so carry
         // the metadata policy as an owned, shareable value.
         let metadata_opts_owned = self.build_metadata_options();
+        let backup_dir_cache = Arc::clone(&self.backup_dir_cache);
         // Only a daemon log renders a victim's full mode (`%B`).
         let capture_mode = self.captures_victim_modes();
 
@@ -1166,6 +1170,7 @@ impl ReceiverContext {
                                     &dest_dir_owned,
                                     sandbox_ref,
                                     &metadata_opts_owned,
+                                    &backup_dir_cache,
                                 )
                             }
                             #[cfg(not(unix))]
@@ -1177,6 +1182,7 @@ impl ReceiverContext {
                                     &path,
                                     &dest_dir_owned,
                                     &metadata_opts_owned,
+                                    &backup_dir_cache,
                                 )
                             }
                         };
@@ -1480,6 +1486,7 @@ impl ReceiverContext {
             backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
             metadata_opts: self.build_metadata_options(),
+            backup_dir_cache: Arc::clone(&self.backup_dir_cache),
             dry_run: self.config.flags.dry_run,
             logged: self.captures_victim_modes().then(Vec::new),
             writer,
@@ -1680,6 +1687,7 @@ impl ReceiverContext {
             backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
             metadata_opts: self.build_metadata_options(),
+            backup_dir_cache: Arc::clone(&self.backup_dir_cache),
             dry_run: self.config.flags.dry_run,
             logged: self.captures_victim_modes().then(Vec::new),
             writer,
@@ -1744,6 +1752,8 @@ struct CappedDeleteState<'w, W: ?Sized> {
     /// Metadata policy applied to `--backup-dir` parent directories created for
     /// a victim (upstream `copy_valid_path` -> `set_file_attrs`).
     metadata_opts: MetadataOptions,
+    /// `--backup-dir` chain validated by the session's previous backup.
+    backup_dir_cache: Arc<engine::BackupDirCache>,
     /// `--dry-run`: report and count each victim without removing it.
     dry_run: bool,
     /// Entries removed so far, recorded only when a daemon log will render
@@ -1995,6 +2005,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 self.dest_dir,
                 self.sandbox,
                 &self.metadata_opts,
+                &self.backup_dir_cache,
             )
         }
         #[cfg(not(unix))]
@@ -2010,6 +2021,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                     path,
                     self.dest_dir,
                     &self.metadata_opts,
+                    &self.backup_dir_cache,
                 )
             }
         }

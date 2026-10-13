@@ -538,6 +538,7 @@ impl ReceiverContext {
         );
         let backup = if self.config.flags.backup {
             Some(BackupConfig {
+                dir_cache: std::sync::Arc::clone(&self.backup_dir_cache),
                 dest_dir: setup.dest_dir.clone(),
                 backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
                 suffix: self.config.effective_backup_suffix().into(),

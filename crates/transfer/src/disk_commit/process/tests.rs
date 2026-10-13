@@ -387,6 +387,7 @@ fn make_backup_returns_destination_relative_notice() {
     fs::write(&file_path, b"existing content").unwrap();
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dir.path().to_path_buf(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -456,6 +457,7 @@ fn cross_device_backup_carries_the_pre_image_timestamps() {
     let expected = fs::metadata(&file_path).unwrap().modified().unwrap();
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dir.path().to_path_buf(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -556,6 +558,7 @@ fn make_backup_regular_file_traces_hlink() {
     fs::write(&file_path, b"pre-image").unwrap();
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dir.path().to_path_buf(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -611,6 +614,7 @@ fn make_backup_cross_device_uses_copy_fallback() {
     fs::write(&file_path, b"pre-transfer content").unwrap();
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dir.path().to_path_buf(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -657,6 +661,7 @@ fn make_backup_missing_file_is_noop() {
     let file_path = dir.path().join("absent.bin");
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dir.path().to_path_buf(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -699,6 +704,7 @@ fn make_backup_backup_dir_subdir_inherits_source_mode() {
 
     let backup_dir = dir.path().join("bak");
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dest_dir.clone(),
         backup_dir: Some(backup_dir.clone()),
         // upstream: options.c:2305-2306 - the default suffix is empty when a
@@ -757,6 +763,7 @@ fn make_backup_backup_dir_clears_nondir_obstruction() {
     fs::write(&obstruction, b"stale file").unwrap();
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dest_dir.clone(),
         backup_dir: Some(backup_dir.clone()),
         suffix: OsString::new(),
@@ -797,6 +804,7 @@ fn make_backup_copy_duplicates_and_keeps_original() {
     fs::write(&file_path, b"original bytes").unwrap();
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dir.path().to_path_buf(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -846,6 +854,7 @@ fn make_backup_copy_missing_file_is_noop() {
     let file_path = dir.path().join("absent.bin");
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dir.path().to_path_buf(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -1207,6 +1216,7 @@ fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
     filetime::set_file_mtime(dest_dir.join("sub"), seeded).expect("seed dest sub mtime");
 
     let config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: dest_dir.clone(),
         backup_dir: Some(backup_dir.clone()),
         suffix: OsString::new(),
@@ -1330,6 +1340,7 @@ fn make_backup_hardlink_tier_anchors_the_backup_on_the_pinned_destination() {
         ..DiskCommitConfig::default()
     };
     let backup_config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: fx.dest_dir.clone(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -1379,6 +1390,7 @@ fn make_backup_without_the_destination_anchor_follows_the_root_swap() {
     let config = DiskCommitConfig::default();
     assert!(config.sandbox.is_none() && config.dest_dir.is_none());
     let backup_config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: fx.dest_dir.clone(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -1446,6 +1458,7 @@ fn make_backup_rename_tier_anchors_both_endpoints_on_the_pinned_destination() {
         ..DiskCommitConfig::default()
     };
     let backup_config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: fx.dest_dir.clone(),
         backup_dir: None,
         suffix: OsString::from("~"),
@@ -1516,6 +1529,7 @@ fn make_backup_backup_dir_root_mkdir_anchors_on_the_pinned_destination() {
         ..DiskCommitConfig::default()
     };
     let backup_config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: fx.dest_dir.clone(),
         backup_dir: Some(PathBuf::from("bak")),
         // upstream: options.c - the default suffix is cleared once a backup
@@ -1568,6 +1582,7 @@ fn make_backup_backup_dir_without_the_anchor_escapes_the_swapped_root() {
         ..DiskCommitConfig::default()
     };
     let backup_config = BackupConfig {
+        dir_cache: Default::default(),
         dest_dir: fx.dest_dir.clone(),
         backup_dir: Some(PathBuf::from("bak")),
         suffix: OsString::new(),
@@ -1626,6 +1641,7 @@ fn commit_file_backup_anchors_on_the_pinned_destination() {
         sandbox: Some(fx.sandbox.clone()),
         dest_dir: Some(fx.dest_dir.clone()),
         backup: Some(BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: fx.dest_dir.clone(),
             backup_dir: None,
             suffix: OsString::from("~"),

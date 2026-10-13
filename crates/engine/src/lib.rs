@@ -221,13 +221,13 @@ pub use local_copy::{
 
 /// Local filesystem copy operations.
 pub use local_copy::{
-    BuilderError, DeleteTiming, HardlinkApplyResult, HardlinkApplyTracker, LocalCopyArgumentError,
-    LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan,
-    LocalCopySummary, ReferenceDirectory, ReferenceDirectoryKind, SkipCompressList,
-    SkipCompressParseError, SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion,
-    compute_backup_path, copy_pre_image_to_backup, create_backup_dir_parents,
-    trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,
-    trace_make_backup_rename, trace_make_backup_symlink,
+    BackupDirCache, BuilderError, DeleteTiming, HardlinkApplyResult, HardlinkApplyTracker,
+    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions,
+    LocalCopyOptionsBuilder, LocalCopyPlan, LocalCopySummary, ReferenceDirectory,
+    ReferenceDirectoryKind, SkipCompressList, SkipCompressParseError, SparseDetectStrategy,
+    SparseDetector, SparseReader, SparseRegion, compute_backup_path, copy_pre_image_to_backup,
+    create_backup_dir_parents, trace_make_backup_copy, trace_make_backup_device,
+    trace_make_backup_hlink, trace_make_backup_rename, trace_make_backup_symlink,
 };
 
 /// File signature generation for delta transfers.

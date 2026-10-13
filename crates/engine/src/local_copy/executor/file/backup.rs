@@ -9,6 +9,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use crate::local_copy::LocalCopyError;
 use crate::local_copy::context::BackupStrategy;
@@ -156,6 +157,7 @@ pub(crate) fn create_backup_parents(
     backup_dir: Option<&Path>,
     parent: &Path,
     metadata_options: &::metadata::MetadataOptions,
+    cache: &BackupDirCache,
 ) -> Result<(), LocalCopyError> {
     if parent.as_os_str().is_empty() {
         return Ok(());
@@ -181,6 +183,7 @@ pub(crate) fn create_backup_parents(
         backup_dir,
         parent,
         metadata_options,
+        cache,
         create_backup_dir_confined,
     )
     .map_err(|error| LocalCopyError::io("create backup directory", parent, error))
@@ -204,6 +207,21 @@ fn create_backup_dir_confined(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
 }
 
+/// The `--backup-dir` subdirectory chain a transfer session validated last.
+///
+/// One instance lives for a whole session and is shared by every backup it
+/// makes, so a chain component is checked (and a non-directory in its place
+/// removed) only when it first appears, not again for every file backed up
+/// beneath it.
+///
+/// upstream: backup.c:88-99 `copy_valid_path()` - the static `backup_dir_buf`
+/// keeps the previous backup path and the components the next path shares with
+/// it are skipped. A later swap of such a component is refused by the confined
+/// link, rename or symlink of the backup itself.
+#[derive(Debug, Default)]
+pub struct BackupDirCache {
+    validated: Mutex<Option<PathBuf>>,
+}
 /// Creates the `--backup-dir` parent tree for a backup path, inheriting each
 /// freshly-created subdirectory's attributes from the corresponding
 /// destination directory and clearing any non-directory obstruction.
@@ -236,6 +254,7 @@ pub fn create_backup_dir_parents<F>(
     backup_dir: &Path,
     parent: &Path,
     metadata_options: &::metadata::MetadataOptions,
+    cache: &BackupDirCache,
     mut mkdir: F,
 ) -> io::Result<()>
 where
@@ -246,40 +265,79 @@ where
     } else {
         destination_root.join(backup_dir)
     };
-
-    // upstream: backup.c:165 make_path(backup_dir_buf, 0) - ensure the backup
-    // directory root exists before validating subdirs.
-    mkdir(&backup_root)?;
-
+    let mut validated = cache
+        .validated
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    // upstream: backup.c:196-208 get_backup_name() - make_path(backup_dir_buf, 0)
+    // ensures the backup directory root once, behind a static flag.
+    if validated.is_none() {
+        mkdir(&backup_root)?;
+    }
     let Ok(rel) = parent.strip_prefix(&backup_root) else {
         // parent is not under backup_root (unexpected path shape); fall back to
         // a plain create so the backup still lands somewhere valid.
         return mkdir(parent);
     };
-
+    // upstream: backup.c:94-99 copy_valid_path() - the leading components this
+    // path shares with the previous backup path were validated by that call
+    // and are not looked at again; only the new ones are.
+    let shared = validated.as_deref().map_or(0, |previous: &Path| {
+        previous
+            .components()
+            .zip(rel.components())
+            .take_while(|(a, b)| a == b)
+            .count()
+    });
     let mut current = backup_root.clone();
-    for component in rel.components() {
+    for (index, component) in rel.components().enumerate() {
         current.push(component.as_os_str());
-        match backup_dir_element_metadata(&current) {
-            Ok(meta) if meta.is_dir() => continue,
-            // upstream: backup.c:48-53 - a non-directory (including a symlink) in
-            // the way is removed so it can be recreated as a directory. A
-            // non-directory is never a recursive tree, so a plain unlink mirrors
-            // `delete_item` for this case (backup.c:50); the unlink drops a
-            // symlink without following it, matching the `lstat`-based check.
-            Ok(_) => remove_backup_dir_obstruction(&current)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        if index < shared {
+            continue;
         }
-
-        mkdir(&current)?;
-
-        apply_backup_dir_attrs(destination_root, &backup_root, &current, metadata_options);
+        if let Err(error) = ensure_backup_dir_element(
+            destination_root,
+            &backup_root,
+            &current,
+            metadata_options,
+            &mut mkdir,
+        ) {
+            // upstream: backup.c:116,137 - `*name = '\0'` truncates the kept
+            // path at the failing component, so the next call validates it again.
+            *validated = Some(rel.components().take(index).collect());
+            return Err(error);
+        }
     }
-
+    *validated = Some(rel.to_path_buf());
     Ok(())
 }
-
+/// Validates one new element of a `--backup-dir` chain and creates it as a
+/// directory carrying the corresponding destination directory's attributes.
+fn ensure_backup_dir_element<F>(
+    destination_root: &Path,
+    backup_root: &Path,
+    current: &Path,
+    metadata_options: &::metadata::MetadataOptions,
+    mkdir: &mut F,
+) -> io::Result<()>
+where
+    F: FnMut(&Path) -> io::Result<()>,
+{
+    match backup_dir_element_metadata(current) {
+        Ok(meta) if meta.is_dir() => return Ok(()),
+        // upstream: backup.c:48-53 - a non-directory (including a symlink) in
+        // the way is removed so it can be recreated as a directory. A
+        // non-directory is never a recursive tree, so a plain unlink mirrors
+        // `delete_item` for this case (backup.c:50); the unlink drops a
+        // symlink without following it, matching the `lstat`-based check.
+        Ok(_) => remove_backup_dir_obstruction(current)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    mkdir(current)?;
+    apply_backup_dir_attrs(destination_root, backup_root, current, metadata_options);
+    Ok(())
+}
 /// Stats one element of a `--backup-dir` chain without following it, through
 /// the ownership walk bound to the session's confinement root.
 ///
@@ -728,5 +786,76 @@ mod tests {
             OsStr::new("~"),
         );
         assert_eq!(result, PathBuf::from("/project/backup/src/main.rs~"));
+    }
+    /// Runs [`create_backup_dir_parents`] with a plain recursive `mkdir`.
+    fn ensure_parents(
+        dest: &Path,
+        backup: &Path,
+        parent: &Path,
+        cache: &BackupDirCache,
+    ) -> io::Result<()> {
+        create_backup_dir_parents(
+            dest,
+            backup,
+            parent,
+            &::metadata::MetadataOptions::default(),
+            cache,
+            |path| fs::create_dir_all(path),
+        )
+    }
+    /// upstream: backup.c:94-99 `copy_valid_path()` validates a `--backup-dir`
+    /// component only when it first appears in the backup path, not again for
+    /// every later file beneath it. A symlink swapped into a validated
+    /// component's place is therefore left for the confined backup operation
+    /// to refuse; deleting it instead hides the swap from the transfer, which
+    /// then reports success where upstream reports the refused backups.
+    #[cfg(unix)]
+    #[test]
+    fn validated_backup_subdir_is_not_revalidated_for_later_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("dest");
+        let backup = dir.path().join("backup");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(dest.join("sub")).expect("dest/sub");
+        fs::create_dir(&outside).expect("outside");
+        let sub = backup.join("sub");
+        let session = BackupDirCache::default();
+        ensure_parents(&dest, &backup, &sub, &session).expect("first backup");
+        assert!(sub.is_dir(), "the first backup creates backup/sub");
+        fs::remove_dir(&sub).expect("remove backup/sub");
+        std::os::unix::fs::symlink(&outside, &sub).expect("swap in symlink");
+        ensure_parents(&dest, &backup, &sub, &session).expect("second backup");
+        assert!(
+            fs::symlink_metadata(&sub)
+                .expect("backup/sub")
+                .file_type()
+                .is_symlink(),
+            "a component validated earlier in the session must not be re-checked"
+        );
+        // A component the session has not validated yet is still cleared.
+        ensure_parents(&dest, &backup, &sub, &BackupDirCache::default()).expect("new session");
+        assert!(
+            fs::symlink_metadata(&sub).expect("backup/sub").is_dir(),
+            "a fresh session validates backup/sub and replaces the symlink"
+        );
+    }
+    /// The components after the prefix shared with the previous backup path
+    /// are new to the session and are validated and created as usual.
+    #[test]
+    fn backup_subdir_new_to_the_session_is_created() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("dest");
+        let backup = dir.path().join("backup");
+        fs::create_dir_all(dest.join("a/b")).expect("dest/a/b");
+        fs::create_dir_all(dest.join("a/c")).expect("dest/a/c");
+        let session = BackupDirCache::default();
+        ensure_parents(&dest, &backup, &backup.join("a/b"), &session).expect("a/b");
+        fs::write(backup.join("a/c"), b"obstruction").expect("plant obstruction");
+        ensure_parents(&dest, &backup, &backup.join("a/c"), &session).expect("a/c");
+        assert!(backup.join("a/b").is_dir());
+        assert!(
+            backup.join("a/c").is_dir(),
+            "a/c is new to the session, so its obstruction is cleared"
+        );
     }
 }

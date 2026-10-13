@@ -95,7 +95,7 @@ where
             // bind race the daemon never reaches this state (it exits with
             // EADDRINUSE), so a different winning daemon on the same port is
             // never mistaken for ours.
-            if daemon_listen_port(pid) == Some(port) {
+            if listens_on_own_socket(pid, port) {
                 acquired = true;
                 break;
             }
@@ -149,16 +149,55 @@ fn serves_ipv4_loopback(addr: Ipv4Addr) -> bool {
 /// Returns the TCP port that process `pid` is listening on at an address
 /// reachable from the IPv4 loopback, or `None` if it has no such socket yet.
 ///
-/// Used by [`spawn_daemon_on_free_port`] to confirm a specific daemon process
-/// owns its port *and* can answer the connection the test is about to make.
-/// Only the daemon's own socket table is consulted (matched by the socket
-/// inodes it owns on Linux, or scoped to the pid by `lsof` on macOS), so an
-/// unrelated process listening on loopback is never mistaken for the daemon.
-/// A daemon that bound only its IPv6 socket is deliberately *not* reported:
-/// see `serves_ipv4_loopback` and this module's header.
-#[cfg(target_os = "linux")]
+/// Used to confirm a specific daemon process owns its port *and* can answer
+/// the connection the test is about to make. Only the daemon's own socket
+/// table is consulted (matched by the socket inodes it owns on Linux, or scoped
+/// to the pid by `lsof` on macOS), so an unrelated process listening on
+/// loopback is never mistaken for the daemon. A daemon that bound only its IPv6
+/// socket is deliberately *not* reported: see `serves_ipv4_loopback` and this
+/// module's header.
 #[must_use]
 pub fn daemon_listen_port(pid: u32) -> Option<u16> {
+    loopback_listeners(pid)?.first().map(|&(_, port)| port)
+}
+
+/// Whether the freshly spawned process `pid` listens on `port` through a socket
+/// it did not inherit from this process.
+///
+/// A spawned child holds copies of every descriptor of its parent until
+/// `execve` closes the `O_CLOEXEC` ones. With `posix_spawn` (what `std` uses)
+/// the parent resumes as soon as the child's new address space is installed,
+/// slightly *before* the kernel closes those descriptors (`begin_new_exec()`
+/// runs `exec_mmap()` ahead of `do_close_on_exec()`), so the first probe can
+/// read a socket table that still holds the caller's own listeners. When the
+/// caller is the process that won the race for `port`, that listener is on
+/// exactly `port`, and a daemon that is about to fail its bind would be
+/// reported ready. Excluding the sockets this process still holds closes that
+/// window for every listener the caller keeps open across the spawn, which
+/// includes the winner of a race the caller lost to itself; a daemon's own
+/// listener is never one of them.
+fn listens_on_own_socket(pid: u32, port: u16) -> bool {
+    let Some(listeners) = loopback_listeners(pid) else {
+        return false;
+    };
+    if !listeners.iter().any(|l| l.1 == port) {
+        return false;
+    }
+    let inherited = loopback_listeners(std::process::id()).unwrap_or_default();
+    listeners
+        .iter()
+        .any(|l| l.1 == port && !inherited.contains(l))
+}
+
+/// The listening sockets of process `pid` that can serve an IPv4 loopback
+/// client, as `(identity, port)` pairs, or `None` if its table is unreadable.
+///
+/// The identity tells two sockets apart: the socket inode on Linux, the bound
+/// address on macOS. Address plus port is the endpoint, which two live
+/// listeners cannot share without `SO_REUSEPORT` - set by neither the daemon
+/// nor `std` - so an equal endpoint there means the same socket.
+#[cfg(target_os = "linux")]
+fn loopback_listeners(pid: u32) -> Option<Vec<(String, u16)>> {
     use std::collections::HashSet;
     use std::fs;
 
@@ -173,8 +212,9 @@ pub fn daemon_listen_port(pid: u32) -> Option<u16> {
             inodes.insert(inode.to_owned());
         }
     }
+    let mut listeners = Vec::new();
     if inodes.is_empty() {
-        return None;
+        return Some(listeners);
     }
 
     // `/proc/<pid>/net/tcp` columns: sl local_address rem_address st ... inode.
@@ -200,10 +240,10 @@ pub fn daemon_listen_port(pid: u32) -> Option<u16> {
         // network-order address, so its native bytes are the address octets on
         // either endianness.
         if port != 0 && serves_ipv4_loopback(Ipv4Addr::from(addr.to_ne_bytes())) {
-            return Some(port);
+            listeners.push((cols[9].to_owned(), port));
         }
     }
-    None
+    Some(listeners)
 }
 
 /// Parses the endpoint in an `lsof -Fn` name line for an IPv4 socket, which is
@@ -221,8 +261,7 @@ fn parse_lsof_ipv4_endpoint(name: &str) -> Option<(Ipv4Addr, u16)> {
 
 /// macOS variant backed by `lsof`, which is present by default.
 #[cfg(target_os = "macos")]
-#[must_use]
-pub fn daemon_listen_port(pid: u32) -> Option<u16> {
+fn loopback_listeners(pid: u32) -> Option<Vec<(Ipv4Addr, u16)>> {
     // `-Ft` emits each socket's address family (`tIPv4` / `tIPv6`) immediately
     // before its `-Fn` name. That field is what separates the families here:
     // lsof renders BOTH wildcard sockets as `*:<port>`, so the name alone
@@ -239,6 +278,7 @@ pub fn daemon_listen_port(pid: u32) -> Option<u16> {
         ])
         .output()
         .ok()?;
+    let mut listeners = Vec::new();
     let mut is_ipv4 = false;
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         if let Some(family) = line.strip_prefix('t') {
@@ -251,18 +291,17 @@ pub fn daemon_listen_port(pid: u32) -> Option<u16> {
                 continue;
             };
             if port != 0 && serves_ipv4_loopback(addr) {
-                return Some(port);
+                listeners.push((addr, port));
             }
         }
     }
-    None
+    Some(listeners)
 }
 
 /// Fallback for platforms without a supported discovery mechanism. The daemon
 /// integration tests using this are `#![cfg(unix)]` and CI runs them only on
 /// Linux and macOS.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-#[must_use]
-pub fn daemon_listen_port(_pid: u32) -> Option<u16> {
+fn loopback_listeners(_pid: u32) -> Option<Vec<((), u16)>> {
     None
 }

@@ -92,6 +92,7 @@ fn place_existing_backup(
     dest_dir: &Path,
     backup_dir: Option<&Path>,
     metadata_opts: &MetadataOptions,
+    backup_dir_cache: &engine::BackupDirCache,
 ) -> io::Result<BackupPlacement> {
     if let Some(parent) = backup_path.parent() {
         match backup_dir {
@@ -105,6 +106,7 @@ fn place_existing_backup(
                     backup_dir,
                     parent,
                     metadata_opts,
+                    backup_dir_cache,
                     confined_create_dir_all,
                 )?;
             }
@@ -399,6 +401,7 @@ fn place_report_and_clear(
     sandbox: Option<&fast_io::DirSandbox>,
     prefer_rename: bool,
     metadata_opts: &MetadataOptions,
+    backup_dir_cache: &engine::BackupDirCache,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
     // upstream: backup.c:402-403 reports BOTH operands - `keep_backup failed:
@@ -412,6 +415,7 @@ fn place_report_and_clear(
         dest_dir,
         backup_dir,
         metadata_opts,
+        backup_dir_cache,
     )
     .map_err(|e| {
         crate::temp_guard::attach_commit_op_between(
@@ -447,6 +451,7 @@ fn place_report_and_clear(
     suffix: &OsStr,
     prefer_rename: bool,
     metadata_opts: &MetadataOptions,
+    backup_dir_cache: &engine::BackupDirCache,
 ) -> io::Result<()> {
     let backup_path = engine::compute_backup_path(dest_dir, existing, None, backup_dir, suffix);
     // upstream: backup.c:402-403 reports BOTH operands - `keep_backup failed:
@@ -460,6 +465,7 @@ fn place_report_and_clear(
         dest_dir,
         backup_dir,
         metadata_opts,
+        backup_dir_cache,
     )
     .map_err(|e| {
         crate::temp_guard::attach_commit_op_between(
@@ -498,6 +504,7 @@ pub(in crate::receiver::directory) fn backup_victim(
     dest_dir: &Path,
     sandbox: Option<&fast_io::DirSandbox>,
     metadata_opts: &MetadataOptions,
+    backup_dir_cache: &engine::BackupDirCache,
 ) -> io::Result<bool> {
     if !backup {
         return Ok(false);
@@ -529,6 +536,7 @@ pub(in crate::receiver::directory) fn backup_victim(
         sandbox,
         true,
         metadata_opts,
+        backup_dir_cache,
     )?;
     Ok(true)
 }
@@ -542,6 +550,7 @@ pub(in crate::receiver::directory) fn backup_victim(
     existing: &Path,
     dest_dir: &Path,
     metadata_opts: &MetadataOptions,
+    backup_dir_cache: &engine::BackupDirCache,
 ) -> io::Result<bool> {
     if !backup {
         return Ok(false);
@@ -564,6 +573,7 @@ pub(in crate::receiver::directory) fn backup_victim(
         OsStr::new(suffix),
         true,
         metadata_opts,
+        backup_dir_cache,
     )?;
     Ok(true)
 }
@@ -587,6 +597,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
     dest_dir: &Path,
     sandbox: Option<&fast_io::DirSandbox>,
     metadata_opts: &MetadataOptions,
+    backup_dir_cache: &engine::BackupDirCache,
 ) -> io::Result<()> {
     if backup_victim(
         backup,
@@ -597,6 +608,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
         dest_dir,
         sandbox,
         metadata_opts,
+        backup_dir_cache,
     )? {
         return Ok(());
     }
@@ -619,6 +631,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
     existing: &std::path::Path,
     dest_dir: &std::path::Path,
     metadata_opts: &MetadataOptions,
+    backup_dir_cache: &engine::BackupDirCache,
 ) -> std::io::Result<()> {
     #[cfg(windows)]
     {
@@ -629,6 +642,7 @@ pub(in crate::receiver::directory) fn remove_file_victim(
             existing,
             dest_dir,
             metadata_opts,
+            backup_dir_cache,
         )? {
             return Ok(());
         }
@@ -691,6 +705,7 @@ impl ReceiverContext {
             sandbox,
             false,
             &metadata_opts,
+            &self.backup_dir_cache,
         )?;
         Ok(true)
     }
@@ -720,6 +735,7 @@ impl ReceiverContext {
             OsStr::new(self.config.effective_backup_suffix()),
             false,
             &metadata_opts,
+            &self.backup_dir_cache,
         )?;
         Ok(true)
     }
@@ -779,6 +795,7 @@ mod tests {
             dir.path(),
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
 
@@ -864,6 +881,7 @@ mod tests {
             &root,
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         );
         // Restore the process-global session before asserting.
         install_local_session(LocalInsecureLinks::default(), None);
@@ -912,6 +930,7 @@ mod tests {
             &root,
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         );
         install_local_session(LocalInsecureLinks::default(), None);
         let leaked = fs::read_dir(&outside).unwrap().next().is_some();
@@ -989,6 +1008,7 @@ mod tests {
             &dest,
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         )
         .expect("with no confinement root the trusted parent symlink is followed");
         let _ = &placement;
@@ -1018,6 +1038,7 @@ mod tests {
             dir.path(),
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         )
         .expect("the copy tier must place the backup");
         assert!(
@@ -1073,6 +1094,7 @@ mod tests {
             dir.path(),
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
 
@@ -1114,6 +1136,7 @@ mod tests {
             dir.path(),
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
 
@@ -1164,6 +1187,7 @@ mod tests {
             dir.path(),
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
 
@@ -1257,6 +1281,7 @@ mod tests {
             dir.path(),
             None,
             &::metadata::MetadataOptions::default(),
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
         report_backup(&placement, &link, &backup, dir.path());
@@ -1312,6 +1337,7 @@ mod tests {
             &dest,
             Some(backup_root.as_path()),
             &opts,
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
 
@@ -1377,6 +1403,7 @@ mod tests {
             &dest,
             Some(backup_root.as_path()),
             &opts,
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
 
@@ -1424,6 +1451,7 @@ mod tests {
             &dest,
             None,
             &opts,
+            &engine::BackupDirCache::default(),
         )
         .unwrap();
         assert!(
@@ -1451,6 +1479,69 @@ mod tests {
         assert_eq!(
             mode, 0o750,
             "the --delete --backup-dir subdir must inherit the dest dir mode"
+        );
+    }
+    /// A `--backup-dir` component the session already validated is not checked
+    /// again (upstream: backup.c:94-99 `copy_valid_path()`), so a later swap of
+    /// that component for an attacker-owned symlink to outside the tree must be
+    /// refused by the confined backup operation itself: `ELOOP`, nothing written
+    /// through, and the destination entry left in place. Planting a symlink
+    /// owned by another uid needs root; as any other user the cell reports the
+    /// skip.
+    #[test]
+    fn swapped_cached_backup_subdir_is_refused_not_written_through() {
+        if !rustix::process::geteuid().is_root() {
+            eprintln!("skipped: planting a symlink owned by another uid needs root");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        let backup_dir = dir.path().join("backup");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(dest.join("sub")).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(dest.join("sub/first"), b"first").unwrap();
+        fs::write(dest.join("sub/file"), b"old").unwrap();
+        std::os::unix::fs::symlink("old-target", dest.join("sub/link")).unwrap();
+        let session = engine::BackupDirCache::default();
+        let backup = |name: &str| {
+            place_existing_backup(
+                &dest.join("sub").join(name),
+                &backup_dir.join("sub").join(name),
+                false,
+                &dest,
+                Some(&backup_dir),
+                &MetadataOptions::default(),
+                &session,
+            )
+        };
+        backup("first").expect("the first backup validates backup/sub");
+        let sub = backup_dir.join("sub");
+        fs::rename(&sub, backup_dir.join(".real")).unwrap();
+        std::os::unix::fs::symlink(&outside, &sub).unwrap();
+        std::os::unix::fs::lchown(&sub, Some(65534), Some(65534)).unwrap();
+        for name in ["file", "link"] {
+            let Err(error) = backup(name) else {
+                panic!("{name}: a swapped backup parent must be refused");
+            };
+            // A regular file's ladder ends in the copy tier, which reports the
+            // type as unsupported rather than the ELOOP of the tiers before it.
+            if name == "link" {
+                assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+            }
+            assert!(
+                fs::symlink_metadata(dest.join("sub").join(name)).is_ok(),
+                "{name}: a refused backup must leave the destination entry"
+            );
+        }
+        assert!(
+            fs::symlink_metadata(&sub).unwrap().file_type().is_symlink(),
+            "the cached component is not revalidated, so the swap is still in place"
+        );
+        assert_eq!(
+            fs::read_dir(&outside).unwrap().count(),
+            0,
+            "nothing may be written through the swapped symlink"
         );
     }
 }

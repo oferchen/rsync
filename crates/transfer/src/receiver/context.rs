@@ -627,6 +627,11 @@ pub struct ReceiverContext {
     /// upstream: generator.c:1904-1912 raise + generator.c:2594 fix_dir_perms.
     #[cfg(unix)]
     pub(in crate::receiver) dir_perm_restores: std::sync::Mutex<Vec<(std::path::PathBuf, u32)>>,
+    /// `--backup-dir` chain validated by this session's previous backup,
+    /// shared by the replace, delete and commit backup paths.
+    ///
+    /// upstream: backup.c:88-99 `copy_valid_path()` static `backup_dir_buf`.
+    pub(in crate::receiver) backup_dir_cache: std::sync::Arc<engine::BackupDirCache>,
 }
 
 impl ReceiverContext {
@@ -771,6 +776,7 @@ impl ReceiverContext {
             session_token_reader: None,
             #[cfg(unix)]
             dir_perm_restores: std::sync::Mutex::new(Vec::new()),
+            backup_dir_cache: std::sync::Arc::default(),
         }
     }
 

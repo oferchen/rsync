@@ -243,6 +243,7 @@ impl ReceiverContext {
         if !all_delayed_updates.is_empty() {
             let backup_cfg = if self.config.flags.backup {
                 Some(crate::disk_commit::BackupConfig {
+                    dir_cache: std::sync::Arc::clone(&self.backup_dir_cache),
                     dest_dir: dest_dir.to_path_buf(),
                     backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
                     suffix: self.config.effective_backup_suffix().into(),
@@ -311,6 +312,7 @@ impl ReceiverContext {
             return Ok(());
         }
         let backup_config = BackupConfig {
+            dir_cache: std::sync::Arc::clone(&self.backup_dir_cache),
             dest_dir: dest_dir.to_path_buf(),
             backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
             suffix: self.config.effective_backup_suffix().into(),
@@ -1707,6 +1709,7 @@ mod tests {
         fs::write(&final_path, b"old-content").unwrap();
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: Some(backup_root.clone()),
             suffix: OsString::from("~"),
@@ -1763,6 +1766,7 @@ mod tests {
         let final_path = dest_root.join("name1");
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: Some(backup_root.clone()),
             suffix: OsString::from("~"),
@@ -1804,6 +1808,7 @@ mod tests {
         fs::write(&final_path, b"old-content").unwrap();
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: None,
             suffix: OsString::from("~"),
@@ -1857,6 +1862,7 @@ mod tests {
         fs::write(&staged, b"new-content").unwrap();
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: Some(backup_root.clone()),
             suffix: OsString::from("~"),
@@ -1927,6 +1933,7 @@ mod tests {
         fs::write(&staged, b"new-content").unwrap();
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: Some(backup_root.clone()),
             suffix: OsString::from("~"),
@@ -1996,6 +2003,7 @@ mod tests {
         fs::write(&staged, b"new-content").unwrap();
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: Some(backup_root.clone()),
             suffix: OsString::from("~"),
@@ -2051,6 +2059,7 @@ mod tests {
         fs::write(&final_path, b"old-content").unwrap();
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: Some(backup_root.clone()),
             suffix: OsString::from(""),
@@ -2106,6 +2115,7 @@ mod tests {
         fs::write(&staged_b, b"new-b").unwrap();
 
         let backup_config = BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_root.to_path_buf(),
             backup_dir: Some(backup_root.clone()),
             suffix: OsString::from("~"),
@@ -2231,6 +2241,7 @@ mod tests {
         fs::write(&staged_path, b"replacement bytes, a different length").unwrap();
 
         let backup_config = crate::disk_commit::BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_dir.clone(),
             backup_dir: None,
             suffix: OsString::from("~"),
