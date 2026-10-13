@@ -6,7 +6,7 @@
 //! 3. Works correctly with other output flags
 //! 4. Shows the correct files
 //!
-//! Reference: rsync 3.4.1 options.c and log.c for verbose level 1 behavior.
+//! Reference: rsync 3.5.1 options.c and log.c for verbose level 1 behavior.
 
 use logging::{
     DebugFlag, DiagnosticEvent, InfoFlag, VerbosityConfig, debug_gte, drain_events, info_gte,

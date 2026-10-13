@@ -15,8 +15,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `log.c:309-316` - `FWARNING` shares the `f = stderr` arm with `FERROR`.
-//! - `log.c:317-320` - only `FINFO` consults `quiet`, so a warning is not
+//! - `log.c:337-343` - `FWARNING` shares the `f = stderr` arm with `FERROR`.
+//! - `log.c:344-346` - only `FINFO` consults `quiet`, so a warning is not
 //!   suppressible the way an info message is.
 //! - `rsync.h:296` - `MSG_WARNING = FWARNING`, carried to the peer for
 //!   protocols >= 30.

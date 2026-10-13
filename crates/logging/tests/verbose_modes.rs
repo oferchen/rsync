@@ -4,7 +4,7 @@
 //! maps rsync's -v, -vv, -vvv flags to the appropriate info and debug
 //! flag combinations.
 //!
-//! Reference: rsync 3.4.1 options.c for verbosity level to flag mapping.
+//! Reference: rsync 3.5.1 options.c for verbosity level to flag mapping.
 
 use logging::{DebugFlag, InfoFlag, VerbosityConfig, debug_gte, drain_events, info_gte, init};
 

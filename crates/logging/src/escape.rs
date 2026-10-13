@@ -1,5 +1,5 @@
 //! Filename octal escaping matching upstream rsync's `filtered_fwrite`
-//! in `log.c:242-263`.
+//! in `log.c:242-264`.
 //!
 //! Upstream rsync escapes non-printable bytes in filenames as `\#ooo`
 //! (backslash, hash, three octal digits). Which bytes qualify depends on the
@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Process-wide `--8-bit-output` / `-8` state.
 ///
-/// upstream: `allow_8bit_chars` is a single file-scope global (options.c),
+/// upstream: `allow_8bit_chars` is a single file-scope global (options.c:105),
 /// consulted only where a buffer is written to the terminal - `rwrite()` ->
 /// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)` (log.c:425). A
 /// process global (not a thread-local) mirrors that exactly: the flag is one
@@ -57,7 +57,7 @@ pub fn terminal_style() -> EscapeStyle {
 /// `--8-bit-output` flag alone:
 ///   - the terminal sink gets `use_isprint = !allow_8bit_chars, escape_c1 = 0`
 ///     (log.c:425);
-///   - the log-file sink gets `use_isprint = 0, escape_c1 = 1` (log.c:132),
+///   - the log-file sink gets `use_isprint = 0, escape_c1 = 1` (log.c:136),
 ///     which is deliberately *not* gated on `--8-bit-output`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EscapeStyle {
@@ -68,7 +68,7 @@ pub struct EscapeStyle {
     /// Escape the C0 controls below 0x20, tab excepted.
     ///
     /// Upstream has no switch for this: every `filtered_fwrite` call site
-    /// escapes them (log.c:250 `*fp < ' '`). oc-rsync needs the switch because
+    /// escapes them (log.c:254 `*(uchar*)in_buf < ' '`). oc-rsync needs the switch because
     /// it has a sink upstream does not - [`EscapeStyle::passthrough`], for a
     /// producer whose own sink escapes.
     escape_controls: bool,
@@ -99,7 +99,7 @@ impl EscapeStyle {
 
     /// Escaping for the log file (CWE-117 log injection defence).
     ///
-    /// upstream: log.c:132 `filtered_fwrite(logfile_fp, buf, len, 0, 1,
+    /// upstream: log.c:136 `filtered_fwrite(logfile_fp, buf, len, 0, 1,
     /// trailing)`. The `isprint()` filter is off, so DEL and 0xA0-0xFF reach
     /// the log verbatim and a non-UTF-8 name stays readable; in exchange the
     /// C1 range is escaped unconditionally, so neither a 7-bit `ESC` nor an
@@ -118,7 +118,7 @@ impl EscapeStyle {
     ///
     /// upstream has no `filtered_fwrite` call in `log_formatted()` at all: the
     /// renderer builds the line and escaping happens later, once, in the
-    /// writer - `log.c:132 logit()` for the log file, `log.c:425 rwrite()` for
+    /// writer - `log.c:136 logit()` for the log file, `log.c:425 rwrite()` for
     /// the terminal. `LogFileWriter` (in the `logging-sink` crate) now owns
     /// the log-file half, so a renderer feeding it must select this style;
     /// applying [`EscapeStyle::log_file`] there too would escape the backslash
@@ -144,7 +144,7 @@ fn is_c_print(byte: u8) -> bool {
 
 /// Decides whether a single byte must be octal-escaped as `\#ooo`.
 ///
-/// upstream: log.c:253-255 `filtered_fwrite` escape condition:
+/// upstream: log.c:254-255 `filtered_fwrite` escape condition:
 ///   `*in_buf != '\t' && ((use_isprint && !isPrint(in_buf)) || *(uchar*)in_buf < ' '
 ///     || (escape_c1 && *(uchar*)in_buf >= 0x80 && *(uchar*)in_buf <= 0x9f))`
 #[inline]
@@ -156,7 +156,7 @@ fn should_escape_byte(byte: u8, style: EscapeStyle) -> bool {
 }
 
 /// Escapes non-printable bytes for display output, matching upstream
-/// rsync's `filtered_fwrite` in `log.c:242-263`.
+/// rsync's `filtered_fwrite` in `log.c:242-264`.
 ///
 /// Which bytes qualify is decided by `style` - see [`EscapeStyle`]. Tab
 /// (0x09) is always passed through unescaped.
@@ -228,7 +228,7 @@ fn escape_bytes_slow(input: &[u8], style: EscapeStyle) -> Vec<u8> {
     while i < len {
         let byte = input[i];
 
-        // upstream: log.c:252-254 - escape literal \#ddd sequences to prevent
+        // upstream: log.c:252-253 - escape literal \#ddd sequences to prevent
         // ambiguity with the escape notation. If the input contains \#001
         // literally, escape the backslash so the output reads \#134#001.
         if i + 4 < len
@@ -258,7 +258,7 @@ fn escape_bytes_slow(input: &[u8], style: EscapeStyle) -> Vec<u8> {
 ///
 /// On Unix, operates on the raw bytes of the path to faithfully represent
 /// non-UTF-8 filenames: a lone invalid byte such as `0x80` reaches the escape
-/// layer verbatim, matching upstream `filtered_fwrite` (log.c:242-263), which
+/// layer verbatim, matching upstream `filtered_fwrite` (log.c:242-264), which
 /// copies filename bytes to the output fd unmodified.
 ///
 /// On non-Unix hosts (chiefly Windows) a path is an `OsStr` whose internal
@@ -304,7 +304,7 @@ mod tests {
     const TERMINAL: EscapeStyle = EscapeStyle::terminal(false);
     /// stdout/stderr with `-8` (upstream log.c:425 `allow_8bit_chars`).
     const TERMINAL_8BIT: EscapeStyle = EscapeStyle::terminal(true);
-    /// The log-file sink (upstream log.c:132 `logit`).
+    /// The log-file sink (upstream log.c:136 `logit`).
     const LOGFILE: EscapeStyle = EscapeStyle::log_file();
 
     // -- escape_for_output: terminal style, no -8 (use_isprint=1, escape_c1=0) --
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn lone_high_byte_0x80_is_raw_in_8bit_mode() {
         // upstream: `filtered_fwrite` writes the raw byte to the output fd when
-        // allow_8bit_chars is set (log.c:242-263). A lone 0x80 is invalid UTF-8
+        // allow_8bit_chars is set (log.c:242-264). A lone 0x80 is invalid UTF-8
         // and cannot live in a Rust String, so the escape layer returns raw
         // bytes and the writer emits exactly one byte, matching `rsync -8`
         // byte-for-byte. Previously the `from_utf8_lossy` return type yielded
@@ -512,7 +512,7 @@ mod tests {
         // path through a `String` (which would replace it with U+FFFD): under
         // `-8` the raw byte passes verbatim to the byte sink, matching upstream
         // `filtered_fwrite`, which copies filename bytes unmodified
-        // (log.c:242-263). This is the round-trip that `--8-bit-output` parity
+        // (log.c:242-264). This is the round-trip that `--8-bit-output` parity
         // depends on.
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt;
@@ -593,11 +593,11 @@ mod tests {
         assert_eq!(escape_for_output(b"", TERMINAL_8BIT), Vec::<u8>::new());
     }
 
-    // -- log-file style (upstream log.c:132: use_isprint=0, escape_c1=1) --
+    // -- log-file style (upstream log.c:136: use_isprint=0, escape_c1=1) --
 
     /// WHY: a filename carrying `\n` or `ESC` must not be able to forge a log
     /// line or drive the operator's terminal when they later `cat` the log
-    /// (CWE-117). upstream: log.c:126-131 escapes the message before it is
+    /// (CWE-117). upstream: log.c:130-136 escapes the message before it is
     /// written to `logfile_fp`.
     #[test]
     fn log_file_escapes_sub_0x20_controls() {
@@ -635,13 +635,13 @@ mod tests {
         );
     }
 
-    /// upstream: log.c:253-254 - tab survives in every style.
+    /// upstream: log.c:254 - tab survives in every style.
     #[test]
     fn log_file_passes_tab_raw() {
         assert_eq!(escape_for_output(b"a\tb", LOGFILE), b"a\tb".to_vec());
     }
 
-    /// upstream: log.c:252-254 - a literal `\#ddd` in a name is disambiguated
+    /// upstream: log.c:252-253 - a literal `\#ddd` in a name is disambiguated
     /// from a real escape in every style, including the log sink.
     #[test]
     fn log_file_disambiguates_literal_escape_sequence() {

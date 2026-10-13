@@ -4,7 +4,7 @@
 //! which log messages are emitted based on their level thresholds.
 //! This is core to rsync's -v and --debug flag handling.
 //!
-//! Reference: rsync 3.4.1 options.c for verbosity level parsing.
+//! Reference: rsync 3.5.1 options.c for verbosity level parsing.
 
 use logging::{
     DebugFlag, InfoFlag, VerbosityConfig, apply_debug_flag, apply_info_flag, debug_gte, debug_log,

@@ -1,14 +1,14 @@
 //! Thread-local storage for verbosity configuration and event collection.
 //!
 //! Upstream rsync stores `info_levels[]` and `debug_levels[]` as file-scope
-//! globals (upstream: rsync.h). In a multi-threaded Rust process each thread
+//! globals (upstream: options.c:263, rsync.h:1473). In a multi-threaded Rust process each thread
 //! may run a separate transfer pipeline (sender, receiver, generator), so
 //! this module uses `thread_local!` storage instead of a global `static`.
 //!
 //! The [`init`] function installs a [`VerbosityConfig`] for the calling
 //! thread. The [`info_gte`] and [`debug_gte`] functions check levels against
 //! that config - these are the Rust equivalents of upstream's `INFO_GTE()`
-//! and `DEBUG_GTE()` macros (upstream: rsync.h).
+//! and `DEBUG_GTE()` macros (upstream: rsync.h:1475-1477).
 //!
 //! Events emitted via [`emit_info`] and [`emit_debug`] are buffered in a
 //! thread-local `Vec<DiagnosticEvent>` and retrieved with [`drain_events`].
@@ -77,7 +77,7 @@ pub enum DiagnosticEvent {
     /// valid UTF-8 (or that carries a control byte) reaches the escaping sink
     /// unmangled instead of being lossily replaced with U+FFFD during
     /// `format!()`. The escaping itself happens once, at the sink
-    /// (log.c:250 `filtered_fwrite`), never here.
+    /// (log.c:242 `filtered_fwrite`), never here.
     Bytes {
         /// The info flag category.
         flag: InfoFlag,
@@ -136,14 +136,14 @@ pub fn finfo_suppressed() -> bool {
 
 /// Check if the info flag is at or above the specified level.
 ///
-/// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h).
+/// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h:1475).
 pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
     VERBOSITY.with(|v| v.borrow().info.get(flag) >= level)
 }
 
 /// Check if the debug flag is at or above the specified level.
 ///
-/// Equivalent to upstream's `DEBUG_GTE(flag, level)` macro (upstream: rsync.h).
+/// Equivalent to upstream's `DEBUG_GTE(flag, level)` macro (upstream: rsync.h:1477).
 pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
     VERBOSITY.with(|v| v.borrow().debug.get(flag) >= level)
 }
@@ -189,7 +189,7 @@ pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String
 ///
 /// The event is tagged [`LogCode::Info`], matching [`emit_info`]. The escaping
 /// of the bytes happens once at the render boundary, per sink
-/// (upstream: log.c:250 `filtered_fwrite`), never at this emitter.
+/// (upstream: log.c:242 `filtered_fwrite`), never at this emitter.
 pub fn emit_info_bytes(flag: InfoFlag, level: u8, message: Vec<u8>) {
     EVENTS.with(|e| {
         e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Bytes {
@@ -325,7 +325,7 @@ fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> 
 /// because that renderer has something to interleave against: the buffered
 /// per-file event stream, which it emits post-hoc. `FLOG` is left behind
 /// because upstream's `rwrite()` writes a log message and returns before the
-/// client-stream dispatch (upstream: log.c:290-307) - the log-file sink takes
+/// client-stream dispatch (upstream: log.c:312-334) - the log-file sink takes
 /// those through [`drain_events_coded`], and draining them here would consume
 /// them before that sink ever runs.
 pub fn drain_stamped_events_for_client() -> Vec<Stamped<DiagnosticEvent>> {
@@ -337,7 +337,7 @@ pub fn drain_stamped_events_for_client() -> Vec<Stamped<DiagnosticEvent>> {
 /// This is how a log-file sink consumes `FLOG`-classified events without
 /// disturbing the client-stream events that a later [`drain_events`] renders:
 /// upstream's `rwrite()` writes an FLOG message to the log file and returns
-/// before the client-stream dispatch (upstream: log.c:290-307), so the two
+/// before the client-stream dispatch (upstream: log.c:312-334), so the two
 /// destinations drain independently. Returns matches in emission order.
 pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
     drain_events_where(|candidate| candidate == code)
@@ -365,7 +365,7 @@ pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
 /// [`emit_debug`] tags every debug trace with - draining it here would put the
 /// server's whole `--debug` output on the wire as a side effect of fixing a
 /// warning. `FLOG` is excluded because upstream returns before the switch
-/// (upstream: log.c:331-333); it belongs to [`drain_events_coded`].
+/// (upstream: log.c:331-334); it belongs to [`drain_events_coded`].
 /// upstream: log.c:357-366 rwrite() `if (am_server ...) send_msg(msg, ...)`
 pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
     drain_events_where(|code| {
@@ -386,16 +386,16 @@ pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
 /// `rwrite()`'s `else if (am_daemon || logfile_name)` block it is handed to
 /// `logit()` whatever its code, and only the priority differs - `LOG_INFO`
 /// for `FINFO`/`FLOG`, `LOG_WARNING` for everything else
-/// (upstream: log.c:310-327). `FLOG` is not special-cased *into* the log; it
+/// (upstream: log.c:312-332). `FLOG` is not special-cased *into* the log; it
 /// is special-cased *out of* the stream switch that follows
-/// (upstream: log.c:329-331).
+/// (upstream: log.c:331-334).
 ///
 /// So this takes everything except [`LogCode::None`], upstream's `FNONE`,
-/// which `rwrite()` is never handed at all (upstream: rsync.h:276 "never
+/// which `rwrite()` is never handed at all (upstream: rsync.h:283 "never
 /// sent"). Draining a narrower set would silently discard a daemon-side
 /// `FERROR`: the message would be produced, be correct, and never reach the
 /// operator.
-/// upstream: log.c:310-327 rwrite() `else if (am_daemon || logfile_name)`
+/// upstream: log.c:312-332 rwrite() `else if (am_daemon || logfile_name)`
 pub fn drain_events_for_daemon_log() -> Vec<DiagnosticEvent> {
     drain_events_where(|code| code != LogCode::None)
 }
@@ -483,7 +483,7 @@ mod tests {
     /// The behaviour-preserving default: every event emitted through the
     /// legacy emitters (and therefore through `info_log!`/`debug_log!`) is
     /// tagged FINFO, the code whose upstream routing - client stdout,
-    /// subject to verbosity (upstream: log.c:317-320) - matches how the
+    /// subject to verbosity (upstream: log.c:344-347) - matches how the
     /// renderer already treats all drained events.
     #[test]
     fn default_emitters_tag_events_finfo() {
@@ -501,7 +501,7 @@ mod tests {
     }
 
     /// Coded emitters attach the producer's real upstream logcode, e.g. FLOG
-    /// for log-file-only banners (upstream: log.c:290-307).
+    /// for log-file-only banners (upstream: log.c:312-334).
     #[test]
     fn coded_emitters_carry_explicit_logcode() {
         init(VerbosityConfig::default());
@@ -535,7 +535,7 @@ mod tests {
     /// The narrow reading - "the daemon log takes `FLOG`" - is what
     /// `rwrite()`'s trailing `if (code == FLOG) return;` looks like from the
     /// stream switch. Read from the top, `logit()` has already run for every
-    /// code that reached the `am_daemon` branch (upstream: log.c:310-327), so
+    /// code that reached the `am_daemon` branch (upstream: log.c:312-332), so
     /// a drain keyed on `FLOG` alone discards a daemon-side `FERROR`: the
     /// message is produced, is correct, and never reaches the operator.
     #[test]
@@ -553,7 +553,7 @@ mod tests {
             emit_info_coded(InfoFlag::Misc, 0, code, format!("{code:?}"));
         }
         // `FNONE` is the one code `rwrite()` is never handed
-        // (upstream: rsync.h:276 "never sent").
+        // (upstream: rsync.h:283 "never sent").
         emit_info_coded(InfoFlag::Misc, 0, LogCode::None, "unsent".to_owned());
 
         let logged: Vec<LogCode> = drain_events_for_daemon_log()

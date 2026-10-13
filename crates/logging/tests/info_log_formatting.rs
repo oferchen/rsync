@@ -4,7 +4,7 @@
 //! diagnostic messages for user-facing information. Info messages are typically
 //! shown during normal operation (e.g., file names, statistics).
 //!
-//! Reference: rsync 3.4.1 log.c for info output formatting.
+//! Reference: rsync 3.5.1 log.c for info output formatting.
 
 use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 
