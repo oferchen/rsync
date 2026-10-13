@@ -614,7 +614,9 @@ impl ZlibTokenDecoder {
                     // holding pending output. zlib copies a stored block
                     // straight through, so today it never holds output once the
                     // input is consumed, but the exit test must not rely on
-                    // that. The encoder's `see_token` carries the matching
+                    // that. No test can reach the second pass for the same
+                    // reason: a stored block never leaves inflate output
+                    // pending. The encoder's `see_token` carries the matching
                     // `avail_out` clause (token.c:509).
                     break;
                 }
