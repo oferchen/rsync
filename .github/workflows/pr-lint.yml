@@ -31,19 +31,24 @@ name: PR lint
 #
 # No cargo and no build lock. The only network access is the cached,
 # checksum-verified upstream tarball for the citation audit.
+#
+# A second job, `Upstream citations resolve`, runs `cargo xtask citations`
+# (xtask/src/commands/citations.rs): every `upstream: <file>:<line>` citation
+# must name a file the pinned upstream release ships, at a line that file has,
+# with ranges running forwards. It scans every git-tracked file, markdown
+# included, against a committed line-count manifest, so it needs no upstream
+# tarball. It runs here, unfiltered, because ci.yml is path-filtered to code and
+# a docs-only PR is exactly the change this check exists to validate. The same
+# assertion also runs under the required `nextest (stable)` cell for code
+# changes. Advisory: not a required status check.
 on:
   pull_request:
-  push:
-    branches:
-      - master
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-lint-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
-  # Superseded pull request pushes cancel; each master commit gets its own
-  # group, so every merge keeps a completed run.
+  group: pr-lint-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -93,3 +98,26 @@ jobs:
       - name: Audit upstream citations against the baseline
         if: ${{ !cancelled() }}
         run: python3 tools/ci/citation_drift_audit.py --ratchet
+
+  citations:
+    name: Upstream citations resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: citations-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check every citation resolves in the pinned upstream release
+        run: cargo xtask citations

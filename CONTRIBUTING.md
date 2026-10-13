@@ -131,14 +131,13 @@ prevents.
 
 ### Weekly auto-sync
 
-`.github/workflows/cargo-lockfile-weekly.yml` runs every Monday and opens a
-`chore(deps): weekly Cargo.lock refresh` PR with the output of
-`cargo update --workspace`. Contributors do not need to bump the lockfile
-manually for routine drift - just review and merge the cron PR when CI is
-green. `.github/workflows/cargo-lockfile-sync.yml` additionally pushes a
-refreshed `Cargo.lock` back to any first-party PR that edits a workspace
-`Cargo.toml`, so adding a dependency does not require a separate lockfile
-commit.
+Dependabot (`.github/dependabot.yml`) opens grouped `chore(deps)` PRs every
+Monday for the root and fuzz workspaces. Contributors do not need to bump
+the lockfile manually for routine drift - just review and merge the
+Dependabot PR when CI is green. `.github/workflows/cargo-lockfile-sync.yml`
+additionally pushes a refreshed `Cargo.lock` back to any first-party PR that
+edits a workspace `Cargo.toml`, so adding a dependency does not require a
+separate lockfile commit.
 
 ### What to do if CI fails on Cargo.lock
 

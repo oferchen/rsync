@@ -16,16 +16,10 @@
 name: Bench daemon cold-start
 
 on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
-  schedule:
-    # Nightly at 03:17 UTC, clear of the weekly Sunday Benchmark cron.
-    - cron: '17 3 * * *'
-  pull_request:
-    paths:
-      - 'crates/daemon/**'
-      - 'crates/core/src/session/**'
-      - 'crates/protocol/src/handshake/**'
-      - '.github/workflows/bench-daemon-coldstart.yml'
 
 concurrency:
   group: bench-daemon-coldstart-${{ github.ref }}

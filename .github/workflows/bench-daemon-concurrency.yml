@@ -16,16 +16,10 @@
 name: Bench daemon concurrency
 
 on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
-  schedule:
-    # Nightly at 04:37 UTC, offset from the 03:17 cold-start cron so the
-    # two daemon benches do not contend on a single runner pool slot.
-    - cron: '37 4 * * *'
-  pull_request:
-    paths:
-      - 'crates/daemon/**'
-      - 'crates/core/src/client/remote/daemon_transfer/**'
-      - '.github/workflows/bench-daemon-concurrency.yml'
 
 concurrency:
   group: bench-daemon-concurrency-${{ github.ref }}

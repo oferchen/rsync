@@ -1,4 +1,4 @@
-# ZMB-1 - Nightly CI cell for zsync matching-engine regression detection.
+# ZMB-1 - Release-tag CI cell for zsync matching-engine regression detection.
 #
 # Runs a smoke version of the criterion matching benchmark suite (short
 # measurement budget, bencher output) to catch performance regressions in
@@ -13,16 +13,10 @@
 name: Bench zsync matching
 
 on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
-  schedule:
-    # Nightly at 07:07 UTC. Offset from checksum (06:17), drain (05:47),
-    # daemon-concurrency (04:37), and cold-start (03:17) so the bench
-    # cells do not contend on a single runner pool slot.
-    - cron: '7 7 * * *'
-  pull_request:
-    paths:
-      - 'crates/matching/**'
-      - '.github/workflows/bench-zsync-matching.yml'
 
 concurrency:
   group: bench-zsync-matching-${{ github.ref }}

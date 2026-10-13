@@ -86,7 +86,7 @@ io_uring = ["transfer/io_uring", "fast_io/io_uring"]
 
 # SEND_ZC dispatch for io_uring sockets (Linux 6.0+) - IORING_OP_SEND_ZC
 # Requirements: Linux kernel 6.0+ (runtime probe with graceful fallback to
-# plain IORING_OP_SEND on older kernels). See SZP-3 / send-zc-5-15-lts.yml.
+# plain IORING_OP_SEND on older kernels). See SZP-3 / iouring-kernel-compat.yml.
 # Forwards to fast_io's iouring-send-zc feature, which implicitly enables
 # io_uring as well.
 iouring-send-zc = ["fast_io/iouring-send-zc"]

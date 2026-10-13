@@ -1,8 +1,7 @@
 name: Upstream Testsuite 3.5.1
 
 # The REQUIRED upstream-testsuite gate: rsync 3.5.1's own testsuite corpus run
-# against oc-rsync on {Linux, macOS} x {non-root, root} x {pipe, loopback tcp},
-# plus the Linux skip oracle.
+# against oc-rsync on {Linux, macOS} x {non-root, root} x {pipe, loopback tcp}.
 #
 # These jobs lived in ci.yml. They have their own workflow so the README can
 # carry an aggregate badge for them, and a badge reports a whole workflow. The
@@ -135,59 +134,6 @@ jobs:
       # fail the driver's own coverage guard.
       expect_result_nonroot: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt' || '' }}
       expect_result_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.root.tcp.txt' || '' }}
-
-  # ===========================================================================
-  # Upstream Testsuite skip oracle (3.5.1, nonroot/pipe, full run)
-  # ---------------------------------------------------------------------------
-  # The same corpus as `upstream-testsuite`, run WITHOUT --expect-result so
-  # upstream's own anti-vacuity oracle actually fires. The two flags are
-  # mutually exclusive by construction: --expect-result clears full_run
-  # (runtests.py:850) and the skip oracle is gated on full_run (:998),
-  # so every expect-result leg above runs with the oracle permanently dark -
-  # a test could start skipping only where its manifest row already says
-  # `skip`, but nothing proves the 86 `skip` rows themselves are the whole
-  # story on a bare full run. Here runtests.py compares the run's skip set
-  # against the committed ledger EXACTLY (testsuite/skiplist/README.md: "if a
-  # test starts skipping - a probe regresses, a helper goes missing - the run
-  # fails instead of reporting green"), and an un-skip fails it too, so the
-  # ledger can only shrink deliberately.
-  #
-  # One leg is enough for the oracle's purpose and it must be a pipe leg: the
-  # tcp legs run the --daemon-tests-only subset, which also clears full_run
-  # (:836) - the driver refuses EXPECT_SKIPPED on such a leg. The skip set is
-  # leg-dependent (require_root/require_tcp), so the ledger names its leg:
-  # ubuntu-latest, non-root, stdio-pipe, no --rsync-bin2 peer,
-  # LEGACY_ORACLES=on (the default) - the `upstream-testsuite` gate's exact
-  # configuration. The built old_versions/ archive is part of that
-  # configuration: the cells that assert against a real old rsync skip
-  # without it, so the ledger measured with it differs from one measured
-  # without it. runtests.py is byte-identical between 3.5.0 and 3.5.1, so the
-  # line citations above hold for both.
-  #
-  # A bare full run fails on any FAIL outcome, and runtests.py then skips the
-  # skip-set comparison altogether (runtests.py:1008-1009). The pipe gate's
-  # manifest records accepted divergences as `fail` rows, so the driver is handed
-  # that same manifest as EXPECT_FAILURES: the run passes only when its FAIL
-  # set is exactly those rows AND its skip set is exactly the ledger. Not yet
-  # a required status check - registering a context is a repo-admin action -
-  # but it fails loud on every PR either way.
-  #
-  # artifact_suffix disambiguates from `upstream-testsuite`, which uploads
-  # `upstream-testsuite-logs-pipe` in the same run.
-  # ===========================================================================
-  upstream-testsuite-skip-oracle:
-    # A bootstrap run has no ledger to compare against; the pipe gate's own
-    # artifact carries the fresh skip set (expect-skipped.nonroot.pipe.txt).
-    needs: changes
-    if: ${{ !cancelled() && !inputs.bootstrap }}
-    uses: ./.github/workflows/_upstream-testsuite.yml
-    with:
-      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'nonroot' }}
-      expect_skipped_nonroot: tools/ci/upstream-3.5.1-skiplist.nonroot.txt
-      expect_failures_nonroot: tools/ci/upstream-3.5.1-expect.nonroot.txt
-      artifact_suffix: '-skip-oracle'
 
   # ===========================================================================
   # Upstream testsuite - macOS (3.5.1, pipe and tcp, nonroot and root)

@@ -860,10 +860,8 @@ jobs:
   # The main `windows-test` job runs only `core`, `engine`, `cli`, so the
   # `daemon` crate (which carries Windows-specific code in its TCP listener,
   # name converter, xfer-exec, and module-access paths) never builds on
-  # `windows-latest` at PR time. Daemon Windows coverage lived only in the
-  # nightly `windows-nightly-daemon.yml` schedule, so a Windows-only daemon
-  # regression could merge and sit unnoticed until the next nightly run. This
-  # job promotes that coverage to PR time so it is caught before merge.
+  # `windows-latest` otherwise. This job is the only Windows daemon coverage,
+  # so a Windows-only daemon regression is caught before merge.
   # ===========================================================================
   windows-daemon:
     name: Windows daemon
@@ -899,7 +897,7 @@ jobs:
 
       # Run the daemon-crate test suite on Windows so the Windows-gated
       # listener, name-converter, and xfer-exec paths are exercised at PR
-      # time rather than only on the nightly schedule.
+      # time.
       - name: Test daemon crate
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
         shell: bash
