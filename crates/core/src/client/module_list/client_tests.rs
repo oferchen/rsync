@@ -24,7 +24,7 @@ use super::super::{
 };
 use super::auth::set_test_daemon_password;
 use super::{
-    DaemonAddress, DaemonAuthDigest, ModuleListOptions, ModuleListRequest, ProxyConfig,
+    DaemonAddress, DaemonAuthDigest, ModuleList, ModuleListOptions, ModuleListRequest, ProxyConfig,
     compute_daemon_auth_response, establish_proxy_tunnel, map_daemon_handshake_error,
     resolve_daemon_addresses, run_module_list, run_module_list_with_options,
     run_module_list_with_password,
@@ -1227,4 +1227,63 @@ fn proxy_connect_request_names_the_idn_host_as_its_a_label() {
 
     proxy_handle.join().expect("proxy thread");
     daemon_handle.join().expect("daemon thread");
+}
+
+/// Fetches a listing from a stub that replays `responses` the way a real
+/// daemon answers `#list`: no `@RSYNCD: OK`, only lines then `@RSYNCD: EXIT`.
+fn list_from_unacknowledged_daemon(responses: Vec<&'static str>) -> ModuleList {
+    let (addr, handle) = spawn_stub_daemon(responses);
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new(addr.ip().to_string(), addr.port()),
+        None,
+        ProtocolVersion::NEWEST,
+    );
+    let list = run_module_list(request).expect("module list succeeds");
+    handle.join().expect("daemon thread completes");
+    list
+}
+
+/// A daemon sends its MOTD, then one `%-15s\t%s` row per module, then
+/// `@RSYNCD: EXIT` (clientserver.c:1385, send_listing). Upstream prints every line once,
+/// in arrival order (clientserver.c:432-435), so each line must land in exactly
+/// one of the MOTD or the module rows, and a MOTD line that holds a tab must
+/// not move below the lines that follow it.
+#[test]
+fn unacknowledged_listing_reports_each_line_once_in_arrival_order() {
+    let _guard = env_lock().lock().expect("env mutex poisoned");
+    let list = list_from_unacknowledged_daemon(vec![
+        "Welcome line one\n",
+        "\n",
+        "Tabbed\tmotd line\n",
+        "last\n",
+        "\n",
+        "mod1           \tfirst module\n",
+        "mod2           \t\n",
+        "@RSYNCD: EXIT\n",
+    ]);
+    assert_eq!(
+        list.motd_lines(),
+        ["Welcome line one", "", "Tabbed\tmotd line", "last", ""]
+    );
+    let rows: Vec<(&str, Option<&str>)> = list
+        .entries()
+        .iter()
+        .map(|entry| (entry.name(), entry.comment()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("mod1           ", Some("first module")),
+            ("mod2           ", None)
+        ]
+    );
+}
+
+/// With no listable modules every line before `@RSYNCD: EXIT` is MOTD.
+#[test]
+fn unacknowledged_listing_without_modules_is_all_motd() {
+    let _guard = env_lock().lock().expect("env mutex poisoned");
+    let list = list_from_unacknowledged_daemon(vec!["plain only\n", "\n", "@RSYNCD: EXIT\n"]);
+    assert_eq!(list.motd_lines(), ["plain only", ""]);
+    assert!(list.entries().is_empty(), "{}", list.entries().len());
 }

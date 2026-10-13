@@ -300,16 +300,23 @@ pub fn run_module_list_with_password_and_options(
                     continue;
                 }
                 Ok(LegacyDaemonMessage::Exit) => {
-                    // upstream: clientserver.c - the daemon sends @RSYNCD: EXIT
-                    // without a preceding @RSYNCD: OK for module listings.
-                    // Lines collected in pre_ack_messages are the module entries.
+                    // upstream: clientserver.c:1374-1384 send_listing() - a
+                    // listing has no @RSYNCD: OK; the MOTD comes first, then one
+                    // "%-15s\t%s" row per module, then @RSYNCD: EXIT. The rows
+                    // are the trailing run of tab-carrying lines; everything
+                    // before it stays MOTD, so each line is reported once in
+                    // arrival order, as clientserver.c:432-435 prints it.
                     if !acknowledged {
-                        for msg in pre_ack_messages.drain(..) {
-                            entries.push(ModuleListEntry::from_line(&msg));
+                        let first_row = pre_ack_messages
+                            .iter()
+                            .rposition(|line| !line.contains('\t'))
+                            .map_or(0, |last_motd| last_motd + 1);
+                        let rows = pre_ack_messages.split_off(first_row);
+                        if !suppress_motd {
+                            motd.truncate(motd.len() - rows.len());
                         }
+                        entries.extend(rows.iter().map(|row| ModuleListEntry::from_line(row)));
                         acknowledged = true;
-                        // Clear motd of module-entry lines (those containing tabs).
-                        motd.retain(|line| !line.contains('\t'));
                     }
                     break;
                 }

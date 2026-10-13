@@ -1033,13 +1033,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         config.connection.compression_level = None;
     }
 
-    // upstream: compat.c:777-778 - apply CF_INPLACE_PARTIAL_DIR after compat exchange.
-    // When the server advertises this flag and a partial directory is configured,
-    // enable per-file inplace for partial-dir basis files.
-    // upstream: receiver.c:926 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+    // upstream: compat.c:789-790 - CF_INPLACE_PARTIAL_DIR sets inplace_partial
+    // for every role. Only the receiver also requires a partial dir
+    // (receiver.c:1153); the sender's updating_basis_file (sender.c:629) does
+    // not, because a pull client never forwards --partial-dir (options.c:3062)
+    // yet still writes its partial-dir resume in place.
     if let Some(flags) = setup_result.compat_flags
         && flags.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
-        && config.has_partial_dir
     {
         config.write.inplace_partial = true;
     }

@@ -9,7 +9,10 @@ fn module_peer_hostname_uses_override() {
     set_test_forward_override("trusted.example.com", &[peer]);
     let mut cache = None;
     let resolved = module_peer_hostname(&module, &mut cache, peer, true);
-    assert_eq!(resolved, Some("trusted.example.com"));
+    // upstream client_name() never folds the PTR name, so `%h` and
+    // RSYNC_HOST_NAME keep its case; `hosts allow` still matches because the
+    // matcher folds the host like upstream iwildmatch (access.c:57).
+    assert_eq!(resolved, Some("Trusted.Example.Com"));
     assert!(module.permits(peer, PeerHost::new(resolved, true)));
     clear_test_hostname_overrides();
 }
