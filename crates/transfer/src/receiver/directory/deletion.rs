@@ -1681,10 +1681,13 @@ impl ReceiverContext {
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
             metadata_opts: self.build_metadata_options(),
             dry_run: self.config.flags.dry_run,
-            logged: None,
+            logged: self.captures_victim_modes().then(Vec::new),
             writer,
         };
         let emptied = state.remove_dir_contents(relative, path)?;
+        if let Some(logged) = state.logged.take() {
+            self.record_daemon_log_make_room_deletions(&logged);
+        }
         let removed = state.combined;
         // upstream: `stats.deleted_files` is one global counter, so the entries
         // cleared to make room land in the same `--stats` breakdown and the same
