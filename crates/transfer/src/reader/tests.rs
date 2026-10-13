@@ -217,7 +217,7 @@ fn multiplex_reader_buffered_partial_read() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_io_error() {
-    // upstream: io.c:1568-1573
+    // upstream: io.c:1740-1747
     let mut stream = Vec::new();
 
     let io_err_val: i32 = 1; // IOERR_GENERAL
@@ -267,7 +267,7 @@ fn multiplex_reader_io_error_wrong_payload_length_aborts() {
     // to invalid_msg and exit_cleanup(RERR_STREAMIO) (exit 12). Silently dropping
     // it would lose the io_error flags the frame carries and desynchronise the
     // demultiplexer, so the read must abort rather than deliver later data.
-    // upstream: io.c:1569 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1741 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::IoError, &[1, 0, 0]).unwrap();
@@ -438,7 +438,7 @@ fn msg_io_error_round_trip_through_multiplex_layer() {
     // 3. Receiver forwards accumulated flags via multiplex writer
     // 4. Generator receives the forwarded MSG_IO_ERROR
     //
-    // upstream: io.c:1568-1575
+    // upstream: io.c:1740-1748
     use crate::io_error_flags;
     use protocol::{MessageCode, MplexWriter};
     use std::io::Write;
@@ -579,7 +579,7 @@ fn multiplex_reader_no_send_wrong_payload_length_aborts() {
     // A wrong-sized MSG_NO_SEND is fatal upstream (invalid_msg ->
     // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the no-send file index
     // the generator needs, so the read must abort instead of continuing.
-    // upstream: io.c:1666 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1848 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::NoSend, &[1, 0, 0]).unwrap();
@@ -625,7 +625,7 @@ fn server_reader_surfaces_msg_no_send_through_the_multiplex_arm() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_redo() {
-    // upstream: io.c:1561-1566, receiver.c:1109-1113
+    // upstream: io.c:1733-1739, receiver.c:1375
     let mut stream = Vec::new();
 
     let ndx1: i32 = 5;
@@ -673,7 +673,7 @@ fn multiplex_reader_redo_wrong_payload_length_aborts() {
     // A wrong-sized MSG_REDO is fatal upstream (invalid_msg ->
     // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the redo file index
     // the generator must reprocess, so the read must abort instead of continuing.
-    // upstream: io.c:1562 `if (msg_bytes != 4 || !am_generator) goto invalid_msg;`
+    // upstream: io.c:1734 `if (msg_bytes != 4 || !am_generator) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::Redo, &[1, 0, 0]).unwrap();
@@ -1336,7 +1336,7 @@ fn server_reader_block_stats_accepted_on_sender_is_stored() {
 /// WHY: before protocol 33, and on any reader that is not the sender, tag 11 is
 /// an unknown message upstream - `invalid_msg` exits RERR_STREAMIO. A reader
 /// that silently accepted it would let a proto-32 peer inject a stats value.
-/// upstream: io.c:1722 `protocol_version < 33 || (!am_generator && !am_sender)`.
+/// upstream: io.c:1724 `protocol_version < 33 || (!am_generator && !am_sender)`.
 #[test]
 fn server_reader_block_stats_rejected_when_not_accepted() {
     let payload = 7i64.to_le_bytes();
@@ -1354,7 +1354,7 @@ fn server_reader_block_stats_rejected_when_not_accepted() {
 
 /// WHY: upstream requires `msg_bytes == 8` exactly; any other length is the
 /// fatal invalid-message path even on an accepting sender.
-/// upstream: io.c:1722 `if (msg_bytes != 8 || ...) goto invalid_msg;`
+/// upstream: io.c:1724 `if (msg_bytes != 8 || ...) goto invalid_msg;`
 #[test]
 fn server_reader_block_stats_wrong_length_rejected() {
     for payload in [&[0u8; 4][..], &[0u8; 9][..], &[][..]] {
@@ -1398,7 +1398,7 @@ fn server_reader_block_stats_defaults_to_zero() {
 /// multiplexed frames. The unframed view must first hand out payload left
 /// over from the current frame, then read the raw bytes without treating
 /// them as a frame header, and dropping the view must resume demultiplexing
-/// exactly at the next frame. upstream: flist.c:2792-2798 / 3013-3014.
+/// exactly at the next frame. upstream: flist.c:2795-2797 / 3013-3014.
 #[test]
 fn server_reader_unframed_view_reads_raw_bytes_between_frames() {
     let mut stream = Vec::new();
