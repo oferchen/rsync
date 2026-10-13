@@ -116,12 +116,9 @@ class Uts351ManifestTests(unittest.TestCase):
             self.assertFalse(unknown, f"{name}: not in the 3.5.1 corpus: {unknown}")
 
     def test_the_gate_reads_exactly_the_eight_manifests(self) -> None:
-        # The skip-oracle leg also takes the nonroot pipe manifest as its
-        # accepted-failure list, so the gate names that one file twice.
         named = re.findall(r"tools/ci/(upstream-3\.5\.1-expect\.[\w.]+\.txt)",
                            WORKFLOW.read_text())
-        self.assertEqual(sorted(named),
-                         sorted(CONTEXTS + ["upstream-3.5.1-expect.nonroot.txt"]))
+        self.assertEqual(sorted(named), sorted(CONTEXTS))
 
     def test_every_committed_manifest_is_a_gate_manifest(self) -> None:
         # A ledger for a retired release, or for a leg nothing runs, is dead
