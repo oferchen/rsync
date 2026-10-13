@@ -60,8 +60,9 @@ fn list_modules(daemon: &DaemonProcess) -> Vec<String> {
         greeting.starts_with("@RSYNCD: "),
         "expected a daemon greeting, got {greeting:?}"
     );
-    // upstream: clientserver.c - the daemon reads the client's own version
-    // line before any request; echoing the server's greeting is a valid one.
+    // upstream: clientserver.c:176 exchange_protocols() - the daemon reads the
+    // client's own version line before any request; echoing the server's
+    // greeting is a valid one.
     stream
         .write_all(greeting.as_bytes())
         .expect("send greeting");

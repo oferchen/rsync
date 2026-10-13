@@ -10,8 +10,9 @@
 //!
 //! Which signal clears such an orphan depends on what it is still doing, and
 //! the distinction is easy to get backwards. `platform::signal::register_signal_handlers`
-//! converts `SIGTERM` into an atomic flag, mirroring upstream `main.c`'s
-//! deferred-signal handling. A daemon still turning its accept loop *does*
+//! converts `SIGTERM` into an atomic flag. Deviation from upstream: rsync.c:843
+//! sig_int() makes a daemon listener exit at once on `SIGTERM` and defers only
+//! for a server or receiver (`got_kill_signal`). A daemon still turning its accept loop *does*
 //! observe that flag - the loop bounds its `poll(2)` park precisely so it can -
 //! and exits, so `SIGTERM` is enough for a healthy orphan. What survives
 //! `SIGTERM` indefinitely is an orphan that has stopped reaching the flag

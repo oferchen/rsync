@@ -7,9 +7,9 @@
 //!    `--inplace`, so every repeat of C goes out as a copy token.
 //! 2. A sparse, VM-image-like file: a few zero blocks in the basis and long
 //!    zero runs in the source. With duplicate-content blocks the chain walk
-//!    order (`match.c:98-110`, highest block index first) and the `want_i`
-//!    hint (`match.c:321-334`) decide which block index each zero window
-//!    names.
+//!    order (`match.c:98-110` build_hash_table(), highest block index first)
+//!    and the `want_i` hint (`match.c:321-334` hash_search()) decide which
+//!    block index each zero window names.
 //!
 //! Each fixture is PULLED by an upstream client (the receiver, pinned to
 //! protocol 32) from two senders in turn - upstream itself and oc - through
@@ -94,7 +94,7 @@ fn sparse_image_fixture() -> (Vec<u8>, Vec<u8>, u64) {
     (basis, source, matched)
 }
 
-/// `MSG_DATA` multiplex tag (upstream: rsync.h `MPLEX_BASE`).
+/// `MSG_DATA` multiplex tag (upstream: rsync.h:210 `MPLEX_BASE`).
 const MPLEX_DATA: u8 = 7;
 
 /// Length of the MD5 whole-file checksum that ends the delta section; both

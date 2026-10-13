@@ -8,13 +8,14 @@
 //! `bind`, a concurrently-running test can be handed the same ephemeral port.
 //!
 //! The oc-rsync daemon binds its listeners with `SO_REUSEADDR` only (matching
-//! upstream `socket.c:455`), so such a collision is a **clean `EADDRINUSE` bind
+//! upstream `socket.c:605` open_socket_in()), so such a collision is a **clean `EADDRINUSE` bind
 //! failure** - never a silent co-bind. No two daemons ever share a port and no
 //! cross-connection load-balancing is possible.
 //!
 //! Losing that race does **not** necessarily stop the daemon, though. On its
 //! default bind it opens one socket per address family and, mirroring upstream
-//! `socket.c:471-473`, treats a per-family failure as a warning and serves on
+//! `socket.c:622-656` open_socket_in(), treats a per-family failure as
+//! non-fatal and serves on
 //! whichever families did bind. So a daemon that loses only the IPv4 half stays
 //! alive listening on IPv6 - on the requested port, yet unreachable to a client
 //! dialling `127.0.0.1`.
@@ -39,8 +40,8 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Exit status of a daemon that could not bind any listener.
 ///
-/// upstream: socket.c `open_socket_in()` failure ends in
-/// `exit_cleanup(RERR_SOCKETIO)`; oc maps the bind failure to the same code
+/// upstream: socket.c:705-707 start_accept_loop() - an `open_socket_in()`
+/// failure ends in `exit_cleanup(RERR_SOCKETIO)`; oc maps the bind failure to the same code
 /// (`daemon/sections/module_parsing/errors.rs` `bind_error`). Before the daemon
 /// is ready no session exists, so this code at that point can only be a bind
 /// failure.
@@ -137,7 +138,8 @@ where
 ///
 /// Only IPv4 sockets are candidates: the daemon sets `IPV6_V6ONLY` on every
 /// IPv6 socket it opens (`daemon/sections/server_runtime/listener.rs`, keeping
-/// each family's socket independent per upstream `socket.c:455-473`), so an
+/// each family's socket independent per upstream `socket.c:612-620`
+/// open_socket_in()), so an
 /// IPv6 listener never accepts an IPv4 connection - not even a mapped one. Of
 /// the IPv4 sockets, the wildcard and loopback addresses serve that client; a
 /// socket bound to some other interface address does not.
