@@ -125,7 +125,7 @@ impl BatchWriter {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:374-383`: stats written with `write_varlong30(batch_fd, ...)`
+    /// - `main.c:378-388`: stats written with `write_varlong30(batch_fd, ...)`
     pub fn write_stats(&mut self, stats: &BatchStats) -> BatchResult<()> {
         if !self.header_written {
             return Err(BatchError::Io(io::Error::other(

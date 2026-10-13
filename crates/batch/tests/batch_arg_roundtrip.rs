@@ -5,7 +5,8 @@
 //!
 //! `crates/batch/src/script.rs` emits the args one direction (write_arg-style
 //! single-quoting, `--write-batch` -> `--read-batch`, filename elision, filter
-//! stripping); #116/#117 pinned the emitted bytes and the stream-flags bitmap.
+//! stripping); the byte-golden tests pin the emitted bytes and the stream-flags
+//! bitmap.
 //! What was untested is the OTHER direction: feed the emitted `.sh` through
 //! `/bin/sh` (its production consumer) and confirm the reconstructed argv is the
 //! intended option set. A quoting or conversion regression that still produces
@@ -14,8 +15,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `batch.c:255-312 write_batch_shell_file()` - the emit side this mirrors.
-//! - `batch.c:164-190 write_arg()` - the single-quote wrapping being round-tripped.
+//! - `batch.c:291-348 write_batch_shell_file()` - the emit side this mirrors.
+//! - `batch.c:164-198 write_arg()` - the single-quote wrapping being round-tripped.
 
 #![cfg(unix)]
 
@@ -204,7 +205,7 @@ const HOSTILE: &[&str] = &[
 /// disables expansion inside the here-doc, so these must reach stdin verbatim.
 const HOSTILE_RULES: &str = "- `touch CANARY`\n- $(touch CANARY);x>CANARY\n+ it's \"q\"\n";
 
-/// Mirrors upstream `write_arg()` (batch.c:164-196) from the C source: a plain
+/// Mirrors upstream `write_arg()` (batch.c:164-198) from the C source: a plain
 /// `-opt=` prefix stays bare, everything after it is single-quoted, and an
 /// embedded `'` becomes `'\''`.
 fn upstream_write_arg(arg: &str) -> String {
@@ -266,7 +267,7 @@ fn hostile_config(dir: &Path, shim: &Path, dest: &str) -> BatchConfig {
 /// unconditional, a destination like ``d`touch CANARY`x/`` was written bare
 /// and the backtick executed on replay.
 ///
-/// upstream: batch.c:164-196 write_arg(), batch.c:213-240 write_filter_rules().
+/// upstream: batch.c:164-198 write_arg(), batch.c:213-240 write_filter_rules().
 #[test]
 fn hostile_values_round_trip_through_sh_as_single_literal_args() {
     for dest in HOSTILE {

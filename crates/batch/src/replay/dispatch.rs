@@ -23,23 +23,23 @@ use crate::reader::BatchStream;
 use super::delta::{apply_delta_ops, block_index_as_i32, write_literals_to_file};
 
 /// ITEM_BASIS_TYPE_FOLLOWS - 1-byte fnamecmp_type follows iflags.
-/// upstream: rsync.c:403-418
+/// upstream: rsync.c:404-433
 pub(super) const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
 /// ITEM_XNAME_FOLLOWS - vstring (1-2 byte length + data) follows iflags.
-/// upstream: rsync.c:403-418
+/// upstream: rsync.c:404-433
 pub(super) const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
 /// ITEM_TRANSFER - delta data follows after the per-file metadata block.
-/// upstream: rsync.h:252 - `#define ITEM_TRANSFER (1<<15)`
+/// upstream: rsync.h:259 - `#define ITEM_TRANSFER (1<<15)`
 pub(super) const ITEM_TRANSFER: u16 = 1 << 15;
 
 /// Read the per-file iflags word and consume any optional trailing fields.
 ///
-/// upstream: rsync.c:383 - read iflags (u16) for protocol >= 29.
+/// upstream: rsync.c:384 - read iflags (u16) for protocol >= 29.
 /// iflags MUST be read before the entry lookup because the stream contains
 /// iflags for every positive NDX, including directory metadata updates where
 /// NDX < ndx_start (INC_RECURSE).
 ///
-/// upstream: rsync.c:403-418 - consume optional trailing fields after iflags.
+/// upstream: rsync.c:404-433 - consume optional trailing fields after iflags.
 /// `ITEM_BASIS_TYPE_FOLLOWS` (0x0800): 1 byte fnamecmp_type.
 /// `ITEM_XNAME_FOLLOWS` (0x1000): vstring (1-2 byte length + data).
 pub(super) fn read_iflags_and_skip_meta(stream: &mut BatchStream, proto: i32) -> BatchResult<u16> {
@@ -53,8 +53,8 @@ pub(super) fn read_iflags_and_skip_meta(stream: &mut BatchStream, proto: i32) ->
         })?;
         u16::from_le_bytes(buf)
     } else {
-        // upstream: rsync.c:383-384 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
-        // ITEM_MISSING_DATA is `1<<16` (rsync.h:254), a log-only bit that never
+        // upstream: rsync.c:384-385 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
+        // ITEM_MISSING_DATA is `1<<16` (rsync.h:261), a log-only bit that never
         // fits this u16 framing word and that no consumer here inspects: the
         // replay loop only tests ITEM_TRANSFER / ITEM_BASIS_TYPE_FOLLOWS /
         // ITEM_XNAME_FOLLOWS to decide which trailing fields to consume.
@@ -107,7 +107,7 @@ pub(super) fn read_iflags_and_skip_meta(stream: &mut BatchStream, proto: i32) ->
 
 /// Read the 16-byte `sum_head` describing the delta body that follows.
 ///
-/// upstream: receiver.c:351 - `read_sum_head()` reads 4 x i32 and rejects any
+/// upstream: io.c:2233 - `read_sum_head()` reads 4 x i32 and rejects any
 /// field that cannot describe a block layout. Decoding through
 /// [`protocol::wire::SumHead`] applies those same rules, and every copy token
 /// in the body is later resolved through the returned geometry, so a header
