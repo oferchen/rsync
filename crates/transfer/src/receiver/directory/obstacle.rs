@@ -430,14 +430,16 @@ impl ReceiverContext {
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
-        let _ = self.emit_error_xfer_line(
-            writer,
-            format!(
-                "could not make way for new {}: {}\n",
-                make_way_for.description(),
-                relative_path.display()
-            ),
-        );
+        // upstream: delete.c:283 prints the name's raw bytes; `display()` would
+        // replace a non-UTF-8 byte with U+FFFD.
+        let mut line = format!(
+            "could not make way for new {}: ",
+            make_way_for.description()
+        )
+        .into_bytes();
+        line.extend_from_slice(relative_path.as_os_str().as_encoded_bytes());
+        line.push(b'\n');
+        let _ = self.emit_error_xfer_line(writer, line);
         Err(error)
     }
 
