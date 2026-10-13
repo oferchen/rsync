@@ -27,16 +27,16 @@ pub(crate) use directory::{
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use file::take_fsync_call_count;
-pub(crate) use file::{
-    CopyComparison, SparseWriteState, copy_entry_to_backup, copy_file, create_backup_parents,
-    should_skip_copy, skip_matched_sparse, system_time_within_window, write_sparse_chunk,
-};
 pub use file::{
-    DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy, SparseDetector,
-    SparseReader, SparseRegion, compute_backup_path, copy_pre_image_to_backup,
+    BackupDirCache, DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy,
+    SparseDetector, SparseReader, SparseRegion, compute_backup_path, copy_pre_image_to_backup,
     create_backup_dir_parents, remove_existing_destination, remove_incomplete_destination,
     trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,
     trace_make_backup_rename, trace_make_backup_symlink,
+};
+pub(crate) use file::{
+    CopyComparison, SparseWriteState, copy_entry_to_backup, copy_file, create_backup_parents,
+    should_skip_copy, skip_matched_sparse, system_time_within_window, write_sparse_chunk,
 };
 #[cfg(test)]
 pub(crate) use file::{

@@ -30,11 +30,11 @@ use super::sync_nfsv4_acls_if_requested;
 use super::sync_xattrs_if_requested;
 
 use super::{
-    CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker, LocalCopyAction,
-    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
-    LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
-    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, MergeFileOrigin, MergeFileRegistry,
-    NestedDirMerge, ReferenceDirectory, SparseWriteState, compute_backup_path,
+    BackupDirCache, CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker,
+    LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
+    LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress,
+    LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, MergeFileOrigin,
+    MergeFileRegistry, NestedDirMerge, ReferenceDirectory, SparseWriteState, compute_backup_path,
     copy_entry_to_backup, copy_pre_image_to_backup, create_backup_parents,
     delete_extraneous_entries, dir_merge_file_present, filter_program_local_error,
     follow_symlink_metadata, load_dir_merge_rules_recursive, map_metadata_error,
@@ -319,6 +319,9 @@ pub(crate) struct CopyContext<'a> {
     /// wins and the duplicate is neither transferred nor itemized. A later
     /// source's same-destination non-directory entry is skipped silently.
     claimed_destinations: HashSet<PathBuf>,
+    /// `--backup-dir` chain validated by this session's previous backup.
+    /// upstream: backup.c:88-99 copy_valid_path() static `backup_dir_buf`.
+    backup_dir_cache: BackupDirCache,
     /// Cache of parent directories whose existence has been verified, mapping
     /// each verified parent to its filesystem device id once resolved.
     /// Eliminates redundant `statx` syscalls when many files share the same

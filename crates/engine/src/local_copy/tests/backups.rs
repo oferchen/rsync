@@ -3835,10 +3835,18 @@ impl BackupConfinementFixture {
 /// confined - any escape the chain can see is refused there first. It is also
 /// exactly why upstream confines the tiers rather than trusting
 /// `copy_valid_path()`'s earlier verdict.
+///
+/// The flip happens once per session. A later backup under the same
+/// `bak/source` shares that component with the previous backup path, so
+/// upstream does not validate it again and the flipped symlink stays in place
+/// (backup.c:94-99 `copy_valid_path()`).
 #[cfg(unix)]
 fn flip_validated_parent_outside(backup_dir: PathBuf, outside: PathBuf) -> impl Fn() + Send {
     move || {
         let validated = backup_dir.join("source");
+        if fs::symlink_metadata(&validated).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return;
+        }
         fs::remove_dir(&validated).expect("the parent chain must have created it");
         std::os::unix::fs::symlink(&outside, &validated).expect("flip it to a symlink");
     }

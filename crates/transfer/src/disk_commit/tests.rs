@@ -3120,6 +3120,7 @@ fn pipelined_backup_default_suffix_returns_destination_relative_notice() {
     let config = DiskCommitConfig {
         dest_dir: Some(dest_dir.clone()),
         backup: Some(BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_dir.clone(),
             backup_dir: None,
             suffix: OsString::from("~"),
@@ -3192,6 +3193,7 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
     let config = DiskCommitConfig {
         dest_dir: Some(dest_dir.clone()),
         backup: Some(BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_dir.clone(),
             backup_dir: Some(backup_dir.clone()),
             suffix: OsString::from("~"),

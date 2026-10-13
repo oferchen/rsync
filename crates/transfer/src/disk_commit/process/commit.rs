@@ -982,6 +982,7 @@ fn create_backup_path_parents(
                 backup_dir,
                 parent,
                 &metadata_opts,
+                &backup_config.dir_cache,
                 |path| create_dir_all_sandboxed(env, path),
             )
         }

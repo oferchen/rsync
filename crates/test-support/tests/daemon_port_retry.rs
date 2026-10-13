@@ -7,6 +7,7 @@
 //! | case | daemon exit | attempts | outcome |
 //! |---|---|---|---|
 //! | port already held | bind failure code | 2 | ready on a fresh port |
+//! | only an inherited listener | bind failure code | 2 | ready on a fresh port |
 //! | unreadable config | other | 1 | the first error |
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
@@ -14,6 +15,7 @@
 use std::cell::Cell;
 use std::fs;
 use std::net::{Ipv4Addr, TcpListener};
+use std::os::fd::OwnedFd;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
@@ -96,6 +98,52 @@ fn a_lost_bind_race_is_retried_on_a_fresh_port() {
     let child = ReapOnDrop::new(child);
 
     assert_eq!(attempts.get(), 2, "exactly one retry after one lost race");
+    let lost = held[0].local_addr().expect("held addr").port();
+    assert_ne!(port, lost, "the retry must use a fresh port");
+    assert_eq!(daemon_listen_port(child.id()), Some(port));
+}
+
+/// Readiness must come from a socket the spawned process opened, not one it
+/// inherited from the caller.
+///
+/// Until `execve` closes them, a spawned child holds copies of the caller's
+/// descriptors - including the listener that won the race for its port. A
+/// probe sampling that brief window reported the doomed daemon ready on its
+/// first attempt. Handing the winner to a stand-in as its stdout keeps the same
+/// state alive across exec for the stand-in's whole life, so the probe meets
+/// it every time instead of once in many thousand runs.
+#[test]
+fn a_listener_inherited_from_the_caller_does_not_count_as_ready() {
+    let dir = test_support::create_tempdir();
+    let config = write_config(&dir);
+    let attempts = Cell::new(0u32);
+    let mut held = Vec::new();
+
+    let (child, port) = spawn_daemon_on_free_port(|port| {
+        attempts.set(attempts.get() + 1);
+        if attempts.get() > 1 {
+            return spawn_loopback_daemon(&config, port);
+        }
+        let winner = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("take the port");
+        let inherited = OwnedFd::from(winner.try_clone()?);
+        held.push(winner);
+        // A daemon that lost the race: it exits with the bind failure code,
+        // and until then its socket table shows only the inherited winner.
+        Command::new("sh")
+            .args(["-c", &format!("sleep 2; exit {BIND_FAILURE_EXIT_CODE}")])
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(inherited))
+            .stderr(Stdio::null())
+            .spawn()
+    })
+    .expect("the retry must recover once the stand-in exits");
+    let child = ReapOnDrop::new(child);
+
+    assert_eq!(
+        attempts.get(),
+        2,
+        "a listener inherited from the caller must not satisfy readiness"
+    );
     let lost = held[0].local_addr().expect("held addr").port();
     assert_ne!(port, lost, "the retry must use a fresh port");
     assert_eq!(daemon_listen_port(child.id()), Some(port));

@@ -108,6 +108,7 @@ impl<'a> CopyContext<'a> {
                 self.options.backup_directory(),
                 parent,
                 &self.metadata_options(),
+                &self.backup_dir_cache,
             )?;
         }
 
@@ -344,6 +345,7 @@ impl<'a> CopyContext<'a> {
                 self.options.backup_directory(),
                 parent,
                 &self.metadata_options(),
+                &self.backup_dir_cache,
             )?;
         }
 

@@ -85,6 +85,7 @@ impl<'a> CopyContext<'a> {
             cross_source_ready: false,
             swept_directories: HashSet::new(),
             claimed_destinations: HashSet::new(),
+            backup_dir_cache: BackupDirCache::default(),
             verified_parents: HashMap::new(),
             emitted_implied_dirs: HashSet::new(),
             expanded_source_roots: Vec::new(),

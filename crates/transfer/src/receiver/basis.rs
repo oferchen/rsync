@@ -1988,6 +1988,7 @@ mod tests {
         fs::write(&dest_file, &data).expect("write dest");
 
         let backup_config = crate::disk_commit::BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_dir.to_path_buf(),
             backup_dir: None,
             suffix: OsString::from("~"),
@@ -2079,6 +2080,7 @@ mod tests {
         fs::write(&dest_file, b"whole-file pre-image").expect("write dest");
 
         let backup_config = crate::disk_commit::BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_dir.to_path_buf(),
             backup_dir: None,
             suffix: OsString::from("~"),
@@ -2110,6 +2112,7 @@ mod tests {
         let dest_file = dest_dir.join("absent.bin");
 
         let backup_config = crate::disk_commit::BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dest_dir.to_path_buf(),
             backup_dir: None,
             suffix: OsString::from("~"),
