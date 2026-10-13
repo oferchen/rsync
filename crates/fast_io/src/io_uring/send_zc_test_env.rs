@@ -72,8 +72,12 @@ fn effective_uid() -> Option<String> {
 
 fn memlock_soft_limit() -> Option<String> {
     let limits = std::fs::read_to_string("/proc/self/limits").ok()?;
-    let line = limits.lines().find(|l| l.starts_with("Max locked memory"))?;
-    let soft = line["Max locked memory".len()..].split_whitespace().next()?;
+    let line = limits
+        .lines()
+        .find(|l| l.starts_with("Max locked memory"))?;
+    let soft = line["Max locked memory".len()..]
+        .split_whitespace()
+        .next()?;
     Some(if soft == "unlimited" {
         soft.to_owned()
     } else {
