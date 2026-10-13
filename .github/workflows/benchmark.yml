@@ -307,6 +307,27 @@ jobs:
             cat benchmark_report.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Release-note edits from this workflow and benchmark-release.yml read the
+  # body, append a section, and write it back. A shared, non-cancelling group
+  # serialises them so neither overwrites the other's section.
+  publish-release-notes:
+    name: Publish benchmark to release
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: release-notes-${{ github.ref }}
+      cancel-in-progress: false
+    # No checkout in this job, so gh cannot infer the repository from git.
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download benchmark results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: benchmark-results
+
       - name: Resolve release tag
         id: release_tag
         run: |
