@@ -1230,6 +1230,63 @@ mod module_access_tests {
         );
     }
 
+    // SEND_ZC is on by default: the daemon-sender's socket writer under the
+    // policy every client arrives with (`Auto`) must put the payload through
+    // `IORING_OP_SEND_ZC` wherever the kernel can run it, and keep the plain
+    // `TcpStream` path - with no SEND_ZC counted - wherever it cannot. The
+    // process-wide counters are what tell the two apart; the bytes match
+    // either way. Gated on the (default-on) feature that makes `Auto` permit it.
+    #[cfg(all(unix, feature = "daemon-zero-copy"))]
+    #[test]
+    fn daemon_socket_writer_dispatches_send_zc_by_default() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+
+        let io_uring = fast_io::io_uring::is_io_uring_available();
+        let opcode = fast_io::io_uring::send_zc_supported();
+        let runnable = io_uring && opcode;
+        eprintln!(
+            "[send_zc env] daemon_socket_writer_dispatches_send_zc_by_default: {}",
+            match (io_uring, opcode) {
+                (false, _) => "io_uring unavailable - SEND_ZC not exercised",
+                (true, false) => "SEND_ZC opcode unsupported (kernel < 6.0) - SEND_ZC not exercised",
+                (true, true) => "ok - exercising IORING_OP_SEND_ZC",
+            }
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let payload: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let payload_owned = payload.clone();
+
+        let before = fast_io::send_zc_stats();
+        let sender = std::thread::spawn(move || {
+            let write_stream = TcpStream::connect(addr).expect("connect");
+            let mut writer =
+                daemon_socket_writer(write_stream, fast_io::ZeroCopyPolicy::default());
+            writer.write_all(&payload_owned).expect("write payload");
+            writer.flush().expect("flush");
+        });
+        let (mut peer, _) = listener.accept().expect("accept");
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).expect("read to end");
+        sender.join().expect("sender thread");
+        let after = fast_io::send_zc_stats();
+
+        assert_eq!(received, payload, "transcript must equal the payload");
+        if runnable {
+            assert!(
+                after.sends > before.sends && after.bytes > before.bytes,
+                "the default daemon writer did not use SEND_ZC: {before:?} -> {after:?}"
+            );
+        } else {
+            assert_eq!(
+                after.sends, before.sends,
+                "SEND_ZC cannot run here, so none may be counted"
+            );
+        }
+    }
+
     // UTS-15.g: the daemon arg parser must fail loud on a client-only batch
     // flag instead of silently dropping it. Upstream rsync at
     // `options.c:1450-1455` emits `rsync: <BAD>: <err> (in daemon mode)` and

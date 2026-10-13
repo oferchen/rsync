@@ -878,9 +878,9 @@ fn process_approved_module(
     // `fast_io::send_zc_policy_permits` accepts this policy (parsed into
     // `config.write.zero_copy_policy` by `apply_long_form_args`). `Disabled`
     // never does. `Auto` - what every client arrives with, since `--zero-copy`
-    // is a local knob no peer argv carries - does so only in builds with the
-    // `iouring-send-zc` cargo feature, so a stock build's default path is byte-
-    // and behavior-identical.
+    // is a local knob no peer argv carries - does so in builds with the
+    // `iouring-send-zc` cargo feature (default on) when the kernel advertises
+    // the opcode; otherwise the default path is byte- and behavior-identical.
     let zero_copy_policy = config.write.zero_copy_policy;
     // upstream: io.c:211-250 `check_timeout()`. The reconciled `io_timeout` is
     // armed on the socket as `SO_RCVTIMEO`/`SO_SNDTIMEO`, but that option lives

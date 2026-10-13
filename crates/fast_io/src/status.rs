@@ -216,7 +216,20 @@ pub fn io_uring_capability_matrix() -> String {
                 "no"
             }
         ));
+        lines.push(format!(
+            "  send_zc opcode:     {}",
+            if io_uring::send_zc_supported() {
+                "yes (kernel 6.0+)"
+            } else {
+                "no"
+            }
+        ));
     }
+    let zc = crate::send_zc_stats();
+    lines.push(format!(
+        "  send_zc counters:   {} sends, {} bytes, {} fallbacks (this process)",
+        zc.sends, zc.bytes, zc.fallbacks
+    ));
 
     // Feature gates (rendered from the single IO_URING_FEATURE_GATES source).
     lines.push(String::new());
@@ -416,7 +429,7 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
         if is_io_uring_available() {
             caps.push("io_uring");
 
-            // SEND_ZC is an opt-in build feature on top of io_uring. Reporting
+            // SEND_ZC is a build feature (default on) on top of io_uring. Reporting
             // it here rather than in core's `compiled_build_features()` is
             // deliberate: `iouring-send-zc` is declared on this crate, so the
             // `cfg!` is live. The same test inside `core` would be vacuously
@@ -476,7 +489,7 @@ mod tests {
             );
 
             // SEND_ZC is only meaningful on top of io_uring, and only when the
-            // opt-in build feature is compiled in. Both halves must hold.
+            // build feature is compiled in. Both halves must hold.
             assert_eq!(
                 caps.contains(&"send_zc"),
                 caps.contains(&"io_uring") && cfg!(feature = "iouring-send-zc"),
@@ -817,6 +830,7 @@ mod tests {
         assert!(matrix.contains("available:"));
         assert!(matrix.contains("feature gates:"));
         assert!(matrix.contains("active fallback chain:"));
+        assert!(matrix.contains("send_zc counters:"));
     }
 
     #[test]
