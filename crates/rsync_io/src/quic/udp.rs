@@ -578,11 +578,11 @@ mod tests {
     /// on every platform whether or not the kernel coalesces.
     #[test]
     fn gro_train_splits_at_stride_and_keeps_the_short_tail() {
-        let meta = RecvMeta {
-            len: 237,
-            stride: 100,
-            ..RecvMeta::default()
-        };
+        // RecvMeta is #[non_exhaustive], so it cannot be built with a struct
+        // literal outside quinn-udp.
+        let mut meta = RecvMeta::default();
+        meta.len = 237;
+        meta.stride = 100;
         let bufs = [(0..237).map(|i| (i / 100) as u8).collect::<Vec<u8>>()];
         let batch = Batch {
             bufs: &bufs,
