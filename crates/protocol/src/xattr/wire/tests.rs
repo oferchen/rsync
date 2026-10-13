@@ -1070,7 +1070,7 @@ fn read_definitions_exceeds_max_count() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("exceeds maximum"));
+    assert!(err.to_string().contains("xattr count out of range"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
     // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
@@ -1156,7 +1156,7 @@ fn recv_xattr_exceeds_max_count() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("exceeds maximum"));
+    assert!(err.to_string().contains("xattr count out of range"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
     // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
