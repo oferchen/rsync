@@ -112,11 +112,14 @@ fn a_worse_remote_shell_status_keeps_the_whine_and_names_its_own_code() {
 /// A remote shell that runs the remote command but forwards only the first
 /// `cut` bytes of its output, then ends the stream: the peer dies mid-transfer.
 /// `dd bs=1` passes each byte straight through, so the cut lands exactly.
+/// stdin is handed over through fd 3: POSIX points a background job's fd 0
+/// at /dev/null before its redirections run, so dash would give `<&0` an
+/// empty stream and the server would exit before speaking.
 fn write_truncating_rsh_shim(dir: &Path, cut: usize) -> PathBuf {
     let script = dir.join(format!("rsh-cut-{cut}.sh"));
     let fifo = dir.join(format!("out-{cut}.fifo"));
     let body = format!(
-        "#!/bin/sh\nshift\nmkfifo '{fifo}'\nsh -c \"$*\" <&0 > '{fifo}' &\nexec dd bs=1 count={cut} < '{fifo}' 2>/dev/null\n",
+        "#!/bin/sh\nshift\nmkfifo '{fifo}'\nexec 3<&0\nsh -c \"$*\" <&3 > '{fifo}' &\nexec dd bs=1 count={cut} 3<&- < '{fifo}' 2>/dev/null\n",
         fifo = fifo.display(),
     );
     fs::write(&script, body).expect("write rsh shim");
@@ -207,7 +210,7 @@ fn push_cut_after(cut: usize) -> (Option<i32>, Vec<String>, u64) {
     let fifo = temp.path().join("out.fifo");
     let tally = temp.path().join("dd.tally");
     let body = format!(
-        "#!/bin/sh\nshift\nmkfifo '{fifo}'\nsh -c \"$*\" <&0 > '{fifo}' &\nexec dd bs=1 count={cut} < '{fifo}' 2>'{tally}'\n",
+        "#!/bin/sh\nshift\nmkfifo '{fifo}'\nexec 3<&0\nsh -c \"$*\" <&3 > '{fifo}' &\nexec dd bs=1 count={cut} 3<&- < '{fifo}' 2>'{tally}'\n",
         fifo = fifo.display(),
         tally = tally.display(),
     );
