@@ -8,7 +8,7 @@
 //!
 //! - `fileio.c:212-216` `reset_block_tracker()` - per-file reset, called from
 //!   `receiver.c:489` at the top of `receive_data()`.
-//! - `fileio.c:218-243` `track_block_touches()` - the forward high-water mark.
+//! - `fileio.c:218-242` `track_block_touches()` - the forward high-water mark.
 //! - `fileio.c:169,180` - sparse data spans are counted only when not seeking.
 //! - `fileio.c:251-252` - dense writes are counted only when not seeking.
 
@@ -74,7 +74,7 @@ impl BlockTouchTracker {
 
     /// Credits a write of `len` bytes at absolute file `offset`.
     ///
-    /// upstream: fileio.c:218-243 `track_block_touches()`.
+    /// upstream: fileio.c:218-242 `track_block_touches()`.
     pub fn record(&mut self, offset: u64, len: u64) {
         if len == 0 {
             return;

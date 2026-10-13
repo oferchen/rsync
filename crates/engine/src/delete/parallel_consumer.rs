@@ -1,6 +1,6 @@
-//! Feature-gated parallel `DeleteEmitter` consumer (DEL-2.c).
+//! Feature-gated parallel `DeleteEmitter` consumer.
 //!
-//! This module wires the DEL-2.a [`super::ReorderBuffer`] and the DEL-2.b
+//! This module wires the [`super::ReorderBuffer`] and the
 //! [`super::CohortBatcher`] into a producer/consumer pipeline that drains
 //! sealed cohorts under a dedicated consumer thread while dispatching each
 //! cohort's [`super::DeleteOperation`] entries on the rayon thread pool.
@@ -9,7 +9,7 @@
 //!
 //! - The module is gated behind the `parallel-delete-consumer` Cargo
 //!   feature so production builds remain byte-for-byte unchanged. When the
-//!   feature is enabled, `DeleteContext::emit_one` (DEL-2.d) routes the
+//!   feature is enabled, `DeleteContext::emit_one` routes the
 //!   receiver-side drain through this consumer instead of the sequential
 //!   [`super::emitter::DeleteEmitter`]. This wiring is additive only: with
 //!   the feature off, the symbols here are not compiled and the existing
@@ -70,7 +70,7 @@ use fast_io::DirSandbox;
 /// the `io_error` bitmask, and the mapped exit code so callers can both
 /// surface the exit code and inspect the dispatcher's recorded trace in
 /// tests. Mirrors the shape of [`super::DrainOutcome`] used by the
-/// sequential emitter so DEL-2.d's call-site migration is mechanical.
+/// sequential emitter so the call-site migration is mechanical.
 #[derive(Debug)]
 pub struct ParallelDrainOutcome<F: DeleteFs> {
     /// Filesystem dispatcher consumed by the parallel run. Production
@@ -93,7 +93,7 @@ pub struct ParallelDrainOutcome<F: DeleteFs> {
 /// paired with a `Condvar`) plus the configuration the consumer thread
 /// needs to dispatch each [`DeleteOperation`] through the configured
 /// [`DeleteFs`]. The producer-facing API is intentionally minimal -
-/// [`Self::enqueue_cohort`] and [`Self::mark_producers_done`] - so DEL-2.d
+/// [`Self::enqueue_cohort`] and [`Self::mark_producers_done`] - so `DeleteContext`
 /// can wire the receiver-side traversal driver in without exposing the
 /// internal Condvar machinery.
 ///
@@ -101,7 +101,7 @@ pub struct ParallelDrainOutcome<F: DeleteFs> {
 ///
 /// - **Producers** call [`Self::enqueue_cohort`] on any rayon worker. Each
 ///   call takes the shared mutex briefly to publish a sealed cohort and
-///   signal the consumer's Condvar. With DEL-2.b's single-call sealing
+///   signal the consumer's Condvar. With single-call sealing
 ///   the producer never holds the lock across a `DeleteFs` syscall.
 /// - **Consumer** runs inside [`Self::run`] which spawns a dedicated OS
 ///   thread (not a rayon worker - the consumer loops on a Condvar and
@@ -122,12 +122,12 @@ pub struct ParallelDrainOutcome<F: DeleteFs> {
 /// returns the folded [`DeleteStats`] only after every per-cohort fold
 /// has executed, so the unchanged goodbye writer at
 /// `crates/transfer/src/generator/transfer/goodbye.rs` serialises the
-/// correct totals when DEL-2.d wires the receiver through this path.
+/// correct totals when `DeleteContext` wires the receiver through this path.
 pub struct ParallelDeleteEmitter<F: DeleteFs> {
     fs: F,
     policy: EmitterErrorPolicy,
     shared: Arc<SharedBatcher>,
-    /// Optional SEC-1.q dirfd anchor. When attached, each cohort's parent
+    /// Optional dirfd anchor. When attached, each cohort's parent
     /// directory is opened once against [`DirSandbox::root_dirfd`] and the
     /// cohort's ops dispatch through the dirfd-anchored `*_at` trait
     /// methods, closing the mid-delete prefix-symlink-swap TOCTOU that a
@@ -188,7 +188,7 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
     }
 
     /// Attaches a [`DirSandbox`] so each cohort dispatches through the
-    /// SEC-1.q dirfd-anchored `*_at` trait methods.
+    /// dirfd-anchored `*_at` trait methods.
     ///
     /// The cohort's destination-relative parent directory is opened once
     /// against [`DirSandbox::root_dirfd`] just before its ops dispatch; the
@@ -446,7 +446,7 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
         return Ok(());
     }
 
-    // SEC-1.q: open the cohort's parent directory once via the sandbox so
+    // Open the cohort's parent directory once via the sandbox so
     // every op dispatches through the dirfd-anchored `*_at` methods. When
     // the sandbox root is known and the cohort key is an absolute path
     // beneath it (the local-copy cleanup path), resolve the cohort dir
@@ -488,7 +488,7 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
                 }
             }
             Err(err) => {
-                // upstream: delete.c:141-273 never aborts the pass on a
+                // upstream: delete.c:141-164 / :259-270 never abort the pass on a
                 // per-entry errno; record it and keep going under the
                 // default continue-on-error policy.
                 accumulate_nonfatal(&mut summary.io_error, policy, &err);
@@ -639,7 +639,7 @@ mod tests {
         )
     }
 
-    /// DEL-2.c empty-batcher path: with no cohorts published and
+    /// Empty-batcher path: with no cohorts published and
     /// `mark_producers_done` invoked before `run`, the consumer must
     /// drain cleanly and surface an empty outcome instead of parking
     /// forever on the Condvar.
@@ -657,7 +657,7 @@ mod tests {
         assert_eq!(outcome.exit_code, 0);
     }
 
-    /// DEL-2.c single-cohort path: a sealed cohort with three ops
+    /// Single-cohort path: a sealed cohort with three ops
     /// dispatches every op exactly once through `DeleteFs`. The recorded
     /// event log proves all three syscalls landed; the per-op stats fold
     /// into the cohort's bucket counters.
@@ -690,7 +690,7 @@ mod tests {
     /// records the leaf-only path for `*_at` calls (vs the absolute path
     /// for path-based calls), so a leaf-only event proves the dirfd anchor
     /// fired. This closes the mid-delete prefix-symlink-swap TOCTOU on the
-    /// parallel consumer, matching the sequential emitter's SEC-1.q
+    /// parallel consumer, matching the sequential emitter's
     /// behaviour.
     #[cfg(unix)]
     #[test]

@@ -2,11 +2,11 @@
 //!
 //! Hosts the [`DeleteFs`] trait, the production [`RealDeleteFs`] backed
 //! by `std::fs`, and the [`RecordingDeleteFs`] test fake. Splitting one
-//! method per upstream-distinguishable entry kind (`delete.c:144-176`)
+//! method per upstream-distinguishable entry kind (`delete.c:245-256`)
 //! lets unit tests assert the exact dispatch table even though all
 //! file-like kinds currently route to `unlink(2)` in production.
 //!
-//! # Sandbox-anchored dispatch (SEC-1.q)
+//! # Sandbox-anchored dispatch
 //!
 //! Each unlink/rmdir method ships in two shapes:
 //!
@@ -21,10 +21,10 @@
 //!   three-arm fallback contract instead of by the kernel with symlink
 //!   following fully enabled.
 //! - **Dirfd-anchored** (`unlink_file_at`, `rmdir_at`, ...,
-//!   `#[cfg(unix)]`): the SEC-1.q entry points that resolve a
+//!   `#[cfg(unix)]`): the entry points that resolve a
 //!   single-leaf name against a [`BorrowedFd`] for the parent directory.
 //!   These close the symlink-swap TOCTOU class on every `--delete`
-//!   syscall and route through the SEC-1.g / SEC-1.s sandbox helpers in
+//!   syscall and route through the sandbox helpers in
 //!   [`fast_io::dir_sandbox::at_syscalls`].
 
 #[cfg(not(unix))]
@@ -47,7 +47,7 @@ use crate::util::poison::lock_or_recover;
 /// Filesystem operations the emitter needs to issue a deletion.
 ///
 /// The trait carves one method per upstream-distinguishable entry kind
-/// (`delete.c:144-176`). Splitting `unlink_file` from `unlink_symlink` /
+/// (`delete.c:245-256`). Splitting `unlink_file` from `unlink_symlink` /
 /// `unlink_device` / `unlink_special` lets unit tests assert the exact
 /// dispatch table even though all four currently route to `unlink(2)` in
 /// the production implementation. Directories use `rmdir(2)`; the
@@ -60,7 +60,7 @@ use crate::util::poison::lock_or_recover;
 /// stateless; the test fake holds a `Mutex` because the recording is
 /// observable from the test thread after `emit_all` returns.
 ///
-/// # Sandbox-anchored siblings (SEC-1.q)
+/// # Sandbox-anchored siblings
 ///
 /// Every path-based method has a unix-only `*_at` sibling that takes a
 /// parent dirfd plus a single-component leaf. When the emitter is built
@@ -104,14 +104,14 @@ pub trait DeleteFs: std::fmt::Debug {
     /// Invoked by the emitter when [`Self::rmdir`] returns
     /// [`io::ErrorKind::DirectoryNotEmpty`] and no nested
     /// [`super::super::DeletePlan`] has been published for the offending
-    /// child (upstream `delete.c:48-122 delete_dir_contents`).
+    /// child (upstream `delete.c:86-183 delete_dir_contents`).
     ///
     /// See [`Self::remove_dir_all_at`] for the sandbox-anchored sibling.
     fn remove_dir_all(&self, path: &Path) -> io::Result<()>;
 
     /// Unlinks a regular file via `unlinkat(parent_fd, name, 0)`.
     ///
-    /// SEC-1.q sandbox-anchored sibling of [`Self::unlink_file`]. The
+    /// Sandbox-anchored sibling of [`Self::unlink_file`]. The
     /// leaf is resolved relative to `parent_fd`; a mid-syscall symlink
     /// swap on the parent walk cannot redirect the call because the
     /// parent is pinned by the dirfd that was opened at receiver setup.
@@ -121,32 +121,32 @@ pub trait DeleteFs: std::fmt::Debug {
     /// Removes an empty directory via
     /// `unlinkat(parent_fd, name, AT_REMOVEDIR)`.
     ///
-    /// SEC-1.q sandbox-anchored sibling of [`Self::rmdir`].
+    /// Sandbox-anchored sibling of [`Self::rmdir`].
     #[cfg(unix)]
     fn rmdir_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()>;
 
     /// Unlinks a symbolic link via `unlinkat(parent_fd, name, 0)`.
     ///
-    /// SEC-1.q sandbox-anchored sibling of [`Self::unlink_symlink`].
+    /// Sandbox-anchored sibling of [`Self::unlink_symlink`].
     #[cfg(unix)]
     fn unlink_symlink_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()>;
 
     /// Unlinks a device node via `unlinkat(parent_fd, name, 0)`.
     ///
-    /// SEC-1.q sandbox-anchored sibling of [`Self::unlink_device`].
+    /// Sandbox-anchored sibling of [`Self::unlink_device`].
     #[cfg(unix)]
     fn unlink_device_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()>;
 
     /// Unlinks a FIFO or socket via `unlinkat(parent_fd, name, 0)`.
     ///
-    /// SEC-1.q sandbox-anchored sibling of [`Self::unlink_special`].
+    /// Sandbox-anchored sibling of [`Self::unlink_special`].
     #[cfg(unix)]
     fn unlink_special_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()>;
 
     /// Recursively removes a directory anchored on `parent_fd`.
     ///
-    /// SEC-1.q sandbox-anchored sibling of [`Self::remove_dir_all`].
-    /// Routes through [`fast_io::recursive_unlinkat`] (SEC-1.s) so each
+    /// Sandbox-anchored sibling of [`Self::remove_dir_all`].
+    /// Routes through [`fast_io::recursive_unlinkat`] so each
     /// per-entry descent refuses to follow a symlink at the leaf
     /// (`O_DIRECTORY | O_NOFOLLOW`) and the final
     /// `unlinkat(AT_REMOVEDIR)` is anchored on `parent_fd`.
@@ -171,7 +171,7 @@ pub trait DeleteFs: std::fmt::Debug {
 /// Windows `DeleteFileW`) on the path fallback. The sandbox path routes
 /// every leaf-removal through [`fast_io::unlinkat`] for the non-recursive
 /// kinds and [`fast_io::recursive_unlinkat`] for the recursive fallback,
-/// mirroring upstream `delete_item` (`delete.c:161-175`): `do_rmdir` for
+/// mirroring upstream `delete_item` (`delete.c:222-239`): `do_rmdir` for
 /// `S_ISDIR`, `robust_unlink` for everything else,
 /// `delete_dir_contents` for the recursive peel.
 #[derive(Debug, Default, Clone, Copy)]
@@ -337,7 +337,7 @@ impl DeleteFs for RealDeleteFs {
         parent_fd: BorrowedFd<'_>,
         name: &OsStr,
     ) -> io::Result<UnlinkResidue> {
-        // SEC-1.s carrier: drives the recursive peel directly off
+        // Drives the recursive peel directly off
         // `parent_fd` with O_DIRECTORY | O_NOFOLLOW so a symlink at the
         // root is refused and the kernel anchors every per-entry
         // `unlinkat` on the descent dirfd.
@@ -425,7 +425,7 @@ pub struct DeleteEvent {
 /// "syscall order matches upstream" check that section 9.1 of the design
 /// elevates to a release-gating interop test.
 ///
-/// The SEC-1.q `*_at` impls discard `parent_fd` and record only the leaf
+/// The `*_at` impls discard `parent_fd` and record only the leaf
 /// name so the existing emitter unit tests, which assert on absolute
 /// paths, keep working unchanged when the emitter dispatches through the
 /// dirfd-anchored siblings (the path is provided by the dispatcher).

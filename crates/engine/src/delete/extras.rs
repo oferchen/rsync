@@ -23,8 +23,9 @@
 //!   item calls `flist_find_ignore_dirness(cur_flist, fp) < 0` to decide
 //!   whether to delete. We perform the same set subtraction in pure
 //!   Rust: hash the segment's basenames, then walk the dest directory.
-//! - `target/interop/upstream-src/rsync-3.5.0/flist.c:flist_find`
-//!   (basename-keyed lookup against the active flist).
+//! - `target/interop/upstream-src/rsync-3.5.1/flist.c:3452`
+//!   (`flist_find_ignore_dirness`, which retries `flist_find` with the
+//!   opposite directory-ness).
 
 use std::collections::HashSet;
 use std::ffi::OsString;

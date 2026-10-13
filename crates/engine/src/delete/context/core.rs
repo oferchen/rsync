@@ -86,7 +86,7 @@ pub(super) struct CursorObservation {
 #[derive(Debug)]
 pub struct DeleteContext {
     /// Shared concurrent map of per-directory plans. Populated by the
-    /// receiver hook (DDP-B3) or by inline `compute_extras` calls in the
+    /// receiver hook or by inline `compute_extras` calls in the
     /// local-copy executor; drained by the emitter.
     pub plans: Arc<DeletePlanMap>,
     /// Destination root the receiver writes into. Per-segment relative
@@ -245,9 +245,9 @@ impl DeleteContext {
     ///
     /// Propagates I/O errors from [`compute_extras`] when the
     /// destination directory cannot be read. The receiver caller is
-    /// expected to log and continue rather than abort the transfer, the
-    /// existing batched-sweep path will still run, matching upstream's
-    /// `io_error |= 1` behaviour for `read_dir` failures.
+    /// expected to log and continue rather than abort the transfer,
+    /// matching upstream, where an unreadable directory sets
+    /// `io_error |= IOERR_GENERAL` and the run goes on.
     ///
     /// # Panics
     ///
@@ -395,7 +395,7 @@ impl DeleteContext {
     /// # Dispatch
     ///
     /// When the crate is built with `--features parallel-delete-consumer`,
-    /// DEL-2.d routes the drain through `ParallelDeleteEmitter` so cohort
+    /// `emit_one` routes the drain through `ParallelDeleteEmitter` so cohort
     /// dispatch runs on rayon while preserving the DEL-1.a cross-cohort
     /// wire-ordering invariant. The sequential
     /// `DeleteEmitter` remains the default.
@@ -468,7 +468,7 @@ impl DeleteContext {
         self.emit_one(fs)
     }
 
-    /// DEL-2.d implementation: translates the published [`DeletePlan`]s
+    /// Parallel-consumer implementation: translates the published [`DeletePlan`]s
     /// into cohort-keyed [`super::super::reorder_buffer::DeleteOperation`]
     /// batches, walks the cursor to assign monotonic ranks, and runs the
     /// parallel consumer to completion. Returns a [`DrainOutcome`] with
@@ -624,7 +624,7 @@ impl DeleteContext {
             .take()
             .ok_or(DeleteError::CursorReceiverAlreadyTaken)?;
 
-        // SEC-1.q / #506: open the delete root as a `DirSandbox` so the
+        // Open the delete root as a `DirSandbox` so the
         // production emitter dispatches every unlink through the
         // dirfd-anchored `*_at` syscalls, closing the parent-component
         // symlink-swap TOCTOU. Open BEFORE `cursor_root` is moved into the
@@ -657,7 +657,7 @@ impl DeleteContext {
 /// Owned inputs the drain needs, extracted from a consumed [`DeleteContext`].
 ///
 /// Bundles the plan map, traversal cursor, and emitter policy shared by the
-/// sequential and parallel drain paths, plus the optional SEC-1.q
+/// sequential and parallel drain paths, plus the optional
 /// [`fast_io::DirSandbox`] anchor (and the absolute root it was opened at)
 /// that lets the production emitter dispatch through the dirfd-anchored
 /// `*_at` syscalls.
@@ -680,7 +680,7 @@ pub(super) struct DrainParts {
 /// path-based [`super::super::emitter::DeleteFs`] methods instead of the
 /// dirfd-anchored `*_at` ones.
 ///
-/// # What `None` now means (CF-P2a)
+/// # What `None` now means
 ///
 /// `None` used to mean "unconfined": the path-based methods were bare
 /// `std::fs` calls. They are not any more - they resolve through
