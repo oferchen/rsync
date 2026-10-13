@@ -302,7 +302,7 @@ where
             metadata_options,
             &mut mkdir,
         ) {
-            // upstream: backup.c:109,129 - `*name = '\0'` truncates the kept
+            // upstream: backup.c:116,137 - `*name = '\0'` truncates the kept
             // path at the failing component, so the next call validates it again.
             *validated = Some(rel.components().take(index).collect());
             return Err(error);
