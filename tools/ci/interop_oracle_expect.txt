@@ -34,8 +34,4 @@ hardlinks/3.5.1/daemon/pull/oc-client task-2597 hard-link leader choice differs,
 hardlinks/3.5.1/daemon/push/oc-server task-2597 hard-link leader choice differs, so itemize names the other file
 hardlinks/3.5.1/rsh/pull/oc-client task-2597 hard-link leader choice differs, so itemize names the other file
 hardlinks/3.5.1/rsh/push/oc-server task-2597 hard-link leader choice differs, so itemize names the other file
-inc-recurse-dirs/3.5.1/daemon/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf
-inc-recurse-dirs/3.5.1/rsh/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf
 non-utf8/3.5.1/rsh/pull/oc-client task-2522 non-UTF-8 names collapse in the flist dedup (sort.rs name())
-touched-tree/3.5.1/daemon/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf (touched count matches)
-touched-tree/3.5.1/rsh/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf (touched count matches)

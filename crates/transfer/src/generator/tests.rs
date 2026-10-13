@@ -5433,6 +5433,61 @@ fn reclaim_oldest_segment_frees_first_segment_entries() {
     assert_eq!(ctx.file_list()[5].name(), "dir/file_5.txt"); // still intact
 }
 
+/// A reclaimed segment keeps its directories, because the receiver still
+/// itemizes each one later through its sub-list's gap NDX.
+///
+/// upstream allocates an INC_RECURSE directory from `dir_flist`'s pool, not the
+/// transfer list's (flist.c:1748-1755), so `flist_free()` of the sub-list that
+/// listed it leaves it alive (flist.c:3548-3551) and `send_files()` still finds
+/// it as `dir_flist->files[cur_flist->parent_ndx]` (sender.c:552-558). If oc
+/// wiped it with the rest of the segment, the gap NDX would resolve to a blank
+/// entry: the row printed as `cf` with no name and the created-file tally
+/// counted a special instead of a directory.
+#[test]
+fn reclaim_oldest_segment_keeps_directories_for_gap_ndx_itemize() {
+    use super::item_flags::ItemFlags;
+    use protocol::CompatibilityFlags;
+    use protocol::flist::FileEntry;
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+
+    // Initial list [0..3) = `.`, a.txt, sub; sub's sub-list starts at flat 3.
+    for (entry, path) in [
+        (FileEntry::new_directory(".".into(), 0o755), "/src/."),
+        (FileEntry::new_file("a.txt".into(), 10, 0o644), "/src/a.txt"),
+        (FileEntry::new_directory("sub".into(), 0o755), "/src/sub"),
+        (
+            FileEntry::new_file("sub/child.txt".into(), 10, 0o644),
+            "/src/sub/child.txt",
+        ),
+    ] {
+        ctx.push_file_item(entry, PathBuf::from(path));
+    }
+    ctx.incremental.ndx_map.set_initial_parent_flat(0);
+    let sub_gap = ctx.incremental.ndx_map.push_sublist(3, 2) - 1;
+
+    ctx.reclaim_oldest_segment();
+    assert_eq!(ctx.incremental.ndx_map.first_live(), 1);
+    assert_eq!(ctx.file_list()[1].name(), "", "a file is still reclaimed");
+
+    let sub = &ctx.file_list()[ctx.resolve_itemize_ndx(sub_gap)];
+    assert!(sub.is_dir(), "the gap NDX must still name a directory");
+    let created = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+    assert_eq!(
+        itemize::format_itemize_line(
+            &created,
+            sub,
+            true,
+            &itemize::ItemizeContext::default(),
+            None
+        ),
+        "cd+++++++++ sub/\n"
+    );
+    assert!(ctx.file_list()[0].is_dir(), "the `.` root survives too");
+}
+
 #[test]
 fn reclaim_oldest_segment_noop_without_inc_recurse() {
     use protocol::flist::FileEntry;
