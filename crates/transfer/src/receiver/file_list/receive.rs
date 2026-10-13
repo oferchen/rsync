@@ -109,6 +109,10 @@ impl ReceiverContext {
             // flist_eof right after recv_id_list(); who_am_i() still reports
             // the pre-forked "Receiver" here (rsync.c:994).
             protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::PreForkReceiver);
+        } else {
+            // upstream: flist.c:1223-1245 - no trailing id list; each entry is
+            // mapped as it is decoded.
+            self.remap_ownership(seg_start..self.file_list.len());
         }
 
         // upstream: flist.c:3311-3315 - read io_error flag for protocol < 30.
@@ -363,6 +367,10 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
         {
+            // upstream: flist.c:1229 - an inline name is resolved as the entry
+            // is decoded, exactly as in the initial list.
+            #[cfg(unix)]
+            self.register_inline_id_names(&entry)?;
             // upstream: flist.c:3236-3249 - same read-loop tally as the
             // initial list; a later segment reclaim never un-counts it.
             self.count_received_entry(&entry);
@@ -373,6 +381,9 @@ impl ReceiverContext {
         // upstream: flist.c:3262 - `received %d names` per recv_file_list()
         // call, sub-lists included.
         protocol::flist::trace_received_names(segment_count);
+
+        // upstream: flist.c:1223-1245 - sub-list entries are mapped as decoded.
+        self.remap_ownership(flat_start..self.file_list.len());
 
         // upstream: flist.c:3236-3242 - snapshot this sub-list's directories at
         // the read loop, before the per-segment sort/clean below tombstones any

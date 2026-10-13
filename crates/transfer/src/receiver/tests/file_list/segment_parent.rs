@@ -208,3 +208,61 @@ fn generator_walk_order_is_flat_order_for_a_single_list() {
         .collect();
     assert_eq!(walk_order(&ctx), flat);
 }
+
+/// A server receiver's directory row goes out at the head of the directory's
+/// own sub-list, on that sub-list's gap NDX, never inside its parent's list.
+///
+/// upstream: generator.c:1631-1633 makes a directory met in its parent's list
+/// `is_dir < 0`, so it is only created there (generator.c:1819-1834);
+/// generate_files() itemizes it with `ndx = cur_flist->ndx_start - 1` right
+/// before the sub-list's entries (generator.c:2780-2787). The pushing client's
+/// sender prints rows in wire order, so a row sent at the parent's position
+/// lists every directory before its siblings' contents.
+#[test]
+fn server_dir_rows_go_out_ahead_of_their_sub_list_on_the_gap_ndx() {
+    let mut ctx = inc_recurse_receiver(test_config());
+    receive_initial(&mut ctx, &[dir("."), file("a.txt"), dir("d"), dir("e")]);
+    receive_sub_list(&mut ctx, 2, &[file("e/y.txt")]);
+    receive_sub_list(&mut ctx, 1, &[file("d/x.txt")]);
+
+    // Flat: 0 `.`, 1 a.txt, 2 d, 3 e, 4 e/y.txt, 5 d/x.txt.
+    let new_dir = 0x8000;
+    let plan: Vec<(usize, u32)> = (0..6).map(|idx| (idx, new_dir)).collect();
+    let ordered = ctx.order_plan_for_walk(plan, 0..ctx.ndx_segments.len());
+    let names: Vec<String> = ordered
+        .iter()
+        .map(|&(idx, _)| ctx.itemize_row_entry(idx).path().display().to_string())
+        .collect();
+    assert_eq!(names, [".", "a.txt", "e", "e/y.txt", "d", "d/x.txt"]);
+
+    let gap = |segment: usize| ctx.ndx_segments[segment].1 - 1;
+    assert_eq!(ctx.itemize_wire_ndx(0), gap(0), "`.` heads the first list");
+    assert_eq!(
+        ctx.itemize_wire_ndx(3),
+        gap(1),
+        "e heads the first sub-list"
+    );
+    assert_eq!(
+        ctx.itemize_wire_ndx(2),
+        gap(2),
+        "d heads the second sub-list"
+    );
+    assert_eq!(
+        ctx.itemize_wire_ndx(1),
+        ctx.flat_to_wire_ndx(1),
+        "a file keeps its NDX"
+    );
+}
+
+/// A pull receiver prints its own rows, so its plan is left in flat order.
+#[test]
+fn client_receiver_plan_keeps_flat_order() {
+    let mut config = test_config();
+    config.connection.client_mode = true;
+    let mut ctx = inc_recurse_receiver(config);
+    receive_initial(&mut ctx, &[dir("."), file("a.txt"), dir("d")]);
+    receive_sub_list(&mut ctx, 1, &[file("d/x.txt")]);
+
+    let plan: Vec<(usize, u32)> = (0..4).map(|idx| (idx, 0)).collect();
+    assert_eq!(ctx.order_plan_for_walk(plan.clone(), 0..2), plan);
+}

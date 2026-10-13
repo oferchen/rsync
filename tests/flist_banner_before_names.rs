@@ -45,13 +45,10 @@ use std::time::{Duration, Instant};
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
 const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
-/// The banner a local copy prints: its receiving half grants INC_RECURSE.
+/// The banner a sender prints once its peer granted INC_RECURSE: a local
+/// copy's receiving half and an oc server receiver both grant it, as upstream's
+/// receiver does (compat.c:161-179), so every leg takes flist.c:2763-2764.
 const INCREMENTAL_BANNER: &str = "sending incremental file list";
-/// The banner an oc-to-oc ssh or daemon push prints: oc's server receiver does
-/// not grant CF_INC_RECURSE (`compute_allow_inc_recurse` requires the sender
-/// role), so the client takes the `show_filelist_progress` arm
-/// (flist.c:2761-2762) exactly as an upstream client pushing into oc does.
-const PROGRESS_BANNER: &str = "building file list ... done";
 
 /// Locates the binary under test.
 ///
@@ -325,7 +322,7 @@ fn ssh_push_verbose_banner_precedes_names() {
     fs::create_dir_all(&dest).unwrap();
     assert_banner_first(
         &run_ssh_push(&shim, &src, &dest, false),
-        PROGRESS_BANNER,
+        INCREMENTAL_BANNER,
         "ssh push -v",
     );
 }
@@ -338,7 +335,7 @@ fn ssh_push_dry_run_verbose_banner_precedes_names() {
     fs::create_dir_all(&dest).unwrap();
     assert_banner_first(
         &run_ssh_push(&shim, &src, &dest, true),
-        PROGRESS_BANNER,
+        INCREMENTAL_BANNER,
         "ssh push -nv",
     );
 }
@@ -351,7 +348,7 @@ fn daemon_push_verbose_banner_precedes_names() {
     let daemon = Daemon::spawn(temp.path(), &module_root);
     assert_banner_first(
         &run_daemon_push(&daemon, &src, false),
-        PROGRESS_BANNER,
+        INCREMENTAL_BANNER,
         "daemon push -v",
     );
 }
@@ -364,7 +361,7 @@ fn daemon_push_dry_run_verbose_banner_precedes_names() {
     let daemon = Daemon::spawn(temp.path(), &module_root);
     assert_banner_first(
         &run_daemon_push(&daemon, &src, true),
-        PROGRESS_BANNER,
+        INCREMENTAL_BANNER,
         "daemon push -nv",
     );
 }

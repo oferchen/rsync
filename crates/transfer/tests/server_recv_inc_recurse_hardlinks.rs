@@ -26,9 +26,6 @@ use test_support::{
     LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };
 
-/// Test-only switch that lets the oc server receiver negotiate INC_RECURSE.
-const SERVER_RECV_INC_RECURSE: &str = "OC_RSYNC_TEST_SERVER_RECV_INC_RECURSE";
-
 fn hardlink_fixture(src: &Path) {
     let deep = src.join("subdir/down/deep");
     fs::create_dir_all(&deep).expect("mkdir deep");
@@ -53,7 +50,6 @@ fn inc_recurse_push_links_a_follower_whose_leader_is_in_an_earlier_sub_list() {
 
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
     let out = OcRsyncCliRunner::new()
-        .env(SERVER_RECV_INC_RECURSE, "1")
         .arg("-aHi")
         .arg(format!("--rsh={}", stub.path().display()))
         .arg(format!(

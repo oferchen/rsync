@@ -384,6 +384,13 @@ impl FileEntry {
         self.extras_mut().user_name = Some(name);
     }
 
+    /// Drops the user name once the receiver has mapped the uid with it.
+    pub fn clear_user_name(&mut self) {
+        if let Some(extras) = self.extras.as_mut() {
+            extras.user_name = None;
+        }
+    }
+
     /// Returns the group name if set.
     pub fn group_name(&self) -> Option<&str> {
         self.extras.as_ref().and_then(|e| e.group_name.as_deref())
@@ -392,6 +399,13 @@ impl FileEntry {
     /// Sets the group name for cross-system ownership mapping.
     pub fn set_group_name(&mut self, name: String) {
         self.extras_mut().group_name = Some(name);
+    }
+
+    /// Drops the group name once the receiver has mapped the gid with it.
+    pub fn clear_group_name(&mut self) {
+        if let Some(extras) = self.extras.as_mut() {
+            extras.group_name = None;
+        }
     }
 
     /// Sets the symlink target.

@@ -462,3 +462,105 @@ fn a_dead_converter_aborts_instead_of_keeping_the_senders_id() {
     let err = result.expect_err("a dead converter must end the transfer");
     assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe, "{err}");
 }
+
+/// Under INC_RECURSE there is no trailing id list (`flist.c:3296-3299` reads it
+/// only `!inc_recurse`), so upstream maps each entry's group as it is decoded:
+/// `recv_file_entry()` calls `match_gid()`/`recv_group_name()`, which run the
+/// `--groupmap` rules (`flist.c:1235-1244`, `uidlist.c:243-282`). A push into
+/// an oc daemon negotiates INC_RECURSE, so a receiver that only remapped after
+/// the trailing list kept the sender's gid in every segment.
+#[cfg(unix)]
+#[test]
+fn groupmap_applies_to_every_inc_recurse_segment() {
+    use protocol::CompatibilityFlags;
+    use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
+    use protocol::flist::{FileEntry, FileListWriter};
+    use std::path::PathBuf;
+
+    let entry = |mut e: FileEntry| {
+        e.set_gid(1000);
+        e.set_mtime(1_700_000_000, 0);
+        e
+    };
+    let mut handshake = test_handshake();
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut config = config_with_flags(false, true, NumericIds::Off);
+    config.group_mapping = Some(metadata::GroupMapping::parse("*:998").unwrap());
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    let protocol = ctx.protocol();
+
+    let mut w = FileListWriter::new(protocol).with_preserve_gid(true);
+    let mut initial = Vec::new();
+    for e in [
+        FileEntry::new_directory(PathBuf::from("."), 0o755),
+        FileEntry::new_directory(PathBuf::from("d"), 0o755),
+        FileEntry::new_file(PathBuf::from("f"), 1, 0o644),
+    ] {
+        w.write_entry(&mut initial, &entry(e)).unwrap();
+    }
+    w.write_end(&mut initial, None).unwrap();
+    ctx.receive_file_list(&mut Cursor::new(initial)).unwrap();
+
+    let mut codec = create_ndx_codec(protocol.as_u8());
+    let mut subs = Vec::new();
+    codec.write_ndx(&mut subs, NDX_FLIST_OFFSET - 1).unwrap();
+    w.write_entry(
+        &mut subs,
+        &entry(FileEntry::new_file(PathBuf::from("d/g"), 1, 0o644)),
+    )
+    .unwrap();
+    w.write_end(&mut subs, None).unwrap();
+    codec.write_ndx(&mut subs, NDX_FLIST_EOF).unwrap();
+    ctx.receive_extra_file_lists(&mut Cursor::new(subs))
+        .unwrap();
+
+    let gids: Vec<_> = ctx
+        .file_list()
+        .iter()
+        .map(|e| (e.path().to_path_buf(), e.gid()))
+        .collect();
+    assert_eq!(gids.len(), 4, "both segments must be decoded: {gids:?}");
+    for (path, gid) in gids {
+        assert_eq!(gid, Some(998), "--groupmap='*:998' must map {path:?}");
+    }
+}
+
+/// The same mapping when the sender names the group on the entry
+/// (`XMIT_GROUP_NAME_FOLLOWS`), as an oc or upstream sender does at
+/// protocol >= 30: `recv_group_name()` runs the rules once, on the wire name
+/// (flist.c:1239-1240, uidlist.c:438-457), and the entry keeps only the
+/// mapped id. A name left on the entry would be mapped a second time when the
+/// metadata is applied, so `1000:2000,2000:3000` would end at 3000.
+#[cfg(unix)]
+#[test]
+fn inc_recurse_inline_named_entry_is_mapped_once() {
+    use protocol::CompatibilityFlags;
+    use protocol::flist::{FileEntry, FileListWriter};
+    use std::path::PathBuf;
+
+    let mut handshake = test_handshake();
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut config = config_with_flags(false, true, NumericIds::Off);
+    config.group_mapping = Some(metadata::GroupMapping::parse("1000:2000,2000:3000").unwrap());
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    let mut w = FileListWriter::new(ctx.protocol())
+        .with_preserve_gid(true)
+        .with_name_follows(true);
+    let mut wire = Vec::new();
+    let mut e = FileEntry::new_file(PathBuf::from("f"), 1, 0o644);
+    e.set_gid(1000);
+    e.set_group_name("somegroup".to_string());
+    e.set_mtime(1_700_000_000, 0);
+    w.write_entry(&mut wire, &e).unwrap();
+    w.write_end(&mut wire, None).unwrap();
+    ctx.receive_file_list(&mut Cursor::new(wire)).unwrap();
+
+    let entry = &ctx.file_list()[0];
+    assert_eq!(entry.gid(), Some(2000));
+    assert_eq!(
+        entry.group_name(),
+        None,
+        "a mapped entry must not carry the wire name into the metadata apply"
+    );
+}

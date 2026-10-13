@@ -12306,26 +12306,27 @@ quic_write_client() {
 quic_ciphers=(aes chacha20)
 quic_inc_modes=(default no-inc-recursive)
 
-# CF_INC_RECURSE the default mode negotiates between two oc peers: none today,
-# in either direction. An oc client advertises 'i' only when it sends
-# (daemon_transfer/orchestration/arguments.rs), and an oc daemon receiving a
-# push does not grant it. Measured identically over TCP, so it is not a QUIC
-# property. Set this to 1 in the change that makes oc negotiate incremental
-# recursion with itself; --no-inc-recursive must negotiate 0 regardless.
-quic_default_inc_recurse=0
-
+# CF_INC_RECURSE the default mode negotiates between two oc peers, by
+# direction. A push grants it: the oc daemon receiver mirrors upstream
+# set_allow_inc_recurse() (compat.c:162-180), which no scenario flag here
+# disables (-r is always on; plain --delete is delete_during at protocol 30+,
+# compat.c:683-688). A pull does not: an oc client advertises 'i' only when it
+# sends (daemon_transfer/orchestration/arguments.rs). Measured identically over
+# TCP, so it is not a QUIC property. --no-inc-recursive must negotiate 0
+# regardless.
+declare -A quic_default_inc_recurse=([push]=1 [pull]=0)
 # Checks the session a client reported in $1.out/$1.err (see
 # quic_write_client): the negotiated suite must belong to cipher family $2,
-# and CF_INC_RECURSE must match incremental-recursion mode $3.
+# and CF_INC_RECURSE must match incremental-recursion mode $3 in direction $4.
 quic_check_session() {
-  local out=$1 cipher=$2 inc=$3
+  local out=$1 cipher=$2 inc=$3 direction=$4
   local want_suite want_inc suite seen_inc
   case "$cipher" in
     aes) want_suite='TLS13_AES_(128|256)_GCM_SHA(256|384)' ;;
     chacha20) want_suite='TLS13_CHACHA20_POLY1305_SHA256' ;;
     *) echo "    unknown cipher family ${cipher}"; return 1 ;;
   esac
-  want_inc=$quic_default_inc_recurse
+  want_inc=${quic_default_inc_recurse[$direction]:?unknown direction ${direction}}
   [[ "$inc" == no-inc-recursive ]] && want_inc=0
   suite=$(cat "${out}.out" "${out}.err" 2>/dev/null \
     | sed -n 's/.*quic: negotiated cipher suite \([A-Z0-9_]*\).*/\1/p' | head -n1)
@@ -12396,7 +12397,7 @@ quic_scenario_both() {
         comp_run_scenario "$name" "$client" "$cell_flags" "$src" "$url" "$dest" "$log" \
           "$vtype" "$direction" || rc=$?
         unset QUIC_CELL_CIPHER
-        if [[ $rc -eq 0 ]] && ! quic_check_session "${log}.transfer" "$cipher" "$inc"; then
+        if [[ $rc -eq 0 ]] && ! quic_check_session "${log}.transfer" "$cipher" "$inc" "$direction"; then
           rc=1
         fi
         quic_record "${mode}/${name}/${direction}/${cipher}/${inc}" "$rc"
@@ -12436,7 +12437,7 @@ quic_big_tree_cells() {
         elif ! diff -r "$src" "$dest" >"${out}.diff" 2>&1; then
           echo "    tree differs: $(head -3 "${out}.diff")"
           rc=1
-        elif ! quic_check_session "$out" "$cipher" "$inc"; then
+        elif ! quic_check_session "$out" "$cipher" "$inc" "$direction"; then
           rc=1
         fi
         quic_record "${mode}/big-tree/${direction}/${cipher}/${inc}" "$rc"

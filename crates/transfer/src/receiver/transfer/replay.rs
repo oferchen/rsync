@@ -230,6 +230,7 @@ impl ReceiverContext {
         } else {
             0
         };
+        let gap_heads = self.gap_ndx_heads();
 
         loop {
             let row = crate::receiver::ndx_stream::read_ndx_and_attrs(
@@ -266,11 +267,14 @@ impl ReceiverContext {
                 // generator half already applied the attribute fixes, so the row
                 // is only itemized and consumed. The recorded iflags are
                 // authoritative, so re-emit the row here from them. A row may
-                // name a segment's parent directory via an index below the
-                // segment's ndx_start (receiver.c:880-887 resolves it from
-                // dir_flist); when the index does not resolve to a live flist
-                // entry there is nothing to itemize, so it is only consumed.
-                if let Some(flat_idx) = self.wire_to_flat_ndx(ndx) {
+                // name a segment's parent directory on the segment's gap NDX
+                // `ndx_start - 1` (generator.c:2787), which receiver.c:880-887
+                // resolves from dir_flist; when the index resolves to neither
+                // there is nothing to itemize, so it is only consumed.
+                if let Some(flat_idx) = self
+                    .wire_to_flat_ndx(ndx)
+                    .or_else(|| gap_heads.get(&ndx).copied())
+                {
                     let entry = self.file_list[flat_idx].clone();
                     let iflags = crate::generator::ItemFlags::from_raw(u32::from(attrs.iflags));
                     self.emit_or_record_itemize(writer, flat_idx, &iflags, &entry)?;

@@ -18,8 +18,6 @@ use std::path::Path;
 use test_support::{
     LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };
-/// Test-only switch that lets the oc server receiver negotiate INC_RECURSE.
-const SERVER_RECV_INC_RECURSE: &str = "OC_RSYNC_TEST_SERVER_RECV_INC_RECURSE";
 fn fifo_fixture(src: &Path) {
     let a = src.join("a");
     for dir in ["e1", "e2", "e3"] {
@@ -44,7 +42,6 @@ fn inc_recurse_push_itemizes_a_fifo_before_its_sub_list_is_released() {
     fs::create_dir_all(&dest).expect("mkdir dest");
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
     let out = OcRsyncCliRunner::new()
-        .env(SERVER_RECV_INC_RECURSE, "1")
         .arg("-aDi")
         .arg(format!("--rsh={}", stub.path().display()))
         .arg(format!(
