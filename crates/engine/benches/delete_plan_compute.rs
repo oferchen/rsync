@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! Task DDP-I1 (#2282). `engine::delete::compute_extras` is phase 1 of
+//! Task DDP-I1. `engine::delete::compute_extras` is phase 1 of
 //! the parallel-deterministic-delete pipeline: per directory, list the
 //! destination, subtract the segment's basenames, classify the survivors.
 //! Each call is independent across directories, so the pipeline runs

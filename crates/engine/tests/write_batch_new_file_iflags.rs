@@ -7,7 +7,7 @@
 //! existed before the transfer. Because upstream's sender re-emits this
 //! exact iflags word to whichever peer is reading the batch
 //! (`sender.c:469 write_ndx_and_attrs()`), and only increments
-//! `stats.created_files` when `ITEM_IS_NEW` is set (`sender.c:587,625`), an
+//! `stats.created_files` when `ITEM_IS_NEW` is set (`sender.c:588,626`), an
 //! upstream `--read-batch` replay of an oc-produced batch itemized a brand
 //! new file as unchanged (`>f.........`) and counted zero created files
 //! instead of `>f+++++++++` / one created file.
@@ -26,7 +26,7 @@
 //!   `statret < 0` (destination absent).
 //! - `sender.c:469 write_ndx_and_attrs()` - re-emits the iflags word to the
 //!   peer, which is what a batch file tees.
-//! - `sender.c:587,625` - `stats.created_files++` gated on
+//! - `sender.c:588,626` - `stats.created_files++` gated on
 //!   `iflags & ITEM_IS_NEW`.
 
 use std::fs;
@@ -39,7 +39,7 @@ use protocol::CompatibilityFlags;
 use protocol::codec::{NdxCodec, NdxCodecEnum};
 use tempfile::tempdir;
 
-/// `rsync.h:257` - `#define ITEM_TRANSFER (1<<15)`.
+/// `rsync.h:259` - `#define ITEM_TRANSFER (1<<15)`.
 const ITEM_TRANSFER: u16 = 0x8000;
 /// `rsync.h:257` - `#define ITEM_IS_NEW (1<<13)`.
 const ITEM_IS_NEW: u16 = 0x2000;

@@ -3,7 +3,7 @@
 //!
 //! # Why this exists
 //!
-//! Task DDP-I3 (#2284). Together with `delete_plan_compute.rs`
+//! Task DDP-I3. Together with `delete_plan_compute.rs`
 //! (DDP-I1, #2282) and `delete_emitter_unlink.rs` (DDP-I2, #2283),
 //! this bench fed the DDP-F3 (batched sweep removal, #2272) decision.
 //! With the legacy production path retired, the legacy arm here now

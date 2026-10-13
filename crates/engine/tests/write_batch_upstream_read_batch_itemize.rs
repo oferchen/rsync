@@ -28,7 +28,7 @@
 //! # Upstream Reference
 //!
 //! - `generator.c:583-584 itemize()`, `sender.c:469 write_ndx_and_attrs()`,
-//!   `sender.c:587,625` (`stats.created_files`), `log.c:730-746` (itemize
+//!   `sender.c:588,626` (`stats.created_files`), `log.c:739-781` (itemize
 //!   string rendering: `+` fill when `ITEM_IS_NEW` is set).
 
 use std::fs;
