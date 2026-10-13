@@ -105,25 +105,23 @@ pub const RSYNC_PREFIX: &str = "user.rsync.";
 #[cfg(not(target_os = "linux"))]
 pub const RSYNC_PREFIX: &str = "rsync.";
 
-/// Defence-in-depth cap on the number of xattr entries per file from the wire.
+/// Upper bound on the number of xattr entries per file read from the wire.
 ///
-/// Linux `listxattr(2)` returns at most `XATTR_LIST_MAX` (65536) bytes of
-/// name data. With a minimum 2-byte name per entry that is at most ~32K
-/// entries. 1024 is well above any real-world usage while preventing a
-/// malicious peer from forcing billions of allocations.
-///
-/// upstream: xattrs.c `receive_xattr()` uses `EXPAND_ITEM_LIST` which
-/// reallocs but has no explicit count cap.
-pub const MAX_WIRE_XATTR_COUNT: usize = 1024;
+/// upstream: rsync.h:176 `MAX_WIRE_XATTR_COUNT`, enforced by
+/// `read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT, "xattr count")` at
+/// xattrs.c:826. A count outside `[0, 65536]` is a protocol error (exit 2);
+/// a lower cap would refuse lists upstream accepts.
+pub const MAX_WIRE_XATTR_COUNT: usize = 65536;
 
-/// Defence-in-depth cap on a single xattr name length from the wire.
+/// Upper bound on a single xattr name length (including its trailing NUL)
+/// read from the wire.
 ///
-/// Linux `XATTR_NAME_MAX` is 255 bytes. We allow 1024 to accommodate
-/// non-Linux platforms with longer names while still bounding allocation.
-///
-/// upstream: xattrs.c checks `name_len < 1` and NUL terminator but has
-/// no upper bound beyond the overflow check against `SIZE_MAX`.
-pub const MAX_WIRE_XATTR_NAME_LEN: usize = 1024;
+/// upstream: rsync.h:177 `MAX_WIRE_XATTR_NAMELEN`, enforced by
+/// `read_varint_size(f, MAX_WIRE_XATTR_NAMELEN, "xattr name_len")` at
+/// xattrs.c:835. The bound is inclusive: a length above 4096 (or negative)
+/// is a protocol error (exit 2); a lower cap would refuse names upstream
+/// accepts.
+pub const MAX_WIRE_XATTR_NAME_LEN: usize = 4096;
 
 /// Default per-value allocation ceiling before `--max-alloc` is negotiated
 /// (1 GiB, equal to [`crate::max_alloc::DEFAULT_MAX_ALLOC`]).

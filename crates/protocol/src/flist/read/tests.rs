@@ -1821,6 +1821,81 @@ fn abbreviated_hardlink_follower_in_range_decodes() {
     assert_eq!(segment[1].mtime(), 1700000000);
 }
 
+/// upstream: flist.c:1099-1105 recv_file_entry() bounds a follower's
+/// reference on BOTH sides - `first_hlink_ndx < 0 || first_hlink_ndx >=
+/// ndx_start + used` - and refuses with "hard-link reference out of range"
+/// and exit_cleanup(RERR_PROTOCOL). A negative reference is never legitimate:
+/// a sender only names leaders it has already sent. Checking only the upper
+/// bound let a negative varint pass as an "unabbreviated" follower (it is
+/// below ndx_start), so a hostile sender planted a bogus hard-link target that
+/// the receiver accepted silently; -1 even aliases the leader sentinel.
+#[test]
+fn negative_hardlink_reference_is_protocol_violation() {
+    use crate::flist::write::FileListWriter;
+    let protocol = test_protocol();
+    // The writer encodes the reference as a signed varint and, because it is
+    // below first_ndx, in the unabbreviated form with full metadata: exactly
+    // the stream a hostile sender produces. Every negative int32 varint is 5
+    // bytes, so the other references are spliced over the -5 encoding.
+    let mut follower = FileEntry::new_file("bogus".into(), 100, 0o100644);
+    follower.set_mtime(1700000000, 0);
+    follower.set_hardlink_idx(-5i32 as u32);
+    let mut data = Vec::new();
+    FileListWriter::new(protocol)
+        .with_preserve_hard_links(true)
+        .write_entry(&mut data, &follower)
+        .unwrap();
+    let mut minus_five = Vec::new();
+    crate::encode_varint_to_vec(-5, &mut minus_five);
+    let at = data
+        .windows(minus_five.len())
+        .position(|w| w == minus_five)
+        .expect("the -5 reference is on the wire");
+    for gnum in [-5i32, -1, i32::MIN] {
+        let mut encoded = Vec::new();
+        crate::encode_varint_to_vec(gnum, &mut encoded);
+        assert_eq!(encoded.len(), minus_five.len());
+        let mut wire = data.clone();
+        wire[at..at + encoded.len()].copy_from_slice(&encoded);
+        let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+        let err = reader
+            .read_entry_with_flist(&mut Cursor::new(&wire[..]), &[])
+            .expect_err("a negative hard-link reference must be refused");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::ProtocolViolation>()),
+            "a negative reference must be tagged RERR_PROTOCOL (exit 2), got: {err}",
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("hard-link reference out of range: {gnum} (0)"),
+        );
+    }
+}
+/// Positive control for `negative_hardlink_reference_is_protocol_violation`:
+/// a non-negative reference below ndx_start (a leader in an earlier segment)
+/// is legal and still decodes, so the new lower bound cannot be implemented
+/// as "refuse every unabbreviated follower". upstream: flist.c:1099-1110.
+#[test]
+fn unabbreviated_hardlink_reference_to_an_earlier_segment_decodes() {
+    use crate::flist::write::FileListWriter;
+    let protocol = test_protocol();
+    let mut follower = FileEntry::new_file("link".into(), 100, 0o100644);
+    follower.set_mtime(1700000000, 0);
+    follower.set_hardlink_idx(3);
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+    writer.set_first_ndx(10);
+    writer.write_entry(&mut data, &follower).unwrap();
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+    reader.reset_for_new_segment(10);
+    let entry = reader
+        .read_entry_with_flist(&mut Cursor::new(&data[..]), &[])
+        .expect("a reference into an earlier segment is legal")
+        .expect("entry present");
+    assert_eq!(entry.hardlink_idx(), Some(3));
+    assert_eq!(entry.size(), 100);
+}
 /// Tests for ACL integration in the flist read path.
 mod acl_integration {
     use super::*;
@@ -3164,7 +3239,7 @@ fn hardlink_idx_is_read_on_the_flag_alone_without_preserve_hard_links() {
     let reader = FileListReader::new(test_protocol()).with_preserve_hard_links(false);
 
     let mut cursor = Cursor::new(&payload[..]);
-    let idx = reader.read_hardlink_idx(&mut cursor, flags).unwrap();
+    let idx = reader.read_hardlink_idx(&mut cursor, flags, 0).unwrap();
 
     assert_eq!(
         idx,
@@ -3193,7 +3268,7 @@ fn hardlink_idx_is_read_when_hard_links_are_preserved() {
     let reader = FileListReader::new(test_protocol()).with_preserve_hard_links(true);
 
     let mut cursor = Cursor::new(&payload[..]);
-    let idx = reader.read_hardlink_idx(&mut cursor, flags).unwrap();
+    let idx = reader.read_hardlink_idx(&mut cursor, flags, 0).unwrap();
 
     assert_eq!(idx, Some(7), "the index must decode when preserving links");
     assert_eq!(
