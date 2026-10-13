@@ -112,8 +112,15 @@ pub trait DaemonFileLog {
 /// row snapshots them when the entry is logged.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DaemonLogRow {
-    /// Transfer-relative name (`%f`, and `%n` before its directory slash).
+    /// Transfer-relative name (`%n` before its directory slash, and the tail
+    /// of `%f`).
     pub name: std::path::PathBuf,
+    /// Module-relative directory `%f` joins in front of [`name`](Self::name);
+    /// empty at the module root.
+    ///
+    /// upstream: log.c `case 'f'` - the sender's `F_PATHNAME(file)`, and the
+    /// daemon receiver's `curr_dir + module_dirlen`.
+    pub dir: std::path::PathBuf,
     /// File length (`%l`).
     pub size: u64,
     /// Rendered 11-character itemize string (`%i`).
@@ -158,6 +165,7 @@ impl DaemonLogRow {
     ) -> Self {
         Self {
             name: entry.path().to_path_buf(),
+            dir: std::path::PathBuf::new(),
             size: entry.size(),
             itemize,
             mode: entry.mode(),
@@ -188,6 +196,7 @@ impl DaemonLogRow {
     ) -> Self {
         Self {
             name,
+            dir: std::path::PathBuf::new(),
             size: 0,
             itemize: "*deleting  ".to_owned(),
             mode,
@@ -210,6 +219,12 @@ impl DaemonLogRow {
     pub(crate) const fn with_byte_counts(mut self, transferred: u64, checksummed: u64) -> Self {
         self.bytes_transferred = transferred;
         self.bytes_checksummed = checksummed;
+        self
+    }
+
+    /// Sets the module-relative directory `%f` joins in front of the name.
+    pub(crate) fn with_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.dir = dir;
         self
     }
 }
