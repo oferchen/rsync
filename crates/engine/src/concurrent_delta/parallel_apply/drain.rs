@@ -1,13 +1,11 @@
-//! Per-file drain primitives for the parallel apply scaffold (SPL-38.e).
+//! Per-file drain primitives for the parallel apply scaffold.
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the SPL-38 module
-//! decomposition. Sibling to [`super::slot_barrier`],
+//! Sibling to [`super::slot_barrier`],
 //! [`super::decrement_guard::DecrementGuard`], and [`super::batch`]; reuses
 //! the per-slot [`super::slot_barrier::SlotEntry`] map maintained by
-//! [`ParallelDeltaApplier`]. DG-3.b (#2569) swapped the DashMap value
-//! type from `Arc<SlotBarrier>` to `SlotEntry`; this module now clones
+//! [`ParallelDeltaApplier`]. This module clones
 //! `entry.barrier` ([`std::sync::Arc<super::slot_barrier::BarrierState>`])
-//! for the FFB-2 wait and unwraps `entry.data`
+//! for the `flush_workers` wait and unwraps `entry.data`
 //! ([`std::sync::Arc<super::slot_barrier::SlotData>`]) for the
 //! end-of-file writer reclaim.
 //!
@@ -17,12 +15,12 @@
 //!
 //! * [`ParallelDeltaApplier::flush_workers`] parks the caller on the slot's
 //!   [`std::sync::Condvar`] until the per-slot in-flight counter is observed
-//!   to be zero, mirroring the FFB-2 barrier wait.
+//!   to be zero.
 //! * [`ParallelDeltaApplier::finish_file`] bakes that barrier in front of the
 //!   [`std::sync::Arc::try_unwrap`] used to reclaim the destination writer,
 //!   so callers never have to sequence the wait + reclaim themselves.
 //!
-//! Both honour the BR-3j.c shard-discipline contract: the DashMap shard
+//! Both honour the shard-discipline contract: the DashMap shard
 //! guard is dropped before the blocking wait so unrelated `FileNdx` values
 //! continue to make progress while a single file drains.
 
@@ -48,7 +46,7 @@ impl ParallelDeltaApplier {
     /// per-file reorder buffer still holds undelivered chunks.
     pub fn finish_file(&self, ndx: impl Into<FileNdx>) -> std::io::Result<Box<dyn Write + Send>> {
         let ndx = ndx.into();
-        // FFB-1 Option D: bake the barrier into `finish_file` so callers
+        // Bake the barrier into `finish_file` so callers
         // never have to sequence `flush_workers` + `finish_file`
         // themselves. The barrier waits for every outstanding
         // `SlotHandle` clone (the unit of "in-flight" worker) to drop
@@ -64,8 +62,8 @@ impl ParallelDeltaApplier {
             .remove(&ndx)
             .ok_or_else(|| std::io::Error::other(format!("parallel applier file {ndx} unknown")))?;
         // Drop the BarrierState Arc before try_unwrap so DecrementGuard
-        // clones are the only remaining strong references. After the
-        // DG-3 split (BarrierState/SlotData), struct field drop order
+        // clones are the only remaining strong references. With the
+        // BarrierState/SlotData split, struct field drop order
         // guarantees SlotHandle's `data` payload clone drops before its
         // _decrement guard fires the Condvar notify - so by the time
         // flush_workers returns, no worker holds a SlotData clone.
@@ -117,7 +115,7 @@ impl ParallelDeltaApplier {
         // Look up the slot, clone the `Arc<BarrierState>` from the
         // entry, drop the shard guard before waiting. This keeps the
         // DashMap shard available to other NDX values while the caller
-        // blocks on the slot's own condvar, preserving the BR-3j.c
+        // blocks on the slot's own condvar, preserving the
         // shard-discipline contract.
         let barrier = match self.files.get(&ndx) {
             Some(guard) => Arc::clone(&guard.value().barrier),

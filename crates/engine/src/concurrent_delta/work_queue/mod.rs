@@ -20,7 +20,8 @@
 //! single-threaded on the receiving side - one multiplexed stream delivers file
 //! entries in sequence, so there is exactly one thread reading from the wire and
 //! producing work items. [`WorkQueueSender`] enforces this by being `Send` but
-//! not `Clone`, preventing multiple producers at compile time.
+//! not `Clone`, preventing multiple producers at compile time. The optional
+//! `multi-producer` cargo feature adds a `Clone` impl and lifts this guarantee.
 //!
 //! ## Ordering Contract
 //!
@@ -33,8 +34,7 @@
 //! ## Multi-Producer Considerations
 //!
 //! Supporting multiple producers would require revising the ordering contract (multiple
-//! producers would need coordinated sequence numbering). See issues #1382 and
-//! #1569 for future multi-producer design discussion.
+//! producers would need coordinated sequence numbering).
 //!
 //! # Capacity
 //!
@@ -93,9 +93,9 @@
 //!
 //! # Upstream Reference
 //!
-//! Upstream rsync processes files sequentially in `recv_files()`. This queue
-//! enables parallel processing while bounding memory - upstream does not need
-//! this because it never queues ahead.
+//! Deviation from upstream: upstream rsync processes files sequentially in
+//! `receiver.c:recv_files()` and never queues ahead, so it has no counterpart
+//! to this queue. The queue enables parallel processing while bounding memory.
 
 mod adaptive_semaphore;
 mod bounded;

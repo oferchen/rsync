@@ -1,16 +1,15 @@
-//! RAII decrement guard for the per-slot in-flight counter (SPL-38.c).
+//! RAII decrement guard for the per-slot in-flight counter.
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the SPL-38 module
-//! decomposition; sibling to [`super::slot_barrier::BarrierState`]. The
+//! Sibling to [`super::slot_barrier::BarrierState`]. The
 //! guard is the only call site of [`BarrierState::decrement_inflight`]
 //! and pairs with [`BarrierState::increment_inflight`] (invoked from
-//! [`super::handle::SlotHandle::new`]) so the FFB-1 invariant ("every
-//! Arc outstanding is reflected in the inflight counter") holds across
+//! [`super::handle::SlotHandle::new`]) so the invariant "every
+//! Arc outstanding is reflected in the inflight counter" holds across
 //! early returns, `?` propagations, and panics.
 //!
-//! The guard's `barrier` field holds an `Arc<BarrierState>` per the
-//! DG-2.a Option-B spec (`docs/design/dg-2a-option-b-spec.md` section
-//! 2). The payload Arc ([`super::slot_barrier::SlotData`]) and the
+//! The guard's `barrier` field holds an `Arc<BarrierState>` per
+//! `docs/design/dg-2a-option-b-spec.md` section 2. The payload Arc
+//! ([`super::slot_barrier::SlotData`]) and the
 //! notify-bearing Arc ([`BarrierState`]) have independent strong-count
 //! trajectories, so the worker's lingering decrement-guard Arc never
 //! extends the payload Arc's strong count past the flusher's

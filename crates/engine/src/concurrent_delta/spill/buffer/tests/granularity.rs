@@ -1,4 +1,4 @@
-//! [`SpillGranularity`] wiring tests (STN-5 #2339).
+//! [`SpillGranularity`] wiring tests.
 
 use std::io::SeekFrom;
 
