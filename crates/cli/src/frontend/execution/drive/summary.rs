@@ -401,6 +401,12 @@ where
                 });
             }
 
+            // upstream: rprintf(FERROR, RSYNC_NAME ": ...") lines that precede
+            // the log_exit() trailer, e.g. io.c:298-303 whine_about_eof().
+            if let Some(line) = error.program_line() {
+                let program = stderr.brand().client_program_name();
+                let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+            }
             let message: &Message = error.message();
             emit_message_with_fallback(
                 message,

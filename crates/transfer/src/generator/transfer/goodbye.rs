@@ -214,16 +214,10 @@ impl GeneratorContext {
         }
 
         // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS.
-        // upstream: main.c:917 - read_ndx_and_attrs() handles NDX_DEL_STATS internally.
-        // Connection may close early in dry-run or when the remote daemon exits before
-        // completing the goodbye exchange - treat this as acceptable.
-        let ndx = match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
-            Ok(ndx) => ndx,
-            Err(e) if is_early_close_error(&e) => {
-                return Ok(GoodbyeArrival::None);
-            }
-            Err(e) => return Err(e),
-        };
+        // upstream: main.c:929 - read_ndx_and_attrs() handles NDX_DEL_STATS
+        // internally and, like every sender read, treats EOF as fatal
+        // (io.c:whine_about_eof(), RERR_STREAMIO).
+        let ndx = self.read_ndx_skipping_del_stats(reader, ndx_read_codec)?;
         if ndx != NDX_DONE {
             // upstream: main.c:1110 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
             // error so the core exit-code mapper yields 2, not RERR_STREAMIO(12).
@@ -285,10 +279,13 @@ impl GeneratorContext {
                 writer.flush()
             })();
 
-            if let Err(e) = write_result {
-                if is_early_close_error(&e) {
-                    return Ok(());
-                }
+            // A peer that closed early surfaces through the final read below:
+            // upstream perform_io() services the readable EOF before the
+            // blocked write, so the run ends in whine_about_eof(), not a
+            // write error.
+            if let Err(e) = write_result
+                && !is_early_close_error(&e)
+            {
                 return Err(e);
             }
 
@@ -304,14 +301,14 @@ impl GeneratorContext {
             // upstream: token.c:367 send_deflated_token() emits the
             // Z_FINISH-terminated stream at end of transfer; main.c:995
             // read_final_goodbye() is bracketed by io_flush(FULL_FLUSH).
-            if let Err(e) = finalize_between_write_and_read(writer) {
-                if is_early_close_error(&e) {
-                    return Ok(());
-                }
+            if let Err(e) = finalize_between_write_and_read(writer)
+                && !is_early_close_error(&e)
+            {
                 return Err(e);
             }
 
-            // Read final NDX_DONE - may fail if daemon kills receiver child early
+            // upstream: main.c:941 - the final read_ndx_and_attrs(); EOF here
+            // is fatal like any other sender read.
             match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
                 Ok(final_ndx) => {
                     if final_ndx != NDX_DONE {
@@ -323,9 +320,6 @@ impl GeneratorContext {
                             crate::role_trailer::sender()
                         )));
                     }
-                }
-                Err(e) if is_early_close_error(&e) => {
-                    // Connection closed during final goodbye - acceptable
                 }
                 Err(e) => {
                     return Err(e);

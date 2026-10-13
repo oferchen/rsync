@@ -3134,6 +3134,79 @@ mod legacy_goodbye_tests {
         );
     }
 
+    fn goodbye_proto31_ctx() -> GeneratorContext {
+        let handshake = test_handshake_with_protocol(31);
+        let mut config = test_config();
+        config.protocol = ProtocolVersion::try_from(31u8).unwrap();
+        config.do_stats = false;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+    /// A writer whose peer has already gone away.
+    struct ClosedPeerWriter;
+    impl Write for ClosedPeerWriter {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        }
+    }
+    /// upstream: main.c:929 and main.c:941 - both goodbye reads go through
+    /// read_ndx_and_attrs(), whose EOF ends the run in io.c:whine_about_eof()
+    /// with RERR_STREAMIO. A receiver that vanishes before its goodbye is
+    /// therefore an error, never a clean finish.
+    #[test]
+    fn handle_goodbye_eof_before_receiver_goodbye_is_an_error() {
+        let mut ctx = goodbye_proto31_ctx();
+        let mut reader = Cursor::new(Vec::new());
+        let mut output = Vec::new();
+        let err = ctx
+            .handle_goodbye(
+                &mut reader,
+                &mut output,
+                &mut create_ndx_codec(31),
+                &mut MonotonicNdxWriter::new(31),
+            )
+            .expect_err("EOF before the receiver's goodbye must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(output.is_empty(), "nothing is echoed without a goodbye");
+    }
+    #[test]
+    fn handle_goodbye_eof_before_final_ndx_done_is_an_error() {
+        let mut ctx = goodbye_proto31_ctx();
+        let mut reader = Cursor::new(NDX_DONE_MODERN.to_vec());
+        let mut output = Vec::new();
+        let err = ctx
+            .handle_goodbye(
+                &mut reader,
+                &mut output,
+                &mut create_ndx_codec(31),
+                &mut MonotonicNdxWriter::new(31),
+            )
+            .expect_err("EOF before the final NDX_DONE must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(
+            output.ends_with(&NDX_DONE_MODERN),
+            "the echo was sent first"
+        );
+    }
+    /// upstream: io.c perform_io() services a readable EOF before a blocked
+    /// write, so a peer that closed during the goodbye surfaces as the read's
+    /// EOF, not as a write error and not as success.
+    #[test]
+    fn handle_goodbye_closed_peer_on_echo_surfaces_the_read_eof() {
+        let mut ctx = goodbye_proto31_ctx();
+        let mut reader = Cursor::new(NDX_DONE_MODERN.to_vec());
+        let err = ctx
+            .handle_goodbye(
+                &mut reader,
+                &mut ClosedPeerWriter,
+                &mut create_ndx_codec(31),
+                &mut MonotonicNdxWriter::new(31),
+            )
+            .expect_err("a closed peer during the goodbye must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
     // UTS-9.REOPEN (daemon-gzip-download): the daemon-sender's `-zz` goodbye
     // path deadlocked because the codec finalize step happened only AFTER
     // `handle_goodbye` returned, but `handle_goodbye` could never return
