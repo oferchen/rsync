@@ -125,7 +125,7 @@ fn send_recv_ida_entries_roundtrip() {
 #[test]
 fn send_ida_entries_ships_name_only_when_include_names() {
     // WHY: upstream writes the ACL entry name only under inc_recurse
-    // (acls.c:597 `if (inc_recurse && name)`); otherwise the receiver remaps
+    // (acls.c:827 `if (inc_recurse && name)`); otherwise the receiver remaps
     // the id through the shared id-list (match_acl_ids). The name must travel
     // when include_names=true so the inc_recurse receiver can resolve it, and
     // must be dropped when false so the non-inc_recurse wire stays byte-compatible
@@ -232,7 +232,7 @@ fn decode_access_non_name_entry() {
 
 #[test]
 fn decode_access_named_out_of_range_is_stream_io() {
-    // upstream: acls.c:672-695 recv_acl_access() rejects a named entry whose
+    // upstream: acls.c:902-925 recv_acl_access() rejects a named entry whose
     // shifted permission bits exceed SMB_ACL_VALID_NAME_BITS (rwx = 0x07) via
     // rprintf(FERROR_XFER) + exit_cleanup(RERR_STREAMIO). A bare InvalidData
     // io::Error maps to RERR_STREAMIO (exit 12) in the core exit-code mapper.
@@ -248,7 +248,7 @@ fn decode_access_named_out_of_range_is_stream_io() {
 
 #[test]
 fn decode_access_object_out_of_range_is_stream_io() {
-    // upstream: acls.c:687-692 recv_acl_access() rejects an object entry whose
+    // upstream: acls.c:917-921 recv_acl_access() rejects an object entry whose
     // bits exceed SMB_ACL_VALID_OBJ_BITS (0x07) with exit_cleanup(RERR_STREAMIO).
     let err = decode_access(0x08, false).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
@@ -256,8 +256,8 @@ fn decode_access_object_out_of_range_is_stream_io() {
 
 #[test]
 fn recv_ida_entries_out_of_range_access_is_stream_io() {
-    // upstream: acls.c:672-695 recv_acl_access() (called from recv_ida_entries,
-    // acls.c:708) aborts with RERR_STREAMIO on an out-of-range named-entry
+    // upstream: acls.c:902-925 recv_acl_access() (called from recv_ida_entries,
+    // acls.c:936) aborts with RERR_STREAMIO on an out-of-range named-entry
     // access value. Drive the full wire decode to prove the error surfaces from
     // the receive path, not just the pure decoder. An out-of-range value must
     // yield the InvalidData -> RERR_STREAMIO (exit 12) error, never a silent
@@ -293,11 +293,11 @@ fn recv_ida_entries_eof_reading_count() {
 #[test]
 fn recv_ida_entries_five_thousand_entries_decodes() {
     // A large-but-legitimate ACL with 5000 named entries: above the former 4096
-    // cap, below upstream's 65536 ceiling. upstream: acls.c:700 reads the count
+    // cap, below upstream's 65536 ceiling. upstream: acls.c:930 reads the count
     // via read_varint_bounded(f, 0, MAX_WIRE_ACL_COUNT, "ACL count"), where
     // MAX_WIRE_ACL_COUNT is 65536 (rsync.h:179), then new_array(id_access, count)
     // succeeds. WHY it matters: a 4096 cap rejected (exit 23) a transfer upstream
-    // 3.4.4 accepts (exit 0); a drop-in tool must accept the same ACLs upstream does.
+    // accepts (exit 0); a drop-in tool must accept the same ACLs upstream does.
     let mut entries = IdaEntries::new();
     for i in 0..5000u32 {
         entries.push(IdAccess::user(1000 + i, 0x07));
@@ -317,9 +317,9 @@ fn recv_ida_entries_exceeds_max_count_is_protocol_violation() {
     use crate::acl::constants::MAX_WIRE_ACL_ENTRIES;
     use crate::varint::write_varint;
 
-    // A hostile ACL entry count above the cap. upstream: acls.c:700
+    // A hostile ACL entry count above the cap. upstream: acls.c:930
     // recv_ida_entries() reads it via read_varint_bounded(f, 0,
-    // MAX_WIRE_ACL_COUNT, "ACL count") (io.c:1942-1951), which
+    // MAX_WIRE_ACL_COUNT, "ACL count") (io.c:2112-2121), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. WHY it matters: a drop-in
     // tool must exit 2 (protocol incompatibility) here, not RERR_STREAMIO (12);
     // the ProtocolViolation tag is what makes the core mapper reproduce exit 2.

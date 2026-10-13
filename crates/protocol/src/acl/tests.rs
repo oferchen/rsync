@@ -184,7 +184,7 @@ mod rsync_acl_tests {
 
 /// Tests for the `--fake-super` xattr byte format (`%aacl`/`%dacl` blobs).
 ///
-/// Upstream: `acls.c:472-509` `get_rsync_acl()` and `acls.c:933-970`
+/// Upstream: `acls.c:601-635` `get_rsync_acl()` and `acls.c:1228-1250`
 /// `set_rsync_acl()` (the `am_root < 0` branches).
 mod fake_super_bytes_tests {
     use super::*;
@@ -250,21 +250,21 @@ mod fake_super_bytes_tests {
 
         #[rustfmt::skip]
         let expected: Vec<u8> = vec![
-            // upstream: acls.c:962 SIVAL(buf, 0, user_obj) -> 0x07
+            // upstream: acls.c:1235 SIVAL(buf, 0, user_obj) -> 0x07
             0x07, 0x00, 0x00, 0x00,
-            // upstream: acls.c:963 SIVAL(buf, 4, group_obj) -> 0x05
+            // upstream: acls.c:1236 SIVAL(buf, 4, group_obj) -> 0x05
             0x05, 0x00, 0x00, 0x00,
-            // upstream: acls.c:964 SIVAL(buf, 8, mask_obj) -> NO_ENTRY (0x80)
+            // upstream: acls.c:1237 SIVAL(buf, 8, mask_obj) -> NO_ENTRY (0x80)
             0x80, 0x00, 0x00, 0x00,
-            // upstream: acls.c:965 SIVAL(buf, 12, other_obj) -> 0x04
+            // upstream: acls.c:1238 SIVAL(buf, 12, other_obj) -> 0x04
             0x04, 0x00, 0x00, 0x00,
-            // upstream: acls.c:971 SIVAL(bp, 0, ida->id) -> 1000 (named user)
+            // upstream: acls.c:1244 SIVAL(bp, 0, ida->id) -> 1000 (named user)
             0xE8, 0x03, 0x00, 0x00,
-            // upstream: acls.c:972 SIVAL(bp, 4, ida->access) -> 0x07 | NAME_IS_USER
+            // upstream: acls.c:1245 SIVAL(bp, 4, ida->access) -> 0x07 | NAME_IS_USER
             0x07, 0x00, 0x00, 0x80,
-            // upstream: acls.c:971 SIVAL(bp, 0, ida->id) -> 100 (named group)
+            // upstream: acls.c:1244 SIVAL(bp, 0, ida->id) -> 100 (named group)
             0x64, 0x00, 0x00, 0x00,
-            // upstream: acls.c:972 SIVAL(bp, 4, ida->access) -> 0x05 (no NAME_IS_USER)
+            // upstream: acls.c:1245 SIVAL(bp, 4, ida->access) -> 0x05 (no NAME_IS_USER)
             0x05, 0x00, 0x00, 0x00,
         ];
 
@@ -594,7 +594,7 @@ mod constants_tests {
 
     #[test]
     fn xmit_flags_match_upstream() {
-        // Upstream acls.c lines 38-42
+        // Upstream acls.c lines 42-46
         assert_eq!(XMIT_USER_OBJ, 0x01);
         assert_eq!(XMIT_GROUP_OBJ, 0x02);
         assert_eq!(XMIT_MASK_OBJ, 0x04);
@@ -604,20 +604,20 @@ mod constants_tests {
 
     #[test]
     fn no_entry_matches_upstream() {
-        // Upstream acls.c line 44
+        // Upstream acls.c line 48
         assert_eq!(NO_ENTRY, 0x80);
     }
 
     #[test]
     fn xflag_constants_match_upstream() {
-        // Upstream acls.c lines 52-53
+        // Upstream acls.c lines 56-57
         assert_eq!(XFLAG_NAME_FOLLOWS, 0x0001);
         assert_eq!(XFLAG_NAME_IS_USER, 0x0002);
     }
 
     #[test]
     fn name_is_user_matches_upstream() {
-        // Upstream acls.c line 46
+        // Upstream acls.c line 50
         assert_eq!(NAME_IS_USER, 1 << 31);
     }
 
@@ -983,11 +983,11 @@ mod computed_mask_and_names {
         //
         // upstream: recv_rsync_acl(type=ACCESS) sets mask_obj = (mode>>3)&7,
         // the authoritative source, because rsync_acl_strip_perms() only drops
-        // the mask when it equals those mode bits (acls.c:150-151, 770-773).
+        // the mask when it equals those mode bits (acls.c:153-156, 1000-1003).
         // oc defers that mode-based fill to reconstruct_acl() at apply time, so
         // the wire decode must leave the mask as NO_ENTRY rather than folding in
         // the OR of the named-entry access bits (which would narrow the mask to
-        // the named user's perms whenever the true mask exceeds them - bug #251).
+        // the named user's perms whenever the true mask exceeds them).
         let mut acl = RsyncAcl::new();
         acl.user_obj = 0x07;
         acl.names.push(IdAccess::user(1000, 0x05)); // r-x
@@ -1017,7 +1017,7 @@ mod computed_mask_and_names {
         // DEFAULT ACL with named entries but no explicit mask. No file mode is
         // available (upstream passes mode 0), so upstream folds the group object
         // into the OR of the named-entry access bits:
-        //   computed_mask_bits |= group_obj & ~NO_ENTRY   (acls.c:774-777)
+        //   computed_mask_bits |= group_obj & ~NO_ENTRY   (acls.c:1004-1005)
         let mut acl = RsyncAcl::new();
         acl.user_obj = 0x07;
         acl.group_obj = 0x04; // r--
@@ -1315,7 +1315,7 @@ mod receive_acl_cached_tests {
 /// Tests for `get_perms` helper function.
 ///
 /// Validates extraction of rwx permission bits from Unix file mode
-/// for each ACL tag type. Upstream: `rsync_acl_get_perms()` in `acls.c`.
+/// for each ACL tag type. Upstream: the shifts in `rsync_acl_fake_perms()` (`acls.c`).
 mod get_perms_tests {
     use super::*;
 
@@ -1533,7 +1533,7 @@ mod strip_perms_tests {
 
         acl.strip_perms();
 
-        // upstream: group_obj should be replaced by mask_obj value
+        // strip_perms() is oc-only: group_obj takes the mask value.
         assert_eq!(acl.group_obj, 3);
         assert_eq!(acl.mask_obj, NO_ENTRY);
         assert!(acl.names.is_empty());
@@ -1590,7 +1590,7 @@ mod strip_perms_tests {
 /// Tests for `RsyncAcl::equal_enough`.
 ///
 /// Encodes the exact contract of upstream `rsync_acl_equal_enough()`
-/// (`acls.c` lines 205-224): the first ACL is fully populated, the second may
+/// (`acls.c` lines 209-228): the first ACL is fully populated, the second may
 /// be a condensed ACL with `NO_ENTRY` fields, and the file mode recovers a
 /// stripped `group_obj`. Only `mask_obj` presence, the `group_obj` extended
 /// entry, and the named user/group entries participate; `user_obj` and
@@ -1612,7 +1612,7 @@ mod equal_enough_tests {
 
     #[test]
     fn empty_acls_are_equal() {
-        // WHY: acls.c:208 - both masks NO_ENTRY (xor bit clear), no group
+        // WHY: acls.c:212 - both masks NO_ENTRY (xor bit clear), no group
         // check (no mask), no named entries -> equal enough.
         let a = RsyncAcl::new();
         let b = RsyncAcl::new();
@@ -1621,7 +1621,7 @@ mod equal_enough_tests {
 
     #[test]
     fn user_obj_differs_but_extended_entries_equal_is_equal_enough() {
-        // WHY: acls.c:205-206,208-223 - user_obj is NOT part of the
+        // WHY: acls.c:204-206,212-227 - user_obj is NOT part of the
         // comparison; upstream leaves it to the mode. Mask absent on both,
         // named entries identical -> equal enough despite differing user_obj
         // (and other_obj). The old code compared user_obj first and wrongly
@@ -1642,7 +1642,7 @@ mod equal_enough_tests {
 
     #[test]
     fn other_obj_differs_no_mask_is_equal_enough() {
-        // WHY: acls.c:205-206 - other_obj is left to the mode and never
+        // WHY: acls.c:204-206 - other_obj is left to the mode and never
         // compared. The old code compared other_obj and wrongly rejected.
         let mut a = RsyncAcl::new();
         a.user_obj = 7;
@@ -1658,7 +1658,7 @@ mod equal_enough_tests {
 
     #[test]
     fn stripped_group_obj_recovered_from_mode_matches_is_equal() {
-        // WHY: acls.c:216-219 - a condensed ACL omits group_obj (NO_ENTRY)
+        // WHY: acls.c:217-223 - a condensed ACL omits group_obj (NO_ENTRY)
         // only when it equalled the mask and thus the mode's group bits.
         // With mode 0o750 the group bits are 5, and racl1.group_obj is 5, so
         // the recovered comparison holds. The old code, seeing named entries,
@@ -1682,7 +1682,7 @@ mod equal_enough_tests {
 
     #[test]
     fn stripped_group_obj_mismatching_mode_is_not_equal() {
-        // WHY: acls.c:216-219 - when racl2 omits group_obj, racl1.group_obj
+        // WHY: acls.c:217-223 - when racl2 omits group_obj, racl1.group_obj
         // must equal the mode's group bits. Here group_obj is 4 but mode
         // 0o700 has group bits 0, so upstream returns false. The old code
         // ignored group_obj entirely when there were no named entries (it
@@ -1705,7 +1705,7 @@ mod equal_enough_tests {
 
     #[test]
     fn present_group_obj_compared_directly() {
-        // WHY: acls.c:220-221 - when both carry a mask and racl2 keeps its
+        // WHY: acls.c:224-225 - when both carry a mask and racl2 keeps its
         // group_obj, the two group_obj values are compared directly (the mode
         // is not consulted).
         let mut a = RsyncAcl::new();
@@ -1722,7 +1722,7 @@ mod equal_enough_tests {
 
     #[test]
     fn mask_presence_differs_is_not_equal() {
-        // WHY: acls.c:208-209 - if one ACL has a mask and the other doesn't,
+        // WHY: acls.c:212-213 - if one ACL has a mask and the other doesn't,
         // they are never equal enough. The old code, with no named entries,
         // collapsed both to their "effective group" (mask if present, else
         // group_obj); with both effective groups 6 it wrongly returned true.
@@ -1743,7 +1743,7 @@ mod equal_enough_tests {
 
     #[test]
     fn differing_mask_values_do_not_matter_when_group_and_names_match() {
-        // WHY: acls.c:208 only tests mask PRESENCE (the NO_ENTRY bit), never
+        // WHY: acls.c:212 only tests mask PRESENCE (the NO_ENTRY bit), never
         // the mask value; the actual mask is reconstructed by the
         // mode-preservation code. With both masks present, matching group_obj,
         // and equal named entries, upstream returns true even though the mask
@@ -1763,7 +1763,7 @@ mod equal_enough_tests {
 
     #[test]
     fn different_named_entry_perms_not_equal() {
-        // WHY: acls.c:223 (ida_entries_equal) - named entries must match in
+        // WHY: acls.c:227 (ida_entries_equal) - named entries must match in
         // access and id. No mask, so only the named entries are compared.
         // This guard also holds under the old code (both compared named
         // entries), so it protects shared behavior rather than the fix.
@@ -1780,7 +1780,7 @@ mod equal_enough_tests {
 
     #[test]
     fn different_named_entry_count_not_equal() {
-        // WHY: acls.c:223 (ida_entries_equal) - a differing entry count is
+        // WHY: acls.c:227 (ida_entries_equal) - a differing entry count is
         // never equal. No mask, so only the named entries are compared.
         // Shared-behavior guard, like the case above.
         let mut a = RsyncAcl::new();
@@ -1795,7 +1795,7 @@ mod equal_enough_tests {
 
     #[test]
     fn resolved_name_is_ignored_in_named_entry_comparison() {
-        // WHY: acls.c:223 (ida_entries_equal) compares only access and id,
+        // WHY: acls.c:227 (ida_entries_equal) compares only access and id,
         // not the resolved name. Two entries with the same id/access but
         // different names remain equal enough. No mask here, so the group
         // branch is skipped and only the named entries are compared.
@@ -1813,7 +1813,7 @@ mod equal_enough_tests {
 }
 
 /// Tests for `RsyncAcl::equal`, the strict comparison used for a directory's
-/// default ACL (upstream `rsync_acl_equal()`, `acls.c` lines 190-197). Unlike
+/// default ACL (upstream `rsync_acl_equal()`, `acls.c` lines 195-202). Unlike
 /// `equal_enough`, every object and named entry participates.
 mod equal_tests {
     use super::*;
@@ -1826,7 +1826,7 @@ mod equal_tests {
 
     #[test]
     fn differing_user_obj_is_not_equal() {
-        // WHY: acls.c:192 - user_obj IS part of the strict comparison (it is
+        // WHY: acls.c:197 - user_obj IS part of the strict comparison (it is
         // not for equal_enough), so a difference here rejects.
         let a = RsyncAcl::from_mode(0o755);
         let mut b = a.clone();
@@ -1836,7 +1836,7 @@ mod equal_tests {
 
     #[test]
     fn differing_other_obj_is_not_equal() {
-        // WHY: acls.c:195 - other_obj participates in the strict comparison.
+        // WHY: acls.c:200 - other_obj participates in the strict comparison.
         let a = RsyncAcl::from_mode(0o755);
         let mut b = a.clone();
         b.other_obj = 0;
@@ -1855,7 +1855,7 @@ mod equal_tests {
 
     #[test]
     fn differing_named_entry_id_is_not_equal() {
-        // WHY: acls.c:196 - ida_entries_equal compares each (access, id) pair.
+        // WHY: acls.c:201 - ida_entries_equal compares each (access, id) pair.
         let mut a = RsyncAcl::from_mode(0o644);
         a.names.push(IdAccess::user(1000, 0x06));
         let mut b = a.clone();
@@ -1929,7 +1929,7 @@ mod strip_perms_for_send_tests {
     use super::*;
 
     /// Basic file without extended ACLs: all base entries stripped.
-    /// upstream: acls.c:142-154 - user_obj, group_obj (no mask), other_obj all set to NO_ENTRY
+    /// upstream: acls.c:146-158 - user_obj, group_obj (no mask), other_obj all set to NO_ENTRY
     #[test]
     fn basic_file_all_stripped() {
         let mut acl = RsyncAcl::from_mode(0o644);

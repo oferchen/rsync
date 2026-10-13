@@ -454,7 +454,7 @@ fn checksum_verification() {
 /// The abbreviation digest of protocol 30-32 is the plain, unseeded MD5 of the
 /// value. Upstream computes it via `sum_init(xattr_sum_nni, checksum_seed)`,
 /// but the `CSUM_MD5` case of `sum_init()` does `md5_begin()` with no seed
-/// (`checksum.c:588`); only the MD4-family cases fold the seed in. A seeded
+/// (`checksum.c:615-616`); only the MD4-family cases fold the seed in. A seeded
 /// digest here would never equal the receiver's locally computed value, so
 /// upstream would re-request every large xattr in full. This locks the digest
 /// to seed-independent plain MD5 so oc-rsync stays byte-compatible.
@@ -895,13 +895,13 @@ fn sender_response_round_trip_with_todo_entries() {
 ///
 /// - Generator -> sender request (`send_xattr_request`, `fname == NULL`):
 ///   upstream writes `write_varint(f_out, rxa->num - prior_req)` for each
-///   requested entry then `write_byte(f_out, 0)` (`xattrs.c:653`,`xattrs.c:674`).
+///   requested entry then `write_byte(f_out, 0)` (`xattrs.c:681`, `xattrs.c:702`).
 ///   Requesting the 1st and 3rd entries (0-based 0 and 2, 1-based num 1 and 3)
 ///   yields deltas 1 and 2 then the 0 terminator: `[0x01, 0x02, 0x00]`.
 /// - Sender -> receiver response (`send_sender_xattr_response`, sender path):
 ///   upstream writes, per TODO entry, `write_varint(num - prior_req)`,
 ///   `write_varint(len)`, `write_bigbuf(ptr, len)`, then `write_byte(0)`
-///   (`xattrs.c:653-674`). num 1 with `b"abc"` and num 3 with `b"de"` give
+///   (`xattrs.c:681-702`). num 1 with `b"abc"` and num 3 with `b"de"` give
 ///   `[0x01,0x03,'a','b','c', 0x02,0x02,'d','e', 0x00]`.
 ///
 /// All values are < 0x80 so each varint is a single byte, making the golden
@@ -915,7 +915,7 @@ fn abbreviated_request_response_wire_is_golden() {
     assert_eq!(req, vec![0x01, 0x02, 0x00], "generator request bytes");
 
     // recv side (sender) parses it back to the same 0-based indices and flags
-    // exactly those entries XSTATE_TODO. upstream: xattrs.c:681 recv_xattr_request.
+    // exactly those entries XSTATE_TODO. upstream: xattrs.c:774-776 recv_xattr_request.
     let mut list = XattrList::new();
     for i in 1..=3u32 {
         let mut e = XattrEntry::abbreviated(
@@ -992,11 +992,11 @@ fn large_cache_index() {
     }
 }
 
-/// BR-3h regression (#2494): the sender must emit `user.foo` xattr names
+/// The sender must emit `user.foo` xattr names
 /// verbatim on the wire. Prior behaviour stripped the `user.` prefix on
 /// Linux, causing the destination to land the entry in the wrong
 /// namespace (`user.rsync.foo` under fake-super or a silent drop without
-/// it) when interoperating with upstream rsync 3.4.1.
+/// it) when interoperating with upstream rsync.
 ///
 /// Asserts that:
 ///
@@ -1009,7 +1009,7 @@ fn large_cache_index() {
 /// 2. The bytes `b"user.foo"` appear in the serialized `send_xattr`
 ///    output as the on-wire name, immediately followed by the NUL
 ///    terminator. This is a byte-for-byte parity check against upstream
-///    rsync 3.4.1 `xattrs.c:send_xattr()`.
+///    rsync `xattrs.c:send_xattr()` (`xattrs.c:523-571`).
 #[test]
 fn user_prefix_preserved_in_wire_bytes() {
     use crate::xattr::{XattrEntry, XattrList, local_to_wire};
@@ -1048,7 +1048,7 @@ fn user_prefix_preserved_in_wire_bytes() {
         .windows(needle.len())
         .position(|w| w == needle)
         .unwrap_or_else(|| panic!("expected `user.foo\\0` in wire bytes; got {buf:?}"));
-    // The stripped form (BR-3h regression) would expose `foo\0` instead.
+    // The stripped form would expose `foo\0` instead.
     assert!(
         !buf.windows(4).any(|w| w == b"foo\0") || buf[position + 5..].starts_with(b"foo\0"),
         "regression: wire bytes contain a bare `foo\\0` token; the \
@@ -1072,7 +1072,7 @@ fn read_definitions_exceeds_max_count() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("xattr count out of range"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
+    // read_varint_size (xattrs.c:826,835-836; io.c:2112-2134), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1100,7 +1100,7 @@ fn read_definitions_exceeds_max_name_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
+    // read_varint_size (xattrs.c:826,835-836; io.c:2112-2134), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1130,7 +1130,7 @@ fn read_definitions_exceeds_max_value_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
+    // read_varint_size (xattrs.c:826,835-836; io.c:2112-2134), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1158,7 +1158,7 @@ fn recv_xattr_exceeds_max_count() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("xattr count out of range"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
+    // read_varint_size (xattrs.c:826,835-836; io.c:2112-2134), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1187,7 +1187,7 @@ fn recv_xattr_exceeds_max_name_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
+    // read_varint_size (xattrs.c:826,835-836; io.c:2112-2134), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1216,7 +1216,7 @@ fn recv_xattr_exceeds_max_value_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
+    // read_varint_size (xattrs.c:826,835-836; io.c:2112-2134), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1249,7 +1249,7 @@ fn recv_xattr_values_exceeds_max_value_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
+    // read_varint_size (xattrs.c:826,835-836; io.c:2112-2134), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1264,7 +1264,7 @@ fn recv_xattr_values_exceeds_max_value_len() {
 #[test]
 fn read_definitions_missing_nul_maps_to_fileio() {
     // A literal xattr name whose declared bytes lack the trailing NUL. upstream:
-    // xattrs.c:811-814 receive_xattr() rejects this with
+    // xattrs.c:857-860 receive_xattr() rejects this with
     // exit_cleanup(RERR_FILEIO) (exit 11) - a file-IO error, NOT a protocol (2)
     // or stream (12) error. WHY it matters: a drop-in tool must reproduce
     // upstream's exact exit classification. io::Error::other maps to RERR_FILEIO
@@ -1309,9 +1309,9 @@ fn read_definitions_large_datum_within_max_alloc_decodes() {
     let mut cursor = Cursor::new(buf);
     let set = read_xattr_definitions(&mut cursor).expect("datum below --max-alloc must decode");
     // WHY: upstream reads datum_len via read_varint_size(f, MAX_WIRE_XATTR_DATALEN,
-    // ...) at xattrs.c:803, where MAX_WIRE_XATTR_DATALEN is 0x7fffffff (rsync.h:178);
-    // the real bound is --max-alloc (default 1 GiB, options.c:203). A 64 MiB cap
-    // rejected legitimate resource forks that upstream 3.4.4 accepts under its
+    // ...) at xattrs.c:836, where MAX_WIRE_XATTR_DATALEN is 0x7fffffff (rsync.h:178);
+    // the real bound is --max-alloc (default 1 GiB, options.c:209). A 64 MiB cap
+    // rejected legitimate resource forks that upstream accepts under its
     // default config. A drop-in tool must accept the same transfers upstream does.
     assert_eq!(set.len(), 1);
     let entry = &set.entries()[0];
@@ -1458,7 +1458,7 @@ fn recv_xattr_values_lowered_max_alloc_rejects_sub_gib_length() {
 /// A negative datum varint cannot fit the signed-`int32` field encoding, so it
 /// stays a protocol violation (exit 2) even when `--max-alloc` is raised to the
 /// field maximum. WHY: upstream's read_varint_size rejects a negative value
-/// with RERR_PROTOCOL regardless of `max_alloc` (io.c:1955-1964); raising the
+/// with RERR_PROTOCOL regardless of `max_alloc` (io.c:2125-2134); raising the
 /// allocation ceiling must never make a malformed field decode.
 #[test]
 fn read_definitions_negative_datum_rejected_even_when_max_alloc_raised() {
@@ -1491,7 +1491,7 @@ fn read_definitions_negative_datum_rejected_even_when_max_alloc_raised() {
 /// Upstream `xattrs.c:send_xattr()` has NO `protocol_version` branch: the
 /// literal encoding (ndx+1, count, per-entry name_len/datum_len/name+NUL/value)
 /// is byte-identical for protocol 30, 31, and 32. The `CF_AVOID_XATTR_OPTIM`
-/// capability and `want_xattr_optim` gate (compat.c:747, only active at
+/// capability and `want_xattr_optim` gate (compat.c:758, only active at
 /// protocol >= 31) affect the transfer-phase hardlink optimisation, not this
 /// flist wire format. This test guards against ever re-introducing a
 /// version-conditioned xattr wire encoding, which desynced proto-30 peers with

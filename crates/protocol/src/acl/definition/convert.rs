@@ -7,7 +7,7 @@
 //! # Upstream Reference
 //!
 //! Corresponds to the parsed result of `recv_rsync_acl()` in
-//! `acls.c` lines 731-800.
+//! `acls.c` lines 961-1014.
 
 use super::types::{AclEntry, AclPerms, AclTag};
 use crate::acl::entry::RsyncAcl;
@@ -16,13 +16,13 @@ use crate::acl::entry::RsyncAcl;
 ///
 /// Contains a list of ACL entries and a flag indicating whether an explicit
 /// mask entry was present in the wire data. When named user/group entries
-/// exist but no mask was explicitly sent, the receiver computes the mask
-/// from the union of all named entry permissions.
+/// exist but no mask was explicitly sent, `read_acl_definition` computes the
+/// mask from the union of all named entry permissions.
 ///
 /// # Upstream Reference
 ///
 /// Corresponds to the literal data branch of `recv_rsync_acl()` in
-/// `acls.c` lines 731-800.
+/// `acls.c` lines 961-1014.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AclDefinition {
     /// All entries in the ACL, in wire order.

@@ -35,7 +35,9 @@ use super::types::AclType;
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `send_ida_entries()` in `acls.c` lines 581-605.
+/// Mirrors `send_ida_entries()` in `acls.c` lines 811-835. The caller decides
+/// `include_names`; upstream sends a name only when `inc_recurse` is set and
+/// the id resolves to a name (`numeric_ids` off).
 pub fn send_ida_entries<W: Write>(
     writer: &mut W,
     entries: &IdaEntries,
@@ -50,7 +52,7 @@ pub fn send_ida_entries<W: Write>(
         let encoded = encode_access(entry.access, has_name);
         write_varint(writer, encoded as i32)?;
 
-        // upstream: acls.c send_ida_entries() writes name after access flags
+        // upstream: acls.c:827-830 writes a one-byte length, then the name.
         if has_name && let Some(ref name) = entry.name {
             let len = name.len().min(255);
             writer.write_all(&[len as u8])?;
@@ -81,7 +83,7 @@ pub fn send_ida_entries<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `send_rsync_acl()` in `acls.c` lines 607-647.
+/// Mirrors `send_rsync_acl()` in `acls.c` lines 837-877.
 pub fn send_rsync_acl<W: Write>(
     writer: &mut W,
     acl: &RsyncAcl,
@@ -94,7 +96,7 @@ pub fn send_rsync_acl<W: Write>(
         AclType::Default => cache.find_default(acl),
     };
 
-    // upstream: ndx + 1 convention (0 means literal data follows)
+    // upstream: acls.c:843 writes ndx + 1 (0 means literal data follows).
     let ndx = cached_index.map(|i| i as i32).unwrap_or(-1);
     write_varint(writer, ndx + 1)?;
 
@@ -143,11 +145,13 @@ pub fn send_rsync_acl<W: Write>(
 /// * `cache` - ACL cache for deduplication
 /// * `include_names` - Whether to write user/group name strings after each
 ///   named entry. Upstream sends names only when `inc_recurse && !numeric_ids`
-///   (`acls.c:597`); the receiver otherwise remaps ids through the id-list.
+///   (`acls.c:823-827`); the receiver otherwise remaps ids through the id-list.
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `send_acl()` in `acls.c` lines 651-668.
+/// Mirrors the wire writes of `send_acl()` in `acls.c` lines 881-900. The
+/// caller performs upstream's `rsync_acl_fake_perms()` / `rsync_acl_strip_perms()`
+/// preparation; this function sends the ACLs as given.
 pub fn send_acl<W: Write>(
     writer: &mut W,
     access_acl: &RsyncAcl,

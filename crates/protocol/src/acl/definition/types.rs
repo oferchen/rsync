@@ -5,8 +5,8 @@
 //!
 //! # Upstream Reference
 //!
-//! Maps to `SMB_ACL_*` tag constants and `rsync_ace` struct in
-//! upstream rsync's `acls.c` lines 37-60.
+//! Maps to the `SMB_ACL_*` tag constants (`lib/sysacls.h`) and the
+//! `rsync_acl` / `id_access` structs in upstream rsync's `acls.c` lines 61-84.
 
 /// POSIX ACL tag identifying the type and scope of an ACL entry.
 ///
@@ -19,7 +19,7 @@
 ///
 /// Maps to `SMB_ACL_USER`, `SMB_ACL_GROUP`, `SMB_ACL_USER_OBJ`,
 /// `SMB_ACL_GROUP_OBJ`, `SMB_ACL_OTHER`, `SMB_ACL_MASK` in upstream
-/// rsync's `acls.c`.
+/// rsync's `lib/sysacls.h`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum AclTag {
     /// File owner permissions.

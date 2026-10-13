@@ -113,7 +113,8 @@ impl XattrList {
     ///
     /// Maintains the invariant that xattr lists are sorted alphabetically
     /// by name, matching upstream rsync's `qsort(rxa, count, sizeof(rsync_xa),
-    /// rsync_xal_compare_names)` in `xattrs.c:863`.
+    /// rsync_xal_compare_names)` in `rsync_xal_get()` (`xattrs.c:309`) and
+    /// `receive_xattr()` (`xattrs.c:918`).
     pub fn sort_by_name(&mut self) {
         self.entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
     }
