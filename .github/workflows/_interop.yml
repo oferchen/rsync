@@ -463,11 +463,11 @@ jobs:
           fi
 
       # NOTE: upstream's own `testsuite/*.test` corpus is deliberately NOT run
-      # here. It is driven by `_upstream-testsuite.yml`, which calls the same
-      # `tools/ci/run_upstream_testsuite.sh` with the same `OC_RSYNC_BIN` and
-      # the same `upstream_rsync_version` ci.yml passes to both workflows - but
-      # blocking, as the required `upstream-testsuite / upstream testsuite`
-      # (and `(root)`) contexts. A second, `continue-on-error` copy inside this
+      # here. `upstream-testsuite-3.5.1.yml` drives it through
+      # `_upstream-testsuite.yml`, which calls the same
+      # `tools/ci/run_upstream_testsuite.sh` with the same `OC_RSYNC_BIN`,
+      # pinned to the 3.5.1 reference release - but blocking, as the required
+      # upstream-testsuite contexts (and their `(root)` variants). A second, `continue-on-error` copy inside this
       # job re-ran an already-required gate and could only ever report a green
       # `interop` context while the suite failed. Add suite coverage there, not
       # here.
