@@ -22,7 +22,7 @@ fn source_tree() -> tempfile::TempDir {
     let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
     fs::create_dir_all(src.join("sub")).expect("mkdir");
-    for name in ["a.txt", "b.txt", "c.log", r"sub\d.txt"] {
+    for name in ["a.txt", "b.txt", "c.log", "s.txt", r"sub\d.txt"] {
         fs::write(src.join(name), name.as_bytes()).expect("write");
     }
     tmp
@@ -57,7 +57,8 @@ fn absolute_wildcard_with_trailing_separator_selects_directories() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // `sub\` copies the directory's contents, as `sub/` does on Unix.
+    // `s.txt` also matches `s*` but is not a directory, so the trailing
+    // separator must drop it; `sub\` copies the directory's contents.
     assert!(tmp.path().join(r"dst\d.txt").is_file());
 }
 
