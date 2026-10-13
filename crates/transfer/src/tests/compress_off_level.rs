@@ -1,8 +1,8 @@
 //! Post-negotiation `init_compression_level()` off_level resolution.
 //!
 //! upstream: `token.c:76-98 init_compression_level()`, called from
-//! `parse_compress_choice(1)` (`compat.c:820`) *after* `negotiate_the_strings()`
-//! (`compat.c:809`). The meaning of `--compress-level=0` is codec-dependent and
+//! `parse_compress_choice(1)` (`compat.c:831`) *after* `negotiate_the_strings()`
+//! (`compat.c:820`). The meaning of `--compress-level=0` is codec-dependent and
 //! therefore only knowable once the codec has been negotiated: zlib/zlibx have
 //! `off_level == Z_NO_COMPRESSION` (`0`) so a literal `0` sets
 //! `do_compression = CPRES_NONE`; zstd/lz4 have `off_level == CLVL_NOT_SPECIFIED`
