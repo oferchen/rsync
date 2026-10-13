@@ -10,8 +10,9 @@ use super::flags::{
 
 /// The lone `.` that stands for the remote working directory.
 ///
-/// upstream: clientserver.c:303 - `server_options()` pushes it ahead of the
-/// paths, and `main.c` `do_server_sender()` / `do_server_recv()` take `argv[0]`
+/// upstream: main.c:630 `do_cmd()` and clientserver.c:345
+/// `start_inband_exchange()` push it right after `server_options()`, ahead of
+/// the paths, and `main.c` `do_server_sender()` / `do_server_recv()` take `argv[0]`
 /// as the directory to change into, so it is consumed there and never appears
 /// as a transferred operand.
 ///
@@ -43,7 +44,7 @@ const CWD_PLACEHOLDER: &str = ".";
 ///   `--temp-dir`) that `server_options()` emits as two argv slots via
 ///   `safe_arg("", value)` - recognised by [`is_two_arg_server_long_flag`],
 ///   whose following value slot is skipped.
-/// - The short `-e` (`POPT_ARG_STRING`, options.c:823) whose `.`-capability
+/// - The short `-e` (`POPT_ARG_STRING`, options.c:837) whose `.`-capability
 ///   value can split off the compact flag string when a remote shell
 ///   re-tokenizes the joined exec line - rebound by
 ///   [`compact_flag_string_expects_split_value`].
@@ -91,7 +92,7 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
             flag_string = arg_str.into_owned();
             found_flags = true;
             // popt value-in-next-token arity for the short `-e`
-            // (`POPT_ARG_STRING`, options.c:823). When a remote shell
+            // (`POPT_ARG_STRING`, options.c:837). When a remote shell
             // re-tokenized the joined `-...e.<caps>` exec line, `-e`'s
             // capability value became a separate argv token. Rebind it onto
             // the compact flag string so it is consumed as the `-e` value
@@ -201,7 +202,7 @@ pub(super) fn parse_server_protocol(value: &str) -> Result<i32, &'static str> {
 /// Parses a `--min-size=SIZE` or `--max-size=SIZE` value from the server argument list.
 ///
 /// Delegates to the shared size parser used by the client-side CLI.
-/// upstream: options.c - `--min-size` / `--max-size` in `server_options()`.
+/// upstream: options.c:3008-3011 - `--min-size` / `--max-size` in `server_options()`.
 pub(super) fn parse_server_size_limit(value: &str, flag: &str) -> Result<u64, String> {
     let os_value = OsStr::new(value);
     super::super::execution::parse_size_limit_argument(os_value, flag)
@@ -211,7 +212,8 @@ pub(super) fn parse_server_size_limit(value: &str, flag: &str) -> Result<u64, St
 /// Parses a `--stop-at=WHEN` value from the server argument list.
 ///
 /// Delegates to the shared stop-at parser.
-/// upstream: options.c - `--stop-at` in `server_options()`.
+/// Deviation from upstream: `server_options()` never forwards `--stop-at`; a
+/// server only sees it via `-M` (popt entry at options.c:836).
 pub(super) fn parse_server_stop_at(value: &str) -> Result<SystemTime, String> {
     let os_value = OsStr::new(value);
     super::super::execution::parse_stop_at_argument(os_value).map_err(|msg| msg.to_string())
@@ -220,7 +222,8 @@ pub(super) fn parse_server_stop_at(value: &str) -> Result<SystemTime, String> {
 /// Parses a `--stop-after=MINS` value from the server argument list.
 ///
 /// Converts minutes to an absolute deadline (now + minutes).
-/// upstream: options.c - `--stop-after` / `--time-limit` in `server_options()`.
+/// Deviation from upstream: `server_options()` never forwards `--stop-after`;
+/// a server only sees it via `-M` (popt entries at options.c:834-835).
 pub(super) fn parse_server_stop_after(value: &str) -> Result<SystemTime, String> {
     let os_value = OsStr::new(value);
     super::super::execution::parse_stop_after_argument(os_value).map_err(|msg| msg.to_string())
