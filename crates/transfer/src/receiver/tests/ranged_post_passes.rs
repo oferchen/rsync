@@ -71,7 +71,7 @@ fn run_range(ctx: &mut ReceiverContext, dest: &Path, range: std::ops::Range<usiz
         .unwrap();
     ctx.create_specials_in_range(range.clone(), dest, None, &mut w)
         .unwrap();
-    ctx.process_missing_args_sentinels_in_range(range.clone(), dest, None)
+    ctx.process_missing_args_sentinels_in_range(range.clone(), dest, None, &mut w)
         .unwrap();
     ctx.create_hardlinks_in_range(range, dest, None, &mut w)
         .unwrap();
@@ -83,7 +83,8 @@ fn run_whole(ctx: &mut ReceiverContext, dest: &Path) {
     ctx.ensure_relative_parents(dest, None);
     ctx.create_symlinks(dest, None, &mut w).unwrap();
     ctx.create_specials(dest, None, &mut w).unwrap();
-    ctx.process_missing_args_sentinels(dest, None).unwrap();
+    ctx.process_missing_args_sentinels(dest, None, &mut w)
+        .unwrap();
     ctx.create_hardlinks(dest, None, &mut w).unwrap();
 }
 
@@ -174,11 +175,11 @@ fn missing_args_in_range_touch_only_their_segment() {
         &[0, 1],
     );
 
-    ctx.process_missing_args_sentinels_in_range(0..1, dest, None)
+    ctx.process_missing_args_sentinels_in_range(0..1, dest, None, &mut TestDeletionWriter)
         .unwrap();
     assert!(dest.join("gone").exists());
 
-    ctx.process_missing_args_sentinels_in_range(1..2, dest, None)
+    ctx.process_missing_args_sentinels_in_range(1..2, dest, None, &mut TestDeletionWriter)
         .unwrap();
     assert!(!dest.join("gone").exists());
 }

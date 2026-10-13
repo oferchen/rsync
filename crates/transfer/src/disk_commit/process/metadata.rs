@@ -85,6 +85,7 @@ pub(super) fn apply_file_metadata(
                 // absent that (fnamecmp == fname), the pre-transfer destination
                 // still holds the referenced value, so fall back to file_path.
                 basis_path: begin.xattr_basis.as_deref().unwrap_or(&begin.file_path),
+                dest_root: config.dest_dir.as_deref(),
             },
         )
     }
@@ -110,6 +111,8 @@ struct MetadataApplyInputs<'a> {
     pre_transfer_meta: Option<std::fs::Metadata>,
     /// fnamecmp basis file for abbreviated xattr resolution.
     basis_path: &'a Path,
+    /// Destination tree the xattr writes are pinned beneath.
+    dest_root: Option<&'a Path>,
 }
 
 /// Applies file metadata, ACLs, and xattrs from the receiver's caches.
@@ -134,6 +137,7 @@ fn apply_metadata_acls_and_xattrs(
         xattr_filter,
         pre_transfer_meta,
         basis_path,
+        dest_root,
     } = inputs;
 
     let (opts, entry) = match (metadata_opts, file_entry) {
@@ -205,7 +209,9 @@ fn apply_metadata_acls_and_xattrs(
             true,
             Some(basis_path),
             filter_ref,
-            None,
+            // upstream: rsync.c:582-597 - a confined receiver re-pins the leaf
+            // and refuses rather than falling back to a path-based lsetxattr.
+            dest_root,
         ) {
             return Some((file_path.to_path_buf(), e.to_string()));
         }

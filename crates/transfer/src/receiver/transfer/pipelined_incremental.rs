@@ -220,6 +220,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            writer,
         )?;
 
         // Mirror `run_pipelined`: when `--delete` is in effect, sweep the
@@ -1157,6 +1158,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            writer,
         )
     }
 }

@@ -494,6 +494,14 @@ pub struct ReceiverContext {
     /// Daemon-log `del.` rows from a delete pass that ran after the transfer
     /// loop (`--delete-after`/`--delete-delay`), logged after the file rows.
     pub(in crate::receiver) daemon_log_late_deletions: Vec<crate::progress::DaemonLogRow>,
+    /// The destination directory relative to the daemon module root, which
+    /// `%f` joins in front of every logged name (upstream's receiver
+    /// `curr_dir + module_dirlen`, log.c `case 'f'`). Empty at the root.
+    pub(in crate::receiver) daemon_log_dir: std::path::PathBuf,
+    /// The lone entry's file-list name when the single-file rename wrote it
+    /// under another name. The log shows the file-list name (upstream's
+    /// `log_item()` renders `f_name(file)`, never `local_name`).
+    pub(in crate::receiver) daemon_log_renamed_from: Option<std::path::PathBuf>,
     /// The last whole-file sum read from the sender, which `%C` shows for a
     /// transfer (upstream's `sender_file_sum` global, receiver.c:687).
     pub(in crate::receiver) sender_file_sum:
@@ -718,6 +726,8 @@ impl ReceiverContext {
             daemon_log_rows: RefCell::new(BTreeMap::new()),
             daemon_log_early_deletions: Vec::new(),
             daemon_log_late_deletions: Vec::new(),
+            daemon_log_dir: std::path::PathBuf::new(),
+            daemon_log_renamed_from: None,
             sender_file_sum: std::cell::Cell::new([0; crate::progress::MAX_FILE_SUM_LEN]),
             daemon_log_data_read: std::cell::Cell::new(0),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
@@ -1264,6 +1274,20 @@ impl ReceiverContext {
             // Server mode: >= 30 (upstream main.c:1185-1186)
             self.protocol.uses_binary_negotiation()
         }
+    }
+
+    /// Whether a peer's log frames go to the daemon's log channel.
+    ///
+    /// True only for a daemon's receiver (oc's `am_daemon`, see
+    /// `served_module_root`). Upstream's receiver child always passes a peer
+    /// `MSG_INFO`/`MSG_ERROR` to its generator (`send_msgs_to_gen`); only a
+    /// daemon's generator then writes it to the log file, so the SSH server
+    /// and client receivers keep rendering it locally.
+    ///
+    /// upstream: log.c:292-301 (forward), log.c:312-330 (`am_daemon` logit)
+    #[must_use]
+    pub(crate) fn forwards_peer_log(&self) -> bool {
+        self.config.connection.served_module_root().is_some()
     }
 
     /// Determines if filter list should be read from sender.

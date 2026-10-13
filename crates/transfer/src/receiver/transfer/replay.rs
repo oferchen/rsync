@@ -125,6 +125,7 @@ impl ReceiverContext {
             &dest_dir,
             #[cfg(unix)]
             sandbox.as_deref(),
+            writer,
         )?;
 
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
@@ -535,7 +536,7 @@ impl ReceiverContext {
                     true,
                     Some(&file_path),
                     filter_ref,
-                    None,
+                    Some(dest_dir.as_path()),
                 ) {
                     metadata_errors.push((file_path.clone(), e.to_string()));
                 }

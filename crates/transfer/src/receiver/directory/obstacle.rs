@@ -114,7 +114,7 @@ impl MakeWayFor {
 ///
 /// upstream: `delete.c:260-263` - `if (S_ISDIR(mode) && errno == ENOTEMPTY)`
 #[cfg(unix)]
-fn is_not_empty(error: &io::Error) -> bool {
+pub(super) fn is_not_empty(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
         Some(libc::ENOTEMPTY) | Some(libc::EEXIST)
@@ -124,7 +124,7 @@ fn is_not_empty(error: &io::Error) -> bool {
 /// Windows reports a populated directory as `ERROR_DIR_NOT_EMPTY`, which `std`
 /// surfaces as a raw OS error rather than a named `io::ErrorKind`.
 #[cfg(windows)]
-fn is_not_empty(error: &io::Error) -> bool {
+pub(super) fn is_not_empty(error: &io::Error) -> bool {
     const ERROR_DIR_NOT_EMPTY: i32 = 145;
     error.raw_os_error() == Some(ERROR_DIR_NOT_EMPTY)
 }
@@ -259,7 +259,7 @@ impl ReceiverContext {
     /// - `generator.c:1629` - `int del_opts = delete_mode || force_delete ? DEL_RECURSE : 0;`
     /// - `generator.c:2481` - the same expression inside `atomic_create()`
     /// - `delete.c:115-118` - `if (!(flags & DEL_RECURSE)) { ret = DR_NOT_EMPTY; goto done; }`
-    fn del_recurse(&self) -> bool {
+    pub(super) fn del_recurse(&self) -> bool {
         self.config.flags.delete || self.config.flags.force
     }
 

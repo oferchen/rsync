@@ -383,10 +383,9 @@ impl HostnamePattern {
         // Every pattern kind is lowercased at parse time (mirroring upstream's
         // `strlower(list2)`, access.c:262), so the comparison must fold the HOST
         // too - upstream's matcher is `iwildmatch`, the case-INSENSITIVE form
-        // (access.c:57). Comparing directly worked only while every host arrived
-        // pre-lowercased by `normalize_hostname_owned`, and failed silently for
+        // (access.c:57). The resolved name keeps the resolver's case, and
         // `UNKNOWN`/`UNDETERMINED`, which upstream documents as usable in a
-        // `hosts allow` line (clientname.c:93-95) and which are uppercase.
+        // `hosts allow` line (clientname.c:93-95), are uppercase.
         let folded = hostname.to_ascii_lowercase();
         let hostname = folded.as_str();
         match &self.kind {

@@ -157,6 +157,15 @@ pub use acl_diff::dest_acl_differs;
 
 pub mod xattr_send;
 
+#[cfg(any(
+    feature = "xattr",
+    all(
+        feature = "acl",
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+    )
+))]
+mod dest_pin;
+
 #[cfg(all(feature = "xattr", any(unix, windows)))]
 mod xattr;
 
