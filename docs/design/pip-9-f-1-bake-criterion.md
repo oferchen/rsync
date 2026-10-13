@@ -196,7 +196,7 @@ artefacts provide the evidence:
 - **Interop Validation history.** GitHub Actions workflow run page
   filtered by workflow `Interop Validation` + branch `master`. Count
   consecutive green runs from the most recent.
-- **Fuzz Coverage history.** Same view, workflow `Fuzz Coverage` +
+- **Fuzz Daily Sweep history.** Same view, workflow `Fuzz Daily Sweep` +
   branch `master`. Count consecutive green runs.
 - **PIP-9.d bench artefacts.** The CI cell at
   `.github/workflows/ci.yml:586` is non-required and emits its build
