@@ -174,7 +174,7 @@ const MAXPATHLEN: usize = 4096;
 ///   double-dot prefixes (upstream macOS compatibility).
 /// - Long filenames are truncated under a dual cap so both the basename stays
 ///   within `NAME_MAX` (255) and the full path within `MAXPATHLEN`, with UTF-8
-///   multi-byte sequence safety (upstream `receiver.c:208-209`).
+///   multi-byte sequence safety (upstream `receiver.c:352-353`).
 /// - When `temp_dir` is provided, the temp file is placed there without an
 ///   extra leading dot (matching upstream `--temp-dir` behavior).
 ///
@@ -207,7 +207,7 @@ fn get_tmpname(dest: &Path, temp_dir: Option<&Path>) -> io::Result<PathBuf> {
 
     let dir = temp_dir.unwrap_or_else(|| dest.parent().unwrap_or(Path::new(".")));
 
-    // upstream: receiver.c:208-209 - the basename is bounded by a DUAL cap:
+    // upstream: receiver.c:352-353 - the basename is bounded by a DUAL cap:
     //   maxname = MIN(MAXPATHLEN - length - TMPNAME_SUFFIX_LEN,
     //                 NAME_MAX - 1 - TMPNAME_SUFFIX_LEN)
     // `length` is the directory-prefix byte count (including the path
@@ -293,7 +293,7 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
     )
 }
 
-/// Like [`open_tmpfile`] but routes the create through the SEC-1.r
+/// Like [`open_tmpfile`] but routes the create through the
 /// `DirSandbox` carrier when both the temp parent and the temp leaf reduce
 /// to a single component beneath `dest_dir`.
 ///
@@ -341,15 +341,15 @@ fn open_tmpfile_inner(
             }
             Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                // upstream: receiver.c:296-306 - the ENOENT-recovery that
+                // upstream: receiver.c:453-462 - the ENOENT-recovery that
                 // called `make_path(fnametmp, ...)` before re-`do_mkstemp()`
                 // is compiled out (`#if 0`). Upstream never creates a missing
                 // parent chain at temp-file open time; a missing destination
                 // ancestor is a hard error (`mkstemp %s failed`). In-tree
                 // subdirectories are created up-front by the receiver's
-                // directory pass (generator.c:1329-1338 / create_directories),
+                // directory pass (`create_directories`),
                 // and the dest-arg path is created only under `--mkpath` in
-                // `ensure_dest_root_exists` (upstream main.c:749). Auto-creating
+                // `ensure_dest_root_exists` (upstream main.c:759). Auto-creating
                 // here would resurrect the no-`--mkpath` deep-path bug, so we
                 // surface the ENOENT verbatim to match upstream.
                 return Err(io::Error::new(e.kind(), e.to_string()));
@@ -382,7 +382,7 @@ fn open_tmpfile_inner(
 }
 
 /// Atomically creates `concrete_path` with `O_RDWR | O_CREAT | O_EXCL |
-/// O_NOFOLLOW` semantics, routing through the SEC-1.r sandbox carrier when
+/// O_NOFOLLOW` semantics, routing through the sandbox carrier when
 /// possible.
 fn try_create_new(
     concrete_path: &Path,
@@ -435,7 +435,7 @@ fn try_create_new(
         libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
         0o600,
     );
-    // SEC-1.r (Windows): create the temp file without following a reparse
+    // Windows: create the temp file without following a reparse
     // point at the leaf - the analog of the Unix `O_EXCL | O_NOFOLLOW` open -
     // so a symlink/junction pre-planted at the temp name cannot redirect the
     // create outside the destination tree (CVE-2024-12747 residual).
@@ -467,7 +467,7 @@ fn fill_random_suffix(template: &Path) -> PathBuf {
     PathBuf::from(os_string_from_bytes(filled))
 }
 
-/// SEC-1.r sandbox anchor carried by [`TempFileGuard`] so the Drop unlink
+/// Sandbox anchor carried by [`TempFileGuard`] so the Drop unlink
 /// runs through `unlinkat(sandbox.current_dirfd(), leaf, 0)` against the
 /// same parent the create resolved against.
 #[cfg(unix)]
@@ -493,7 +493,7 @@ pub struct TempFileGuard {
     ///
     /// [`mark_registered`]: TempFileGuard::mark_registered
     registered: bool,
-    /// SEC-1.r sandbox anchor: when present, Drop routes the unlink through
+    /// Sandbox anchor: when present, Drop routes the unlink through
     /// `unlinkat(sandbox.current_dirfd(), leaf, 0)` so a symlink swap on the
     /// temp parent between create and unlink cannot redirect the cleanup.
     #[cfg(unix)]
@@ -504,7 +504,7 @@ impl TempFileGuard {
     /// Create a new guard for the given temp file path.
     ///
     /// The Drop cleanup uses [`std::fs::remove_file`] against the stored
-    /// path. Use [`open_tmpfile_sandboxed`] to install a SEC-1.r sandbox
+    /// path. Use [`open_tmpfile_sandboxed`] to install a sandbox
     /// anchor that routes the unlink through `unlinkat`.
     #[inline]
     pub const fn new(path: PathBuf) -> Self {
@@ -524,7 +524,7 @@ impl TempFileGuard {
     /// file (not a temp file), so the guard is constructed already
     /// keep-on-drop: an aborted `--inplace` or device transfer leaves the
     /// partial write in place instead of deleting the user's existing file.
-    /// This mirrors upstream `receiver.c:1070`, which gates the destination
+    /// This mirrors upstream `receiver.c:1334-1335`, which gates the temp
     /// unlink on `!one_inplace` and so never unlinks an in-place target.
     /// The success path still calls [`keep`](TempFileGuard::keep), which is
     /// an idempotent no-op here.
@@ -539,7 +539,7 @@ impl TempFileGuard {
         }
     }
 
-    /// Create a new guard with an optional SEC-1.r sandbox anchor.
+    /// Create a new guard with an optional sandbox anchor.
     ///
     /// When `sandbox` and `dest_dir` are both `Some` and the temp file lives
     /// directly beneath `dest_dir`, the guard's Drop unlinks the file through
@@ -616,8 +616,8 @@ impl TempFileGuard {
     ///
     /// # Upstream Reference
     ///
-    /// - `cleanup.c:105-115` - `handle_partial_dir()` constructs the partial
-    ///   path and calls `do_rename()` to move the temp file there.
+    /// - `cleanup.c:170-182` - `handle_partial_dir(PDIR_CREATE)` then
+    ///   `finish_transfer()` moves the temp file into the partial dir.
     /// - `util1.c:robust_rename()` - cross-device fallback with copy+remove.
     pub fn rename_to_partial_dir(
         &mut self,
@@ -669,8 +669,8 @@ impl TempFileGuard {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1397` - `partial_dir_fname()` joins `partial_dir` and the basename
-/// - `generator.c:1759` - `partialptr = partial_dir_fname(fname)` basis lookup
+/// - `util1.c:1563` - `partial_dir_fname()` joins `partial_dir` and the basename
+/// - `generator.c:2173` - `partialptr = partial_dir_fname(fname)` basis lookup
 pub fn partial_dir_fname(dest_path: &Path, partial_dir: &Path) -> Option<PathBuf> {
     let file_name = dest_path.file_name()?;
     let partial_path = if partial_dir.is_absolute() {
@@ -998,7 +998,7 @@ mod tests {
 
     #[test]
     fn tmpname_deep_dir_bounds_full_path_and_basename() {
-        // upstream: receiver.c:208-209 - the MAXPATHLEN term of the dual cap
+        // upstream: receiver.c:352-353 - the MAXPATHLEN term of the dual cap
         // must bind when the directory prefix is long, keeping the full temp
         // path within MAXPATHLEN even though the basename alone would fit under
         // NAME_MAX. Build a directory prefix long enough that the path budget
@@ -1391,7 +1391,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Regression (#515): an errored transfer's temp path must be removed from
+    /// Regression: an errored transfer's temp path must be removed from
     /// the global `CleanupManager` when the guard drops, otherwise a
     /// long-running daemon leaks a `PathBuf` per errored file forever. The
     /// guard is registered, then dropped WITHOUT `keep()` (the error path);

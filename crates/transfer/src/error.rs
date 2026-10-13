@@ -158,7 +158,7 @@ pub fn categorize_io_error(
 
 /// Reads exactly `buf.len()` bytes, retrying on EINTR (interrupted system call).
 ///
-/// This matches upstream rsync's behavior in `util1.c:318-320` where reads are
+/// This matches upstream rsync's behavior in `util1.c:339-341` (`safe_read()`) where reads are
 /// retried immediately when interrupted by a signal.
 ///
 /// # Upstream Reference
@@ -274,7 +274,7 @@ pub fn flush_retry<W: Write>(writer: &mut W) -> io::Result<()> {
 /// # Upstream Reference
 ///
 /// - `errcode.h` - the `RERR_*` values.
-/// - `rsync.c:900` - `finish_transfer()` answers a failed `make_backup()` with
+/// - `rsync.c:897-900` - `finish_transfer()` answers a failed `make_backup()` with
 ///   `exit_cleanup(RERR_FILEIO)` whatever the errno was.
 #[must_use]
 pub fn rerr_for_io_error(error: &io::Error) -> i32 {
@@ -307,7 +307,7 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
         return 22;
     }
 
-    // upstream: rsync.c:900 - a denied backup must not be graded by `ErrorKind`
+    // upstream: rsync.c:897-900 - a denied backup must not be graded by `ErrorKind`
     // like the per-file open failures below. Without this arm the usual `EACCES`
     // reaches the `PermissionDenied => RERR_FILESELECT` arm and reports 3.
     if matches!(

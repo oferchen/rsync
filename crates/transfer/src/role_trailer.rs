@@ -6,7 +6,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `log.c:rwrite()` - appends `at <file>(<line>) [role=VERSION]` to error/warning lines
+//! - `log.c:log_exit()` - appends `at <file>(<line>) [role=VERSION]` to the exit error/warning line
 
 /// Package version used in role trailers, matching `RUST_VERSION` from branding.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,7 +29,7 @@ pub(crate) fn file_basename(path: &str) -> &str {
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:rwrite()` - formats the `at <file>(<line>)` suffix
+/// - `log.c:log_exit()` - formats the `at <file>(<line>)` suffix
 macro_rules! error_location {
     () => {
         format!(
@@ -65,7 +65,7 @@ pub(crate) fn receiver() -> String {
 /// Returns the role trailer suffix for the generator role.
 ///
 /// Upstream rsync uses `[generator=VERSION]` for messages emitted by the
-/// generator process - see `log.c:who_am_i()`.
+/// generator process - see `rsync.c:who_am_i()`.
 pub(crate) fn generator() -> String {
     format!(" [{GENERATOR}={VERSION}]")
 }
