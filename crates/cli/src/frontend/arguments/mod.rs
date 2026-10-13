@@ -20,8 +20,8 @@ pub(crate) use bandwidth::BandwidthArgument;
 pub(crate) use env::{
     atoi_leading, env_iconv_default, env_max_alloc_default, env_protect_args_default,
 };
-pub use parsed_args::ParsedArgs; // Changed to pub for test_utils
+pub use parsed_args::ParsedArgs;
 pub(crate) use parser::ChecksumThreadsSetting;
-pub use parser::parse_args; // Changed to pub for test_utils
+pub use parser::parse_args;
 pub(crate) use program_name::{ProgramName, detect_program_name};
 pub(crate) use stop::StopRequest;
