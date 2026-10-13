@@ -346,13 +346,12 @@ fn test_negotiation_with_newest_only() {
     );
 }
 
-/// Test that negotiation short-circuits when newest version is found.
+/// Test that the highest mutual version wins when it is listed first.
 ///
-/// This test verifies the optimization where negotiation returns immediately
-/// upon finding protocol 32 in the peer's advertisement list.
+/// The early return in `select_highest_mutual` fires only on NEWEST (33), so
+/// with 32 first this exercises the ordinary scan.
 #[test]
 fn test_short_circuit_on_newest_version() {
-    // Even with older versions after newest, should return 32
     let result = select_highest_mutual([
         AdvertisedVersion(32),
         AdvertisedVersion(31),

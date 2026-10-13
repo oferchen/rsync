@@ -1,7 +1,7 @@
 //! Golden byte tests for upstream rsync wire format compatibility.
 //!
 //! These tests embed known-correct byte sequences derived from the upstream
-//! rsync 3.4.1 C source code and verify that our encoding and decoding
+//! rsync 3.5.1 C source code and verify that our encoding and decoding
 //! produces identical results. Each test documents the upstream reference
 //! (source file and function) so deviations can be traced back to the
 //! authoritative implementation.
@@ -684,7 +684,7 @@ fn golden_stats_zero_proto30() {
 fn golden_stats_zero_proto28() {
     // Protocol 28 only sends 3 core stats, no flist times.
     // upstream: io.h:46 write_varlong30() routes protocol < 30 through
-    // io.c:2260 write_longint(), which writes each small (0..=0x7FFFFFFF)
+    // io.c:2445 write_longint(), which writes each small (0..=0x7FFFFFFF)
     // value as a fixed 4-byte little-endian int. A zero value is 4 zero bytes.
     let stats = TransferStats::new();
     let mut buf = Vec::new();

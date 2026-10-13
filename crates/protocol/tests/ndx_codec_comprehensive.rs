@@ -25,9 +25,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `io.c:2281-2325` - `write_ndx()` function
-//! - `io.c:2327-2356` - `read_ndx()` function
-//! - `rsync.h:285-288` - NDX constant definitions
+//! - `io.c:2541-2585` - `write_ndx()` function
+//! - `io.c:2588-2630` - `read_ndx()` function
+//! - `rsync.h:316-319` - NDX constant definitions
 
 use protocol::codec::{
     LegacyNdxCodec, ModernNdxCodec, NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET,
@@ -42,22 +42,22 @@ mod ndx_constants {
     /// Verify NDX constant values match rsync upstream definitions.
     #[test]
     fn constants_match_upstream_rsync_definitions() {
-        // rsync.h:285 - #define NDX_DONE -1
+        // rsync.h:316 - #define NDX_DONE -1
         assert_eq!(NDX_DONE, -1, "NDX_DONE must be -1 per rsync.h:285");
 
-        // rsync.h:286 - #define NDX_FLIST_EOF -2
+        // rsync.h:317 - #define NDX_FLIST_EOF -2
         assert_eq!(
             NDX_FLIST_EOF, -2,
             "NDX_FLIST_EOF must be -2 per rsync.h:286"
         );
 
-        // rsync.h:287 - #define NDX_DEL_STATS -3
+        // rsync.h:318 - #define NDX_DEL_STATS -3
         assert_eq!(
             NDX_DEL_STATS, -3,
             "NDX_DEL_STATS must be -3 per rsync.h:287"
         );
 
-        // rsync.h:288 - #define NDX_FLIST_OFFSET -101
+        // rsync.h:319 - #define NDX_FLIST_OFFSET -101
         assert_eq!(
             NDX_FLIST_OFFSET, -101,
             "NDX_FLIST_OFFSET must be -101 per rsync.h:288"

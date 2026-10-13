@@ -26,7 +26,7 @@
 //! 5. **Multi-file session**: Verifies the persistent zstd context across
 //!    file boundaries in a daemon transfer session.
 //!
-//! upstream: token.c:send_zstd_token() lines 678-776, recv_zstd_token() 780-870
+//! upstream: token.c:send_zstd_token() lines 735-835, recv_zstd_token() 839-924
 
 use std::io::Cursor;
 
@@ -35,9 +35,7 @@ use protocol::wire::{
     MAX_DATA_COUNT, TOKEN_REL,
 };
 
-// ---------------------------------------------------------------------------
 // Test input data - deterministic, representative of daemon transfer content
-// ---------------------------------------------------------------------------
 
 /// Small file content typical of a daemon-mode config file transfer.
 /// 59 bytes of printable ASCII - small enough for a single DEFLATED_DATA block.
@@ -55,9 +53,7 @@ fn medium_input() -> Vec<u8> {
     data
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Encodes a literal-only stream using zstd at daemon default level (3).
 fn encode_literal_only(input: &[u8]) -> Vec<u8> {
@@ -130,9 +126,7 @@ fn extract_first_deflated_block(wire: &[u8]) -> (u8, u8, &[u8], &[u8]) {
     (byte0, byte1, payload, rest)
 }
 
-// ===========================================================================
 // Section 1: Encoder determinism - same input always produces same wire bytes
-// ===========================================================================
 
 /// Encoding the same small input twice must produce byte-identical output.
 /// This is the foundation of golden byte testing - if the encoder is not
@@ -172,14 +166,12 @@ fn golden_zstd_daemon_recv_deterministic_mixed() {
     );
 }
 
-// ===========================================================================
 // Section 2: DEFLATED_DATA framing - exact header byte verification
-// ===========================================================================
 
 /// Verifies the DEFLATED_DATA header bytes encode the payload length correctly.
 /// The 14-bit length field must match the actual compressed payload size.
 ///
-/// upstream: token.c lines 758-759 - obuf[0] = DEFLATED_DATA + (n>>8), obuf[1] = n
+/// upstream: token.c:818-819 - obuf[0] = DEFLATED_DATA + (n>>8), obuf[1] = n
 #[test]
 fn golden_zstd_daemon_recv_deflated_header_encodes_length() {
     let encoded = encode_literal_only(SMALL_INPUT);
@@ -216,7 +208,8 @@ fn golden_zstd_daemon_recv_deflated_header_encodes_length() {
 /// Verifies that small daemon-mode input fits in a single DEFLATED_DATA block
 /// within MAX_DATA_COUNT.
 ///
-/// upstream: token.c line 755 - write only when buffer full or on flush
+/// upstream: token.c:794 caps each block at MAX_DATA_COUNT; 815-821 writes a block
+/// after every `ZSTD_compressStream2()` call that produced output
 #[test]
 fn golden_zstd_daemon_recv_small_single_block() {
     let encoded = encode_literal_only(SMALL_INPUT);
@@ -232,15 +225,13 @@ fn golden_zstd_daemon_recv_small_single_block() {
     assert_eq!(rest, &[END_FLAG]);
 }
 
-// ===========================================================================
 // Section 3: Mixed stream wire format - exact token byte verification
-// ===========================================================================
 
 /// Verifies the exact wire format of a mixed literal + single block match.
 /// After the DEFLATED_DATA block(s), the next byte must be TOKEN_REL | 0,
 /// followed by END_FLAG.
 ///
-/// upstream: token.c lines 700-723 - flush, then write token byte
+/// upstream: token.c:765-782 (token byte) after the flushed literal (786-829)
 #[test]
 fn golden_zstd_daemon_recv_mixed_wire_layout() {
     let encoded = encode_mixed(&[b"daemon push data\n"], &[0]);
@@ -270,9 +261,7 @@ fn golden_zstd_daemon_recv_mixed_block_42() {
     );
 }
 
-// ===========================================================================
 // Section 4: Zstd frame structure verification
-// ===========================================================================
 
 /// Verifies the zstd compressed payload contains a valid frame header.
 /// The zstd frame format starts with:
@@ -282,7 +271,8 @@ fn golden_zstd_daemon_recv_mixed_block_42() {
 /// This ensures we are producing real zstd frames, not accidentally using
 /// another codec.
 ///
-/// upstream: token.c line 688 - ZSTD_initCStream, produces standard frames
+/// upstream: token.c:743-752 - ZSTD_createCCtx() + ZSTD_CCtx_setParameter(),
+/// producing standard frames
 #[test]
 fn golden_zstd_daemon_recv_frame_magic_present() {
     let encoded = encode_literal_only(b"verify zstd frame magic in daemon mode");
@@ -305,7 +295,8 @@ fn golden_zstd_daemon_recv_frame_magic_present() {
 /// Verifies that the compressed payload does NOT contain the zlib sync marker.
 /// Zstd frames are self-delimiting and never produce 0x00 0x00 0xFF 0xFF.
 ///
-/// upstream: token.c line 685 - zstd uses ZSTD_e_flush, no marker stripping
+/// upstream: token.c:797-820 - zstd flushes with ZSTD_e_flush and writes all output,
+/// with no marker trimming
 #[test]
 fn golden_zstd_daemon_recv_no_zlib_sync_marker() {
     let encoded = encode_literal_only(SMALL_INPUT);
@@ -320,9 +311,7 @@ fn golden_zstd_daemon_recv_no_zlib_sync_marker() {
     }
 }
 
-// ===========================================================================
 // Section 5: Decode verification - daemon receive path
-// ===========================================================================
 
 /// Verifies the complete daemon receive path: decode zstd-compressed small
 /// input and recover the original bytes.
@@ -368,15 +357,13 @@ fn golden_zstd_daemon_recv_decode_interleaved() {
     assert_eq!(blocks, vec![0, 5]);
 }
 
-// ===========================================================================
 // Section 6: Multi-file continuous session - daemon transfer pattern
-// ===========================================================================
 
 /// Verifies the daemon-mode multi-file transfer pattern where a single zstd
 /// context persists across file boundaries. The second file benefits from
 /// the dictionary built during the first file's compression.
 ///
-/// upstream: token.c:688 (CCtx created once), token.c:700-703 (only run
+/// upstream: token.c:743 (CCtx created once), token.c:759-762 (only run
 /// state resets between files)
 #[test]
 fn golden_zstd_daemon_recv_multi_file_session() {
@@ -442,7 +429,7 @@ fn golden_zstd_daemon_recv_multi_file_session() {
 /// than it would in isolation, proving the zstd context carries dictionary
 /// history across file boundaries.
 ///
-/// upstream: token.c - CCtx never reset, dictionary persists
+/// upstream: token.c:742-757 - CCtx created once and never reset, dictionary persists
 #[test]
 fn golden_zstd_daemon_recv_cross_file_dictionary_benefit() {
     // Encode file 1 then file 2 in a session
@@ -480,9 +467,7 @@ fn golden_zstd_daemon_recv_cross_file_dictionary_benefit() {
     );
 }
 
-// ===========================================================================
 // Section 7: Compression level verification for daemon mode
-// ===========================================================================
 
 /// Verifies that daemon default level (3) produces different output than
 /// level 1 (fast) for the same input, confirming the level parameter is

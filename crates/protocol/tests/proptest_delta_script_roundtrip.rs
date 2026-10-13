@@ -21,9 +21,7 @@ use protocol::wire::{
 };
 use std::io::{Cursor, Read as _};
 
-// ---------------------------------------------------------------------------
 // Strategies
-// ---------------------------------------------------------------------------
 
 /// Generates an arbitrary `DeltaOp::Literal` with bounded size.
 fn arb_literal(max_len: usize) -> impl Strategy<Value = DeltaOp> {
@@ -55,9 +53,7 @@ fn arb_delta_script(max_ops: usize) -> impl Strategy<Value = Vec<DeltaOp>> {
     prop::collection::vec(arb_delta_op(), 0..=max_ops)
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Decodes a token-based stream written by `write_token_stream` back into
 /// `(literals, block_indices)`.
@@ -88,9 +84,7 @@ fn decode_token_stream(data: &[u8]) -> std::io::Result<(Vec<Vec<u8>>, Vec<u32>)>
     Ok((literals, blocks))
 }
 
-// ---------------------------------------------------------------------------
 // Internal opcode format roundtrips
-// ---------------------------------------------------------------------------
 
 mod internal_format {
     use super::*;
@@ -169,9 +163,7 @@ mod internal_format {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Upstream token-based wire format roundtrips
-// ---------------------------------------------------------------------------
 
 mod token_format {
     use super::*;

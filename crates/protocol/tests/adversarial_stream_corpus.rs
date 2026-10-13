@@ -14,7 +14,7 @@
 //! way we expect. Each entry carries an inline comment describing the bug
 //! it would catch.
 //!
-//! Designed as the regression seed for live interop fuzzing (#1196). Adding
+//! Designed as the regression seed for live interop fuzzing. Adding
 //! a new entry only requires appending to the appropriate static array; the
 //! runners iterate the corpus generically.
 //!
@@ -551,8 +551,8 @@ fn filter_list_oversized_length_rejected_before_allocation() {
     // `..._truncates_to_eof`. That outcome did not mean what its comment
     // claimed: the 1 MiB buffer WAS allocated, and the EOF only followed
     // because no payload happened to be present. A peer that sent the payload
-    // got the allocation. upstream refuses first - exclude.c:1980-1981
-    // `overflow_exit("recv_rules")` precedes the `read_sbuf` at :1982 - so the
+    // got the allocation. upstream refuses first - exclude.c:1981-1982
+    // `overflow_exit("recv_rules")` precedes the `read_sbuf` at :1983 - so the
     // rejection, not the truncation, is the behaviour to pin.
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&(1_024_i32 * 1_024).to_le_bytes());
@@ -583,7 +583,7 @@ fn filter_list_length_within_the_bound_still_reaches_the_read() {
 fn filter_list_non_utf8_pattern_preserved() {
     // Bug it catches: a rule body with non-UTF-8 bytes must be preserved
     // verbatim, not rejected. Upstream carries the pattern as a raw `char *`
-    // and never validates UTF-8 (exclude.c:1685 `read_sbuf(f_in, line, len)`
+    // and never validates UTF-8 (exclude.c:1983 `read_sbuf(f_in, line, len)`
     // into a `char[]`), so a `0xFF` byte round-trips. This retires the earlier
     // pinned `InvalidData` rejection, which wrongly refused a byte sequence
     // upstream accepts.

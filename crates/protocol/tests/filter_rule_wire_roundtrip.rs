@@ -6,10 +6,10 @@
 //! - the serializer `write_filter_list()` -> `serialize_rule()` ->
 //!   `build_rule_prefix()`, which turns a [`FilterRuleWireFormat`] into the
 //!   length-prefixed `<prefix><pattern>[/]` record upstream's
-//!   `send_rules()`/`get_rule_prefix()` emit (exclude.c:1589-1642, 1525-1587);
+//!   `send_rules()`/`get_rule_prefix()` emit (exclude.c:1888-1941, 1824-1886);
 //! - the parser `read_filter_list()` -> `parse_wire_rule()`, which decodes that
 //!   record back into a [`FilterRuleWireFormat`], mirroring upstream's
-//!   `recv_filter_list()`/`parse_rule_tok()` (exclude.c:1672-1698, 1092-1338).
+//!   `recv_filter_list()`/`parse_rule_tok()` (exclude.c:1971-1997, 1241-1487).
 //!
 //! Existing unit tests in `crates/protocol/src/filters/` exercise the two
 //! halves one direction at a time (build a rule, write it, then assert a few
@@ -23,7 +23,7 @@
 //! serializer and parser are proven mutual inverses, not merely
 //! independently plausible.
 //!
-//! # Upstream wire format (exclude.c:1633-1640 `send_rules()`)
+//! # Upstream wire format (exclude.c:1932-1939 `send_rules()`)
 //!
 //! Each rule is `write_int(plen + len + dlen)` followed by the prefix bytes,
 //! the pattern bytes, and - when the rule is directory-only - a trailing `/`.
@@ -103,7 +103,7 @@ fn assert_roundtrips_to_self(
 
 #[test]
 fn exclude_bare_pattern_roundtrips() {
-    // upstream: exclude.c:1536-1540 - a plain exclude serializes as `- <pat>`.
+    // upstream: exclude.c:1835-1839 - a plain exclude serializes as `- <pat>`.
     assert_roundtrips_to_self(
         FilterRuleWireFormat::exclude("*.log".to_owned()),
         proto(32),
@@ -113,7 +113,7 @@ fn exclude_bare_pattern_roundtrips() {
 
 #[test]
 fn include_bare_pattern_roundtrips() {
-    // upstream: exclude.c:1536-1537 - FILTRULE_INCLUDE serializes as `+ <pat>`.
+    // upstream: exclude.c:1835-1836 - FILTRULE_INCLUDE serializes as `+ <pat>`.
     assert_roundtrips_to_self(
         FilterRuleWireFormat::include("*.txt".to_owned()),
         proto(32),
@@ -127,7 +127,7 @@ fn exclude_with_spaces_and_glob_metachars_roundtrips() {
     // after it - embedded spaces, glob classes, a leading `!`, internal slashes
     // - is pattern payload and must survive verbatim. This guards the parser's
     // "first space ends the prefix, rest is the pattern" contract
-    // (exclude.c:1215 loop breaks on ' ').
+    // (exclude.c:1365 loop breaks on ' ').
     assert_roundtrips_to_self(
         FilterRuleWireFormat::exclude("!keep foo/*.[ch]?".to_owned()),
         proto(32),
@@ -142,7 +142,7 @@ fn exclude_with_spaces_and_glob_metachars_roundtrips() {
 
 #[test]
 fn anchored_exclude_roundtrips() {
-    // upstream: exclude.c:200-208 / 941-944 - a command-line anchored rule keeps
+    // upstream: exclude.c:297-305 / 1041-1044 - a command-line anchored rule keeps
     // its leading `/` in ent->pattern (FILTRULE_ABS_PATH unset), so the anchor
     // rides in the pattern body as `- /tmp`, and the parser folds the leading
     // `/` back into the `anchored` bit to recover the canonical bare pattern.
@@ -155,7 +155,7 @@ fn anchored_exclude_roundtrips() {
 
 #[test]
 fn directory_only_exclude_roundtrips() {
-    // upstream: exclude.c:1632,1639-1640 - FILTRULE_DIRECTORY appends a trailing
+    // upstream: exclude.c:1931,1938-1939 - FILTRULE_DIRECTORY appends a trailing
     // `/` (dlen=1) after the pattern.
     assert_roundtrips_to_self(
         FilterRuleWireFormat::exclude("cache".to_owned()).with_directory_only(true),
@@ -192,7 +192,7 @@ fn anchored_directory_only_exclude_roundtrips() {
 
 #[test]
 fn negated_exclude_roundtrips() {
-    // upstream: exclude.c:1546 / 1241-1246 - FILTRULE_NEGATE emits `!` right
+    // upstream: exclude.c:1845 / 1395-1400 - FILTRULE_NEGATE emits `!` right
     // after the type char (`-!`), decoded back by the modifier loop.
     let mut rule = FilterRuleWireFormat::exclude("core".to_owned());
     rule.negate = true;
@@ -201,7 +201,7 @@ fn negated_exclude_roundtrips() {
 
 #[test]
 fn xattr_only_exclude_roundtrips() {
-    // upstream: exclude.c:1564 / 1284-1286 - FILTRULE_XATTR emits `x`.
+    // upstream: exclude.c:1863 / 1438-1440 - FILTRULE_XATTR emits `x`.
     let mut rule = FilterRuleWireFormat::exclude("user.*".to_owned());
     rule.xattr_only = true;
     assert_roundtrips_to_self(rule, proto(32), b"-x user.*");
@@ -212,12 +212,12 @@ fn xattr_only_exclude_roundtrips() {
 // (`p`, protocol >= 30). Sender-side exclude == `hide`, sender-side include ==
 // `show` at the wire layer (there is no distinct `H`/`S` wire char - upstream
 // parse_rule_tok maps `H`->exclude|SENDER_SIDE and `S`->include|SENDER_SIDE,
-// exclude.c:1194-1200, then serializes them via the `s` modifier).
+// exclude.c:1345-1351, then serializes them via the `s` modifier).
 // ---------------------------------------------------------------------------
 
 #[test]
 fn sender_side_exclude_is_hide_and_roundtrips() {
-    // `hide` == sender-side exclude (exclude.c:1197-1199 `H`).
+    // `hide` == sender-side exclude (exclude.c:1348-1350 `H`).
     assert_roundtrips_to_self(
         FilterRuleWireFormat::exclude("*.tmp".to_owned()).with_sides(true, false),
         proto(29),
@@ -227,7 +227,7 @@ fn sender_side_exclude_is_hide_and_roundtrips() {
 
 #[test]
 fn sender_side_include_is_show_and_roundtrips() {
-    // `show` == sender-side include (exclude.c:1194-1199 `S`).
+    // `show` == sender-side include (exclude.c:1345-1350 `S`).
     assert_roundtrips_to_self(
         FilterRuleWireFormat::include("keep".to_owned()).with_sides(true, false),
         proto(29),
@@ -246,7 +246,7 @@ fn receiver_side_exclude_roundtrips() {
 
 #[test]
 fn both_sides_exclude_roundtrips() {
-    // upstream: exclude.c:1566-1572 - `s` precedes `r` in the emitted order.
+    // upstream: exclude.c:1865-1871 - `s` precedes `r` in the emitted order.
     assert_roundtrips_to_self(
         FilterRuleWireFormat::exclude("shared".to_owned()).with_sides(true, true),
         proto(29),
@@ -256,7 +256,7 @@ fn both_sides_exclude_roundtrips() {
 
 #[test]
 fn perishable_exclude_roundtrips() {
-    // upstream: exclude.c:1573-1578 - FILTRULE_PERISHABLE emits `p` at proto >= 30.
+    // upstream: exclude.c:1872-1877 - FILTRULE_PERISHABLE emits `p` at proto >= 30.
     assert_roundtrips_to_self(
         FilterRuleWireFormat::exclude("*.swp".to_owned()).with_perishable(true),
         proto(30),
@@ -268,7 +268,7 @@ fn perishable_exclude_roundtrips() {
 fn all_scalar_modifiers_on_exclude_roundtrip() {
     // Kitchen-sink exclude exercising every modifier legal on a non-merge rule,
     // in the exact order get_rule_prefix() emits them: `!` `x` `s` `r` `p`
-    // (exclude.c:1546-1578). Proves the serializer's emission order and the
+    // (exclude.c:1845-1877). Proves the serializer's emission order and the
     // parser's accept order agree across the whole modifier set at once.
     let mut rule = FilterRuleWireFormat::exclude("blob".to_owned());
     rule.negate = true;
@@ -311,7 +311,7 @@ fn dir_merge_rule_roundtrips() {
 
 #[test]
 fn dir_merge_anchored_emits_slash_modifier_and_roundtrips() {
-    // upstream: exclude.c:1238-1239 / 1543-1544 - on a merge/dir-merge rule the
+    // upstream: exclude.c:1392-1393 / 1843-1844 - on a merge/dir-merge rule the
     // anchor is FILTRULE_ABS_PATH, emitted as the `/` PREFIX modifier (`:/`),
     // NOT as a leading slash in the pattern body (contrast the non-merge case).
     assert_roundtrips_to_self(
@@ -328,7 +328,7 @@ fn dir_merge_anchored_emits_slash_modifier_and_roundtrips() {
 
 #[test]
 fn dir_merge_no_inherit_roundtrips() {
-    // upstream: exclude.c:1551-1552 / 1261-1264 - `n` == FILTRULE_NO_INHERIT.
+    // upstream: exclude.c:1850-1851 / 1415-1418 - `n` == FILTRULE_NO_INHERIT.
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
@@ -343,7 +343,7 @@ fn dir_merge_no_inherit_roundtrips() {
 
 #[test]
 fn dir_merge_word_split_roundtrips() {
-    // upstream: exclude.c:1553-1554 / 1279-1282 - `w` == FILTRULE_WORD_SPLIT.
+    // upstream: exclude.c:1852-1853 / 1433-1436 - `w` == FILTRULE_WORD_SPLIT.
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
@@ -358,7 +358,7 @@ fn dir_merge_word_split_roundtrips() {
 
 #[test]
 fn dir_merge_exclude_self_roundtrips() {
-    // upstream: exclude.c:1562-1563 / 1256-1259 - `e` == FILTRULE_EXCLUDE_SELF.
+    // upstream: exclude.c:1861-1862 / 1410-1413 - `e` == FILTRULE_EXCLUDE_SELF.
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
@@ -373,7 +373,7 @@ fn dir_merge_exclude_self_roundtrips() {
 
 #[test]
 fn dir_merge_no_prefixes_minus_roundtrips() {
-    // upstream: exclude.c:1555-1560 / 1227-1231 - `-` on a merge rule sets
+    // upstream: exclude.c:1854-1859 / 1381-1385 - `-` on a merge rule sets
     // FILTRULE_NO_PREFIXES (exclude-only per-dir rules), emitted between `w`
     // and `e`.
     assert_roundtrips_to_self(
@@ -390,7 +390,7 @@ fn dir_merge_no_prefixes_minus_roundtrips() {
 
 #[test]
 fn dir_merge_no_prefixes_plus_roundtrips() {
-    // upstream: exclude.c:1556-1557 / 1232-1236 - `+` sets NO_PREFIXES|INCLUDE
+    // upstream: exclude.c:1855-1856 / 1386-1390 - `+` sets NO_PREFIXES|INCLUDE
     // (include-only per-dir rules).
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
@@ -408,7 +408,7 @@ fn dir_merge_no_prefixes_plus_roundtrips() {
 #[test]
 fn dir_merge_all_merge_modifiers_roundtrip() {
     // Kitchen-sink dir-merge in get_rule_prefix() emission order: `/` `n` `w`
-    // `e` `s` `r` `p` (exclude.c:1543-1578). `-`/`+` (no-prefixes) is mutually
+    // `e` `s` `r` `p` (exclude.c:1843-1877). `-`/`+` (no-prefixes) is mutually
     // exclusive with a plain merge body and is covered separately above.
     assert_roundtrips_to_self(
         FilterRuleWireFormat {
@@ -434,7 +434,7 @@ fn dir_merge_all_merge_modifiers_roundtrip() {
 
 #[test]
 fn clear_rule_roundtrips() {
-    // upstream: exclude.c:1208-1210 / 1315-1323 - a bare `!` is
+    // upstream: exclude.c:1359-1361 / 1467-1473 - a bare `!` is
     // FILTRULE_CLEAR_LIST and carries no pattern, so it takes NO separator
     // space. exclude.c:1467-1473 rejects a `!` rule with any trailing byte
     // (`'!' rule has trailing characters`, exit_cleanup(RERR_SYNTAX)), which
@@ -495,8 +495,8 @@ fn heterogeneous_rule_list_roundtrips_in_order() {
 
 #[test]
 fn protect_normalizes_to_receiver_side_exclude() {
-    // upstream: exclude.c:1204-1206 - `P`/protect parses as an exclude carrying
-    // FILTRULE_RECEIVER_SIDE; exclude.c:1536-1540,1569-1572 serialize it as
+    // upstream: exclude.c:1355-1357 - `P`/protect parses as an exclude carrying
+    // FILTRULE_RECEIVER_SIDE; exclude.c:1835-1839,1868-1871 serialize it as
     // `-r`. There is no `P` byte on the wire, so decode yields a receiver-side
     // exclude, and re-encoding THAT is stable (`-r protected`).
     let protocol = proto(32);
@@ -528,7 +528,7 @@ fn protect_normalizes_to_receiver_side_exclude() {
 
 #[test]
 fn risk_normalizes_to_receiver_side_include() {
-    // upstream: exclude.c:1201-1206 - `R`/risk parses as an include carrying
+    // upstream: exclude.c:1352-1357 - `R`/risk parses as an include carrying
     // FILTRULE_RECEIVER_SIDE, serialized as `+r`.
     let protocol = proto(32);
     let risk = FilterRuleWireFormat {
@@ -561,9 +561,9 @@ fn risk_normalizes_to_receiver_side_include() {
 // ---------------------------------------------------------------------------
 // CVS `C` modifier. The serializer emits ONLY `C` and suppresses the flags it
 // implies (no-inherit/word-split/no-prefixes), matching upstream
-// get_rule_prefix() (exclude.c:1548-1561). The PARSER re-derives those implied
+// get_rule_prefix() (exclude.c:1847-1860). The PARSER re-derives those implied
 // flags from `C`, mirroring upstream parse_rule_tok case 'C'
-// (exclude.c:1248-1255 sets NO_PREFIXES|WORD_SPLIT|NO_INHERIT|CVS_IGNORE). The
+// (exclude.c:1402-1409 sets NO_PREFIXES|WORD_SPLIT|NO_INHERIT|CVS_IGNORE). The
 // two halves compose into a stable WIRE fixpoint: `:C` decodes to the full
 // implied flag set and re-encodes back to `:C`.
 // ---------------------------------------------------------------------------
@@ -611,7 +611,7 @@ fn cvs_dir_merge_c_modifier_re_derives_implied_flags_matching_upstream() {
 }
 
 // Upstream carries filter patterns as a raw `char *` and never validates them
-// as UTF-8 (exclude.c:1685 `read_sbuf(f_in, line, len)` into a `char[]`), so a
+// as UTF-8 (exclude.c:1983 `read_sbuf(f_in, line, len)` into a `char[]`), so a
 // non-UTF-8 pattern must decode to its raw bytes rather than being rejected.
 // This retires the earlier pinned `InvalidData` rejection. The 0xFF byte cannot
 // live in a `String`, so this case is unix-only where `OsStr` is byte-addressable.
