@@ -59,6 +59,8 @@ pub struct BackupConfig {
     pub backup_dir: Option<PathBuf>,
     /// Backup file suffix (default `~`).
     pub suffix: OsString,
+    /// `--backup-dir` chain validated by the session's previous backup.
+    pub dir_cache: Arc<engine::BackupDirCache>,
 }
 
 /// Subdirectory name used by upstream rsync for staging files when

@@ -106,6 +106,7 @@ fn make_inplace_backup_skips_when_the_delta_basis_is_the_backup() {
 
     let config = DiskCommitConfig {
         backup: Some(BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dir.path().to_path_buf(),
             backup_dir: None,
             suffix: OsString::from("~"),
@@ -148,6 +149,7 @@ fn make_inplace_backup_still_copies_when_no_backup_basis_is_carried() {
 
     let config = DiskCommitConfig {
         backup: Some(BackupConfig {
+            dir_cache: Default::default(),
             dest_dir: dir.path().to_path_buf(),
             backup_dir: None,
             suffix: OsString::from("~"),
