@@ -121,7 +121,7 @@ jobs:
       - name: Build oc-rsync (for subprocess integration tests)
         run: cargo build --locked -p bin --bin oc-rsync
 
-      # INC-S1a oracle: oc sender vs the real upstream 3.4.4 receiver under
+      # INC-S1a oracle: oc sender vs the real upstream 3.5.1 receiver under
       # INC_RECURSE. Gated on OC_RSYNC_UPSTREAM_COMPAT so the standard
       # nextest cells stay upstream-binary-free; this cell has the
       # upstream-install tree built above.
@@ -130,7 +130,7 @@ jobs:
           OC_RSYNC_UPSTREAM_COMPAT: "1"
         run: cargo nextest run --locked --profile ci -p bin -E 'binary(upstream_compat_inc_recurse_sender_oracle)'
 
-      # INC-S1b oracle: a real upstream 3.4.4 sender vs oc as the
+      # INC-S1b oracle: a real upstream 3.5.1 sender vs oc as the
       # server-receiver under INC_RECURSE (the receiver-facing twin of the
       # sender oracle above). Encodes oc's CURRENT non-negotiation of
       # CF_INC_RECURSE as its baseline; the assertion flips when #205 enables

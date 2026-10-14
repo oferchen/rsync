@@ -49,9 +49,9 @@ pub const UPSTREAM_3_4_1: &str = concat!(
     "/../../target/interop/upstream-install/3.4.1/bin/rsync"
 );
 #[allow(dead_code)]
-pub const UPSTREAM_3_4_4: &str = concat!(
+pub const UPSTREAM_3_5_1: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../target/interop/upstream-install/3.4.4/bin/rsync"
+    "/../../target/interop/upstream-install/3.5.1/bin/rsync"
 );
 
 /// Selects which daemon binary to launch.
@@ -417,15 +417,15 @@ pub fn require_upstream(binary_path: &str) {
 /// machine usually only has the packaged binary. Both are acceptable as long
 /// as the binary is genuinely upstream, which [`upstream_rsync`] verifies from
 /// `--version` rather than from the path it was found at.
-/// The reference version is 3.4.4; the harness build and the source-tree build
+/// The reference version is 3.5.1; the harness build and the source-tree build
 /// come first so a machine with both uses the pinned one rather than whatever
 /// the package manager shipped.
 #[allow(dead_code)]
 const UPSTREAM_CANDIDATES: &[&str] = &[
-    UPSTREAM_3_4_4,
+    UPSTREAM_3_5_1,
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/interop/upstream-src/rsync-3.4.4/rsync"
+        "/../../target/interop/upstream-src/rsync-3.5.1/rsync"
     ),
     UPSTREAM_3_4_1,
     "/opt/homebrew/bin/rsync",
