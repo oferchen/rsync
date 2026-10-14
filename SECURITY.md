@@ -35,21 +35,14 @@ Safe Rust rules out out-of-bounds access, use-after-free, reads of uninitialised
 
 ### Unsafe code policy
 
-Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions in production code:
-- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers. Some of these crates carry `#[allow(unsafe_code)]` in test code only, for example to set environment variables. `test-support` is itself a test-only crate.
+Every crate root sets `#![deny(unsafe_code)]` (`engine` outside tests only), so each unsafe block needs a targeted `#[allow(unsafe_code)]` and a SAFETY comment. Unsafe code belongs to two owning crates, split by subject, that expose safe APIs:
 
-Crates with `#![deny(unsafe_code)]` and targeted `#[allow(unsafe_code)]` for documented FFI/SIMD boundaries:
-- `metadata` - Ownership, identity, xattr, timestamp and Windows ACL FFI (for example `getpwuid_r`/`getgrnam_r`, `setuid`/`setgid` for `--copy-as`, `setattrlist`, NTFS DACLs)
-- `protocol` - One isolated `#[allow]` in `multiplex::helpers` for performance-critical frame parsing
-- `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI and the buffer pool (`syncfs`, `clonefile`, buffer reuse)
-- `platform` - Daemonization, per-connection `fork`/`waitpid`, name and group resolution, privilege transitions (`setuid`/`setgid`/`initgroups`), chroot, environment access, local time, signal disposition, and Windows service dispatch
-- `checksums` - SIMD intrinsics for MD4/MD5 and rolling checksums (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM), with scalar fallbacks and parity tests
-- `fast_io` - Platform I/O syscalls (sendfile, io_uring, mmap, `copy_file_range`, IOCP, `WSARecv`/`WSASend`, `setsockopt`) and the `signal::install_signal_handler` FFI wrapper, with standard I/O / no-op fallbacks
-- `windows-gnu-eh` - Windows GNU exception handling shims
+- `platform` - process, identity, environment and signals: daemonization, per-connection `fork`/`waitpid`, name and group resolution, privilege transitions, `chroot`, environment access, local time, signal disposition and Windows service dispatch.
+- `fast_io` - I/O syscalls: io_uring, `copy_file_range`, `sendfile`, mmap, reflink and copy dispatch, IOCP and Winsock, and the confined-path resolver.
 
-The `oc-rsync` binary (`src/bin/oc-rsync.rs`) also denies unsafe code, with one `#[unsafe(no_mangle)]` static that sets jemalloc's decay options.
+New unsafe code goes first to a safe wrapper crate (`nix`, `rustix`, `socket2`, `exacl`, `windows`), then to a safe API on `platform` or `fast_io`, and only then to a new `#[allow(unsafe_code)]` function whose SAFETY comment says why the first two could not express it.
 
-**Long-term direction.** Unsafe code is being consolidated into two owning crates: `fast_io` for I/O syscalls and `platform` for process, identity, environment and signals. Both expose safe public APIs. `metadata`, `checksums`, `engine` and `protocol` still hold production unsafe until their sites migrate. New `#[allow(unsafe_code)]` annotations in any other crate require explicit review.
+That is the target, not yet the whole tree. Several crates outside the two owners still declare FFI crates such as `libc` or `nix` directly, and four hold production unsafe from before the split, permitted until their sites migrate: `metadata` (ownership, identity, xattr, timestamp and Windows ACL FFI), `checksums` (SIMD intrinsics, with scalar fallbacks and parity tests), `engine` (platform FFI and the buffer pool) and `protocol` (one site in multiplex frame parsing). `windows-gnu-eh` holds Windows GNU exception-handling shims, and the `oc-rsync` binary has one `#[unsafe(no_mangle)]` static that sets jemalloc's decay options. Other crates allow unsafe only in tests.
 
 ## Upstream CVE Status
 
@@ -68,7 +61,7 @@ The reference version is upstream rsync 3.5.1. Its release notes name no CVE ids
 | 2024 (CVE-2024-12084 to 12088, CVE-2024-12747) | Not vulnerable or mitigated |
 | rsync 3.4.2 fixes | Audited in v0.6.2; equivalent paths verified safe |
 | rsync 3.4.3 (six CVEs) | Fixed or not vulnerable |
-| rsync 3.5.0 (33 CVEs) | One row each below |
+| rsync 3.5.0 (33 CVEs) | 27 fixed, 1 partially fixed, 5 not applicable; one row each below |
 | rsync 3.5.1 (no CVE ids) | One row per security-relevant fix below |
 
 ### 2024 and rsync 3.4.3 CVEs
@@ -115,10 +108,10 @@ grep -cE '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md      # 3.5.0 rows: 33
 | CVE-2026-53793 | HIGH | A symlinked parent inside a chroot inner module reached a sibling outside it through `/./`. | Fixed | The module identity is resolved before the chroot (PR #7585), and the destination is entered through a port of `secure_relative_dirfd()` (PR #8010). The six `chroot-*-inner-module` cells pass on every leg that runs them. |
 | CVE-2026-53794 | MEDIUM | `--max-alloc=0` disabled the per-allocation cap. | Fixed | Follows 3.5.1, which accepts `0` again as the maximum limit rather than as "no limit" (PR #8011). `max-alloc-zero` passes on every leg that runs it. |
 | CVE-2026-53795 | HIGH | An absolute `--temp-dir` or `--link-dest` disabled rename and link confinement. | Fixed | The staging family, `--log-file`, the alt-dest basis, `--relative` implied parents and absolute rename endpoints resolve through one ownership walk (PRs #7393, #7398, #7404, #7415, #7419), as do the operator-named auxiliary files (PRs #7421-#7426, #7439, #7441-#7443, #7459, #7463). The `operator-path-*`, `link-dest-*` and `rename-mixed-parent-*` cells pass on every leg that runs them. |
-| CVE-2026-53796 | MEDIUM | A non-daemon receiver's `chdir()` into a relative destination was not confined. | Partially fixed | Every non-daemon receiver (local copy, the pull client and the rsh `--server` receiver) now enters an existing destination through the ownership walk, refuses an untrusted destination symlink with exit 3 and upstream's diagnostic (PR #8071), and pins the walked descriptor as the destination root; data writes stay in the directory the walk accepted even if the destination is swapped afterwards. Two paths are not closed. After such a swap the network receiver still applies about 60 metadata calls (stat, chmod, utime) by path; they fail closed with exit 23 rather than reaching the swapped-in target, but they are not anchored on the pinned directory the way upstream's `fchdir()` makes them (task 546). A local destination that names a single file, not a directory, is not pinned. On a push the walk's refusal line is not relayed from the server (task 2764). `tests/destination_root_owner_walk.rs` and `crates/fast_io/tests/destination_root_pin.rs` pin the refusal, the trusted-symlink and `--insecure-links` cases and the post-walk swap on all three receivers. `symlink-race-dest`, `symlink-race-relative-dest` and `chdir-symlink-race` pass on every leg that runs them. |
+| CVE-2026-53796 | MEDIUM | A non-daemon receiver's `chdir()` into a relative destination was not confined. | Partially fixed | Every non-daemon receiver (local copy, the pull client and the rsh `--server` receiver) enters an existing destination through the ownership walk, refuses an untrusted destination symlink with exit 3 and upstream's diagnostic, and pins the walked descriptor, so data writes stay in the directory the walk accepted even if the destination is swapped afterwards (PRs #8071, #8201). Three residuals remain. After a swap the network receiver still applies about 60 metadata calls (stat, chmod, utime) by path; they fail closed with exit 23 instead of reaching the swapped-in target, but they are not anchored on the pinned directory the way upstream's `fchdir()` makes them (task 546). A local destination that names a single file, not a directory, is not pinned. On a push, the walk's refusal line is not relayed from the server to the client. `tests/destination_root_owner_walk.rs` and `crates/fast_io/tests/destination_root_pin.rs` pin the refusal, the trusted-symlink and `--insecure-links` cases and the post-walk swap on all three receivers. `symlink-race-dest`, `symlink-race-relative-dest` and `chdir-symlink-race` pass on every leg that runs them. |
 | CVE-2026-53797 | MEDIUM | A non-daemon sender opened file content by path, following a raced parent symlink. | Fixed | Explicit source roots are held by dev/ino and content opens run beneath the held root; a replaced root is refused with `ELOOP` (PR #8120). An rsh-server-sender e2e swaps a listed directory mid-scan and is refused with exit 23, and `relative-source-ancestor`, `symlink-race-source` and `chdir-symlink-race` pass on every leg that runs them. |
 | CVE-2026-53798 | MEDIUM | The daemon name converter mapped an unknown name to uid/gid 0. | Fixed | oc-rsync reads a converter answer strictly, as upstream's `namecvt_call()` does (clientserver.c:1340-1354): an empty or non-numeric answer is an unknown name, and the receiver keeps the sender's id (uidlist.c:273-276). Id 0 is never resolved by name, matching `recv_add_id()`'s `*name && id` guard (PR #8108). A root e2e test (`tests/daemon_name_converter_unknown_answer.rs`) pushes a `nobody`-owned file through converters that answer empty, `notanumber` and `4242`, and gets the sender's ids, the sender's ids and 4242:4242, the same as the upstream 3.5.1 control; making the parse read those answers as 0 fails both refusal cells. The upstream `daemon-namecvt-empty-response` cell reads a `--fake-super` xattr, which oc-rsync does not implement, so it passes without exercising the mapping. |
-| CVE-2026-53799 | MEDIUM | ACL and xattr application followed a symlink race. | Fixed (upstream parity on supported platforms): pinned-fd apply on Linux; path-based on macOS and the BSDs as upstream 3.5.1; upstream's Solaris facl arm is not applicable (oc does not support Solaris/illumos) | Fixed on Linux. The network receiver and the local copy write xattrs and ACLs through a leaf pinned beneath the destination root, and skip them when the pin is refused (`rsync.c:555-599,800`). ACLs are serialised into the kernel's `system.posix_acl_*` xattr format and written with `fsetxattr` on the pinned fd (`crates/metadata/src/acl_exacl/pinned.rs`); a device or socket is never opened and takes the confined parent dirfd through `/proc/self/fd` instead (`lib/acl.c:188-255`), so `--version` reports `ACL-at`. Special files get their ACL through the same pin (`receiver_applies_the_acl_to_a_fifo_entry`). ACLs are applied through a pinned fd on Linux (configure.ac:1510-1514, acls.c:1266-1322). macOS and the BSDs are path-based, as in upstream 3.5.1 (acls.c:1316-1322, 1352). Upstream's Solaris facl/refuse arm (acls.c:1325-1344) does not apply, because oc does not support Solaris or illumos. On macOS and FreeBSD oc-rsync applies ACLs by path, as upstream does; a daemon can refuse ACLs there with `refuse options = acls`. `commit_path_acl_apply_is_pinned_beneath_the_destination_root` and `a_local_copy_acl_sync_is_pinned_beneath_the_destination_root` drive both receivers through a swapped parent. |
+| CVE-2026-53799 | MEDIUM | ACL and xattr application followed a symlink race. | Fixed | Upstream parity on supported platforms (PRs #8167, #8201). The network receiver and the local copy write xattrs through a leaf pinned beneath the destination root, and skip them when the pin is refused (rsync.c:555-599,800). On Linux, ACLs take the same pin: they are serialised into the kernel's `system.posix_acl_*` xattr format and written with `fsetxattr` on the pinned fd (`crates/metadata/src/acl_exacl/pinned.rs`, configure.ac:1510-1514, acls.c:1266-1322); a device or socket is never opened and takes the confined parent dirfd through `/proc/self/fd` (lib/acl.c:188-255), and `--version` reports `ACL-at`. Special files get their ACL through the same pin (`receiver_applies_the_acl_to_a_fifo_entry`). macOS and FreeBSD apply ACLs by path, as upstream 3.5.1 does (acls.c:1316-1322, 1352); a daemon can refuse them there with `refuse options = acls`. Upstream's Solaris facl arm (acls.c:1325-1344) does not apply, because oc-rsync does not support Solaris or illumos. `commit_path_acl_apply_is_pinned_beneath_the_destination_root` and `a_local_copy_acl_sync_is_pinned_beneath_the_destination_root` drive both receivers through a swapped parent. |
 | CVE-2026-53800 | MEDIUM | `--remove-source-files` unlink followed a parent-symlink race. | Fixed | `sender-remove-source-secure` and `sender-remove-source-relative-anchor` pass on every leg that runs them. |
 | CVE-2026-53801 | MEDIUM | Directory-scan enumeration escaped the transfer root or module. | Fixed | `sender-scan-dir-escape` and `daemon-scan-dir-escape` pass on every leg that runs them. |
 | CVE-2026-53802 | HIGH | Symlinked operator input files: merge files, per-directory merges and `.cvsignore`. | Fixed | Merge and `--*clude-from` files open through the ownership walk (PRs #7421-#7426). `filter-merge-symlink` passes on every leg that runs it. |
@@ -163,7 +156,7 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | 3.5.1 fix | Status | Evidence |
 |---|---|---|
 | Explicit sender paths traverse symlinked ancestors without weakening scan confinement; `--files-from` entries are operator paths | Fixed | `--files-from` entries resolve through the ownership walk and are refused outside `--confine-root` (PR #8012). `relative-source-ancestor` passes on every leg that runs it. |
-| `/dev/stdin`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` work for pipes; `--read-batch` accepts a FIFO | Fixed | `pseudo-paths`, `read-batch-pipe` and `pseudo-paths-daemon` pass on every leg that runs them (PR #8096 flipped the first two). A root daemon already logs to a `/dev/fd/N` or `/dev/stdout` pipe. `pseudo-paths-daemon` failed on the Linux root legs for another reason: the daemon, dropped to `nobody`, re-stamped the mtime of a root-owned module directory and got `EPERM`. The receiver now skips an mtime already within `--modify-window`, as upstream `same_mtime()` does (rsync.c:489). |
+| `/dev/stdin`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` work for pipes; `--read-batch` accepts a FIFO | Fixed | `pseudo-paths`, `read-batch-pipe` and `pseudo-paths-daemon` pass on every leg that runs them (PRs #8096, #8109). |
 | `--max-alloc=0` means the maximum limit, not no limit | Fixed | PR #8011. `max-alloc-zero` passes on every leg that runs it. |
 | `rrsync` restricted-root paths | Not applicable | oc-rsync ships no `rrsync`. |
 | inetd mode only for a network stream on stdin | Fixed | PR #8011. `daemon-stdin-local-socket` passes on every leg. |
@@ -197,51 +190,15 @@ For each new upstream CVE:
 
 ## Fuzzing
 
-The repo ships 26 cargo-fuzz targets covering security-critical parsing, SIMD parity, concurrency, and differential fuzzing against upstream rsync:
+Three cargo-fuzz workspaces hold 36 targets. They are excluded from the main workspace and do not commit a `Cargo.lock`, so each fuzz build resolves a fresh lockfile.
 
-**Core protocol parsing:**
-- `varint_decode` - variable-length integer codec
-- `multiplex_frame_parse` - multiplex `MSG_*` frame parsing
-- `legacy_greeting` - daemon `@RSYNCD:` greeting parser
-- `ndx_codec` - file-list index codec
-- `protocol_wire` - generic protocol wire format
-- `flist_entry_decode` - file-list entry decoder
-- `incremental_flist` - incremental file-list segments
-- `capability_flags` - negotiation prologue capability flags
-- `vstring` - vstring parser
-- `auth_response` - daemon authentication response
+| Workspace | Targets |
+|---|---|
+| `fuzz/` (26) | Protocol parsing: `varint_decode`, `multiplex_frame_parse`, `legacy_greeting`, `daemon_greeting`, `ndx_codec`, `protocol_wire`, `flist_entry_decode`, `incremental_flist`, `capability_flags`, `vstring`, `auth_response`. Files and options: `batch_reader`, `bwlimit`, `acl_xattr_wire`, `filter_list_wire`, `buffered_map`. Compression: `decompressor_zlib`, `decompressor_zstd`, `zlib_token_decode`. SIMD parity: `simd_checksum_parity`. Concurrency: `parallel_receive_delta_adversarial`. Differential against upstream: `filter_rules_vs_upstream`, `filter_differential`, `differential_outcome`, `differential_multiplex`, `differential_flist` |
+| `crates/protocol/fuzz/` (8) | `fuzz_varint`, `fuzz_delta`, `fuzz_multiplex_frame`, `fuzz_legacy_greeting`, `file_entry_roundtrip`, `multiplex_frame_roundtrip`, `varint_roundtrip`, `negotiation_prologue` |
+| `crates/filters/fuzz/` (2) | `fuzz_filter_parse`, `fuzz_filter_chain` |
 
-**Daemon and configuration:**
-- `daemon_greeting` - daemon greeting generation
-- `batch_reader` - rsync batch file header
-- `bwlimit` - bwlimit CLI string parser
-
-**Metadata and extensions:**
-- `acl_xattr_wire` - ACL/xattr wire format
-- `filter_list_wire` - filter list wire format
-- `buffered_map` - buffered map decoder
-
-**Compression:**
-- `decompressor_zlib` - zlib decompression
-- `decompressor_zstd` - zstd decompression
-- `zlib_token_decode` - zlib compressed-token decoder
-
-**SIMD parity:**
-- `simd_checksum_parity` - cross-validates AVX2, SSE2, NEON, and scalar rolling/strong checksum paths against random inputs (see #2103)
-
-**Concurrency:**
-- `parallel_receive_delta_adversarial` - adversarial scheduling against the parallel receive-delta pipeline
-
-**Filter rules:**
-- `filter_rules_vs_upstream` - filter rule evaluation vs upstream behavior
-- `filter_differential` - differential filter testing
-
-**Differential fuzzing (upstream wire parity):**
-- `differential_outcome` - outcome-based differential fuzzing against upstream rsync
-- `differential_multiplex` - multiplex frame differential fuzzing
-- `differential_flist` - flist wire format differential fuzzing
-
-[`fuzz-coverage-report.yml`](./.github/workflows/fuzz-coverage-report.yml) ("Fuzz Daily Sweep") runs every target once a day (PR #8185). See `fuzz/README.md` for detailed fuzzing instructions.
+Every target runs every day. [`fuzz-coverage-report.yml`](./.github/workflows/fuzz-coverage-report.yml) ("Fuzz Daily Sweep") fuzzes 31 of them for 120 seconds each, built from the workspaces' `[[bin]]` tables by `tools/ci/fuzz_target_matrix.py`, and fails on any crash, sanitizer report, timeout or OOM. The five differential targets run for longer in [`differential-fuzzer-overnight.yml`](./.github/workflows/differential-fuzzer-overnight.yml) and [`filter-fuzzer-overnight.yml`](./.github/workflows/filter-fuzzer-overnight.yml). See `fuzz/README.md` for how to run a target locally.
 
 ## Hardening Notes
 
