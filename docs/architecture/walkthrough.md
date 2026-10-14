@@ -43,7 +43,7 @@ tokio tasks in async mode) that feed into the same `transfer` pipeline.
 | `core` | Orchestration facade - dispatches local/SSH/daemon transfers | `client::run_client()` |
 | `engine` | Delta pipeline, local-copy executor, sparse I/O, buffer pool | `local_copy::LocalCopyPlan`, `delta::generate_delta()` |
 | `transfer` | Sender/receiver/generator roles, request pipelining, disk commit | `run_server_stdio()`, `GeneratorContext`, `ReceiverContext` |
-| `protocol` | Wire protocol v28-32, multiplex MSG_* framing, varint codec | `MplexReader`, `MplexWriter`, `ProtocolVersion` |
+| `protocol` | Wire protocol v28-33, multiplex MSG_* framing, varint codec | `MplexReader`, `MplexWriter`, `ProtocolVersion` |
 | `daemon` | TCP listener, `@RSYNCD:` negotiation, auth, module config | `run_daemon()`, `DaemonConfig` |
 | `rsync_io` | Transport adapters - SSH subprocess, TCP streams, negotiation | `SessionHandshake`, `NegotiatedStream` |
 | `checksums` | Rolling Adler-32 + strong checksums (MD4/MD5/XXH3), SIMD | `RollingChecksum`, `strong::strategy` |

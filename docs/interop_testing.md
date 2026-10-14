@@ -26,8 +26,10 @@ Both test suites use similar infrastructure:
 
 Tests verify compatibility with:
 
-- **rsync 3.4.2** - Latest stable, protocol 32
-- **rsync 3.4.1** - Previous stable, protocol 32
+- **rsync 3.5.1** - Latest stable, protocol 33
+- **rsync 3.5.0** - Protocol 32
+- **rsync 3.4.4** - Protocol 32
+- **rsync 3.4.1** - Protocol 32, used by the upstream-client handshake tests below
 - **rsync 3.1.3** - Common production version, protocol 30/31
 - **rsync 3.0.9** - Older widely-deployed version, protocol 30
 - **rsync 2.6.9** - Protocol 29 peer, always built from source by `tools/ci/run_interop.sh`. It runs only in daemon push and pull cells that do not block CI. No native protocol-28 peer is tested.

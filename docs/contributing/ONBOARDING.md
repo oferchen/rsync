@@ -27,7 +27,7 @@ oc-rsync is a workspace of focused crates. Each crate has a single responsibilit
 | `cli` | CLI parsing (Clap v4), help text, output formatting |
 | `core` | Orchestration facade - all transfers route through `core::session()` |
 | `engine` | Delta pipeline, block matching, temp-file commit, local-copy executor |
-| `protocol` | Wire protocol (v28-32), multiplex MSG_* frames, version negotiation |
+| `protocol` | Wire protocol (v28-33), multiplex MSG_* frames, version negotiation |
 | `transport` | SSH stdio passthrough, `rsync://` TCP, timeouts and back-pressure |
 
 ### Data Processing

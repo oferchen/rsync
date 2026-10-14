@@ -53,7 +53,8 @@ cargo llvm-cov nextest -p <crate> --all-features
 - Fuzz targets: `fuzz_varint`, `fuzz_multiplex_frame`, `fuzz_delta`,
   `fuzz_legacy_greeting`, `file_entry_roundtrip`, `varint_roundtrip`,
   `multiplex_frame`, `negotiation_prologue`.
-- Version negotiation tests cover protocol 27 through 32.
+- Version negotiation tests accept protocols 28 through 33, reject 0, 27 and 41,
+  and select protocol 33 when the peer advertises a newer version up to 40.
 
 ### filters
 

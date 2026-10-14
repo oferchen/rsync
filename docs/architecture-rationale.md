@@ -56,7 +56,7 @@ unrelated subsystems.
 
 ### Wire protocol and transport
 
-- **`protocol`** - Versions 28-32, multiplex framing, varint codec, `MSG_*`
+- **`protocol`** - Versions 28-33, multiplex framing, varint codec, `MSG_*`
   tags, file-list flag bits, NDX delta encoding. Pure parsing/encoding, no
   I/O. Wire format is verified by golden byte tests.
 - **`rsync_io`** - Transport adapters: SSH subprocess, `rsync://` TCP,

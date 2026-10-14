@@ -1,8 +1,8 @@
-# Protocol 28-32 Interop Test Matrix
+# Protocol 28-33 Interop Test Matrix
 
 This document is the operator and contributor reference for what the oc-rsync
 interop harness actually exercises. It maps protocol versions to upstream
-rsync releases, lists capability differences across protocol 28-32, and
+rsync releases, lists capability differences across protocols 28-33, and
 enumerates every scenario in `tools/ci/run_interop.sh` together with the
 versions it runs against and the directions tested.
 
@@ -34,13 +34,18 @@ window each release will accept on the wire.
 | rsync 2.6.9      | 29                 | 20                     | 40                     | Protocol-28 cutoff peer; advertises 29 and degrades to 28 on request. Always source-built by the harness; binary is cached but dedicated push/pull interop cells land in a follow-up task. |
 | rsync 3.0.9      | 30                 | 20                     | 40                     | First release with binary handshake; wire compat down to 28 still useful for legacy peers. |
 | rsync 3.1.3      | 31                 | 20                     | 40                     | Adds `CF_SAFE_FLIST` always-on, `--info=progress2`. |
-| rsync 3.4.1      | 32                 | 20                     | 40                     | Newest release. Adds checksum negotiation (`-e.LsfxCIvu`), `CF_ID0_NAMES`, `--crtimes`. |
+| rsync 3.4.1      | 32                 | 20                     | 40                     | Adds checksum negotiation (`-e.LsfxCIvu`), `CF_ID0_NAMES`, `--crtimes`. |
 
-oc-rsync supports the inclusive range protocol 28..32. The supported set is
-declared in
-`crates/protocol/src/version/protocol_version/mod.rs:104` via
-`declare_supported_protocols!(32, 31, 30, 29, 28)` and exposed through
-`ProtocolVersion::{V28..V32, OLDEST, NEWEST}`. The negotiation boundary
+rsync 3.4.4 and 3.5.0 also advertise protocol 32, and rsync 3.5.1 advertises
+33 (`MIN_PROTOCOL_VERSION` 20, `MAX_PROTOCOL_VERSION` 40). The scenario tables
+below were recorded against 3.0.9, 3.1.3 and 3.4.1 and have not been
+re-recorded for the newer releases.
+
+oc-rsync supports the inclusive range protocol 28..33; protocols below 28 are
+not supported for now. The supported set is declared in
+`crates/protocol/src/version/protocol_version/mod.rs:102` via
+`declare_supported_protocols!(33, 32, 31, 30, 29, 28)` and exposed through
+`ProtocolVersion::{V28..V33, OLDEST, NEWEST}`. The negotiation boundary
 (`BINARY_NEGOTIATION_INTRODUCED`) is protocol 30; protocols 28-29 use the
 legacy ASCII `@RSYNCD:` daemon greeting.
 
