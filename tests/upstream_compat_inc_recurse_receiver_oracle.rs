@@ -1,11 +1,11 @@
-//! INC-S1b: a real upstream 3.4.4 SENDER vs an oc-rsync RECEIVER under
+//! INC-S1b: a real upstream 3.5.1 SENDER vs an oc-rsync RECEIVER under
 //! INC_RECURSE - the receiver-facing twin of INC-S1a
 //! (`upstream_compat_inc_recurse_sender_oracle.rs`, #7036).
 //!
 //! An oc<->oc run cannot expose a receiver-side negotiation or segmentation
 //! bug: both ends share the same file-list model, so whatever the oc server
 //! writes for CF_INC_RECURSE, the oc client reads back and both agree. This
-//! oracle pins the other half - a real upstream 3.4.4 sender pushes a
+//! oracle pins the other half - a real upstream 3.5.1 sender pushes a
 //! recursive tree INTO oc as the server-receiver over both real transports
 //! (remote-shell wrapper and daemon) and the upstream binary is the judge.
 //!
@@ -56,7 +56,7 @@
 //!
 //! Mirrors the sibling sender oracle: skip silently unless
 //! `OC_RSYNC_UPSTREAM_COMPAT=1`; once enabled, a missing or mis-versioned
-//! upstream 3.4.4 binary self-skips via `require_upstream_rsync`, whose
+//! upstream 3.5.1 binary self-skips via `require_upstream_rsync`, whose
 //! `--version` banner check keeps macOS `/usr/bin/rsync` (openrsync) from
 //! ever standing in for upstream.
 
@@ -101,17 +101,17 @@ fn oc_rsync_bin() -> PathBuf {
     built
 }
 
-/// Resolve the upstream 3.4.4 sender, honoring the sibling gating contract:
+/// Resolve the upstream 3.5.1 sender, honoring the sibling gating contract:
 /// `None` when the compat cell is not selected, loud panic when it is
 /// selected but the binary is absent.
 fn upstream_or_skip() -> Option<test_support::UpstreamRsync> {
     if !upstream_compat_enabled() {
         return None;
     }
-    Some(require_upstream_rsync(UpstreamVersion::V3_4_4).expect(
-        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.4.4 is not \
+    Some(require_upstream_rsync(UpstreamVersion::V3_5_1).expect(
+        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.1 is not \
          installed; build it with `bash tools/ci/run_interop.sh` or point \
-         OC_RSYNC_UPSTREAM_BIN_3_4_4 at it",
+         OC_RSYNC_UPSTREAM_BIN_3_5_1 at it",
     ))
 }
 
@@ -243,7 +243,7 @@ fn assert_success(output: &Output, context: &str) {
     );
 }
 
-/// Remote-shell leg: a real upstream 3.4.4 sender pushes the
+/// Remote-shell leg: a real upstream 3.5.1 sender pushes the
 /// 1080-file tree into oc as the ssh-style server-receiver. Asserts the
 /// transfer succeeds, the tree is byte-identical, the client OFFERED the `i`
 /// capability, and oc granted it (the incremental marker).
@@ -265,7 +265,7 @@ fn rsh_push_into_oc_receiver_negotiates_inc_recurse() {
     let output = run_upstream_push_via_rsh(&upstream, &wrapper, &oc_rsync_bin(), &src, &dest);
     assert_success(
         &output,
-        "upstream 3.4.4 push via rsh wrapper into oc receiver",
+        "upstream 3.5.1 push via rsh wrapper into oc receiver",
     );
 
     // The upstream client offered incremental recursion: a `-r` push always
@@ -291,7 +291,7 @@ fn rsh_push_into_oc_receiver_negotiates_inc_recurse() {
 }
 
 /// Positive control (discriminating power): the SAME upstream client pushes
-/// into a real upstream 3.4.4 server-receiver, which DOES negotiate
+/// into a real upstream 3.5.1 server-receiver, which DOES negotiate
 /// CF_INC_RECURSE, so the marker MUST appear. If this control ever loses the
 /// marker, the oc legs' "marker present" assertions prove nothing.
 #[test]
@@ -312,7 +312,7 @@ fn rsh_push_into_upstream_receiver_negotiates_inc_recurse_control() {
     let output = run_upstream_push_via_rsh(&upstream, &wrapper, upstream.binary(), &src, &dest);
     assert_success(
         &output,
-        "upstream 3.4.4 push via rsh wrapper into upstream 3.4.4 receiver",
+        "upstream 3.5.1 push via rsh wrapper into upstream 3.5.1 receiver",
     );
 
     let out = combined_output(&output);
@@ -389,7 +389,7 @@ impl OcDaemon {
     }
 }
 
-/// Daemon leg: a real upstream 3.4.4 sender pushes the >1000-file tree
+/// Daemon leg: a real upstream 3.5.1 sender pushes the >1000-file tree
 /// into an oc daemon module. No argv capture exists on this transport, so
 /// the client's incremental marker carries the whole negotiation proof.
 #[test]
@@ -414,7 +414,7 @@ fn daemon_push_into_oc_receiver_negotiates_inc_recurse() {
         .stderr(Stdio::piped())
         .output()
         .expect("spawn upstream rsync daemon push");
-    assert_success(&output, "upstream 3.4.4 push into oc daemon");
+    assert_success(&output, "upstream 3.5.1 push into oc daemon");
 
     // upstream: compat.c:161-179 - an oc daemon receiver grants it too.
     let out = combined_output(&output);
