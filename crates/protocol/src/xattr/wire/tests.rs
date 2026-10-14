@@ -1594,6 +1594,25 @@ fn recv_xattr_name_len_boundary_matches_upstream() {
 /// signed overflow before `num += rel_pos` and exits RERR_PROTOCOL.
 /// upstream: xattrs.c:730-734 recv_xattr_request().
 #[test]
+fn xattr_request_num_below_one_is_protocol_violation() {
+    // Fuzz reproducer (acl_xattr_wire): a negative delta drove `num` to
+    // i32::MIN and `num - 1` overflowed. Nums are 1-based, so any num below 1
+    // names no entry; upstream exits RERR_PROTOCOL ("could not find xattr").
+    for rel in [-1, i32::MIN] {
+        let mut req = Vec::new();
+        write_varint(&mut req, rel).unwrap();
+        write_varint(&mut req, 0).unwrap();
+        let err = recv_xattr_request(&mut Cursor::new(req), &mut XattrList::new())
+            .expect_err("num below 1 must be refused");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+            "num {rel} must be tagged ProtocolViolation (RERR_PROTOCOL=2), got {err:?}"
+        );
+    }
+}
+
+#[test]
 fn xattr_request_accumulation_overflow_is_protocol_violation() {
     let mut req = Vec::new();
     write_varint(&mut req, i32::MAX).unwrap();

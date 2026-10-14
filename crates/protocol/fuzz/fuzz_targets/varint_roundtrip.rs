@@ -110,7 +110,12 @@ fuzz_target!(|input: VarintInput| {
         let mut buf = Vec::new();
         if protocol::write_varlong30(&mut buf, input.varlong_value, min_bytes).is_ok() {
             let mut cursor = Cursor::new(&buf);
-            if let Ok(decoded) = protocol::read_varlong30(&mut cursor, min_bytes) {
+            // Same reach limit as the varlong case above: read_varlong30 is
+            // read_varlong at protocol 30+ (upstream: io.h read_varlong30).
+            if let Some(decoded) = protocol::read_varlong30(&mut cursor, min_bytes)
+                .ok()
+                .filter(|_| buf.len() <= usize::from(min_bytes) + 6)
+            {
                 assert_eq!(
                     decoded, input.varlong_value,
                     "varlong30 roundtrip mismatch for {} (min_bytes={})",
