@@ -178,6 +178,16 @@ pub fn write_attribute_at(file: &File, name: &[u8], value: &[u8]) -> io::Result<
     xattr::FileExt::set_xattr(file, OsStr::from_bytes(name), value)
 }
 
+/// Lists xattr names through a held fd (`flistxattr`).
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/xattrs.c:149-177` `get_xattr_names()` - `sys_flistxattr`
+///   when a held fd is supplied, `sys_llistxattr` otherwise
+pub fn list_attributes_at(file: &File) -> io::Result<Vec<OsString>> {
+    Ok(xattr::FileExt::list_xattr(file)?.collect())
+}
+
 /// Removes an xattr through a held fd (`fremovexattr`).
 ///
 /// # Upstream Reference
