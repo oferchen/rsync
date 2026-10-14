@@ -80,6 +80,9 @@
 #![deny(missing_docs)]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
+/// Extended ACL apply through a held descriptor (macOS only).
+#[cfg(target_os = "macos")]
+pub mod acl_fd;
 /// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
 /// Sender-side confined source open beneath a module root.
