@@ -2103,7 +2103,9 @@ comp_run_scenario() {
 # upstream: support/lsh.sh
 resolve_remote_shell() {
   local lsh
-  lsh=$(find "$upstream_src_root" -type f -name lsh.sh 2>/dev/null | head -n1 || true)
+  # The 3.1.3 and older lsh.sh reject the "lh" host ("unable to connect to
+  # host lh"), so pick a copy that has that case arm.
+  lsh=$(grep -l '^ *lh)' "$upstream_src_root"/*/support/lsh.sh 2>/dev/null | head -n1 || true)
   if [[ -n "$lsh" ]]; then
     # "lh" is lsh.sh's no-cd hostname, so the absolute paths rsync hands to
     # the server command are used verbatim.
