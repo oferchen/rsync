@@ -16,7 +16,7 @@ use super::super::super::config::{
     TransferTimeout,
 };
 use super::super::flags;
-use super::super::output_option::{OutputWordKind, make_output_option};
+use super::super::output_option::make_output_option;
 use super::{RemoteRole, SecludedInvocation};
 use transfer::setup::build_capability_string_suffix;
 
@@ -815,17 +815,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
 
         // upstream: options.c:3126-3130 server_options() - make_output_option()
-        // forwards the explicitly-set --info / --debug levels to the peer so
-        // its diagnostic output matches. `am_sender` (a push) selects the
-        // receiving half of the role `where` filter.
-        if let Some(arg) =
-            make_output_option(OutputWordKind::Info, self.config.info_flags(), am_sender)
-        {
-            args.push(OsString::from(arg));
-        }
-        if let Some(arg) =
-            make_output_option(OutputWordKind::Debug, self.config.debug_flags(), am_sender)
-        {
+        // forwards the explicitly-set --info levels only; --debug is never
+        // sent. `am_sender` (a push) selects the receiving half of the role
+        // `where` filter.
+        if let Some(arg) = make_output_option(self.config.info_flags(), am_sender) {
             args.push(OsString::from(arg));
         }
 

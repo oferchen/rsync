@@ -286,6 +286,8 @@ where
             config.flags.verbose_level,
         ));
     }
+    // upstream: log.c:344-346 - a quiet server drops FINFO before framing it.
+    logging::set_quiet(config.flags.quiet);
 
     // upstream: options.c parse_output_words - server-side info parsing
     // silently ignores unknown tokens so a newer client can forward names
@@ -308,9 +310,10 @@ where
         }
     }
 
-    // upstream: options.c:1890 / 484 - the client forwards explicitly-set debug
-    // levels (`--debug=hlink4`) the same way it forwards `--info`, and the
-    // server parses them with the same live parser as a user `--debug` arg.
+    // upstream: options.c:1890 / 484 - a client never forwards `--debug`
+    // (options.c:3126-3130 sends `--info` only), so these words arrive only
+    // through `-M--debug=X`; the server parses them with the same live parser
+    // as a user `--debug` arg.
     // Unknown tokens are silently ignored because `am_server` (options.c:484),
     // so a newer client can forward categories this build has not learned yet
     // without aborting the transfer. `help_requested` cannot arise from a real

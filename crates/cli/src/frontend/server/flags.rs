@@ -339,11 +339,11 @@ pub(super) struct ServerLongFlags {
     /// `make_output_option(info_words, info_levels, ...)`, so the server
     /// receives `--info=...` whenever the client has non-default info levels.
     pub(super) info: Vec<OsString>,
-    /// Raw `--debug=FLAGS` values forwarded by the client.
+    /// Raw `--debug=FLAGS` values the server's argv carries.
     ///
-    /// The client forwards explicitly-set debug levels via
-    /// `make_output_option(debug_words, ...)` so an oc peer raises its debug
-    /// output to match (`client/remote/output_option.rs`). The receiving side
+    /// A client never sends `--debug=` (upstream: options.c:3126-3130 calls
+    /// `make_output_option()` for `info_words` only); the value reaches the
+    /// server only when the user passes it via `-M--debug=X`. The server
     /// parses `--debug=...` the same way upstream parses a user `--debug` arg
     /// (options.c:1890 `parse_output_words(debug_words, ...)`), silently
     /// ignoring unknown tokens because `am_server` (options.c:484). Without

@@ -23,7 +23,11 @@
 //!   (`-re.iLsfxCIvu`; upstream compat.c:162-181 `set_allow_inc_recurse()`,
 //!   options.c:3046 `maybe_add_e_option()`) - captured from the wrapper's
 //!   argv log on the remote-shell leg;
-//! - with `--debug=flist2` forwarded to the receiver, upstream prints one
+//! - with `-M--debug=flist2` delivering the debug level to the receiver
+//!   (a client never forwards `--debug=`, options.c:3126-3130; the server
+//!   parses the remote option like a user `--debug`, options.c:1888-1891,
+//!   and a daemon caps it per flag at `max verbosity`, options.c:546-572),
+//!   upstream prints one
 //!   `received %d names` line per `recv_file_list()` call (flist.c:2966)
 //!   and one `[receiver] receiving flist for dir %d` line per extra
 //!   sub-list (rsync.c:373). A non-INC_RECURSE transfer produces exactly
@@ -234,7 +238,7 @@ fn rsh_push_negotiates_inc_recurse_and_segments_flist() {
     let output = run_oc_client(
         &[
             "-r",
-            "--debug=flist2",
+            "-M--debug=flist2",
             "--timeout=30",
             "--rsh",
             wrapper.to_str().expect("utf-8 wrapper path"),
@@ -306,7 +310,7 @@ fn rsh_push_no_inc_recursive_control_yields_single_segment() {
         &[
             "-r",
             "--no-inc-recursive",
-            "--debug=flist2",
+            "-M--debug=flist2",
             "--timeout=30",
             "--rsh",
             wrapper.to_str().expect("utf-8 wrapper path"),
@@ -355,9 +359,10 @@ impl Drop for DaemonGuard {
 }
 
 /// Daemon leg fixture: an upstream `rsync --daemon` exposing one
-/// read-write module. `max verbosity = 4` lets the client-requested
-/// `--debug=flist2` through the daemon's verbosity clamp
-/// (upstream clientserver.c `lp_max_verbosity`).
+/// read-write module. `max verbosity = 4` lets the `-M--debug=flist2`
+/// remote option through the daemon's per-flag clamp: FLIST2 is row 3
+/// (options.c:248), above the default `max verbosity = 1`
+/// (clientserver.c:1223 `limit_output_verbosity(lp_max_verbosity())`).
 struct UpstreamDaemon {
     _workdir: TempDir,
     module_root: PathBuf,
@@ -430,7 +435,14 @@ fn daemon_push_negotiates_inc_recurse_and_segments_flist() {
     let src_arg = format!("{}/", src.display());
     let dest_arg = format!("rsync://127.0.0.1:{}/push/", daemon.port);
     let output = run_oc_client(
-        &["-r", "--debug=flist2", "--timeout=30", &src_arg, &dest_arg].map(std::ffi::OsStr::new),
+        &[
+            "-r",
+            "-M--debug=flist2",
+            "--timeout=30",
+            &src_arg,
+            &dest_arg,
+        ]
+        .map(std::ffi::OsStr::new),
     );
     assert_success(&output, "oc-rsync push to upstream 3.4.4 daemon");
 

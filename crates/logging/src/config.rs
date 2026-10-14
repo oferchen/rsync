@@ -149,6 +149,24 @@ impl VerbosityConfig {
         config
     }
 
+    /// Lowers every info and debug level above `limit`'s to `limit`'s.
+    ///
+    /// upstream: options.c:546-572 limit_output_verbosity() - the per-flag
+    /// clamp loop, given limits built from the verbosity tables.
+    pub fn limit_to(&mut self, limit: &Self) {
+        for flag in InfoFlag::ALL {
+            let cap = limit.info.get(flag);
+            if self.info.get(flag) > cap {
+                self.info.set(flag, cap);
+            }
+        }
+        for flag in DebugFlag::ALL {
+            let cap = limit.debug.get(flag);
+            if self.debug.get(flag) > cap {
+                self.debug.set(flag, cap);
+            }
+        }
+    }
     /// Apply a single info flag token (e.g., `"copy2"`, `"del"`).
     ///
     /// Parses the token into a flag name and optional numeric level suffix
