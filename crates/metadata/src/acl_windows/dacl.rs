@@ -313,6 +313,10 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
 
 /// Applies parsed ACLs from an [`AclCache`] to a destination file.
 ///
+/// Deviation from upstream: `confine_root` is ignored and the DACL is applied
+/// by path. Upstream has no Windows build; its race-safe `SUPPORT_ACL_FD` arm
+/// is Linux-only (`configure.ac:1512-1514`).
+///
 /// # Errors
 ///
 /// Returns [`MetadataError`] on unrecoverable Win32 failures.
@@ -330,11 +334,13 @@ pub fn apply_acls_from_cache(
     follow_symlinks: bool,
     mode: Option<u32>,
     id_map: Option<&AclIdMapper>,
+    confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     if !follow_symlinks {
         return Ok(());
     }
 
+    let _ = confine_root;
     let _ = default_ndx; // Default ACLs are POSIX-only; ignored on Windows.
     // Windows resolves ACL principals by SID/name, not numeric uid/gid, so the
     // POSIX id-list remapper does not apply here.
@@ -377,6 +383,7 @@ pub fn store_acls_via_fake_super(
         default_ndx,
         follow_symlinks,
         Some(mode),
+        None,
         None,
     )
 }

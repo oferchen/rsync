@@ -26,7 +26,7 @@ fn golden_config() -> VersionInfoConfig {
         .supports_inplace(true)
         .supports_append(true)
         .supports_acls(true)
-        .supports_acl_at(false)
+        .supports_acl_at(true)
         .supports_xattrs(true)
         .secluded_args_mode(SecludedArgsMode::Optional)
         .supports_iconv(true)
@@ -73,7 +73,7 @@ Capabilities:
     64-bit files, 64-bit inums, 64-bit timestamps, 64-bit long ints,
     socketpairs, symlinks, symtimes, hardlinks, hardlink-specials,
     hardlink-symlinks, IPv6, atimes, batchfiles, inplace, append, ACLs,
-    no ACL-at, xattrs, optional secluded-args, iconv, prealloc, stop-at,
+    ACL-at, xattrs, optional secluded-args, iconv, prealloc, stop-at,
     no crtimes, IDN
 Optimizations:
     SIMD-roll, no asm-roll, openssl-crypto, no asm-MD5, jemalloc,
@@ -121,10 +121,10 @@ fn version_info_sections_match_upstream_layout() {
 #[test]
 fn version_json_reports_acl_at_on_linux() {
     let json = VersionInfoReport::new(golden_config()).machine_readable();
-    assert!(json.contains("\"ACLs\": true,\n    \"ACL_at\": false,\n    \"xattrs\""));
-    let pinned = golden_config().to_builder().supports_acl_at(true).build();
-    let json = VersionInfoReport::new(pinned).machine_readable();
-    assert!(json.contains("\"ACL_at\": true,"));
+    assert!(json.contains("\"ACLs\": true,\n    \"ACL_at\": true,\n    \"xattrs\""));
+    let unpinned = golden_config().to_builder().supports_acl_at(false).build();
+    let json = VersionInfoReport::new(unpinned).machine_readable();
+    assert!(json.contains("\"ACL_at\": false,"));
 }
 
 /// Without ACL support upstream's `SUPPORT_ACL_FD` is undefined, so the token
@@ -143,6 +143,17 @@ fn default_acl_at_tracks_the_metadata_apply_path() {
         VersionInfoConfig::new().supports_acl_at,
         ::metadata::ACL_APPLY_IS_FD_PINNED
     );
+}
+
+/// The Linux receiver writes ACLs through the confined leaf pin
+/// (`metadata::acl_exacl::pinned`), so the shipped report says `ACL-at`
+/// like a `SUPPORT_ACL_FD` upstream build on a kernel with the at-syscalls.
+#[cfg(all(target_os = "linux", feature = "acl"))]
+#[test]
+fn shipped_linux_report_says_acl_at() {
+    let rendered = VersionInfoReport::new(VersionInfoConfig::new()).human_readable();
+    assert!(rendered.contains(" ACL-at,"), "{rendered}");
+    assert!(!rendered.contains("no ACL-at"), "{rendered}");
 }
 
 /// upstream: compat.c:477-478 - the version lists keep the num-0 `none` entry.

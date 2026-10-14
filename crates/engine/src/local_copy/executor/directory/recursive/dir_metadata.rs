@@ -131,6 +131,7 @@ pub(super) fn apply_final_directory_metadata(
         source,
         destination,
         true,
+        Some(context.destination_root()),
     )?;
 
     // Suppress unused variable warnings when features are disabled

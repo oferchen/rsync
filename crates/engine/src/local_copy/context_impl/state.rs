@@ -523,6 +523,7 @@ impl<'a> CopyContext<'a> {
                 source,
                 destination,
                 true,
+                Some(self.destination_root()),
             )?;
         }
 

@@ -260,6 +260,7 @@ impl<'a> CopyContext<'a> {
                     destination,
                     &backup_path,
                     true,
+                    None,
                 )?;
             }
             // upstream: xattrs.c:set_stat_xattr() re-records the source stat in

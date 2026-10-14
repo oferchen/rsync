@@ -478,7 +478,7 @@ fn apply_acls_from_cache_skips_symlinks() {
     File::create(&file).expect("create file");
 
     let cache = AclCache::new();
-    let result = apply_acls_from_cache(&file, &cache, 0, None, false, None, None);
+    let result = apply_acls_from_cache(&file, &cache, 0, None, false, None, None, None);
     assert!(result.is_ok());
 }
 
@@ -492,7 +492,7 @@ fn apply_acls_from_cache_applies_basic_acl() {
     let acl = RsyncAcl::from_mode(0o644);
     let ndx = cache.store_access(acl);
 
-    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
+    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None, None);
     assert!(result.is_ok());
 }
 
@@ -506,7 +506,7 @@ fn apply_acls_from_cache_empty_acl_resets() {
     let acl = RsyncAcl::new();
     let ndx = cache.store_access(acl);
 
-    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
+    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None, None);
     assert!(result.is_ok());
 }
 
@@ -531,6 +531,7 @@ fn apply_acls_from_cache_directory_with_default() {
         true,
         Some(0o755),
         None,
+        None,
     );
     assert!(result.is_ok());
 }
@@ -542,7 +543,7 @@ fn apply_acls_from_cache_missing_index_is_noop() {
     File::create(&file).expect("create file");
 
     let cache = AclCache::new();
-    let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644), None);
+    let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644), None, None);
     assert!(result.is_ok());
 }
 
@@ -612,7 +613,7 @@ fn apply_acls_from_cache_preserves_setgid_and_sticky() {
     let mut cache = AclCache::new();
     let ndx = cache.store_access(acl);
 
-    apply_acls_from_cache(&file, &cache, ndx, None, true, Some(mode), None)
+    apply_acls_from_cache(&file, &cache, ndx, None, true, Some(mode), None, None)
         .expect("apply ACL from cache");
 
     let after = std::fs::metadata(&file).expect("stat").permissions().mode() & 0o7000;
