@@ -3,7 +3,29 @@
 Date: 2026-06-01
 Scope: implementation plan for promoting `iouring-send-zc` from opt-in to
 the default Cargo feature set, contingent on SZC.f promote decision.
-Status: ready to execute once SZC.f decides "promote".
+Status: **executed 2026-10-13** for the daemon-sender write side; the
+runtime default was then turned back off (see below).
+
+> **Update 2026-10-13.** The project owner decided default-on directly,
+> without waiting for the SZC.c numbers. What shipped differs from the plan
+> below in three places:
+>
+> - The feature is compiled in by default, but the runtime default is off.
+>   A benchmark measured runtime default-on at +44% wall time on a 2 GiB
+>   daemon pull, so `Auto` keeps the plain socket write path (`TcpStream` in
+>   the daemon) on every kernel and only an explicit opt-in dispatches
+>   SEND_ZC. Zero-copy is a local decision on each node and is never
+>   forwarded: a client's `--zero-copy` covers only its own I/O, and a server
+>   opts in itself with `oc-rsync --daemon --zero-copy`, `--rsync-path='oc-rsync
+>   --zero-copy'` for an SSH server, or `OC_RSYNC_ZERO_COPY=on`. An upstream
+>   peer never sees any of it.
+> - There is no `OC_RSYNC_NO_SEND_ZC` variable; `--zero-copy` is the
+>   runtime on switch and `--no-zero-copy` a hard off.
+> - `fast_io::send_zc_stats()` counts SEND_ZC sends, bytes and fallbacks,
+>   and `--io-uring-status` prints the opcode probe and the counters.
+>
+> Follow-ups: client push wiring, read-side io_uring RECV wiring, and
+> retiring `send-zc-5-15-lts.yml`.
 Predecessor: SZC.f (`docs/design/send-zc-decision-revisit.md`) - decision
 framework. This document is the implementation plan for the promote branch.
 Successor: release notes entry in the next minor version.

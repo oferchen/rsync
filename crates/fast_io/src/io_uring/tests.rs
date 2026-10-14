@@ -957,16 +957,15 @@ fn zero_copy_large_payload_roundtrip() {
     use std::net::{TcpListener, TcpStream};
     use std::os::unix::io::AsRawFd;
 
-    if !is_io_uring_available() {
-        println!("skipping: io_uring unavailable on this host");
-        return;
-    }
+    use super::send_zc_test_env::{SendZcEnv, classify, report};
 
     let send_zc_available = super::send_zc::is_supported();
-    if send_zc_available {
-        println!("SEND_ZC opcode present: exercising the zero-copy path");
-    } else {
-        println!("SEND_ZC opcode absent (kernel < 6.0): exercising the SEND fallback");
+    let env = report(
+        "zero_copy_large_payload_roundtrip",
+        classify(is_io_uring_available(), send_zc_available),
+    );
+    if env == SendZcEnv::IoUringUnavailable {
+        return;
     }
 
     let listener = match TcpListener::bind("127.0.0.1:0") {
@@ -1028,6 +1027,46 @@ fn zero_copy_large_payload_roundtrip() {
     );
 }
 
+// The ssh wire is an AF_UNIX socketpair, which the kernel refuses for SEND_ZC
+// (`EOPNOTSUPP`). With zero-copy requested the writer must learn that at
+// construction - not from a failed pipelined flush, which would have already
+// moved the staged bytes out of its buffer and aborted the transfer - and then
+// carry a multi-MiB payload over plain `IORING_OP_SEND` byte for byte.
+#[cfg(target_os = "linux")]
+#[test]
+fn zero_copy_on_unix_socketpair_falls_back_at_setup() {
+    if !is_io_uring_available() || !super::send_zc::is_supported() {
+        println!("skipping: io_uring or IORING_OP_SEND_ZC unavailable on this host");
+        return;
+    }
+    let (fd_a, fd_b) = make_socket_pair();
+    let mut writer =
+        socket_writer_from_fd_zero_copy(fd_a, 64 * 1024, crate::ZeroCopyPolicy::Enabled).unwrap();
+    assert!(
+        matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if !w.send_zc_active()),
+        "an AF_UNIX socket must resolve to the io_uring SEND writer with SEND_ZC off"
+    );
+
+    let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let expected = payload.clone();
+    let write_thread = std::thread::spawn(move || {
+        writer.write_all(&payload).unwrap();
+        writer.flush().unwrap();
+    });
+
+    let mut reader = FdReader(fd_b);
+    let mut received = vec![0u8; expected.len()];
+    reader.read_exact(&mut received).unwrap();
+    write_thread.join().unwrap();
+    close_fd(fd_a);
+    close_fd(fd_b);
+    let first_diff = received.iter().zip(&expected).position(|(a, b)| a != b);
+    assert_eq!(
+        first_diff, None,
+        "stream corrupted at the first differing offset"
+    );
+}
+
 // `Disabled` must NOT engage SEND_ZC on any build: the factory returns the
 // plain fd `Std` writer, preserving the default socket write path. This is the
 // HARD `--no-zero-copy` invariant at the fast_io boundary.
@@ -1045,34 +1084,32 @@ fn zero_copy_disabled_yields_std_writer() {
     close_fd(fd_b);
 }
 
-// `Auto` follows the `iouring-send-zc` cargo feature, which is the IUS-4
-// release gate. Without it a stock build keeps the plain `Std` writer, so the
-// default transfer path is byte-identical; with it `Auto` reaches the io_uring
-// writer, whose own kernel probe then decides whether real SEND_ZC SQEs fly.
-//
-// A socketpair is AF_UNIX, where SEND_ZC's notification path is not wired, so
-// this asserts only which writer the factory picked - `zero_copy_large_payload_
-// roundtrip` covers the loopback-TCP opcode behaviour.
+// SEND_ZC is compiled in by default but runtime opt-in. `Auto` - the policy
+// with no `--zero-copy` flag - must keep the plain `Std` writer on every host,
+// even one whose kernel advertises the opcode, and must not count a fallback
+// (nothing was asked for). Widening `Auto` would reintroduce the measured +44%
+// wall-time regression on default daemon pulls.
 #[test]
-fn zero_copy_auto_follows_the_send_zc_feature_gate() {
+fn zero_copy_auto_never_engages_send_zc() {
+    use super::send_zc_test_env::{classify, report};
+
+    report(
+        "zero_copy_auto_never_engages_send_zc",
+        classify(is_io_uring_available(), super::send_zc::is_supported()),
+    );
     let (fd_a, fd_b) = make_socket_pair();
+    let before = crate::send_zc_stats();
     let writer =
         socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, crate::ZeroCopyPolicy::Auto).unwrap();
-    let picked_io_uring = matches!(writer, IoUringOrStdSocketWriter::IoUring(_));
-    if cfg!(feature = "iouring-send-zc") {
-        assert_eq!(
-            picked_io_uring,
-            is_io_uring_available(),
-            "with the feature on, Auto must reach the io_uring writer whenever \
-             io_uring itself is available"
-        );
-    } else {
-        assert!(
-            !picked_io_uring,
-            "without the feature, Auto must keep the plain Std writer so a \
-             stock build's default path is unchanged"
-        );
-    }
+    let after = crate::send_zc_stats();
+    assert!(
+        matches!(writer, IoUringOrStdSocketWriter::Std(_)),
+        "Auto must keep the plain fd writer; SEND_ZC needs an explicit --zero-copy"
+    );
+    assert_eq!(
+        after, before,
+        "Auto requested no SEND_ZC, so no send or fallback may be counted"
+    );
     drop(writer);
     close_fd(fd_a);
     close_fd(fd_b);

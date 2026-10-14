@@ -8,10 +8,10 @@
 //! design doc section 1.1, row "`socket_writer` factory" in section 1.2).
 //!
 //! The SEND_ZC opcode dispatch is preserved: when the `iouring-send-zc` cargo
-//! feature is enabled and the running kernel advertises `IORING_OP_SEND_ZC`,
-//! payloads at or above [`SEND_ZC_MIN_BYTES`] are submitted through the
-//! zero-copy primitive; sub-threshold payloads stay on regular
-//! `IORING_OP_SEND` over the per-thread ring.
+//! feature is enabled (the default) and the running kernel advertises
+//! `IORING_OP_SEND_ZC`, payloads at or above [`SEND_ZC_MIN_BYTES`] are
+//! submitted through the zero-copy primitive; sub-threshold payloads stay on
+//! regular `IORING_OP_SEND` over the per-thread ring.
 //!
 //! SEND_ZC sends split by buffer ownership, because the opcode's page-release
 //! notification is what makes it fast or slow:
@@ -49,7 +49,7 @@ use super::send_zc_pipeline::SendZcPipeline;
 /// The default 16 KiB threshold comes from `docs/design/iouring-send-zc.md`
 /// section 5 (workload B regression guard). With the `iouring-send-zc`
 /// cargo feature enabled the threshold drops to
-/// [`send_zc::SEND_ZC_DISPATCH_MIN_BYTES`] (4 KiB) so the opt-in transport
+/// [`send_zc::SEND_ZC_DISPATCH_MIN_BYTES`] (4 KiB) so the transport
 /// dispatch matches the user-facing contract documented on
 /// [`crate::ZeroCopySender`].
 #[cfg(not(feature = "iouring-send-zc"))]
@@ -81,7 +81,6 @@ pub struct IoUringSocketWriter {
     buffer: Vec<u8>,
     buffer_pos: usize,
     buffer_size: usize,
-    sq_entries: u32,
     /// True when the configured policy permits SEND_ZC **and** the running
     /// kernel advertises `IORING_OP_SEND_ZC`. Resolved once at construction
     /// so the hot path never re-probes.
@@ -113,14 +112,17 @@ impl IoUringSocketWriter {
         // io_uring unavailability synchronously, matching the old behaviour
         // where `config.build_ring()?` surfaced setup errors here.
         with_ring(|_| Ok(()))?;
-        let send_zc_active = config.allow_send_zc() && send_zc::is_supported();
+        let send_zc_active =
+            config.allow_send_zc() && send_zc::is_supported() && socket_accepts_send_zc(fd);
+        if config.allow_send_zc() && !send_zc_active {
+            crate::send_zc_stats::record_fallback();
+        }
 
         Ok(Self {
             fd,
             buffer: vec![0u8; config.buffer_size],
             buffer_pos: 0,
             buffer_size: config.buffer_size,
-            sq_entries: config.sq_entries,
             send_zc_active,
             send_zc_pipeline: None,
         })
@@ -163,14 +165,14 @@ impl IoUringSocketWriter {
                     // but turning off the per-writer flag avoids a futile
                     // syscall on every subsequent flush.
                     self.send_zc_active = false;
+                    crate::send_zc_stats::record_fallback();
                 }
             }
         }
         let raw_fd = self.fd;
         let fd = sqe_fd(raw_fd, NO_FIXED_FD);
         let buffer_size = self.buffer_size;
-        let sq_entries = self.sq_entries as usize;
-        with_ring(|ring| submit_send_batch(ring, fd, data, buffer_size, sq_entries, NO_FIXED_FD))
+        with_ring(|ring| submit_send_batch(ring, fd, data, buffer_size, NO_FIXED_FD))
     }
 
     /// Flushes the internal buffer via the SEND_ZC pipeline or batched SEND
@@ -250,6 +252,7 @@ impl IoUringSocketWriter {
                     // No ring, no zero-copy. Stop retrying so every later
                     // flush goes straight to the batched SEND path.
                     self.send_zc_active = false;
+                    crate::send_zc_stats::record_fallback();
                     return Ok(false);
                 }
             }
@@ -259,6 +262,33 @@ impl IoUringSocketWriter {
         };
         pipeline.send_staged(&mut self.buffer, len)?;
         Ok(true)
+    }
+}
+
+/// Asks the kernel once, at writer setup, whether `fd` can carry SEND_ZC.
+///
+/// The opcode probe is kernel-wide, but zero-copy support is per socket
+/// family: an `AF_UNIX` socketpair (the ssh wire) refuses with `EOPNOTSUPP`.
+/// Without this probe that refusal would surface from the first pipelined
+/// flush - after the staged bytes left the writer's buffer - and abort the
+/// transfer. Only a refusal that names the socket (`EOPNOTSUPP`, `ENOTSOCK`)
+/// turns SEND_ZC off; any other probe outcome keeps the existing per-send
+/// fallback, so a transient probe failure never downgrades a TCP socket.
+fn socket_accepts_send_zc(fd: RawFd) -> bool {
+    match with_ring(|ring| Ok(send_zc::probe_socket(ring, fd))) {
+        Ok(Ok(())) => {
+            logging::debug_log!(Iouring, 1, "SEND_ZC accepted by socket fd {fd}");
+            true
+        }
+        Ok(Err(err)) if matches!(err.raw_os_error(), Some(libc::EOPNOTSUPP | libc::ENOTSOCK)) => {
+            logging::debug_log!(
+                Iouring,
+                1,
+                "SEND_ZC refused by socket fd {fd} ({err}); sending with IORING_OP_SEND"
+            );
+            false
+        }
+        Ok(Err(_)) | Err(_) => true,
     }
 }
 

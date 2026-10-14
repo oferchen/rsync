@@ -20,6 +20,9 @@ struct AcceptLoopState<'a> {
     config_path: &'a Option<PathBuf>,
     /// `--log-file-format`, re-applied to the modules on every SIGHUP reload.
     log_file_format: Option<String>,
+    /// Daemon-wide zero-copy policy, re-applied to the modules on every
+    /// SIGHUP reload.
+    zero_copy_policy: fast_io::ZeroCopyPolicy,
     dparams: &'a [String],
     connection_limiter: &'a Option<Arc<ConnectionLimiter>>,
     modules: Arc<Vec<ModuleRuntime>>,
@@ -99,6 +102,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
             state.log_sink.as_ref(),
             state.notifier,
             state.log_file_format.as_deref(),
+            state.zero_copy_policy,
         );
     }
 

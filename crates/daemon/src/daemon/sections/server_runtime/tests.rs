@@ -467,6 +467,7 @@ fn reload_config_with_no_config_path_is_noop() {
         None,
         &notifier,
         None,
+        fast_io::ZeroCopyPolicy::Auto,
     );
 
     assert!(modules.is_empty());
@@ -498,6 +499,7 @@ fn reload_config_with_missing_file_keeps_old_config() {
         None,
         &notifier,
         None,
+        fast_io::ZeroCopyPolicy::Auto,
     );
 
     assert_eq!(modules.len(), 1);
@@ -539,6 +541,7 @@ fn reload_config_replaces_modules_and_motd() {
         None,
         &notifier,
         None,
+        fast_io::ZeroCopyPolicy::Auto,
     );
 
     assert_eq!(modules.len(), 1);
@@ -573,6 +576,7 @@ fn reload_config_existing_connections_keep_old_config() {
         None,
         &notifier,
         None,
+        fast_io::ZeroCopyPolicy::Auto,
     );
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0].definition.name, "original");
@@ -593,6 +597,7 @@ fn reload_config_existing_connections_keep_old_config() {
         None,
         &notifier,
         None,
+        fast_io::ZeroCopyPolicy::Auto,
     );
 
     assert_eq!(modules.len(), 1);
@@ -630,6 +635,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
         None,
         &notifier,
         None,
+        fast_io::ZeroCopyPolicy::Auto,
     );
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0].definition.name, "valid");
@@ -648,6 +654,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
         None,
         &notifier,
         None,
+        fast_io::ZeroCopyPolicy::Auto,
     );
 
     assert_eq!(modules.len(), 1);
@@ -767,6 +774,7 @@ fn test_accept_loop_state<'a>(
         max_connections,
         config_path,
         log_file_format: None,
+        zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
         dparams: &[],
         connection_limiter: limiter,
         modules: Arc::new(Vec::new()),
@@ -2369,9 +2377,50 @@ fn reload_config_reapplies_the_log_file_format_override() {
         None,
         &notifier,
         Some("%i %n"),
+        fast_io::ZeroCopyPolicy::Auto,
     );
 
     let definition = &modules[0].definition;
     assert!(definition.transfer_logging);
     assert_eq!(definition.log_format.as_deref(), Some("%i %n"));
+}
+
+/// The daemon-wide zero-copy policy comes from the command line or the
+/// environment at startup, never from rsyncd.conf, so a SIGHUP reload must
+/// carry it onto the freshly parsed modules or an opted-in daemon would
+/// silently fall back to plain sends after the first reload.
+#[cfg(unix)]
+#[test]
+fn reload_config_reapplies_the_zero_copy_policy() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let conf_path = dir.path().join("rsyncd.conf");
+    {
+        let mut f = fs::File::create(&conf_path).unwrap();
+        writeln!(f, "[alpha]").unwrap();
+        writeln!(f, "path = {}", dir.path().display()).unwrap();
+    }
+
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(Vec::new());
+    let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
+    let notifier = systemd::ServiceNotifier::new();
+
+    reload_daemon_config(
+        Some(&conf_path),
+        &[],
+        &limiter,
+        &mut modules,
+        &mut motd,
+        None,
+        &notifier,
+        None,
+        fast_io::ZeroCopyPolicy::Enabled,
+    );
+
+    assert_eq!(
+        modules[0].definition.zero_copy_policy,
+        fast_io::ZeroCopyPolicy::Enabled
+    );
 }

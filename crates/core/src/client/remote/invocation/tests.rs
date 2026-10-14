@@ -5172,6 +5172,23 @@ mod oc_flag_forwarding {
         );
     }
 
+    /// Zero-copy is a local decision on each node: neither `--zero-copy` nor
+    /// `--no-zero-copy` may change a single `--server` argv token, the `-e.`
+    /// capability string included, in either direction.
+    #[test]
+    fn zero_copy_policy_never_reaches_ssh_server_argv() {
+        for role in [RemoteRole::Receiver, RemoteRole::Sender] {
+            let baseline = build_args(&ClientConfig::builder().build(), role);
+            for policy in [
+                fast_io::ZeroCopyPolicy::Enabled,
+                fast_io::ZeroCopyPolicy::Disabled,
+            ] {
+                let config = ClientConfig::builder().zero_copy_policy(policy).build();
+                assert_eq!(build_args(&config, role), baseline, "{policy:?}");
+            }
+        }
+    }
+
     #[test]
     fn oc_tuning_flags_never_reach_ssh_push_argv() {
         let baseline = build_args(&ClientConfig::builder().build(), RemoteRole::Sender);

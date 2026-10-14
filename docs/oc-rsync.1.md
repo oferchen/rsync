@@ -960,6 +960,15 @@ NEON) are used where available, with automatic scalar fallbacks.
     *oc-rsyncd.conf*). Releases prior to **v0.6.2** have no admission cap
     and accept connections until the operating system runs out of resources.
 
+**--zero-copy**, **--no-zero-copy**
+:   Set the daemon-wide zero-copy policy for every module (oc-only). With
+    **--zero-copy** a daemon-sender sends module data through io_uring
+    **SEND_ZC** where the kernel supports it; **--no-zero-copy** disables
+    I/O-level zero-copy. Without either flag the daemon reads
+    **OC_RSYNC_ZERO_COPY** (*on*, *off* or *auto*); an explicit flag wins over
+    the variable. The default is off. A client's own **--zero-copy** never
+    changes the daemon's policy.
+
 **--max-sessions**=*N*
 :   Cap the total number of sessions the daemon will serve before exiting.
     *N* must be a positive integer. After serving *N* sessions the daemon
@@ -1005,22 +1014,23 @@ exits with an error.
 **--zero-copy**
 :   Allow I/O-level zero-copy primitives (**sendfile**(2), **splice**(2),
     **copy_file_range**(2), and io_uring **SEND_ZC**) when supported by the
-    kernel. This is the default (policy *auto*/*enabled*).
+    kernel. This is the default (policy *auto*/*enabled*), except for
+    io_uring **SEND_ZC**: it is compiled into default builds but runs only
+    when **--zero-copy** is given explicitly (Linux 6.0+), because enabling it
+    by default measured slower on large pulls.
 
-    **NOTE:** the io_uring **SEND_ZC** dispatch is gated behind the
-    `iouring-send-zc` cargo feature, which is **not** in the default feature
-    set; the gate is documented as "Disabled by default pending
-    kernel/workload benchmarks" in **crates/fast_io/Cargo.toml**. Default
-    distro builds therefore use plain io_uring **SEND** even when
-    **--zero-copy** is set; the other zero-copy primitives still apply where
-    the kernel supports them. To get **SEND_ZC** dispatch, build with
-    `cargo build --features iouring-send-zc` (requires Linux 5.16+). See
-    **docs/design/iouring-send-zc.md** for the full rationale.
+    Zero-copy is a local decision on each node. The flag affects only this
+    process's own I/O and is never forwarded to the remote side, so it never
+    reaches an upstream peer. A server chooses its own policy: start a daemon
+    with **--daemon --zero-copy**, pass it to an SSH server with
+    **--rsync-path**=*'oc-rsync --zero-copy'*, or set
+    **OC_RSYNC_ZERO_COPY**=*on* in the server's environment.
 
 **--no-zero-copy**
 :   Disable I/O-level zero-copy and route data through portable userspace
-    read/write loops. Does not affect filesystem-level reflink / CoW cloning
-    (see **--cow** / **--no-cow**).
+    read/write loops. Local to this process, like **--zero-copy**. Does not
+    affect filesystem-level reflink / CoW cloning (see **--cow** /
+    **--no-cow**).
 
 The next two flags govern the receiver-side `SpillPolicy` that bounds the
 concurrent-delta `ReorderBuffer`'s memory footprint. Both are *planned* for

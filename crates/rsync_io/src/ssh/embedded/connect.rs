@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
+
 use super::auth::authenticate;
 use super::cipher;
 use super::config::SshConfig;
@@ -17,6 +19,7 @@ use super::error::SshError;
 use super::handler::{HostKeyOptions, SshClientHandler};
 use super::proxy::{ProxyDial, expand_proxy_tokens, spawn_proxy_command};
 use super::resolve::resolve_host;
+use super::sync_bridge::{ChunkPool, DEFAULT_CHANNEL_CAPACITY, drain_into};
 
 /// SSH extended-data type for a channel's stderr stream.
 ///
@@ -49,45 +52,34 @@ pub const SSH_GOODBYE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Synchronous reader wrapping data received from the SSH channel.
 ///
 /// Receives channel data chunks via a bounded sync channel and presents
-/// them through `std::io::Read`. Partial reads from oversized chunks are
-/// buffered internally.
+/// them through `std::io::Read`. Each chunk is the `Bytes` russh decoded,
+/// moved across the queue without a copy; partial reads keep the unread tail
+/// for the next call.
 pub struct ChannelReader {
-    rx: std::sync::mpsc::Receiver<Vec<u8>>,
-    partial: Option<ReadBuffer>,
+    rx: std::sync::mpsc::Receiver<Bytes>,
+    /// Unread tail of the current chunk; empty when the next read must
+    /// receive a fresh chunk.
+    pending: Bytes,
 }
 
-/// Partial buffer tracking for incomplete reads from channel messages.
-struct ReadBuffer {
-    data: Vec<u8>,
-    offset: usize,
+impl ChannelReader {
+    fn new(rx: std::sync::mpsc::Receiver<Bytes>) -> Self {
+        Self {
+            rx,
+            pending: Bytes::new(),
+        }
+    }
 }
 
 impl std::io::Read for ChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // Drain any leftover data from a previous read.
-        if let Some(ref mut rb) = self.partial {
-            let remaining = &rb.data[rb.offset..];
-            let n = std::cmp::min(remaining.len(), buf.len());
-            buf[..n].copy_from_slice(&remaining[..n]);
-            rb.offset += n;
-            if rb.offset >= rb.data.len() {
-                self.partial = None;
+        if self.pending.is_empty() {
+            match self.rx.recv() {
+                Ok(data) => self.pending = data,
+                Err(_) => return Ok(0), // Channel closed = EOF
             }
-            return Ok(n);
         }
-
-        // Wait for next chunk from the channel.
-        match self.rx.recv() {
-            Ok(data) => {
-                let n = std::cmp::min(data.len(), buf.len());
-                buf[..n].copy_from_slice(&data[..n]);
-                if n < data.len() {
-                    self.partial = Some(ReadBuffer { data, offset: n });
-                }
-                Ok(n)
-            }
-            Err(_) => Ok(0), // Channel closed = EOF
-        }
+        Ok(drain_into(&mut self.pending, buf))
     }
 }
 
@@ -142,15 +134,25 @@ impl ChannelReader {
 /// Synchronous writer forwarding data to the SSH channel.
 ///
 /// Sends data to the async channel-forwarding task via a tokio mpsc channel.
-/// `blocking_send` bridges the sync/async boundary.
+/// `blocking_send` bridges the sync/async boundary. Each write is copied once
+/// into a pooled buffer that returns to the writer's `ChunkPool` after russh
+/// has packetised it, so steady-state writes do not allocate.
 pub struct ChannelWriter {
-    tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    tx: tokio::sync::mpsc::Sender<Bytes>,
+    pool: ChunkPool,
+}
+
+impl ChannelWriter {
+    fn new(tx: tokio::sync::mpsc::Sender<Bytes>) -> Self {
+        let pool = ChunkPool::new(tx.max_capacity());
+        Self { tx, pool }
+    }
 }
 
 impl std::io::Write for ChannelWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.tx
-            .blocking_send(buf.to_vec())
+            .blocking_send(self.pool.chunk(buf))
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
         Ok(buf.len())
     }
@@ -195,8 +197,8 @@ pub fn connect_and_exec(
     remote_command: &str,
     stdin_data: Option<&[u8]>,
 ) -> Result<(ChannelReader, ChannelWriter), SshError> {
-    let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
-    let (write_tx, write_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Bytes>(DEFAULT_CHANNEL_CAPACITY);
+    let (write_tx, write_rx) = tokio::sync::mpsc::channel::<Bytes>(DEFAULT_CHANNEL_CAPACITY);
     let (setup_tx, setup_rx) = std::sync::mpsc::sync_channel::<Result<(), SshError>>(1);
 
     let ssh_config = ssh_config.clone();
@@ -236,13 +238,7 @@ pub fn connect_and_exec(
         ))
     })??;
 
-    Ok((
-        ChannelReader {
-            rx: data_rx,
-            partial: None,
-        },
-        ChannelWriter { tx: write_tx },
-    ))
+    Ok((ChannelReader::new(data_rx), ChannelWriter::new(write_tx)))
 }
 
 /// Forwards one SSH extended-data chunk to the local process stderr when it is
@@ -281,8 +277,8 @@ async fn bridge_main(
     ssh_config: &SshConfig,
     remote_command: &str,
     stdin_data: Option<&[u8]>,
-    data_tx: std::sync::mpsc::SyncSender<Vec<u8>>,
-    mut write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    data_tx: std::sync::mpsc::SyncSender<Bytes>,
+    mut write_rx: tokio::sync::mpsc::Receiver<Bytes>,
     setup_tx: std::sync::mpsc::SyncSender<Result<(), SshError>>,
 ) {
     let (mut channel, handle, channel_id) =
@@ -303,7 +299,7 @@ async fn bridge_main(
             msg = channel.wait() => {
                 match msg {
                     Some(russh::ChannelMsg::Data { data }) => {
-                        if data_tx.send(data.to_vec()).is_err() {
+                        if data_tx.send(data).is_err() {
                             break;
                         }
                     }
@@ -636,8 +632,8 @@ mod tests {
 
     #[test]
     fn channel_reader_eof_on_closed_channel() {
-        let (_, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
-        let mut reader = ChannelReader { rx, partial: None };
+        let (_, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
+        let mut reader = ChannelReader::new(rx);
         let mut buf = [0u8; 64];
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(n, 0);
@@ -645,11 +641,11 @@ mod tests {
 
     #[test]
     fn channel_reader_reads_full_chunk() {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
-        tx.send(b"hello".to_vec()).unwrap();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
+        tx.send(Bytes::from_static(b"hello")).unwrap();
         drop(tx);
 
-        let mut reader = ChannelReader { rx, partial: None };
+        let mut reader = ChannelReader::new(rx);
         let mut buf = [0u8; 64];
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(&buf[..n], b"hello");
@@ -657,11 +653,11 @@ mod tests {
 
     #[test]
     fn channel_reader_partial_read_buffers_remainder() {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
-        tx.send(b"hello world".to_vec()).unwrap();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
+        tx.send(Bytes::from_static(b"hello world")).unwrap();
         drop(tx);
 
-        let mut reader = ChannelReader { rx, partial: None };
+        let mut reader = ChannelReader::new(rx);
 
         let mut buf = [0u8; 5];
         let n = reader.read(&mut buf).unwrap();
@@ -684,8 +680,8 @@ mod tests {
     /// scheduling jitter.
     #[test]
     fn wait_for_eof_times_out_when_bridge_stalls() {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
-        let mut reader = ChannelReader { rx, partial: None };
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
+        let mut reader = ChannelReader::new(rx);
 
         let budget = Duration::from_millis(50);
         let start = Instant::now();
@@ -719,8 +715,8 @@ mod tests {
     /// must return `Ok(())` promptly.
     #[test]
     fn wait_for_eof_returns_ok_on_clean_drop() {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
-        let mut reader = ChannelReader { rx, partial: None };
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
+        let mut reader = ChannelReader::new(rx);
         drop(tx);
 
         let start = Instant::now();
@@ -741,10 +737,10 @@ mod tests {
     /// sender is never dropped.
     #[test]
     fn wait_for_eof_drains_pending_chunks_then_times_out() {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
-        tx.send(b"stale".to_vec()).unwrap();
-        tx.send(b"goodbye-bytes".to_vec()).unwrap();
-        let mut reader = ChannelReader { rx, partial: None };
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(4);
+        tx.send(Bytes::from_static(b"stale")).unwrap();
+        tx.send(Bytes::from_static(b"goodbye-bytes")).unwrap();
+        let mut reader = ChannelReader::new(rx);
 
         let budget = Duration::from_millis(75);
         let result = reader.wait_for_eof_with_timeout(budget);
@@ -757,13 +753,52 @@ mod tests {
     fn channel_writer_broken_pipe_on_closed_receiver() {
         // Create the channel outside any runtime - ChannelWriter::write uses
         // blocking_send which cannot be called from within a tokio runtime.
-        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(1);
         drop(rx);
 
-        let mut writer = ChannelWriter { tx };
+        let mut writer = ChannelWriter::new(tx);
         let result = std::io::Write::write(&mut writer, b"data");
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    /// Each write ships as its own chunk, byte-exact and in order, and once
+    /// russh drops a chunk the next write reuses its buffer rather than
+    /// allocating a fresh one per write.
+    #[test]
+    fn channel_writer_ships_writes_in_order_and_recycles_buffers() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Bytes>(4);
+        let mut writer = ChannelWriter::new(tx);
+
+        std::io::Write::write_all(&mut writer, b"first").unwrap();
+        std::io::Write::write_all(&mut writer, b"second").unwrap();
+        let first = rx.blocking_recv().unwrap();
+        let second = rx.blocking_recv().unwrap();
+        assert_eq!(&first[..], b"first");
+        assert_eq!(&second[..], b"second");
+        let first_ptr = first.as_ptr();
+        drop(first);
+
+        // Observe the pool itself: comparing the next chunk's address alone
+        // would also pass if the allocator happened to hand back the same
+        // freed block.
+        let parked = writer.pool.take();
+        assert_eq!(
+            parked.as_ptr(),
+            first_ptr,
+            "dropped chunk must return to the pool"
+        );
+        assert!(
+            parked.is_empty(),
+            "a recycled buffer carries no stale bytes"
+        );
+        drop(writer.pool.wrap(parked));
+
+        std::io::Write::write_all(&mut writer, b"third").unwrap();
+        let third = rx.blocking_recv().unwrap();
+        assert_eq!(&third[..], b"third");
+        assert_eq!(third.as_ptr(), first_ptr, "the next write reuses it");
+        assert_eq!(&second[..], b"second", "a live chunk must stay intact");
     }
 
     // Tests for optimized client config construction.

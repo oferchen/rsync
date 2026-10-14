@@ -3,8 +3,19 @@
 Date: 2026-05-22
 Scope: apply the IUS-4 decision rule against the IUS-3 evidence base and
 record the IUS-5 / IUS-6 actions taken in this cycle.
-Status: **DECISION RECORDED - keep opt-in (data-missing branch)**
+Status: **SUPERSEDED 2026-10-13 - compiled in by default, runtime
+opt-in** (was: keep opt-in, data-missing branch)
 Decision rule: `docs/design/ius-4-decision-framing-2026-05-21.md` section 3
+
+> **Update 2026-10-13.** The project owner decided to build and dispatch
+> SEND_ZC by default. The keep-opt-in outcome below was a placeholder for
+> missing multi-kernel measurements, not a measured regression. The flip
+> follows `docs/design/send-zc-default-on-flip.md`: `iouring-send-zc` is in
+> the default feature set. A follow-up benchmark the same day measured
+> runtime default-on at +44% wall time on a 2 GiB daemon pull, so the
+> runtime default is off: `Auto` never dispatches SEND_ZC, only an explicit
+> `--zero-copy` does, and `--no-zero-copy` stays a hard off. The record
+> below is kept as history.
 Predecessors:
 - IUS-1 (PR #4661, shipped): README + man-page note on the `--zero-copy`
   SEND_ZC build-time dependency.

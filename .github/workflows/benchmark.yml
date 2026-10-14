@@ -243,12 +243,13 @@ jobs:
             3.5.1=target/interop/upstream-src/rsync-3.5.1/rsync,3.5.0=target/interop/upstream-src/rsync-3.5.0/rsync,3.4.4=target/interop/upstream-src/rsync-3.4.4/rsync
           OC_RSYNC_OPENSSL: target/release/oc-rsync-openssl
           OC_RSYNC_RUSSH: target/release/oc-rsync-russh
-          # `iouring-send-zc` is not in any default feature set and the
-          # binary's --version does not enumerate fast_io features, so the
-          # cargo invocation above is the only place this is knowable. Change
-          # it in step with the build, not independently.
+          # `iouring-send-zc` is in the default feature set the release
+          # build above uses, and the binary's --version does not enumerate
+          # fast_io features, so the cargo invocation above is the only place
+          # this is knowable. Change it in step with the build, not
+          # independently.
           OC_RSYNC_SEND_ZC_DISPATCH: >-
-            compiled out (iouring-send-zc cargo feature not enabled in the release build)
+            compiled in, runtime opt-in (dispatched only under --zero-copy)
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results.json

@@ -259,21 +259,57 @@ pub type ZeroCopyPolicy = BackendPolicy;
 /// - [`ZeroCopyPolicy::Disabled`] - never. `--no-zero-copy` is a hard off.
 /// - [`ZeroCopyPolicy::Enabled`] - always attempt; an unsupported kernel
 ///   still degrades to plain `IORING_OP_SEND` inside the writer.
-/// - [`ZeroCopyPolicy::Auto`] - attempt only in builds carrying the
-///   `iouring-send-zc` cargo feature. That feature is the IUS-4 release gate
-///   (it raises the socket-send kernel floor from 5.6 to 6.0), so a stock
-///   build keeps `Auto` on the plain socket write path and is byte-identical
-///   to a build without this predicate.
+/// - [`ZeroCopyPolicy::Auto`] - never. SEND_ZC is compiled in by default
+///   (the `iouring-send-zc` cargo feature) but runs only when asked for:
+///   on a 2 GiB daemon pull it cost +44% wall time, so the default path
+///   (`--zero-copy=auto` or no flag) keeps plain socket writes.
 ///
 /// Mirrors the shape of `is_splice_enabled`, which applies the same
 /// policy gate to `splice(2)`.
 #[must_use]
 pub const fn send_zc_policy_permits(policy: ZeroCopyPolicy) -> bool {
     match policy {
-        ZeroCopyPolicy::Disabled => false,
+        ZeroCopyPolicy::Disabled | ZeroCopyPolicy::Auto => false,
         ZeroCopyPolicy::Enabled => true,
-        ZeroCopyPolicy::Auto => cfg!(feature = "iouring-send-zc"),
     }
+}
+
+/// Environment variable naming a server's own zero-copy policy.
+///
+/// Read by the daemon at startup and by a `--server` process. Values are
+/// `on`, `off` and `auto` (case-insensitive), mapping to
+/// [`ZeroCopyPolicy::Enabled`], [`ZeroCopyPolicy::Disabled`] and
+/// [`ZeroCopyPolicy::Auto`]. Any other value is ignored. Zero-copy is a local
+/// decision on each node: a client never forwards its own policy to the peer.
+pub const ZERO_COPY_ENV: &str = "OC_RSYNC_ZERO_COPY";
+
+/// Resolves a server's zero-copy policy from its own command-line flag and
+/// the [`ZERO_COPY_ENV`] value.
+///
+/// Precedence: an explicit `--zero-copy` / `--no-zero-copy` flag beats the
+/// environment, which beats the default [`ZeroCopyPolicy::Auto`] (no
+/// `SEND_ZC`). An unrecognised environment value falls back to the default.
+#[must_use]
+pub fn resolve_server_zero_copy_policy(
+    flag: Option<ZeroCopyPolicy>,
+    env: Option<&str>,
+) -> ZeroCopyPolicy {
+    if let Some(policy) = flag {
+        return policy;
+    }
+    match env.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("on") => ZeroCopyPolicy::Enabled,
+        Some("off") => ZeroCopyPolicy::Disabled,
+        _ => ZeroCopyPolicy::Auto,
+    }
+}
+
+/// Resolves a server's zero-copy policy from `flag` and the live
+/// [`ZERO_COPY_ENV`] environment variable. See
+/// [`resolve_server_zero_copy_policy`] for the precedence.
+#[must_use]
+pub fn server_zero_copy_policy(flag: Option<ZeroCopyPolicy>) -> ZeroCopyPolicy {
+    resolve_server_zero_copy_policy(flag, std::env::var(ZERO_COPY_ENV).ok().as_deref())
 }
 
 /// Size threshold (bytes) above which basis-file reads use io_uring+SQPOLL
@@ -511,14 +547,81 @@ mod tests {
         assert!(send_zc_policy_permits(ZeroCopyPolicy::Enabled));
     }
 
-    /// `Auto` is the arm the IUS-4 release gate governs: it permits SEND_ZC
-    /// exactly when the build carries `iouring-send-zc`, so a stock build's
-    /// default socket-send path is unchanged.
+    /// SEND_ZC is compiled in by default but is runtime opt-in: the default
+    /// `Auto` policy must never dispatch it, feature or not. Widening the
+    /// `Auto` arm would silently put every default daemon pull on SEND_ZC,
+    /// which measured +44% wall time on a 2 GiB pull.
     #[test]
-    fn send_zc_policy_permits_auto_follows_the_feature_gate() {
-        assert_eq!(
-            send_zc_policy_permits(ZeroCopyPolicy::Auto),
-            cfg!(feature = "iouring-send-zc")
+    fn send_zc_policy_never_permits_the_default_auto() {
+        assert_eq!(ZeroCopyPolicy::default(), ZeroCopyPolicy::Auto);
+        assert!(!send_zc_policy_permits(ZeroCopyPolicy::default()));
+    }
+
+    /// A server's explicit flag is the operator's own decision for that
+    /// process, so it must win over an inherited environment value in both
+    /// directions; otherwise `--no-zero-copy` could not turn off a fleet-wide
+    /// `OC_RSYNC_ZERO_COPY=on`.
+    #[test]
+    fn server_zero_copy_flag_beats_env() {
+        for env in [Some("on"), Some("off"), Some("auto"), None] {
+            for flag in [ZeroCopyPolicy::Enabled, ZeroCopyPolicy::Disabled] {
+                assert_eq!(
+                    resolve_server_zero_copy_policy(Some(flag), env),
+                    flag,
+                    "flag {flag:?} must beat env {env:?}"
+                );
+            }
+        }
+    }
+
+    /// Without a flag the environment selects the policy, and only `on`
+    /// reaches the one variant that dispatches SEND_ZC.
+    #[test]
+    fn server_zero_copy_env_selects_policy_without_flag() {
+        for (env, want) in [
+            ("on", ZeroCopyPolicy::Enabled),
+            (" ON ", ZeroCopyPolicy::Enabled),
+            ("off", ZeroCopyPolicy::Disabled),
+            ("Off", ZeroCopyPolicy::Disabled),
+            ("auto", ZeroCopyPolicy::Auto),
+        ] {
+            assert_eq!(
+                resolve_server_zero_copy_policy(None, Some(env)),
+                want,
+                "{env:?}"
+            );
+        }
+        assert!(send_zc_policy_permits(resolve_server_zero_copy_policy(
+            None,
+            Some("on")
+        )));
+    }
+
+    /// The server default stays off: no flag and no (or a malformed) env
+    /// value must never permit SEND_ZC, which measured +44% wall time when
+    /// it was the default.
+    #[test]
+    fn server_zero_copy_defaults_off() {
+        for env in [None, Some(""), Some("yes"), Some("1"), Some("enabled")] {
+            let policy = resolve_server_zero_copy_policy(None, env);
+            assert_eq!(policy, ZeroCopyPolicy::Auto, "{env:?}");
+            assert!(!send_zc_policy_permits(policy), "{env:?}");
+        }
+    }
+
+    /// SEND_ZC stays compiled into default builds so `--zero-copy` works
+    /// without a rebuild. Checked against the manifest so it holds whatever
+    /// feature set this test binary was compiled with.
+    #[test]
+    fn iouring_send_zc_is_a_default_feature() {
+        let manifest = include_str!("../Cargo.toml");
+        let default_line = manifest
+            .lines()
+            .find(|line| line.starts_with("default = "))
+            .expect("fast_io Cargo.toml declares a default feature list");
+        assert!(
+            default_line.contains("\"iouring-send-zc\""),
+            "iouring-send-zc must stay in fast_io's default features: {default_line}"
         );
     }
 

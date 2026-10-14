@@ -7,7 +7,7 @@
 //! remote rsync writes error messages.
 
 use std::io::{self, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, ExitStatus};
+use std::process::{Child, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -17,6 +17,9 @@ use logging::debug_log;
 
 use super::aux_channel::BoxedStderrChannel;
 use super::stall::{IoStallWatchdog, StallHandle, effective_io_timeout};
+use super::wire::{
+    WireEnds, WireIoPolicy, WirePrimitive, WireReadEnd, WireReader, WireWriteEnd, WireWriter,
+};
 
 /// Applies stall detection to a completed read/write on a stall-tracked half.
 ///
@@ -82,8 +85,12 @@ pub struct SshConnection {
     /// The watchdog needs access to call `Child::kill()` on timeout,
     /// so the handle is wrapped in `Arc<Mutex<Option<Child>>>`.
     child: Arc<Mutex<Option<Child>>>,
-    stdin: Option<ChildStdin>,
-    stdout: Option<ChildStdout>,
+    stdin: Option<WireWriteEnd>,
+    stdout: Option<WireReadEnd>,
+    /// Kernel primitive behind `stdin`/`stdout`.
+    wire_primitive: WirePrimitive,
+    /// io_uring / zero-copy preferences applied to the halves at split time.
+    wire_io: WireIoPolicy,
     stderr_drain: Option<BoxedStderrChannel>,
     connect_watchdog: Option<ConnectWatchdog>,
     /// Data-phase stall watchdog enforcing the negotiated `--timeout`. `None`
@@ -113,8 +120,8 @@ impl SshConnection {
     /// off state. upstream: io.c `set_io_timeout` / `check_timeout`.
     pub(super) fn new(
         child: Child,
-        stdin: Option<ChildStdin>,
-        stdout: ChildStdout,
+        wire: WireEnds,
+        wire_io: WireIoPolicy,
         stderr_channel: Option<BoxedStderrChannel>,
         connect_timeout: Option<Duration>,
         io_timeout: Option<Duration>,
@@ -125,8 +132,10 @@ impl SshConnection {
         let (io_stall_watchdog, stall) = arm_io_stall(io_timeout, &shared_child);
         Self {
             child: shared_child,
-            stdin,
-            stdout: Some(stdout),
+            stdin: Some(wire.stdin),
+            stdout: Some(wire.stdout),
+            wire_primitive: wire.primitive,
+            wire_io,
             stderr_drain: stderr_channel,
             connect_watchdog,
             io_stall_watchdog,
@@ -150,6 +159,12 @@ impl SshConnection {
         } else {
             Ok(())
         }
+    }
+
+    /// Returns the kernel primitive carrying the child's stdin and stdout.
+    #[must_use]
+    pub const fn wire_primitive(&self) -> WirePrimitive {
+        self.wire_primitive
     }
 
     /// Returns the stderr output collected so far by the background drain thread.
@@ -268,16 +283,15 @@ impl SshConnection {
     /// - An owned handle for waiting on the child process
     ///
     /// The stderr drain thread (if running) is transferred to the child handle.
+    /// On a socketpair wire the halves are driven through io_uring only under
+    /// an explicit `--io-uring` (`IoUringPolicy::Enabled`); otherwise they use
+    /// plain `read`/`write`.
     ///
     /// # Returns
     ///
     /// Returns `(reader, writer, child_handle)` on success.
-    /// Returns an error if stdin, stdout, or the child process has already been taken.
-    ///
-    /// # Errors
-    ///
-    /// Returns `io::ErrorKind::BrokenPipe` when stdin or stdout was already taken, or another
-    /// error when the halves cannot be set up.
+    /// Returns an error if stdin, stdout, or the child process has already been
+    /// taken, or if io_uring was explicitly requested but is unavailable.
     pub fn split(mut self) -> io::Result<(SshReader, SshWriter, SshChildHandle)> {
         let stdin = self.stdin.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "stdin has already been closed")
@@ -301,6 +315,9 @@ impl SshConnection {
         // kill it on a timeout. Leaving an empty `Arc` behind keeps
         // `SshConnection::Drop` from reaping the child we just handed off.
         let child = std::mem::replace(&mut self.child, Arc::new(Mutex::new(None)));
+
+        let stdout = WireReader::new(stdout, self.wire_primitive, self.wire_io)?;
+        let stdin = WireWriter::new(stdin, self.wire_primitive, self.wire_io)?;
 
         let stderr_drain = self.stderr_drain.take();
         let connect_watchdog = self.connect_watchdog.take();
@@ -326,7 +343,7 @@ impl SshConnection {
 /// Read half of an SSH connection (subprocess stdout).
 #[derive(Debug)]
 pub struct SshReader {
-    stdout: ChildStdout,
+    stdout: WireReader,
     /// Shared stall handle; `None` when `--timeout` is disabled.
     stall: Option<StallHandle>,
 }
@@ -341,7 +358,7 @@ impl Read for SshReader {
 /// Write half of an SSH connection (subprocess stdin).
 #[derive(Debug)]
 pub struct SshWriter {
-    stdin: ChildStdin,
+    stdin: WireWriter,
     /// Shared stall handle; `None` when `--timeout` is disabled.
     stall: Option<StallHandle>,
 }

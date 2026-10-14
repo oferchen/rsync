@@ -1,13 +1,14 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 
 use super::aux_channel::{build_stderr_channel, configure_stderr_channel};
 use super::connection::SshConnection;
 use super::parse::{RemoteShellParseError, parse_remote_shell};
+use super::wire::{WireIoPolicy, configure_wire};
 use logging::debug_log;
 use protocol::cmd::{trace_cmd_argv, trace_opening_connection};
 
@@ -87,6 +88,7 @@ pub struct SshCommand {
     target_override: Option<OsString>,
     prefer_aes_gcm: Option<bool>,
     jump_hosts: Option<OsString>,
+    wire_io: WireIoPolicy,
 }
 
 impl SshCommand {
@@ -110,6 +112,7 @@ impl SshCommand {
             target_override: None,
             prefer_aes_gcm: None,
             jump_hosts: None,
+            wire_io: WireIoPolicy::default(),
         }
     }
 
@@ -222,6 +225,24 @@ impl SshCommand {
     /// upstream: io.c `set_io_timeout` / `check_timeout`; errcode.h `RERR_TIMEOUT`.
     pub const fn set_io_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
         self.io_timeout = timeout;
+        self
+    }
+
+    /// Selects whether the parent ends of the socketpair wire are driven
+    /// through io_uring `RECV`/`SEND`. Only `Enabled` (`--io-uring`) does;
+    /// the default `Auto` keeps plain `read`/`write`, since io_uring showed no
+    /// gain on the `AF_UNIX` wire. Pipe-backed wires always use plain
+    /// `read`/`write`.
+    pub const fn set_io_uring_policy(&mut self, policy: fast_io::IoUringPolicy) -> &mut Self {
+        self.wire_io.io_uring = policy;
+        self
+    }
+
+    /// Selects whether the io_uring wire writer asks for `IORING_OP_SEND_ZC`
+    /// (default: `Auto`). The socket is probed once at split time and a
+    /// refusal leaves the writer on plain `SEND`.
+    pub const fn set_zero_copy_policy(&mut self, policy: fast_io::ZeroCopyPolicy) -> &mut Self {
+        self.wire_io.zero_copy = policy;
         self
     }
 
@@ -408,16 +429,11 @@ impl SshCommand {
 
     /// Spawns the configured command and returns a [`SshConnection`].
     ///
-    /// On Unix the child's stderr is wired through a `socketpair(2)` when
-    /// possible, exposing a real socket descriptor on the parent side that
-    /// future event-loop integrations can poll alongside stdin/stdout. If
+    /// On Unix the child's stdin and stdout are two `socketpair(2)`s, as
+    /// upstream `piped_child()` creates them, and its stderr is a third. If
     /// socketpair creation fails for any reason (e.g., file-descriptor
-    /// exhaustion), the spawn transparently falls back to the conventional
-    /// `Stdio::piped()` anonymous pipe. Windows always uses the pipe path.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the child cannot be spawned or its stdio pipes are missing.
+    /// exhaustion), the spawn falls back to `Stdio::piped()` anonymous pipes
+    /// and traces the reason at `--debug=connect`. Windows always uses pipes.
     pub fn spawn(&self) -> io::Result<SshConnection> {
         let (program, args) = self.command_parts();
 
@@ -436,22 +452,21 @@ impl SshCommand {
             trace_cmd_argv(&full_argv);
         }
 
-        // upstream: main.c:617-618 do_cmd() forces blocking_io for rsh/remsh
-        // when unset; pipe.c:80-82 then sets the child stdout blocking. Our
-        // `Stdio::piped()` child descriptors are already unconditionally
-        // blocking, so this only records the resolved mode for diagnostics.
+        // upstream: main.c:613-614 do_cmd() forces blocking_io for rsh/remsh
+        // when unset; pipe.c:80-82 then sets the child stdout blocking. The
+        // socketpair wire applies it; the pipe fallback is always blocking.
+        let blocking_io = self.resolved_blocking_io();
         if logging::debug_gte(logging::DebugFlag::Cmd, 2) {
             debug_log!(
                 Connect,
                 2,
-                "remote-shell blocking_io resolved to {}",
-                self.resolved_blocking_io()
+                "remote-shell blocking_io resolved to {blocking_io}"
             );
         }
 
         let mut command = Command::new(&program);
-        command.stdin(Stdio::piped());
-        command.stdout(Stdio::piped());
+        // upstream: pipe.c:57 piped_child() - two fd_pair()s carry stdin/stdout.
+        let wire = configure_wire(&mut command, blocking_io);
         command.args(args.iter());
 
         for (key, value) in &self.envs {
@@ -465,28 +480,21 @@ impl SshCommand {
         let parent_socketpair_end = configure_stderr_channel(&mut command);
 
         let mut child = command.spawn()?;
+        // upstream: pipe.c:85-88 - the parent closes the child's ends. They
+        // live in `command`; dropping it leaves only the parent ends open, so
+        // the child's exit reaches us as EOF.
+        drop(command);
 
         debug_log!(Connect, 2, "ssh process spawned successfully");
 
-        let stdin = child.stdin.take().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "ssh command did not expose a writable stdin",
-            )
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "ssh command did not expose a readable stdout",
-            )
-        })?;
+        let wire = wire.into_parent_ends(&mut child)?;
 
         let stderr_channel = build_stderr_channel(parent_socketpair_end, child.stderr.take());
 
         Ok(SshConnection::new(
             child,
-            Some(stdin),
-            stdout,
+            wire,
+            self.wire_io,
             stderr_channel,
             self.connect_timeout,
             self.io_timeout,
@@ -703,12 +711,11 @@ impl SshCommand {
     /// `rsh`/`remsh` shells - which mishandle a non-blocking child stdout - and
     /// leaves every other program (`ssh`, custom `-e` wrappers) non-blocking.
     ///
-    /// oc-rsync spawns the remote shell with `std::process::Command` and
-    /// `Stdio::piped()`, whose child pipe descriptors are unconditionally
-    /// blocking on every platform, so the forced-blocking outcome already holds
-    /// by construction; this resolution keeps the semantic state faithful to
-    /// upstream. `blocking_io` is a purely local child-fd concern and is never
-    /// forwarded on the wire (upstream `server_options()` does not emit it).
+    /// On the socketpair wire the result decides whether the child's stdout
+    /// end is left non-blocking, as upstream does; the `Stdio::piped()`
+    /// fallback is always blocking. `blocking_io` is a purely local child-fd
+    /// concern and is never forwarded on the wire (upstream `server_options()`
+    /// does not emit it).
     ///
     /// upstream: main.c:617-618 `do_cmd()` - `if (blocking_io < 0 && (strcmp(t,
     /// "rsh") == 0 || strcmp(t, "remsh") == 0)) blocking_io = 1;` and

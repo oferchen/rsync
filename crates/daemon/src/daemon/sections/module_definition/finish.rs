@@ -286,6 +286,7 @@ impl ModuleDefinitionBuilder {
                 .or(defaults.open_noatime)
                 .flatten()
                 .unwrap_or(false),
+            zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
             // upstream: daemon-parm.h:78 default True; module value overrides the
             // global-section default (defaults.reverse_lookup), else built-in True.
             reverse_lookup: self

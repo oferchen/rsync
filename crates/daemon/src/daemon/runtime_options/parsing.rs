@@ -54,6 +54,7 @@ impl RuntimeOptions {
         }
 
         let mut iter = arguments.iter();
+        let mut zero_copy_flag = None;
 
         while let Some(argument) = iter.next() {
             if take_option_value(argument, &mut iter, "--dparam")?.is_some() {
@@ -92,6 +93,10 @@ impl RuntimeOptions {
                 options.set_bandwidth_limit(None)?;
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).expect("1 is nonzero"))?;
+            } else if argument == "--zero-copy" {
+                zero_copy_flag = Some(fast_io::ZeroCopyPolicy::Enabled);
+            } else if argument == "--no-zero-copy" {
+                zero_copy_flag = Some(fast_io::ZeroCopyPolicy::Disabled);
             } else if argument == "--no-detach" {
                 options.detach = false;
             } else if argument == "--detach" {
@@ -158,6 +163,11 @@ impl RuntimeOptions {
             for module in &mut options.modules {
                 module.apply_log_file_format(format);
             }
+        }
+
+        options.zero_copy_policy = fast_io::server_zero_copy_policy(zero_copy_flag);
+        for module in &mut options.modules {
+            module.zero_copy_policy = options.zero_copy_policy;
         }
 
         // upstream: clientserver.c:1573-1574 -

@@ -54,35 +54,31 @@
 //! - [`crate::negotiate_session`] for the negotiation façade that consumes
 //!   [`SshConnection`] streams.
 //!
-//! # io_uring and SSH stdio
+//! # Wire primitive
 //!
-//! The SSH data channel is the spawned `ssh` child's inherited stdio: a
-//! `(stdin, stdout)` pipe pair created by `Command::spawn`, not a socket.
-//! The `fast_io` io_uring `socket_reader` / `socket_writer` fast paths
-//! require an `AF_INET`/`AF_INET6` socket FD and are therefore unreachable
-//! for SSH transfers - regardless of kernel version or `io_uring_policy`.
-//! This mirrors upstream rsync, which also performs blocking reads/writes
-//! on the inherited stdio FDs when invoked over SSH (`main.c:520 do_cmd()`).
+//! On Unix the child's stdin and stdout are two `AF_UNIX` `SOCK_STREAM`
+//! socketpairs, one per direction, exactly as upstream creates them
+//! (upstream: pipe.c:57 `piped_child()`, util1.c:84 `fd_pair()`). If the
+//! kernel refuses either pair the spawn falls back to anonymous pipes; the
+//! chosen primitive and any fallback reason are traced at `--debug=connect`
+//! and reported by [`SshConnection::wire_primitive`]. Windows has no
+//! `socketpair(2)` and always uses pipes. The stderr channel is a separate
+//! socketpair on Unix; see `aux_channel.rs`.
 //!
-//! The Linux kernel does support submitting `IORING_OP_READ` /
-//! `IORING_OP_WRITE` against pipe FDs (5.1+), and `splice()` / `vmsplice()`
-//! enable zero-copy pipe transfers. Wiring these into the SSH transport
-//! is tracked separately as tasks #1859 (pipe-FD io_uring) and #1860
-//! (splice-based zero-copy).
+//! The 2026-10-13 change to socketpairs supersedes the pipe disposition
+//! recorded in `docs/audits/ssh-socketpair-vs-pipes.md` and
+//! `docs/audits/ssh-single-socketpair-bidirectional.md`.
 //!
-//! Daemon-mode TCP sockets and local-disk transfers DO benefit from
-//! `fast_io`: TCP uses the socket fast path, and on-disk file I/O uses
-//! the io_uring read/write submission paths.
+//! # io_uring on the wire
 //!
-//! # Wire primitive choice
-//!
-//! The wire deliberately uses anonymous pipes rather than socketpairs.
-//! The disposition - including both the two-socketpairs-per-direction
-//! variant matching upstream and the single bidirectional socketpair
-//! variant - is recorded in `docs/audits/ssh-socketpair-vs-pipes.md`
-//! and `docs/audits/ssh-single-socketpair-bidirectional.md`.
-//! The stderr channel is socketpair-backed on Unix; see
-//! `aux_channel.rs` for that path.
+//! The socketpair ends are sockets, so on Linux [`SshConnection::split`]
+//! can drive them through the `fast_io` io_uring `RECV`/`SEND` paths. It does
+//! so only under an explicit `--io-uring`: on this `AF_UNIX` wire io_uring
+//! measured no gain, so the default is plain `read`/`write`. When zero-copy
+//! is also requested the writer asks for
+//! `IORING_OP_SEND_ZC`; the kernel refuses it on `AF_UNIX` (`EOPNOTSUPP`),
+//! which the writer learns once at setup and then sends with plain `SEND`.
+//! The pipe fallback always uses `read`/`write`.
 
 /// The single ssh_config tokeniser, shared by both config readers.
 #[cfg(any(feature = "ssh-config-parse", feature = "embedded-ssh"))]
@@ -111,6 +107,7 @@ mod parse;
 #[cfg(feature = "ssh-socketpair-stderr")]
 pub mod socketpair_stderr;
 mod stall;
+mod wire;
 
 #[cfg(all(feature = "async-ssh", feature = "ssh-socketpair-stderr"))]
 pub use async_stderr_drain::{ASYNC_STDERR_BUFFER_CAP, AsyncStderrDrain, RingBuffer};
@@ -124,6 +121,7 @@ pub use connect::{
 pub use connection::{SshChildHandle, SshConnection, SshReader, SshWriter};
 pub use operand::{RemoteOperand, RemoteOperandParseError, parse_ssh_operand};
 pub use parse::{RemoteShellParseError, parse_remote_shell};
+pub use wire::WirePrimitive;
 
 #[cfg(test)]
 mod tests;

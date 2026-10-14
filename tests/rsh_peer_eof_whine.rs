@@ -115,6 +115,9 @@ fn a_worse_remote_shell_status_keeps_the_whine_and_names_its_own_code() {
 /// stdin is handed over through fd 3: POSIX points a background job's fd 0
 /// at /dev/null before its redirections run, so dash would give `<&0` an
 /// empty stream and the server would exit before speaking.
+/// `dd` cannot retry `EAGAIN`, so callers pass `--blocking-io`: without it the
+/// client leaves the remote shell's stdout non-blocking (upstream pipe.c:80-82)
+/// and a slow reader makes `dd` die long before the cut.
 fn write_truncating_rsh_shim(dir: &Path, cut: usize) -> PathBuf {
     let script = dir.join(format!("rsh-cut-{cut}.sh"));
     let fifo = dir.join(format!("out-{cut}.fifo"));
@@ -142,6 +145,7 @@ fn pull_cut_after(cut: usize) -> (Option<i32>, Vec<String>) {
         .arg("-a")
         .arg("-e")
         .arg(&rsh)
+        .arg("--blocking-io")
         .arg(format!("--rsync-path={}", env!("CARGO_BIN_EXE_oc-rsync")))
         .arg(format!("peer:{}/", src.display()))
         .arg(format!("{}/", temp.path().join("dst").display()))
@@ -220,6 +224,7 @@ fn push_cut_after(cut: usize) -> (Option<i32>, Vec<String>, u64) {
         .arg("-a")
         .arg("-e")
         .arg(&script)
+        .arg("--blocking-io")
         .arg(format!("--rsync-path={}", env!("CARGO_BIN_EXE_oc-rsync")))
         .arg(format!("{}/", src.display()))
         .arg(format!("peer:{}/", temp.path().join("dst").display()))

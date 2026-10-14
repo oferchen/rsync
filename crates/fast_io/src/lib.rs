@@ -380,6 +380,7 @@ mod io_uring_ops;
 /// securityfs mounted the helpers return "no LSMs visible" without error.
 pub mod lsm;
 mod policy;
+mod send_zc_stats;
 /// SQM-3: pin mmap'd basis windows in memory before SQPOLL submissions
 /// so the kthread cannot fault on a page the userspace task has not
 /// touched. See `docs/design/sqm-2b-implementation-design.md`.
@@ -594,9 +595,10 @@ pub use io_uring::{
     socket_reader_from_fd, socket_writer_from_fd, socket_writer_from_fd_zero_copy,
 };
 
-/// Opt-in `IORING_OP_SEND_ZC` transport-send dispatch (Linux + `io_uring`).
+/// `IORING_OP_SEND_ZC` transport-send dispatch (Linux + `io_uring`).
 ///
-/// Exposed only when the `iouring-send-zc` cargo feature is enabled. The
+/// Exposed when the `iouring-send-zc` cargo feature is enabled, which it is
+/// by default. The
 /// stub on non-Linux returns [`std::io::ErrorKind::Unsupported`] from every
 /// method so cross-platform callers compile but never route real traffic
 /// through the zero-copy path. See the module docs on `io_uring::send_zc`
@@ -643,10 +645,12 @@ pub use io_uring_depth::{
 pub use io_uring_ops::{hard_link, try_rename_via_io_uring, try_statx_batch_via_io_uring};
 pub use policy::{
     BackendPolicy, BasisReadBackend, CowPolicy, IoUringPolicy, IocpPolicy,
-    MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZeroCopyPolicy,
+    MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZERO_COPY_ENV, ZeroCopyPolicy,
     choose_basis_read_backend, choose_basis_read_backend_with_threshold,
-    mmap_to_sqpoll_threshold_bytes, send_zc_policy_permits,
+    mmap_to_sqpoll_threshold_bytes, resolve_server_zero_copy_policy, send_zc_policy_permits,
+    server_zero_copy_policy,
 };
+pub use send_zc_stats::{SendZcStats, send_zc_stats};
 pub use source_prefetch::{PREFETCH_MAX_FILE_LEN, PrefetchOpen, PrefetchRequest, prefetch_sources};
 pub use sqpoll_basis::{
     MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,

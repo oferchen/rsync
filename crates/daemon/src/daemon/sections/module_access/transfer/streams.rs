@@ -74,19 +74,18 @@ fn should_arm_delta_drain(_client_args: &[String]) -> bool {
 ///
 /// When `zero_copy_policy` permits SEND_ZC on Unix - which
 /// [`fast_io::send_zc_policy_permits`] answers - the socket fd is handed to
-/// [`fast_io::socket_writer_from_fd_zero_copy`], which returns an
-/// `IORING_OP_SEND_ZC` writer when the running kernel advertises the opcode and
-/// otherwise degrades to a plain fd writer. The `TcpStream` is kept alive
-/// alongside the returned writer (the factory borrows the fd but does not take
-/// ownership), so the fd stays valid for the transfer's lifetime.
+/// [`fast_io::socket_writer_from_fd_zero_copy`], which returns an io_uring
+/// writer when SEND_ZC can run and otherwise a plain fd writer. In the plain
+/// case the `TcpStream` writer is kept instead, so a kernel without the opcode
+/// (or without io_uring) takes exactly the pre-SEND_ZC path. The `TcpStream` is
+/// kept alive alongside an io_uring writer (the factory borrows the fd but does
+/// not take ownership), so the fd stays valid for the transfer's lifetime.
 ///
-/// The policy gate has two arms, not one. `Disabled` (`--no-zero-copy`) never
-/// reaches the factory. `Auto` - the default every client arrives with, since
-/// the oc-invented `--zero-copy` flag is deliberately never forwarded to a peer
-/// argv - reaches it only in builds carrying the `iouring-send-zc` cargo
-/// feature; that feature is the IUS-4 release gate which raises the socket-send
-/// kernel floor from 5.6 to 6.0. A stock build therefore keeps `Auto` on the
-/// unchanged `TcpStream` writer. On non-Unix there is no raw-fd path at all.
+/// Only `Enabled`, from the daemon's own `--zero-copy` or
+/// `OC_RSYNC_ZERO_COPY=on`, reaches the factory. `Disabled` and the default
+/// `Auto` keep the `TcpStream` writer: SEND_ZC is compiled in by default but
+/// runtime opt-in, since default-on measured +44% wall time on a 2 GiB daemon
+/// pull. On non-Unix there is no raw-fd path at all.
 #[cfg(unix)]
 fn daemon_socket_writer(
     write_stream: TcpStream,
@@ -103,13 +102,13 @@ fn daemon_socket_writer(
     // owned, so `write_stream` is moved into the sink to keep it valid.
     let fd = write_stream.as_raw_fd();
     match fast_io::socket_writer_from_fd_zero_copy(fd, 64 * 1024, zero_copy_policy) {
+        // The factory degraded to a plain fd writer: the stock `TcpStream`
+        // writer does the same job, so keep the unchanged default path.
+        Ok(fast_io::IoUringOrStdSocketWriter::Std(_)) | Err(_) => Box::new(write_stream),
         Ok(zc) => Box::new(ZeroCopyTcpWriter {
             writer: zc,
             _socket: write_stream,
         }),
-        // A construction failure is non-fatal: fall back to the plain
-        // `TcpStream` writer so the transfer still runs with identical framing.
-        Err(_) => Box::new(write_stream),
     }
 }
 
@@ -147,16 +146,12 @@ impl Write for ZeroCopyTcpWriter {
 }
 
 /// `zero_copy_policy` opts the daemon-sender's socket write side into the
-/// io_uring `IORING_OP_SEND_ZC` transport when it is
-/// [`ZeroCopyPolicy::Enabled`](fast_io::ZeroCopyPolicy::Enabled) (the client
-/// sent `--zero-copy`) and the write side is a plaintext TCP socket. The
-/// zero-copy writer substitutes the socket write of the same framed buffer, so
-/// the wire bytes are identical; only the syscall path changes. `Auto` and
-/// `Disabled` - and every non-plaintext or stdio transport - keep the current
-/// `TcpStream` writer unchanged, so the default transfer path is byte- and
-/// behavior-identical. On non-Linux, or a build without the `io_uring` cargo
-/// feature, the factory degrades to the plain fd writer; on non-Unix the raw-fd
-/// path is skipped entirely and the current `TcpStream` box is used.
+/// io_uring `IORING_OP_SEND_ZC` transport when the write side is a plaintext
+/// TCP socket and the daemon was started with zero-copy on. The zero-copy writer
+/// substitutes the socket write of the same framed buffer, so the wire bytes
+/// are identical; only the syscall path changes. `Auto` and `Disabled` - and
+/// every stdio transport, and any kernel or build without SEND_ZC - keep the
+/// current `TcpStream` writer unchanged.
 ///
 /// Returns the transfer streams on success, or sends an error and returns `None`.
 /// `deadline` is the session's transfer-phase idle timeout (`io_progress.rs`),

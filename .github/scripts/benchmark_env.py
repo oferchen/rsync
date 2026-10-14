@@ -201,9 +201,8 @@ def capture(oc_rsync_send_zc_dispatch: str = "") -> dict:
         "cpu_count": os.cpu_count(),
         "io_uring_send_zc": probe_send_zc(),
         # Declared by the build step that produced the benchmarked binary:
-        # `iouring-send-zc` is not in any default feature set, and the
-        # binary's --version output does not enumerate fast_io features, so
-        # the workflow that ran cargo is the only place this is knowable.
+        # the binary's --version output does not enumerate fast_io features,
+        # so the workflow that ran cargo is the only place this is knowable.
         "oc_rsync_send_zc_dispatch": oc_rsync_send_zc_dispatch
         or "not declared by the build",
     }
