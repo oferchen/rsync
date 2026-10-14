@@ -393,6 +393,8 @@ include!("tests/chunks/runtime_options_quic_identity_resolution.rs");
 #[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_port_directive.rs");
 #[cfg(feature = "quic")]
+include!("tests/chunks/runtime_options_quic_windows_refusal.rs");
+#[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_listener_enabled.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_bwlimit.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_lock_file_argument.rs");
