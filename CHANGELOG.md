@@ -47,7 +47,7 @@ for detail.
 | CVE-2026-70463 | #7345 |
 | CVE-2026-70464 | #7688, #7754, #8002 |
 
-CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: the network receiver now pins xattr writes beneath the destination root (#8167), but still applies ACLs by path.
+CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: it is fixed on Linux (#8167 and the ACL pin), and macOS and FreeBSD still apply ACLs by path, as upstream does.
 
 **Path confinement (CVE-2026-53795 family)**
 - Confine destination writes and source reads against symlink races through one shared per-component resolver (#7393, #7349)
@@ -139,6 +139,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Refuse a negative hard-link reference and bound the live xattr count (CVE-2026-70458, #8173)
 - Step the zstd token decoder through a fixed output buffer (#8172)
 - Pin received xattr writes beneath the destination root (CVE-2026-53799, xattr half, #8167)
+- Pin ACL writes beneath the destination root on Linux, in the network receiver and the local copy, and report `ACL-at` in `--version` (CVE-2026-53799, ACL half)
 - Mirror upstream's daemon auth challenge, peer address and auth rules (#8190)
 
 ### Added
