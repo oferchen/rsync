@@ -19,7 +19,7 @@
 //! - `rsync-3.5.1/generator.c:2270-2274` `prepare_to_open` - `fnamecmp =
 //!   partialptr; fnamecmp_type = FNAMECMP_PARTIAL_DIR`, overriding the
 //!   destination and fuzzy basis.
-//! - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
+//! - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial && partial_dir &&
 //!   fnamecmp_type == FNAMECMP_PARTIAL_DIR`, the reconstruction rewrites the leaf.
 
 use std::fs;

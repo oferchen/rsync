@@ -30,7 +30,7 @@ impl LocalCopyOptions {
     /// Overrides the suffix appended to backup file names.
     ///
     /// When `None`, the default is `""` if a backup directory is set, or `"~"`
-    /// otherwise - matching upstream `options.c:2287-2288`.
+    /// otherwise - matching upstream `options.c:2448`.
     #[must_use]
     #[doc(alias = "--suffix")]
     pub fn with_backup_suffix<S: Into<OsString>>(mut self, suffix: Option<S>) -> Self {
@@ -40,7 +40,7 @@ impl LocalCopyOptions {
                 self.backup = true;
             }
             None => {
-                // upstream: options.c:2305-2306
+                // upstream: options.c:2448
                 // backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
                 if self.backup_dir.is_some() {
                     self.backup_suffix = OsString::new();
@@ -71,7 +71,7 @@ impl LocalCopyOptions {
 
     /// Reports whether `name` already ends with the backup suffix.
     ///
-    /// Mirrors upstream `delete.c:37-41 is_backup_file()`: a non-empty suffix
+    /// Mirrors upstream `delete.c:80-84 is_backup_file()`: a non-empty suffix
     /// that matches the trailing bytes of the name (with at least one byte
     /// preceding it) marks the file as an existing backup.
     #[must_use]
@@ -88,7 +88,7 @@ impl LocalCopyOptions {
     /// Reports whether an extraneous entry should be backed up before it is
     /// deleted, rather than unlinked directly.
     ///
-    /// Mirrors the guard on upstream `delete.c:165`:
+    /// Mirrors the guard on upstream `delete.c:228`:
     /// `make_backups > 0 && (backup_dir || !is_backup_file(fbuf))`. A file
     /// whose name already ends in the backup suffix is unlinked directly (no
     /// re-backup to `<name><suffix><suffix>`) unless a `--backup-dir` is set,
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn with_backup_suffix_none_empty_when_backup_dir_set() {
-        // upstream: options.c:2305-2306 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
+        // upstream: options.c:2448 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
         let opts = LocalCopyOptions::new()
             .with_backup_directory(Some("/backups"))
             .with_backup_suffix::<OsString>(None);
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn is_backup_file_matches_trailing_suffix() {
-        // upstream: delete.c:37-41 - k > 0 && strcmp(fn+k, backup_suffix) == 0.
+        // upstream: delete.c:80-84 - k > 0 && strcmp(fn+k, backup_suffix) == 0.
         let opts = LocalCopyOptions::new().backup(true); // default suffix "~"
         assert!(opts.is_backup_file(OsStr::new("stale~")));
         assert!(!opts.is_backup_file(OsStr::new("plain")));
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn should_backup_before_delete_skips_already_suffixed() {
-        // upstream: delete.c:165 - backup_dir || !is_backup_file(fbuf).
+        // upstream: delete.c:228 - backup_dir || !is_backup_file(fbuf).
         // With -b and no --backup-dir, a "~"-suffixed extraneous file is
         // unlinked directly, not re-backed-up to "<name>~~".
         let opts = LocalCopyOptions::new().backup(true);

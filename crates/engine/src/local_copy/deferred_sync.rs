@@ -259,9 +259,10 @@ fn sync_file(path: &Path) -> io::Result<()> {
 
 /// Syncs a directory to disk.
 ///
-/// The directory `fsync` is oc-rsync's durability extension on top of
-/// upstream's file-only `--fsync` (upstream `do_fsync` in `syscall.c` targets
-/// regular files). On Unix a plain `File::open` yields a directory descriptor
+/// Deviation from upstream: the directory `fsync` is an oc-rsync durability
+/// extension. Upstream `--fsync` (`do_fsync`) only fsyncs regular files
+/// (receiver.c:679 `receive_data()`, util1.c:502 `copy_file()`). On Unix a
+/// plain `File::open` yields a directory descriptor
 /// that `fsync(2)` accepts, so that path is used unchanged.
 ///
 /// On Windows a directory handle can only be obtained with

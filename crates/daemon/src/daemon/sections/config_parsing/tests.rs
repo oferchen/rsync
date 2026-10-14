@@ -113,7 +113,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_global_section_returns_to_global_scope() {
-        // upstream loadparm.c:do_section:497-510 - a "[global]" header (case-
+        // upstream loadparm.c:do_section:616-629 - a "[global]" header (case-
         // insensitive) returns to global scope instead of defining a module, so
         // only the real module is created and directives after it apply globally.
         let dir = TempDir::new().expect("create temp dir");
@@ -144,7 +144,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_path_strips_trailing_slash() {
-        // upstream loadparm.c:443-449 P_PATH strips trailing '/'.
+        // upstream loadparm.c:562-569 P_PATH strips trailing '/'.
         let dir = TempDir::new().expect("create temp dir");
         let mpath = dir.path().join("data");
         fs::create_dir(&mpath).expect("create module dir");
@@ -159,7 +159,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_syslog_facility_numeric_stored_raw() {
-        // upstream loadparm.c:456-467 P_ENUM - an unrecognised name that is a
+        // upstream loadparm.c:575-586 P_ENUM - an unrecognised name that is a
         // positive integer is stored as that raw numeric facility.
         let dir = TempDir::new().expect("create temp dir");
         let mpath = dir.path().join("data");
@@ -435,7 +435,7 @@ mod config_parsing_tests {
     }
 
     /// A bare global `include` is the P_LOCAL include-filter parameter
-    /// (daemon-parm.txt Locals; loadparm.c via daemon-parm.h), NOT file
+    /// (daemon-parm.txt Locals, generated into loadparm.c), NOT file
     /// inclusion - upstream reserves `&include` for pulling in another file
     /// (params.c). So `include = <file>` must be treated as a filter value and
     /// must NOT load the modules declared in that file.
@@ -583,7 +583,7 @@ mod config_parsing_tests {
     fn global_uid_declared_after_a_module_section_still_applies_to_it() {
         // upstream: loadparm.c:347-348 - `uid` is P_LOCAL and reached through
         // FN_LOCAL_STRING, whose else-branch reads the live `Vars.l.uid`.
-        // clientserver.c:781-783 performs that read when a client selects the
+        // clientserver.c:739 `rsync_module()` performs that read when a client selects the
         // module, long after lp_load() returned, so a global declared *below*
         // the section still supplies its default. Resolving the default at the
         // `[name]` header instead left the module at `uid = None`, which
@@ -844,7 +844,7 @@ mod config_parsing_tests {
         assert!(result.modules.is_empty());
     }
 
-    /// upstream: loadparm.c:379-470 do_parameter() assigns the parameter slot
+    /// upstream: loadparm.c:498-590 do_parameter() assigns the parameter slot
     /// unconditionally, so a repeated global directive keeps its last value
     /// instead of aborting the load.
     #[test]
@@ -869,7 +869,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_invalid_boolean_keeps_default() {
-        // upstream: loadparm.c:418-423 - a badly formed boolean warns and
+        // upstream: loadparm.c:537-543 - a badly formed boolean warns and
         // retains the directive's default rather than aborting the load, so
         // `read only = maybe` leaves read_only at its default (true).
         let file = write_config("[mod]\npath = /tmp\nread only = maybe\n");
@@ -928,7 +928,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_munge_symlinks_invalid_boolean_keeps_default() {
-        // upstream: loadparm.c:418-423 - a badly formed boolean warns and keeps
+        // upstream: loadparm.c:537-543 - a badly formed boolean warns and keeps
         // the default; munge symlinks is unset (None) unless explicitly set.
         let file = write_config("[mod]\npath = /tmp\nmunge symlinks = maybe\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -937,7 +937,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_munge_symlinks_unset_tristate() {
-        // upstream: loadparm.c:369 - munge symlinks is a P_BOOL3 param, so the
+        // upstream: loadparm.c:488 - munge symlinks is a P_BOOL3 param, so the
         // `unset` tri-state is accepted and leaves the setting at its default.
         let file = write_config("[mod]\npath = /tmp\nmunge symlinks = unset\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -977,7 +977,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_max_verbosity_atoi_leniency() {
-        // upstream: loadparm.c:431-433 - P_INTEGER uses atoi(), so "abc" yields
+        // upstream: loadparm.c:550-552 - P_INTEGER uses atoi(), so "abc" yields
         // 0 and a trailing suffix like "5x" yields 5, never an error.
         let file = write_config("[mod]\npath = /tmp\nmax verbosity = abc\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -1279,8 +1279,8 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_strict_modes_invalid_boolean_keeps_default() {
-        // upstream: loadparm.c:418-423 - a badly formed boolean warns and keeps
-        // the default. `strict modes` defaults to True (daemon-parm.h:203), so
+        // upstream: loadparm.c:537-543 - a badly formed boolean warns and keeps
+        // the default. `strict modes` defaults to True (daemon-parm.txt:64), so
         // the malformed value must leave it enabled, not clear it.
         let file = write_config("[mod]\npath = /tmp\nstrict modes = maybe\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -1332,7 +1332,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_module_open_noatime_invalid_boolean_keeps_default() {
-        // upstream: loadparm.c:418-423 - a badly formed boolean warns and keeps
+        // upstream: loadparm.c:537-543 - a badly formed boolean warns and keeps
         // the default (open noatime defaults to false).
         let file = write_config("[mod]\npath = /tmp\nopen noatime = maybe\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -1645,7 +1645,7 @@ mod config_parsing_tests {
         assert!(!value);
     }
 
-    // upstream: reverse lookup is P_LOCAL (daemon-parm.h:78). A module value
+    // upstream: reverse lookup is P_LOCAL (daemon-parm.txt:63). A module value
     // overrides the global default for that module only; another module without
     // its own directive inherits the global default. Proving the override wins
     // guards against a regression back to treating it as a daemon-wide singleton.
@@ -1703,7 +1703,7 @@ mod config_parsing_tests {
         assert!(!result.modules[0].reverse_lookup);
     }
 
-    // upstream: daemon-parm.h:78 default True when neither global nor module set.
+    // upstream: daemon-parm.txt:63 default True when neither global nor module set.
     #[test]
     fn module_reverse_lookup_defaults_true_when_unset() {
         let dir = TempDir::new().expect("create temp dir");
@@ -1731,7 +1731,7 @@ mod config_parsing_tests {
         assert!(!result.modules[0].reverse_lookup);
     }
 
-    // upstream: lock file is P_LOCAL (daemon-parm.h:46). A module value overrides
+    // upstream: lock file is P_LOCAL (daemon-parm.txt:34). A module value overrides
     // the daemon-wide lock file for that module; an unset module inherits it.
     #[test]
     fn module_lock_file_override_parsed_and_sibling_inherits() {
@@ -2180,7 +2180,7 @@ mod config_parsing_tests {
         assert_eq!(module.syslog_facility.as_deref(), Some("local0"));
     }
 
-    // upstream: loadparm.c:456 `case P_ENUM` leaves the inherited value unchanged
+    // upstream: loadparm.c:575 `case P_ENUM` leaves the inherited value unchanged
     // when the facility name matches no entry, so an unknown name is not a config
     // error - the module keeps inheriting the global/default facility. WHY: mirror
     // upstream's accept-and-continue instead of failing the daemon on a typo.
@@ -2544,7 +2544,7 @@ mod config_parsing_tests {
 
     /// A repeated `filter` directive REPLACES the earlier one.
     ///
-    /// upstream: loadparm.c:379-470 do_parameter() assigns every P_STRING
+    /// upstream: loadparm.c:498-590 do_parameter() assigns every P_STRING
     /// through `string_set()`, which frees the old value first, so the last
     /// occurrence is the one that survives. Measured against the real 3.5.0
     /// daemon: with `filter = - foo` then `filter = - bar`, upstream serves
@@ -2730,7 +2730,7 @@ mod config_parsing_tests {
     /// Measured against the real 3.5.0 daemon, both orders and in the global
     /// section too: with `exclude = foo` and `filter = - bar` on one module,
     /// upstream hides BOTH and serves only the third file. `string_set()` keys
-    /// on the parameter (loadparm.c:379-470), so each name owns its own slot.
+    /// on the parameter (loadparm.c:498-590), so each name owns its own slot.
     #[test]
     fn parse_module_directives_of_different_names_keep_separate_slots() {
         let dir = TempDir::new().expect("create temp dir");
@@ -2830,7 +2830,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_global_rsync_port_atoi_leniency() {
-        // upstream: loadparm.c:431-433 - `port` is P_INTEGER, parsed with
+        // upstream: loadparm.c:550-552 - `port` is P_INTEGER, parsed with
         // atoi(), so "abc" yields 0 (the default port) rather than an error.
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
@@ -2879,7 +2879,7 @@ mod config_parsing_tests {
     /// A relative `log file` is kept verbatim, so the daemon opens it against
     /// its own working directory.
     ///
-    /// upstream: log.c:216-218 log_init() assigns `lp_log_file(module_id)` -
+    /// upstream: log.c:217 log_init() assigns `lp_log_file(module_id)` -
     /// loadparm.c's stored string - to `logfile_name`, and log.c:169
     /// logfile_open() opens that string unchanged. Rebasing it on the config
     /// file's directory prefixes a path that is already relative to the
@@ -3118,7 +3118,7 @@ mod config_parsing_tests {
     }
 
     /// Parameter-name matching must fold whitespace and case exactly like
-    /// upstream `strwiEQ` (loadparm.c:282), so every spacing/case variant of a
+    /// upstream `strwiEQ` (loadparm.c:401), so every spacing/case variant of a
     /// label collapses to the same canonical form. This is why `read only`,
     /// `readonly`, and `Read Only` all address the same parameter.
     #[test]
@@ -3166,7 +3166,7 @@ mod config_parsing_tests {
 
     /// An underscore in a parameter name is significant. Upstream 3.4.4 logs
     /// `Unknown Parameter encountered: "read_only"` and ignores the line
-    /// (loadparm.c:356), so `read_only` must NOT set the read only parameter,
+    /// (loadparm.c:475 map_parameter()), so `read_only` must NOT set the read only parameter,
     /// which retains its default of true.
     #[test]
     fn parse_module_read_only_underscore_is_not_a_synonym() {
@@ -3320,7 +3320,7 @@ mod config_parsing_tests {
 
     // WHY: upstream daemon-parm.txt marks `uid`/`gid` P_LOCAL, so a value in the
     // global section is the default `lp_uid(module_id)`/`lp_gid(module_id)` every
-    // module inherits (clientserver.c:781,790). A root daemon only drops a module
+    // module inherits (clientserver.c:833,844). A root daemon only drops a module
     // to `nobody` when that per-module value is unset (`am_root ? NOBODY_USER`).
     // Regression guard: mapping the global `uid`/`gid` to the process-wide daemon
     // drop instead made a root daemon silently run every uid-less module as
@@ -3352,7 +3352,7 @@ mod config_parsing_tests {
         );
     }
 
-    // WHY: upstream clientserver.c:783 - an explicit per-module `uid` overrides
+    // WHY: upstream clientserver.c:835 - an explicit per-module `uid` overrides
     // the inherited global default, exactly like every other P_LOCAL parameter.
     #[test]
     fn module_uid_overrides_global_uid_default() {
@@ -3375,9 +3375,10 @@ mod config_parsing_tests {
     }
 
     // WHY: upstream daemon-parm.txt marks `daemon_uid`/`daemon_gid` P_GLOBAL;
-    // `daemon uid` sets the process-wide drop the listener applies once before
-    // the accept loop (clientserver.c:1376), and must NOT leak into per-module
-    // uid defaults. Keeps the two identity mechanisms cleanly separated.
+    // `daemon uid` sets the process-wide drop oc's listener applies once before
+    // the accept loop (upstream applies it per connection, clientserver.c:1509),
+    // and must NOT leak into per-module uid defaults. Keeps the two identity
+    // mechanisms cleanly separated.
     #[test]
     fn daemon_uid_directive_is_process_wide_not_module_default() {
         let dir = TempDir::new().expect("create temp dir");
@@ -3419,7 +3420,7 @@ mod config_parsing_tests {
         assert!(!result.modules[0].requires_authentication());
     }
 
-    /// `auth users` is P_LOCAL (daemon-parm.h:262), so a module's empty value
+    /// `auth users` is P_LOCAL (daemon-parm.txt:20), so a module's empty value
     /// replaces the inherited global list rather than falling back to it.
     #[test]
     fn parse_empty_module_auth_users_overrides_the_global_list() {
@@ -3447,9 +3448,9 @@ mod config_parsing_tests {
         assert!(!result.modules[0].requires_authentication());
     }
 
-    /// A global `auth users` is a P_LOCAL default (daemon-parm.h:262): every
+    /// A global `auth users` is a P_LOCAL default (daemon-parm.txt:20): every
     /// module that omits its own `auth users` must inherit it and therefore
-    /// require authentication (authenticate.c:228 auth_server reads
+    /// require authentication (authenticate.c:288 auth_server reads
     /// lp_auth_users). Before this was wired, the global directive was silently
     /// dropped and such modules were left open - a fail-open security hole. A
     /// module that declares its own `auth users` still overrides the default.
@@ -3610,7 +3611,7 @@ mod config_parsing_tests {
     /// declared as `[my   module]`: requesting `my module` transfers (exit 0)
     /// while `mymodule`, `my   module`, `MY MODULE`, and `MyModule` each get
     /// `@ERROR: Unknown module '<name>'` (exit 5). `strwiEQ` governs parameter
-    /// name matching (loadparm.c:282), never module lookup, which compares with
+    /// name matching (loadparm.c:401), never module lookup, which compares with
     /// `strcmp` - mirrored by the `module.name == request` test in
     /// `module_access/request.rs`.
     #[test]
@@ -3637,7 +3638,7 @@ mod config_parsing_tests {
     /// A directive repeated inside one module section keeps its last value and
     /// the config still loads.
     ///
-    /// upstream: loadparm.c:379-470 do_parameter() has no seen-set and no
+    /// upstream: loadparm.c:498-590 do_parameter() has no seen-set and no
     /// duplicate check - it resolves the parameter pointer from parm_table and
     /// assigns unconditionally (`case P_STRING: string_set(parm_ptr,
     /// parmvalue)`). rsync 3.4.4 starts and serves the second `path` for a
@@ -3667,7 +3668,7 @@ mod config_parsing_tests {
     /// A repeated `[section]` header re-opens the module the first header
     /// created, so the two blocks merge into one module.
     ///
-    /// upstream: loadparm.c:add_a_section:320-339 - "it might already exist":
+    /// upstream: loadparm.c:add_a_section:439-459 - "it might already exist":
     /// `if (name) { i = getsectionbyname(name); if (i >= 0) return i; }` returns
     /// the existing section index instead of adding a second one. rsync 3.4.4
     /// starts and serves a single `data` module for a file that names `[data]`
@@ -3708,7 +3709,7 @@ mod config_parsing_tests {
     /// accumulating alongside it.
     ///
     /// upstream: `motd_file` is a P_STRING slot written by
-    /// loadparm.c:452-454 `string_set(parm_ptr, parmvalue)`, so the daemon
+    /// loadparm.c:571-573 `string_set(parm_ptr, parmvalue)`, so the daemon
     /// greets with the last file only. rsync 3.4.4 prints "two" for a config
     /// whose first `motd file` holds "one" and whose second holds "two";
     /// printing "one two" would send bytes upstream never sends.
@@ -3949,7 +3950,7 @@ mod config_parsing_tests {
         // upstream: `secrets file` is a NULL-default P_LOCAL string. A module
         // created before any global `secrets file` has a NULL copy, so
         // FN_LOCAL_STRING reads the final global value when the client
-        // authenticates (authenticate.c:143). The config is valid upstream.
+        // authenticates (authenticate.c:156). The config is valid upstream.
         let dir = TempDir::new().expect("create temp dir");
         let data = section_model_data_dir(&dir);
         let secrets = dir.path().join("rsyncd.secrets");
@@ -4041,7 +4042,7 @@ mod config_parsing_tests {
     #[test]
     fn merge_inside_a_module_keeps_applying_to_that_module() {
         // upstream: &merge does not touch bInGlobalSection/iSectionIndex
-        // (params.c:include_config:422-428 only sends `]push` for &include), so
+        // (params.c:include_config:424-429 only sends `]push` for &include), so
         // the merged file's parameters and the includer's following lines keep
         // applying to `[mod]`, and never become globals for `[other]`.
         let dir = TempDir::new().expect("create temp dir");
@@ -4217,7 +4218,7 @@ mod config_parsing_tests {
 
     #[test]
     fn missing_secrets_file_is_not_a_config_error() {
-        // upstream: authenticate.c:143-160 check_secret() opens the secrets
+        // upstream: authenticate.c:138-166 check_secret() opens the secrets
         // file per login, so a file that does not exist yet fails only that
         // login. The daemon must still start and serve its other modules.
         let dir = TempDir::new().expect("create temp dir");
@@ -4239,7 +4240,7 @@ mod config_parsing_tests {
 
     #[test]
     fn auth_users_without_any_secrets_file_is_not_a_config_error() {
-        // upstream: authenticate.c:143-146 - with no secrets file every login
+        // upstream: authenticate.c:156-157 - with no secrets file every login
         // fails with "no secrets file"; the config itself still loads.
         let dir = TempDir::new().expect("create temp dir");
         let data = section_model_data_dir(&dir);
@@ -4303,7 +4304,7 @@ mod config_parsing_tests {
 
     #[test]
     fn relative_motd_secrets_and_lock_files_are_stored_verbatim() {
-        // upstream: clientserver.c:183-188 (motd), authenticate.c:143
+        // upstream: clientserver.c:183-188 (motd), authenticate.c:156
         // (secrets) and connection.c claim_connection (lock) open the value as
         // given, so a relative path resolves against the daemon's cwd - never
         // against the directory the config file lives in.

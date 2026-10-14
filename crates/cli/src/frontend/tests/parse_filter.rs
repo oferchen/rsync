@@ -146,7 +146,7 @@ fn parse_filter_directive_accepts_clear_directive() {
         .expect("clear directive parses");
     assert_eq!(clear, FilterDirective::Clear);
 
-    // upstream: exclude.c:1211-1213 - leading whitespace is not skipped for a
+    // upstream: exclude.c:1249-1257 - leading whitespace is not skipped for a
     // top-level rule, so `  !   ` reaches the prefix `switch` default and errors
     // ("Unknown filter rule") rather than being treated as a clear.
     let _ = parse_filter_directive(OsStr::new("  !   "), filters::RuleSource::Argument)
@@ -159,14 +159,14 @@ fn parse_filter_directive_accepts_clear_keyword() {
         .expect("keyword parses");
     assert_eq!(keyword, FilterDirective::Clear);
 
-    // upstream: exclude.c:1139 RULE_STRCMP(s, "clear") is a case-sensitive
+    // upstream: exclude.c:1290 RULE_STRCMP(s, "clear") is a case-sensitive
     // strncmp reached only via `case 'c'`, so `CLEAR` misses it, reaches the
     // inner switch default, and errors with "Unknown filter rule". It is not a
     // clear directive.
     let _ = parse_filter_directive(OsStr::new("CLEAR"), filters::RuleSource::Argument)
         .expect_err("uppercase should error");
 
-    // upstream: exclude.c:1211-1213 - a leading space errors before any keyword
+    // upstream: exclude.c:1249-1257 - a leading space errors before any keyword
     // is recognised, and the keyword is case-sensitive besides; neither the
     // whitespace nor the case is normalised away.
     let _ = parse_filter_directive(OsStr::new("  CLEAR  "), filters::RuleSource::Argument)
@@ -188,7 +188,7 @@ fn parse_filter_directive_rejects_clear_with_trailing_characters() {
 
 #[test]
 fn parse_filter_directive_rejects_missing_pattern() {
-    // upstream: exclude.c:1290-1291,1326 - exactly one separator is consumed
+    // upstream: exclude.c:1365,1442-1443 - exactly one separator is consumed
     // after the rule char, so an empty remainder (`+ ` / `P `) is a missing
     // pattern ("unexpected end of filter rule"). A whitespace-only remainder is
     // NOT empty: `+   ` keeps the two extra spaces as the pattern "  " and is

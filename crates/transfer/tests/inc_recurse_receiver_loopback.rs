@@ -9,7 +9,7 @@
 //! forces INC_RECURSE the way an upstream client would: the sender's compact
 //! flag string carries `-e.i...`, so the sender's `setup_protocol` sets
 //! `CF_INC_RECURSE` and the receiver honours the flag verbatim
-//! (upstream: compat.c:745-746). No production hook is involved.
+//! (upstream: compat.c:757). No production hook is involved.
 //!
 //! The tree holds 3 directories of 5,000 files plus a nested directory, well
 //! above upstream's `MIN_FILECNT_LOOKAHEAD` (1,000) and `MAX_FILECNT_LOOKAHEAD`
@@ -19,9 +19,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:2219-2239` - `check_for_finished_files` writes `NDX_DONE`
+//! - `generator.c:2698` - `check_for_finished_files` writes `NDX_DONE`
 //!   for each completed flist during the walk.
-//! - `sender.c:249-264` - the sender echoes it and frees the flist.
+//! - `sender.c:525-545` - the sender echoes it and frees the flist.
 //! - `rsync.h:151-152` - `MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`.
 
 #![cfg(unix)]
@@ -129,7 +129,7 @@ fn forced_inc_recurse_pull_with(
     configure: impl FnOnce(&mut ServerConfig, &mut ServerConfig),
 ) -> TransferStats {
     // The `i` letter is what an upstream client sends to request INC_RECURSE
-    // (options.c:3045).
+    // (options.c:3221).
     loopback_pull(src, dst, opts, "iLsfxCIvu", configure)
 }
 
@@ -272,7 +272,7 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
 ///
 /// Under INC_RECURSE the sender numbers a group by the wire NDX of its first
 /// member *in send order*, and that NDX includes the one-slot gap each
-/// sub-list opens (flist.c:824-831, flist.c:3209). Numbering from the sorted
+/// sub-list opens (flist.c:824-831, flist.c:3511). Numbering from the sorted
 /// pre-partition list instead names the wrong entry: upstream's receiver
 /// aborts with `hard-link gnum N precedes flist start M` (hlink.c:125-141),
 /// and this receiver silently transfers the follower as a separate copy.
@@ -337,8 +337,8 @@ fn inc_recurse_receiver_loopback_links_hard_links_across_segments() {
 /// A decoder created afresh for a later sub-list sees that continuation
 /// without a frame header and fails with `Unknown frame descriptor`.
 ///
-/// upstream: token.c:837-866 recv_zstd_token() creates `zstd_dctx` once
-/// (`decomp_init_done`) and never resets it between files or file lists.
+/// upstream: token.c:839-924 recv_zstd_token() creates `zstd_dctx` once
+/// (`decomp_init_done`, token.c:841-861) and never resets it between files or file lists.
 #[cfg(feature = "zstd")]
 #[test]
 fn inc_recurse_zstd_pull_decodes_every_segment_with_one_stream() {
@@ -417,7 +417,7 @@ fn assert_streamed(stats: &TransferStats) {
 /// check_for_finished_files() after every entry (generator.c:2820), so each
 /// finished sub-list is released with an NDX_DONE during the walk. An eager
 /// drain of the whole list first never frees the sender's window and both ends
-/// block (io.c:753-774).
+/// block (io.c:854-861).
 #[test]
 fn inc_recurse_list_only_streams_past_lookahead_window() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -457,7 +457,7 @@ fn inc_recurse_list_only_streams_past_lookahead_window() {
 /// `MAX_FILECNT_LOOKAHEAD` entries must finish, request every file once, and
 /// leave the destination untouched.
 ///
-/// upstream: generator.c:1858-1959 - the `!do_xfers` request is NDX + iflags;
+/// upstream: generator.c:2367-2396 - the `!do_xfers` request is NDX + iflags;
 /// check_for_finished_files() (generator.c:2620-2714) still releases each
 /// finished sub-list mid-walk, and the sender's echo stream may carry the next
 /// sub-list ahead of a file echo (rsync.c:322-431 read_ndx_and_attrs).
@@ -486,9 +486,9 @@ fn inc_recurse_dry_run_streams_past_lookahead_window() {
 /// `MAX_FILECNT_LOOKAHEAD` entries must finish, drain every delta, and leave
 /// the destination untouched.
 ///
-/// upstream: main.c:1866 forces `dry_run` with `do_xfers` still set, so the
+/// upstream: main.c:1946-1947 forces `dry_run` with `do_xfers` still set, so the
 /// generator sends real sum heads and a pull receiver drains each delta with
-/// discard_receive_data() (receiver.c:827-833); the per-sub-list NDX_DONE
+/// discard_receive_data() (receiver.c:1001-1008); the per-sub-list NDX_DONE
 /// release is the same check_for_finished_files() walk.
 #[test]
 fn inc_recurse_only_write_batch_streams_past_lookahead_window() {
@@ -624,8 +624,8 @@ fn inc_recurse_list_only_matches_whole_list_listing() {
 /// `--dry-run` tallied segment by segment reports what the whole-list dry run
 /// reports: the same files requested, bytes, and created entries.
 ///
-/// upstream: receiver.c:797-800 counts each `!do_xfers` request and
-/// receiver.c:748-762 each ITEM_IS_NEW, whichever sub-list the entry is in.
+/// upstream: receiver.c:975 counts each `!do_xfers` request and
+/// receiver.c:925-938 each ITEM_IS_NEW, whichever sub-list the entry is in.
 #[test]
 fn inc_recurse_dry_run_matches_whole_list_tallies() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -810,7 +810,7 @@ fn inc_recurse_delete_empties_a_directory_whose_sub_list_is_empty() {
 /// walked and every extraneous entry survives.
 ///
 /// upstream: generator.c:304-311 tests the global `io_error` as each
-/// delete_in_dir() starts, and flist.c:2967 folds each list's trailer into it
+/// delete_in_dir() starts, and flist.c:3190-3211 folds each list's trailer into it
 /// as the list is read.
 #[test]
 fn inc_recurse_delete_skips_every_directory_after_a_source_io_error() {

@@ -1,4 +1,6 @@
-//! Regular file copy routines and helpers.
+//! Regular-file copy routines: whole-file and delta copy, `--backup`
+//! placement, destination write guards, partial files, sparse writes, and
+//! preallocation.
 
 mod append;
 mod backup;

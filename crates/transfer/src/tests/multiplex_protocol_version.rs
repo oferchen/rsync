@@ -2,8 +2,8 @@
 //!
 //! Upstream rsync activates multiplex output at different thresholds depending
 //! on the execution context:
-//! - Server mode: protocol >= 23 (main.c:1283-1284)
-//! - Client mode: protocol >= 30 (need_messages_from_generator, compat.c:776)
+//! - Server mode: protocol >= 23 (main.c:1310-1311)
+//! - Client mode: protocol >= 30 (need_messages_from_generator, compat.c:788)
 //!
 //! These tests exercise `requires_multiplex_output` for each supported protocol
 //! version in both server and client mode.

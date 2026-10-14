@@ -17,7 +17,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:230-420` `send_files()` - the per-request decode
+//! - `sender.c:488-821` `send_files()` - the per-request decode
 //!   (`read_ndx_and_attrs` + `receive_sums`) and source open this reads ahead of.
 
 use std::collections::HashMap;

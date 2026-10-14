@@ -1,18 +1,22 @@
 //! Copy-on-write file cloning with dual-path runtime selection.
 //!
-//! This module provides file cloning using macOS `clonefile()` when available,
-//! with automatic fallback to standard copy operations. The dual-path approach
-//! tries copy-on-write first (instant, zero data copied), then falls back to
-//! standard read/write copy on error.
+//! `clone_or_copy` dispatches through `fast_io`'s platform copy strategy, which
+//! tries a copy-on-write clone first (instant, zero data copied) and falls back
+//! to a data copy when CoW is unavailable. `try_clonefile` calls macOS
+//! `clonefile()` directly.
 //!
 //! On macOS APFS, `clonefile()` creates instant copy-on-write clones that share
-//! storage blocks until modified. This is particularly useful for `--link-dest`
-//! scenarios and same-filesystem copies.
+//! storage blocks until modified.
 //!
 //! # Platform Support
 //!
-//! - **macOS**: Uses `clonefile()` syscall for CoW cloning on supported filesystems (APFS)
-//! - **Other platforms**: Always uses standard copy (clonefile not available)
+//! - **`clone_or_copy`**: whatever `fast_io::DefaultPlatformCopy` supports
+//!   (`clonefile` on macOS, `FICLONE` on Linux, ReFS reflink on Windows),
+//!   otherwise a data copy.
+//! - **`try_clonefile`**: macOS only; `ErrorKind::Unsupported` elsewhere.
+//!
+//! Deviation from upstream: rsync 3.5.1 never clones; it always copies data.
+//! Cloning is an oc-only optimisation with byte-identical results.
 //!
 //! # Examples
 //!
@@ -314,7 +318,6 @@ mod tests {
         let content = std::fs::read(&dst).expect("read destination");
         assert_eq!(content, b"", "empty file should remain empty");
 
-        // Verify result reports correct bytes
         match result {
             CloneResult::Cloned => {
                 // Empty file cloned
@@ -329,7 +332,6 @@ mod tests {
     fn test_copy_large_file() {
         let temp = TempDir::new().expect("create temp dir");
 
-        // Create 1MB file
         let large_content = vec![0xAB_u8; 1024 * 1024];
         let src = temp.path().join("large_src.txt");
         let dst = temp.path().join("large_dst.txt");
@@ -342,7 +344,6 @@ mod tests {
         assert_eq!(dst_content.len(), 1024 * 1024, "should copy all bytes");
         assert_eq!(dst_content, large_content, "content should match exactly");
 
-        // Verify result
         match result {
             CloneResult::Cloned => {
                 // Instant CoW clone (macOS APFS)
@@ -366,11 +367,9 @@ mod tests {
         let src = temp.path().join("parity_src.txt");
         std::fs::write(&src, &test_content).expect("write source");
 
-        // Test clone_or_copy path
         let dst1 = temp.path().join("parity_dst1.txt");
         clone_or_copy(&src, &dst1).expect("clone_or_copy should succeed");
 
-        // Test standard copy path
         let dst2 = temp.path().join("parity_dst2.txt");
         copy_file_standard(&src, &dst2).expect("copy_file_standard should succeed");
 

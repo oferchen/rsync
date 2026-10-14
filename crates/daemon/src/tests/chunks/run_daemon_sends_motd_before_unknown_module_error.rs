@@ -1,7 +1,7 @@
 #[test]
 fn run_daemon_sends_motd_before_unknown_module_error() {
     // Wire/text fidelity: upstream emits the MOTD inside exchange_protocols()
-    // (clientserver.c:158-170), immediately after the greeting and before it
+    // (clientserver.c:183-200), immediately after the greeting and before it
     // reads the client's module request. The MOTD therefore precedes *every*
     // response, including an @ERROR refusal for an unknown module - not just
     // the module listing. A client parsing the daemon stream byte-for-byte
@@ -52,7 +52,7 @@ fn run_daemon_sends_motd_before_unknown_module_error() {
     reader.read_line(&mut line).expect("motd line");
     assert_eq!(line, "Welcome to rsyncd\n");
 
-    // upstream: clientserver.c:169 - single trailing blank line after the MOTD.
+    // upstream: clientserver.c:198 - single trailing blank line after the MOTD.
     line.clear();
     reader.read_line(&mut line).expect("motd trailing blank");
     assert_eq!(line, "\n");

@@ -51,7 +51,7 @@ impl ClientConfigBuilder {
     ///
     /// Set when `-i` was given at least twice (`stdout_format_has_i > 1`) or
     /// `--info=name2` raised the NAME level. Mirrors upstream's `itemize()`
-    /// emit gate at generator.c:575-576.
+    /// emit gate at generator.c:588-589.
     #[must_use]
     #[doc(alias = "-ii")]
     pub const fn itemize_unchanged(mut self, enabled: bool) -> Self {
@@ -66,7 +66,7 @@ impl ClientConfigBuilder {
     /// lacks `%i` clears it even under `-i`, while `-i` alone installs the
     /// default `"%i %n%L"` format whose `%i` is forwarded.
     ///
-    /// upstream: options.c:2354-2367 (`stdout_format_has_i`), 2772-2775 (emit
+    /// upstream: options.c:2496-2508 (`stdout_format_has_i`), 2948-2951 (emit
     /// `--log-format=%i`).
     #[must_use]
     #[doc(alias = "--out-format")]
@@ -90,7 +90,7 @@ impl ClientConfigBuilder {
     /// the `%o` (operation) directive without `%i`, so the remote is told via
     /// `--log-format=%o`.
     ///
-    /// upstream: options.c:2384-2385, 2786-2787.
+    /// upstream: options.c:2526-2527, 2952-2953.
     #[must_use]
     #[doc(alias = "--out-format")]
     #[doc(alias = "--log-format")]
@@ -103,7 +103,7 @@ impl ClientConfigBuilder {
     /// that contains neither `%i` nor `%o`, so a non-verbose client forwards the
     /// placeholder `--log-format=X`.
     ///
-    /// upstream: options.c:2788-2789.
+    /// upstream: options.c:2954-2955.
     #[must_use]
     #[doc(alias = "--out-format")]
     #[doc(alias = "--log-format")]

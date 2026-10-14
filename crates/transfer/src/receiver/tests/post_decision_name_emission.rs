@@ -1,6 +1,6 @@
 //! Regression: the receiver-transfer Name,1 emission must occur AFTER the
 //! per-file transfer/uptodate decision, mirroring upstream's `set_file_attrs`
-//! at `rsync.c:672-676`.
+//! at `rsync.c:904-914`.
 //!
 //! Two production sites were previously emitting `info_log!(Name, 1, "%s")`
 //! BEFORE the decision was known:
@@ -47,7 +47,7 @@ fn name_messages() -> Vec<String> {
 /// Simulates the post-decision emission ordering: the bare-name `info_log!`
 /// fires AFTER the metadata application step succeeds, so a transferred file
 /// produces exactly one line containing the bare path. Mirrors upstream
-/// `rsync.c:672-676` `set_file_attrs` "updated" branch.
+/// `rsync.c:824-828` `set_file_attrs` "updated" branch.
 #[test]
 fn transferred_file_emits_single_bare_name_post_decision() {
     init_name_level_1();
@@ -72,8 +72,8 @@ fn transferred_file_emits_single_bare_name_post_decision() {
 /// Pipelined live-path counterpart of `transferred_file_emits_single_bare_name_post_decision`:
 /// the live `transfer_file_list_pipelined` loop must also emit the bare path
 /// only AFTER `process_file_response_streaming` returns Ok and the per-file
-/// transfer is confirmed. Mirrors the same upstream `rsync.c:672-676`
-/// `set_file_attrs` "updated" branch as the dry-run path, and `receiver.c:966`
+/// transfer is confirmed. Mirrors the same upstream `rsync.c:824-828`
+/// `set_file_attrs` "updated" branch as the dry-run path, and `receiver.c:1266-1267`
 /// `log_item()` invocation on the live path.
 ///
 /// Regression for the pre-decision sites at `pipeline.rs:248-250` (initial-pass
@@ -85,7 +85,7 @@ fn pipelined_transferred_file_emits_single_bare_name_post_decision() {
 
     // Simulate the live pipelined receiver finishing
     // `process_file_response_streaming` for a single file. The production
-    // emission point is inside the `upstream: receiver.c:966` block in
+    // emission point is inside the `upstream: receiver.c:1266-1267` block in
     // pipeline.rs, right alongside `emit_itemize`.
     info_log!(Name, 1, "{}", "foo/bar.txt");
 

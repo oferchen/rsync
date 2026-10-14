@@ -54,7 +54,7 @@ impl UnsupportedOption {
 
     /// Renders the refusal line naming the offending token.
     ///
-    /// upstream: options.c:2053 formats `"%s: %s\n"` from `poptBadOption()` and
+    /// upstream: options.c:2051-2054 formats `"%s%s: %s\n"` from `poptBadOption()` and
     /// `poptStrerror()`, and option_error() (options.c:915) prints it behind
     /// the program name.
     pub(crate) fn refusal_line(&self, program: &str) -> String {
@@ -66,7 +66,7 @@ impl UnsupportedOption {
 
     /// Renders the refusal line a server prints for the offending token.
     ///
-    /// upstream: options.c:2053 prefixes popt's text with `on remote machine: `
+    /// upstream: options.c:2051-2052 prefixes popt's text with `on remote machine: `
     /// when `am_server`, which covers a local transfer's forked child too.
     pub(crate) fn remote_refusal_line(&self, program: &str) -> String {
         format!(

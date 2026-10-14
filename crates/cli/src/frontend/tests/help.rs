@@ -51,7 +51,7 @@ fn oc_help_mentions_config_option() {
 
 #[test]
 fn archive_help_matches_upstream_parenthetical() {
-    // Upstream rsync 3.4.1 (help-rsync.h:10) renders the archive line as:
+    // Upstream rsync 3.5.1 (rsync.1.md:542 -> help-rsync.h) renders the archive line as:
     //   --archive, -a            archive mode is -rlptgoD (no -A,-X,-U,-N,-H)
     // The parenthetical must match byte-for-byte for interop tooling that
     // grep `--help` output by upstream wording.

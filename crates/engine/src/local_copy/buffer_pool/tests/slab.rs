@@ -1,4 +1,4 @@
-//! End-to-end behaviour tests for the per-thread slab feature (#1271, #1370).
+//! End-to-end behaviour tests for the per-thread slab feature.
 //!
 //! Each test runs inside a dedicated worker thread so the `thread_local!`
 //! slab is fresh and the assertions are not perturbed by other tests

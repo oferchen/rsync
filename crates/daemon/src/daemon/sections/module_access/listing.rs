@@ -4,8 +4,9 @@
 // one `%-15s\t%s\n` line per listable module, terminated by `@RSYNCD: EXIT`.
 // The MOTD is emitted earlier, right after the greeting.
 //
-// upstream: clientserver.c:1246-1254 - `rsync_module()` handles the `#list`
-// request by iterating `lp_numservices()` and printing each listable module.
+// upstream: clientserver.c:1554-1559 - `start_daemon()` handles the `#list`
+// request by calling `send_listing()` (1374-1386), which iterates
+// `lp_num_modules()` and prints each listable module.
 
 /// Sends the list of available modules to a client.
 ///
@@ -15,17 +16,17 @@
 /// only when the client tries to open a module. A host denied access still sees
 /// the module in the listing, matching upstream. The MOTD is emitted earlier,
 /// right after the greeting, matching upstream's `exchange_protocols()`
-/// (clientserver.c:158-170).
+/// (clientserver.c:182-200).
 fn respond_with_module_list(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleRuntime],
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {
-    // upstream: clientserver.c:1261-1272 send_listing() - the listing loops over
+    // upstream: clientserver.c:1374-1386 send_listing() - the listing loops over
     // every module and prints it iff `lp_list(i)`. No `allow_access()`/hosts
     // check is applied; host filtering happens only in rsync_module() on the
-    // module-open path (clientserver.c:728). The listing goes straight to the
+    // module-open path (clientserver.c:773). The listing goes straight to the
     // module names followed by @RSYNCD: EXIT - it does NOT send @RSYNCD: OK
     // first, and the MOTD was already emitted after the greeting.
     for module in modules {
@@ -33,7 +34,7 @@ fn respond_with_module_list(
             continue;
         }
 
-        // upstream: clientserver.c:1267 - io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
+        // upstream: clientserver.c:1381 - io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
         let comment = module.comment.as_deref().unwrap_or("");
         let line = format_daemon_module_listing(&module.name, comment);
         write_limited(stream, limiter, line.as_bytes())?;

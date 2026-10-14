@@ -8,12 +8,12 @@
 //!
 //! Only knobs whose runtime behaviour is wired today are covered:
 //!
-//! - [`SpillPolicy::threshold_bytes`] (STN-2) - drives the spill trigger.
-//! - [`SpillPolicy::dir`] (STN-3) - drives the on-disk scratch location.
+//! - [`SpillPolicy::threshold_bytes`] - drives the spill trigger.
+//! - [`SpillPolicy::dir`] - drives the on-disk scratch location.
 //!
 //! The remaining knobs ([`reclaim_mode`], [`granularity`], [`compression`])
-//! are placeholders for STN-4..7 and have no observable runtime effect yet,
-//! so no tests are emitted for them here.
+//! are covered by their own suites under `spill/buffer/tests/`, so no tests
+//! are emitted for them here.
 //!
 //! [`reclaim_mode`]: super::policy::SpillPolicy::reclaim_mode
 //! [`granularity`]: super::policy::SpillPolicy::granularity
@@ -88,7 +88,7 @@ fn drain_all(buf: &mut SpillableReorderBuffer<SizedItem>) -> Result<Vec<SizedIte
     buf.drain_ready()
 }
 
-// ---- threshold_bytes (STN-2, wired) ----
+// ---- threshold_bytes ----
 
 #[test]
 fn threshold_bytes_does_not_spill_at_exact_threshold() {
@@ -165,7 +165,7 @@ fn threshold_bytes_zero_spills_on_first_insert() {
     assert_eq!(values, vec![10, 11]);
 }
 
-// ---- dir (STN-3, wired) ----
+// ---- dir ----
 
 #[test]
 fn dir_override_routes_spill_through_supplied_directory() {
@@ -269,7 +269,7 @@ fn dir_override_default_none_keeps_buffer_without_a_dir() {
     );
 }
 
-// ---- in_memory_only (SRO-3, wired) ----
+// ---- in_memory_only ----
 
 #[test]
 fn in_memory_only_returns_spill_disabled_via_policy() {

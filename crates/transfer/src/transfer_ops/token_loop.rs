@@ -6,7 +6,7 @@
 //!
 //! # Buffer Recycling
 //!
-//! Mirrors upstream rsync's `simple_recv_token` (token.c:285) single-buffer
+//! Mirrors upstream rsync's `simple_recv_token` (token.c:289) single-buffer
 //! pattern. Buffers flow from the network thread to the disk thread and back
 //! through a return channel, avoiding per-chunk allocation.
 
@@ -25,7 +25,7 @@ use super::streaming::StreamingResult;
 
 /// Try to reuse a buffer returned by the disk thread, or allocate a new one.
 ///
-/// Mirrors upstream rsync's `simple_recv_token` (token.c:285) which uses a
+/// Mirrors upstream rsync's `simple_recv_token` (token.c:289) which uses a
 /// single static buffer. Here we recycle buffers through a return channel.
 #[inline]
 pub(super) fn recycle_or_alloc(
@@ -156,7 +156,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
                 };
                 let len = buf.len() as u64;
 
-                // upstream: receiver.c:568-571 - the literal's length and the
+                // upstream: receiver.c:563-569 - the literal's length and the
                 // output offset it lands at, before it is written.
                 matching::trace_deltasum::trace_data_recv(len as usize, total_bytes);
 
@@ -198,14 +198,14 @@ pub(super) fn process_remaining_tokens<R: Read>(
 
                     let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
 
-                    // upstream: token.c:685 - see_deflate_token() keeps the
+                    // upstream: token.c:688 - see_deflate_token() keeps the
                     // decompressor dictionary in sync after block matches.
                     token_reader.see_token(block_data)?;
 
                     let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
                     buf.extend_from_slice(block_data);
 
-                    // upstream: receiver.c:481-490 - when updating the basis in
+                    // upstream: receiver.c:640-650 - when updating the basis in
                     // place (fnamecmp == fname) and this matched block's basis
                     // offset equals the current output position, the bytes are
                     // already correct in the destination. Seek past them via
@@ -217,8 +217,8 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     // data received from the sender, and the disk thread arms
                     // `--partial` retention off that. upstream sets
                     // `cleanup_got_literal` only in the literal branch
-                    // (receiver.c:405-416), so a temp holding nothing but basis
-                    // copies is unlinked on abort (cleanup.c:159, :199-200)
+                    // (receiver.c:575), so a temp holding nothing but basis
+                    // copies is unlinked on abort (cleanup.c:159, :200-201)
                     // rather than renamed over a complete destination.
                     let seek = updating_basis && offset == total_bytes;
                     // upstream: receiver.c:625-630 - the ` (seek)` suffix marks

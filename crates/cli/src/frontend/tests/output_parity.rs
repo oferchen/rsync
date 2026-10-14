@@ -127,7 +127,7 @@ fn render_itemize(event: &ClientEvent) -> String {
 
 #[test]
 fn info_name_only_suppresses_stats_footer() {
-    // upstream: main.c:462-464 output_summary() gates the
+    // upstream: main.c:466-475 output_summary() gates the
     // `sent %s bytes  received %s bytes` / `total size is %s` trailer on
     // `verbose > 0 || INFO_GTE(STATS, 1)`. `--info=name2` raises only the NAME
     // level, so the trailer must NOT print - previously oc emitted it whenever
@@ -170,7 +170,7 @@ fn info_name_only_suppresses_stats_footer() {
 #[test]
 fn verbose_still_emits_stats_footer() {
     // upstream: the verbose level-1 word list raises INFO_STATS to 1
-    // (options.c:251), so plain `-v` still prints the trailer. Guards against
+    // (options.c:257), so plain `-v` still prints the trailer. Guards against
     // over-suppressing the footer when tightening the name-only gate.
     let (summary, _temp) = create_known_summary(&[("file.txt", b"hello world")]);
     let out = render_verbose(&summary, 1);
@@ -617,7 +617,7 @@ fn parity_stats_level_1_emits_only_summary_lines() {
     let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 1);
 
     // Level 1 emits only the "sent X bytes received Y bytes" + "total size"
-    // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:454-464).
+    // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:466-475).
     assert!(
         output.contains("sent "),
         "level 1 must include 'sent' summary line:\n{output}"
@@ -657,8 +657,8 @@ fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
     let (summary, _temp) = create_known_summary(&[("lvl2.txt", b"level two")]);
     let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 2);
 
-    // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:418-452)
-    // followed by the level-1 summary (main.c:454-464).
+    // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:431-465)
+    // followed by the level-1 summary (main.c:466-475).
     for required in [
         "Number of files:",
         "Number of created files:",
@@ -681,7 +681,7 @@ fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
     }
 
     // The detail block must precede the summary lines (single blank line
-    // separator, matching upstream's `rprintf(FCLIENT, "\n")` at main.c:455).
+    // separator, matching upstream's `rprintf(FCLIENT, "\n")` at main.c:467).
     let bytes_received_pos = output
         .find("Total bytes received:")
         .expect("Total bytes received: must be present at level 2");
@@ -798,7 +798,7 @@ fn parity_verbose_directory_names_end_with_slash() {
 #[test]
 fn parity_verbose_v2_emits_bare_name_per_upstream() {
     // upstream: log.c:log_formatted() at NAME>=1 emits the default
-    // `%n%L` format set by options.c:2381 - bare name plus optional
+    // `%n%L` format set by options.c:2523 - bare name plus optional
     // ` -> target` for symlinks or ` => hardlink` for hardlinks. Higher
     // verbosity adds ancillary log frames, never a per-file descriptor
     // prefix or byte-count wrapper. The upstream testsuite
@@ -971,7 +971,7 @@ fn parity_itemize_string_is_eleven_chars_for_non_delete() {
 
 #[test]
 fn parity_itemize_unchanged_file_shows_dots() {
-    // upstream: log.c:735-744 - all-dots collapse to spaces for '.', 'h', 'c' update types
+    // upstream: log.c:773-782 - all-dots collapse to spaces for '.', 'h', 'c' update types
     let event = ClientEvent::for_test(
         PathBuf::from("unchanged.txt"),
         ClientEventKind::MetadataReused,
@@ -2270,7 +2270,7 @@ fn parity_verbose_v3_produces_output_with_debug_info() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vvv"),
-        // upstream recurse defaults to 0 (options.c:112); a trailing-slash
+        // upstream recurse defaults to 0 (options.c:117); a trailing-slash
         // directory operand is "skipping directory ." without -r/-d, so it
         // transfers nothing. Pass --recursive so the top-level file is
         // actually enumerated and the verbose listing has something to show,

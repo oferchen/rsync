@@ -74,7 +74,7 @@ pub(crate) fn ensure_destination_directory(
         return Ok(true);
     }
 
-    // upstream: main.c:749 vs main.c:809 - `--mkpath` runs `make_path()` (full
+    // upstream: main.c:759 vs main.c:817 - `--mkpath` runs `make_path()` (full
     // chain) while the plain path does a single `do_mkdir(dest_path)` that fails
     // with ENOENT when a leading directory is absent.
     let outcome = if mkpath {
@@ -99,7 +99,7 @@ pub(crate) fn ensure_destination_directory(
 /// When an `--iconv` converter is supplied, the source filename component
 /// `name` is transcoded with [`transcode_filename_component`] before being
 /// appended to `destination_base`. This mirrors upstream rsync's
-/// `flist.c:1804-1828` (sender) + `flist.c:963-979` (receiver) composition
+/// `flist.c:2000-2023` (sender) + `flist.c:1058-1072` (receiver) composition
 /// in local-copy mode (`rsync.c:118-140`).
 pub(super) fn compute_target_path(
     destination_path: &Path,

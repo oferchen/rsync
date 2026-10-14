@@ -20,9 +20,12 @@ fn target_description() -> String {
 
 /// Static metadata describing the standard version banner rendered by `oc-rsync`.
 ///
-/// The structure mirrors upstream `print_rsync_version()` so higher layers can
-/// render byte-identical banners without hard-coding strings at the call site
-/// while honouring the Rust-specific branding.
+/// The structure follows upstream `print_rsync_version()` (usage.c:275) so higher
+/// layers can render the banner without hard-coding strings at the call site.
+///
+/// Deviation from upstream: the banner is oc-rsync branded. It adds a revision,
+/// a `Compatible with rsync ...` line and a toolchain line, and prints `Source:`
+/// where upstream prints `Web site:`.
 /// It captures the program name, version identifiers, protocol numbers, and the
 /// canonical copyright notice.
 ///
@@ -86,7 +89,7 @@ impl VersionMetadata {
         self.subprotocol_version
     }
 
-    /// Returns the canonical copyright notice rendered by upstream rsync.
+    /// Returns the copyright notice rendered on the banner's `Copyright` line.
     #[must_use]
     pub const fn copyright_notice(&self) -> &'static str {
         self.copyright_notice
@@ -165,7 +168,7 @@ pub const fn version_metadata() -> VersionMetadata {
     version_metadata_for_program(PROGRAM_NAME)
 }
 
-/// Returns metadata configured for the upstream-compatible `rsync` daemon banner.
+/// Returns metadata configured for the daemon banner.
 #[must_use]
 pub const fn daemon_version_metadata() -> VersionMetadata {
     version_metadata_for_program(DAEMON_PROGRAM_NAME)

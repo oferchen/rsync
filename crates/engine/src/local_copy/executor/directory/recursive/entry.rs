@@ -48,7 +48,7 @@ pub(super) fn process_planned_entry(
             // the built flist, which still holds non-regular entries (symlinks,
             // FIFOs, devices) even when their preservation flag (-l/-D) is off.
             // The generator only skips transferring them later
-            // (generator.c:1695-1701 "skipping non-regular file"), so the entry
+            // (generator.c:2109-2114 "skipping non-regular file"), so the entry
             // still reprieves its parent directory from pruning and the (empty)
             // parent is created. Ensure the directory exists and count it as
             // kept so `--prune-empty-dirs` does not over-prune the parent.
@@ -56,7 +56,7 @@ pub(super) fn process_planned_entry(
             return Ok(true);
         }
         EntryAction::SkipMountPoint => {
-            // upstream: flist.c:1572 - INFO_GTE(MOUNT, 1) gates
+            // upstream: flist.c:1718-1721 - INFO_GTE(MOUNT, 1) gates
             // `rprintf(FINFO, "[%s] skipping mount-point dir %s", who_am_i(), thisname)`
             // when `--one-file-system` (`-xx`) prunes a cross-device directory.
             // The role prefix (`[sender]`) is added downstream by the renderer.
@@ -72,7 +72,7 @@ pub(super) fn process_planned_entry(
         _ => {}
     }
 
-    // upstream: flist.c:1804-1828 (sender) + flist.c:963-979 (receiver) -
+    // upstream: flist.c:2000-2023 (sender) + flist.c:1058-1072 (receiver) -
     // the receiver opens the file with the iconv-converted name. For
     // local-copy the two contexts compose to LOCAL -> REMOTE; apply that
     // transcoding here before joining onto the destination directory.

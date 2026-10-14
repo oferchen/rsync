@@ -3,15 +3,15 @@
 //! Upstream scenario lineage:
 //! - `testsuite/delete_test.py` - canonical upstream delete sweep
 //!   coverage.
-//! - `testsuite/daemon-delete-stats_test.py` - at the pinned 3.5.0 the
+//! - `testsuite/daemon-delete-stats_test.py` - in 3.5.1 the
 //!   daemon-mode `NDX_DEL_STATS` exchange has its own script; through
 //!   3.4.x it was only exercised by the same `--delete --stats`
 //!   invocation under `runtests.py` daemon mode.
 //! - `generator.c:364` `do_delete_pass()` - the full-tree delete sweep
 //!   that populates the per-type counters.
-//! - `generator.c:2850-2872` and `main.c:229-242` (`write_del_stats`):
-//!   the `NDX_DEL_STATS` wire frame contract gated on `delete_mode ||
-//!   force_delete || read_batch` plus `INFO_GTE(STATS, 2)`.
+//! - `generator.c:2867-2872` / `generator.c:2911-2916` and `main.c:229-242`
+//!   (`write_del_stats`): the `NDX_DEL_STATS` wire frame contract, gated on
+//!   `protocol_version >= 31` and `delete_mode || force_delete || read_batch`.
 //!
 //! # Background
 //!
@@ -25,11 +25,10 @@
 //!
 //! oc-rsync's coverage of this contract landed in two passes:
 //!
-//! - UTS-6 / URV-6: the receiver-side delete sweep in
-//!   `run_pipelined_incremental` was wired so daemon-upload transfers
+//! - The receiver-side delete sweep was wired so daemon-upload transfers
 //!   carry per-type counters into `ReceiverContext::pending_del_stats`,
 //!   surfaced into `ServerStats::Receiver` and
-//!   `ServerStats::Generator` (PR #5586).
+//!   `ServerStats::Generator`.
 //! - The pull direction (client pulls from a daemon) was already wired
 //!   through the local receiver sweep but had no end-to-end nextest
 //!   guard against a future regression.
@@ -71,8 +70,9 @@
 //! # Upstream References
 //!
 //! - `generator.c:364` `do_delete_pass()` - delete sweep loop.
-//! - `generator.c:2850-2872` - `write_del_stats()` early emission gate
-//!   (`delete_mode || force_delete || read_batch`).
+//! - `generator.c:2867-2872` - `write_del_stats()` early emission gate
+//!   (`delete_mode || force_delete || read_batch`); `generator.c:2911-2916`
+//!   is the late arm.
 //! - `main.c:229-242` - `write_del_stats()` wire format.
 //! - `rsync.c:338-343` - sender-side `read_ndx_and_attrs()` consumes
 //!   the `NDX_DEL_STATS` frame and accumulates the counters.
@@ -80,9 +80,9 @@
 //!   `read_from` - oc-rsync side of the wire format.
 //! - `crates/transfer/src/generator/transfer/goodbye.rs::handle_goodbye` -
 //!   emission site.
-//! - `crates/transfer/src/receiver/transfer/pipelined_incremental.rs:118-124` -
-//!   URV-6.b wiring of the receiver-side counters into
-//!   `pending_del_stats` for the upload direction.
+//! - `crates/transfer/src/receiver/transfer.rs` - wiring of the
+//!   receiver-side counters into `pending_del_stats` for the upload
+//!   direction.
 
 #![cfg(unix)]
 
@@ -285,7 +285,7 @@ impl DaemonScratch {
 }
 
 /// Push direction: client pushes a source tree into a daemon module
-/// that already contains an extraneous file. URV-6.b path: the
+/// that already contains an extraneous file. The
 /// receiver runs in the daemon process, sweeps the destination, and
 /// must emit `NDX_DEL_STATS` so the sender renders the right
 /// `--stats` line.

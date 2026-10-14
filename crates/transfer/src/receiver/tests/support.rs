@@ -185,7 +185,7 @@ impl crate::writer::MsgInfoSender for TestDeletionWriter {
 /// A local/client receiver renders the row itself and forwards it as a
 /// `MSG_INFO` frame; a server generator instead forwards the raw deleted name
 /// as a `MSG_DELETED` frame that the client renders into the same
-/// `*deleting   <name>` row (upstream `log.c:869` vs `log.c:873`). Both channels
+/// `*deleting   <name>` row (upstream `log.c:916` vs `log.c:920`). Both channels
 /// are captured here so the order assertion holds regardless of role.
 #[cfg(unix)]
 #[derive(Default)]

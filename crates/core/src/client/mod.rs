@@ -145,6 +145,6 @@ pub(crate) use self::error::{
 ///
 /// This governs only I/O on an established stream (the `@RSYNCD:` handshake
 /// reads/writes), never the connect phase. Upstream bounds `connect(2)` solely
-/// via `--contimeout` (socket.c:274-277), with a default of `0` (no bound); the
+/// via `--contimeout` (socket.c:429-432), with a default of `0` (no bound); the
 /// connect phase is left to the OS SYN timeout unless `--contimeout` is set.
 pub(crate) const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);

@@ -66,7 +66,7 @@ fn run_daemon_logs_a_refused_option_in_upstream_words() {
     reader.read_line(&mut line).expect("module acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");
 
-    // upstream: clientserver.c:1156-1171 - the refusal is decided by
+    // upstream: clientserver.c:1159-1166 - the refusal is decided by
     // parse_arguments() over the post-OK argv, so `-z` arrives bundled in the
     // client's server-option string exactly as a stock client sends it.
     for arg in [

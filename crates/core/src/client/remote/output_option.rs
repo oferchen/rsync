@@ -1,18 +1,18 @@
 //! Server-side `--info=`/`--debug=` argument construction.
 //!
-//! Mirrors upstream `options.c:make_output_option()` (rsync-3.4.4:354), which
+//! Mirrors upstream `make_output_option()` (options.c:360), which
 //! forwards the negotiated info/debug output levels to the remote peer so its
 //! diagnostic output matches what the user asked for. Only levels the user set
 //! EXPLICITLY via `--info=`/`--debug=` are forwarded: levels merely implied by
 //! `-v`/`--stats` carry `DEFAULT_PRIORITY`, which upstream skips
-//! (options.c:372), so the peer re-derives them from the forwarded `-v`
+//! (options.c:378), so the peer re-derives them from the forwarded `-v`
 //! letters. Each word is additionally gated by its role `where` mask
-//! (options.c:419) so a category is only sent when it is relevant to the
+//! (options.c:376) so a category is only sent when it is relevant to the
 //! peer's role.
 
 use std::ffi::OsString;
 
-// upstream: options.c:264-267 - output-word role bit masks.
+// upstream: options.c:270-273 - output-word role bit masks.
 const W_CLI: u8 = 1 << 0;
 const W_SRV: u8 = 1 << 1;
 const W_SND: u8 = 1 << 2;
@@ -27,11 +27,11 @@ pub(crate) enum OutputWordKind {
     Debug,
 }
 
-// upstream: options.c:286-301 info_words[] (rsync-3.5.0) - `(name, where)` in
+// upstream: options.c:286-301 info_words[] (rsync-3.5.1) - `(name, where)` in
 // upstream table order. `stats` is deliberately not forwarded from here: oc conflates
 // `--stats` with `--info=stats` into a single stats level and forwards it via
 // the standalone `--stats` flag (mirroring upstream `if (do_stats) --stats` at
-// options.c:2866), so the caller filters `stats` out of the enabled list to
+// options.c:3032), so the caller filters `stats` out of the enabled list to
 // avoid double-sending.
 const INFO_WORDS: &[(&str, u8)] = &[
     ("backup", W_REC),
@@ -49,7 +49,7 @@ const INFO_WORDS: &[(&str, u8)] = &[
     ("symsafe", W_SND | W_REC),
 ];
 
-// upstream: options.c:305-331 debug_words[] (rsync-3.5.0) - `(name, where)` in
+// upstream: options.c:305-331 debug_words[] (rsync-3.5.1) - `(name, where)` in
 // upstream table order. Categories oc adds beyond upstream (the accelerated-I/O
 // diagnostics `iouring`/`clone`/`sockopt`/`iocp`) are absent here and fall to
 // the unconditional-forward path in `make_output_option`.
@@ -99,7 +99,7 @@ fn split_name_level(token: &str) -> (&str, u8) {
 ///
 /// `enabled` holds the explicitly-set flags as normalized `name{level}` tokens
 /// (e.g. `io2`, `del`); `am_sender` is true on a push (the local side is the
-/// sender). Mirrors upstream `make_output_option()` (options.c:354): each word
+/// sender). Mirrors upstream `make_output_option()` (options.c:360): each word
 /// is gated by its role `where` mask against `W_SRV | (am_sender ? W_REC :
 /// W_SND)`, and a level of 1 is emitted bare because the digit is implied
 /// (options.c:432). The abbreviated `ALL`/`NONE`/`ALLn` spelling upstream may
@@ -114,7 +114,7 @@ pub(crate) fn make_output_option(
         OutputWordKind::Info => (INFO_WORDS, "--info="),
         OutputWordKind::Debug => (DEBUG_WORDS, "--debug="),
     };
-    // upstream: options.c:2956 - `where = (am_server ? W_CLI : W_SRV) |
+    // upstream: options.c:3127 - `where = (am_server ? W_CLI : W_SRV) |
     // (am_sender ? W_REC : W_SND)`. We always build the peer's server args, so
     // `am_server` is false and the client-half is `W_SRV`.
     let peer_where = W_SRV | if am_sender { W_REC } else { W_SND };
@@ -128,7 +128,7 @@ pub(crate) fn make_output_option(
             // oc-specific categories absent from upstream's table (the
             // accelerated-I/O diagnostics) are forwarded unconditionally: an
             // oc peer consumes them and an upstream peer silently ignores
-            // unknown tokens (options.c:465 am_server tolerance).
+            // unknown tokens (options.c:484 am_server tolerance).
             None => true,
         };
         if !forward {
@@ -164,12 +164,12 @@ mod tests {
     // pin holds the same upstream lists plus the four oc debug extensions.
     #[test]
     fn word_tables_name_exactly_the_upstream_words() {
-        // upstream: options.c:286-301 info_words[] (rsync-3.5.0), table order.
+        // upstream: options.c:286-301 info_words[] (rsync-3.5.1), table order.
         const UPSTREAM_INFO: [&str; 13] = [
             "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress",
             "remove", "skip", "stats", "symsafe",
         ];
-        // upstream: options.c:305-331 debug_words[] (rsync-3.5.0), table order.
+        // upstream: options.c:305-331 debug_words[] (rsync-3.5.1), table order.
         const UPSTREAM_DEBUG: [&str; 24] = [
             "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
             "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own",
@@ -202,7 +202,7 @@ mod tests {
     // WHY: a category the peer's role cannot act on must not be forwarded, or
     // the two sides disagree on which side owns the message. `del` is
     // receiver-side (W_REC); on a pull the peer is the sender (W_SND), so it is
-    // dropped. Mirrors the `where` gate at options.c:419.
+    // dropped. Mirrors the `where` gate at options.c:376.
     #[test]
     fn role_filter_drops_irrelevant_category_on_pull() {
         // Pull: local is receiver, am_sender = false, peer_where = W_SRV|W_SND.

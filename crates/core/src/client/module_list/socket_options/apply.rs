@@ -2,7 +2,7 @@
 //!
 //! Parses a comma/whitespace-separated option string and applies each
 //! option via platform-specific `setsockopt` calls.
-// upstream: socket.c:set_socket_options()
+// upstream: socket.c:837 set_socket_options()
 
 use std::ffi::OsStr;
 
@@ -22,7 +22,7 @@ use super::types::SocketOptionKind;
 /// - `IPTOS_LOWDELAY` (Unix only)
 ///
 /// Must be called on `socket` before `connect(2)` - upstream:
-/// socket.c:279-280 applies `set_socket_options(s, sockopts)` immediately
+/// socket.c:434-435 applies `set_socket_options(s, sockopts)` immediately
 /// before `connect(s, ...)` so options that shape the SYN (e.g.
 /// `SO_SNDBUF`/`SO_RCVBUF` window scaling) actually take effect; setting
 /// them after `connect(2)` returns is a no-op for the handshake.
@@ -66,7 +66,7 @@ pub fn apply_socket_options_reporting(
         };
 
         let Some(kind) = lookup_socket_option(name) else {
-            // upstream: socket.c:712-715 - an unknown option name reports
+            // upstream: socket.c:863-866 - an unknown option name reports
             // `rprintf(FERROR,"Unknown socket option %s\n",tok)` and `continue`s.
             report(format!("Unknown socket option {name}"));
             continue;
@@ -76,7 +76,7 @@ pub fn apply_socket_options_reporting(
         {
             match kind {
                 SocketOptionKind::On { .. } => {
-                    // upstream: socket.c:725-735 - an OPT_ON option given a
+                    // upstream: socket.c:876-879 - an OPT_ON option given a
                     // value warns (`syntax error -- %s does not take a value`)
                     // but still applies its fixed value.
                     if value_str.is_some() {
@@ -114,7 +114,7 @@ pub fn apply_socket_options_reporting(
 
     for option in parsed {
         if let Err(error) = option.apply(socket) {
-            // upstream: socket.c:738-741 - a failed `setsockopt(2)` reports
+            // upstream: socket.c:889-892 - a failed `setsockopt(2)` reports
             // `rsyserr(FERROR, errno, "failed to set socket option %s")` and
             // keeps applying the remaining options.
             report(format!(
@@ -130,7 +130,7 @@ mod tests {
     use super::apply_socket_options;
 
     /// Builds a connected `socket2::Socket`, mirroring the pre-connect socket
-    /// `apply_socket_options` runs against (upstream: socket.c:279-280 -
+    /// `apply_socket_options` runs against (upstream: socket.c:434-435 -
     /// `set_socket_options()` must run before `connect(2)`). The accept thread
     /// only needs to complete the handshake; the options under test are applied
     /// (and read back) after connect for test convenience, which does not
@@ -160,7 +160,7 @@ mod tests {
         handle.join().expect("accept thread completes");
     }
 
-    /// upstream: socket.c:712-715 - an unknown option name warns
+    /// upstream: socket.c:863-866 - an unknown option name warns
     /// (`Unknown socket option %s`) and `continue`s; `set_socket_options()` is
     /// `void`, so a bogus name must never abort the connection. A later valid
     /// option in the same string must still be applied, proving the loop
@@ -183,7 +183,7 @@ mod tests {
         handle.join().expect("accept thread completes");
     }
 
-    /// upstream: socket.c:725-735 - an OPT_ON option (e.g. `IPTOS_LOWDELAY`) given
+    /// upstream: socket.c:876-879 - an OPT_ON option (e.g. `IPTOS_LOWDELAY`) given
     /// a value warns (`syntax error -- %s does not take a value`) but still applies
     /// its fixed value. The value must not turn the option into a fatal error.
     #[cfg(not(target_family = "windows"))]

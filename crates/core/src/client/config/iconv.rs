@@ -22,6 +22,11 @@ pub enum IconvSetting {
 
 impl IconvSetting {
     /// Parses an iconv specification as accepted by `--iconv`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`IconvParseError`] for an empty specification or an empty
+    /// local or remote half.
     pub fn parse(spec: &str) -> Result<Self, IconvParseError> {
         let trimmed = spec.trim();
         if trimmed.is_empty() {
@@ -89,76 +94,32 @@ impl IconvSetting {
         }
     }
 
-    /// Resolves the CLI-side iconv setting into a transfer-side
-    /// [`FilenameConverter`].
-    ///
-    /// This is the bridge from the parsed user request
-    /// ([`IconvSetting`] in `core::client::config`) to the in-process
-    /// converter consumed by the transfer crate's file-list reader and
-    /// writer hooks. Without this bridge, `--iconv` parses, validates,
-    /// and is forwarded to the remote peer over SSH, but the local
-    /// process silently passes raw bytes through file-list ingest,
-    /// file-list emit, and filter matching.
-    ///
-    /// Mapping:
-    ///
-    /// - [`IconvSetting::Unspecified`] / [`IconvSetting::Disabled`]
-    ///   resolve to `None`. The receiver and generator skip the iconv
-    ///   hook and operate on raw bytes, matching upstream rsync's
-    ///   behaviour when `--iconv` is absent or `--no-iconv` is supplied.
-    /// - [`IconvSetting::LocaleDefault`] (`--iconv=.`) resolves to
-    ///   [`converter_from_locale`], mirroring upstream
-    ///   `options.c::recv_iconv_settings` which uses the locale's
-    ///   `nl_langinfo(CODESET)` for the local side and UTF-8 for the
-    ///   remote side.
-    /// - [`IconvSetting::Explicit`] resolves via
-    ///   [`FilenameConverter::new`] with the local charset paired against
-    ///   the literal wire charset `"UTF-8"`. Upstream rsync always uses
-    ///   UTF-8 on the wire (`rsync.c:130-140` opens
-    ///   `ic_send = iconv_open(UTF8_CHARSET, charset)` and
-    ///   `ic_recv = iconv_open(charset, UTF8_CHARSET)` where `charset` is
-    ///   each peer's local charset); the post-comma half of
-    ///   `--iconv=LOCAL,REMOTE` describes the *peer's* local charset and
-    ///   is forwarded to the remote CLI by the invocation builder, not
-    ///   used for transcoding on this side. An unrecognised charset is
-    ///   rejected earlier by [`IconvSetting::validate_charsets`], which the
-    ///   CLI runs at option-resolution time and which exits 4 exactly as
-    ///   upstream's `setup_iconv()` does; the `None` arm below is therefore
-    ///   defence in depth, not the operator-visible path. It must NOT be
-    ///   relaxed back into a silent fallback: returning `None` here reads to
-    ///   every caller as "no conversion requested", which is why an
-    ///   unsupported charset used to produce a full transfer with
-    ///   untranscoded filenames and no diagnostic.
-    ///
     /// Validates that every charset named by `--iconv` can actually be
     /// opened, returning upstream's `iconv_open(...) failed` text when one
     /// cannot.
     ///
     /// Upstream performs this check once at startup: `setup_iconv()` opens
     /// both directions and calls `exit_cleanup(RERR_UNSUPPORTED)` if either
-    /// `iconv_open` fails (`rsync.c:130-140`), so an unusable charset stops
-    /// the run before a single file is examined. oc previously had no
-    /// equivalent - `resolve_converter` and `resolve_local_copy_converter`
-    /// each turned the failure into `None`, which every caller reads as "no
-    /// conversion requested", so the operator got a full transfer with the
-    /// filenames untranscoded and nothing on stderr.
+    /// `iconv_open` fails (`rsync.c:131-141`), so an unusable charset stops
+    /// the run before a single file is examined. Running this gate at option
+    /// resolution means `resolve_converter` and `resolve_local_copy_converter`
+    /// never meet an unknown charset mid-transfer.
     ///
-    /// Validating here rather than at the point of use is what makes that
-    /// safe: the concern recorded on those two call sites - not wanting to
-    /// abort midway through a file list - is real, and upstream answers it
-    /// by refusing at startup. Once this gate runs there is no unknown
-    /// charset left to discover mid-transfer.
+    /// # Errors
+    ///
+    /// Returns the upstream-format `iconv_open("UTF-8", "<charset>") failed`
+    /// text for the first charset that cannot be opened.
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:130-140` - `iconv_open` failure is fatal with
+    /// - `rsync.c:131-141` - `iconv_open` failure is fatal with
     ///   `RERR_UNSUPPORTED`, message `iconv_open("%s", "%s") failed`.
     pub fn validate_charsets(&self) -> Result<(), String> {
         let Self::Explicit { local, remote } = self else {
             return Ok(());
         };
 
-        // upstream: rsync.c:130 - `ic_send = iconv_open(UTF8_CHARSET,
+        // upstream: rsync.c:131 - `ic_send = iconv_open(UTF8_CHARSET,
         // charset)` is attempted first, so its message is the one an
         // operator sees for a charset that cannot be opened at all.
         Self::check_charset(local)?;
@@ -177,25 +138,65 @@ impl IconvSetting {
     /// against the UTF-8 wire charset.
     fn check_charset(charset: &str) -> Result<(), String> {
         if FilenameConverter::new(charset, "UTF-8").is_err() {
-            // upstream: rsync.c:131-132 - `iconv_open("%s", "%s") failed`
+            // upstream: rsync.c:132-133 - `iconv_open("%s", "%s") failed`
             // with UTF8_CHARSET as the destination.
             return Err(format!(r#"iconv_open("UTF-8", "{charset}") failed"#));
         }
         Ok(())
     }
 
+    /// Resolves the CLI-side iconv setting into a transfer-side
+    /// [`FilenameConverter`].
+    ///
+    /// This is the bridge from the parsed user request
+    /// ([`IconvSetting`] in `core::client::config`) to the in-process
+    /// converter consumed by the transfer crate's file-list reader and
+    /// writer hooks. Without this bridge, `--iconv` parses, validates,
+    /// and is forwarded to the remote peer over SSH, but the local
+    /// process silently passes raw bytes through file-list ingest,
+    /// file-list emit, and filter matching.
+    ///
+    /// Mapping:
+    ///
+    /// - [`IconvSetting::Unspecified`] / [`IconvSetting::Disabled`]
+    ///   resolve to `None`. The receiver and generator skip the iconv
+    ///   hook and operate on raw bytes, matching upstream rsync's
+    ///   behaviour when `--iconv` is absent or `--no-iconv` is supplied.
+    /// - [`IconvSetting::LocaleDefault`] (`--iconv=.`) resolves to
+    ///   [`converter_from_locale`], mirroring upstream `setup_iconv()`, which
+    ///   opens the locale's `default_charset()` (`nl_langinfo(CODESET)`,
+    ///   `rsync.c:82`) against the UTF-8 wire (`rsync.c:126-127`).
+    /// - [`IconvSetting::Explicit`] resolves via
+    ///   [`FilenameConverter::new`] with the local charset paired against
+    ///   the literal wire charset `"UTF-8"`. Upstream rsync always uses
+    ///   UTF-8 on the wire (`rsync.c:131-141` opens
+    ///   `ic_send = iconv_open(UTF8_CHARSET, charset)` and
+    ///   `ic_recv = iconv_open(charset, UTF8_CHARSET)` where `charset` is
+    ///   each peer's local charset); the post-comma half of
+    ///   `--iconv=LOCAL,REMOTE` describes the *peer's* local charset and
+    ///   is forwarded to the remote CLI by the invocation builder, not
+    ///   used for transcoding on this side. An unrecognised charset is
+    ///   rejected earlier by [`IconvSetting::validate_charsets`], which the
+    ///   CLI runs at option-resolution time and which exits 4 exactly as
+    ///   upstream's `setup_iconv()` does; the `None` arm below is therefore
+    ///   defence in depth, not the operator-visible path. It must not become a
+    ///   silent fallback: every caller reads `None` as "no conversion
+    ///   requested" and would transfer untranscoded filenames without a
+    ///   diagnostic.
+    ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:87-140` `setup_iconv()` - wire is always UTF-8.
-    /// - `flist.c::iconv_for_local` (file-list path entry transcode)
-    /// - `options.c::recv_iconv_settings` (parse `--iconv=LOCAL,REMOTE`)
-    /// - `compat.c:716-718` (gates `CF_SYMLINK_ICONV` advertisement on
-    ///   whether iconv is configured)
+    /// - `rsync.c:88-148` `setup_iconv()` - wire is always UTF-8; it also
+    ///   splits `--iconv=LOCAL,REMOTE` (`rsync.c:119-124`).
+    /// - `flist.c:1059-1075` `recv_file_entry()` and `flist.c:2002-2040`
+    ///   `send_file_list()` - file-list name transcoding.
+    /// - `compat.c:728-730` - `CF_SYMLINK_ICONV` is set whenever the build has
+    ///   `ICONV_OPTION`, independent of `--iconv`.
     pub fn resolve_converter(&self) -> Option<FilenameConverter> {
         match self {
             Self::Unspecified | Self::Disabled => None,
             Self::LocaleDefault => {
-                // upstream: rsync.c:142-145 - the level-1 emission fires
+                // upstream: rsync.c:143-146 - the level-1 emission fires
                 // after the iconv contexts open. For --iconv=. the local
                 // charset is locale-default, rendered as "[LOCALE]" via
                 // None.
@@ -203,14 +204,14 @@ impl IconvSetting {
                 Some(converter_from_locale())
             }
             Self::Explicit { local, .. } => {
-                // upstream: rsync.c:130-140 - wire is always UTF-8; only the
+                // upstream: rsync.c:131-141 - wire is always UTF-8; only the
                 // local-side charset matters for this peer's transcoding. The
                 // remote half of --iconv=LOCAL,REMOTE is forwarded to the
                 // remote CLI by remote::invocation::builder so the peer opens
                 // its own iconv context.
                 match FilenameConverter::new(local, "UTF-8") {
                     Ok(converter) => {
-                        // upstream: rsync.c:142-145 - `[%s] charset: %s`
+                        // upstream: rsync.c:143-146 - `[%s] charset: %s`
                         // emits once after both ic_send/ic_recv succeed.
                         trace_peer_charset(IconvRole::Client, Some(local));
                         Some(converter)
@@ -235,7 +236,7 @@ impl IconvSetting {
     ///
     /// In upstream rsync's local-copy mode, both sender and receiver run
     /// in the same address space but each opens its own iconv context.
-    /// The split at the comma is described in `rsync.c:118-122`:
+    /// The split at the comma is described in `rsync.c:119-124`:
     ///
     /// ```text
     /// if ((cp = strchr(iconv_opt, ',')) != NULL) {
@@ -246,7 +247,7 @@ impl IconvSetting {
     ///
     /// The sender then opens `ic_send = iconv_open(UTF8, LOCAL)` and the
     /// receiver opens `ic_recv = iconv_open(REMOTE, UTF8)`
-    /// (`rsync.c:130-140`). A filename therefore travels through both
+    /// (`rsync.c:131-141`). A filename therefore travels through both
     /// converters: LOCAL -> UTF-8 wire -> REMOTE. Composing those is
     /// equivalent to a single `FilenameConverter` whose local charset is
     /// LOCAL and whose remote charset is REMOTE, used in
@@ -259,10 +260,10 @@ impl IconvSetting {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:118-122` - LOCAL/REMOTE split between client and server.
-    /// - `rsync.c:130-140` - `ic_send`/`ic_recv` `iconv_open` calls.
-    /// - `flist.c:1804-1828` - sender applies `ic_send` to filenames.
-    /// - `flist.c:963-979` - receiver applies `ic_recv` to filenames.
+    /// - `rsync.c:119-124` - LOCAL/REMOTE split between client and server.
+    /// - `rsync.c:131-141` - `ic_send`/`ic_recv` `iconv_open` calls.
+    /// - `flist.c:2002-2040` - sender applies `ic_send` to filenames.
+    /// - `flist.c:1059-1075` - receiver applies `ic_recv` to filenames.
     pub fn resolve_local_copy_converter(&self) -> Option<FilenameConverter> {
         match self {
             Self::Unspecified | Self::Disabled => None,
@@ -397,7 +398,7 @@ mod tests {
     #[cfg(feature = "iconv")]
     #[test]
     fn resolve_converter_explicit_pair_local_utf8_is_identity() {
-        // upstream: rsync.c:130-140 - wire is always UTF-8. When the local
+        // upstream: rsync.c:131-141 - wire is always UTF-8. When the local
         // charset matches the wire charset, no transcoding is needed on
         // this peer (the remote half of LOCAL,REMOTE is the *peer's* local
         // charset, forwarded to the remote CLI separately).
@@ -435,7 +436,7 @@ mod tests {
     #[test]
     fn resolve_converter_explicit_single_uses_local_charset() {
         // A single charset means "local only"; the wire is always UTF-8
-        // (upstream rsync.c:130-140), so a Latin-1 local charset still
+        // (upstream rsync.c:131-141), so a Latin-1 local charset still
         // requires transcoding to and from the UTF-8 wire.
         let setting = IconvSetting::Explicit {
             local: "ISO-8859-1".to_owned(),
@@ -486,7 +487,7 @@ mod tests {
     #[cfg(feature = "iconv")]
     #[test]
     fn resolve_local_copy_converter_explicit_pair_uses_both_sides() {
-        // upstream: rsync.c:118-140 - in local-copy mode the sender opens
+        // upstream: rsync.c:119-141 - in local-copy mode the sender opens
         // ic_send=iconv_open(UTF8, LOCAL) and the receiver opens
         // ic_recv=iconv_open(REMOTE, UTF8). Composing both is equivalent
         // to a single LOCAL->REMOTE converter.
@@ -562,7 +563,7 @@ mod tests {
 
         #[test]
         fn locale_default_emits_locale_placeholder() {
-            // upstream: rsync.c:142-145 - `--iconv=.` renders charset as
+            // upstream: rsync.c:143-146 - `--iconv=.` renders charset as
             // "[LOCALE]" because *charset evaluates to NUL after
             // setup_iconv resolves the default.
             init_iconv(1);
@@ -577,7 +578,7 @@ mod tests {
         #[cfg(feature = "iconv")]
         #[test]
         fn explicit_charset_emits_charset_name() {
-            // upstream: rsync.c:142-145 - explicit `--iconv=LOCAL` (or
+            // upstream: rsync.c:143-146 - explicit `--iconv=LOCAL` (or
             // LOCAL,REMOTE) names the charset directly.
             init_iconv(1);
             let setting = IconvSetting::Explicit {
@@ -595,7 +596,7 @@ mod tests {
         #[test]
         fn unspecified_and_disabled_do_not_emit() {
             // upstream: setup_iconv early-returns when iconv_opt is unset
-            // (rsync.c:115-116); no DEBUG_GTE(ICONV, 1) fires.
+            // (rsync.c:116-117); no DEBUG_GTE(ICONV, 1) fires.
             init_iconv(2);
             let _ = IconvSetting::Unspecified.resolve_converter();
             let _ = IconvSetting::Disabled.resolve_converter();
@@ -618,7 +619,7 @@ mod tests {
 
         #[test]
         fn malformed_charset_does_not_emit() {
-            // upstream: rsync.c:130-134 - iconv_open failure aborts via
+            // upstream: rsync.c:131-135 - iconv_open failure aborts via
             // exit_cleanup before the DEBUG_GTE(ICONV, 1) emission. We
             // mirror the same ordering by skipping the trace when
             // FilenameConverter::new errors out.

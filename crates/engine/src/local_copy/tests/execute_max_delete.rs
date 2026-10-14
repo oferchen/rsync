@@ -708,7 +708,7 @@ fn max_delete_without_delete_flag_has_no_effect() {
 
 #[test]
 fn max_delete_survivor_set_matches_upstream_traversal() {
-    // Regression for the which-entries divergence (#207): with a mix of an
+    // Regression for the which-entries divergence: with a mix of an
     // extraneous directory whose name byte-sorts BEFORE the extraneous
     // sibling files, oc must delete the same entries upstream rsync does
     // when `--max-delete` caps the pass.
@@ -833,7 +833,7 @@ fn count_entries_under(dir: &std::path::Path, skip_top: Option<&str>) -> usize {
 /// Before the fix the local-copy emitter removed a doomed subtree wholesale
 /// (`remove_dir_all`) and counted it as a single deletion, so `--max-delete=3`
 /// against a directory of five files plus two loose files silently deleted all
-/// eight entries. upstream `delete.c:156`/`:181` guards and counts each removed
+/// eight entries. upstream `delete.c:217`/`:243` guards and counts each removed
 /// leaf, deleting exactly three and reporting `RERR_DEL_LIMIT` (25). Verified
 /// byte-for-byte against rsync 3.4.3 (3 deleted, 4 skipped, exit 25).
 #[test]
@@ -886,17 +886,17 @@ fn max_delete_counts_leaves_inside_nonempty_directory() {
     );
 }
 
-/// COUNT-FIDELITY REGRESSION (#212): a cap-saturated non-empty NESTED
+/// Count-fidelity regression: a cap-saturated non-empty NESTED
 /// directory must be counted toward the reported skipped total, exactly one
 /// per such directory, matching upstream.
 ///
 /// upstream `delete.c` reaches a nested subdir via
-/// `delete_item(..., DEL_DIR_IS_EMPTY)` (delete.c:107). With `DEL_DIR_IS_EMPTY`
-/// set, delete.c:144 is skipped and control falls straight to the max_delete
-/// guard (delete.c:156), which does `skipped_deletes++` because the cap is
+/// `delete_item(..., DEL_DIR_IS_EMPTY)` (delete.c:126-127, 162). With `DEL_DIR_IS_EMPTY`
+/// set, delete.c:205 is skipped and control falls straight to the max_delete
+/// guard (delete.c:217), which does `skipped_deletes++` because the cap is
 /// saturated - even though the subdir is actually non-empty. The TOP-LEVEL
 /// directory instead enters `delete_item` WITHOUT `DEL_DIR_IS_EMPTY`, so its
-/// survived contents take the `goto check_ret` path (delete.c:151-152) and it
+/// survived contents take the `goto check_ret` path (delete.c:212-213) and it
 /// is never counted.
 ///
 /// Layout `a/{f4, b/{f3, c/{f1, f2}}}` plus loose `top`, all extraneous, with
@@ -906,7 +906,7 @@ fn max_delete_counts_leaves_inside_nonempty_directory() {
 /// top-level `a` is NOT counted. Verified byte-for-byte against rsync 3.4.4
 /// (`Deletions stopped due to --max-delete limit (6 skipped)`, exit 25).
 ///
-/// Guards #6446/#6440: the survivor set and exit code must stay unchanged;
+/// The survivor set and exit code must stay unchanged;
 /// only the reported count moves from oc's old 4 to upstream's 6.
 #[test]
 fn max_delete_counts_nested_nonempty_directories_toward_skipped() {
@@ -940,7 +940,7 @@ fn max_delete_counts_nested_nonempty_directories_toward_skipped() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect_err("must stop at the cap and report RERR_DEL_LIMIT");
 
-    // Exit code unchanged (#6446/#6440): RERR_DEL_LIMIT (25).
+    // Exit code unchanged: RERR_DEL_LIMIT (25).
     assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
     match error.kind() {
         LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
@@ -953,7 +953,7 @@ fn max_delete_counts_nested_nonempty_directories_toward_skipped() {
         other => panic!("unexpected error kind: {other:?}"),
     }
 
-    // Survivor set unchanged (#6446/#6440): only `f2` is removed; every other
+    // Survivor set unchanged: only `f2` is removed; every other
     // doomed entry (including both nested directories) must remain.
     assert!(
         !c_dir.join("f2").exists(),

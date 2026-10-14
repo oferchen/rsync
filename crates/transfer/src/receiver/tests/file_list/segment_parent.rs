@@ -10,7 +10,7 @@
 //!   (`flist.c:3314-3326`), since a wrong `Some(0)` points the delete at a
 //!   directory the list never described;
 //! - the content flag as it stands AFTER the implied-parent downgrade
-//!   (`flist.c:1465-1481`), since the sender's claim is what lets a hostile
+//!   (`flist.c:1848-1864`), since the sender's claim is what lets a hostile
 //!   peer widen `--delete` to siblings the client merely traversed.
 
 use std::io::Cursor;

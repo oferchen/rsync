@@ -13,7 +13,7 @@ use super::msg_info::MsgInfoSender;
 /// upstream opens the batch file as the receiver's `f_in` and points the
 /// generator's `f_out` at one end of a self-pipe whose read end
 /// (`batch_gen_fd`) is never drained, so the requests simply go nowhere
-/// (`main.c:648-664`, and the `!read_batch` gate at `main.c:1377-1384` that
+/// (`main.c:652-665`, and the `!read_batch` gate at `main.c:1386-1387` that
 /// leaves that stream unmultiplexed). `DiscardSink` is that dead end - it
 /// swallows the generator's outbound stream without allocating or blocking, so
 /// the real receiver can drive to completion off a one-way pre-recorded input.

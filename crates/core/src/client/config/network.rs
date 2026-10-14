@@ -15,7 +15,7 @@ impl BindAddress {
         Self { raw, socket }
     }
 
-    /// Returns the raw command-line representation forwarded to the fallback binary.
+    /// Returns the address exactly as given on the command line.
     #[must_use]
     pub fn raw(&self) -> &OsStr {
         self.raw.as_os_str()

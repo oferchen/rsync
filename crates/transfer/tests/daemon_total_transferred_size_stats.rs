@@ -5,17 +5,17 @@
 //! Upstream accumulates `stats.total_transferred_size` by adding each
 //! transferred file's `F_LENGTH` at the exact point it bumps `xferred_files`:
 //!
-//! - `sender.c:344`   - `stats.total_transferred_size += F_LENGTH(file);`
-//! - `receiver.c:800` - `stats.total_transferred_size += F_LENGTH(file);`
+//! - `sender.c:635`   - `stats.total_transferred_size += F_LENGTH(file);`
+//! - `receiver.c:976` - `stats.total_transferred_size += F_LENGTH(file);`
 //!
-//! The value never crosses the wire: `main.c:handle_stats()` (3.4.4:325-385)
+//! The value never crosses the wire: `main.c:handle_stats()` (`main.c:329-389`)
 //! exchanges only `total_read`, `total_written`, `total_size` and the two
 //! flist timing counters. Each side computes `total_transferred_size` locally,
 //! and for every direction the process that runs the transfer loop is the
 //! client that prints the summary - on a push the client is the sender
 //! (`sender.c`), on a pull the client is the receiver (`receiver.c`). So a
 //! correct implementation reports the real summed length in BOTH directions
-//! purely from its own accumulation. `main.c:439` / `log.c:output_summary()`
+//! purely from its own accumulation. `main.c:442-443` in `output_summary()`
 //! renders the `Total transferred file size: %s bytes` line from it.
 //!
 //! # What this test pins
@@ -23,7 +23,7 @@
 //! oc-rsync previously accumulated this total only in the local-copy executor,
 //! so every remote (daemon / ssh) push AND pull printed
 //! `Total transferred file size: 0 bytes` even though real file data moved.
-//! This is the twin of the `bytes_copied` / `Literal data` gap fixed in #477.
+//! This is the twin of the `bytes_copied` / `Literal data` gap.
 //!
 //! For both upload (client pushes into a daemon module) and download (client
 //! pulls from a daemon module) into a FRESH empty destination - so every
@@ -44,9 +44,9 @@
 //!
 //! # Upstream References
 //!
-//! - `sender.c:344` / `receiver.c:800` - `total_transferred_size += F_LENGTH`.
-//! - `main.c:325-385` - `handle_stats()`: the stat is NOT sent on the wire.
-//! - `main.c:439` / `log.c:output_summary()` - the summary line.
+//! - `sender.c:635` / `receiver.c:976` - `total_transferred_size += F_LENGTH`.
+//! - `main.c:329-389` - `handle_stats()`: the stat is NOT sent on the wire.
+//! - `main.c:442-443` in `output_summary()` - the summary line.
 
 #![cfg(unix)]
 
@@ -207,7 +207,7 @@ impl DaemonScratch {
 }
 
 /// Push direction: client is the sender, so it accumulates
-/// `total_transferred_size` itself (`sender.c:344`). Destination starts empty
+/// `total_transferred_size` itself (`sender.c:635`). Destination starts empty
 /// so all three files transfer and the summed length is deterministic.
 #[test]
 fn daemon_push_reports_total_transferred_file_size() {
@@ -263,7 +263,7 @@ fn daemon_push_reports_total_transferred_file_size() {
 }
 
 /// Pull direction: client is the receiver, so it accumulates
-/// `total_transferred_size` itself (`receiver.c:800`) and must adopt it into
+/// `total_transferred_size` itself (`receiver.c:976`) and must adopt it into
 /// the client summary. Regression guard for the opposite direction.
 #[test]
 fn daemon_pull_reports_total_transferred_file_size() {

@@ -6,12 +6,12 @@
 /// messages fall back to [`format_legacy_daemon_message`], ensuring formatting
 /// parity with upstream rsync without duplicating string construction logic.
 ///
-/// The cache is hoisted to a process-wide `OnceLock` because the `OK` and
-/// `EXIT` payloads are compile-time constants; the DIS-4.a audit flagged the
-/// per-accept rebuild as wasted allocations on the cold-start critical path.
+/// The cache is a process-wide `OnceLock` because the `OK` and `EXIT` payloads
+/// never change, so rebuilding them per connection would only allocate.
 ///
-/// upstream: clientserver.c - the daemon sends `@RSYNCD: OK\n` and
-/// `@RSYNCD: EXIT\n` as protocol bookends around every module interaction.
+/// upstream: clientserver.c:1152 sends `@RSYNCD: OK\n` once a module request
+/// is accepted, and clientserver.c:1385 sends `@RSYNCD: EXIT\n` after a module
+/// listing.
 #[derive(Debug)]
 struct LegacyMessageCache {
     ok: Box<[u8]>,

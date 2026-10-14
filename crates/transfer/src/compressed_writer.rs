@@ -62,7 +62,7 @@ impl<W: Write> CompressedWriter<W> {
 
     /// Like [`new`](Self::new) but plumbs `--compress-threads=N` through to
     /// `ZSTD_c_nbWorkers` when zstd is the active codec. `workers` is ignored
-    /// for zlib and LZ4. upstream: `token.c:749`.
+    /// for zlib and LZ4. upstream: `token.c:752`.
     pub fn with_workers(
         inner: W,
         algorithm: CompressionAlgorithm,
@@ -146,7 +146,7 @@ impl<W: Write> CompressedWriter<W> {
     /// Calls `Z_SYNC_FLUSH` (or equivalent) on the compressor so the receiver
     /// can decompress all data written so far without waiting for more input.
     ///
-    /// upstream: `token.c:send_deflated_token()` lines 442-443 uses
+    /// upstream: `token.c:send_deflated_token()` lines 445-446 uses
     /// `Z_SYNC_FLUSH` at token boundaries for independent decompressibility.
     fn flush_compressed(&mut self) -> io::Result<()> {
         // upstream: token.c uses Z_SYNC_FLUSH after each token's data so the
@@ -410,7 +410,7 @@ mod tests {
 
         assert!(!buf.is_empty(), "flush must produce compressed output");
 
-        // upstream: token.c:send_deflated_token lines 442-443.
+        // upstream: token.c:send_deflated_token lines 445-446.
         let full = decompress_to_vec(&buf).unwrap();
         let mut expected = Vec::new();
         expected.extend_from_slice(token_data);

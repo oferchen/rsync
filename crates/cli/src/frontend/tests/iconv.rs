@@ -32,7 +32,7 @@ fn resolve_iconv_setting_rejects_empty_spec() {
 #[cfg(not(feature = "iconv"))]
 #[test]
 fn resolve_iconv_setting_rejects_explicit_when_feature_disabled() {
-    // Closes #1915 - --iconv must hard-fail rather than silently no-op
+    // --iconv must hard-fail rather than silently no-op
     // when the iconv feature is compiled out.
     let error = resolve_iconv_setting(Some(OsStr::new("utf8,iso88591")), false)
         .expect_err("reject iconv spec when feature is disabled");

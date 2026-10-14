@@ -14,18 +14,18 @@ use core::{
 /// - If `disable` is `true` and no spec is given, returns `Disabled`.
 /// - Otherwise returns `Unspecified`.
 ///
-/// When the `iconv` cargo feature is disabled and the user supplies an
-/// explicit `--iconv=LOCAL,REMOTE` (anything other than `--no-iconv` or
-/// absence), this function returns a hard error rather than silently
-/// no-opping. Without this guard, the parsed setting would flow through
-/// `IconvSetting::resolve_converter` and produce `None`, causing
-/// filenames containing non-ASCII bytes to be passed through verbatim
-/// despite the user's explicit conversion request.
+/// When the `iconv` cargo feature is disabled, an explicit `--iconv=...` is a
+/// hard error rather than a silent no-op that would pass non-ASCII filenames
+/// through untranscoded.
 ///
-/// # Upstream Reference
+/// # Errors
 ///
-/// - `options.c::recv_iconv_settings` - parses `--iconv=LOCAL,REMOTE`
-/// - `flist.c::iconv_for_local` - applies the converter on the local side
+/// Returns a client-role `Message` for a malformed specification (exit 1), a
+/// charset that cannot be opened (exit 4), or an iconv-disabled build (exit 1).
+///
+/// upstream: options.c:840 (`--iconv` is a plain string option), options.c:2195-2205
+/// (`-` clears it on the client), rsync.c:setup_iconv() (splits `LOCAL,REMOTE` and
+/// opens the converters).
 pub(crate) fn resolve_iconv_setting(
     spec: Option<&OsStr>,
     disable: bool,
@@ -60,13 +60,10 @@ pub(crate) fn resolve_iconv_setting(
 /// checking that every charset it names can actually be opened.
 ///
 /// Upstream refuses to start when `iconv_open` fails, exiting
-/// `RERR_UNSUPPORTED` (4) from `setup_iconv()` (`rsync.c:130-140`). oc used
-/// to accept the option, resolve the converter to `None`, and then complete
-/// the transfer with filenames untranscoded and nothing on stderr - the same
-/// silent passthrough this function's `#[cfg(not(feature = "iconv"))]` twin
-/// below already refuses for a build-time-disabled iconv. The two have
-/// identical consequences for the operator, so they are treated alike; only
-/// the exit code differs, each matching its own upstream site.
+/// `RERR_UNSUPPORTED` (4) from `setup_iconv()` (`rsync.c:131-141`). Like the
+/// `#[cfg(not(feature = "iconv"))]` twin below, this refuses rather than
+/// completing the transfer with filenames silently untranscoded; only the exit
+/// code differs, each matching its own upstream site.
 #[cfg(feature = "iconv")]
 fn accept_parsed_setting(setting: IconvSetting) -> Result<IconvSetting, Message> {
     match setting.validate_charsets() {
@@ -77,7 +74,10 @@ fn accept_parsed_setting(setting: IconvSetting) -> Result<IconvSetting, Message>
 }
 
 /// Rejects an explicit iconv setting with a hard error when the `iconv`
-/// feature was disabled at build time. Closes #1915.
+/// feature was disabled at build time.
+///
+/// upstream: options.c:1099-1101 - a build without `ICONV_OPTION` refuses
+/// `--iconv` as an unsupported option.
 #[cfg(not(feature = "iconv"))]
 fn accept_parsed_setting(_setting: IconvSetting) -> Result<IconvSetting, Message> {
     Err(rsync_error!(
@@ -106,7 +106,7 @@ mod tests {
     /// never resolve to "no conversion".
     ///
     /// Upstream `setup_iconv()` calls `exit_cleanup(RERR_UNSUPPORTED)` when
-    /// `iconv_open` fails (`rsync.c:130-140`) and prints
+    /// `iconv_open` fails (`rsync.c:131-141`) and prints
     /// `iconv_open("UTF-8", "<charset>") failed`. Measured against a built
     /// rsync 3.5.0: `--iconv=NOSUCHCHARSET` gives exit 4 and transfers
     /// nothing, where oc used to give exit 0 having copied every file with
@@ -219,7 +219,7 @@ mod tests {
     #[cfg(not(feature = "iconv"))]
     #[test]
     fn resolve_iconv_setting_rejects_explicit_when_feature_off() {
-        // Closes #1915 - when the iconv feature is compiled out, an
+        // When the iconv feature is compiled out, an
         // explicit --iconv=LOCAL,REMOTE must produce a hard error rather
         // than silently no-opping.
         let result = resolve_iconv_setting(Some(&os("UTF-8,ISO-8859-1")), false);

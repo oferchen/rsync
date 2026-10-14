@@ -9,7 +9,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1360-1366` - `missing_args == 2 && file->mode == 0`
+//! - `generator.c:1749-1755` - `missing_args == 2 && file->mode == 0`
 //!   branch that calls `delete_item()` when the destination exists and
 //!   falls through (no creation) otherwise.
 
@@ -37,7 +37,7 @@ fn encode_flist(entries: &[FileEntry]) -> Vec<u8> {
 }
 
 /// Constructs a mode-0 sentinel entry whose name matches a top-level
-/// destination path (`flist.c:2491-2497`, `make_file()` + `file->mode = 0`).
+/// destination path (`flist.c:3249-3255`, `make_file()` + `file->mode = 0`).
 fn sentinel_entry(name: &str) -> FileEntry {
     let mut entry = FileEntry::new_file(name.into(), 0, 0);
     entry.set_mode(0);
@@ -132,7 +132,7 @@ fn receiver_ignores_sentinel_when_delete_missing_args_off() {
 }
 
 /// Missing destination path is a no-op (mirrors upstream's `statret == 0`
-/// guard at `generator.c:1351`).
+/// guard at `generator.c:1752`).
 #[test]
 fn receiver_sentinel_for_missing_destination_is_noop() {
     let temp_dir = TempDir::new().unwrap();
@@ -234,7 +234,7 @@ fn receiver_sentinel_removes_directory_recursively_under_delete() {
 ///
 /// Why this matters: `del_opts` lacks `DEL_RECURSE` here (generator.c:1629),
 /// so upstream's `delete_dir_contents()` refuses any populated directory
-/// (delete.c:115-118) and reports `cannot delete non-empty directory: %s` at
+/// (delete.c:176-179) and reports `cannot delete non-empty directory: %s` at
 /// FINFO (delete.c:178-181). Recursing anyway silently destroys a whole tree
 /// the user never asked to delete. An empty directory is still removed.
 #[cfg(unix)]

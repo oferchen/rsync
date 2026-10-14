@@ -13,23 +13,23 @@ use std::str::FromStr;
 /// Lowest protocol version upstream rsync accepts on the command line.
 ///
 /// upstream: rsync.h:147 `MIN_PROTOCOL_VERSION 20`. `setup_protocol`
-/// (compat.c:629) rejects anything below this with `RERR_PROTOCOL`.
+/// (compat.c:631-635) rejects anything below this with `RERR_PROTOCOL`.
 const UPSTREAM_MIN_PROTOCOL: u8 = 20;
 /// Highest protocol version upstream rsync accepts on the command line.
 ///
 /// upstream: rsync.h:114 `PROTOCOL_VERSION 33`. `setup_protocol`
-/// (compat.c:634) rejects anything above this with `RERR_PROTOCOL`.
+/// (compat.c:636-640) rejects anything above this with `RERR_PROTOCOL`.
 const UPSTREAM_MAX_PROTOCOL: u8 = 33;
 
 /// Classification of a validated `--protocol` argument.
 ///
-/// Upstream accepts protocol `20..=32` on the command line, but this build only
-/// speaks `28..=32` over the wire. Values in `20..=27` are valid per upstream
+/// Upstream accepts protocol `20..=33` on the command line, but this build only
+/// speaks `28..=33` over the wire. Values in `20..=27` are valid per upstream
 /// and are meaningful only for a local copy, where no protocol is ever
 /// negotiated (the local-copy executor never touches the wire).
 #[derive(Debug)]
 pub(crate) enum ProtocolArg {
-    /// A wire-capable protocol version in `28..=32`.
+    /// A wire-capable protocol version in `28..=33`.
     Supported(ProtocolVersion),
     /// An upstream-valid version in `20..=27`, below this build's wire floor.
     LegacyLocalOnly(u8),
@@ -38,13 +38,13 @@ pub(crate) enum ProtocolArg {
 /// Parses and classifies the `--protocol` command-line argument.
 ///
 /// Mirrors upstream rsync's command-line bounds (`setup_protocol`,
-/// compat.c:629-637): values outside `20..=32` are protocol errors (exit 4 in
+/// compat.c:631-640): values outside `20..=33` are protocol errors (exit 4 in
 /// this build is reserved for unsupported actions; a bad protocol number is
 /// `RERR_PROTOCOL` = 2). Non-numeric input is a syntax error (exit 1).
 ///
 /// Returns user-friendly errors matching upstream rsync diagnostics:
 /// - Exit code 1 for syntax errors (non-numeric input).
-/// - Exit code 2 for a numeric value outside upstream's `20..=32` range.
+/// - Exit code 2 for a numeric value outside upstream's `20..=33` range.
 pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolArg, Message> {
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
@@ -55,7 +55,7 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolArg, M
     };
 
     match ProtocolVersion::from_str(text.as_ref()) {
-        // `from_str` only succeeds for this build's supported range (28..=32).
+        // `from_str` only succeeds for this build's supported range (28..=33).
         Ok(version) => Ok(ProtocolArg::Supported(version)),
         Err(error) => match error.kind() {
             // Non-numeric input is a usage error: exit 1 (RERR_SYNTAX).
@@ -101,7 +101,7 @@ fn syntax_error(display: &str, detail: String) -> Message {
 
 /// Builds the exit-2 diagnostic for a value below upstream's minimum (20).
 ///
-/// upstream: compat.c:630 "--protocol must be at least 20 on the %s."
+/// upstream: compat.c:632 "--protocol must be at least %d on the %s."
 fn floor_error(display: &str) -> Message {
     rsync_error!(
         PROTOCOL_INCOMPATIBLE_EXIT_CODE,
@@ -112,9 +112,9 @@ fn floor_error(display: &str) -> Message {
     .with_role(Role::Client)
 }
 
-/// Builds the exit-2 diagnostic for a value above upstream's maximum (32).
+/// Builds the exit-2 diagnostic for a value above upstream's maximum (33).
 ///
-/// upstream: compat.c:635 "--protocol must be no more than 32 on the %s."
+/// upstream: compat.c:637 "--protocol must be no more than %d on the %s."
 fn ceiling_error(display: &str) -> Message {
     rsync_error!(
         PROTOCOL_INCOMPATIBLE_EXIT_CODE,
@@ -128,7 +128,7 @@ fn ceiling_error(display: &str) -> Message {
 /// Builds the exit-2 diagnostic for a legacy protocol requested over the wire.
 ///
 /// upstream accepts 20..=27 and would negotiate it, but this build speaks only
-/// 28..=32 over the wire, so a remote transfer at a legacy version is refused.
+/// 28..=33 over the wire, so a remote transfer at a legacy version is refused.
 pub(crate) fn legacy_remote_rejection(raw: u8) -> Message {
     let supported = supported_protocols_list();
     rsync_error!(

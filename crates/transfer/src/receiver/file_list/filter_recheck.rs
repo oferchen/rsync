@@ -9,16 +9,16 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1244-1255` `recv_file_entry()` - for every received name (except
+//! - `flist.c:1361-1372` `recv_file_entry()` - for every received name (except
 //!   the transfer root `.`), `check_server_filter(&filter_list, ...)` is run;
 //!   a match on an exclude rule (`< 0`) triggers
 //!   `rprintf(FERROR, "ERROR: rejecting excluded file-list name: %s\n", ...)`
 //!   followed by `exit_cleanup(RERR_UNSUPPORTED)`.
-//! - `exclude.c:1027-1034` `check_server_filter()` - evaluates the list with
+//! - `exclude.c:1126-1133` `check_server_filter()` - evaluates the list with
 //!   `cur_elide_value = LOCAL_RULE`, i.e. the sender-side view of the rules
 //!   (receiver-side-only rules are elided), matching the sender's own
 //!   include/exclude decision.
-//! - `exclude.c:1182` - a per-directory merge rule (`:`) sets
+//! - `exclude.c:1333` - a per-directory merge rule (`:`) sets
 //!   `trust_sender_filter = 1`; the receiver then trusts the sender's filtering
 //!   and skips the re-check entirely, because it cannot reliably reproduce a
 //!   per-directory merge decision without the sender's directory context.
@@ -55,7 +55,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1274-1277` `recv_file_entry()`
+    /// - `flist.c:1363-1367` `recv_file_entry()`
     pub(in crate::receiver) fn recheck_received_filter(&self) -> io::Result<()> {
         self.recheck_received_filter_entries(self.file_list.live())
     }
@@ -64,14 +64,14 @@ impl ReceiverContext {
     /// [`recheck_received_filter`](Self::recheck_received_filter) that re-checks
     /// only `entries` (an INC_RECURSE sub-list at `self.file_list[flat_start..]`),
     /// so sub-list entries received on a pull get the same defense-in-depth as
-    /// the level-1 list. upstream: flist.c:1247 `recv_file_entry()` runs the
+    /// the level-1 list. upstream: flist.c:1364 `recv_file_entry()` runs the
     /// server-filter check for every received entry, including sub-lists.
     pub(in crate::receiver) fn recheck_received_filter_entries(
         &self,
         entries: &[FileEntry],
     ) -> io::Result<()> {
-        // upstream: flist.c:1246 - `!trust_sender_filter` guards the whole
-        // re-check (options.c:2521/main.c:1496 set it for local/--trust-sender).
+        // upstream: flist.c:1363 - `!trust_sender_filter` guards the whole
+        // re-check (options.c:2675-2676/main.c:1552 set it for local/--trust-sender).
         if self.config.trust_sender {
             return Ok(());
         }
@@ -82,17 +82,17 @@ impl ReceiverContext {
         // `config.connection.filter_rules` instead.
         let owned_set;
         let filter_set: &FilterSet = if !self.filter_chain.is_empty() {
-            // upstream: exclude.c:1182 - a `:` (per-dir merge) rule sets
+            // upstream: exclude.c:1333 - a `:` (per-dir merge) rule sets
             // trust_sender_filter, so the receiver defers to the sender.
             if self.filter_chain.has_per_dir_merge() {
                 return Ok(());
             }
-            // upstream: flist.c:1247 - `check_server_filter(&filter_list, ...)`
+            // upstream: flist.c:1364 - `check_server_filter(&filter_list, ...)`
             // consults the CLIENT's rules only. A server-receiver whose chain
             // had daemon rules prepended re-checks against the client-only
             // view captured before that merge; the daemon rules keep their own
             // per-file refusal (`ERROR: daemon refused to receive file`,
-            // generator.c:1662-1670) instead of aborting the session here.
+            // generator.c:1662-1675) instead of aborting the session here.
             match &self.recheck_client_filter {
                 Some(client_set) => client_set,
                 None => self.filter_chain.global(),
@@ -113,25 +113,25 @@ impl ReceiverContext {
 
         for entry in entries {
             let path = entry.path().as_path();
-            // upstream: flist.c:1244 - the transfer root (`.` / `/.`) is never
+            // upstream: flist.c:1361 - the transfer root (`.` / `/.`) is never
             // re-checked. Cleared entries (empty name, mode 0) are no-ops.
             if path.as_os_str().is_empty() || path == Path::new(".") {
                 continue;
             }
 
-            // upstream: flist.c:1247 - `check_server_filter(...) < 0` means the
+            // upstream: flist.c:1364 - `check_server_filter(...) < 0` means the
             // sender-side rules exclude this name. `allows_during_traversal` is
             // the sender's decision (DecisionContext::Transfer, receiver-only
             // rules elided) evaluated with upstream `exclude.c:rule_matches()`
             // semantics: no synthetic `pattern/**` descendant matchers. This is
-            // load-bearing - `rule_matches()` (exclude.c:903, `!ex->u.slash_cnt`
+            // load-bearing - `rule_matches()` (exclude.c:1016, `!ex->u.slash_cnt`
             // basename strip) never matches a child against a slashless anchored
             // exclude like `- /bar`, so a name the sender legitimately sent
             // under an included parent (e.g. `bar/down` after `+ **/bar`) must
             // NOT be rejected here. `!allows_during_traversal` is exactly
             // upstream's `check_server_filter(...) < 0`.
             if !filter_set.allows_during_traversal(path, entry.is_dir()) {
-                // upstream: flist.c:1248-1249 - rprintf(FERROR, ...) then
+                // upstream: flist.c:1365-1366 - rprintf(FERROR, ...) then
                 // exit_cleanup(RERR_UNSUPPORTED).
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -170,11 +170,11 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1251-1254` `recv_file_entry()` - `check_filter(&implied_filter_list,
+    /// - `flist.c:1368-1371` `recv_file_entry()` - `check_filter(&implied_filter_list,
     ///   ...) <= 0` triggers `rprintf(FERROR, "ERROR: rejecting unrequested
     ///   file-list name: %s\n", ...)` then `exit_cleanup(RERR_UNSUPPORTED)`.
-    /// - `exclude.c:379` `add_implied_include()` - rule construction.
-    /// - `options.c:2519-2522` - `trust_sender_args` disables the mechanism.
+    /// - `exclude.c:476` `add_implied_include()` - rule construction.
+    /// - `options.c:2675-2678` - `trust_sender_args` disables the mechanism.
     pub(in crate::receiver) fn recheck_received_implied_includes(&self) -> io::Result<()> {
         self.recheck_received_implied_includes_entries(self.file_list.live())
     }
@@ -183,7 +183,7 @@ impl ReceiverContext {
     /// [`recheck_received_implied_includes`](Self::recheck_received_implied_includes)
     /// that validates only `entries` (an INC_RECURSE sub-list at
     /// `self.file_list[flat_start..]`) so sub-list entries get the same
-    /// CVE-2022-29154 defense as the level-1 list. upstream: flist.c:1251
+    /// CVE-2022-29154 defense as the level-1 list. upstream: flist.c:1368
     /// `recv_file_entry()` runs the implied-include check for every received
     /// entry, including sub-lists.
     pub(in crate::receiver) fn recheck_received_implied_includes_entries(
@@ -196,16 +196,16 @@ impl ReceiverContext {
 
         for entry in entries {
             let path = entry.path().as_path();
-            // upstream: flist.c:1244 - only the transfer root (`.` / `/.`) is
+            // upstream: flist.c:1361 - only the transfer root (`.` / `/.`) is
             // exempt from the check.
             if path == Path::new(".") || path == Path::new("/.") {
                 continue;
             }
 
             // A name emptied by a failed `--iconv` conversion is cleared to ""
-            // (upstream flist.c:1067-1070 sets `thisname[0] = '\0'`) but the entry
+            // (upstream flist.c:1065-1071 truncates `thisname` to "") but the entry
             // stays active with its real mode, and upstream still runs it through
-            // `check_filter(&implied_filter_list, "", ...)` at flist.c:1251,
+            // `check_filter(&implied_filter_list, "", ...)` at flist.c:1368,
             // which returns `<= 0` for the empty name and aborts with
             // RERR_UNSUPPORTED (exit 4). The sender kept the entry active and
             // will send its data, so failing to reject here lets the request
@@ -219,14 +219,14 @@ impl ReceiverContext {
             let covered = if path.as_os_str().is_empty() {
                 !has_type_bits
             } else {
-                // upstream: flist.c:1251 - check_filter(&implied_filter_list,
+                // upstream: flist.c:1368 - check_filter(&implied_filter_list,
                 // ...) <= 0 means no include rule matched, i.e. the name was
                 // never requested. `covers` reproduces `check_filter(...) > 0`
                 // with `rule_matches()` (check_descendants = false) semantics.
                 implied.covers(path, entry.is_dir())
             };
             if !covered {
-                // upstream: flist.c:1252-1253 - rprintf(FERROR, ...) then
+                // upstream: flist.c:1369-1370 - rprintf(FERROR, ...) then
                 // exit_cleanup(RERR_UNSUPPORTED).
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -249,14 +249,14 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2519` / `exclude.c:385` - `trust_sender_args` makes
+    /// - `options.c:2675-2678` / `exclude.c:482` - `trust_sender_args` makes
     ///   `add_implied_include()` a no-op, leaving `implied_filter_list` empty.
-    /// - `exclude.c:403-567` - `relative_paths`, `recurse`, `xfer_dirs` and the
+    /// - `exclude.c:476-668` - `relative_paths`, `recurse`, `xfer_dirs` and the
     ///   daemon-module flag shape the implied rules. The module-name strip
-    ///   applies only to a daemon source arg (`main.c:1567` passes
+    ///   applies only to a daemon source arg (`main.c:1581,1605` pass
     ///   `skip_daemon_module=daemon_connection`); local `--files-from` entries
     ///   are already module-relative, so upstream records them with
-    ///   `skip_daemon_module=0` (`io.c:445,482`). The strip decision is read
+    ///   `skip_daemon_module=0` (`io.c:512,549`). The strip decision is read
     ///   from the stable flag recorded when the args were built:
     ///   `files_from_data` is consumed while forwarding the list and would
     ///   misreport here.
@@ -297,7 +297,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1455-1477` `recv_file_entry()` - re-asserts
+    /// - `flist.c:1455-1481` `recv_file_entry()` - re-asserts
     ///   `XMIT_NO_CONTENT_DIR | XMIT_TOP_DIR` before flag mapping, so the entry
     ///   lands in `FLAG_IMPLIED_DIR` rather than `FLAG_CONTENT_DIR`.
     /// - `exclude.c:1144` `is_implied_parent_dir()` - the parent-only test.
@@ -308,7 +308,7 @@ impl ReceiverContext {
     /// Range-scoped variant of
     /// [`downgrade_implied_parent_dirs`](Self::downgrade_implied_parent_dirs)
     /// covering only `self.file_list[flat_start..]`, so INC_RECURSE sub-list
-    /// entries get the same defense. upstream: `flist.c:1455` runs per received
+    /// entries get the same defense. upstream: `flist.c:1465` runs per received
     /// entry, sub-lists included.
     pub(in crate::receiver) fn downgrade_implied_parent_dirs_from(
         &mut self,

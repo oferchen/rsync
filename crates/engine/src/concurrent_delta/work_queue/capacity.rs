@@ -47,7 +47,8 @@ pub fn default_capacity() -> usize {
 /// # Arguments
 ///
 /// * `avg_file_size` - Average file size in bytes across the transfer set.
-///   Use 0 or `None`-equivalent when unknown to get the default 2x multiplier.
+///   An average of 0 counts as small and yields the 8x multiplier; use
+///   [`default_capacity`] when the average is unknown.
 ///
 /// # Examples
 ///

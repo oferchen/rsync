@@ -117,10 +117,8 @@ mod tests {
             // Subscribe a receiver so send succeeds
             let mut rx = shutdown.subscribe();
 
-            // Should be able to send shutdown
             assert!(shutdown.send(()).is_ok());
 
-            // Receiver should get the message
             assert!(rx.recv().await.is_ok());
         });
     }

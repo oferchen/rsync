@@ -71,13 +71,13 @@ fn run_daemon_requests_authentication_for_protected_module() {
     stream.write_all(b"\n").expect("send empty credentials");
     stream.flush().expect("flush empty credentials");
 
-    // upstream: clientserver.c:762 - auth failure sends
+    // upstream: clientserver.c:812 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("denied message");
     assert_eq!(line.trim_end(), "@ERROR: auth failed on module secure");
 
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
     // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
     // the refusal; the socket just closes (next read is EOF).
     line.clear();

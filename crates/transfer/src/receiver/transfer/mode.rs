@@ -54,11 +54,11 @@ impl ReceiverContext {
     ///
     /// The ordering is upstream's and is load-bearing:
     ///
-    /// - `--list-only` first (`generator.c:1249`): it renders entries via
+    /// - `--list-only` first (`generator.c:1638`): it renders entries via
     ///   `list_file_entry()` and sends no per-file NDX at all. It does *not*
     ///   set `dry_run`, but checking it first keeps that independent of the
     ///   flag's future wiring.
-    /// - `--only-write-batch` before `--dry-run` (`main.c:1866`): `write_batch
+    /// - `--only-write-batch` before `--dry-run` (`main.c:1946-1947`): `write_batch
     ///   < 0` forces `dry_run = 1` while leaving `do_xfers = 1`, so the flag
     ///   pair is ambiguous and only the order disambiguates it. The generator
     ///   still sends real block checksums and the sender expects a sum head per
@@ -80,7 +80,7 @@ impl ReceiverContext {
     /// Drives one non-transfer mode to completion over the whole file list.
     ///
     /// Returns `(files_transferred, transferred_file_size)` - the tallies
-    /// upstream still reports for a run that moves no data (`receiver.c:797-800`
+    /// upstream still reports for a run that moves no data (`receiver.c:989-992`
     /// bumps `stats.xferred_files` before the `if (!do_xfers)` continue).
     ///
     /// The batch drivers call this once with the list fully received; the
@@ -90,9 +90,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1249` - `--list-only` renders entries, sends no request.
-    /// - `main.c:1866` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
-    /// - `generator.c:1858-1959` - the `!do_xfers` dry-run request shape.
+    /// - `generator.c:1638` - `--list-only` renders entries, sends no request.
+    /// - `main.c:1946-1947` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
+    /// - `generator.c:2277-2397` - the `!do_xfers` dry-run request shape.
     pub(in crate::receiver) fn run_non_transfer_mode<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -124,7 +124,7 @@ impl ReceiverContext {
     /// Puts a `--list-only` listing, collected in flat-index order from index 0,
     /// into the order upstream's generator lists it.
     ///
-    /// upstream: generator.c:1638-1644 - `list_file_entry()` runs as
+    /// upstream: generator.c:1637-1643 - `list_file_entry()` runs as
     /// recv_generator() reaches each entry, so under INC_RECURSE a directory is
     /// listed at the head of its own sub-list, not inside its parent's.
     pub(in crate::receiver) fn order_list_only_entries(&self, stats: &mut TransferStats) {
@@ -176,9 +176,9 @@ impl ReceiverContext {
                 // The same reporting pass the plain dry run uses; only the wire
                 // loop differs (real block checksums, no plan). A push receiver
                 // reads no delta - the client sender diverted it into its own
-                // batch fd (sender.c:220) - while a pull receiver drains the
+                // batch fd (sender.c:502) - while a pull receiver drains the
                 // remote sender's delta via discard_receive_data()
-                // (receiver.c:829-830).
+                // (receiver.c:1162-1163).
                 let plan = self.plan_dry_run_in_range(
                     &mut *writer,
                     range,

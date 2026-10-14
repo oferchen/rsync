@@ -125,7 +125,7 @@ impl FilterProgram {
                     // FILTRULE_EXCLUDE_SELF so it is added exactly once. Here
                     // that list is `current_segment`, and pushing before the
                     // flush below keeps the exclude AHEAD of the merge rule's
-                    // own add_rule (:1590) - filter lists are first-match-wins,
+                    // own add_rule (:1593) - filter lists are first-match-wins,
                     // so the order is part of the behaviour.
                     //
                     // Doing it at registration is the substance: it makes the
@@ -570,7 +570,7 @@ mod tests {
     }
 
     /// A global rule written BEFORE a `dir-merge` directive wins over the merge
-    /// file's rules under upstream's single-list first-match (exclude.c:1043-1064
+    /// file's rules under upstream's single-list first-match (exclude.c:1192-1212
     /// recurses into the per-dir merge AT the directive's source position). The
     /// program lays the global segment ahead of the `DirMerge` instruction, so
     /// the segment latches the transfer verdict before the merge layer is
@@ -638,7 +638,7 @@ mod tests {
     /// Source position governs the deletion verdict identically to transfer: a
     /// global rule ahead of the `dir-merge` directive latches the unified
     /// first-match deletion decision, so `- *.tmp` before `dir-merge .rsf`
-    /// protects `keep.tmp` from deletion (upstream exclude.c:1043-1064).
+    /// protects `keep.tmp` from deletion (upstream exclude.c:1192-1212).
     #[test]
     fn global_rule_before_dir_merge_wins_deletion() {
         let mut merge_layer = FilterSegment::default();
@@ -785,7 +785,7 @@ mod tests {
         );
     }
 
-    /// `R`/risk is `FILTRULE_INCLUDE|RECEIVER_SIDE` (exclude.c:1355), so on an
+    /// `R`/risk is `FILTRULE_INCLUDE|RECEIVER_SIDE` (exclude.c:1352-1356), so on an
     /// xattr chain it is an INCLUDE - the inverse of `P`. Modelling protect and
     /// risk as distinct oc actions makes it possible to treat both as
     /// "not Include" and silently invert this row, which is what

@@ -1,7 +1,7 @@
 /// An `incoming chmod` directive repeated in the global section keeps its last
 /// value and every module inherits that value.
 ///
-/// upstream: loadparm.c:452-454 `case P_STRING: string_set(parm_ptr,
+/// upstream: loadparm.c:571-572 `case P_STRING: string_set(parm_ptr,
 /// parmvalue)` overwrites the slot, so only the final value survives.
 #[test]
 fn runtime_options_last_wins_global_chmod() {

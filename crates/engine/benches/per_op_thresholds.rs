@@ -1,4 +1,4 @@
-//! Per-operation threshold sweep, local filesystem versus NFS (#1555).
+//! Per-operation threshold sweep, local filesystem versus NFS.
 //!
 //! # Why this exists
 //!

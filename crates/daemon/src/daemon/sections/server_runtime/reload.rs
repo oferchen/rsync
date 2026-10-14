@@ -9,10 +9,11 @@
 /// so both are re-applied to every reloaded module.
 ///
 /// On failure (missing file, parse error), the error is logged and the daemon
-/// continues with the previous configuration - matching upstream rsync
-/// behaviour where a bad config reload is non-fatal.
+/// continues with the previous configuration.
 ///
-/// upstream: clientserver.c - `re_read_config()` called from SIGHUP handler.
+/// Deviation from upstream: upstream has no reload. SIGHUP terminates the
+/// daemon (main.c:1920 `sig_int`), and each connection re-reads the config
+/// itself (clientserver.c:1434 `load_config(0)` in `start_daemon()`).
 #[allow(clippy::too_many_arguments)]
 fn reload_daemon_config(
     config_path: Option<&Path>,

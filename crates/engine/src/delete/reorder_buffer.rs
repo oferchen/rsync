@@ -3,9 +3,8 @@
 //! This module is the buffer primitive specified by DEL-1.b (see
 //! `docs/design/del-1b-reordering-buffer.md`) and the batching strategy
 //! resolved by DEL-1.c (see
-//! `docs/design/del-1c-cohort-batching-strategy.md`). Originally the
-//! DEL-2.a deliverable (the data structure alone), it is now wired into
-//! the parallel consumer (`super::parallel_consumer`, DEL-2.c) under the
+//! `docs/design/del-1c-cohort-batching-strategy.md`). It is wired into
+//! the parallel consumer (`super::parallel_consumer`) under the
 //! `parallel-delete-consumer` feature.
 //!
 //! # What this buffer does
@@ -26,7 +25,7 @@
 //! DEL-1.b sketches a ring buffer with modulo indexing and
 //! `head`/`tail` atomics, but that shape only pays for itself once the
 //! buffer is wired into a `Condvar`-driven producer/consumer loop
-//! (DEL-2.c). For the DEL-2.a primitive the consumer is synchronous,
+//! (`super::parallel_consumer`). For the buffer itself the consumer is synchronous,
 //! the drain order is strictly increasing rank, and the cohort set is
 //! sparse during normal operation (producers complete out of order).
 //! A [`BTreeMap`](std::collections::BTreeMap) keyed by rank gives:
@@ -99,7 +98,7 @@ pub const MAX_BUFFERED_COHORTS: usize = 64;
 /// consumer CPU at the 100k-cohort projection point." A larger cap
 /// inflates head-of-line latency on the wire; a smaller cap loses the
 /// amortisation benefit. The cap is compile-time; a runtime knob is
-/// out of scope for DEL-2.a (deferred to DEL-3).
+/// out of scope for the buffer itself.
 pub const DRAIN_BATCH_CAP: usize = 8;
 
 /// Per-deletion-attempt record the buffer carries.
@@ -107,7 +106,7 @@ pub const DRAIN_BATCH_CAP: usize = 8;
 /// A minimal payload that captures everything the parallel consumer
 /// needs to either re-issue the dispatch or emit a `MSG_DELETED`
 /// frame: the absolute destination path, the leaf name (for
-/// SEC-1.q-style dirfd-anchored dispatch), and the kind for stats
+/// dirfd-anchored dispatch), and the kind for stats
 /// bookkeeping.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteOperation {
@@ -170,7 +169,7 @@ impl From<PathBuf> for DeleteCohortKey {
 /// stable wire-ordering rank used to serialise the consumer drain.
 ///
 /// The rank is supplied by the caller (the receiver-side driver in
-/// DEL-2.c) and is the dense pre-order index DEL-1.c section 1
+/// the parallel consumer) and is the dense pre-order index DEL-1.c section 1
 /// describes. Inside a cohort the [`Self::ops`] vector is in FIFO
 /// insertion order; that is the upstream `delete_in_dir`
 /// reverse-directory order producers walk (DEL-1.b section 3.1).
@@ -203,14 +202,14 @@ impl DeleteCohort {
 /// Errors surfaced by [`ReorderBuffer`].
 ///
 /// The buffer never panics on legal API misuse; every misuse path
-/// returns a typed [`ReorderBufferError`] so the DEL-2.c consumer can
+/// returns a typed [`ReorderBufferError`] so the parallel consumer can
 /// distinguish capacity backpressure from invariant violations.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReorderBufferError {
     /// Caller tried to insert into a new cohort while the buffer is
     /// already holding [`MAX_BUFFERED_COHORTS`] distinct cohorts.
     /// DEL-1.b section 4.3 mandates that producers block on this
-    /// signal (the production wiring uses a `Condvar`; the DEL-2.a
+    /// signal (the production wiring uses a `Condvar`; the buffer
     /// primitive surfaces it as an error and lets the caller decide).
     #[error(
         "delete reorder buffer is full: cap={cap} cohorts, new cohort key={key:?} would exceed it"
@@ -268,7 +267,7 @@ pub enum ReorderBufferError {
 ///
 /// The buffer is intentionally synchronous: it surfaces capacity
 /// backpressure and unsealed-head stalls as method-return signals
-/// rather than blocking the caller. The DEL-2.c wiring layers a
+/// rather than blocking the caller. The parallel consumer layers a
 /// `Condvar` and a producer/consumer scope on top of this primitive.
 ///
 /// # Invariants
@@ -378,7 +377,7 @@ impl ReorderBuffer {
     ///
     /// Calling [`Self::seal`] on an already-sealed cohort is
     /// idempotent. DEL-1.b section 6.1 ("Producer panics mid-cohort")
-    /// uses an empty-batch seal as the panic-recovery path; the DEL-2.a
+    /// uses an empty-batch seal as the panic-recovery path; the buffer
     /// primitive accepts that pattern by allowing seals on empty
     /// cohorts (insert one zero-op cohort then seal) so the future
     /// wiring layer keeps a uniform API.
@@ -387,7 +386,7 @@ impl ReorderBuffer {
     ///
     /// - [`ReorderBufferError::UnknownCohort`] when `key` was never
     ///   inserted. This is a producer/consumer ordering bug; the
-    ///   production wiring (DEL-2.c) should pair every `seal` with
+    ///   production wiring (`super::parallel_consumer`) should pair every `seal` with
     ///   exactly one prior `insert` or zero-op registration.
     pub fn seal(&mut self, key: &DeleteCohortKey) -> Result<(), ReorderBufferError> {
         let Some(&rank) = self.by_key.get(key) else {
@@ -510,7 +509,7 @@ impl ReorderBuffer {
     /// cohorts and returns each one's `(key, rank, ops)` tuple.
     ///
     /// Mirrors [`Self::try_drain_ready`]'s semantics with the cohort
-    /// key and rank surfaced alongside the operations so the DEL-2.b
+    /// key and rank surfaced alongside the operations so the
     /// batcher can dispatch cohorts through `DeleteFs` without holding
     /// a parallel snapshot of head identities. The strict cohort-order
     /// invariant from DEL-1.b section 2.3 carries through unchanged.
@@ -561,7 +560,7 @@ impl ReorderBuffer {
     /// Returns the rank of the head cohort (lowest rank currently
     /// buffered), or `None` when the buffer is empty.
     ///
-    /// Exposed so DEL-2.c's wiring can drive an external
+    /// Exposed so the parallel consumer's wiring can drive an external
     /// `Condvar::wait` on "head rank unchanged" without re-walking the
     /// map.
     #[must_use]
@@ -770,7 +769,7 @@ mod tests {
         assert!(buf.head_is_ready());
     }
 
-    /// DEL-2.b: [`ReorderBuffer::try_drain_ready_with_meta`] surfaces
+    /// [`ReorderBuffer::try_drain_ready_with_meta`] surfaces
     /// the cohort key and rank alongside the operations, matching the
     /// rank order and cap of [`ReorderBuffer::try_drain_ready`].
     #[test]

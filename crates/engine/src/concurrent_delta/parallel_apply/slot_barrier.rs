@@ -1,6 +1,7 @@
-//! Per-slot synchronisation primitives backing FFB-1 / FFB-2.
+//! Per-slot synchronisation primitives backing the in-flight counter and
+//! the `flush_workers` barrier.
 //!
-//! Extracted from `parallel_apply.rs` as part of SPL-38.b. The per-slot
+//! The per-slot
 //! state is split across [`BarrierState`] (in-flight counter +
 //! [`Condvar`]) and [`SlotData`] (per-file [`Mutex<FileSlot>`]), stored
 //! together as a [`SlotEntry`] in the [`super::ParallelDeltaApplier`]
@@ -21,16 +22,16 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use super::super::types::FileNdx;
 use super::{FileSlot, ParallelApplyError};
 
-/// Per-slot in-flight counter and [`Condvar`] (DG-3.a, Option B).
+/// Per-slot in-flight counter and [`Condvar`] (Option B).
 ///
 /// Carries exactly the bookkeeping that the worker's drop path touches:
 /// the in-flight counter behind its own [`Mutex`] and the [`Condvar`]
-/// that wakes a parked `flush_workers`. Defined per the DG-2.a spec at
+/// that wakes a parked `flush_workers`. Defined per
 /// `docs/design/dg-2a-option-b-spec.md` section 2.
 ///
 /// # Why a dedicated bookkeeping type?
 ///
-/// The DG-1 audit (`docs/design/decrementguard-audit.md`, section 4)
+/// The audit in `docs/design/decrementguard-audit.md` (section 4)
 /// traced the `finish_file` release race to one [`Arc`] graph being
 /// asked to carry two unrelated ownership obligations: the worker's
 /// `notify_all` fires from inside `super::DecrementGuard::drop` while
@@ -127,18 +128,17 @@ impl BarrierState {
     }
 }
 
-/// Per-file destination payload behind its own [`Mutex`] (DG-3.a,
-/// Option B).
+/// Per-file destination payload behind its own [`Mutex`] (Option B).
 ///
 /// Carries the [`Mutex<FileSlot>`] that workers lock to write a chunk
 /// and that `finish_file` `Arc::try_unwrap`s to recover the destination
-/// writer at end-of-file. Defined per the DG-2.a spec at
+/// writer at end-of-file. Defined per
 /// `docs/design/dg-2a-option-b-spec.md` section 2.
 ///
 /// # Why a dedicated payload type?
 ///
 /// Together with [`BarrierState`], this type is the second half of the
-/// Option-B split that fixes the DG-1 release race. By keeping the
+/// Option-B split that fixes the `finish_file` release race. By keeping the
 /// payload Arc structurally disjoint from the notify-bearing Arc,
 /// `finish_file`'s `Arc::try_unwrap` on [`Arc<SlotData>`] becomes
 /// independent of the worker's lingering [`Arc<BarrierState>`] between
@@ -196,12 +196,13 @@ impl SlotData {
     }
 }
 
-/// DashMap value carrying the two per-slot Arcs under Option B (DG-3.a).
+/// DashMap value carrying the two per-slot Arcs under Option B.
 ///
 /// Cloning a [`SlotEntry`] clones both inner Arcs, keeping the
 /// register/lookup paths symmetric: producers insert one
 /// [`SlotEntry::new`], consumers clone one [`SlotEntry`] and bind the
-/// halves separately. Per the DG-2.a spec section 2, this carrier
+/// halves separately. Per `docs/design/dg-2a-option-b-spec.md` section 2,
+/// this carrier
 /// avoids tuple-field churn at the five call sites that touch both
 /// Arcs.
 ///
@@ -214,7 +215,8 @@ impl SlotData {
 /// - Strong counts are tracked separately: the payload Arc only flows
 ///   to `SlotHandle.data` and `finish_file`'s local binding; the
 ///   barrier Arc flows to `DecrementGuard.barrier` and `flush_workers`'s
-///   local wait clone. See DG-2.a spec section 3 for the steady-state
+///   local wait clone. See `docs/design/dg-2a-option-b-spec.md` section 3
+///   for the steady-state
 ///   strong-count table.
 ///
 /// # Visibility

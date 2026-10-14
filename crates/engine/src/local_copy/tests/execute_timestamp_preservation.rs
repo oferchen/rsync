@@ -543,12 +543,12 @@ fn subsecond_difference_does_not_trigger_copy() {
 
     // Timestamps land in the same whole second but differ in the fractional
     // part. Upstream's quick check stores the source modtime as a `time_t` and
-    // compares whole seconds (`cmp_time(st->st_mtime, file->modtime)`), so a
+    // compares whole seconds (`same_time()` at the default modify window 0), so a
     // sub-second-only difference is invisible: the file is reported `is
     // uptodate` and never transferred, even with `-t`.
     //
-    // upstream: generator.c:unchanged_file() -> cmp_time() compares time_t
-    // seconds.
+    // upstream: generator.c:quick_check_ok() -> mtime_differs() -> util1.c:1746-1747
+    // same_time(), which compares time_t seconds only.
     let source_mtime = FileTime::from_unix_time(1_700_000_000, 1); // 1 nanosecond
     let dest_mtime = FileTime::from_unix_time(1_700_000_000, 0); // 0 nanoseconds
     set_file_mtime(&source, source_mtime).expect("set source mtime");

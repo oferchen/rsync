@@ -18,7 +18,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Configures the checksum seed forwarded to the engine and fallback binary.
+    /// Configures the checksum seed forwarded to the engine and the remote peer.
     #[must_use]
     #[doc(alias = "--checksum-seed")]
     pub const fn checksum_seed(mut self, seed: Option<i32>) -> Self {

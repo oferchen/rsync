@@ -421,8 +421,8 @@ fn execute_whole_file_dry_run_reports_transfer() {
         .expect("dry run succeeds");
 
     // Dry run should report what would be done. upstream: a dry run counts the
-    // file size (sender.c:343-344) but never reaches match_sums(), so both
-    // literal_data (match.c:436) and matched_data (match.c:121) stay 0.
+    // file size (sender.c:635-636) but never reaches match_sums(), so both
+    // literal_data (match.c:477) and matched_data (match.c:144) stay 0.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 0);
     assert_eq!(summary.transferred_file_size(), content.len() as u64);
@@ -580,7 +580,7 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
 /// must copy zero literal bytes, even when the file size is not a multiple of
 /// the block size.
 ///
-/// Upstream rsync matches the basis's final partial block (`match.c:222-224`
+/// Upstream rsync matches the basis's final partial block (`match.c:254`
 /// shrinks the last hash-search window to `l = MIN(blength, len-offset)`), so
 /// an identical basis reports `Matched == total`, `Literal == 0`. The local
 /// delta matcher previously refused to probe any window shorter than one full

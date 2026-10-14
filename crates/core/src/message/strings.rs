@@ -3,7 +3,7 @@
 //! # Overview
 //!
 //! The `strings` module centralises user-visible text tied to rsync's exit codes.
-//! Upstream `log.c` uses the same table (`rerr_names`) when printing
+//! Upstream `log.c` uses the same table (`rerr_names`, log.c:81-107) when printing
 //! `rsync error:` and `rsync warning:` diagnostics. Providing the mapping here
 //! lets higher layers select the canonical wording without duplicating the
 //! strings in multiple call sites.
@@ -22,7 +22,9 @@
 //!
 //! # Invariants
 //!
-//! - The mapping matches rsync 3.4.1's `rerr_names` table byte-for-byte.
+//! - The mapping matches rsync 3.5.1's `rerr_names` table byte-for-byte, except code 6.
+//! - Deviation from upstream: code 6 ("daemon unable to append to log-file") has no
+//!   `errcode.h` or `rerr_names` entry in 3.5.1; it is an oc-only addition.
 //! - Exit code 24 is the only warning; all other known codes remain errors.
 //! - Unknown codes return `None`, leaving higher layers to supply bespoke text.
 //!
@@ -85,7 +87,7 @@
 
 use super::{Message, Severity};
 
-/// Sorted table mirroring upstream `rerr_names` entries.
+/// Sorted table mirroring upstream `rerr_names` entries (log.c:81-107), plus oc-only code 6.
 const EXIT_CODE_TABLE: [ExitCodeMessage; 26] = [
     ExitCodeMessage::new(Severity::Error, 1, "syntax or usage error"),
     ExitCodeMessage::new(Severity::Error, 2, "protocol incompatibility"),

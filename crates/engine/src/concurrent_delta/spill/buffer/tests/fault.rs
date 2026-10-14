@@ -1,18 +1,19 @@
 //! Fault-injection harness for the reorder-spill module.
 //!
-//! Implements the SPL-33.a design
+//! Implements the design
 //! (`docs/design/spl-33a-enospc-injection-mechanism.md`) and the chassis
-//! shared with SPL-34 (`docs/design/spl-34-temp-vanish-injection.md`).
+//! shared with the temp-vanish design
+//! (`docs/design/spl-34-temp-vanish-injection.md`).
 //! This file is the *harness only*; the assertion tests that drive
 //! [`SpillableReorderBuffer`](super::super::SpillableReorderBuffer) through
-//! every injection scenario land in SPL-33.c.
+//! every injection scenario live in `enospc_degradation.rs`.
 //!
 //! Two layers are provided:
 //!
 //! 1. [`MockEnoSpcWriter`] - a userspace [`Write`] adapter that wraps any
 //!    real writer and returns [`ErrorKind::StorageFull`] after a configurable
 //!    byte threshold. Portable across Linux, macOS, and Windows; deterministic
-//!    by construction. The unit-test layer of every SPL-33 assertion uses
+//!    by construction. The unit-test layer of every assertion uses
 //!    this adapter.
 //! 2. `with_full_tmpfs` (Linux only) - mounts a fixed-size tmpfs, pre-fills
 //!    it with `fallocate(2)` so the next caller write hits real-kernel
@@ -22,8 +23,8 @@
 //!    not flake.
 //!
 //! Both layers share [`FaultPlan`], which describes when and how a fault
-//! fires. SPL-34.b extends [`FaultEvent`] with vanish modes; the SPL-33
-//! variants live here as the seed.
+//! fires. The temp-vanish design extends [`FaultEvent`] with vanish modes;
+//! the ENOSPC variants live here as the seed.
 
 #![cfg(test)]
 
@@ -39,8 +40,8 @@ pub(crate) const ENOSPC_KIND: ErrorKind = ErrorKind::StorageFull;
 
 /// Trigger surface for a single fault injection.
 ///
-/// Variants are additive: SPL-33 ships [`FaultEvent::DiskFull`]; SPL-34 will
-/// add temp-vanish variants on the same chassis. New variants must not
+/// Variants are additive: [`FaultEvent::DiskFull`] exists today; the
+/// temp-vanish design adds variants on the same chassis. New variants must not
 /// change the existing semantics of the [`FaultPlan`] byte-count trigger
 /// implemented by [`MockEnoSpcWriter`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,15 +57,15 @@ pub(crate) enum FaultEvent {
 
 /// Declarative description of when and how a fault fires.
 ///
-/// Mirrors the SPL-33.a design's `FaultPlan` exactly so SPL-34.b can extend
-/// the same struct with vanish-mode fields without breaking SPL-33 callers.
+/// Mirrors the design's `FaultPlan` exactly so the temp-vanish work can extend
+/// the same struct with vanish-mode fields without breaking callers.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FaultPlan {
     /// Error kind injected when the trigger fires. Defaults to
     /// [`ENOSPC_KIND`] via [`FaultPlan::enospc`].
     pub(crate) kind: ErrorKind,
-    /// Event describing the trigger. SPL-33 only uses
-    /// [`FaultEvent::DiskFull`]; SPL-34 will add vanish events.
+    /// Event describing the trigger. Only [`FaultEvent::DiskFull`] exists
+    /// today; vanish events are planned.
     pub(crate) event: FaultEvent,
     /// When `true`, the fault fires exactly once and subsequent writes
     /// succeed against the underlying writer. When `false`, the fault
@@ -134,20 +135,20 @@ impl<W: Write> MockEnoSpcWriter<W> {
     }
 
     /// Returns the cumulative number of bytes the inner writer has accepted.
-    #[allow(dead_code)] // surfaced for SPL-33.c assertions
+    #[allow(dead_code)] // surfaced for assertions
     pub(crate) fn bytes_written(&self) -> u64 {
         self.bytes_written
     }
 
     /// Returns `true` once the fault has fired at least once.
-    #[allow(dead_code)] // surfaced for SPL-33.c assertions
+    #[allow(dead_code)] // surfaced for assertions
     pub(crate) fn has_tripped(&self) -> bool {
         self.tripped
     }
 
     /// Consumes the wrapper and returns the underlying writer for
     /// post-test inspection.
-    #[allow(dead_code)] // surfaced for SPL-33.c assertions
+    #[allow(dead_code)] // surfaced for assertions
     pub(crate) fn into_inner(self) -> W {
         self.inner
     }
@@ -201,7 +202,7 @@ impl<W: Write + Seek> Seek for MockEnoSpcWriter<W> {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    //! Real-kernel ENOSPC integration helper for SPL-33.b.
+    //! Real-kernel ENOSPC integration helper.
     //!
     //! Mounts a tmpfs of the requested size at a fresh temp directory,
     //! pre-allocates a filler file via [`fallocate(2)`] so only a few KiB
@@ -351,7 +352,7 @@ mod linux {
 }
 
 #[cfg(target_os = "linux")]
-#[allow(unused_imports)] // exercised by SPL-33.c integration tests
+#[allow(unused_imports)] // exercised by integration tests
 pub(crate) use linux::{has_cap_sys_admin, with_full_tmpfs};
 
 mod tests {
@@ -413,7 +414,7 @@ mod tests {
         let err = w.write(b"hello").expect_err("one-shot fires on first call");
         assert_eq!(err.kind(), ENOSPC_KIND);
         // After the one-shot trips, subsequent writes succeed against the
-        // underlying buffer. This mirrors the SPL-33 free-space-restored
+        // underlying buffer. This mirrors the free-space-restored
         // matrix row.
         let n = w.write(b"hello").expect("post-trip write succeeds");
         assert_eq!(n, 5);

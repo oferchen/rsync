@@ -3,8 +3,8 @@
 //! Upstream rsync's generator pokes `maybe_send_keepalive()` while it is busy
 //! with local disk work so a remote sender's `--timeout` does not fire during a
 //! long silent stretch. The three sites are `delete_in_dir()`
-//! (generator.c:295-296), `touch_up_dirs()` (generator.c:2138-2144), and the
-//! `generate_files()` per-file loop (generator.c:2348-2353).
+//! (generator.c:301-302), `touch_up_dirs()` (generator.c:2610-2616), and the
+//! `generate_files()` per-file loop (generator.c:2822-2827).
 //!
 //! These tests drive each oc phase with a multiplexed writer and assert:
 //!

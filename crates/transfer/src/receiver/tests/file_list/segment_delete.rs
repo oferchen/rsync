@@ -154,7 +154,7 @@ fn a_same_named_entry_of_another_directory_protects_nothing() {
 /// the single tally the goodbye `NDX_DEL_STATS` frame carries.
 ///
 /// upstream: delete.c:241-256 bumps one global `stats.deleted_*`, written once
-/// by main.c:228-240 `write_del_stats()`.
+/// by main.c:229-242 `write_del_stats()`.
 #[test]
 fn segment_deletions_accumulate_into_one_tally() {
     let tmp = tempfile::tempdir().unwrap();
@@ -367,7 +367,7 @@ fn whole_list_sweep_after_reclaim_fails_and_deletes_nothing() {
 /// the root protects a matching entry of a later segment's directory; with the
 /// merge file absent the same entry is deleted (the opposed control).
 ///
-/// upstream: generator.c:308 delete_in_dir() -> change_local_filter_dir()
+/// upstream: generator.c:314 delete_in_dir() -> change_local_filter_dir()
 /// reloads the destination merge files as each sub-list is walked, so a merge
 /// file the walk has already transferred governs every later directory.
 #[test]

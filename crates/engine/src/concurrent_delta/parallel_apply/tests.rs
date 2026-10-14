@@ -215,7 +215,7 @@ fn cursor_writer_round_trip() {
 
 #[test]
 fn flush_workers_returns_immediately_when_no_inflight() {
-    // FFB-2: with no apply calls outstanding, `flush_workers` must
+    // With no apply calls outstanding, `flush_workers` must
     // observe zero in-flight handles and return without blocking.
     let applier = ParallelDeltaApplier::new(1);
     let (sink, _) = VecSink::new();
@@ -233,7 +233,7 @@ fn flush_workers_returns_immediately_when_no_inflight() {
 
 #[test]
 fn flush_workers_returns_ok_for_unknown_ndx() {
-    // FFB-2: absent slot is the same observable outcome as
+    // Absent slot is the same observable outcome as
     // fully-drained slot; the API contract is "wait until idle", and
     // a slot that does not exist is idle by definition.
     let applier = ParallelDeltaApplier::new(1);
@@ -242,7 +242,7 @@ fn flush_workers_returns_ok_for_unknown_ndx() {
 
 #[test]
 fn flush_workers_blocks_until_worker_drops_arc() {
-    // FFB-2: a worker thread holds a SlotHandle clone for ~50ms;
+    // A worker thread holds a SlotHandle clone for ~50ms;
     // flush_workers must not return until the handle drops. Uses
     // raw `slot_for` to exercise the barrier directly without going
     // through `apply_one_chunk` (which internally bounds the
@@ -284,7 +284,7 @@ fn flush_workers_blocks_until_worker_drops_arc() {
 
 #[test]
 fn drain_inflight_drains_all_files() {
-    // FFB-2: register N files, hand a SlotHandle clone out to a
+    // Register N files, hand a SlotHandle clone out to a
     // worker per file, call drain_inflight, assert it blocks until
     // every worker drops its handle.
     const N: u32 = 6;
@@ -334,7 +334,7 @@ fn drain_inflight_drains_all_files() {
 
 #[test]
 fn finish_file_calls_flush_workers_internally() {
-    // FFB-2 Option D: finish_file bakes the barrier in. A worker
+    // Finish_file bakes the barrier in. A worker
     // that holds a SlotHandle clone for a bounded duration must not
     // cause finish_file to return ApplierStillReferenced; instead
     // finish_file blocks until the worker drops the handle, then
@@ -375,21 +375,19 @@ fn finish_file_calls_flush_workers_internally() {
 
 #[test]
 fn finish_file_payload_arc_uncontended_after_worker_drop() {
-    // DG-3.d: After DG-3.c retyped `DecrementGuard` to
+    // With `DecrementGuard` holding an
     // `Arc<BarrierState>`, the worker's lingering decrement-guard
     // clone no longer touches the payload Arc that `finish_file`
     // calls `Arc::try_unwrap` on. Verify the strong-count trajectory
-    // claim from the DG-2.a spec section 3 at the actual try_unwrap
+    // claim from `docs/design/dg-2a-option-b-spec.md` section 3 at the actual try_unwrap
     // call site: once the worker has fully released its
     // `SlotHandle`, the entry's `Arc<SlotData>` has strong count 1
     // (DashMap only) and `try_unwrap` would succeed deterministically
     // without spinning.
     //
-    // Establishing this fact in a test is the precondition for DG-4
-    // (removing the spin-then-yield workaround in
-    // `drain.rs::finish_file`). If a future change re-introduces a
-    // payload-Arc clone on the worker's drop path, this test fails
-    // before the spin can mask the regression.
+    // `drain.rs::finish_file` relies on this fact instead of a
+    // spin-then-yield retry. If a future change re-introduces a
+    // payload-Arc clone on the worker's drop path, this test fails.
     let applier = Arc::new(ParallelDeltaApplier::new(1));
     let (sink, _) = VecSink::new();
     applier.register_file(0u32, Box::new(sink)).unwrap();
@@ -442,7 +440,7 @@ fn finish_file_payload_arc_uncontended_after_worker_drop() {
         .expect("worker dropped SlotHandle");
     worker.join().expect("worker thread");
 
-    // DG-3.c invariant: after the worker drops, the only remaining
+    // Invariant: after the worker drops, the only remaining
     // `Arc<SlotData>` clone is the one owned by the DashMap. The
     // DecrementGuard's `Arc<BarrierState>` clone is irrelevant here
     // - it lives on a disjoint allocation per the Option-B split in
@@ -466,7 +464,7 @@ fn finish_file_payload_arc_uncontended_after_worker_drop() {
 
 #[test]
 fn finish_file_payload_arc_uncontended_under_burst() {
-    // DG-3.d: stress variant. Drive many short-lived SlotHandles
+    // Stress variant. Drive many short-lived SlotHandles
     // serially through the same file (mirroring the receiver
     // pipeline's per-chunk dispatch) and verify the post-drop
     // payload Arc strong count returns to 1 after every burst. A
@@ -502,14 +500,13 @@ fn finish_file_payload_arc_uncontended_under_burst() {
 
 #[test]
 fn finish_file_payload_and_barrier_arcs_are_distinct_allocations() {
-    // DG-3.d: structural witness that the DG-2.a Option-B split is
+    // Structural witness that the Option-B split is
     // intact. The entry's `data: Arc<SlotData>` and
     // `barrier: Arc<BarrierState>` Arcs point at different
     // allocations - if a future refactor collapses them back into
     // one (e.g. by re-introducing a combined struct behind a single
-    // Arc) the wakeup-before-drop race documented in DG-1 returns
-    // and the spin-then-yield workaround in drain.rs becomes
-    // load-bearing again.
+    // Arc) the wakeup-before-drop race documented in
+    // `docs/design/decrementguard-audit.md` returns.
     let applier = ParallelDeltaApplier::new(1);
     let (sink, _) = VecSink::new();
     applier.register_file(0u32, Box::new(sink)).unwrap();
@@ -545,7 +542,7 @@ fn flush_workers_survives_spurious_wakeup() {
 
     // Snapshot the inner `Arc<BarrierState>` so a sibling thread can
     // notify the slot's Condvar without going through the apply
-    // path. DG-3.b stores `SlotEntry` in the DashMap; the test
+    // path. The DashMap stores `SlotEntry`; the test
     // reads `entry.barrier` (the bookkeeping Arc) and pokes the
     // shared Condvar through it.
     let barrier = applier
@@ -616,7 +613,7 @@ fn parallel_apply_error_converts_into_io_error_with_typed_message() {
 
 #[test]
 fn new_defaults_strategy_to_md5() {
-    // BR-3i.b: `new(concurrency)` must default to the protocol >= 30
+    // `new(concurrency)` must default to the protocol >= 30
     // fallback (MD5) so existing test/bench callers keep working without
     // observing a behaviour change.
     let applier = ParallelDeltaApplier::new(1);
@@ -629,7 +626,7 @@ fn new_defaults_strategy_to_md5() {
 
 #[test]
 fn with_strategy_threads_negotiated_algorithm() {
-    // BR-3i.b: `with_strategy(concurrency, strategy)` is the constructor
+    // `with_strategy(concurrency, strategy)` is the constructor
     // the receiver pipeline will use once the negotiated algorithm is
     // wired in. Verify it stores and exposes the supplied trait object.
     let strategy: Arc<dyn ChecksumStrategy> = Arc::from(ChecksumStrategySelector::for_algorithm(
@@ -648,7 +645,7 @@ fn with_strategy_threads_negotiated_algorithm() {
 
 #[test]
 fn unverified_chunk_preserves_writer_byte_stream() {
-    // BR-3i.c: when a chunk carries no `expected_strong`, the applier
+    // When a chunk carries no `expected_strong`, the applier
     // still computes a digest (so the parallel verify path has stable
     // CPU cost) but skips comparison, leaving the writer byte stream
     // unchanged. Backward-compatible callers must keep working.
@@ -667,7 +664,7 @@ fn unverified_chunk_preserves_writer_byte_stream() {
 }
 
 /// Helper: builds a chunk whose `expected_strong` matches the digest
-/// the supplied strategy will compute over `data`. Used by the BR-3i.c
+/// the supplied strategy will compute over `data`. Used by the
 /// happy-path tests so the fixture stays in lockstep with the
 /// negotiated algorithm.
 pub(super) fn chunk_with_correct_digest(
@@ -682,7 +679,7 @@ pub(super) fn chunk_with_correct_digest(
 
 #[test]
 fn verify_chunk_accepts_matching_digest_md5() {
-    // BR-3i.c happy path: MD5 (protocol >= 30 fallback) chunk with the
+    // Happy path: MD5 (protocol >= 30 fallback) chunk with the
     // correct expected digest applies cleanly and writes the original
     // bytes to the sink.
     let applier = ParallelDeltaApplier::new(1);
@@ -698,7 +695,7 @@ fn verify_chunk_accepts_matching_digest_md5() {
 
 #[test]
 fn verify_chunk_accepts_matching_digest_xxh3() {
-    // BR-3i.c happy path under the XXH3 negotiated algorithm: confirms
+    // Happy path under the XXH3 negotiated algorithm: confirms
     // the dispatch routes through the configured strategy, not a
     // hard-coded MD5 path.
     let strategy: Arc<dyn ChecksumStrategy> = Arc::from(ChecksumStrategySelector::for_algorithm(
@@ -716,7 +713,7 @@ fn verify_chunk_accepts_matching_digest_xxh3() {
 
 #[test]
 fn verify_chunk_rejects_mismatched_digest_and_does_not_write() {
-    // BR-3i.c error path: a chunk with a deliberately wrong expected
+    // Error path: a chunk with a deliberately wrong expected
     // digest must fail verification, surface the typed
     // `ChecksumMismatch`, and never reach the destination writer.
     let applier = ParallelDeltaApplier::new(1);

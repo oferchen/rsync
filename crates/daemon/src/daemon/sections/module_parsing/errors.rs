@@ -7,9 +7,9 @@
 
 /// Parses the daemon `--bwlimit` value as a bare KiB integer.
 ///
-/// upstream: options.c:862 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
+/// upstream: options.c:876 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
 /// - the daemon `--bwlimit` is a plain integer number of KiB per second, unlike
-///   the client `--bwlimit` (options.c:1720) which accepts a size suffix. There is
+///   the client `--bwlimit` (options.c:1826-1827) which accepts a size suffix. There is
 ///   no `:BURST` component. `0` disables throttling; the returned value is the
 ///   byte-per-second rate (KiB * 1024).
 fn parse_runtime_bwlimit(value: &OsString) -> Result<Option<NonZeroU64>, DaemonError> {
@@ -36,7 +36,7 @@ fn runtime_bwlimit_error(value: &str) -> DaemonError {
     ))
 }
 
-/// upstream: options.c:1570-1574 and the `daemon_error:` hint at
+/// upstream: options.c:1574-1578 and the `daemon_error:` hint at
 /// options.c:1594-1596 - `rsync: <option>: unknown option (in daemon mode)`.
 fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     let option = option.to_string_lossy();
@@ -46,7 +46,7 @@ fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     ))
 }
 
-/// upstream: options.c:1559-1562 and the shared `daemon_error:` label at
+/// upstream: options.c:1560-1564 and the shared `daemon_error:` label at
 /// options.c:1594-1596.
 fn dparam_missing_equals(value: &str, brand: Brand) -> DaemonError {
     let program = brand.daemon_program_name();
@@ -57,7 +57,7 @@ fn dparam_missing_equals(value: &str, brand: Brand) -> DaemonError {
 
 /// Refuses a daemon command line the way upstream's option parser does.
 ///
-/// upstream: options.c:1583-1596 - the cause is printed bare, then
+/// upstream: options.c:1574-1597 - the cause is printed bare, then
 /// `exit_cleanup(RERR_SYNTAX)` adds its own trailer. `am_daemon` is not yet
 /// set, so the trailer names the client role.
 fn daemon_syntax_error(cause: String) -> DaemonError {
@@ -142,7 +142,7 @@ fn ensure_valid_module_name(name: &str) -> Result<(), &'static str> {
 ///
 /// Deliberately separate from `ensure_valid_module_name`: the whitespace
 /// collapse that makes a single interior space legal lives in
-/// params.c:Section(), which upstream runs only while scanning a config-file
+/// params.c:178 Section(), which upstream runs only while scanning a config-file
 /// section header. The daemon's CLI `NAME=PATH` specs never pass through that
 /// scanner, so they keep the stricter no-whitespace rule.
 ///
@@ -170,7 +170,7 @@ fn duplicate_argument(option: &str) -> DaemonError {
 ///
 /// This is deliberately not reachable from a config file alone: a repeated
 /// `[name]` header re-opens the section the first header created
-/// (loadparm.c:add_a_section:320-339), so the two blocks merge into one module.
+/// (loadparm.c:444-449 add_a_section()), so the two blocks merge into one module.
 /// `--module` has no upstream equivalent, and two specs for one name have no
 /// merge order to follow, so the collision stays an error there.
 fn duplicate_module(name: &str) -> DaemonError {
@@ -183,7 +183,7 @@ fn bind_error(address: SocketAddr, error: io::Error) -> DaemonError {
 
 /// Only the kqueue engine treats an `accept(2)` failure as fatal: a kevent
 /// error means its readiness surface is unusable. The portable poll engine
-/// mirrors upstream `socket.c:601`'s `if (fd < 0) continue;` and warns instead.
+/// mirrors upstream `socket.c:756`'s `if (fd < 0) continue;` and warns instead.
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 fn accept_error(address: SocketAddr, error: io::Error) -> DaemonError {
     network_error("accept connection on", address, error)

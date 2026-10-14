@@ -21,7 +21,7 @@
 /// # Upstream Reference
 ///
 /// - `flist.c:readlink_stat()` - uses stat() instead of lstat() when copy_links
-/// - `options.c:764` - 'L' = copy_links flag
+/// - `options.c:2832-2833` - 'L' = copy_links flag in the server flag string
 #[cfg(unix)]
 #[test]
 fn daemon_copy_links_push_resolves_symlinks() {

@@ -198,7 +198,7 @@ pub fn run_module_list_with_password_and_options(
     // `host::` listing reaches the daemon through the remote shell
     // (daemon-over-rsh); otherwise RSYNC_CONNECT_PROG, otherwise plain TCP.
     let mut stream = if let Some(shell_args) = options.remote_shell() {
-        // upstream: main.c:616-626 + main.c:1611-1626 - spawn the remote shell
+        // upstream: main.c:615-630 + main.c:1648-1670 - spawn the remote shell
         // with `rsync --server --daemon .` and speak the `@RSYNCD:` listing
         // handshake over its pipes instead of opening a TCP socket. Matches
         // `clientserver.c:start_inband_exchange` carried over the shell.
@@ -351,8 +351,8 @@ pub fn run_module_list_with_password_and_options(
                             })?
                     };
 
-                    // upstream: authenticate.c:242 `auth_client()` calls
-                    // `negotiate_daemon_auth(f_out, 1)` only once the daemon has
+                    // upstream: authenticate.c:453 `auth_client()` calls
+                    // `negotiate_daemon_auth(-1, 1)` only once the daemon has
                     // asked for credentials, so a server list we cannot match is
                     // fatal here and nowhere earlier - an unauthenticated
                     // listing never negotiates at all.
@@ -452,15 +452,15 @@ pub fn run_module_list_with_password_and_options(
 
 /// Enforces upstream's greeting-completeness gate on the daemon's banner.
 ///
-/// upstream: clientserver.c:188-210 `exchange_protocols()` (am_client == 1) -
+/// upstream: clientserver.c:203-240 `exchange_protocols()` (am_client == 1) -
 /// after parsing the `@RSYNCD:` greeting the client rejects a banner that omits
 /// the subprotocol value (`remote_protocol >= 30`) or the digest name list
 /// (`remote_protocol > 31`), printing `rsync: the server omitted the <token>:
 /// <buf>` and aborting with `RERR_STARTCLIENT`. Module listing reaches this gate
 /// through the same `start_inband_exchange()` path as a transfer (an empty
 /// module name only changes what follows the handshake), so the listing client
-/// applies the identical shared [`missing_greeting_token`] check that #6609
-/// wired into the transfer handshake. The gate lives here at the application
+/// applies the identical shared [`missing_greeting_token`] check the transfer
+/// handshake uses. The gate lives here at the application
 /// layer, not in the lenient negotiation parser, so protocol-clamping paths that
 /// deliberately accept digest-less banners to exercise version capping stay
 /// intact.
@@ -509,7 +509,7 @@ fn configure_daemon_stream(
 ) -> Result<(), ClientError> {
     if let super::connect::DaemonStream::Tcp(socket) = stream {
         // --sockopts is applied pre-connect inside open_daemon_stream (upstream:
-        // socket.c:279-280 - set_socket_options() must run before connect(2)).
+        // socket.c:434-435 - set_socket_options() must run before connect(2)).
 
         // Module listing has no transfer, so no bwlimit pacing applies.
         super::tcp_perf::apply_client_tcp_perf_options(socket, options.tcp_fastopen(), None);
@@ -605,7 +605,7 @@ mod tests {
         assert_eq!(result, Some(Duration::from_secs(60)));
     }
 
-    // upstream: socket.c:274-277, options.c:125 - connect(2) is alarm-guarded
+    // upstream: socket.c:429-432, options.c:130 - connect(2) is alarm-guarded
     // only when --contimeout > 0; the default connect_timeout is 0. --timeout
     // governs per-read I/O on an established stream and must never bound the
     // connect phase. Without --contimeout, a slow connect must NOT be capped.

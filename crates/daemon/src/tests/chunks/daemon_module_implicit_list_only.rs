@@ -1,9 +1,9 @@
-/// PR #6115 regression: `rsync://host:port/module/` with NO destination must
+/// Regression: `rsync://host:port/module/` with NO destination must
 /// enter implicit list-only mode and list the module contents instead of
 /// erroring "need at least one source and one destination".
 ///
-/// upstream: options.c:2203 - a single source with `list_only` set lists the
-/// module. Fix sites: `client/remote/daemon_transfer/mod.rs` (the
+/// upstream: options.c:2320-2321 - a single operand sets `list_only`, which
+/// lists the module. Fix sites: `client/remote/daemon_transfer/mod.rs` (the
 /// `args.len() < 2 && !list_only` guard + dummy-dest synthesis) and the CLI
 /// frontend `.../workflow/run.rs` single-operand auto-promotion. `run_client`
 /// does not auto-promote `list_only` the way the CLI frontend does, so the test

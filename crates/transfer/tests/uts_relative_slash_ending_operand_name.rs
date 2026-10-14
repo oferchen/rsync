@@ -4,7 +4,7 @@
 //! is `clean_fname(fn, CFN_KEEP_TRAILING_SLASH | CFN_DROP_TRAILING_DOT_DIR)`
 //! with the trailing `/` then stripped (`flist.c:2882-2897`); the fact that a
 //! marker was there survives only in `name_type`, which is what makes
-//! `link_stat()` follow a symlinked operand at `flist.c:2937`. So `-R src/d`,
+//! `scan_link_stat()` follow a symlinked operand at `flist.c:2937`. So `-R src/d`,
 //! `-R src/d/` and `-R src/d/.` all put the SAME names on the wire, and
 //! `-R sym/` differs from `-R sym` only in that the symlink is followed.
 //!
@@ -30,7 +30,7 @@
 //!   CFN_KEEP_TRAILING_SLASH | CFN_DROP_TRAILING_DOT_DIR);`
 //! - `rsync-3.5.1/flist.c:2891-2897` - `else if (fn[len-1] == '/') {
 //!   fn[--len] = '\0'; ... name_type = SLASH_ENDING_NAME; }`
-//! - `rsync-3.5.1/flist.c:2937` - `link_stat(fbuf, &st, copy_dirlinks ||
+//! - `rsync-3.5.1/flist.c:2937` - `scan_link_stat(fbuf, &st, copy_dirlinks ||
 //!   name_type != NORMAL_NAME)` - the marker's surviving effect.
 
 #![cfg(unix)]
@@ -101,7 +101,7 @@ fn build_source_tree(scratch: &TempDir) {
 /// under `scratch`, in wire order, paired with their file types.
 ///
 /// Names above the scratch directory are the operand's implied parents
-/// (`flist.c:2162 send_implied_dirs()`); they are identical for every shape
+/// (`flist.c:2444 send_implied_dirs()`); they are identical for every shape
 /// under test and would only bury the rows that differ.
 fn scoped_flist(scratch: &TempDir, operand: &Path) -> Vec<(String, FileType)> {
     let config = generator_config(operand);
@@ -109,8 +109,8 @@ fn scoped_flist(scratch: &TempDir, operand: &Path) -> Vec<(String, FileType)> {
     ctx.build_file_list(&[operand.to_path_buf()])
         .expect("build_file_list");
 
-    // The receiver strips the leading `/` (flist.c:3314), so the sender's names
-    // are the absolute path minus its root.
+    // The receiver strips the leading `/` (flist.c:3308, flist_sort_and_clean()
+    // with strip_root), so the sender's names are the absolute path minus its root.
     let root = scratch
         .path()
         .to_str()

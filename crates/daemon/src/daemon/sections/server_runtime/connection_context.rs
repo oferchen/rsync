@@ -4,8 +4,9 @@
 /// its full session (module table, MOTD, log sink, bandwidth limits, client
 /// socket options, and the reverse-lookup / PROXY-protocol toggles). All
 /// fields are owned or `Arc`-shared so the context can be cloned cheaply and
-/// handed to a worker on either the synchronous thread-per-connection accept
-/// loop or the tokio `spawn_blocking` async accept path.
+/// handed to a worker on either the synchronous accept loop (a forked child
+/// on Unix, a thread elsewhere) or the tokio `spawn_blocking` async accept
+/// path.
 ///
 /// The context is built once and shared; both accept paths run the same
 /// [`ConnectionContext::serve_session`] core so the per-connection wire
@@ -71,8 +72,8 @@ impl ConnectionContext {
     /// session is caught, logged, and swallowed so the daemon stays alive,
     /// matching upstream's fork-per-connection crash isolation.
     ///
-    /// upstream: clientserver.c - `start_daemon()` forks a child per
-    /// connection which runs `rsync_module()`.
+    /// upstream: socket.c:761-773 forks a child per connection, which runs
+    /// clientserver.c:1414 `start_daemon()` and then `rsync_module()`.
     fn serve_session(&self, stream: DaemonStream, raw_peer_addr: SocketAddr) -> io::Result<()> {
         let peer_addr = normalize_peer_address(raw_peer_addr);
         let log_for_worker = self.log_sink.clone();

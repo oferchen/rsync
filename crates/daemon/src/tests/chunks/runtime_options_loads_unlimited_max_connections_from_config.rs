@@ -13,7 +13,7 @@ fn runtime_options_loads_unlimited_max_connections_from_config() {
     ])
     .expect("config parses");
 
-    // upstream: connection.c:27 - `max connections = 0` returns success
+    // upstream: connection.c:30-31 - `max connections = 0` returns success
     // before the lock file is opened, so the module is unlimited.
     assert_eq!(
         options.modules[0].max_connections(),

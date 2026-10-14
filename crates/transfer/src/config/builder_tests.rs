@@ -208,7 +208,7 @@ mod defaults {
     /// `ServerConfig.fake_super`, which the receiver then forwards into
     /// `MetadataOptions.fake_super` so ownership/special-file metadata is
     /// stored in the `user.rsync.%stat` xattr instead of being applied to
-    /// inodes (upstream: `clientserver.c:1120-1121`).
+    /// inodes (upstream: `clientserver.c:1198-1201`).
     #[test]
     fn fake_super_round_trips_through_builder() {
         let enabled = ServerConfigBuilder::new()
@@ -317,7 +317,7 @@ mod validation {
         ));
     }
 
-    /// upstream: options.c:2432-2440 - `--inplace` cannot be used with
+    /// upstream: options.c:2575-2582 - `--inplace` cannot be used with
     /// `--partial-dir`; the pair is refused at config-build time.
     #[test]
     fn inplace_and_partial_dir_conflict() {

@@ -988,7 +988,7 @@ fn level_zero_does_not_skip_any_mount_points() {
 /// Verifies that pruning a cross-device child directory emits the upstream
 /// `--info=MOUNT` notice through the diagnostic event queue.
 ///
-/// Mirrors `flist.c:1544-1548` in upstream rsync 3.4.1:
+/// Mirrors `flist.c:1718-1721` in upstream rsync 3.5.1:
 /// ```c
 /// if (INFO_GTE(MOUNT, 1)) {
 ///     rprintf(FINFO, "[%s] skipping mount-point dir %s\n",
@@ -1069,7 +1069,7 @@ fn one_file_system_emits_info_mount_notice() {
 
 /// Verifies that the default verbosity configuration (no `--info=MOUNT`)
 /// suppresses the notice, matching upstream's `INFO_GTE(MOUNT, 1)` gate
-/// (flist.c:1572). MOUNT is not in `info_verbosity[0]`, so it stays silent
+/// (flist.c:1718). MOUNT is not in `info_verbosity[0]`, so it stays silent
 /// unless explicitly enabled.
 #[test]
 fn one_file_system_default_verbosity_suppresses_info_mount_notice() {
@@ -1143,7 +1143,7 @@ fn one_file_system_default_verbosity_suppresses_info_mount_notice() {
 /// while same-device extraneous entries are still removed.
 ///
 /// upstream: generator.c:delete_in_dir() (FLAG_MOUNT_DIR skip) and
-/// delete.c:89-97 delete_dir_contents() (a mount point pins the parent).
+/// delete.c:144-150 delete_dir_contents() (a mount point pins the parent).
 ///
 /// Unix-only: the device-boundary skip is gated on `st_dev`, which has no
 /// Windows equivalent, so on Windows the boundary check is a no-op and the

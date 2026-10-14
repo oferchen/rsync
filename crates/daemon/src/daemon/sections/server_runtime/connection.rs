@@ -13,9 +13,10 @@ struct AcceptLoopState<'a> {
     /// Concurrent connection cap consulted by the accept loop before
     /// dispatching a worker. `None` disables the check.
     ///
-    /// upstream: clientserver.c:746-758 enforces the per-module `max
-    /// connections` directive via `claim_connection()`; this cap mirrors
-    /// the same behaviour at the daemon level.
+    /// upstream: clientserver.c:791-801 enforces the per-module `max
+    /// connections` directive via `claim_connection()`. Deviation from
+    /// upstream: this daemon-wide cap has no upstream counterpart; it applies
+    /// the same refusal across every module.
     max_connections: Option<usize>,
     config_path: &'a Option<PathBuf>,
     /// `--log-file-format`, re-applied to the modules on every SIGHUP reload.
@@ -68,8 +69,9 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
         return Some(true);
     }
 
-    // upstream: main.c - SIGUSR1 stops accepting new connections
-    // and exits after active transfers drain.
+    // Deviation from upstream: SIGUSR1 stops accepting new connections and
+    // lets active transfers drain; upstream's main.c:1684 sigusr1_handler()
+    // exits immediately with RERR_SIGNAL1.
     if state.signal_flags.graceful_exit.load(Ordering::Relaxed) {
         if let Some(log) = state.log_sink.as_ref() {
             let text = format!(
@@ -106,7 +108,9 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
         );
     }
 
-    // upstream: main.c - SIGUSR2 outputs transfer statistics.
+    // Deviation from upstream: SIGUSR2 logs a daemon progress summary;
+    // upstream's main.c:1695 sigusr2_handler() only makes a receiver child
+    // wrap up.
     if state
         .signal_flags
         .progress_dump
@@ -142,7 +146,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
 /// stream (matching upstream's wording byte for byte). The accept loop
 /// keeps running.
 ///
-/// upstream: clientserver.c:746-758 - `claim_connection()` enforces the
+/// upstream: clientserver.c:791-801 - `claim_connection()` enforces the
 /// per-module `lp_max_connections()` cap and emits
 /// `@ERROR: max connections (%d) reached -- try again later\n` to the
 /// client via `io_printf(f_out, ...)`.
@@ -209,8 +213,9 @@ pub(crate) fn log_max_connections_rejection(
 /// Spawns a worker for an accepted connection.
 ///
 /// Normalizes the peer address, claims the connection's `max connections`
-/// slot, and spawns a session handler thread with `catch_unwind` panic
-/// isolation. Returns the [`SessionWorker`] pairing the two.
+/// slot, and starts the session: a forked child on Unix, a thread with
+/// `catch_unwind` panic isolation elsewhere. Returns the [`SessionWorker`]
+/// pairing the two.
 ///
 /// The slot is claimed here but held by the returned worker rather than by the
 /// session, so the accept loop's reap is what releases it. See
@@ -220,7 +225,7 @@ pub(crate) fn log_max_connections_rejection(
 /// `fork` does that, and upstream treats it the same way, by continuing the
 /// accept loop rather than ending the daemon.
 ///
-/// upstream: `socket.c:761-780` `start_accept_loop()` forks per connection;
+/// upstream: `socket.c:761-785` `start_accept_loop()` forks per connection;
 /// oc does the same on Unix and keeps a thread backing on Windows, which has
 /// no `fork`. See [`SessionBacking`].
 fn spawn_connection_worker(
@@ -302,7 +307,7 @@ fn fork_session_backing(
         Ok(platform::session_fork::ForkSide::Parent { child_pid }) => {
             // The parent must not hold the accepted socket: while it stays
             // open the peer cannot observe the child's close.
-            // upstream: `socket.c:780` `close(fd)` in the parent arm.
+            // upstream: `socket.c:784` `close(fd)` in the parent arm.
             drop(stream);
             Some(SessionBacking { child_pid })
         }

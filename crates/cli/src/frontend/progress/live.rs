@@ -61,7 +61,7 @@ fn tick_throttled(last: Option<Instant>, now: Instant, interval: Duration, is_fi
 /// before any non-progress message. We go further: when the output is not
 /// a terminal, we use `\n` instead of `\r` so piped output is readable.
 ///
-/// upstream: options.c:2018-2040 `--outbuf` controls stdout buffering via
+/// upstream: options.c:2156-2180 `--outbuf` controls stdout buffering via
 /// `setvbuf`. We mirror this by flushing after each progress tick when
 /// the mode is unbuffered or line-buffered.
 #[derive(Clone, Copy, Debug)]
@@ -90,9 +90,9 @@ impl Default for ProgressOutputConfig {
 /// the progress lines that are written live.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LocalSessionOutput<'a> {
-    /// The sender's file-list banner. upstream: flist.c:2521-2524.
+    /// The sender's file-list banner. upstream: flist.c:2760-2764.
     pub(crate) banner: FlistBanner,
-    /// The `-vv` generator notice. upstream: generator.c:2290-2295.
+    /// The `-vv` generator notice. upstream: generator.c:2763-2768.
     pub(crate) delta_notice: Option<DeltaTransmissionState>,
     /// upstream `stdout_format_has_i`: forces the `created directory` notice.
     pub(crate) itemizing: bool,
@@ -113,7 +113,7 @@ pub(crate) enum LiveListing<'a> {
         name_overridden: bool,
     },
     /// An `-i` / `--out-format` line per entry, logged before its transfer.
-    /// upstream: options.c:2502-2508 `log_before_transfer`.
+    /// upstream: options.c:2501-2508 `log_before_transfer`.
     Formatted {
         format: &'a OutFormat,
         context: &'a OutFormatContext,
@@ -449,7 +449,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             return;
         }
 
-        // upstream: receiver.c:690-692 - the NDX_DONE end_progress(0) summary
+        // upstream: receiver.c:852-857 - the NDX_DONE end_progress(0) summary
         // is emitted only under --info=progress2. Per-file progress mode has no
         // terminal summary line, so drop the synthetic transfer-complete tick.
         if update.is_transfer_complete() && matches!(self.mode, ProgressMode::PerFile) {

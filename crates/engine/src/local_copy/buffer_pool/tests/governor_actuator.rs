@@ -22,7 +22,7 @@ fn pool_with_ceiling(start_cap: usize, ceiling: usize) -> (BufferPool, GovernorH
     (pool, gov)
 }
 
-// --- composition truth table (pure, deterministic) --------------------------
+// Composition truth table (pure, deterministic).
 
 #[test]
 fn no_actuator_passes_local_action_through_unchanged() {
@@ -121,7 +121,7 @@ fn governor_never_alters_shrink_or_hold() {
     drop(gov);
 }
 
-// --- end-to-end through the acquire path ------------------------------------
+// End-to-end through the acquire path.
 
 #[test]
 fn adaptive_grow_is_bounded_by_the_governor_ceiling() {

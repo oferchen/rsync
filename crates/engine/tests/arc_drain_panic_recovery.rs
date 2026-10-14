@@ -1,8 +1,8 @@
-//! Stress tests for ATU-7 (#2384): a panic in a receiver-side worker
+//! Stress tests for ATU-7: a panic in a receiver-side worker
 //! that still holds a clone of one of the shared `Arc` handles must
 //! surface as a strongly typed error variant on the drain path,
 //! carrying the residual `Arc::strong_count`. Prior to ATU-3
-//! (PR #4357), the same failure mode collapsed to an opaque
+//!, the same failure mode collapsed to an opaque
 //! `io::Error::Other("...")` with no machine-readable shape and no
 //! strong-count, so operators could neither match on the variant nor
 //! see how many workers were still leaking the handle.

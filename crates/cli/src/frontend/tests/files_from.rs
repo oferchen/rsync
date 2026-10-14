@@ -27,9 +27,9 @@ fn files_from_reports_read_failures() {
     let dest_dir = tmp.path().join("files-from-error-dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
 
-    // upstream: options.c:2474-2480 requires a source and destination operand
+    // upstream: options.c:2619-2622 requires a source and destination operand
     // with --files-from (argc == 2); the list is only read afterwards
-    // (main.c:1833), so both operands are supplied to reach the read failure.
+    // (send_file_list(), flist.c:2787), so both operands are supplied to reach the read failure.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from(format!("--files-from={}", missing.display())),
@@ -248,8 +248,8 @@ fn from0_strips_comment_lines() {
     let list_path = tmp.path().join("from0_comments.list");
 
     // upstream: --from0 still strips leading #/; comment lines. RL_DUMP_COMMENTS
-    // is gated on reading_remotely, not eol_nulls (flist.c:2485); read_line drops
-    // #/; regardless of RL_EOL_NULLS (io.c:1294).
+    // is gated on reading_remotely, not eol_nulls (flist.c:2753); read_line drops
+    // #/; regardless of RL_EOL_NULLS (io.c:1446).
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"#comment");
     bytes.push(0);
@@ -671,7 +671,7 @@ fn files_from_integration_handles_nested_directories() {
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(stdout.is_empty());
 
-    // upstream: options.c:2196-2197 - --files-from implies --relative, so
+    // upstream: options.c:2331-2332 - --files-from implies --relative, so
     // subdir/nested.txt stays at dest/subdir/nested.txt.
     assert!(dest_dir.join("top.txt").exists());
     assert!(dest_dir.join("subdir").join("nested.txt").exists());
@@ -833,7 +833,7 @@ fn files_from_reports_permission_error() {
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
 
-    // upstream: options.c:2474-2480 - --files-from requires src + dest operands
+    // upstream: options.c:2619-2622 - --files-from requires src + dest operands
     // (argc == 2) before the list is read, so both are supplied here.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -1572,7 +1572,7 @@ fn files_from_integration_with_recursive_copies_nested_files() {
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(stdout.is_empty());
 
-    // --files-from implies --relative (upstream options.c:2196-2197), so
+    // --files-from implies --relative (upstream options.c:2331-2332), so
     // listed paths preserve their directory structure at the destination.
     assert!(dest_dir.join("top.txt").exists());
     assert!(dest_dir.join("a/mid.txt").exists());
@@ -1694,7 +1694,7 @@ fn resolve_file_list_entries_with_dot_relative_paths() {
 fn resolve_files_from_entry_with_embedded_dot_marker_skips_extra_marker() {
     use crate::frontend::execution::resolve_file_list_entries;
 
-    // upstream: flist.c:2556-2558 - entries like "from/./dir/subdir" already
+    // upstream: flist.c:2863 - entries like "from/./dir/subdir" already
     // contain a "./" transfer root marker. The resolver must NOT add another
     // "./" because the engine splits at the first marker, and a double marker
     // would incorrectly keep "from/" in the destination path.
@@ -1754,11 +1754,11 @@ fn resolve_files_from_entry_with_leading_dot_slash_skips_extra_marker() {
 /// Upstream `flist.c:2992-3118` honours `(xfer_dirs && name_type != NORMAL_NAME)`
 /// and calls `send_directory()` for every trailing-slash or dotdir entry, so
 /// `from/./` enumerates one level of `from/`'s children even though `--files-from`
-/// implicitly clears `recurse` (`options.c:2198`). The same applies to
+/// implicitly clears `recurse` (`options.c:2314-2315`). The same applies to
 /// `from/./dir/subdir/subsubdir2/`, which must pull `bin-lt-list` even though
 /// `subsubdir/` (no trailing slash) does not pull `etc-ltr-list`.
 ///
-/// Prior to PR #5852 the local-copy executor short-circuited at
+/// Previously the local-copy executor short-circuited at
 /// `copy_directory_recursive`'s `!recursive_enabled()` bail-out, so the
 /// destination only contained `dir/subdir/{foobar.baz,subsubdir,subsubdir2}`
 /// and was missing all top-level siblings plus `subsubdir2/bin-lt-list`.
@@ -1869,7 +1869,7 @@ fn files_from_integration_matches_upstream_dotdir_walk() {
 }
 
 /// Companion regression test for a flat filelist where every listed entry is a
-/// top-level file. Before PR #5852 the executor walked only the entries that
+/// top-level file. Previously the executor walked only the entries that
 /// happened to land under an already-recursed directory; flat top-level files
 /// were silently dropped despite being in the list.
 #[test]

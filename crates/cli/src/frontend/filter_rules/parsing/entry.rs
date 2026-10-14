@@ -29,7 +29,7 @@ pub(crate) fn parse_filter_directive(
     source: RuleSource<'_>,
 ) -> Result<FilterDirective, Message> {
     let text = argument.to_string_lossy();
-    // upstream: exclude.c:1100-1213 parse_rule_tok - leading whitespace is only
+    // upstream: exclude.c:1249-1257 parse_rule_tok - leading whitespace is only
     // skipped under FILTRULE_WORD_SPLIT, which a top-level `--filter` rule never
     // carries. A leading space therefore reaches the prefix `switch` default and
     // raises "Unknown filter rule" (RERR_SYNTAX). Do not trim the leading edge.
@@ -46,7 +46,7 @@ pub(crate) fn parse_filter_directive(
 ///
 /// upstream: exclude.c:1533-1538, in `parse_filter_str`'s token loop. It
 /// measures `pat_len` - the pattern *alone*, since `parse_rule_tok` has already
-/// consumed the action prefix and any modifiers (exclude.c:1456-1464) - and
+/// consumed the action prefix and any modifiers (exclude.c:1444-1465) - and
 /// `continue`s, so the rule contributes nothing and parsing exits 0.
 ///
 /// Consulting the CONSTRUCTED directive is how oc reads that same quantity
@@ -54,7 +54,7 @@ pub(crate) fn parse_filter_directive(
 /// exactly what upstream measures. `Clear`, `Noop` and `CvsDefaults` carry no
 /// pattern at all, so upstream's check can never fire for them.
 ///
-/// upstream's check sits above the `FILTRULE_MERGE_FILE` branch (`:1550`), and
+/// upstream's check sits above the `FILTRULE_MERGE_FILE` branch (`:1553`), and
 /// so does this one in effect: the merge file is opened later, by the caller
 /// that consumes the directive, so an over-long merge name never reaches a
 /// filesystem here either.
@@ -71,7 +71,7 @@ fn discard_over_long(directive: FilterDirective, source: RuleSource<'_>) -> Filt
         return directive;
     }
 
-    // The rule text crosses `rule_text` (exclude.c:88-123): upstream passes a
+    // The rule text crosses `rule_text` (exclude.c:103-124): upstream passes a
     // NULL template here, which falls back to the am-I-parsing-a-file state
     // (exclude.c:67-69) - the fact oc carries explicitly on `source`.
     logging::emit_info_coded(
@@ -94,7 +94,7 @@ fn discard_over_long(directive: FilterDirective, source: RuleSource<'_>) -> Filt
 /// this line). Empty patterns are rejected to match upstream
 /// `exclude.c:parse_rule_tok()` which reports unexpected-end-of-rule.
 ///
-/// upstream: exclude.c:parse_rule_tok() XFLG_OLD_PREFIXES branch (lines 1125-1133).
+/// upstream: exclude.c:parse_rule_tok() XFLG_OLD_PREFIXES branch (lines 1276-1284).
 pub(crate) fn parse_old_prefix_rule(
     line: &str,
     default_kind: FilterRuleKind,
@@ -109,15 +109,15 @@ pub(crate) fn parse_old_prefix_rule(
     );
 
     if line.is_empty() {
-        // upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty
+        // upstream: exclude.c:1256-1257 parse_rule_tok returns NULL for an empty
         // rule, so a blank `--exclude`/`--include` value adds nothing (exit 0).
         return Ok(FilterDirective::Noop);
     }
 
     let bytes = line.as_bytes();
-    // upstream: exclude.c parse_rule_tok() XFLG_OLD_PREFIXES branch - `*s ==
+    // upstream: exclude.c:1283 parse_rule_tok() XFLG_OLD_PREFIXES branch - `*s ==
     // '!'` sets FILTRULE_CLEAR_LIST tentatively WITHOUT advancing `s`, so the
-    // later `if (len > 1) rule->rflags &= ~FILTRULE_CLEAR_LIST` measures the
+    // later `if (len > 1) rule->rflags &= ~FILTRULE_CLEAR_LIST` (:1472) measures the
     // whole line. Only a line that is exactly `!` stays a clear; anything
     // longer - including `! ` - is demoted back to a literal pattern. The
     // trailing-characters error cannot fire here, because its guard excludes
@@ -139,7 +139,7 @@ pub(crate) fn parse_old_prefix_rule(
     if pattern.is_empty() {
         // upstream: exclude.c:1475 - a prefix with no pattern is `!len`, so it
         // raises "unexpected end of filter rule". The rule text crosses
-        // `rule_text` (exclude.c:88-123): an `--exclude-from`/`--include-from`
+        // `rule_text` (exclude.c:103-124): an `--exclude-from`/`--include-from`
         // line is a file's contents.
         return Err(unexpected_end_of_filter_rule(RuleLine::new(line, source)));
     }
@@ -157,14 +157,14 @@ pub(crate) fn parse_old_prefix_rule(
 /// short rules, then the long keyword rules.
 pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective, Message> {
     let text = line.text();
-    // upstream: exclude.c:1313 parse_rule_tok - the pattern length is strlen, so
+    // upstream: exclude.c:1465 parse_rule_tok - the pattern length is strlen, so
     // trailing whitespace is part of the pattern and is never stripped. A rule
     // like `- *.o ` keeps the trailing space in its pattern, so `x.o` is not
     // matched by `*.o ` and stays included.
     let trimmed = text;
 
     if trimmed.is_empty() {
-        // upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty rule
+        // upstream: exclude.c:1256-1257 parse_rule_tok returns NULL for an empty rule
         // string (`if (!*s) return NULL`), so a blank `--filter` value adds
         // nothing and exits 0. A `--filter=" "` (whitespace) value is NOT empty
         // here - a top-level `--filter` never carries FILTRULE_WORD_SPLIT, so the
@@ -223,7 +223,7 @@ pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective
 /// The per-directory `:C` / `.C` merge forms are handled earlier by the
 /// merge-directive parser, so they never reach this check.
 ///
-/// upstream: exclude.c:1441-1443 - a FILTRULE_CVS_IGNORE rule that is not a
+/// upstream: exclude.c:1595-1597 - a FILTRULE_CVS_IGNORE rule that is not a
 /// merge triggers get_cvs_excludes().
 pub(super) fn is_cvs_convenience_rule(trimmed: &str) -> bool {
     let body = match trimmed
@@ -234,7 +234,7 @@ pub(super) fn is_cvs_convenience_rule(trimmed: &str) -> bool {
         None => return false,
     };
     let body = body.strip_prefix(',').unwrap_or(body);
-    // upstream: exclude.c:1252 the cvs-ignore modifier is uppercase `C`; a
+    // upstream: exclude.c:1402 the cvs-ignore modifier is uppercase `C`; a
     // lowercase `c` is rejected as an invalid modifier, so match exactly.
     body == "C"
 }

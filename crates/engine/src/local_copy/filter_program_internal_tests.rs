@@ -73,7 +73,7 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
         .push_rule(FilterRule::include("keep.txt"))
         .expect("include rule added");
     // Risk (more specific) precedes protect (broad): upstream check_filter()
-    // returns on the first matching rule (exclude.c:1058-1061), so the override
+    // returns on the first matching rule (exclude.c:1207-1210), so the override
     // sub-path is un-protected while the broad protect still guards its siblings.
     segment
         .push_rule(FilterRule::risk("protected/override/**"))
@@ -138,7 +138,7 @@ fn perishable_rules_protect_top_level_deletion_context() {
     );
     assert!(!transfer.allows_transfer());
 
-    // upstream: exclude.c:1044 / delete.c:147 - the top-level delete scan runs
+    // upstream: exclude.c:1193 / delete.c:205-211 - the top-level delete scan runs
     // with `ignore_perishable` unset, so a perishable exclude protects a
     // matching candidate just like a plain exclude.
     let mut deletion = FilterOutcome::default();

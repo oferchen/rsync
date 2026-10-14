@@ -32,7 +32,7 @@ impl ActiveCompressor {
 
     /// Creates a compressor with an optional zstd worker thread count.
     /// `workers` only affects zstd; other algorithms ignore the value.
-    /// upstream: `token.c:701` plumbs `do_compression_threads` into
+    /// upstream: `token.c:752` plumbs `do_compression_threads` into
     /// `ZSTD_c_nbWorkers`.
     pub fn new_with_workers(
         algorithm: CompressionAlgorithm,

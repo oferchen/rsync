@@ -12,7 +12,7 @@ fn out_format_argument_accepts_supported_placeholders() {
 
 #[test]
 fn out_format_argument_passes_unknown_placeholders_through_literally() {
-    // upstream log.c:756 copies an unrecognized %escape through verbatim rather
+    // upstream log.c:791-792 copies an unrecognized %escape through verbatim rather
     // than rejecting the format string.
     let format = parse_out_format(OsStr::new("%z")).expect("parse out-format");
     assert!(!format.is_empty());

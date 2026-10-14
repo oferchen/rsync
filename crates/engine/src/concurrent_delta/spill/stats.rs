@@ -24,8 +24,8 @@ pub struct SpillStats {
     ///
     /// Counts each `spill_excess` call that successfully wrote at least one
     /// record, regardless of how many records that call produced. Adaptive
-    /// ring sizing (ROB-7) and bench normal-operation spill-rate audits
-    /// (ROB-6) use this counter because it is invariant to
+    /// ring sizing and bench normal-operation spill-rate audits
+    /// use this counter because it is invariant to
     /// [`SpillGranularity`](super::SpillGranularity).
     pub spill_activations: u64,
     /// Total reload-from-disk events since creation.

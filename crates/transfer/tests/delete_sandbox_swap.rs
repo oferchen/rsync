@@ -226,7 +226,7 @@ fn sandbox_off_fallback_matches_std_for_legitimate_delete() {
     assert!(!dir.exists(), "fallback recursive unlink must remove dir");
 }
 
-/// upstream: `delete.c:100-101`/`141-142` `DEL_NO_UID_WRITE` - a destination
+/// upstream: `delete.c:202-203` `DEL_NO_UID_WRITE` (set at `generator.c:349`) - a destination
 /// directory we own but cannot write to (no owner-write bit) must still be
 /// emptied and removed under `--delete`, via a proactive chmod +w rather
 /// than failing with `EACCES`. Exercised at the same sandbox anchor the

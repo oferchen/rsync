@@ -83,7 +83,7 @@ fn itemize_modified_file_shows_change_indicators() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // upstream: generator.c:1942 - the position-2 `c` glyph fires only under
+    // upstream: generator.c:2379-2380 - the position-2 `c` glyph fires only under
     // `--checksum`; enable it here so `checksum_changed()` reflects the
     // rewritten data.
     let options = LocalCopyOptions::default()
@@ -298,7 +298,7 @@ fn itemize_multiple_changes_shows_all_indicators() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // upstream: generator.c:1942 - position-2 `c` is reserved for `--checksum`
+    // upstream: generator.c:2379-2380 - position-2 `c` is reserved for `--checksum`
     // mode, so enable it here to assert the multi-indicator pattern.
     let options = LocalCopyOptions::default()
         .checksum(true)
@@ -441,7 +441,7 @@ fn itemize_hard_link_shows_correct_action() {
     assert!(hard_link_record.is_some(), "should have hard link record");
 }
 
-// upstream: hlink.c:228-234 maybe_hard_link() + log.c:736-738 - a hard-link
+// upstream: hlink.c:244-249 maybe_hard_link() + log.c:768-769 - a hard-link
 // follower whose destination does not yet exist is itemized through
 // atomic_create() with the follower's own negative statret, which sets
 // ITEM_IS_NEW and renders `hf+++++++++`. Regression guard for the follower
@@ -495,7 +495,7 @@ fn itemize_new_hard_link_follower_marked_created() {
     );
 }
 
-// upstream: hlink.c:match_gnums / generator.c:1803-1806 / hlink.c:474-521
+// upstream: hlink.c:match_gnums / generator.c:2214-2217 / hlink.c:496
 // finish_hard_link() - the LAST name-sorted member of a hard-link cohort is the
 // transferred data-holder; every earlier member is deferred and then linked to
 // the holder, so the itemize stream is `>f <last>` followed by the remaining
@@ -603,10 +603,10 @@ fn itemize_hard_link_data_holder_is_last_name_sorted_member() {
     assert_eq!(order, ["c", "b", "a"], "holder-then-descending order");
 }
 
-// upstream: hlink.c:385-414 hard_link_check() + generator.c:995-1052
+// upstream: hlink.c:399-432 hard_link_check() + generator.c:1073
 // try_dests_reg() - when a hard-link follower's destination is absent but its
 // name matches a --copy-dest basis (quick_check_ok), statret is bumped from < 0
-// to 1, so the itemize (log.c:736-738) never sets ITEM_IS_NEW: the follower
+// to 1, so the itemize (log.c:768-769) never sets ITEM_IS_NEW: the follower
 // renders blank (`hf          `), mirroring the leader that was itself satisfied
 // from the copy-dest tree. Regression guard so the empty-destination
 // new-follower fix does not wrongly mark a copy-dest-matched follower created.
@@ -698,7 +698,7 @@ fn itemize_size_change_detected_correctly() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // The position-2 `c` glyph (ITEM_REPORT_CHANGE) only fires under
-    // --checksum (upstream: generator.c:1942 - `if (always_checksum > 0)
+    // --checksum (upstream: generator.c:2379-2380 - `if (always_checksum > 0)
     // iflags |= ITEM_REPORT_CHANGE`), so enable checksum mode to assert
     // `checksum_changed()` below.
     let options = LocalCopyOptions::default()
@@ -864,7 +864,7 @@ fn itemize_format_matches_upstream_for_changed_file() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // upstream: generator.c:1942 - position-2 `c` is reserved for `--checksum`
+    // upstream: generator.c:2379-2380 - position-2 `c` is reserved for `--checksum`
     // mode, so enable it here to exercise the `>f.st......` upstream pattern.
     let options = LocalCopyOptions::default()
         .checksum(true)
@@ -895,7 +895,7 @@ fn itemize_format_matches_upstream_for_changed_file() {
 #[cfg(unix)]
 #[test]
 fn itemize_existing_root_dir_emits_metadata_reused() {
-    // upstream: generator.c:1480-1483 + 582-583 - the transfer-root "." entry is
+    // upstream: generator.c:1869-1872 + 588-589 - the transfer-root "." entry is
     // itemized whether or not it changed; under `INFO_GTE(NAME, 2)` (`-vv`) the
     // unchanged root prints `.d ./`. The local-copy engine previously skipped the
     // "." record entirely when the destination root already existed, so the row

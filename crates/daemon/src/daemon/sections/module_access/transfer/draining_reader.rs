@@ -52,7 +52,7 @@
 // thread clears it on exit - before `stop_and_join()` returns - leaving the
 // goodbye-drain clone a normal blocking socket.
 //
-// upstream: io.c:900-907 perform_io() drains readable multiplex messages
+// upstream: io.c:1002-1009 perform_io() drains readable multiplex messages
 // whenever it is about to write, keeping the peer's send buffer emptied.
 //
 // This file is `include!`d into the `crate::daemon` scope, so it reuses the
@@ -522,7 +522,7 @@ mod draining_reader_tests {
 
     #[test]
     fn replays_all_buffered_bytes_before_stop() {
-        // Queue-drain invariant (mirrors upstream perform_io io.c:900): every
+        // Queue-drain invariant (mirrors upstream perform_io io.c:1004-1006): every
         // byte the drain thread pulled off the socket must be replayed to the
         // consumer in order, even after `stop()` halts further draining. The
         // consumer reads the full transfer payload through the reader, then

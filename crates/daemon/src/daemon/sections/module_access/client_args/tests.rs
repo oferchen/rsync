@@ -152,15 +152,16 @@ mod output_verbosity_limit_tests {
     use std::ffi::OsString;
 
     // WHY: upstream gates per-connection log floods with
-    // `limit_output_verbosity(lp_max_verbosity(i))` (clientserver.c:1141), which
-    // lowers the `info_levels[]`/`debug_levels[]` OUTPUT arrays
-    // (options.c:537-560) and leaves the client's option string untouched. Two
-    // separate invariants ride on that shape and both are pinned here:
+    // `limit_output_verbosity(lp_max_verbosity(module_id))`
+    // (clientserver.c:1223), which lowers the `info_levels[]`/`debug_levels[]`
+    // OUTPUT arrays (options.c:546-572) and leaves the client's option string
+    // untouched. Two separate invariants ride on that shape and both are
+    // pinned here:
     //
     //   1. The `v` inside the `-e.<caps>` payload is NOT a `-v`. It is the
     //      client's `CF_VARINT_FLIST_FLAGS` / negotiated-strings advertisement
-    //      (compat.c:730-733), and upstream's popt gives everything after `-e`
-    //      to `shell_cmd` (options.c:823) rather than treating it as option
+    //      (compat.c:741-744), and upstream's popt gives everything after `-e`
+    //      to `shell_cmd` (options.c:837) rather than treating it as option
     //      letters. Counting it inflates every connection's verbosity by one.
     //   2. Limiting must not rewrite the option string. A rewrite that dropped
     //      that `v` would silently strip the peer's capability advertisement -
@@ -200,8 +201,8 @@ mod output_verbosity_limit_tests {
         // `max verbosity = 0` is the strongest limit an operator can set; it
         // must still leave the `-e` payload byte-identical, because that payload
         // is what the capability decoder turns into the compat flags written on
-        // the wire (compat.c:712-738).
-        // `1` is the shipped default (upstream daemon-parm.txt:49), `0` the
+        // the wire (compat.c:722-750).
+        // `1` is the shipped default (upstream daemon-parm.txt:51), `0` the
         // strongest limit an operator can set, `-1` the below-zero arm.
         for max_verbosity in [-1, 0, 1, 2, 5, 9] {
             for bundle in [
@@ -218,7 +219,7 @@ mod output_verbosity_limit_tests {
                 );
                 // Spelled out rather than left implicit in the equality above:
                 // every capability letter the peer advertised has to survive,
-                // because each one is a compat-flag bit (compat.c:720-733).
+                // because each one is a compat-flag bit (compat.c:731-747).
                 let payload = cfg
                     .flag_string
                     .split_once('e')
@@ -279,7 +280,7 @@ mod output_verbosity_limit_tests {
 
     #[test]
     fn permissive_max_verbosity_passes_the_request_through() {
-        // upstream: options.c:542-543 - `limit_output_verbosity` returns without
+        // upstream: options.c:551-552 - `limit_output_verbosity` returns without
         // applying any limit once the module's cap exceeds MAX_VERBOSITY, so the
         // client's own level survives intact.
         let mut cfg = parse("-vlogDtpre.iLsfxCIvu");
@@ -292,7 +293,7 @@ mod output_verbosity_limit_tests {
     #[test]
     fn negative_max_verbosity_silences_the_connection() {
         // A negative `max verbosity` makes upstream's `for (j = 0; j <= level;)`
-        // loop body never run (options.c:548), leaving every limit at zero.
+        // loop body never run (options.c:558), leaving every limit at zero.
         let mut cfg = parse("-vvlogDtpre.iLsfxCIvu");
         assert_eq!(apply_output_verbosity_limit(&mut cfg, -1), 0);
     }
@@ -306,9 +307,9 @@ mod daemon_module_suffix_tests {
     /// is the only condition under which `full_fname()` appends
     /// ` (in MODULE)` to a quoted path. Recording the name here is what lets a
     /// daemon-side `send_files failed to open` / `mkstemp failed` line name the
-    /// module the client asked for, exactly as upstream 3.4.4 does.
+    /// module the client asked for, exactly as upstream does.
     ///
-    /// upstream: clientserver.c:821 `module_id = i`; util1.c:1387
+    /// upstream: clientserver.c:821 `module_id = i`; util1.c:1548
     /// `if (module_id >= 0)`.
     #[test]
     fn module_selection_records_name_for_full_fname() {
@@ -404,7 +405,7 @@ mod daemon_clean_fname_collapse_tests {
     /// reaches the in-module sibling. Comparing the relative spelling with
     /// `module_dir` instead found no common prefix, spent a depth of 0 and
     /// rewrote the basis to `<module>/01` - the `link-dest-pathroot` failure.
-    // upstream: main.c:1254 sanitize_path(NULL, dir, NULL, curr_dir_depth, ..)
+    // upstream: main.c:1255 sanitize_path(NULL, *dir_p, NULL, curr_dir_depth, ..)
     #[test]
     fn a_served_relative_destination_keeps_its_depth_budget() {
         for module_dir in ["/", "/srv/mod"] {
@@ -583,7 +584,7 @@ mod daemon_partial_dir_sanitize_tests {
     ///
     /// Without this the pin above would also hold for a fix that simply stopped
     /// clamping altogether, which would let `--partial-dir=/pdir` address the
-    /// filesystem root - the defect PR #7498 closed.
+    /// filesystem root.
     #[test]
     fn an_absolute_partial_dir_still_re_roots_at_the_module() {
         let module_root = Path::new("/srv/mod");

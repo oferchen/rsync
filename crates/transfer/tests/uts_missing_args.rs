@@ -35,9 +35,11 @@
 //! # Upstream References
 //!
 //! - `testsuite/missing_test.py` - the upstream script this file ports.
-//! - `generator.c` - `missing_below` handling and the `--ignore-non-existing`
-//!   skip path (`skipping non-existent destination file`).
-//! - `delete.c` - the `--delete-after` deletion pass that must still run.
+//! - `generator.c` - `dry_missing_dir` / `skip_dir` handling in
+//!   `recv_generator()` (the 3.5.1 successors of `missing_below`) and the
+//!   `--ignore-non-existing` skip path (`generator.c:1757-1763`).
+//! - `generator.c:do_delete_pass()` - the `--delete-after` deletion pass that
+//!   must still run.
 
 #![cfg(unix)]
 

@@ -42,7 +42,7 @@ use crate::server::{ServerConfig, ServerRole, TransferProgressCallback};
 
 /// Maps the local client's server-infrastructure role to its trailer role.
 ///
-/// upstream: who_am_i() (rsync.c:823) - a client push runs under `am_sender`
+/// upstream: who_am_i() (rsync.c:987) - a client push runs under `am_sender`
 /// (`[sender]`), a client pull is the pre-forked receiver (`[Receiver]`). The
 /// client drives the server flow as a `ServerRole::Generator` on a push (local
 /// sends) and as a `ServerRole::Receiver` on a pull (local receives), matching
@@ -91,7 +91,7 @@ pub fn run_ssh_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    // upstream: main.c:1483-1484 - a remote source with a single operand sets
+    // upstream: main.c:1483-1485 - a remote source with a single operand sets
     // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
@@ -120,7 +120,7 @@ pub fn run_ssh_transfer(
             remote_sources,
             local_dest,
         } => {
-            // upstream: main.c:1543,1567 - each requested source path is
+            // upstream: main.c:1581,1605 - each requested source path is
             // recorded as an implied include to validate the received flist.
             let implied_source_args = remote_operand_source_paths(&remote_sources)?;
             let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
@@ -161,7 +161,7 @@ fn run_pull_transfer(
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    // upstream: main.c:1294 - client_mode=true tells the server flow to send the
+    // upstream: main.c:1426 - client_mode=true tells the server flow to send the
     // filter list after handshake + compat exchange (where recv_filter_list() is
     // called inside the server).
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
@@ -172,7 +172,7 @@ fn run_pull_transfer(
         )?;
     server_config.stop_at = config.stop_at();
 
-    // upstream: main.c:1390-1393 - when pulling with --files-from pointing to a
+    // upstream: main.c:1428-1431 - when pulling with --files-from pointing to a
     // local file or stdin, the receiver reads the file list locally and
     // forwards its bytes back to the remote sender via
     // `start_filesfrom_forwarding(filesfrom_fd)`. The remote sender consumes
@@ -186,7 +186,7 @@ fn run_pull_transfer(
         server_config.connection.files_from_data = Some(data);
     }
 
-    // upstream: flist.c:1251 recv_file_entry() validates each received name
+    // upstream: flist.c:1368 recv_file_entry() validates each received name
     // against these implied includes (CVE-2022-29154). Computed after staging
     // so a local --files-from folds each forwarded entry into the set.
     server_config.connection.implied_source_args = implied_source_args_for_pull(
@@ -320,7 +320,7 @@ fn run_server_over_ssh_connection(
     // on the SSH pipe.
     let mut reader = BufReader::with_capacity(32768, reader);
 
-    // upstream: who_am_i() (rsync.c:823) - the local client's role for any exit
+    // upstream: who_am_i() (rsync.c:987) - the local client's role for any exit
     // diagnostic. Captured before `config` is consumed by the handshake so both
     // the handshake-failure and post-transfer child-exit paths can tag it.
     let local_role = local_client_role(config.role);
@@ -355,12 +355,12 @@ fn run_server_over_ssh_connection(
                 Err(_) => ExitCode::WaitChild,
             };
 
-            // upstream: io.c:250 whine_about_eof() maps an unexpected EOF
+            // upstream: io.c:282 whine_about_eof() maps an unexpected EOF
             // during setup to RERR_STREAMIO (12); an out-of-range peer protocol
-            // version is RERR_PROTOCOL (2) per compat.c:619-623 setup_protocol;
+            // version is RERR_PROTOCOL (2) per compat.c:621-625 setup_protocol;
             // other handshake failures keep the client/server-startup code (5).
             // exit_cleanup() then takes the worst of that base and the child's
-            // raw exit status (cleanup.c:150), so an arbitrary remote exit code
+            // raw exit status (cleanup.c:150-152), so an arbitrary remote exit code
             // propagates verbatim.
             let base = if e.kind() == std::io::ErrorKind::UnexpectedEof {
                 ExitCode::StreamIo
@@ -371,18 +371,18 @@ fn run_server_over_ssh_connection(
             };
             let child_overrides = child_exit.as_i32() > base.as_i32();
             if base == ExitCode::StreamIo {
-                // upstream: io.c:298-303 - whine_about_eof() prints its line
+                // upstream: io.c:299-303 - whine_about_eof() prints its line
                 // before exit_cleanup() picks the worse code, and nothing is
-                // counted before buffered input starts (main.c:1307-1308).
+                // counted before buffered input starts (main.c:1378-1381).
                 let exit = if child_overrides { child_exit } else { base };
                 return Err(connection_unexpectedly_closed_error(0, exit, local_role));
             }
             if child_overrides {
-                // upstream: log.c:912 log_exit() - when the remote/child's raw
+                // upstream: log.c:937 log_exit() - when the remote/child's raw
                 // exit status outranks the local base code (cleanup.c:150-152),
                 // the final `rsync error:` line reports that winning code by its
                 // rerr_name, or "unexplained error" for an unknown raw code
-                // (log.c:903-905), not the EOF whine text.
+                // (log.c:950-952), not the EOF whine text.
                 return Err(remote_exit_error(child_exit, local_role));
             }
             return Err(invalid_argument_error_typed_with_role(
@@ -403,15 +403,15 @@ fn run_server_over_ssh_connection(
     }
     let negotiated_protocol = handshake.protocol.as_u8();
 
-    // upstream: sender.c:450-462 log_item(FCLIENT) - on an SSH push the local
+    // upstream: sender.c:640,775 log_item(FCLIENT) - on an SSH push the local
     // side is the sender (ServerRole::Generator) and prints each file's
     // client-visible line to its own stdout: the `-i` itemize row (built from
     // the iflags the remote receiver's generator writes over the wire,
-    // generator.c:583-599) or, under plain `-v`, the bare `%n%L` name. The
-    // remote generator never forwards either itself (log.c:822 gates FCLIENT on
+    // generator.c:588-597) or, under plain `-v`, the bare `%n%L` name. The
+    // remote generator never forwards either itself (log.c:869 gates FCLIENT on
     // `!am_server`). A custom `--out-format` also wants the per-file rows even
     // without `-v`/`-i` so the client can render them; otherwise honor the plain
-    // verbose/itemize gates (upstream: sender.c:218 `itemizing =
+    // verbose/itemize gates (upstream: sender.c:500 `itemizing =
     // stdout_format_has_i`).
     //
     // On a pull the local side is the receiver, which prints its own default
@@ -419,7 +419,7 @@ fn run_server_over_ssh_connection(
     // `--out-format`, where it buffers metadata events the CLI renders, drained
     // into this callback after the receive loop (transfer/lib.rs receiver branch).
     // `-v` is not the gate: upstream logs names whenever NAME >= 1 sets
-    // `stdout_format` (options.c:2521-2523), which `-P` does on its own.
+    // `stdout_format` (options.c:2522-2525), which `-P` does on its own.
     let wants_client_output = match config.role {
         ServerRole::Generator => {
             config.flags.info_flags.itemize
@@ -430,7 +430,7 @@ fn run_server_over_ssh_connection(
     };
     let mut itemize_sink = ItemizeEventSink::new(render_out_format_locally);
 
-    // upstream: io.c:298-301 whine_about_eof() names stats.total_read, the raw
+    // upstream: io.c:299-301 whine_about_eof() names stats.total_read, the raw
     // bytes perform_io() read once buffered input started (io.c:938).
     let bytes_read = Arc::new(AtomicU64::new(0));
     let transfer_result = crate::server::run_server_with_handshake_adopting(
@@ -472,7 +472,7 @@ fn run_server_over_ssh_connection(
             if child_exit_code.is_success() {
                 Ok((stats, negotiated_protocol, collected_events))
             } else {
-                // upstream: log.c:912 log_exit() renders the winning child code
+                // upstream: log.c:937 log_exit() renders the winning child code
                 // by its rerr_name tagged with the local role, not "client".
                 Err(remote_exit_error(child_exit_code, local_role))
             }
@@ -505,7 +505,7 @@ fn transfer_failure_error(
     }
     // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
     // mid-transfer prints the whine, then exit_cleanup(RERR_STREAMIO) takes the
-    // worse of that and the child's raw status (cleanup.c:150).
+    // worse of that and the child's raw status (cleanup.c:150-152).
     if transfer_error.kind() == std::io::ErrorKind::UnexpectedEof {
         let exit = if child_exit_code.as_i32() > ExitCode::StreamIo.as_i32() {
             child_exit_code

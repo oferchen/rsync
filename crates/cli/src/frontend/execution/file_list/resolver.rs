@@ -14,7 +14,7 @@ use super::parser::operand_is_remote;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2556` - `strstr(fbuf, "/./")` detects embedded marker
+/// - `flist.c:2863` - `strstr(fbuf, "/./")` detects embedded marker
 fn entry_contains_dot_marker(operand: &OsStr) -> bool {
     #[cfg(unix)]
     {
@@ -93,8 +93,8 @@ fn clamp_files_from_entry(entry: &OsStr) -> OsString {
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2196-2197` - `--files-from` implies `--relative`
-/// - `main.c:793-803` - source dir used as chdir base for file list entries
+/// - `options.c:2331-2332` - `--files-from` implies `--relative`
+/// - `flist.c:2788` - source dir (`argv[0]`) used as chdir base for file list entries
 pub(crate) fn resolve_file_list_entries(
     entries: &mut [OsString],
     explicit_operands: &[OsString],
@@ -147,7 +147,7 @@ pub(crate) fn resolve_file_list_entries(
             // upstream: flist.c:2811 - `sanitize_path(fbuf, fbuf, "", 0,
             // SP_KEEP_DOT_DIRS)` is applied UNCONDITIONALLY to every line read
             // from the files-from fd, before the name is joined onto argv[0].
-            // The neighbouring argv arm at :2576 makes the same call but gates
+            // The neighbouring argv arm at :2816-2817 makes the same call but gates
             // it on `sanitize_paths`, and that asymmetry is the point: a line
             // out of a files-from file is supplied by the file, an argv operand
             // is supplied by the operator. Every entry reaching here came from
@@ -166,7 +166,7 @@ pub(crate) fn resolve_file_list_entries(
             let clamped = clamp_files_from_entry(entry);
             let entry_path = Path::new(&clamped);
 
-            // upstream: flist.c:2556-2558 - when relative_paths is set and a
+            // upstream: flist.c:2863-2870 - when relative_paths is set and a
             // file list entry contains "/./", upstream splits the entry at that
             // marker: the portion before becomes a chdir prefix (relative to
             // argv[0]), and the portion after becomes the transferred filename.

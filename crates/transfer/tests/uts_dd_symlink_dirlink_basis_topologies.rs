@@ -1,13 +1,13 @@
 //! Regression coverage for the eight `symlink-dirlink-basis` topologies the
-//! upstream rsync 3.4.4 testsuite exercises against `-K`/`--keep-dirlinks`.
+//! upstream rsync 3.5.1 testsuite exercises against `-K`/`--keep-dirlinks`.
 //!
-//! Upstream test: `testsuite/symlink-dirlink-basis_test.py`. Issue #715. The
-//! scenarios update a destination file whose parent directory is a symlink to
-//! the real directory. With `--keep-dirlinks` the receiver must follow the
-//! parent symlink at chmod time instead of refusing it through the
-//! `secure_chmod_at` sandbox; PR #5793 added the helper bypass and PR #5853
-//! wired the compact `K` byte through the server-flag parser so the receiver
-//! actually sets `MetadataOptions::keep_dirlinks`.
+//! Upstream test: `testsuite/symlink-dirlink-basis_test.py`. The scenarios
+//! update a destination file whose parent directory is a symlink to the real
+//! directory. With `--keep-dirlinks` the receiver must follow the parent
+//! symlink at chmod time instead of refusing it through the `secure_chmod_at`
+//! sandbox; that takes both the helper bypass and the compact `K` byte in the
+//! server-flag parser, so the receiver actually sets
+//! `MetadataOptions::keep_dirlinks`.
 //!
 //! These tests pin both halves of the chain together:
 //!   1. `ParsedServerFlags::parse` recognises the compact `K` byte for every
@@ -54,7 +54,7 @@ fn assert_keep_dirlinks_wired(flag_string: &str, label: &str) {
 }
 
 /// Test 1 - basic directory symlink update through `-KRlptv`. The original
-/// Issue #715 scenario: `dir -> real-dir` on the receiver, and a small delta
+/// reported scenario: `dir -> real-dir` on the receiver, and a small delta
 /// update must land on `real-dir/file` after running through the dirfd
 /// sandbox bypass.
 #[test]

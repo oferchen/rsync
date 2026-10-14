@@ -2,7 +2,7 @@
 //!
 //! Upstream splits a `--relative` operand on the first `/./`; when the part
 //! after the anchor is empty it is forced to `"."` with `DOTDIR_NAME`
-//! (`flist.c:2910-2913`), which then makes `link_stat()` follow the operand
+//! (`flist.c:2910-2913`), which then makes `scan_link_stat()` follow the operand
 //! unconditionally (`flist.c:2937` - `copy_dirlinks || name_type !=
 //! NORMAL_NAME`). Losing the marker turns `-R <symlinked-dir>/./` into an
 //! `lstat` that records the operand as a symlink under its own basename
@@ -16,7 +16,7 @@
 //!
 //! - `rsync-3.5.1/flist.c:2910-2913` - empty remainder becomes `"."` /
 //!   `DOTDIR_NAME`.
-//! - `rsync-3.5.1/flist.c:2937` - `link_stat(fbuf, &st, copy_dirlinks ||
+//! - `rsync-3.5.1/flist.c:2937` - `scan_link_stat(fbuf, &st, copy_dirlinks ||
 //!   name_type != NORMAL_NAME)`.
 
 #![cfg(unix)]

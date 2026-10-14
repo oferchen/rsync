@@ -44,7 +44,7 @@ pub mod session;
 ///
 /// Re-exported from the [`transfer`] crate for backward compatibility.
 /// Provides the `--server` mode entry points that mirror upstream
-/// `main.c:start_server()` for both sender (generator) and receiver roles.
+/// `main.c:start_server()` for both the sender and receiver roles.
 pub use ::transfer as server;
 /// Version constants and capability helpers used by CLI and daemon entry points.
 pub mod version;

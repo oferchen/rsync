@@ -32,7 +32,7 @@ pub(super) use verify_redo::execute_transfer;
 /// Mirrors upstream's `recv_ok` for the two outcomes the local executor can
 /// produce: `recv_ok == 1` (committed) and `recv_ok == 0` (the whole-file
 /// re-checksum failed, so the update is kept and the file is queued for the
-/// phase-2 redo). upstream: receiver.c:1077-1117.
+/// phase-2 redo). upstream: receiver.c:1342-1381.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::local_copy) enum TransferOutcome {
     /// The pass committed; nothing further is owed for this file.
@@ -92,7 +92,7 @@ pub(super) struct TransferFlags {
     /// Whether the destination's extended attributes differed from the
     /// source's before the copy touched them.
     ///
-    /// Drives the itemize `x` column. upstream: `generator.c:566-572` sets
+    /// Drives the itemize `x` column. upstream: `generator.c:571-576` sets
     /// `ITEM_REPORT_XATTR` from `xattr_diff()`, never from `preserve_xattrs`
     /// alone, so this is captured once in `copy_file` while the destination is
     /// still untouched and carried down to every record site.

@@ -127,7 +127,7 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     /// at most one, even when [`SpillGranularity::PerItem`] writes many
     /// records. Surfaced through
     /// [`SpillStats::spill_activations`](super::SpillStats::spill_activations)
-    /// to feed adaptive ring sizing (ROB-7) and bench rate audits (ROB-6).
+    /// to feed adaptive ring sizing and bench rate audits.
     spill_activations: u64,
     /// Running count of reload-from-disk events (for diagnostics).
     reload_count: u64,

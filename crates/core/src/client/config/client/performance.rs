@@ -29,7 +29,7 @@ impl ClientConfig {
     /// Preserves the verbatim string (e.g. `"zlibx"`) that
     /// [`CompressionAlgorithm`] cannot round-trip, so the local-copy
     /// `--debug=NSTR` compress summary can reproduce upstream's output
-    /// byte-for-byte (`compat.c:206-219`).
+    /// byte-for-byte (`compat.c:206-220`).
     #[must_use]
     #[doc(alias = "--compress-choice")]
     pub fn compress_choice_name(&self) -> Option<&str> {
@@ -43,7 +43,7 @@ impl ClientConfig {
     /// is the build-time default (zstd > lz4 > zlib).
     ///
     /// This distinction is required for correct argument forwarding to
-    /// the remote peer - upstream `options.c:2828-2833` only sends
+    /// the remote peer - upstream `options.c:2994-2999` only sends
     /// `--compress-choice` / `--new-compress` / `--old-compress` when
     /// the user explicitly selected an algorithm.
     #[must_use]
@@ -85,7 +85,7 @@ impl ClientConfig {
     ///
     /// `Some` only when the suffix list was explicitly set; the built-in default
     /// list is never forwarded, matching upstream's NULL `skip_compress` global
-    /// (options.c:150, forwarded at options.c:2868-2870).
+    /// (options.c:156, forwarded at options.c:3035-3036).
     #[must_use]
     #[doc(alias = "--skip-compress")]
     pub fn skip_compress_spec(&self) -> Option<&str> {
@@ -250,9 +250,9 @@ impl ClientConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `compat.c:720 set_allow_inc_recurse()` - capability negotiation
+    /// - `compat.c:162 set_allow_inc_recurse()` - capability negotiation
     ///   gate that clears `allow_inc_recurse`.
-    /// - `options.c:3013-3060 maybe_add_e_option()` - capability string
+    /// - `options.c:3202-3246 maybe_add_e_option()` - capability string
     ///   construction.
     #[must_use]
     #[doc(alias = "--inc-recursive")]
@@ -283,8 +283,8 @@ impl ClientConfig {
     /// - `compat.c:172 set_allow_inc_recurse()` - `!recurse || use_qsort`.
     /// - `compat.c:174-177` - the receiver clause.
     /// - `compat.c:683-688` - the later `delete_mode` -> `delete_during` default.
-    /// - `options.c:2735` - the call site inside `server_options()`.
-    /// - `options.c:3049 maybe_add_e_option()` - `if (allow_inc_recurse)`.
+    /// - `options.c:2901` - the call site inside `server_options()`.
+    /// - `options.c:3220 maybe_add_e_option()` - `if (allow_inc_recurse)`.
     #[must_use]
     pub const fn allow_inc_recurse(&self, am_sender: bool) -> bool {
         if !(self.inc_recursive_send && self.recursive && !self.qsort) {

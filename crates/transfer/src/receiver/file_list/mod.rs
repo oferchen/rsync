@@ -4,7 +4,7 @@
 //! reception for INC_RECURSE mode, and the streaming
 //! [`IncrementalFileListReceiver`] interface.
 //!
-//! Split into focused submodules to keep each file within the 650-line cap:
+//! Split into focused submodules:
 //!
 //! - `receive` - `receive_file_list`, `receive_extra_file_lists`,
 //!   `receive_one_extra_segment`, and
@@ -16,7 +16,11 @@
 //! - `filter_recheck` - receiver-side re-filtering of received names against
 //!   the receiver's own filter chain (upstream `recv_file_entry()`
 //!   `check_server_filter`).
+//! - `dir_flist` - [`DirFlist`], the receiver's `dir_ndx`-addressed directory
+//!   list for INC_RECURSE sub-list headers.
+//! - `prune` - `--prune-empty-dirs` pass over the sorted list.
 //! - `hardlinks` - post-sort hardlink leader/follower assignment for
+
 //!   protocol 30+ and pre-30 normalization from (dev, ino) pairs.
 //! - `incremental` - the streaming [`IncrementalFileListReceiver`] type.
 //! - `window` - [`FileListWindow`], the absolute-indexed list that can

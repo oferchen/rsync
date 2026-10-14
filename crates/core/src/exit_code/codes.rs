@@ -5,7 +5,7 @@
 ///
 /// # Upstream Reference
 ///
-/// Source: `errcode.h` in rsync 3.4.4
+/// Source: `errcode.h` in rsync 3.5.1
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum ExitCode {
@@ -40,9 +40,12 @@ pub enum ExitCode {
     /// Returned when the initial handshake with the daemon fails.
     StartClient = 5,
 
-    /// Daemon unable to append to log-file (RERR_LOG_FAILURE = 6).
+    /// Daemon unable to append to log-file (6).
     ///
     /// Returned when the daemon cannot write to its log file.
+    ///
+    /// Deviation from upstream: oc-only. Upstream `errcode.h` defines no code 6
+    /// and no `RERR_LOG_FAILURE`; `log.c` has no name for it.
     LogFileAppend = 6,
 
     /// Error in socket I/O (RERR_SOCKETIO = 10).
@@ -139,7 +142,7 @@ pub enum ExitCode {
     /// This variant preserves that raw code so it survives round-trips to
     /// `process::exit` and worst-wins comparisons unchanged.
     ///
-    /// upstream: main.c:221 `wait_process_with_flush()` returns
+    /// upstream: main.c:226 `wait_process_with_flush()` returns
     /// `WEXITSTATUS(status)` raw for a normally-exited child.
     Other(i32),
 }
@@ -182,7 +185,9 @@ impl ExitCode {
 
     /// Returns a human-readable description of this exit code.
     ///
-    /// These descriptions match upstream rsync's `log.c` error strings.
+    /// These descriptions match upstream rsync's `log.c:81-106` `rerr_names`
+    /// strings, except the oc-only `LogFileAppend` (6) and `Ok`, which upstream
+    /// never names.
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
@@ -213,7 +218,7 @@ impl ExitCode {
             Self::CommandKilled => "remote shell killed",
             Self::CommandRun => "remote command could not be run",
             Self::CommandNotFound => "remote command not found",
-            // upstream: log.c:905 log_exit() - an unrecognized code renders as
+            // upstream: log.c:951-952 log_exit() - an unrecognized code renders as
             // "unexplained error" (rerr_name() returned NULL).
             Self::Other(_) => "unexplained error",
         }
@@ -303,8 +308,8 @@ impl ExitCode {
     /// using [`from_i32`](Self::from_i32) so a genuinely invalid code still
     /// falls back to a defined RERR_* value rather than leaking out raw.
     ///
-    /// upstream: main.c:221 `wait_process_with_flush()` returns
-    /// `WEXITSTATUS(status)` raw; cleanup.c:150 propagates the worst raw code.
+    /// upstream: main.c:226 `wait_process_with_flush()` returns
+    /// `WEXITSTATUS(status)` raw; cleanup.c:150-152 propagates the worst raw code.
     #[must_use]
     pub const fn from_raw(value: i32) -> Self {
         match Self::from_i32(value) {

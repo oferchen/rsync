@@ -109,7 +109,7 @@ pub(super) fn try_clone(
 ) -> Result<bool, LocalCopyError> {
     let file_size = metadata.len();
 
-    // REFLINK-2: skip the FICLONE ioctl when source and destination live on
+    // Skip the FICLONE ioctl when source and destination live on
     // different filesystems. ioctl(FICLONE) only reflinks within one
     // filesystem and fails with EXDEV across mounts - but not before
     // File::create() has already materialised an empty destination inode that

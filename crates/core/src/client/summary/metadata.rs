@@ -18,7 +18,7 @@ use engine::local_copy::{LocalCopyFileKind, LocalCopyMetadata};
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:1249` - `list_file_entry()` renders mode/size/mtime/name plus
+/// - `generator.c:1318` - `list_file_entry()` renders mode/size/mtime/name plus
 ///   the `F_ATIME(f)` / `F_CRTIME(f)` columns when the atimes/crtimes ndx is set
 pub struct ListOnlyEntryFields {
     /// POSIX mode bits (type + permissions).
@@ -80,7 +80,8 @@ pub struct RemoteItemizeFields {
     pub symlink_target: Option<PathBuf>,
     /// Hard-link group leader's transfer-relative name, when this row is a
     /// hard-link follower. Renders the `%L` ` => <leader>` suffix on a remote
-    /// pull (upstream `hlink.c:232-234` + `log.c:643-646`); `None` otherwise.
+    /// pull (upstream `hlink.c:244-248 maybe_hard_link()` + `log.c:675-678`);
+    /// `None` otherwise.
     pub hardlink_leader: Option<PathBuf>,
     /// Whether the entry is newly created (`ITEM_IS_NEW`).
     pub is_new: bool,
@@ -199,7 +200,7 @@ impl ClientEntryMetadata {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1249` - `list_file_entry()` renders mode/size/mtime/name,
+    /// - `generator.c:1318` - `list_file_entry()` renders mode/size/mtime/name,
     ///   plus the `F_ATIME(f)` / `F_CRTIME(f)` columns when the atimes/crtimes
     ///   ndx is active
     #[must_use]

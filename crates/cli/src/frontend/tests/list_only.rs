@@ -78,8 +78,8 @@ fn list_only_formats_directory_without_trailing_slash() {
 
 /// `--list-only <dir>` with no `-r`/`-d` and no trailing slash must still list
 /// the directory operand's own entry, mirroring upstream's
-/// `xfer_dirs = list_only ? 1 : 0` default (options.c:2212). Without this,
-/// `xfer_dirs` stays 0 and `flist.c:2691` skips the bare directory, so the
+/// `xfer_dirs = list_only ? 1 : 0` default (options.c:2329). Without this,
+/// `xfer_dirs` stays 0 and `flist.c:2963` skips the bare directory, so the
 /// listing is empty - diverging from upstream which prints the `src` row.
 #[test]
 fn list_only_lists_bare_directory_without_recursion_or_slash() {
@@ -111,7 +111,7 @@ fn list_only_lists_bare_directory_without_recursion_or_slash() {
 }
 
 /// A bare source operand with no destination and no `--list-only` flag implies
-/// list-only mode regardless of transport. upstream: options.c:2203-2204 -
+/// list-only mode regardless of transport. upstream: options.c:2320-2321 -
 /// `if (argc < 2 && !read_batch && !am_server) list_only |= 1;`. The rule is not
 /// gated on the transport, so a local `oc-rsync src/` lists the directory and
 /// exits 0 (RERR_OK) rather than erroring "need source and destination" (which
@@ -1067,7 +1067,7 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
 
 /// Verifies that `--list-only` lists entries without transferring any files.
 ///
-/// upstream: options.c:2375-2376 - list_only does NOT set dry_run, but the
+/// upstream: options.c:2320-2321 - list_only does NOT set dry_run, but the
 /// receiver skips destination writes under list_only independently
 /// (`run_client` mode selection + `TransferFlags::skip_dest_writes`).
 #[test]
@@ -1417,7 +1417,7 @@ fn list_only_mixed_file_types_in_single_listing() {
 /// entry types. Both fields are right-justified in a width of `1 +
 /// strlen(timestamp)` (20 for the 19-char "YYYY/MM/DD HH:MM:SS" form), so a
 /// value carries one leading space and a blank fills the whole column.
-/// upstream: generator.c:1183 list_file_entry() - the ` -> <target>` arrow is
+/// upstream: generator.c:1346 list_file_entry() - the ` -> <target>` arrow is
 /// gated on `preserve_links`. Without `-l` the symlink is still listed (perms
 /// start with `l`, size is the target length) but no target string is shown.
 /// FIFOs, sockets, and devices render their own permstring type char.

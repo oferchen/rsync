@@ -1,10 +1,10 @@
 //! Branch-order tests for the shared marker-aware NDX reader.
 //!
 //! Every case here pins a specific line of upstream's `read_loop`
-//! (`rsync.c:329-431`). They are written so that *reordering* the branches
+//! (`rsync.c:330-448`). They are written so that *reordering* the branches
 //! fails them, not merely changing what each branch does: the `NDX_DEL_STATS`
 //! cases run against a sink whose `inc_recurse` is off, which only passes while
-//! `rsync.c:336-342` is evaluated ahead of the `rsync.c:343` gate, and the
+//! `rsync.c:338-343` is evaluated ahead of the `rsync.c:344` gate, and the
 //! `NDX_DONE` case asserts the reader position so a stray attribute read is
 //! visible.
 //!
@@ -100,7 +100,7 @@ fn push_del_stats(wire: &mut Vec<u8>, codec: &mut NdxCodecEnum, stats: &DeleteSt
 /// A sub-list marker arriving BETWEEN two per-file echoes is consumed in full;
 /// only the file indices surface to the caller.
 ///
-/// WHY: upstream `rsync.c:360-380` handles the marker inside `read_loop` and
+/// WHY: upstream `rsync.c:362-381` handles the marker inside `read_loop` and
 /// `continue`s, so the sender may interleave sub-list traffic with per-file
 /// echoes at any point. A reader that surfaced the marker (or that decoded its
 /// leading `0xFF` byte as an `iflags` word) would desync the transfer stream.
@@ -136,7 +136,7 @@ fn segment_between_file_echoes_is_consumed_and_never_surfaces() {
 
 /// `NDX_FLIST_EOF` mid-transfer sets `flist_eof` and does not surface.
 ///
-/// WHY: upstream `rsync.c:353-359` sets the flag and `continue`s - it never
+/// WHY: upstream `rsync.c:355-361` sets the flag and `continue`s - it never
 /// leaves the loop - so the caller's next value must be the following frame.
 /// The receiver relies on this flag to stop pulling segments; surfacing the
 /// marker instead would strand the lazy fetch loop.
@@ -161,10 +161,10 @@ fn flist_eof_sets_the_flag_and_continues() {
 /// Sub-list `dir_ndx` values are NOT monotonic and NOT contiguous.
 ///
 /// WHY: upstream's sender walks its dir_flist while *appending* newly
-/// discovered subdirectories to it (`flist.c:2935-2944`), so an `-a` pull of a
+/// discovered subdirectories to it (`flist.c:2201-2207` `add_dirs_to_tree()`), so an `-a` pull of a
 /// nested tree interleaves level-1 directories with their children. A measured
 /// upstream oracle produced the header sequence `1, 9, 2, 10, 3, 11`. The
-/// range check (`rsync.c:361-369` / `flist.c:2862-2866`) is the ONLY constraint:
+/// range check (`rsync.c:363-371` / `flist.c:3149-3150`) is the ONLY constraint:
 /// any validation that assumed ordering or contiguity would reject a legitimate
 /// upstream stream.
 #[test]
@@ -205,8 +205,8 @@ fn non_monotonic_dir_ndx_sequence_is_accepted() {
 
 /// `NDX_DEL_STATS` is drained even by a reader whose `inc_recurse` is off.
 ///
-/// WHY: upstream evaluates the `NDX_DEL_STATS` branch (`rsync.c:336-342`)
-/// BEFORE the `!inc_recurse || am_sender` gate (`rsync.c:343`). Moving the gate
+/// WHY: upstream evaluates the `NDX_DEL_STATS` branch (`rsync.c:338-343`)
+/// BEFORE the `!inc_recurse || am_sender` gate (`rsync.c:344`). Moving the gate
 /// ahead of it would make a plain non-incremental peer abort on a frame it is
 /// required to consume, and would desync the five varints that follow.
 #[test]
@@ -245,10 +245,10 @@ fn del_stats_is_drained_before_the_inc_recurse_gate() {
 
 /// The sender drains `NDX_DEL_STATS` too, and hands the counters to its sink.
 ///
-/// WHY: `rsync.c:336-342` runs before `rsync.c:343`, so `am_sender` does not
+/// WHY: `rsync.c:338-343` runs before `rsync.c:344`, so `am_sender` does not
 /// exempt the sender from draining. This is what lets the generator accumulate
 /// the receiver's deletion counts during `read_final_goodbye()`
-/// (`main.c:917`).
+/// (`main.c:921`).
 #[test]
 fn sender_drains_del_stats_and_receives_the_counters() {
     /// Records every drained frame so the ordering claim is observable.
@@ -316,8 +316,8 @@ fn sender_drains_del_stats_and_receives_the_counters() {
 
 /// `NDX_DONE` returns without consuming the attribute tail.
 ///
-/// WHY: upstream `rsync.c:334-335` returns from inside the loop, *before* the
-/// `read_shortint()` at `rsync.c:383`. A combined read-ndx-and-iflags helper
+/// WHY: upstream `rsync.c:336-337` returns from inside the loop, *before* the
+/// `read_shortint()` at `rsync.c:384`. A combined read-ndx-and-iflags helper
 /// swallows two bytes the peer never sent, which shifts every subsequent frame.
 /// The reader position is asserted so the regression is caught even though the
 /// returned value would look correct.
@@ -350,7 +350,7 @@ fn ndx_done_reads_no_attribute_tail() {
 /// A per-file index still reads its attribute tail.
 ///
 /// WHY: guards the split in [`SenderAttrs::read_attrs_after_ndx`] against the
-/// opposite regression - skipping `rsync.c:383-417` for a real index would
+/// opposite regression - skipping `rsync.c:384-433` for a real index would
 /// leave `iflags` on the wire.
 #[test]
 fn file_ndx_reads_its_attribute_tail() {
@@ -373,7 +373,7 @@ fn file_ndx_reads_its_attribute_tail() {
 
 /// The sender rejects a file-list marker with upstream's wording.
 ///
-/// WHY: `rsync.c:343-352` - `if (!inc_recurse || am_sender) ... "Invalid file
+/// WHY: `rsync.c:344-354` - `if (!inc_recurse || am_sender) ... "Invalid file
 /// index: %d (%d - %d) [%s]" ... exit_cleanup(RERR_PROTOCOL)`. The sender never
 /// consumes sub-list traffic; only the receiver inside the INC_RECURSE window
 /// may. The sink below reports `inc_recurse = true`, so a passing test proves
@@ -448,7 +448,7 @@ fn marker_rejected_by_sender_with_upstream_text() {
 /// A receiver outside the INC_RECURSE window rejects markers by the
 /// `!inc_recurse` term.
 ///
-/// WHY: the same `rsync.c:343` gate has two terms. This pins the first one, so
+/// WHY: the same `rsync.c:344` gate has two terms. This pins the first one, so
 /// dropping it would let a phase-boundary or goodbye read silently grow a file
 /// list it does not own.
 #[test]
@@ -473,11 +473,11 @@ fn marker_rejected_by_receiver_without_inc_recurse() {
 
 /// The receiver's `last_file_ndx` tracks the newest segment, matching upstream's
 /// `first_flist->prev->ndx_start + first_flist->prev->used - 1`
-/// (`rsync.c:345-348`).
+/// (`rsync.c:346-349`).
 #[test]
 fn receiver_last_file_ndx_matches_upstream_span() {
     let ctx = inc_recurse_receiver(&["d0"]);
-    // INC_RECURSE starts numbering at 1 (flist.c:3201), so an empty list has no
+    // INC_RECURSE starts numbering at 1 (flist.c:3503), so an empty list has no
     // valid index and reports one below the first.
     assert_eq!(FlistMarkerSink::last_file_ndx(&ctx), 0);
 
@@ -493,7 +493,7 @@ fn receiver_last_file_ndx_matches_upstream_span() {
 /// sub-list marker by the same `!inc_recurse` term.
 ///
 /// WHY: the pipelined response driver hands its own `ReceiverContext` to
-/// [`read_ndx_and_attrs`], so the `rsync.c:343` gate is data-driven there rather
+/// [`read_ndx_and_attrs`], so the `rsync.c:344` gate is data-driven there rather
 /// than hardcoded by the sink type. Should `inc_recurse()` ever stop consulting
 /// the negotiated flags, a peer that never advertised INC_RECURSE could grow the
 /// receiver's file list from the transfer stream. This is the negative half of
@@ -622,7 +622,7 @@ fn non_transfer_frame_for_non_regular_entry_is_not_refused() {
 /// A protocol-29 keep-alive frame is consumed and the loop re-enters, so only
 /// the following real frame surfaces.
 ///
-/// WHY: upstream `rsync.c:386-391` - `if (protocol_version < 30 && ndx ==
+/// WHY: upstream `rsync.c:387-392` - `if (protocol_version < 30 && ndx ==
 /// cur_flist->used && iflags == ITEM_IS_NEW) goto read_loop`. A <=3.0.x peer
 /// running `--timeout` emits exactly this frame as its keep-alive (3.0.9
 /// io.c:971-986); a reader that surfaced it would hand the caller an

@@ -1,8 +1,7 @@
 //! The [`ParallelDeltaApplier`] struct and its core register/apply/verify
 //! impl.
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the module
-//! decomposition. Holds the applier's data members (the per-file
+//! Holds the applier's data members (the per-file
 //! [`SlotEntry`] map, concurrency limit, negotiated strong-checksum
 //! strategy, and reorder-saturation telemetry), its constructors and
 //! accessors, the single-chunk [`ParallelDeltaApplier::apply_one_chunk`]
@@ -49,14 +48,14 @@ pub struct ParallelDeltaApplier {
     /// (an [`Arc<slot_barrier::SlotData>`] wrapping
     /// [`std::sync::Mutex<FileSlot>`]) and the per-file bookkeeping
     /// (an [`Arc<slot_barrier::BarrierState>`] holding the in-flight
-    /// counter and [`std::sync::Condvar`] that back FFB-2's
+    /// counter and [`std::sync::Condvar`] that back the
     /// `flush_workers` barrier). [`SlotHandle`] consumes a [`SlotEntry`]
     /// clone directly: it keeps the payload
     /// [`Arc<slot_barrier::SlotData>`] for the lock path and hands the
     /// bookkeeping [`Arc<slot_barrier::BarrierState>`] to
     /// [`DecrementGuard`], so the two halves have disjoint strong-count
-    /// trajectories. The BR-3j.a audit (see
-    /// `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`) selected
+    /// trajectories. The audit in
+    /// `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md` selected
     /// DashMap as the right fit for the access pattern: short guard
     /// windows, no iteration in the hot path, and write rates that scale
     /// with file count rather than chunk count.
@@ -89,12 +88,10 @@ pub struct ParallelDeltaApplier {
     /// Held behind an [`Arc`] so rayon workers can clone the handle cheaply
     /// without re-boxing the trait object. The trait itself is `Send + Sync`
     /// (see `checksums::strong::strategy::ChecksumStrategy`), preserving the
-    /// struct-level Send/Sync requirements documented above. BR-3i.b
-    /// (#2498) plumbs the field; BR-3i.c (#2499) replaces the
-    /// length-only verify stub with `strategy.compute(&chunk.data)`.
+    /// struct-level Send/Sync requirements documented above.
     pub(super) strategy: Arc<dyn ChecksumStrategy>,
     /// Cumulative count of per-file reorder-ring saturation events
-    /// observed since the applier was constructed (ROB-2, #3667).
+    /// observed since the applier was constructed.
     ///
     /// Incremented exactly once per [`IngestError::ReorderSaturated`]
     /// returned by [`FileSlot::ingest`]. The per-file applier has no
@@ -104,10 +101,10 @@ pub struct ParallelDeltaApplier {
     ///
     /// Exposed via [`Self::reorder_saturations`]. Pairs with
     /// [`reorder_saturated_warned`](Self::reorder_saturated_warned) so the
-    /// first event also emits the ROB-3 one-shot warning.
+    /// first event also emits the one-shot warning.
     reorder_saturations: AtomicU64,
     /// One-shot guard ensuring the per-file ring-saturation warning fires
-    /// at most once for the lifetime of this applier (ROB-3, #3667).
+    /// at most once for the lifetime of this applier.
     ///
     /// The first [`IngestError::ReorderSaturated`] swaps this from `false`
     /// to `true` and emits a `tracing::warn!` (mirrored to stderr) that
@@ -137,8 +134,7 @@ impl ParallelDeltaApplier {
     ///
     /// Operators can override this default (and any future adaptive sizing)
     /// by exporting `OC_RSYNC_REORDER_RING_CAP` to a positive integer; see
-    /// `ring_cap_env` for the parser contract and ROB-11 (#3678) for the
-    /// rationale.
+    /// `ring_cap_env` for the parser contract.
     pub const DEFAULT_PER_FILE_REORDER_CAPACITY: usize = 64;
 
     /// Builds a new applier with the supplied concurrency limit.
@@ -166,7 +162,7 @@ impl ParallelDeltaApplier {
     ///
     /// `concurrency == 0` is treated as "use the ambient rayon pool".
     ///
-    /// # DashMap shard sizing (DMC-CON.3, #3997)
+    /// # DashMap shard sizing
     ///
     /// The internal `files: DashMap` is constructed with a shard count
     /// adapted to the applier's actual `concurrency` rather than DashMap's
@@ -177,7 +173,7 @@ impl ParallelDeltaApplier {
     /// `docs/design/dmc-con-adaptive-sharding.md` for the rationale, and
     /// the `OC_RSYNC_DASHMAP_SHARDS` env override for tuning.
     ///
-    /// # Per-file ring capacity (ROB-11, #3678)
+    /// # Per-file ring capacity
     ///
     /// The per-file reorder-ring capacity defaults to
     /// [`Self::DEFAULT_PER_FILE_REORDER_CAPACITY`] but is overridden when
@@ -205,7 +201,7 @@ impl ParallelDeltaApplier {
 
     /// Returns the configured strong-checksum strategy.
     ///
-    /// Exposed so callers (and the BR-3i.c follow-up) can read back the
+    /// Exposed so callers can read back the
     /// negotiated algorithm kind for logging and parity assertions.
     #[must_use]
     pub fn strategy(&self) -> &Arc<dyn ChecksumStrategy> {
@@ -237,18 +233,18 @@ impl ParallelDeltaApplier {
     /// `OC_RSYNC_REORDER_RING_CAP` env var captured at first applier
     /// construction in this process, or
     /// [`Self::DEFAULT_PER_FILE_REORDER_CAPACITY`] (64) when neither is set.
-    /// Exposed primarily for diagnostics and the ROB-11 regression test.
+    /// Exposed primarily for diagnostics and the ring-capacity regression test.
     #[must_use]
     pub fn per_file_reorder_capacity(&self) -> usize {
         self.per_file_reorder_capacity
     }
 
     /// Returns the cumulative number of per-file reorder-ring saturation
-    /// events observed since the applier was constructed (ROB-2, #3667).
+    /// events observed since the applier was constructed.
     ///
     /// Granularity-invariant: one increment per
     /// `IngestError::ReorderSaturated` regardless of which file
-    /// produced it. Pairs with the ROB-3 one-shot warning emitted by
+    /// produced it. Pairs with the one-shot warning emitted by
     /// `Self::note_reorder_saturation`.
     #[must_use]
     pub fn reorder_saturations(&self) -> u64 {
@@ -256,7 +252,7 @@ impl ParallelDeltaApplier {
     }
 
     /// Records a per-file reorder-ring saturation event and, on the first
-    /// observation per applier instance, emits the ROB-3 one-shot warning.
+    /// observation per applier instance, emits the one-shot warning.
     ///
     /// Increments [`Self::reorder_saturations`] unconditionally and uses an
     /// [`AtomicBool::compare_exchange`] guard so the warning fires exactly
@@ -264,13 +260,13 @@ impl ParallelDeltaApplier {
     /// workers. The warning text includes the file index, the in-effect
     /// per-file ring capacity, the offending `chunk_sequence`, the
     /// registered file count at the time of saturation, and a pointer to
-    /// the `OC_RSYNC_REORDER_RING_CAP` env knob (ROB-11) so operators
+    /// the `OC_RSYNC_REORDER_RING_CAP` env knob so operators
     /// have an actionable next step.
     ///
     /// The warning goes through `tracing::warn!` (visible at `--info=ALL`
     /// minimum) and is mirrored to stderr via [`eprintln!`] so default
     /// builds without the `tracing` feature still surface it. Mirrors the
-    /// SRO-6 pattern used by `SpillableReorderBuffer`.
+    /// one-shot warning pattern used by `SpillableReorderBuffer`.
     ///
     pub(crate) fn note_reorder_saturation(&self, ndx: FileNdx, chunk_sequence: u64) {
         self.reorder_saturations.fetch_add(1, Ordering::Relaxed);
@@ -352,7 +348,7 @@ impl ParallelDeltaApplier {
     /// See `docs/audits/rjn-1-apply-chunk-parallel-call-sites-2026-05-21.md`
     /// for the call-site catalogue and design rationale behind keeping this
     /// per-chunk shape until the receiver pipeline wires a real fan-out
-    /// caller (tracked under RJN-3).
+    /// caller.
     ///
     /// # Errors
     ///
@@ -405,8 +401,8 @@ impl ParallelDeltaApplier {
     /// Blocks until every registered slot in the applier has zero in-flight
     /// workers.
     ///
-    /// Implemented as a thin loop over [`Self::flush_workers`] (FFB-1
-    /// Option B). Used by panic/abort/shutdown paths that need to retire
+    /// Implemented as a thin loop over [`Self::flush_workers`]. Used by panic/abort/shutdown paths
+    /// that need to retire
     /// every slot in one shot; normal per-file completion goes through
     /// [`Self::finish_file`]'s baked-in barrier instead.
     ///
@@ -464,14 +460,12 @@ impl ParallelDeltaApplier {
     /// expectation. This preserves the cross-core amortisation the
     /// design doc relies on while keeping the verified-vs-unverified
     /// shapes interchangeable for backward-compatible callers.
-    ///
-    /// Implements BR-3i.c (#2499); the strategy plumbing landed in
-    /// BR-3i.b (#2498).
     pub(super) fn verify_chunk(
         strategy: &dyn ChecksumStrategy,
         chunk: DeltaChunk,
     ) -> Result<VerifiedChunk, ParallelApplyError> {
-        // ABW-5.a invariant 1: verify_chunk reads only owned chunk.data
+        // Invariant 1 of the verify-write overlap contract (see
+        // `apply_batch_parallel`): verify_chunk reads only owned chunk.data
         // and immutable shared strategy - no Mutex, no &self, no side
         // effects on shared state. Being a static method it structurally
         // cannot access the per-file Mutex map. Assert the digest length

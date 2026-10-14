@@ -9,19 +9,21 @@ impl RuntimeOptions {
 
     /// Returns the configured TCP listen backlog.
     ///
-    /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER (upstream default 5,
-    /// oc-rsync default 128 for better connection scaling).
+    /// `None` means the listener uses upstream's default of 5.
+    ///
+    /// upstream: daemon-parm.txt:12 `INTEGER listen_backlog 5`, passed to
+    /// `listen()` at socket.c:716.
     pub(crate) fn listen_backlog(&self) -> Option<u32> {
         self.listen_backlog
     }
 
     /// Returns the configured socket options string.
     ///
-    /// Upstream: `daemon-parm.txt` - `socket options` STRING. Comma-separated
+    /// upstream: daemon-parm.txt:10 `socket options` STRING. Comma-separated
     /// list of TCP/IP socket options applied to the daemon listener socket
     /// (e.g., `TCP_NODELAY`, `SO_KEEPALIVE`, `SO_SNDBUF=65536`).
     pub(crate) fn socket_options(&self) -> Option<&str> {
-        // upstream: socket.c:606-610 - `if (sockopts) set_socket_options(s,
+        // upstream: socket.c:607-610 - `if (sockopts) set_socket_options(s,
         // sockopts); else set_socket_options(s, lp_socket_options());`
         self.sockopts.as_deref().or(self.socket_options.as_deref())
     }
@@ -38,7 +40,8 @@ impl RuntimeOptions {
 
     /// Returns whether incoming connections require a PROXY protocol header.
     ///
-    /// upstream: clientserver.c:1312 - checked before accepting client data.
+    /// upstream: clientserver.c:1443-1446 `start_daemon()` - checked before any
+    /// other client data is read.
     #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
     pub(crate) fn proxy_protocol(&self) -> bool {
         self.proxy_protocol
@@ -47,9 +50,10 @@ impl RuntimeOptions {
     /// Returns the directory the daemon chroots into before serving any
     /// connections.
     ///
-    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL. Applied in
-    /// `clientserver.c:1301-1312 start_accept_loop()` before privilege drop.
-    /// The accept loop destructures the field directly; this accessor is kept
+    /// upstream: daemon-parm.txt:4 `daemon chroot`, applied per connection in
+    /// `start_daemon()` (clientserver.c:1470-1495) before the `daemon gid` /
+    /// `daemon uid` drop. Deviation from upstream: oc applies it once, before
+    /// the accept loop. The accept loop destructures the field directly; this accessor is kept
     /// for callers that hold an opaque `&RuntimeOptions` (e.g. test
     /// inspection of parsed config).
     #[allow(dead_code)] // REASON: accessor for external read-only inspection of parsed runtime options
@@ -65,7 +69,7 @@ impl RuntimeOptions {
     /// `apply_verbosity` at startup to seed the thread-local
     /// `logging::VerbosityConfig` so subsequent `info_gte` / `debug_gte`
     /// checks gate log output per upstream's `set_output_verbosity()`
-    /// semantics (upstream: options.c:2068).
+    /// semantics (upstream: options.c:2188).
     pub(crate) fn verbosity(&self) -> u8 {
         self.verbosity
     }

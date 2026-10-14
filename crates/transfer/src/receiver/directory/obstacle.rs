@@ -92,7 +92,7 @@ pub(in crate::receiver) enum MakeWayFor {
 
 #[cfg(any(unix, windows))]
 impl MakeWayFor {
-    /// upstream: `delete.c:275-279` - the `desc` assigned per `DEL_FOR_*`.
+    /// upstream: `delete.c:276-280` - the `desc` assigned per `DEL_FOR_*`.
     const fn description(self) -> &'static str {
         match self {
             Self::File => "regular file",
@@ -161,7 +161,7 @@ impl ReceiverContext {
     where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
-        // SEC-1.f: when the sandbox is plumbed and the destination parent is
+        // When the sandbox is plumbed and the destination parent is
         // the sandbox root the obstacle stat goes through
         // `fstatat(AT_SYMLINK_NOFOLLOW)`, so a TOCTOU symlink swap on
         // `existing` cannot redirect the probe to a different inode.
@@ -169,7 +169,7 @@ impl ReceiverContext {
             fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative_path, existing)
         else {
             // upstream: delete.c:268-269 maps ENOENT to DR_SUCCESS and
-            // backup.c:236 returns "nothing to keep" - either way there is
+            // backup.c:274-276 returns 3 for "no file to keep" - either way there is
             // nothing in the way to make way for.
             return Ok(());
         };
@@ -195,7 +195,7 @@ impl ReceiverContext {
             Err(error) => return self.report_backup_failure(writer, relative_path, error),
         }
 
-        // SEC-1.g: the obstacle unlink is anchored on the same sandbox dirfd
+        // The obstacle unlink is anchored on the same sandbox dirfd
         // the stat above used, so a swap between the two cannot redirect the
         // syscall to an attacker-chosen parent.
         //
@@ -412,13 +412,13 @@ impl ReceiverContext {
     ///
     /// The line is `FERROR_XFER`, which sets the peer's `got_xfer_error` and so
     /// lifts a zero exit to `RERR_PARTIAL` (23). Reporting the same event at a
-    /// verbosity-gated `debug_log!` instead - which is what these call sites
-    /// used to do - leaves the run exiting 0 with the obstacle still standing.
+    /// verbosity-gated `debug_log!` instead would leave the run exiting 0 with
+    /// the obstacle still standing.
     ///
     /// # Upstream Reference
     ///
     /// - `delete.c:272-286` - the `DEL_MAKE_ROOM` block reached via `check_ret`
-    /// - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`
+    /// - `log.c:337-338` - `case FERROR_XFER: got_xfer_error = 1;`
     /// - `cleanup.c:217-218` - `got_xfer_error` lifts a zero exit to `RERR_PARTIAL`
     fn report_make_way_failure<W>(
         &self,

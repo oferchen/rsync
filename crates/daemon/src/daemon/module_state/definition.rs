@@ -7,13 +7,13 @@ use crate::daemon::HostPattern;
 
 /// Resolved `gid` directive for a daemon module's privilege drop.
 ///
-/// upstream: clientserver.c:793-824 `rsync_module()` parses `lp_gid()` as a
+/// upstream: clientserver.c:844-875 `rsync_module()` parses `lp_gid()` as a
 /// whitespace/comma-separated list via `conf_strtok`. A leading `*` requests
-/// all groups the target user belongs to (`getgrouplist`, clientserver.c:797
-/// `want_all_groups`); any remaining tokens are explicit groups added with
+/// all groups the target user belongs to (`want_all_groups()`, called at
+/// clientserver.c:849); any remaining tokens are explicit groups added with
 /// `add_a_group`. The first concrete gid becomes the process primary group via
-/// `setgid` (clientserver.c:1022), and the whole list is installed with
-/// `setgroups` (clientserver.c:1029), clearing inherited supplementary groups.
+/// `setgid` (clientserver.c:1098), and the whole list is installed with
+/// `setgroups` (clientserver.c:1105), clearing inherited supplementary groups.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum GidSetting {
     /// An explicit, non-empty list of numeric gids. The first entry is the
@@ -30,7 +30,7 @@ pub(crate) enum GidSetting {
 /// A `uid` or `gid` value that did not resolve when the config was loaded.
 ///
 /// upstream: loadparm.c stores the value verbatim and rsync_module()
-/// resolves it only when a client selects the module (clientserver.c:833-870),
+/// resolves it only when a client selects the module (clientserver.c:833-875),
 /// so the failure refuses that one module with `@ERROR: invalid uid` /
 /// `@ERROR: invalid gid` instead of stopping the daemon. For `gid` the value is
 /// the first token add_a_group() rejects - a name that does not resolve, or a
@@ -46,11 +46,12 @@ pub(crate) enum UnresolvedId {
 /// Configuration for a single rsync module.
 ///
 /// A module represents a named filesystem path that can be accessed via rsync daemon.
-/// Each module has its own access controls, bandwidth limits, and metadata handling options.
+/// Each module has its own access controls and metadata handling options.
 ///
 /// upstream: loadparm.c - each `[module]` section in `rsyncd.conf` produces one
-/// set of parameters accessible via `lp_*()` functions. daemon-parm.h defines
-/// the parameter table with types, defaults, and scope (P_LOCAL vs P_GLOBAL).
+/// set of parameters accessible via `lp_*()` functions. daemon-parm.txt defines
+/// the parameter table with types, defaults, and scope (Globals vs Locals); the
+/// build generates daemon-parm.h from it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ModuleDefinition {
     pub(crate) name: String,
@@ -65,11 +66,11 @@ pub(crate) struct ModuleDefinition {
     /// Kept as the raw configured string rather than a resolved digest so an
     /// unsupported name fails the way upstream fails it: the daemon still
     /// starts and every other module keeps serving, while a connection to
-    /// *this* module is refused (authenticate.c:313-322). Resolving at parse
-    /// time would turn one module's typo into a daemon that will not start.
+    /// *this* module is refused (authenticate.c:313-322 `auth_server()`).
+    /// Resolving at parse time would turn one module's typo into a daemon that
+    /// will not start.
     ///
-    /// upstream: daemon-parm.h:273 `{"auth digest", P_STRING, P_LOCAL, ...}`,
-    /// default NULL (:163).
+    /// upstream: daemon-parm.txt:19 `STRING auth_digest NULL` (a Locals entry).
     pub(crate) auth_digest: Option<String>,
     pub(crate) secrets_file: Option<PathBuf>,
     pub(crate) refuse_options: Vec<String>,
@@ -77,7 +78,7 @@ pub(crate) struct ModuleDefinition {
     pub(crate) write_only: bool,
     /// Tri-state `numeric ids` directive (upstream BOOL3): `None` = unset,
     /// `Some(true)` = yes, `Some(false)` = no. The unset third state is
-    /// load-bearing: under chroot, upstream (clientserver.c:1201-1204) treats
+    /// load-bearing: under chroot, upstream (clientserver.c:1283-1286) treats
     /// an unset value as enabled because there is no `/etc/passwd` inside the
     /// chroot for name<->id resolution. Collapsing it to `false` would make a
     /// default-config chrooted module wrongly perform name-based id mapping.
@@ -97,7 +98,7 @@ pub(crate) struct ModuleDefinition {
     /// the daemon falls back to no-chroot with a notice instead of refusing the
     /// connection.
     ///
-    /// upstream: clientserver.c:833-840 `rsync_module()`.
+    /// upstream: clientserver.c:883-896 `rsync_module()`.
     pub(crate) use_chroot_explicit: bool,
     pub(crate) max_connections: MaxConnections,
     pub(crate) incoming_chmod: Option<String>,
@@ -110,10 +111,9 @@ pub(crate) struct ModuleDefinition {
     pub(crate) fake_super: bool,
     /// Whether this module opts out of the operator-path symlink confinement.
     ///
-    /// upstream: `daemon-parm.h:314` - `{"insecure links", P_BOOL, P_LOCAL,
-    /// &Vars.l.insecure_links, NULL, 0}`, defaulting false (`daemon-parm.h:208`).
-    /// Read only through `lp_insecure_links(module_id)` inside
-    /// `symlink_optout_allowed()` (`syscall.c:142`); a peer-supplied
+    /// upstream: `daemon-parm.txt:60` - `BOOL insecure_links False`, a Locals
+    /// entry. Read only through `lp_insecure_links(module_id)` inside
+    /// `symlink_optout_allowed()` (`syscall.c:139`); a peer-supplied
     /// `--insecure-links` can never reach it, which is why the daemon and local
     /// opt-outs are distinct types in `fast_io::confinement`.
     pub(crate) insecure_links: bool,
@@ -123,101 +123,108 @@ pub(crate) struct ModuleDefinition {
     /// When `Some(true)`, munging is always enabled. When `Some(false)`, munging is
     /// always disabled regardless of chroot setting.
     ///
-    /// Upstream: `clientserver.c` - `munge_symlinks` global; defaults to true when
-    /// `use_chroot` is false or when an inside-chroot module is configured.
+    /// upstream: clientserver.c:1070-1071 `rsync_module()` - an unset value
+    /// becomes `!use_chroot || module_dirlen`, i.e. true when `use chroot` is off
+    /// or the module path has a non-empty inner path after a `/./` split.
     pub(crate) munge_symlinks: Option<bool>,
     /// Caps the client's requested verbosity level.
     ///
-    /// Upstream: `loadparm.c` - `max verbosity` parameter, default 1.
+    /// upstream: daemon-parm.txt:51 `INTEGER max_verbosity 1`.
     pub(crate) max_verbosity: i32,
     /// When true, I/O errors during delete operations are ignored.
     ///
-    /// Upstream: `loadparm.c` - `ignore errors` parameter, default false.
+    /// upstream: daemon-parm.txt:58 `BOOL ignore_errors False`.
     pub(crate) ignore_errors: bool,
     /// When true, files the daemon cannot read are silently skipped.
     ///
-    /// Upstream: `loadparm.c` - `ignore nonreadable` parameter, default false.
+    /// upstream: daemon-parm.txt:59 `BOOL ignore_nonreadable False`.
     pub(crate) ignore_nonreadable: bool,
     /// When true, per-file transfer logging is enabled.
     ///
-    /// Upstream: `loadparm.c` - `transfer logging` parameter, default false.
+    /// upstream: daemon-parm.txt:65 `BOOL transfer_logging False`.
     pub(crate) transfer_logging: bool,
     /// Format string for per-file transfer log entries.
     ///
-    /// Upstream: `loadparm.c` - `log format` parameter, default `"%o %h [%a] %m (%u) %f %l"`.
+    /// upstream: daemon-parm.txt:36 `STRING log_format "%o %h [%a] %m (%u) %f %l"`.
     pub(crate) log_format: Option<String>,
     /// Per-module log file path.
-    /// upstream: daemon-parm.h - `log file` STRING, P_LOCAL.
+    ///
+    /// upstream: daemon-parm.txt:35 `STRING log_file NULL` (a Locals entry).
     pub(crate) log_file: Option<PathBuf>,
     /// Glob patterns of files that should not be compressed during transfer.
     ///
-    /// Upstream: `loadparm.c` - `dont compress` parameter.
+    /// upstream: daemon-parm.txt:23 `STRING dont_compress DEFAULT_DONT_COMPRESS`.
     pub(crate) dont_compress: Option<String>,
     /// Command to execute early in the connection, before file list exchange.
     ///
-    /// Upstream: `loadparm.c` - `early exec` parameter. Runs after module selection
-    /// but before argument exchange and authentication.
+    /// upstream: daemon-parm.txt:24 `STRING early_exec NULL`; `rsync_module()`
+    /// starts it at clientserver.c:996, after authentication and before the
+    /// client's arguments are read.
     pub(crate) early_exec: Option<String>,
     /// Command to execute before a transfer begins.
     ///
-    /// Upstream: `loadparm.c` - `pre-xfer exec` parameter.
+    /// upstream: daemon-parm.txt:41 `STRING pre-xfer_exec NULL`.
     pub(crate) pre_xfer_exec: Option<String>,
     /// Command to execute after a transfer completes.
     ///
-    /// Upstream: `loadparm.c` - `post-xfer exec` parameter.
+    /// upstream: daemon-parm.txt:40 `STRING post-xfer_exec NULL`.
     pub(crate) post_xfer_exec: Option<String>,
     /// External program for mapping user/group names to IDs and vice versa.
     ///
     /// Used when the daemon runs in a chroot where `/etc/passwd` is unavailable.
-    /// Upstream: `loadparm.c` - `name converter` parameter.
+    /// upstream: daemon-parm.txt:38 `STRING name_converter NULL`.
     pub(crate) name_converter: Option<String>,
     /// Temporary directory for receiving files before final placement.
     ///
-    /// Upstream: `loadparm.c` - `temp dir` parameter.
+    /// upstream: daemon-parm.txt:48 `PATH temp_dir NULL`.
     pub(crate) temp_dir: Option<String>,
     /// Character set for filename conversion.
     ///
-    /// Upstream: `loadparm.c` - `charset` parameter.
+    /// upstream: daemon-parm.txt:21 `STRING charset NULL`.
     pub(crate) charset: Option<String>,
     /// When true, DNS forward lookup verification is performed on connecting hosts.
     ///
-    /// Upstream: `loadparm.c` - `forward lookup` parameter, default true.
+    /// upstream: daemon-parm.txt:57 `BOOL forward_lookup True`.
     pub(crate) forward_lookup: bool,
     /// When true, the daemon checks that the secrets file has appropriate permissions.
     ///
-    /// Upstream: `loadparm.c` - `strict modes` parameter, default true.
+    /// upstream: daemon-parm.txt:64 `BOOL strict_modes True`.
     /// Controls whether the secrets file must not be world-readable.
     pub(crate) strict_modes: bool,
     /// Path to a file containing exclude patterns for this module.
     ///
-    /// Upstream: `daemon-parm.txt` - `exclude_from` STRING parameter, default NULL.
-    /// Patterns are loaded via `parse_filter_file()` in `clientserver.c`.
+    /// upstream: daemon-parm.txt:26 `STRING exclude_from NULL`; loaded via
+    /// `parse_filter_file()` in `rsync_module()` (clientserver.c:946-948).
     pub(crate) exclude_from: Option<PathBuf>,
     /// Path to a file containing include patterns for this module.
     ///
-    /// Upstream: `daemon-parm.txt` - `include_from` STRING parameter, default NULL.
-    /// Patterns are loaded via `parse_filter_file()` in `clientserver.c`.
+    /// upstream: daemon-parm.txt:32 `STRING include_from NULL`; loaded via
+    /// `parse_filter_file()` in `rsync_module()` (clientserver.c:937-939).
     pub(crate) include_from: Option<PathBuf>,
     /// Direct filter rules for this module (space-separated, repeatable).
     ///
-    /// Upstream: `daemon-parm.h` - `filter` STRING, P_LOCAL.
-    /// Parsed with `FILTRULE_WORD_SPLIT` in `clientserver.c:rsync_module()`.
+    /// upstream: daemon-parm.txt:27 `STRING filter NULL`; parsed with
+    /// `FILTRULE_WORD_SPLIT` in `rsync_module()` (clientserver.c:933-935).
     pub(crate) filter: Vec<String>,
     /// Direct exclude rules for this module (space-separated, repeatable).
     ///
-    /// Upstream: `daemon-parm.h` - `exclude` STRING, P_LOCAL.
-    /// Parsed with `FILTRULE_WORD_SPLIT` in `clientserver.c:rsync_module()`.
+    /// upstream: daemon-parm.txt:25 `STRING exclude NULL`; parsed with
+    /// `FILTRULE_WORD_SPLIT` in `rsync_module()` (clientserver.c:950-952).
     pub(crate) exclude: Vec<String>,
     /// Direct include rules for this module (space-separated, repeatable).
     ///
-    /// Upstream: `daemon-parm.h` - `include` STRING, P_LOCAL.
-    /// Parsed with `FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT` in `clientserver.c:rsync_module()`.
+    /// upstream: daemon-parm.txt:31 `STRING include NULL`; parsed with
+    /// `FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT` in `rsync_module()`
+    /// (clientserver.c:941-944).
     pub(crate) include: Vec<String>,
     /// When true, source files are opened with `O_NOATIME` to avoid updating access times.
     ///
     /// Only effective on Linux where `O_NOATIME` is supported. On other platforms this
-    /// is accepted but has no effect (no-op).
-    /// Upstream: `loadparm.c` - `open noatime` parameter, default false.
+    /// is accepted but has no effect (no-op). False leaves the client's own
+    /// `--open-noatime` choice in place.
+    ///
+    /// upstream: daemon-parm.txt:70 `BOOL3 open_noatime Unset`; clientserver.c:1172-1173
+    /// overrides the client's choice whenever the value is set, including to no.
     pub(crate) open_noatime: bool,
     /// Daemon-wide zero-copy policy for this module's socket sends.
     ///
@@ -229,35 +236,35 @@ pub(crate) struct ModuleDefinition {
     /// Whether reverse DNS lookups are enabled for this module (default: true).
     ///
     /// Inherits the global-section value when the module does not override it.
-    /// upstream: daemon-parm.h:78 `reverse_lookup` BOOL, P_LOCAL, default True;
-    /// consumed per-module at clientserver.c:723 `lp_reverse_lookup(i)`.
+    /// upstream: daemon-parm.txt:63 `BOOL reverse_lookup True`; consumed
+    /// per-module at clientserver.c:768 `lp_reverse_lookup(i)`.
     pub(crate) reverse_lookup: bool,
     /// Per-module lock file override for cross-process max-connections counting.
     ///
-    /// `None` inherits the daemon-wide lock file. upstream: daemon-parm.h:46
-    /// `lock_file` STRING, P_LOCAL; consumed per-module at clientserver.c:746
+    /// `None` inherits the daemon-wide lock file. upstream: daemon-parm.txt:34
+    /// `STRING lock_file DEFAULT_LOCK_FILE`; consumed per-module at clientserver.c:791
     /// `claim_connection(lp_lock_file(i), lp_max_connections(i))`.
     pub(crate) lock_file: Option<PathBuf>,
     /// Per-module syslog ident (tag) override, resolved with the global default.
     ///
     /// `None` means the module did not set (and no global `syslog tag` directive
     /// supplied) a value, so it inherits the daemon-global tag opened at startup.
-    /// upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL, default "rsyncd");
-    /// consumed per-module at log.c:143 `openlog(lp_syslog_tag(module_id), ...)`.
+    /// upstream: daemon-parm.txt:44 `STRING syslog_tag "rsyncd"`; consumed
+    /// per-module at log.c:152 `openlog(lp_syslog_tag(module_id), ...)`.
     pub(crate) syslog_tag: Option<String>,
     /// Per-module syslog facility name override, resolved with the global
     /// default (canonical lowercase, e.g. "daemon", "local3").
     ///
     /// `None` means the module inherits the daemon-global facility. upstream:
-    /// loadparm.c syslog_facility (P_ENUM, P_LOCAL, default LOG_DAEMON);
-    /// consumed per-module at log.c:143 `openlog(..., lp_syslog_facility(module_id))`.
+    /// daemon-parm.txt:54 `ENUM syslog_facility LOG_DAEMON`; consumed per-module
+    /// at log.c:152 `openlog(..., lp_syslog_facility(module_id))`.
     pub(crate) syslog_facility: Option<String>,
 }
 
 impl ModuleDefinition {
     /// Checks whether a peer is permitted to access this module.
     ///
-    /// Mirrors upstream `access.c::allow_access()` exactly:
+    /// Mirrors upstream `access.c:allow_access()`:
     ///
     /// 1. If `hosts allow` is non-empty and the peer matches any allow
     ///    pattern, access is granted - the deny list is not consulted.
@@ -266,27 +273,27 @@ impl ModuleDefinition {
     /// 3. Otherwise the deny list is consulted. If the peer matches any
     ///    deny pattern, access is refused. Otherwise access is granted.
     ///
-    /// Fail-closed semantics for GHSA-rjfm-3w2m-jf4f: when the peer's
-    /// hostname is unresolvable (`None`) and ANY `hosts deny` rule is
-    /// hostname-based, the deny check fails closed. Upstream relies on
+    /// Deviation from upstream (GHSA-rjfm-3w2m-jf4f): when the peer's
+    /// hostname is unresolved (a `PeerHost::Sentinel`) and ANY `hosts deny`
+    /// rule is hostname-based, the deny check fails closed. Upstream relies on
     /// reverse DNS being available at access-check time (it performs the
-    /// lookup before `daemon chroot` so the result is cached); oc-rsync
-    /// uses a thread-per-connection model where `daemon chroot` is applied
-    /// process-wide at startup, so per-peer DNS can fail post-chroot when
-    /// the chroot lacks NSS configuration. The guard sits on the deny
+    /// lookup before its per-connection `daemon chroot` so the result is
+    /// cached); oc-rsync applies `daemon chroot` once at startup, before the
+    /// accept loop, so per-peer DNS can fail post-chroot when the chroot lacks
+    /// NSS configuration. The guard sits on the deny
     /// branch only - if the peer already matched a `hosts allow` rule we
     /// admit them regardless of DNS state, matching upstream's "allow
     /// short-circuits deny" semantics.
     ///
-    /// upstream: access.c:275 `allow_access()` - "If we match an allow-list
+    /// upstream: access.c:293-299 `allow_access()` - "If we match an allow-list
     /// item, we always allow access." Allow-list match returns 1
     /// unconditionally; the deny list is consulted only when the allow
     /// list either is absent or did not match.
-    /// upstream: clientserver.c (3.4.3 commit c38f20c5) - reverse DNS
+    /// upstream: clientserver.c:1448-1468 `start_daemon()` - reverse DNS
     /// before chroot ensures `client_name()` returns a real hostname when
     /// ACLs are evaluated.
     pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
-        // upstream: access.c:288-294 - allow-list short-circuit. A peer
+        // upstream: access.c:293-299 - allow-list short-circuit. A peer
         // matching any allow pattern is admitted before the deny list is
         // consulted; a peer matching nothing in a non-empty allow list is
         // refused only when there is no deny list to fall through to.
@@ -396,7 +403,7 @@ impl ModuleDefinition {
     /// match against the user's own groups for `@group` tokens), first match
     /// wins.
     ///
-    /// upstream: authenticate.c:274-304 `auth_server()`.
+    /// upstream: authenticate.c:356-407 `auth_server()`.
     pub(crate) fn get_auth_user(&self, username: &str) -> Option<super::AuthMatch<'_>> {
         super::authorize_auth_user(&self.auth_users, username, &super::SystemGroupMembership)
     }
@@ -416,7 +423,7 @@ impl ModuleDefinition {
     /// Applies the daemon's `--log-file-format` to this module.
     ///
     /// upstream: options.c:885 stores the command-line value in the
-    /// `logfile_format` global, and clientserver.c:823 falls back to the
+    /// `logfile_format` global, and clientserver.c:823-824 falls back to the
     /// module's `log format` only while that global is still NULL - so the
     /// command-line format replaces the module's and logs per file even when
     /// the module leaves `transfer logging` off.
@@ -433,7 +440,7 @@ impl ModuleDefinition {
     /// path splits at a `/./` marker (`module_dirlen > 0`), which still exposes
     /// a sanitized inner path.
     ///
-    /// upstream: clientserver.c:997-998 -
+    /// upstream: clientserver.c:1070-1071 -
     /// `munge_symlinks = !use_chroot || module_dirlen`.
     #[allow(dead_code)] // Wired during file list send/receive in daemon mode
     pub(crate) fn effective_munge_symlinks(&self) -> bool {
@@ -445,7 +452,7 @@ impl ModuleDefinition {
     /// (`/./`) with a non-empty inner path, mirroring upstream's
     /// `module_dirlen > 0`.
     ///
-    /// upstream: clientserver.c:847-874 - when `use chroot` is set and the
+    /// upstream: clientserver.c:896-923 - when `use_chroot` is set and the
     /// module path contains a `/./` marker, the normalized inner path length
     /// (`module_dirlen`) is non-zero. A `/./` at the very end (empty inner
     /// path) normalizes to `/` and resets `module_dirlen` back to 0.
@@ -461,7 +468,7 @@ impl ModuleDefinition {
     /// This is upstream's `lp_log_file(module_id)`: the value already carries the
     /// global-section default inherited at resolution time (finish.rs). The
     /// daemon reopens its per-connection log sink to this path at module select
-    /// (`reopen_module_log_sink`, mirroring `log_init(1)` at clientserver.c:897).
+    /// (`reopen_module_log_sink`, mirroring `log_init(1)` at clientserver.c:956).
     pub(crate) fn module_log_file(&self) -> Option<&Path> {
         self.log_file.as_deref()
     }
@@ -489,7 +496,8 @@ impl ModuleDefinition {
     /// facility name resolves to the default facility, mirroring upstream's
     /// P_ENUM keep-default behaviour.
     ///
-    /// upstream: log.c:169 `log_init` reopens syslog for the selected module via
+    /// upstream: log.c:186-205 `log_init(1)` closes syslog when the module's tag
+    /// or facility differs, and `syslog_init()` (log.c:143-155) reopens it via
     /// `openlog(lp_syslog_tag(module_id), LOG_PID, lp_syslog_facility(module_id))`.
     #[cfg(unix)]
     pub(in crate::daemon) fn reconfigure_syslog(

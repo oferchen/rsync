@@ -1,6 +1,6 @@
 //! Cargo feature-propagation regression tests for `crates/core`.
 //!
-//! PR #5564 fixed a propagation gap where the `core` crate's `xattr` feature
+//! These tests guard a propagation gap where the `core` crate's `xattr` feature
 //! pulled in `transfer/xattr` but NOT `metadata/xattr`. The `metadata` crate
 //! owns the Windows FindFirstStreamW ADS backend, so without the propagation
 //! the backend was dead code on Windows even when `--features xattr` was set.
@@ -91,8 +91,8 @@ fn core_acl_feature_propagates_to_metadata_subcrate() {
 /// Symmetry guard: if a future edit ever drops `metadata/<feat>` from the
 /// `acl` arm, the test above catches it. This second test additionally
 /// enforces that the two platform-metadata features stay structurally
-/// symmetric - both reach the `metadata` crate. The motivating defect (PR
-/// #5564) was exactly that `xattr` and `acl` had asymmetric propagation.
+/// symmetric - both reach the `metadata` crate. The motivating defect was
+/// exactly that `xattr` and `acl` had asymmetric propagation.
 #[test]
 fn core_platform_metadata_features_stay_symmetric() {
     let manifest = read_core_manifest();

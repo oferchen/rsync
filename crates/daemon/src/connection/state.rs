@@ -511,9 +511,6 @@ mod tests {
     /// daemon connection lifecycle. No ad-hoc booleans, phase counters, or
     /// state strings exist outside the FSM - all phase progression goes
     /// through `ConnectionState::transition()`.
-    ///
-    /// This test codifies the FSW-7 audit finding: after FSW-4 wired the FSM
-    /// into the daemon handler, zero residual ad-hoc state variables remain.
     #[test]
     fn connection_state_is_sole_lifecycle_authority() {
         // The FSM covers every daemon connection phase.

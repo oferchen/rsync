@@ -32,10 +32,10 @@ fn module_path_is_absolute(path: &Path) -> bool {
 /// as the default value of the `dont compress` parameter (`lp_dont_compress`).
 /// The list itself is authored in `rsync.1.md` and extracted by
 /// `define-from-md.awk`. Only a bare `*` collapses the whole compression stream
-/// (token.c:206-211); the per-suffix lookup in `set_compression` is compiled
-/// out (`#if 0`, token.c:227), so this default list is a config-fidelity value
-/// with no per-file wire effect - a daemon still compresses a `.gz` exactly as
-/// upstream 3.4.4 does.
+/// (token.c:213-218 init_set_compression()); the per-suffix lookup in
+/// `set_compression` is compiled out (`#if 0`, token.c:246), so this default
+/// list is a config-fidelity value with no per-file wire effect - a daemon
+/// still compresses a `.gz` exactly as upstream 3.5.1 does.
 const DEFAULT_DONT_COMPRESS: &str = "*.3g2 *.3gp *.7z *.aac *.ace *.apk *.avi *.bz2 *.deb \
 *.dmg *.ear *.f4v *.flac *.flv *.gpg *.gz *.iso *.jar *.jpeg *.jpg *.lrz *.lz *.lz4 *.lzma \
 *.lzo *.m1a *.m1v *.m2a *.m2ts *.m2v *.m4a *.m4b *.m4p *.m4r *.m4v *.mka *.mkv *.mov *.mp1 \
@@ -50,7 +50,7 @@ impl ModuleDefinitionBuilder {
     /// Parameters not explicitly set on the module inherit from `defaults`,
     /// which captures P_LOCAL directives from the global section of rsyncd.conf.
     ///
-    /// upstream: loadparm.c - `init_section()` copies the current global
+    /// upstream: loadparm.c:394 `init_section()` copies the current global
     /// defaults (`Vars.l`) into each new module section. Per-module directives
     /// then override specific fields.
     fn finish(
@@ -85,7 +85,7 @@ impl ModuleDefinitionBuilder {
         // `if (*path != '/') { /* Make path absolute. */ ... }`, joining the
         // value onto `curr_dir` before cleaning it. `rsync_module()` routes
         // every module path through it on BOTH arms - the chroot arm at
-        // clientserver.c:898-916 and the no-chroot arm at :916-918 - so neither
+        // clientserver.c:897-914 and the no-chroot arm at :915-918 - so neither
         // arm can observe a relative path by the time it chroots or serves.
         // There is no absolute-path requirement anywhere in upstream's config
         // parser; refusing here rejected a configuration upstream serves.
@@ -97,7 +97,8 @@ impl ModuleDefinitionBuilder {
         // check and letting a relative path travel further.
         //
         // The bare root `/` is already absolute and is preserved verbatim:
-        // upstream loadparm.c (P_PATH) keeps a single-slash module path as-is,
+        // upstream loadparm.c:562-568 do_parameter() (P_PATH) strips trailing
+        // slashes only while more than one byte remains, so `/` is kept as-is,
         // and clientserver.c serves from it both with and without chroot (the
         // chroot("/") is a no-op). See the upstream daemon-path-root-read
         // scenario.
@@ -123,20 +124,20 @@ impl ModuleDefinitionBuilder {
             filters::collapse_dot_dot_dirs(&current_dir.join(path))
         };
 
-        // upstream: daemon-parm.h:262 - `auth users` is P_LOCAL. A module with
+        // upstream: daemon-parm.txt:20 - `auth users` is P_LOCAL. A module with
         // no explicit list inherits the global-section default, so a global
         // `auth users` forces authentication on every module that lacks its own
-        // (authenticate.c:228 auth_server reads lp_auth_users). Mirrors
+        // (authenticate.c:291 auth_server() reads lp_auth_users). Mirrors
         // hosts_allow below.
         let auth_users = self
             .auth_users
             .or_else(|| defaults.auth_users.clone())
             .unwrap_or_default();
-        // upstream: daemon-parm.h:273 - `auth digest` is P_LOCAL, so a value in
+        // upstream: daemon-parm.txt:19 - `auth digest` is P_LOCAL, so a value in
         // the global section is the default for every module that does not set
         // its own, exactly like `auth users` above.
         let auth_digest = self.auth_digest.or_else(|| defaults.auth_digest.clone());
-        // upstream: authenticate.c:143-146 check_secret() - a module that
+        // upstream: authenticate.c:155-157 check_secret() - a module that
         // requires authentication but has no secrets file is not a config
         // error; every login to it fails with "no secrets file".
         let secrets_file = if auth_users.is_empty() {
@@ -146,7 +147,8 @@ impl ModuleDefinitionBuilder {
                 .or_else(|| default_secrets.map(Path::to_path_buf))
         };
 
-        // upstream: loadparm.c - exclude/include/filter are STRING parameters.
+        // upstream: daemon-parm.txt:25,27,31 - exclude/filter/include are STRING
+        // P_LOCAL parameters.
         // In the global section they set defaults; per-module directives override
         // (not append to) the defaults. If the module has its own exclude rules,
         // use those; otherwise inherit the global defaults.
@@ -166,7 +168,7 @@ impl ModuleDefinitionBuilder {
             self.filter
         };
 
-        // upstream: loadparm.c - hosts_allow/hosts_deny are STRING P_LOCAL
+        // upstream: daemon-parm.txt:29-30 - hosts_allow/hosts_deny are STRING P_LOCAL
         // parameters with global defaults.
         let hosts_allow = self
             .hosts_allow
@@ -199,12 +201,12 @@ impl ModuleDefinitionBuilder {
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.or(defaults.read_only).unwrap_or(true),
             write_only: self.write_only.or(defaults.write_only).unwrap_or(false),
-            // upstream: clientserver.c:1201-1204 - `numeric ids` is a BOOL3
+            // upstream: clientserver.c:1283-1286 - `numeric ids` is a BOOL3
             // tri-state. Preserve the unset third state (`None`) so a chrooted
             // module with the directive unset can still be forced to numeric
             // ids at session setup; collapsing to `false` here loses that.
             numeric_ids: self.numeric_ids.or(defaults.numeric_ids).flatten(),
-            // upstream: clientserver.c:781,790 read the per-module `lp_uid`/
+            // upstream: clientserver.c:833,844 read the per-module `lp_uid`/
             // `lp_gid`, which inherit the global-section default when the module
             // sets no explicit value (daemon-parm.txt marks both P_LOCAL).
             uid: uid.and_then(Result::ok),
@@ -287,16 +289,16 @@ impl ModuleDefinitionBuilder {
                 .flatten()
                 .unwrap_or(false),
             zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
-            // upstream: daemon-parm.h:78 default True; module value overrides the
+            // upstream: daemon-parm.txt:63 default True; module value overrides the
             // global-section default (defaults.reverse_lookup), else built-in True.
             reverse_lookup: self
                 .reverse_lookup
                 .or(defaults.reverse_lookup)
                 .unwrap_or(true),
-            // upstream: daemon-parm.h:46 - a module `lock file` overrides the
+            // upstream: daemon-parm.txt:34 - a module `lock file` overrides the
             // daemon-wide lock file; `None` inherits it at connection setup.
             lock_file: self.lock_file,
-            // upstream: loadparm.c syslog_tag/syslog_facility are P_LOCAL, so a
+            // upstream: daemon-parm.txt:44,54 syslog_tag/syslog_facility are P_LOCAL, so a
             // global-section value seeds every module's default (init_section
             // copy). A module directive overrides it; otherwise the module
             // inherits the global-section value, else the built-in default.

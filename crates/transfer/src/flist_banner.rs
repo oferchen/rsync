@@ -84,7 +84,7 @@ impl FlistBanner {
     /// level 1; at level 2 the `%d file%sto consider` total, preceded by the
     /// ` %d files...\r` ticks that flist.c:194-197 maybe_emit_filelist_progress()
     /// writes for every hundredth entry. The sender ticks before adding each
-    /// entry (flist.c:2091, counts 0, 100, ...), the receiver after
+    /// entry (flist.c:2092, counts 0, 100, ...), the receiver after
     /// (flist.c:3253, counts 100, 200, ...). The first tick starts on a fresh
     /// line because `start` left `output_needs_newline` set (log.c:375-378).
     pub(crate) fn finish(
@@ -117,7 +117,7 @@ impl FlistBanner {
 }
 
 /// Runs `emit` against the client stream the banner belongs on: stderr under
-/// `--msgs2stderr` (log.c:253), stdout otherwise.
+/// `--msgs2stderr` (log.c:272), stdout otherwise.
 pub(crate) fn with_client_stream(
     msgs_to_stderr: bool,
     emit: impl FnOnce(&mut dyn Write) -> io::Result<()>,
@@ -207,7 +207,7 @@ mod tests {
 
     /// At FLIST level 2 (`-P`, `-vv`) the progress banner ends with the
     /// entry count and carries a tick for every hundredth entry - from 0 on
-    /// the sender, from 100 on the receiver (flist.c:2091 vs flist.c:3253).
+    /// the sender, from 100 on the receiver (flist.c:2092 vs flist.c:3253).
     #[test]
     fn flist2_reports_the_count_with_upstream_ticks() {
         let mut config = VerbosityConfig::from_verbose_level(1);

@@ -2,7 +2,7 @@
 //!
 //! Contains the `DeltaApplicator` that applies delta data received from a sender
 //! to reconstruct files. Mirrors upstream rsync's `receive_data()` function from
-//! `receiver.c:318`.
+//! `receiver.c:474`.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -22,7 +22,7 @@ use crate::token_buffer::TokenBuffer;
 use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 use engine::BlockTouchTracker;
 
-/// Same-fs detection cache for the IUD-10 `copy_file_range` fast path.
+/// Same-fs detection cache for the `copy_file_range` fast path.
 ///
 /// Resolved lazily on the first COPY token (so we don't pay a `metadata()`
 /// syscall when the receiver never produces a COPY large enough to dispatch)
@@ -36,7 +36,7 @@ enum SameFsCache {
     DifferentFs,
 }
 
-/// Per-applicator gate for the REFLINK-4 `FICLONERANGE` partial-clone path.
+/// Per-applicator gate for the `FICLONERANGE` partial-clone path.
 ///
 /// The first eligible COPY token attempts a clone; subsequent calls only
 /// retry while the filesystem is still believed to support reflinks. Once a
@@ -87,7 +87,7 @@ type BasisMapStrategy = BufferedMap;
 ///    synchronous fault and stalling other in-flight SQEs on the same poller.
 ///
 /// Upstream rsync deliberately avoids `mmap(2)` for basis files for the same
-/// truncation reason - see `fileio.c:256-259` + `map_ptr()` in upstream rsync.
+/// truncation reason - see `fileio.c:316-319` + `map_ptr()` in upstream rsync.
 ///
 /// See `docs/design/basis-file-io-policy.md` and audit
 /// `docs/audits/mmap-iouring-co-usage.md` finding F1. The variant is retained
@@ -158,9 +158,8 @@ pub struct DeltaApplyResult {
     /// the trailing seek+1-byte hole terminator). When sparse mode is off it
     /// is `None`; the byte count is already tracked by `bytes_written`.
     ///
-    /// Mirrors the post-finish size check in the live receiver path
-    /// (`receiver/transfer/sync.rs:276-289`), which compares this position
-    /// against the file-list entry size.
+    /// The receiver's post-finish size check (`receiver/transfer/sync.rs`)
+    /// compares this position against the file-list entry size.
     pub final_pos: Option<u64>,
 }
 
@@ -179,7 +178,7 @@ pub struct DeltaApplyResult {
 ///   `io::Error`. Windowed reads also keep mmap-backed pointers out of any
 ///   io_uring SQE, whose cold-page faults would stall the SQPOLL kernel
 ///   thread. Mirrors upstream rsync's deliberate use of `read(2)` for basis
-///   files (`fileio.c:256-259` + `map_ptr()`). See
+///   files (`fileio.c:316-319` + `map_ptr()`). See
 ///   `docs/design/basis-file-io-policy.md`.
 /// - Uses `TokenBuffer` for literal data, reusing the same allocation across
 ///   all tokens to avoid per-token heap allocations.
@@ -193,10 +192,10 @@ pub struct DeltaApplicator<'a> {
     basis_map: Option<MapFile<BasisMapStrategy>>,
     /// Reusable buffer for literal token data to avoid per-token allocations.
     token_buffer: TokenBuffer,
-    /// Cached same-filesystem decision for the IUD-10 `copy_file_range`
+    /// Cached same-filesystem decision for the `copy_file_range`
     /// fast path. Resolved on first eligible COPY token, then reused.
     same_fs: SameFsCache,
-    /// Cached gate for the REFLINK-4 `FICLONERANGE` partial-clone fast path.
+    /// Cached gate for the `FICLONERANGE` partial-clone fast path.
     /// Marks the filesystem as `Declined` after the first `Ok(false)` so the
     /// receiver does not pay one `ENOTSUP` ioctl per COPY token on
     /// non-reflink filesystems.
@@ -224,7 +223,7 @@ impl<'a> DeltaApplicator<'a> {
     /// surfaces as an ordinary short-read `io::Error` instead of a `SIGBUS`
     /// the kernel raises while faulting an unmapped page on our behalf. This
     /// also keeps mmap-backed pointers out of any io_uring SQE. Mirrors
-    /// upstream rsync's `fileio.c:256-259` rationale for using `read(2)`
+    /// upstream rsync's `fileio.c:316-319` rationale for using `read(2)`
     /// instead of `mmap(2)` on basis files. See
     /// `docs/design/basis-file-io-policy.md`.
     pub fn new(
@@ -245,7 +244,7 @@ impl<'a> DeltaApplicator<'a> {
             // reports as a transfer failure. Buffered reads also keep
             // mmap-backed pointers out of any io_uring SQE, whose cold-page
             // faults would otherwise stall the SQPOLL kernel thread.
-            // upstream: fileio.c:256-259 comment + map_ptr() deliberately use
+            // upstream: fileio.c:316-319 comment + map_ptr() deliberately use
             // read(2) instead of mmap(2) on basis files for this exact reason.
             let _ = config.writer_kind;
             #[cfg(unix)]
@@ -346,7 +345,7 @@ impl<'a> DeltaApplicator<'a> {
     /// (`BufferedMap`) on every platform. The basis is never memory-mapped so
     /// a concurrent truncation cannot raise `SIGBUS`, and no mmap pointer can
     /// reach an io_uring SQE (audit `docs/audits/mmap-iouring-co-usage.md`
-    /// finding F1; upstream `fileio.c:256-259` + `map_ptr()`).
+    /// finding F1; upstream `fileio.c:316-319` + `map_ptr()`).
     ///
     /// # Errors
     ///
@@ -399,11 +398,11 @@ impl<'a> DeltaApplicator<'a> {
             self.stats.bytes_written
         );
 
-        // IUD-10 fast path: when no checksum is being accumulated (CSUM_NONE)
+        // Fast path: when no checksum is being accumulated (CSUM_NONE)
         // and no sparse rewrite is in flight, hand the basis-to-dest copy off
         // to `copy_file_range(2)` instead of bouncing bytes through userspace.
-        // upstream rsync 3.4.1 does not use copy_file_range; this is an
-        // oc-rsync-only optimization that produces byte-identical output.
+        // Deviation from upstream: 3.5.1 never uses copy_file_range; this
+        // oc-only optimization produces byte-identical output.
         if Self::should_try_kernel_copy(
             &self.checksum_verifier,
             self.sparse_state.as_ref(),
@@ -412,7 +411,7 @@ impl<'a> DeltaApplicator<'a> {
         {
             let dest_off = self.stats.bytes_written;
 
-            // REFLINK-4: try FICLONERANGE first when the basis and
+            // Try FICLONERANGE first when the basis and
             // destination ranges are block-aligned and large enough to
             // amortize the ioctl. Success is metadata-only - no bytes
             // traverse userspace or the kernel page cache. Failure
@@ -488,7 +487,7 @@ impl<'a> DeltaApplicator<'a> {
         Ok(())
     }
 
-    /// Predicate gating the IUD-10 `copy_file_range` fast path.
+    /// Predicate gating the `copy_file_range` fast path.
     ///
     /// Returns `true` when in-kernel copy is safe to attempt:
     /// - the checksum verifier is `None` (no per-byte digest to maintain),
@@ -616,7 +615,7 @@ impl<'a> DeltaApplicator<'a> {
     fn resolve_same_fs(basis: &File, dest: &File) -> SameFsCache {
         #[cfg(target_os = "linux")]
         {
-            // REFLINK-1: shared st_dev comparison so the delta-apply
+            // Shared st_dev comparison so the delta-apply
             // FICLONERANGE gate and the whole-file FICLONE gate agree.
             match fast_io::same_fs::files_same_device(basis, dest) {
                 Some(true) => SameFsCache::SameFs,
@@ -644,15 +643,15 @@ impl<'a> DeltaApplicator<'a> {
     /// Returns `Ok(true)` if more tokens are expected, `Ok(false)` at the
     /// `End` marker. The `token_reader` handles BOTH the plain 4-byte-LE
     /// framing AND the compressed (`-z`) DEFLATED_DATA framing, exactly like
-    /// the live receiver loop in `receiver/transfer/sync.rs:518-634`. After
+    /// the pipelined receiver loop in `transfer_ops/token_loop.rs`. After
     /// every block reference the basis bytes are fed back into the
     /// decompressor dictionary via [`TokenReader::see_token`] so the inflate
     /// state stays synchronized with the sender's deflate state - the critical
-    /// step that plain raw-`i32` reads omit (upstream: `token.c:685`
-    /// `see_deflate_token()`; mirrors `sync.rs:629`).
+    /// step that plain raw-`i32` reads omit (upstream: `token.c:688`
+    /// `see_deflate_token()`).
     ///
     /// Uses the applicator's reusable `TokenBuffer` for `Pending` literal
-    /// reads to avoid per-token heap allocations. The live path additionally
+    /// reads to avoid per-token heap allocations. The pipelined path additionally
     /// attempts a zero-copy `try_borrow_exact` on its concrete `ServerReader`;
     /// that is a pure I/O optimization with byte-identical output, so the
     /// generic `R: Read` path here always reads into the buffer.
@@ -686,9 +685,9 @@ impl<'a> DeltaApplicator<'a> {
             }
             DeltaToken::BlockRef(block_idx) => {
                 self.apply_block_ref(block_idx)?;
-                // upstream: token.c:685 see_deflate_token() - keep the inflate
+                // upstream: token.c:688 see_deflate_token() - keep the inflate
                 // dictionary synced with the sender after every block match.
-                // Mirrors the live receiver loop (sync.rs:629). Only the
+                // Mirrors `transfer_ops/token_loop.rs`. Only the
                 // compressed reader needs the bytes; for the plain reader
                 // see_token is a no-op, so we avoid the extra basis map there.
                 if token_reader.is_compressed() {
@@ -763,8 +762,8 @@ impl<'a> DeltaApplicator<'a> {
     /// Maps the basis bytes for `block_idx` and feeds them into the
     /// decompressor dictionary via [`TokenReader::see_token`].
     ///
-    /// Mirrors the live receiver's `token_reader.see_token(block_data)` call
-    /// (sync.rs:629). The block index has already been bounds-checked by
+    /// Mirrors the pipelined receiver's `token_reader.see_token(block_data)`
+    /// call (`transfer_ops/token_loop.rs`). The block index has already been bounds-checked by
     /// [`Self::apply_block_ref`], so a missing basis here is an internal
     /// invariant violation surfaced as `InvalidData`.
     fn feed_see_token(
@@ -801,7 +800,7 @@ impl<'a> DeltaApplicator<'a> {
     ///
     /// When `expected_size` is `Some` and sparse mode is active, also verifies
     /// the materialized file length matches, mirroring the live receiver's
-    /// post-finish size check (`receiver/transfer/sync.rs:276-289`). The
+    /// post-finish size check (`receiver/transfer/sync.rs`). The
     /// sparse final position is recorded in
     /// [`DeltaApplyResult::final_pos`] regardless.
     ///
@@ -846,7 +845,7 @@ impl<'a> DeltaApplicator<'a> {
         let expected_len = self.checksum_verifier.digest_len();
         let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         reader.read_exact(&mut expected[..expected_len])?;
-        // upstream: receiver.c:532-533 DEBUG_GTE(DELTASUM, 2)
+        // upstream: receiver.c:688-689 DEBUG_GTE(DELTASUM, 2)
         debug_log!(Deltasum, 2, "got file_sum");
 
         let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -871,7 +870,8 @@ impl<'a> DeltaApplicator<'a> {
             ));
         }
 
-        // upstream: receiver.c:318 receive_data() emits the same summary line.
+        // Deviation from upstream: oc-only summary trace; `receive_data()`
+        // (receiver.c:474) emits no per-file token summary.
         debug_log!(
             Deltasum,
             1,
@@ -893,14 +893,14 @@ impl<'a> DeltaApplicator<'a> {
 /// The `token_reader` selects the wire framing (plain 4-byte-LE or compressed
 /// DEFLATED_DATA) and is threaded through every token so the compressed
 /// inflate dictionary stays synchronized via `see_token` after each block
-/// match. Mirrors the live receiver loop in
-/// `receiver/transfer/sync.rs:518-634`.
+/// match. `receiver/transfer/sync.rs` drives each file through this function.
 pub fn apply_delta_stream<R: Read>(
     reader: &mut R,
     applicator: &mut DeltaApplicator<'_>,
     token_reader: &mut TokenReader,
 ) -> io::Result<()> {
-    // upstream: receiver.c:318 receive_data() logs the same start marker.
+    // Deviation from upstream: oc-only trace; `receive_data()` (receiver.c:474)
+    // logs no start marker.
     debug_log!(Deltasum, 2, "recv delta stream start");
 
     while applicator.apply_token(reader, token_reader)? {}
@@ -921,14 +921,14 @@ pub fn apply_delta_stream<R: Read>(
 /// `mapbuf == NULL`:
 ///
 /// - Literal tokens: the data bytes are read off the wire and dropped without
-///   writing (`receiver.c:420` `write_file` is guarded by `fd != -1`). On the
+///   writing (`receiver.c:579` `write_file` is guarded by `fd != -1`). On the
 ///   compressed path the decoder returns the already-decompressed payload, so
 ///   reading the token keeps the inflate stream in sync.
 /// - Block-match tokens: absorbed benignly by advancing the notional offset,
 ///   with NO basis read and NO `see_token` dictionary feed - exactly the
 ///   `if (!mapbuf) { ...; offset += len; continue; }` branch at
-///   `receiver.c:457-464`. That branch runs BEFORE the `if (mapbuf)` guard that
-///   would otherwise call `see_token`/`sum_update` (`receiver.c:474-479`), so
+///   `receiver.c:616-624`. That branch runs BEFORE the `if (mapbuf)` guard that
+///   would otherwise call `see_token`/`sum_update` (`receiver.c:633-638`), so
 ///   the discard path never feeds the dictionary either. A pre-fix upstream
 ///   version dereferenced `full_fname(fname)` with `fname == NULL` here and
 ///   crashed the receiver on an otherwise normal transfer (the
@@ -936,17 +936,17 @@ pub fn apply_delta_stream<R: Read>(
 ///
 /// After the `End` token, the sender always writes the whole-file checksum
 /// (`xfer_sum_len` bytes); upstream's `receive_data()` reads it unconditionally
-/// at `receiver.c:531` regardless of `fd`. `checksum_len` MUST equal the
+/// at `receiver.c:687` regardless of `fd`. `checksum_len` MUST equal the
 /// negotiated digest length ([`ChecksumVerifier::digest_len`]).
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:540-543` - `discard_receive_data()` calls
+/// - `receiver.c:696-699` - `discard_receive_data()` calls
 ///   `receive_data(f_in, NULL, -1, 0, NULL, -1, file, 0)`.
-/// - `receiver.c:1015-1022` - `open_tmpfile` failure -> `discard_receive_data`
+/// - `receiver.c:1254-1261` - `open_tmpfile` failure -> `discard_receive_data`
 ///   + `continue` (no propagation out of the receive loop).
-/// - `receiver.c:457-464` - block-match-with-no-basis absorb (`offset += len`).
-/// - `receiver.c:531` - trailing `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
+/// - `receiver.c:616-624` - block-match-with-no-basis absorb (`offset += len`).
+/// - `receiver.c:687` - trailing `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
 pub fn discard_delta_stream<R: Read>(
     reader: &mut R,
     token_reader: &mut TokenReader,
@@ -962,7 +962,7 @@ pub fn discard_delta_stream<R: Read>(
             // wire bytes; drop the payload.
             DeltaToken::Literal(LiteralData::Ready(_)) => {}
             // Plain literal: read the raw bytes off the wire and drop them.
-            // upstream: receiver.c:420 write_file is skipped when fd == -1.
+            // upstream: receiver.c:579 write_file is skipped when fd == -1.
             DeltaToken::Literal(LiteralData::Pending(len)) => {
                 if scratch.len() < len {
                     scratch.resize(len, 0);
@@ -970,17 +970,17 @@ pub fn discard_delta_stream<R: Read>(
                 reader.read_exact(&mut scratch[..len])?;
             }
             // Block match with no basis: absorb without reading a basis block
-            // and without feeding see_token. upstream: receiver.c:457-464.
+            // and without feeding see_token. upstream: receiver.c:616-624.
             DeltaToken::BlockRef(_) => {}
         }
     }
 
-    // upstream: receiver.c:531 - the sender always trails the delta with the
+    // upstream: receiver.c:687 - the sender always trails the delta with the
     // whole-file checksum; consume it so the stream stays aligned for the next
     // NDX / goodbye. On the discard path there is nothing to verify against.
     let mut sink = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     reader.read_exact(&mut sink[..checksum_len])?;
-    // upstream: receiver.c:532-533 DEBUG_GTE(DELTASUM, 2)
+    // upstream: receiver.c:688-689 DEBUG_GTE(DELTASUM, 2)
     debug_log!(Deltasum, 2, "got file_sum");
 
     debug_log!(Deltasum, 2, "recv delta stream discard complete");
@@ -1060,7 +1060,7 @@ mod tests {
         // the windowed read() reader, never mmap. Memory-mapping the basis
         // would raise SIGBUS if another process truncates it mid-transfer;
         // read(2) past the shrunk EOF surfaces as an ordinary io::Error
-        // instead (upstream fileio.c:256-259 + map_ptr()).
+        // instead (upstream fileio.c:316-319 + map_ptr()).
         assert!(
             !applicator.basis_uses_mmap(),
             "standard writer must read the basis via windowed read(), never mmap"
@@ -1084,7 +1084,7 @@ mod tests {
         // The load-bearing invariant: io_uring writer => never mmap basis.
         // Submitting an mmap-backed pointer to an io_uring SQE either
         // stalls the SQPOLL kernel thread on cold-page faults or raises
-        // SIGBUS on concurrent truncation (upstream fileio.c:256-259).
+        // SIGBUS on concurrent truncation (upstream fileio.c:316-319).
         assert!(
             !applicator.basis_uses_mmap(),
             "io_uring writer must force BufferedMap to keep mmap pointers \
@@ -1315,7 +1315,7 @@ mod tests {
         );
     }
 
-    /// REFLINK-4: range below `CLONE_FILE_RANGE_MIN_BYTES` declines without
+    /// Range below `CLONE_FILE_RANGE_MIN_BYTES` declines without
     /// touching the filesystem so tail blocks do not burn an ioctl.
     #[test]
     fn try_clone_basis_range_declines_below_threshold() {
@@ -1344,7 +1344,7 @@ mod tests {
         assert_eq!(same_fs, SameFsCache::Unresolved);
     }
 
-    /// REFLINK-4: misaligned basis offset declines without an ioctl.
+    /// Misaligned basis offset declines without an ioctl.
     /// `FICLONERANGE` rejects unaligned ranges with EINVAL; the predicate
     /// front-runs that check.
     #[test]
@@ -1370,7 +1370,7 @@ mod tests {
         assert_eq!(same_fs, SameFsCache::Unresolved);
     }
 
-    /// REFLINK-4: misaligned destination offset declines without an ioctl.
+    /// Misaligned destination offset declines without an ioctl.
     #[test]
     fn try_clone_basis_range_declines_on_unaligned_dest_offset() {
         let dir = tempdir().expect("tempdir");
@@ -1394,7 +1394,7 @@ mod tests {
         assert_eq!(same_fs, SameFsCache::Unresolved);
     }
 
-    /// REFLINK-4: once the cache is `Declined` the predicate short-circuits
+    /// Once the cache is `Declined` the predicate short-circuits
     /// even for aligned, large enough ranges. This is the "one ioctl per
     /// file" invariant that keeps non-reflink filesystems from paying a
     /// per-token cost.
@@ -1420,7 +1420,7 @@ mod tests {
         assert_eq!(cache, ReflinkRangeCache::Declined);
     }
 
-    /// REFLINK-3: a cross-filesystem basis/destination pair declines without
+    /// A cross-filesystem basis/destination pair declines without
     /// issuing the `FICLONERANGE` ioctl. The range here is aligned and large
     /// enough to clear the size and alignment gates, so the decline can only
     /// come from the same-fs guard. The reflink cache stays `Unresolved` -
@@ -1472,11 +1472,11 @@ mod tests {
     /// token AND the trailing checksum. If a single byte is left behind, the
     /// next NDX read parses leftover delta bytes as a frame header and the
     /// whole session desyncs (upstream: `discard_receive_data` at
-    /// receiver.c:540 exists precisely to keep the stream aligned when the
+    /// receiver.c:696 exists precisely to keep the stream aligned when the
     /// receiver never writes the file). This test pins that WHY: after a
     /// discard the reader is positioned exactly at end-of-frame, with no
     /// trailing bytes and no error - even when the delta contains a
-    /// block-match token with no basis (receiver.c:457-464).
+    /// block-match token with no basis (receiver.c:616-624).
     #[test]
     fn discard_drains_plain_delta_with_match_token_to_exact_end() {
         let digest_len = 16;
@@ -1523,8 +1523,8 @@ mod tests {
     /// End-to-end intent of the temp-create-fail path: after the receiver
     /// drains a discarded delta it records IOERR_GENERAL, which MUST map to
     /// exit 23 (RERR_PARTIAL) - matching upstream's
-    /// FERROR_XFER -> got_xfer_error -> _exit(RERR_PARTIAL) (log.c:311,
-    /// main.c:1648). This pins WHY the receiver sets the flag rather than
+    /// FERROR_XFER -> got_xfer_error -> _exit(RERR_PARTIAL) (log.c:338,
+    /// main.c:1710-1711). This pins WHY the receiver sets the flag rather than
     /// aborting: the transfer is partial, not fatal (exit 12), and the drained
     /// stream keeps every subsequent file intact.
     #[test]

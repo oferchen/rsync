@@ -43,7 +43,7 @@ fn run_daemon_honours_max_sessions() {
         reader.read_line(&mut line).expect("error message");
         assert!(line.starts_with("@ERROR:"));
 
-        // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal
+        // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal
         // and returns before reading further, so no @RSYNCD: EXIT follows the
         // refusal; the socket just closes (next read is EOF).
         line.clear();

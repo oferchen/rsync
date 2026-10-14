@@ -131,9 +131,10 @@ pub(crate) struct CopyContext<'a> {
     /// cumulative set inherited from the parent frame plus any rules newly
     /// registered while processing the current directory's merge files.
     ///
-    /// upstream: exclude.c:1419-1428 - `dir-merge .filt2` inside `bar/.filt`
-    /// registers `.filt2` for lookup in every subdirectory entered beneath
-    /// `bar/`. The [`DirectoryFilterGuard`] pops the frame on drop.
+    /// A nested `dir-merge .filt2` inside `bar/.filt` registers `.filt2` for
+    /// lookup in every subdirectory entered beneath `bar/` (upstream:
+    /// `parse_filter_str()`, exclude.c:1573-1582). The [`DirectoryFilterGuard`]
+    /// pops the frame on drop.
     dir_merge: DirectoryFilterHandles,
     /// Destination-side per-directory merge filter stacks, maintained ONLY by
     /// the delete pass (`enter_destination_for_deletion`) and read ONLY by the
@@ -142,10 +143,11 @@ pub(crate) struct CopyContext<'a> {
     /// list: the receiver's delete pass loads per-dir merge files from the
     /// DESTINATION tree and never perturbs the sender `filter_list`.
     ///
-    /// upstream: delete.c:63-115 `delete_in_dir` calls `change_local_filter_dir`
-    /// which pops filters at depth > current and `push_local_filters` loads this
-    /// destination directory's rules, keeping inherited rules in `lp->head` an
-    /// arbitrary number of indices deep (exclude.c:801).
+    /// upstream: generator.c:314 `delete_in_dir()` calls `change_local_filter_dir()`
+    /// (exclude.c:974), which pops filters at depth > current, and
+    /// `push_local_filters()` (exclude.c:858) loads this destination directory's
+    /// rules, keeping inherited rules in `lp->head` an arbitrary number of indices
+    /// deep.
     delete_dir_merge: DirectoryFilterHandles,
     /// Persistent depth-keyed stack of held destination delete-filter guards.
     ///
@@ -177,7 +179,7 @@ pub(crate) struct CopyContext<'a> {
     /// `None` before the first operand and for any operand whose anchor cannot
     /// be determined, in which case the open degrades to the `O_NOFOLLOW` leaf
     /// rule alone. Set per operand because each source argument has its own
-    /// transfer root. upstream: `rsync-3.5.0/sender.c` opens file content
+    /// transfer root. upstream: `rsync-3.5.1/sender.c:692-706` opens file content
     /// through the confined held-ancestor-dirfd stack anchored at the transfer
     /// root, so a parent component flipped to a symlink is refused.
     source_anchor: Option<PathBuf>,
@@ -185,7 +187,8 @@ pub(crate) struct CopyContext<'a> {
     /// when its operand was reached.
     ///
     /// upstream: `rsync-3.5.1/flist.c:2967-2969` remembers each source root
-    /// by dev/ino, and `sender.c:694-704` refuses a root that changed since.
+    /// by dev/ino, and `flist.c:328-329` refuses a root that changed since
+    /// (reached from the sender's open at `sender.c:695`).
     source_roots: fast_io::SourceRoots,
     /// The held `--files-from` base the current operand's entries resolve
     /// beneath through the ownership walk; `None` whenever
@@ -224,7 +227,7 @@ pub(crate) struct CopyContext<'a> {
     /// notice. Upstream prints it exactly once (guarded by a static
     /// `already_warned`) the first time the delete pass is skipped because a
     /// general I/O error occurred without `--ignore-errors`.
-    // upstream: generator.c:299 static int already_warned
+    // upstream: generator.c:287 static int already_warned
     io_error_delete_warning_emitted: bool,
     /// Set when a source file ended before the length this transfer was sized
     /// from - it shrank after the file list recorded it. Drives the final
@@ -246,7 +249,7 @@ pub(crate) struct CopyContext<'a> {
     /// or a `--copy-links` referent that could not be stat'ed. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's
     /// `io_error |= IOERR_GENERAL` at both sites.
-    // upstream: flist.c:1856 send_file1(), flist.c:1658-1697 make_file()
+    // upstream: flist.c:2017-2019 send_file_name(), flist.c:1692-1695 make_file()
     flist_io_error: bool,
     /// Set when a file entry could not be materialised because the operation is
     /// unsupported on this platform without privilege (currently a Windows file
@@ -261,14 +264,14 @@ pub(crate) struct CopyContext<'a> {
     /// but this flag drives the final `RERR_PARTIAL` (exit 23) exit code,
     /// mirroring upstream `successful_send()` where every such `FERROR_XFER`
     /// sets `got_xfer_error` without aborting the transfer.
-    // upstream: sender.c:396 successful_send(); log.c:311 got_xfer_error
+    // upstream: sender.c:396 successful_send(); log.c:338 got_xfer_error
     sender_remove_error: bool,
     /// Set when a directory obstacle could not be removed to make way for an
     /// incoming regular file, symlink, or special. That one entry is skipped
     /// and the run continues, but this flag drives the final `RERR_PARTIAL`
     /// (exit 23) exit code, mirroring upstream's `could not make way for %s
     /// %s` at `FERROR_XFER`.
-    // upstream: delete.c:283-285; log.c:310-311 got_xfer_error
+    // upstream: delete.c:283-285; log.c:337-338 got_xfer_error
     make_way_error: bool,
     /// Set when `atomic_create()` could not make a FIFO, socket, device node,
     /// symlink, or hard link. The entry is skipped and the run continues, but
@@ -279,9 +282,9 @@ pub(crate) struct CopyContext<'a> {
     /// error during the recursive peel (an `EACCES` and friends the walker
     /// logged and stepped over). The pass keeps deleting the rest of the
     /// tree, but this flag drives the final `RERR_PARTIAL` (exit 23) exit
-    /// code, mirroring upstream `delete.c:86-210` where each such
-    /// `rsyserr(FERROR_XFER, ...)` sets `io_error |= IOERR_GENERAL` without
-    /// aborting the pass.
+    /// code, mirroring upstream `delete.c:264-267` where each such
+    /// `rsyserr(FERROR_XFER, ...)` sets `got_xfer_error` (log.c:337-338)
+    /// without aborting the pass.
     delete_io_error: bool,
     /// `true` when the active plan carries more than one source operand.
     /// Gates the cross-source bookkeeping below and, while
@@ -333,7 +336,7 @@ pub(crate) struct CopyContext<'a> {
     verified_parents: HashMap<PathBuf, Option<u64>>,
     /// Relative paths of implied parent directories already surfaced as flist
     /// entries during this transfer (`--relative`). Upstream's
-    /// `send_implied_dirs()` (flist.c:2162) relies on `lastpath` plus
+    /// `send_implied_dirs()` (flist.c:2444) relies on `lastpath` plus
     /// `flist_sort_and_clean()` deduplication so each implied ancestor appears
     /// once even when several source args share a prefix; this set reproduces
     /// that single-emission guarantee for the local-copy itemize/stats/verbose
@@ -349,7 +352,7 @@ pub(crate) struct CopyContext<'a> {
     /// `-R down/3/deep extra/./down/3/deep/extra.added.value`), and upstream keeps
     /// the distinct file because no earlier flist entry produced it. Upstream
     /// reaches the same collapse by building one shared flist across all source
-    /// args and then deduplicating in `flist_sort_and_clean()` (flist.c:3259); the
+    /// args and then deduplicating in `flist_sort_and_clean()` (flist.c:3561); the
     /// streaming local-copy executor never materialises that shared list, so this
     /// ordered set of covering source roots reproduces the dedup. Kept as a `Vec`
     /// because the covering test is an ancestor (path-prefix) match, not an exact
@@ -383,7 +386,7 @@ pub(crate) struct CopyContext<'a> {
     /// patches the slot. Emitting the head before the body is composed is what
     /// let `--write-batch` advertise `count=0` ahead of block-match tokens.
     ///
-    /// upstream: `io.c:write_sum_head()`; `receiver.c:427` rejects a block
+    /// upstream: `io.c:write_sum_head()`; `receiver.c:586-588` rejects a block
     /// index that the advertised count cannot cover.
     batch_delta_sum_head: protocol::wire::SumHead,
     /// Byte offset of the reserved sum_head inside `batch_delta_buf`.
@@ -478,7 +481,7 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     /// `Some(meta)` when the destination existed at transfer start;
     /// `None` for a brand-new destination. Used by
     /// [`::metadata::apply_dest_mode_pre_transfer`] to reproduce the
-    /// upstream `receiver.c:980` + `rsync.c:489-682` chmod-on-rename loop.
+    /// upstream `receiver.c:1208` + `rsync.c:504` `set_file_attrs()` chmod-on-rename loop.
     pre_transfer_meta: Option<&'a fs::Metadata>,
 
     #[cfg(unix)]
@@ -549,9 +552,9 @@ pub(crate) struct FileCopyOutcome {
 /// A whole-file copy, a sparse whole-file copy, and an append all reach the
 /// destination without consulting a signature, so nothing is "matched" even
 /// though most of the resulting file may not be literal either. upstream:
-/// match_sums() only reaches `matched()` (match.c:121) via `hash_search()`,
+/// match_sums() only reaches `matched()` (match.c:128) via `hash_search()`,
 /// which is skipped when `s->count == 0` - the whole-file case - and append
-/// mode zeroes `s->count` outright (match.c:389-390).
+/// mode zeroes `s->count` outright (match.c:431).
 pub(crate) const MATCHED_NONE: u64 = 0;
 
 impl FileCopyOutcome {
@@ -588,7 +591,7 @@ impl FileCopyOutcome {
     /// Returns the number of bytes supplied by block matches against the basis.
     ///
     /// Reported by the copy paths that actually emit matches, never inferred
-    /// from the file size. upstream: match.c:121 - `stats.matched_data` grows
+    /// from the file size. upstream: match.c:144 - `stats.matched_data` grows
     /// only inside `matched()`, so a whole-file copy and an append both leave
     /// it at zero even though most of their bytes were not literal.
     pub(crate) const fn matched_bytes(self) -> u64 {
@@ -686,8 +689,8 @@ pub(crate) struct FinalizedDir {
 ///   filter chain THEN (the destination merge files are present by then).
 /// - `--delete-delay` sets `decided` to the plan computed during the walk, when
 ///   the destination merge files were still absent; the flush executes that plan
-///   verbatim without re-scanning or re-filtering. upstream: generator.c:345
-///   `remember_delete` vs the `do_delete_pass` rescan.
+///   verbatim without re-scanning or re-filtering. upstream: generator.c:164
+///   `remember_delete` vs the `do_delete_pass` rescan (generator.c:364).
 pub(crate) struct DeferredDeletion {
     pub(crate) destination: PathBuf,
     pub(crate) relative: Option<PathBuf>,
@@ -763,7 +766,7 @@ pub(crate) enum CreatedEntryKind {
     Symlink,
     Fifo,
     // REASON: device nodes are only created on Unix; non-Unix receivers skip
-    // device-node creation entirely (WIND-2), so this variant is never
+    // device-node creation entirely, so this variant is never
     // constructed there.
     #[cfg_attr(not(unix), allow(dead_code))]
     Device,
@@ -818,7 +821,7 @@ struct LoadedNestedDirMerge {
 /// Rewrites an anchored per-dir merge rule so its leading `/` anchor binds to
 /// the merge file's directory (`relative_dir`) rather than the transfer root.
 ///
-/// upstream: exclude.c:200-207 `add_rule` - for a rule loaded via
+/// upstream: exclude.c:279 `add_rule()` - for a rule loaded via
 /// `parse_filter_file` with `XFLG_ANCHORED2ABS`, a leading-`/` pattern gets the
 /// directory prefix `dirbuf + module_dirlen` (length
 /// `dirbuf_len - module_dirlen - 1`) prepended, so `- /file1` in `foo/.filt`
@@ -863,7 +866,7 @@ pub(crate) struct LoadedDynamicSegment {
 
 /// Per-directory frame for runtime-registered `dir-merge` rules.
 ///
-/// upstream: exclude.c:1419-1428 - tracks the cumulative set of nested
+/// upstream: exclude.c:1573-1582 `parse_filter_str()` - tracks the cumulative set of nested
 /// `dir-merge` directives that are active at the current traversal depth
 /// (`active_rules`), and the segments / markers produced by looking those
 /// rules up against the directory being entered (`loaded_segments` and
@@ -920,8 +923,8 @@ impl DirectoryFilterHandles {
 #[cfg(test)]
 thread_local! {
     /// Test-only counter of per-directory-merge filter files loaded by
-    /// [`CopyContext::enter_directory_for_path`]. Lets the PEX equivalence test
-    /// (#333) assert the destination-deletion scan performs O(depth) filter
+    /// [`CopyContext::enter_directory_for_path`]. Lets the equivalence test
+    /// assert the destination-deletion scan performs O(depth) filter
     /// loads across a deep walk - one lookup per directory entered - rather than
     /// the O(depth^2) re-load a whole-ancestor rebuild would incur.
     pub(crate) static FILTER_FILE_LOAD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -943,13 +946,13 @@ fn record_filter_file_load() {}
 /// a destination-deletion scan's guard can restore inherited entries that a
 /// `clear` directive wiped.
 ///
-/// upstream: exclude.c:801 `push_local_filters` seeds `lp->head` from inherited
+/// upstream: exclude.c:858 `push_local_filters` seeds `lp->head` from inherited
 /// rules an arbitrary number of indices deep; a `clear` directive in a
 /// destination merge file discards those inherited entries at `index`, which the
 /// guard's per-index pop cannot rebuild. Recording the wiped vectors before the
 /// clear and restoring them after the pop leaves the source-visible state
 /// byte-identical, mirroring delete.c's isolated `delete_filt` chain without
-/// cloning the whole source-side stack (PEX, #333).
+/// cloning the whole source-side stack.
 struct ClearedLayerRestore {
     index: usize,
     layer: Vec<FilterSegment>,
@@ -1013,7 +1016,7 @@ impl DirectoryFilterGuard {
     /// Number of static layer indices this guard will restore on drop because a
     /// destination-side `clear` directive wiped their inherited entries.
     ///
-    /// Test-only observability for the PEX incremental-stack invariant (#333):
+    /// Test-only observability for the incremental-stack invariant:
     /// the per-visit restore work is proportional to the `clear` directives in
     /// the destination directory, NOT to the traversal depth. A deep tree with
     /// no `clear` therefore captures zero restore data, proving the destination
@@ -1059,7 +1062,7 @@ impl Drop for DirectoryFilterGuard {
             }
         }
 
-        // PEX (#333): a destination-deletion `clear` directive wiped these
+        // A destination-deletion `clear` directive wiped these
         // inherited layer indices, which the per-index pops above cannot
         // rebuild. Restore the captured pre-clear vectors LAST so the
         // source-visible state matches exactly what it was before the load.

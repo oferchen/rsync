@@ -82,8 +82,8 @@ pub struct ClientConfig {
     /// it was not overridden by a later `--remove-source-files`). Selects which
     /// spelling `server_options()` forwards on the wire.
     ///
-    /// upstream: options.c:730 (option table sets `remove_source_files = 2`) and
-    /// options.c:2992-2995 (emit `--remove-sent-files` when the value is 2).
+    /// upstream: options.c:744 (option table sets `remove_source_files = 2`) and
+    /// options.c:3163-3166 (emit `--remove-sent-files` when the value is 2).
     pub(super) remove_sent_files: bool,
     /// Whether the explicit `--out-format` / `--log-format` string contains the
     /// Whether the resolved out-format string carries the `%i` (itemize)
@@ -92,8 +92,8 @@ pub struct ClientConfig {
     /// without `%i` clears it even under `-i`, while `-i` alone installs the
     /// default `"%i %n%L"` format. Drives the `--log-format=%i` server arg.
     ///
-    /// upstream: options.c:2354-2367 (`stdout_format_has_i`) and
-    /// options.c:2782-2785 (emit `--log-format=%i`).
+    /// upstream: options.c:2496-2508 (`stdout_format_has_i`) and
+    /// options.c:2948-2951 (emit `--log-format=%i`).
     pub(super) out_format_forwards_i: bool,
     /// A custom `--out-format` template was given, so remote per-file output is
     /// routed through the client's out-format renderer (collected as events)
@@ -102,14 +102,14 @@ pub struct ClientConfig {
     /// `%o` (operation) directive but not `%i`. Drives the `--log-format=%o`
     /// server arg so the remote emits matching operation output.
     ///
-    /// upstream: options.c:2384-2385 (`stdout_format_has_o_or_i`) and
-    /// options.c:2786-2787 (emit `--log-format=%o`).
+    /// upstream: options.c:2526-2527 (`stdout_format_has_o_or_i`) and
+    /// options.c:2952-2953 (emit `--log-format=%o`).
     pub(super) out_format_has_operation: bool,
     /// Whether an explicit `--out-format` / `--log-format` string was given that
     /// contains neither `%i` nor `%o`. Drives the placeholder `--log-format=X`
     /// server arg (further gated on the client not being verbose).
     ///
-    /// upstream: options.c:2788-2789 (emit `--log-format=X` when `!verbose`).
+    /// upstream: options.c:2954-2955 (emit `--log-format=X` when `!verbose`).
     pub(super) out_format_placeholder: bool,
     pub(super) bandwidth_limit: Option<BandwidthLimit>,
     pub(super) preserve_owner: bool,
@@ -136,7 +136,7 @@ pub struct ClientConfig {
     ///
     /// Distinguishes "user chose zstd" from "zstd is the default."
     /// Required for correct forwarding to the remote peer - upstream
-    /// `options.c:2828-2833` only sends `--compress-choice` / `--new-compress`
+    /// `options.c:2994-2999` only sends `--compress-choice` / `--new-compress`
     /// / `--old-compress` when the user explicitly selected an algorithm.
     pub(super) explicit_compress_choice: bool,
     /// Raw `--compress-choice` name as typed by the user (e.g. `"zlibx"`).
@@ -144,7 +144,7 @@ pub struct ClientConfig {
     /// [`CompressionAlgorithm`] folds `zlibx` into `Zlib` because the two
     /// share the deflate codec, so the enum alone cannot reproduce upstream's
     /// verbatim `compress_choice` name in the `--debug=NSTR` summary. Upstream
-    /// prints the user-supplied string (`compat.c:206-219`), so this preserves
+    /// prints the user-supplied string (`compat.c:206-220`), so this preserves
     /// it. `None` means the algorithm was the negotiated/default choice, in
     /// which case the summary derives the name from the algorithm.
     pub(super) compress_choice_name: Option<String>,
@@ -158,15 +158,15 @@ pub struct ClientConfig {
     /// (`ActiveCompressor`) and the wire protocol token encoder
     /// (`CompressedTokenEncoder`) via `ServerConfig`.
     ///
-    /// Upstream: `options.c:89 do_compression_threads`,
-    /// `token.c:701 ZSTD_c_nbWorkers`.
+    /// Upstream: `options.c:93 do_compression_threads`,
+    /// `token.c:752 ZSTD_c_nbWorkers`.
     pub(super) compression_threads: Option<std::num::NonZeroU8>,
     pub(super) skip_compress: SkipCompressList,
     /// Raw `--skip-compress` spec forwarded verbatim to the remote sender.
     ///
     /// `Some` only when the suffix list was explicitly set (CLI or environment);
     /// the built-in default list forwards nothing, matching upstream's NULL
-    /// `skip_compress` global (options.c:150).
+    /// `skip_compress` global (options.c:156).
     pub(super) skip_compress_spec: Option<String>,
     /// Whether `-C` / `--cvs-exclude` was requested (upstream `cvs_exclude`).
     pub(super) cvs_exclude: bool,
@@ -242,7 +242,7 @@ pub struct ClientConfig {
     ///
     /// Distinct from `list_only`, which is also set implicitly for a single
     /// source with no destination. Only the explicit form is forwarded to the
-    /// remote as `--list-only` (upstream `options.c:2757`).
+    /// remote as `--list-only` (upstream `options.c:2923-2924`).
     pub(super) list_only_arg: bool,
     /// Whether `-q` / `--quiet` was passed (upstream `quiet`).
     pub(super) quiet: bool,
@@ -264,7 +264,7 @@ pub struct ClientConfig {
     /// `--port=PORT` - the daemon port to use when the target names none.
     ///
     /// upstream: `options.c` stores `--port` in `rsync_port`, and
-    /// `main.c:1608` `start_socket_client()` passes it to `open_socket_out*`
+    /// `main.c:1615` `start_socket_client()` passes it to `open_socket_out*`
     /// for every daemon connection. An explicit `:port` in an `rsync://` URL
     /// still wins, matching upstream, which overwrites `rsync_port` while
     /// parsing the URL.
@@ -315,7 +315,7 @@ pub struct ClientConfig {
     /// The resolved `old_style_args` level. `Some(1)` passes filename arguments
     /// unescaped to the remote shell (space-separated paths split by `eval`);
     /// `Some(2)` disables every safe_arg escape; `Some(0)`/`None` are inactive.
-    /// upstream: options.c:1648 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
+    /// upstream: options.c:1755 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
     pub(super) old_args: Option<u8>,
     pub(super) jump_hosts: Option<OsString>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
@@ -602,11 +602,11 @@ impl ClientConfig {
     /// Folds in `--files-from`: upstream forces `xfer_dirs = 1` whenever a
     /// files-from source is active and `--dirs`/`--no-dirs` was left unset, so
     /// the bare directories named in the list are transferred rather than
-    /// skipped by the `!xfer_dirs` guard in `flist.c:2691`.
+    /// skipped by the `!xfer_dirs` guard in `flist.c:2963`.
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2199-2200` - `if (files_from) { if (xfer_dirs < 0) xfer_dirs = 1; }`
+    /// - `options.c:2313-2317` - `if (files_from) { if (xfer_dirs < 0) xfer_dirs = 1; }`
     #[must_use]
     #[doc(alias = "--dirs")]
     #[doc(alias = "-d")]
@@ -621,11 +621,11 @@ impl ClientConfig {
     /// [`Self::dirs`] answers "is `xfer_dirs` non-zero", which is what the
     /// traversal paths need. The compact `d` letter needs the stronger question,
     /// because upstream packs it for an explicit `-d` but not for the implied
-    /// level (`options.c:2647-2649`).
+    /// level (`options.c:2814-2816`).
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:628` - `{"dirs", 'd', POPT_ARG_VAL, &xfer_dirs, 2, ...}`
+    /// - `options.c:637` - `{"dirs", 'd', POPT_ARG_VAL, &xfer_dirs, 2, ...}`
     #[must_use]
     pub const fn dirs_explicit(&self) -> bool {
         self.dirs_explicit

@@ -12,7 +12,8 @@ use protocol::effective_max_alloc;
 use protocol::read_varint;
 use protocol::xattr::{MAX_XATTR_VALUE_BYTES, XattrList};
 
-/// Upstream MAXPATHLEN ceiling for an xname vstring (io.c:1982-1998).
+/// Upstream `MAXPATHLEN` ceiling for an xname vstring (`rsync.c:409` -
+/// `read_vstring(f_in, buf, MAXPATHLEN)`).
 const MAX_XNAME_LEN: usize = 4096;
 
 /// Confines a peer-supplied basis xname to the basedir the receiver joins it to.
@@ -27,7 +28,7 @@ const MAX_XNAME_LEN: usize = 4096;
 ///
 /// Upstream sanitizes it ALWAYS, not only in the daemon (`sanitize_paths`) case,
 /// because a *client* receiver has `sanitize_paths == 0` and is exactly the
-/// victim: `rsync.c:407-427`. The depth budget is 0, so no leading `..`
+/// victim: `rsync.c:412-429`. The depth budget is 0, so no leading `..`
 /// survives.
 ///
 /// Only the basis types use the xname as a path. The other
@@ -36,7 +37,7 @@ const MAX_XNAME_LEN: usize = 4096;
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:407-427` - `if (fnamecmp_type >= FNAMECMP_FUZZY) sanitize_path(buf, buf, "", 0, SP_DEFAULT)`
+/// - `rsync.c:426-429` - `if (fnamecmp_type >= FNAMECMP_FUZZY) sanitize_path(buf, buf, "", 0, SP_DEFAULT)`
 fn sanitize_basis_xname(fnamecmp_type: Option<protocol::FnameCmpType>, xname: Vec<u8>) -> Vec<u8> {
     if fnamecmp_type.is_some_and(|kind| kind.is_fuzzy()) {
         filters::sanitize_path::sanitize_path_bytes_default(&xname, 0)
@@ -48,8 +49,8 @@ fn sanitize_basis_xname(fnamecmp_type: Option<protocol::FnameCmpType>, xname: Ve
 /// Validates and wraps a sender-echoed basis-type byte.
 ///
 /// Used by [`SenderAttrs::read_with_codec_xattr`] to decode the `fnamecmp_type`.
-/// Upstream `rsync.c:read_ndx_and_attrs` reads a single byte and maps it through
-/// `FnameCmpType`.
+/// Upstream `rsync.c:404-405` (`read_ndx_and_attrs()`) reads a single byte with
+/// `read_byte()`; oc maps it through `FnameCmpType`.
 fn parse_fnamecmp_type(byte: u8) -> io::Result<protocol::FnameCmpType> {
     protocol::FnameCmpType::from_wire(byte).ok_or_else(|| {
         io::Error::new(
@@ -68,7 +69,7 @@ fn parse_fnamecmp_type(byte: u8) -> io::Result<protocol::FnameCmpType> {
 ///
 /// If the high bit of `len_byte` is set the length spans two bytes
 /// (`(len_byte & 0x7F) * 256 + second`); otherwise it is `len_byte`. Upstream
-/// `io.c:2042-2058` `read_vstring()`.
+/// `io.c:2212-2229` `read_vstring()`.
 #[inline]
 fn xname_len_from_bytes(len_byte: u8, second: Option<u8>) -> usize {
     if len_byte & 0x80 != 0 {
@@ -96,9 +97,10 @@ fn check_xname_len(xname_len: usize) -> io::Result<()> {
 
 /// Decides whether the sender-response frame carries xattr abbreviation data.
 ///
-/// Mirrors upstream `receiver.c:737-739`: read when xattrs are preserved and
+/// Mirrors upstream `receiver.c:913-915`: read when xattrs are preserved and
 /// `ITEM_REPORT_XATTR` is set, unless the xattr hardlink optimization elides it
-/// for a local-change rename.
+/// for a local-change rename. Deviation from upstream: upstream also requires
+/// `do_xfers` (not `--dry-run`); this predicate leaves that to the caller.
 #[inline]
 fn want_xattr_read(preserve_xattrs: bool, iflags: u16, want_xattr_optim: bool) -> bool {
     preserve_xattrs
@@ -110,7 +112,7 @@ fn want_xattr_read(preserve_xattrs: bool, iflags: u16, want_xattr_optim: bool) -
 
 /// Signature header for delta transfer.
 ///
-/// Represents the `sum_head` structure from upstream rsync's rsync.h.
+/// Represents the header fields of upstream's `struct sum_struct` (`rsync.h`).
 /// Contains metadata about the signature blocks that follow.
 ///
 /// # Wire Format
@@ -123,9 +125,9 @@ fn want_xattr_read(preserve_xattrs: bool, iflags: u16, want_xattr_optim: bool) -
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.h:200` - `struct sum_struct` definition
-/// - `match.c:380` - `write_sum_head()` sends the header
-/// - `sender.c:124` - `read_sum_head()` receives the header
+/// - `rsync.h:1007-1015` - `struct sum_struct` definition
+/// - `io.c:2295` - `write_sum_head()` sends the header
+/// - `io.c:2233-2290` - `read_sum_head()` receives the header
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SumHead {
     /// Number of signature blocks.
@@ -170,7 +172,7 @@ impl SumHead {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:302-304` - `sum.flength = count * blength; if (remainder) flength -= blength - remainder`
+    /// - `receiver.c:526-528` - `sum.flength = count * blength; if (remainder) flength -= blength - remainder`
     #[must_use]
     pub const fn flength(&self) -> u64 {
         if self.count == 0 {
@@ -233,7 +235,7 @@ impl SumHead {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:2063-2105` - `read_sum_head()` validates every field and calls
+    /// - `io.c:2233-2290` - `read_sum_head()` validates every field and calls
     ///   `exit_cleanup(RERR_PROTOCOL)` on any out-of-range value.
     fn from_wire_bytes(buf: &[u8; 16]) -> io::Result<Self> {
         let head = protocol::wire::SumHead::decode(*buf).map_err(Self::malformed)?;
@@ -258,7 +260,7 @@ impl SumHead {
     /// Gating on the negotiated width closes that gap.
     ///
     /// upstream: io.c:2235 `max_blength = protocol_version < 30 ?
-    /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE` and io.c:read_sum_head - `if
+    /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE` and io.c:2279-2282 `read_sum_head()` - `if
     /// (sum->s2length > xfer_sum_len) exit_cleanup(RERR_PROTOCOL)`.
     ///
     /// [`read_signature_blocks`]: crate::generator::read_signature_blocks
@@ -286,7 +288,7 @@ impl SumHead {
 
     /// Builds a `RERR_PROTOCOL`-mapped error for a malformed sum_head field.
     ///
-    /// upstream: io.c:2070-2103 `read_sum_head()` validates every field and
+    /// upstream: io.c:2233-2290 `read_sum_head()` validates every field and
     /// calls `exit_cleanup(RERR_PROTOCOL)` (exit 2) on any out-of-range value.
     /// The error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
     /// rather than RERR_STREAMIO(12), and carries the role trailer upstream
@@ -315,7 +317,7 @@ impl SumHead {
     /// the generator actually wrote would desync the stream. This is the read
     /// used before [`read_signature_blocks`](crate::generator::read_signature_blocks).
     ///
-    /// upstream: io.c:read_sum_head, called from sender.c:345 receive_sums().
+    /// upstream: io.c:2233 `read_sum_head()`, called from sender.c:345 `receive_sums()`.
     pub fn read_negotiated<R: Read>(
         reader: &mut R,
         protocol_version: u8,
@@ -337,8 +339,8 @@ impl SumHead {
 /// # Upstream Reference
 ///
 /// - `sender.c:469-486` - `write_ndx_and_attrs()` sends these
-/// - `rsync.c:383` - `read_ndx_and_attrs()` reads them
-/// - `xattrs.c:623` - `send_xattr_request()` writes abbreviated xattr values
+/// - `rsync.c:323-448` - `read_ndx_and_attrs()` reads them
+/// - `xattrs.c:651` - `send_xattr_request()` writes abbreviated xattr values
 #[derive(Debug, Clone, Default)]
 pub struct SenderAttrs {
     /// Item flags indicating transfer mode.
@@ -359,7 +361,7 @@ pub struct SenderAttrs {
     ///
     /// # Upstream Reference
     ///
-    /// - `xattrs.c:681` - `recv_xattr_request()` reads these on the receiver side
+    /// - `xattrs.c:709` - `recv_xattr_request()` reads these on the receiver side
     pub xattr_values: Vec<(i32, Vec<u8>)>,
 }
 
@@ -376,7 +378,7 @@ impl SenderAttrs {
     pub const ITEM_LOCAL_CHANGE: u16 = 1 << 14; // 0x4000
     /// Item flag indicating a newly created destination entry. An `iflags`
     /// that is *exactly* this value, paired with `NDX == cur_flist->used`,
-    /// forms the protocol-29 keep-alive frame (`rsync.c:387-391`).
+    /// forms the protocol-29 keep-alive frame (`rsync.c:387-392`).
     pub const ITEM_IS_NEW: u16 = 1 << 13; // 0x2000
 
     /// Reads sender attributes from the wire using an NDX codec.
@@ -387,9 +389,9 @@ impl SenderAttrs {
     ///
     /// When `preserve_xattrs` is true and the sender sets `ITEM_REPORT_XATTR`,
     /// this also reads abbreviated xattr values from the wire. The
-    /// `want_xattr_optim` flag mirrors upstream's `CF_AVOID_XATTR_OPTIM`
-    /// capability - when active, xattr exchange is skipped for local-change
-    /// hardlinks.
+    /// `want_xattr_optim` flag mirrors upstream's `want_xattr_optim`
+    /// (`compat.c:758`, set unless the peer advertised `CF_AVOID_XATTR_OPTIM`) -
+    /// when active, xattr exchange is skipped for local-change hardlinks.
     ///
     /// # Arguments
     ///
@@ -400,10 +402,10 @@ impl SenderAttrs {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:2402-2431` - `read_ndx()` for NDX decoding
-    /// - `rsync.c:383` - `read_ndx_and_attrs()` reads NDX + iflags
-    /// - `receiver.c:737-739` - receiver reads xattr data when ITEM_REPORT_XATTR set
-    /// - `xattrs.c:681` - `recv_xattr_request()` reads abbreviated values
+    /// - `io.c:2588` - `read_ndx()` for NDX decoding
+    /// - `rsync.c:332-385` - `read_ndx_and_attrs()` reads NDX + iflags
+    /// - `receiver.c:913-915` - receiver reads xattr data when `ITEM_REPORT_XATTR` set
+    /// - `xattrs.c:709` - `recv_xattr_request()` reads abbreviated values
     pub fn read_with_codec<R: Read>(
         reader: &mut R,
         ndx_codec: &mut impl NdxCodec,
@@ -439,16 +441,16 @@ impl SenderAttrs {
     /// This is the second half of upstream `read_ndx_and_attrs()`: everything
     /// from the `iflags` read onwards. Splitting it from the NDX read is what
     /// lets `crate::receiver::ndx_stream::read_ndx_and_attrs` honour
-    /// `rsync.c:334-335`, where `NDX_DONE` returns *before* any attribute byte
+    /// `rsync.c:336-337`, where `NDX_DONE` returns *before* any attribute byte
     /// is consumed - calling the combined helper there would swallow two
     /// phantom `iflags` bytes that the peer never sent.
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:383-384` - `iflags` via `read_shortint` for protocol >= 29
-    /// - `rsync.c:403-405` - basis-type byte on `ITEM_BASIS_TYPE_FOLLOWS`
-    /// - `rsync.c:407-417` - xname vstring on `ITEM_XNAME_FOLLOWS`
-    /// - `receiver.c:737-739` - xattr data on `ITEM_REPORT_XATTR`
+    /// - `rsync.c:384-385` - `iflags` via `read_shortint` for protocol >= 29
+    /// - `rsync.c:404-405` - basis-type byte on `ITEM_BASIS_TYPE_FOLLOWS`
+    /// - `rsync.c:408-410` - xname vstring on `ITEM_XNAME_FOLLOWS`
+    /// - `receiver.c:913-915` - xattr data on `ITEM_REPORT_XATTR`
     pub fn read_attrs_after_ndx<R: Read + ?Sized>(
         reader: &mut R,
         protocol_version: u8,
@@ -461,13 +463,13 @@ impl SenderAttrs {
             reader.read_exact(&mut iflags_buf)?;
             u16::from_le_bytes(iflags_buf)
         } else {
-            // upstream: rsync.c:383-384 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
-            // ITEM_MISSING_DATA is `1<<16` (rsync.h:254), a log-only bit that
+            // upstream: rsync.c:384-385 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
+            // ITEM_MISSING_DATA is `1<<16` (rsync.h:261), a log-only bit that
             // does not fit this u16 framing word. It is deliberately omitted:
             // this value only selects which trailing wire fields to parse and
             // is echoed back, never rendered, so the display bit would be dead
             // state here. Upstream likewise masks `iflags &= 0xffff` before the
-            // wire (generator.c:581).
+            // wire (generator.c:587).
             Self::ITEM_TRANSFER
         };
 
@@ -481,7 +483,7 @@ impl SenderAttrs {
         };
 
         let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
-            // Read vstring: upstream io.c:2042-2058 read_vstring()
+            // Read vstring: upstream io.c:2212-2229 read_vstring()
             // Format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
             let mut len_byte = [0u8; 1];
             reader.read_exact(&mut len_byte)?;
@@ -504,9 +506,10 @@ impl SenderAttrs {
             None
         };
 
-        // upstream: receiver.c:737-739 - read xattr data when ITEM_REPORT_XATTR is set
-        // Condition mirrors upstream: preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
-        // && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))
+        // upstream: receiver.c:913-915 - read xattr data when ITEM_REPORT_XATTR is set:
+        // preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
+        // && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE)).
+        // `want_xattr_read` checks every term except `do_xfers`.
         let xattr_values = if want_xattr_read(preserve_xattrs, iflags, want_xattr_optim) {
             read_xattr_abbreviation_data(reader)?
         } else {
@@ -550,13 +553,13 @@ impl SenderAttrs {
             reader.read_exact(&mut iflags_buf)?;
             u16::from_le_bytes(iflags_buf)
         } else {
-            // upstream: rsync.c:383-384 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
-            // ITEM_MISSING_DATA is `1<<16` (rsync.h:254), a log-only bit that
+            // upstream: rsync.c:384-385 - `ITEM_TRANSFER | ITEM_MISSING_DATA`.
+            // ITEM_MISSING_DATA is `1<<16` (rsync.h:261), a log-only bit that
             // does not fit this u16 framing word. It is deliberately omitted:
             // this value only selects which trailing wire fields to parse and
             // is echoed back, never rendered, so the display bit would be dead
             // state here. Upstream likewise masks `iflags &= 0xffff` before the
-            // wire (generator.c:581).
+            // wire (generator.c:587).
             Self::ITEM_TRANSFER
         };
 
@@ -617,7 +620,8 @@ impl SenderAttrs {
 ///
 /// # Upstream Reference
 ///
-/// - `match.c:395` - Signature block transmission
+/// - `generator.c:824-825` - `generate_and_send_sums()` writes `sum1` + `sum2`
+///   per block
 pub fn write_signature_blocks<W: Write + ?Sized>(
     writer: &mut W,
     signature: &FileSignature,
@@ -658,7 +662,7 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:681-757` - `recv_xattr_request()` called by receiver (!am_sender)
+/// - `xattrs.c:709-798` - `recv_xattr_request()` called by receiver (!am_sender)
 fn read_xattr_abbreviation_data<R: Read + ?Sized>(
     reader: &mut R,
 ) -> io::Result<Vec<(i32, Vec<u8>)>> {
@@ -686,7 +690,7 @@ fn read_xattr_abbreviation_data<R: Read + ?Sized>(
 
 /// Accumulates the 1-based xattr entry number, rejecting signed overflow.
 ///
-/// Upstream `xattrs.c:700-705`
+/// Upstream `xattrs.c:730-734`
 /// rejects overflow before `num += rel_pos` to stop a hostile peer wrapping
 /// `num` to an arbitrary value.
 #[inline]
@@ -705,7 +709,7 @@ fn accumulate_xattr_num(prior_req: i32, rel_pos: i32) -> io::Result<i32> {
 
 /// Validates a raw xattr datum length against the negotiated `--max-alloc`.
 ///
-/// Upstream `xattrs.c:752-756` reads `datum_len` via
+/// Upstream `xattrs.c:780` reads `datum_len` via
 /// `read_varint_size(..., MAX_WIRE_XATTR_DATALEN, ...)` and then allocates it
 /// with `new_array()`, whose `my_alloc()` aborts once the request reaches the
 /// negotiated `--max-alloc` (util2.c:75). We mirror that by bounding against
@@ -715,7 +719,7 @@ fn accumulate_xattr_num(prior_req: i32, rel_pos: i32) -> io::Result<i32> {
 /// typed error instead of an unbounded allocation or a varint overflow panic.
 #[inline]
 fn check_xattr_datum_len(raw_len: i32) -> io::Result<usize> {
-    // upstream: xattrs.c:781 (3.5.0) additionally rejects any single value
+    // upstream: xattrs.c:781-784 additionally rejects any single value
     // above MAX_XATTR_VALUE_BYTES with exit_cleanup(RERR_PROTOCOL). That
     // ceiling is hard: unlike the --max-alloc guard it does not rise when the
     // peer raises --max-alloc, so take whichever bound is tighter.
@@ -749,7 +753,7 @@ fn check_xattr_datum_len(raw_len: i32) -> io::Result<usize> {
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:623-675` - `send_xattr_request()` called by generator (fname=NULL)
+/// - `xattrs.c:651-703` - `send_xattr_request()` called by generator (fname=NULL)
 pub fn write_xattr_request<W: Write + ?Sized>(
     writer: &mut W,
     xattr_list: &XattrList,
@@ -796,7 +800,7 @@ pub fn write_xattr_request<W: Write + ?Sized>(
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:744-755` - receiver stores full values in place of checksums
+/// - `xattrs.c:779-794` - receiver stores full values in place of checksums
 pub fn apply_xattr_abbreviation_values(xattr_list: &mut XattrList, values: &[(i32, Vec<u8>)]) {
     for (num, value) in values {
         // Find the entry by its 1-based num. Upstream scans forward with wrap.
@@ -814,8 +818,8 @@ pub fn apply_xattr_abbreviation_values(xattr_list: &mut XattrList, values: &[(i3
 mod xattr_abbrev_guard_tests {
     //! Defensive-bounds regression tests for `read_xattr_abbreviation_data`.
     //!
-    //! These cover the upstream hardening at `xattrs.c:700-705` (signed
-    //! rel_pos overflow) and `xattrs.c:752` (bounded `datum_len`). When the
+    //! These cover the upstream hardening at `xattrs.c:730-734` (signed
+    //! rel_pos overflow) and `xattrs.c:780` (bounded `datum_len`). When the
     //! sender wire is misaligned or an attacker injects a hostile frame at
     //! the xattr-abbreviation offset, we want a typed `InvalidData` error
     //! instead of an unbounded allocation or a varint overflow panic.
@@ -836,7 +840,7 @@ mod xattr_abbrev_guard_tests {
     fn rel_pos_overflow_returns_typed_error() {
         // First rel_pos lifts num to near i32::MAX with a zero-length value,
         // then the second rel_pos would overflow the signed accumulator.
-        // Mirrors upstream xattrs.c:700-705.
+        // Mirrors upstream xattrs.c:730-734.
         let mut bytes = Vec::new();
         bytes.extend(encode_varint(i32::MAX - 1));
         bytes.extend(encode_varint(0));
@@ -874,7 +878,7 @@ mod xattr_abbrev_guard_tests {
 
     #[test]
     fn malformed_sum_head_is_tagged_protocol_violation() {
-        // WHY: upstream io.c:2070 read_sum_head() aborts a negative checksum
+        // WHY: upstream io.c:2237-2240 read_sum_head() aborts a negative checksum
         // count with exit_cleanup(RERR_PROTOCOL) (exit 2), not RERR_STREAMIO.
         // The InvalidData error must carry the ProtocolViolation marker so the
         // core exit-code mapper yields 2; otherwise a hostile sum_head collapses
@@ -897,7 +901,7 @@ mod xattr_abbrev_guard_tests {
         // datum_len just above the effective --max-alloc ceiling must be
         // rejected with InvalidData rather than triggering a giant `vec!`
         // allocation. Keys off the effective ceiling (default 1 GiB), not a
-        // fixed constant. Mirrors upstream xattrs.c:752 bounded read.
+        // fixed constant. Mirrors upstream xattrs.c:780 bounded read.
         let mut bytes = Vec::new();
         bytes.extend(encode_varint(1));
         bytes.extend(encode_varint((protocol::effective_max_alloc() as i32) + 1));

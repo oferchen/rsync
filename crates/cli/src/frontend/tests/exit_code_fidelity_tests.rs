@@ -29,7 +29,7 @@ fn empty_compress_choice_returns_unsupported() {
     assert_eq!(code, 4);
 }
 
-/// upstream: options.c:2019-2022 - `--compress-choice=auto` is nulled out so
+/// upstream: options.c:2133-2136 - `--compress-choice=auto` is nulled out so
 /// normal codec negotiation runs; it is accepted (exit 0), not rejected.
 #[test]
 fn compress_choice_auto_is_accepted() {
@@ -47,7 +47,7 @@ fn compress_choice_auto_is_accepted() {
     assert!(destination.exists());
 }
 
-/// upstream: options.c:2019 only special-cases the exact token `auto`;
+/// upstream: options.c:2133 only special-cases the exact token `auto`;
 /// `--compress-choice=auto,auto` is an unknown compress name (exit 4).
 #[test]
 fn compress_choice_auto_auto_returns_unsupported() {
@@ -60,7 +60,7 @@ fn compress_choice_auto_auto_returns_unsupported() {
     assert_eq!(code, 4);
 }
 
-/// upstream: options.c:2474-2480 - with `--files-from`, more than two operands
+/// upstream: options.c:2619-2622 - with `--files-from`, more than two operands
 /// (or a lone operand) is a syntax error (RERR_SYNTAX = 1).
 #[test]
 fn files_from_extra_operands_return_syntax_error() {
@@ -109,7 +109,7 @@ fn empty_checksum_choice_returns_unsupported() {
     assert_eq!(code, 4);
 }
 
-/// upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty rule, so a
+/// upstream: exclude.c:1256-1257 parse_rule_tok returns NULL for an empty rule, so a
 /// blank `--filter` value is a no-op and the transfer succeeds (exit 0).
 #[test]
 fn empty_filter_is_accepted_as_noop() {
@@ -148,7 +148,7 @@ fn empty_exclude_and_include_are_accepted_as_noop() {
 
 /// A whitespace-only `--filter=" "` is NOT empty: a top-level `--filter` never
 /// carries FILTRULE_WORD_SPLIT, so the space reaches the prefix switch and
-/// upstream (exclude.c:1213) raises "Unknown filter rule" (RERR_SYNTAX = 1).
+/// upstream (exclude.c:1363) raises "Unknown filter rule" (RERR_SYNTAX = 1).
 #[test]
 fn whitespace_only_filter_is_still_rejected() {
     let (code, _stdout, _stderr) = run_with_args([

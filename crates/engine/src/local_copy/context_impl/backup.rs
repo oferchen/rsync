@@ -1,6 +1,6 @@
 // `--backup` / `--backup-dir` staging of an existing destination entry,
 // and the forced removal that makes room for a replacement.
-// upstream: backup.c `make_backup()`, `keep_backup()`.
+// upstream: backup.c `make_backup()`, `get_backup_name()`.
 impl<'a> CopyContext<'a> {
     /// Reports whether `--safe-links` forbids backing up `destination`,
     /// emitting upstream's `SYMSAFE,1` notice when it does.
@@ -60,12 +60,13 @@ impl<'a> CopyContext<'a> {
     /// parameter: callers backing up an item that is about to be unlinked
     /// outright (the delete pass) pass `true` to skip straight to the rename
     /// tier, since the caller removes the original right after regardless of
-    /// which strategy placed the backup (`delete.c:165-167`). Callers backing
+    /// which strategy placed the backup (`delete.c:228-234`). Callers backing
     /// up an item before overwriting it with fresh content pass `false` so
-    /// the hard-link tier runs first (`rsync.c:740`, `receiver.c:554`).
+    /// the hard-link tier runs first (`rsync.c:898` `finish_transfer()`,
+    /// `receiver.c:710` `handle_delayed_updates()`).
     ///
-    /// Emits an `--info=BACKUP` notice mirroring upstream rsync 3.4.1
-    /// (backup.c:352) under `INFO_GTE(BACKUP, 1)` once the backup has been
+    /// Emits an `--info=BACKUP` notice mirroring upstream
+    /// (backup.c:432-433) under `INFO_GTE(BACKUP, 1)` once the backup has been
     /// placed successfully. The wording matches upstream byte-for-byte:
     /// `backed up <fname> to <buf>`.
     pub(super) fn backup_existing_entry(
@@ -142,7 +143,9 @@ impl<'a> CopyContext<'a> {
                 // Any other failure (e.g. EXDEV across a `--backup-dir` on a
                 // different filesystem, or a type the platform cannot
                 // hard-link) falls through to the rename tier below, mirroring
-                // `link_or_rename`'s in-call rename fallback.
+                // `link_or_rename`'s in-call rename fallback. Deviation from
+                // upstream: backup.c:245 takes that fallback only for a regular
+                // file; any other type goes straight to the copy tier.
                 Err(_) => None,
             }
         };
@@ -316,12 +319,12 @@ impl<'a> CopyContext<'a> {
     /// regular-file inplace updates; other entries keep the rename path.
     ///
     /// upstream: backup.c make_backup() inplace copy path - the generator makes
-    /// the backup a COPY (`generator.c:1862` `copy_file(fname, backupptr, ...)`,
-    /// with the delta twin building the same copy at `generator.c:1898`) BEFORE
+    /// the backup a COPY (`generator.c:2295` `copy_file(fname, backupptr, ...)`,
+    /// with the delta twin opening the backup at `generator.c:2328-2357`) BEFORE
     /// the receiver rewrites the destination in place. The inplace copy bypasses
     /// `make_backup()`, so it emits no `DEBUG_GTE(BACKUP, 1)` trace, but it still
     /// emits the `INFO_GTE(BACKUP, 1)` "backed up X to Y" line
-    /// (`generator.c:1990-1992`).
+    /// (`generator.c:2448-2451`).
     pub(super) fn backup_existing_entry_copy(
         &mut self,
         destination: &Path,
@@ -349,12 +352,12 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        // upstream: generator.c:1866 copy_file() - duplicate the pre-image; the
+        // upstream: generator.c:2295 copy_file() - duplicate the pre-image; the
         // destination inode is left in place to be rewritten by the inplace
         // writer. A pre-existing backup is overwritten (upstream robust_unlinks
-        // it at generator.c:1901); the O_TRUNC create reaches the same end
+        // it at generator.c:2340); the O_TRUNC create reaches the same end
         // state. The backup path is operator-named, so it resolves through the
-        // ownership walk - generator.c:2283 raises `operator_path_resolve` for
+        // ownership walk - generator.c:2286 raises `operator_path_resolve` for
         // exactly this copy because it bypasses `make_backup()`.
         match copy_pre_image_to_backup(destination, &backup_path) {
             Ok(_) => {}
@@ -366,7 +369,7 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        // upstream: generator.c:1988 set_file_attrs(backupptr, back_file, ...) -
+        // upstream: generator.c:2446 set_file_attrs(backupptr, back_file, ...) -
         // the backup carries the source node's mode/owner/times. fs::copy
         // preserves only permissions, so reapply full metadata like the
         // cross-device COPY fallback in backup_existing_entry.
@@ -374,7 +377,7 @@ impl<'a> CopyContext<'a> {
             let metadata_options = self.metadata_options();
             apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
                 .map_err(map_metadata_error)?;
-            // upstream: generator.c:1985 copy_xattrs() under --fake-super
+            // upstream: generator.c:2430 copy_xattrs() under --fake-super
             // re-records the source stat in `user.rsync.%stat`; no-op otherwise.
             #[cfg(all(unix, feature = "xattr"))]
             store_effective_fake_super_if_requested(
@@ -385,7 +388,7 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        // upstream: generator.c:1990-1992 - INFO_GTE(BACKUP, 1) "backed up X to
+        // upstream: generator.c:2448-2451 - INFO_GTE(BACKUP, 1) "backed up X to
         // Y". No DEBUG_GTE(BACKUP) trace: the inplace copy bypasses make_backup().
         let dest_root = self.destination_root();
         let destination_rel = destination.strip_prefix(dest_root).unwrap_or(destination);
@@ -406,13 +409,13 @@ impl<'a> CopyContext<'a> {
     /// Forcibly removes a type-conflicting destination entry (backing it up
     /// first if needed) to make room for an incoming item of a different type.
     ///
-    /// upstream: generator.c:1240 recv_generator() clears the conflicting
+    /// upstream: generator.c:2149 recv_generator() clears the conflicting
     /// destination with `delete_item(fname, mode, del_opts | DEL_FOR_FILE)`.
-    /// delete.c:178-194 `delete_item()` suppresses `log_delete()` and the
+    /// delete.c:241-257 `delete_item()` suppresses `log_delete()` and the
     /// `stats.deleted_files` bump whenever `flags & DEL_MAKE_ROOM` is set, so
     /// the make-room removal of the conflicting entry itself is silent and
     /// uncounted (unlike a genuine delete-pass deletion). When that entry is a
-    /// directory, `delete_dir_contents()` (delete.c:83) recurses with
+    /// directory, `delete_dir_contents()` (delete.c:126) recurses with
     /// DEL_MAKE_ROOM stripped, so its contents are itemized (`*deleting`) and
     /// counted like ordinary deletions while the directory node stays silent.
     pub(super) fn force_remove_destination(
@@ -431,8 +434,8 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        // upstream: delete.c:165-167 - `delete_item()` (the callee behind
-        // generator.c:1240's DEL_FOR_FILE removal) always calls
+        // upstream: delete.c:228-230 - `delete_item()` (the callee behind
+        // generator.c:2149's DEL_FOR_FILE removal) always calls
         // `make_backup(fbuf, True)`, so the hard-link tier is skipped here
         // exactly as it is for a genuine delete-pass removal.
         self.backup_existing_entry(destination, relative, file_type, true)?;
@@ -472,7 +475,7 @@ impl<'a> CopyContext<'a> {
 
     /// Itemizes and counts the contents of a conflicting directory that is
     /// being cleared to make room for an incoming item, mirroring upstream's
-    /// `delete_dir_contents()` recursion (delete.c:83): the children are
+    /// `delete_dir_contents()` recursion (delete.c:91-183): the children are
     /// reported like delete-pass deletions (DEL_MAKE_ROOM stripped) while the
     /// directory node itself is removed silently by the caller.
     pub(crate) fn record_make_room_contents(

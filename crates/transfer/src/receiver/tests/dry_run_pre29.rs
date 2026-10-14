@@ -10,7 +10,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:590,607-610` - `itemize()` writes NDX + iflags only at
+//! - `generator.c:597,607-610` - `itemize()` writes NDX + iflags only at
 //!   protocol >= 29; below that it calls `log_item()`.
 //! - `generator.c:2376` - `notify_others` writes the NDX of a regular file
 //!   that needs a transfer, even when `!do_xfers`.

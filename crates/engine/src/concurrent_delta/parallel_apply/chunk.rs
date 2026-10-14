@@ -1,7 +1,6 @@
 //! Per-file delta chunk payloads for the parallel apply scaffold.
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the module
-//! decomposition. Holds the public [`DeltaChunk`] segment type the wire
+//! Holds the public [`DeltaChunk`] segment type the wire
 //! reader hands to [`ParallelDeltaApplier::apply_one_chunk`], plus the
 //! internal [`VerifiedChunk`] the rayon verify step produces once a chunk
 //! has cleared its strong-checksum comparison.

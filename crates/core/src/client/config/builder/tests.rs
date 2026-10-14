@@ -933,7 +933,7 @@ fn partial_directory_none_clears_path() {
     assert!(config.partial_directory().is_none());
 }
 
-/// upstream: compat.c:791-797 - a relative `--partial-dir` appends a
+/// upstream: compat.c:803-808 - a relative `--partial-dir` appends a
 /// directory-only, perishable exclude rule so the partial directory is kept
 /// out of the sender's file list and protected from `--delete` on the
 /// receiver. Encoded here to guard against a regression that would leak the
@@ -958,10 +958,10 @@ fn implicit_partial_dir_filter_excludes_and_protects() {
     assert!(rule.applies_to_receiver());
 }
 
-/// upstream: options.c:2430 `if (delay_updates && !partial_dir) partial_dir =
+/// upstream: options.c:2572 `if (delay_updates && !partial_dir) partial_dir =
 /// tmp_partialdir;` (`tmp_partialdir[] = ".~tmp~"`) - a bare `--delay-updates`
 /// uses the implicit `.~tmp~` staging dir, which then gets the same protective
-/// perishable exclude via compat.c:791. Without this the staging directory
+/// perishable exclude via compat.c:803. Without this the staging directory
 /// would leak into the transfer and be deleted by `--delete`.
 #[test]
 fn delay_updates_injects_tmp_partial_dir_filter() {
@@ -1000,7 +1000,7 @@ fn implicit_partial_dir_filter_skips_absolute_dir() {
     assert!(config.filter_rules().is_empty());
 }
 
-/// upstream: options.c:2345-2348 - `--backup` (no `--backup-dir`) combined with
+/// upstream: options.c:2487-2490 - `--backup` (no `--backup-dir`) combined with
 /// `--delete` (and without `--delete-excluded`) injects a receiver-side
 /// `P *<suffix>` protect rule. Backups are written beside the destination as
 /// `name~`, so without this rule the delete pass would remove the very files
@@ -1023,7 +1023,7 @@ fn backup_with_delete_injects_default_protect_rule() {
     assert!(!rule.is_perishable());
 }
 
-/// upstream: options.c:2346-2347 `"P *%s", backup_suffix` - an explicit
+/// upstream: options.c:2488-2489 `"P *%s", backup_suffix` - an explicit
 /// `--suffix` is reflected in the injected protect pattern.
 #[test]
 fn backup_with_delete_uses_explicit_suffix() {
@@ -1040,7 +1040,7 @@ fn backup_with_delete_uses_explicit_suffix() {
     assert_eq!(rule.pattern(), "*.bak");
 }
 
-/// upstream: options.c:2345 guard `!delete_excluded` - `--delete-excluded`
+/// upstream: options.c:2487 guard `!delete_excluded` - `--delete-excluded`
 /// suppresses the protect rule so backup-suffix files remain deletion
 /// candidates. WHY: the guard is what lets `--delete-excluded` reach files the
 /// backup protect rule would otherwise shield.
@@ -1060,7 +1060,7 @@ fn backup_with_delete_excluded_omits_protect_rule() {
     );
 }
 
-/// upstream: options.c:2337-2338 `if (backup_dir) { /* No need for ... a protect
+/// upstream: options.c:2479-2480 `if (backup_dir) { /* No need for ... a protect
 /// rule. */ }` - a `--backup-dir` stores backups in a separate tree, so no
 /// protect rule is injected.
 #[test]
@@ -1144,11 +1144,11 @@ fn append_sets_flag() {
     assert!(config.append());
 }
 
-// upstream: options.c:2419 - `if (append_mode) { ...; inplace = 1; }`. Nothing
+// upstream: options.c:2563 - `if (append_mode) { ...; inplace = 1; }`. Nothing
 // downstream reads `append_mode` to decide where the receiver writes: the write
-// target (receiver.c:984), the retained-vs-discarded branch for a failed
-// verification (receiver.c:1045), the keptstr wording (receiver.c:1090) and the
-// sender's updating_basis_file (sender.c:338) all read `inplace`. Materialising
+// target (receiver.c:1212), the retained-vs-discarded branch for a failed
+// verification (receiver.c:1353), the keptstr wording (receiver.c:1358) and the
+// sender's updating_basis_file (sender.c:629-630) all read `inplace`. Materialising
 // the flag here is what lets those sites stay single-implementation.
 #[test]
 fn append_implies_inplace() {
@@ -1160,7 +1160,7 @@ fn append_implies_inplace() {
     );
 }
 
-// `--append-verify` is append_mode == 2 upstream (options.c:719), the same
+// `--append-verify` is append_mode == 2 upstream (options.c:733), the same
 // `if (append_mode)` truth test, so it promotes identically.
 #[test]
 fn append_verify_implies_inplace() {
@@ -1275,13 +1275,13 @@ fn io_uring_depth_clears_to_none() {
 }
 
 // Mutual exclusion validation tests
-// (upstream: options.c:2433-2441 - inplace/append conflicts with partial-dir/delay-updates)
+// (upstream: options.c:2575-2582 - inplace/append conflicts with partial-dir/delay-updates)
 
 #[test]
 fn validate_inplace_with_partial_dir_conflicts() {
-    // upstream: options.c:2433-2441 - `--inplace` with `--partial-dir` is
+    // upstream: options.c:2575-2582 - `--inplace` with `--partial-dir` is
     // rejected unconditionally, before any capability negotiation. The
-    // `CF_INPLACE_PARTIAL_DIR` capability (compat.c:727,778) only enables the
+    // `CF_INPLACE_PARTIAL_DIR` capability (compat.c:738,789) only enables the
     // receiver's internal one_inplace optimization for a basis file in the
     // partial directory; it never relaxes this user-facing option conflict, so
     // validation must reject the pair regardless of negotiated capabilities.
@@ -1321,7 +1321,7 @@ fn validate_append_with_delay_updates_conflicts() {
 
 #[test]
 fn validate_append_with_whole_file_conflicts() {
-    // upstream: options.c:2409 - --append cannot be used with --whole-file.
+    // upstream: options.c:2551-2556 - --append cannot be used with --whole-file.
     let mut b = builder().append(true).whole_file(true);
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "append");
@@ -1331,7 +1331,7 @@ fn validate_append_with_whole_file_conflicts() {
 
 #[test]
 fn validate_old_args_with_secluded_args_conflicts() {
-    // upstream: options.c:1983 - `--old-args` and `--secluded-args`
+    // upstream: options.c:2094-2098 - `--old-args` and `--secluded-args`
     // (`--protect-args`) are mutually exclusive and abort with this exact
     // wording, which differs from the generic "cannot be used with" template:
     // the message names --secluded-args first and ends with a period.
@@ -1403,7 +1403,7 @@ fn validate_rsh_with_ssh_url_operand_conflicts() {
 #[cfg(not(feature = "embedded-ssh"))]
 #[test]
 fn validate_rsh_with_ssh_url_operand_no_conflict_without_embedded_ssh() {
-    // #7123: without the built-in SSH client, an `ssh://` operand has no
+    // Without the built-in SSH client, an `ssh://` operand has no
     // transport regardless of --rsh (or an implicit shell from RSYNC_RSH). The
     // -e conflict must NOT pre-empt run_client's clearer "ssh:// requires the
     // embedded-ssh feature" error, so validate() stays Ok here and defers.
@@ -1435,7 +1435,7 @@ fn validate_ssh_url_without_rsh_ok() {
 #[cfg(feature = "embedded-ssh")]
 #[test]
 fn validate_rsh_ssh_url_conflict_message() {
-    // #7123: the message names both sources of the remote shell (--rsh/-e and
+    // The message names both sources of the remote shell (--rsh/-e and
     // the RSYNC_RSH environment variable) because the shell is often implicit,
     // and points the user at every way to resolve it (unset RSYNC_RSH, drop
     // --rsh, or use host:path for the external ssh).
@@ -1538,7 +1538,7 @@ fn backup_suffix_sets_value() {
 
 #[test]
 fn backup_suffix_does_not_enable_backup() {
-    // upstream: options.c:2305-2316 - only `--backup-dir` implies `--backup`.
+    // upstream: options.c:2456-2458 - only `--backup-dir` implies `--backup`.
     // A suffix alone stores the string without enabling backups.
     let config = builder().backup_suffix(Some(".bak")).build();
     assert!(!config.backup());
@@ -1622,7 +1622,7 @@ fn compression_algorithm_sets_value() {
 
 #[test]
 fn compression_algorithm_marks_explicit_choice() {
-    // upstream: options.c:2828-2833 - explicit compress_choice is forwarded
+    // upstream: options.c:2994-2999 - explicit compress_choice is forwarded
     // to the remote peer. The explicit flag distinguishes "user chose zstd"
     // from "zstd is the default."
     let config = builder()
@@ -1684,7 +1684,7 @@ fn whole_file_sets_false() {
 
 #[test]
 fn checksum_choice_none_promotes_whole_file() {
-    // upstream: checksum.c:197-198 - CSUM_NONE forces whole_file = 1.
+    // upstream: checksum.c:215-216 - CSUM_NONE forces whole_file = 1.
     let choice = StrongChecksumChoice::parse("none").unwrap();
     let config = builder().checksum_choice(choice).build();
     assert_eq!(config.whole_file_raw(), Some(true));
@@ -1860,8 +1860,8 @@ fn inc_recursive_send_false_clears_flag() {
 
 #[test]
 fn default_inc_recursive_send_is_true() {
-    // ISI.h: sender-side INC_RECURSE is default-on, matching upstream rsync
-    // 3.4.x. CLI `--no-inc-recursive` overrides to false.
+    // Sender-side INC_RECURSE is default-on, matching upstream's default
+    // `allow_inc_recurse = 1`. CLI `--no-inc-recursive` overrides to false.
     let config = builder().build();
     assert!(config.inc_recursive_send());
 }
@@ -2236,10 +2236,10 @@ fn dirs_sets_flag() {
     assert!(config.dirs());
 }
 
-// upstream: options.c:2199-2200 - `if (files_from) { if (xfer_dirs < 0)
+// upstream: options.c:2313-2317 - `if (files_from) { if (xfer_dirs < 0)
 // xfer_dirs = 1; }`. A files-from run must resolve xfer_dirs on even when
 // `-d` was never passed, otherwise the bare directories named in the list hit
-// the `!xfer_dirs` guard (flist.c:2691) and are silently skipped.
+// the `!xfer_dirs` guard (flist.c:2963) and are silently skipped.
 #[test]
 fn dirs_folds_in_files_from_when_flag_unset() {
     let config = builder()

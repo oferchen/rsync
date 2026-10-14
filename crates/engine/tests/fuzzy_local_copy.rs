@@ -4,15 +4,15 @@
 //! `fuzzy_basis` is set, calls `find_fuzzy()` to select the closest-named
 //! existing destination file as the delta basis and announces it at
 //! `DEBUG_GTE(FUZZY, 1)` before using it as `fnamecmp`
-//! (`generator.c:1767-1795`). These tests confirm the local-copy path mirrors
+//! (`generator.c:2198-2209`). These tests confirm the local-copy path mirrors
 //! that behaviour: a near-identical closest-named candidate is used as the
 //! delta basis (matched bytes > 0, not a full re-send) and the FUZZY,1
 //! selection line is emitted.
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:831` `find_fuzzy()` - scores candidates and picks the basis.
-//! - `generator.c:1785-1794` - `fuzzy_file = find_fuzzy(...)`, sets
+//! - `generator.c:836` `find_fuzzy()` - scores candidates and picks the basis.
+//! - `generator.c:2199-2208` - `fuzzy_file = find_fuzzy(...)`, sets
 //!   `fnamecmp = fnamecmpbuf` and prints "fuzzy basis selected for %s: %s".
 
 use std::fs;
@@ -103,7 +103,7 @@ fn fuzzy_selects_near_identical_basis_for_delta() {
     let operands = vec![src_os, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     // Local copies default to whole-file; delta (and thus fuzzy-basis reuse)
-    // only engages with --no-whole-file. upstream: generator.c:1962 -
+    // only engages with --no-whole-file. upstream: generator.c:2400 -
     // `if (statret != 0 || whole_file) write_sum_head(NULL)` sends the whole
     // file even when a fuzzy basis was selected.
     let options = LocalCopyOptions::default()
@@ -130,7 +130,7 @@ fn fuzzy_selects_near_identical_basis_for_delta() {
         "fuzzy delta must reconstruct the source exactly"
     );
 
-    // upstream: generator.c:1787-1793 - the FUZZY,1 line names the target and
+    // upstream: generator.c:2202-2205 - the FUZZY,1 line names the target and
     // basis by their relative flist names (basenames here), byte-for-byte:
     // "fuzzy basis selected for %s: %s". The fuzzy testsuite greps this exact
     // string, so the basis must be the basename `report_2023.csv`, not an

@@ -52,9 +52,16 @@ pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Messa
 ///
 /// Returning `Ok(None)` indicates that the variable was unset, allowing
 /// callers to retain their default skip-compress configuration. When the
-/// variable is present but empty the function returns an empty list, matching
-/// upstream rsync's semantics where an explicitly empty list disables the
-/// optimisation altogether.
+/// variable is present but empty the function returns an empty list, the same
+/// result as an explicit empty `--skip-compress=`.
+///
+/// Deviation from upstream: rsync 3.5.1 reads no skip-compress environment
+/// variable; only `--skip-compress` (`options.c:780`) sets the list.
+///
+/// # Errors
+///
+/// Returns an error when the value is not UTF-8 or is not a valid
+/// skip-compress specification.
 pub fn skip_compress_from_env(variable: &str) -> Result<Option<SkipCompressList>, Message> {
     let Some(value) = env::var_os(variable) else {
         return Ok(None);

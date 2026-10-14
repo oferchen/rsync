@@ -1,4 +1,4 @@
-//! Non-Unix (Windows and other) source-side hardlink tracker stub.
+//! Non-Unix (Windows and other) source-side hardlink tracker.
 //!
 //! On platforms without inode metadata, source-side hardlink detection is not
 //! available, so `existing_target` and `record` are no-ops. The ACL cohort
@@ -14,7 +14,7 @@ pub(crate) struct HardLinkTracker {
     /// same DACL through each alias produces N identical inode-level writes.
     ///
     /// upstream: hlink.c::hard_link_check returns 1 for followers so
-    /// generator.c:1552 exits before set_file_attrs(); the inode keeps the
+    /// generator.c:1943-1945 skips set_file_attrs(); the inode keeps the
     /// leader's DACL for free.
     #[cfg(any(test, feature = "acl"))]
     acl_cohort_leaders: rustc_hash::FxHashSet<PathBuf>,

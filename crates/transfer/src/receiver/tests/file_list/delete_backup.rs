@@ -132,7 +132,7 @@ fn immediate_delete_backs_up_victim_into_backup_dir() {
 
 /// A victim already named like a backup (`foo~`) with NO `--backup-dir` must be
 /// unlinked directly, never re-backed-up to `foo~~`
-/// (upstream `is_backup_file` guard, `delete.c:165`).
+/// (upstream `is_backup_file` guard, `delete.c:228`).
 #[test]
 fn already_suffixed_victim_is_not_rebacked_up() {
     let dir = tempfile::TempDir::new().unwrap();

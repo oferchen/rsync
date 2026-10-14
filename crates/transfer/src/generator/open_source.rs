@@ -19,7 +19,7 @@
 //! Every open also honours `--open-noatime` (rsync 3.4.2): on Linux/Android
 //! the open adds `O_NOATIME`, falling back to a plain open if the kernel or
 //! filesystem rejects the flag (`EPERM`/`EACCES`/`EINVAL`/`ENOTSUP`/`EROFS`).
-//! upstream: `syscall.c:278 do_open` / `syscall.c:826 do_open_nofollow`.
+//! upstream: `syscall.c:1603 do_open` / `syscall.c:2811 do_open_nofollow`.
 
 use std::fs;
 use std::io;

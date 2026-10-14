@@ -1,5 +1,5 @@
 //! Regression coverage for the ROB-2 / ROB-3 reorder-buffer telemetry
-//! additions (#3667).
+//! additions.
 //!
 //! Two surfaces are exercised:
 //!

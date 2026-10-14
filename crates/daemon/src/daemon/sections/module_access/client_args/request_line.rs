@@ -1,10 +1,10 @@
 // The daemon's per-request log line and the `request` value it names.
 //
-// upstream: clientserver.c:1207-1220 emits exactly one line per served
+// upstream: clientserver.c:1208-1219 emits exactly one line per served
 // request, gated on a non-empty `request`, once the argv is parsed and the
 // pre-xfer hooks have run.
 
-/// Ceiling upstream tests *before* appending each operand (`io.c:1513`).
+/// Ceiling upstream tests *before* appending each operand (`io.c:1514`).
 ///
 /// The guard is `request_len < 1024`, evaluated before the append rather than
 /// after it, so the assembled value can exceed 1024 by the length of the
@@ -15,12 +15,12 @@ const DAEMON_REQUEST_LEN_CAP: usize = 1024;
 /// Assembles upstream's `request` from the client's argument vector.
 ///
 /// `request` is *not* the module name. It is an out-param of `read_args()`
-/// (`clientserver.c:1154`) built at `io.c:1512-1521` from the argv entries
+/// (`clientserver.c:1154`) built at `io.c:1513-1521` from the argv entries
 /// that follow the `.` cwd marker, joined with single spaces:
 ///
 /// - entries before the marker are options and never contribute;
 /// - the marker itself never contributes, and only the first one switches
-///   modes (`io.c:1533-1534` sets `dot_pos` from the *else* branch, which
+///   modes (`io.c:1534-1535` sets `dot_pos` from the *else* branch, which
 ///   stops running once `dot_pos` is set);
 /// - the operands are the raw wire lines, before `glob_expand_module()`.
 ///
@@ -63,7 +63,7 @@ fn daemon_request(client_args: &[String]) -> Option<String> {
 ///
 /// `am_sender` is the daemon serving a pull, which is [`ServerRole::Generator`]
 /// here. The `[pid]` prefix the operator sees comes from the log-file stamp
-/// (`log.c:122-132`), not from this format string.
+/// (`log.c:135`, `logit()`), not from this format string.
 ///
 /// An empty `auth_user` takes the anonymous arm: upstream branches on
 /// `*auth_user`, and an unauthenticated session leaves that buffer empty.
@@ -86,7 +86,7 @@ fn daemon_request_log_line(
 
 /// Emits the per-request line when the client named at least one operand.
 ///
-/// upstream: clientserver.c:1207 - `if (request)`. A client that sent no
+/// upstream: clientserver.c:1208 - `if (request)`. A client that sent no
 /// operand after the `.` marker produces no line at all.
 fn log_daemon_request(
     ctx: &ModuleRequestContext<'_>,
@@ -104,8 +104,8 @@ fn log_daemon_request(
 #[cfg(test)]
 mod daemon_request_line_tests {
     //! Upstream parity for the per-request daemon log line
-    //! (`clientserver.c:1207-1220`) and its `request` operand
-    //! (`io.c:1512-1521`).
+    //! (`clientserver.c:1208-1219`) and its `request` operand
+    //! (`io.c:1513-1521`).
 
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
@@ -126,7 +126,7 @@ mod daemon_request_line_tests {
         assert_eq!(daemon_request(&argv).as_deref(), Some("mod/f"));
     }
 
-    /// upstream joins multiple operands with a single space (`io.c:1515-1516`).
+    /// upstream joins multiple operands with a single space (`io.c:1516-1517`).
     #[test]
     fn multiple_operands_join_with_single_spaces() {
         let argv = args(&["--server", ".", "mod/a", "mod/b", "mod/c"]);
@@ -134,7 +134,7 @@ mod daemon_request_line_tests {
     }
 
     /// A client that names no operand leaves upstream's `request` NULL, and
-    /// `clientserver.c:1207` then writes nothing at all.
+    /// `clientserver.c:1208` then writes nothing at all.
     #[test]
     fn no_operand_after_the_marker_yields_no_request() {
         assert_eq!(daemon_request(&args(&["--server", "--sender", "."])), None);
@@ -148,7 +148,7 @@ mod daemon_request_line_tests {
         assert_eq!(daemon_request(&argv).as_deref(), Some("mod/a . mod/b"));
     }
 
-    /// The cap is tested BEFORE each append (`io.c:1513`), so the assembled
+    /// The cap is tested BEFORE each append (`io.c:1514`), so the assembled
     /// value overshoots 1024 by the operand that crossed the boundary. A
     /// `truncate(1024)` would produce different bytes than upstream.
     #[test]
@@ -166,7 +166,7 @@ mod daemon_request_line_tests {
         assert!(!request.contains('c'));
     }
 
-    /// upstream: clientserver.c:1213-1215 - the anonymous arm, `on` because a
+    /// upstream: clientserver.c:1213-1217 - the anonymous arm, `on` because a
     /// daemon serving a pull is `am_sender`.
     #[test]
     fn an_unauthenticated_pull_renders_upstreams_anonymous_arm() {
@@ -182,7 +182,7 @@ mod daemon_request_line_tests {
         );
     }
 
-    /// upstream: clientserver.c:1209-1211 - the authenticated arm, `to` because
+    /// upstream: clientserver.c:1209-1212 - the authenticated arm, `to` because
     /// a daemon serving a push is not `am_sender`.
     #[test]
     fn an_authenticated_push_renders_upstreams_user_arm() {

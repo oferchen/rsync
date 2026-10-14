@@ -24,7 +24,7 @@ impl GeneratorContext {
     /// wire); later ones become followers carrying the leader's wire NDX.
     ///
     /// The wire NDX of flat index `i` is `ndx_start + i` plus one gap for every
-    /// sub-list opened at or before `i` (flist.c:3209 opens each sub-list at
+    /// sub-list opened at or before `i` (flist.c:3511 opens each sub-list at
     /// `prev->ndx_start + prev->used + 1`). A follower whose leader sits in an earlier sub-list
     /// therefore names that leader's absolute NDX, which upstream's receiver
     /// resolves through `prior_hlinks` (hlink.c:125-141) and rejects when it
@@ -93,7 +93,7 @@ impl GeneratorContext {
             lookup_group_name_cached, lookup_user_name_cached, no_id_unless_converter_failed,
         };
 
-        // upstream: flist.c:715 gates add_uid()/add_gid() on `!numeric_ids`, so
+        // upstream: flist.c:787-797 gates add_uid()/add_gid() on `!numeric_ids`, so
         // the id-list is populated only when names are active (`numeric_ids ==
         // 0`). Both daemon-forced and explicit numeric-ids leave it empty.
         if self.config.flags.numeric_ids.maps_numeric() {

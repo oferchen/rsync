@@ -8,7 +8,8 @@ use thiserror::Error;
 pub enum SecludedArgsMode {
     /// Secluded arguments are available when explicitly requested.
     Optional,
-    /// Secluded arguments are enabled by default, matching upstream's maintainer builds.
+    /// Secluded arguments are enabled by default, as in an upstream build that defines
+    /// `RSYNC_USE_SECLUDED_ARGS` (usage.c:132-137).
     Default,
 }
 

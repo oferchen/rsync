@@ -32,15 +32,15 @@ pub(crate) fn append_filter_rules_from_files(
         return Err(message);
     }
 
-    // upstream: options.c:1547-1549 - --exclude-from and --include-from
+    // upstream: options.c:1635-1657 - --exclude-from and --include-from
     // feed parse_filter_file with XFLG_OLD_PREFIXES so per-line `- pat`,
     // `+ pat`, and `!` prefixes flip the rule kind or clear the list. Kinds
     // other than Include/Exclude have no upstream OLD_PREFIXES analogue, so
     // we keep the legacy raw-pattern behavior to preserve existing semantics.
     let honor_old_prefixes = matches!(kind, FilterRuleKind::Include | FilterRuleKind::Exclude);
 
-    // upstream: exclude.c:1393-1402 resolves FILTRULE_CLEAR_LIST via
-    // pop_filter_list (exclude.c:574-590), truncating only the local section
+    // upstream: exclude.c:1542-1551 resolves FILTRULE_CLEAR_LIST via
+    // pop_filter_list (exclude.c:671-687), truncating only the local section
     // of the per-file rule list. Buffer each --include-from/--exclude-from
     // file's rules locally so a `!` inside the file clears only that scope
     // and parent CLI rules survive.
@@ -58,7 +58,7 @@ pub(crate) fn append_filter_rules_from_files(
                 // redacts - `rule_src_file` is set for the whole read, so
                 // `TEXT_FROM_FILE` holds and the text is replaced by
                 // `FILE line N` (exclude.c:71, the wording `rule_src_where`
-                // builds at exclude.c:84). oc does not carry a
+                // builds at exclude.c:85). oc does not carry a
                 // line number through `load_filter_file_patterns`, and naming the
                 // file without one would claim upstream's word-split arm
                 // (`rule_src_line < 0`) for a line-counted read. Left as
@@ -160,8 +160,8 @@ fn filter_file_open_error(
 ///
 /// - `rsync-3.5.1/exclude.c:1683` - `parse_filter_file()` opens the file with
 ///   `open_no_attacker_symlinks(open_path, O_RDONLY, 0)`.
-/// - `rsync-3.5.1/exclude.c:1587` - the `--*clude-from` / `merge` call site
-///   passes `XFLG_FATAL_ERRORS`.
+/// - `rsync-3.5.1/options.c:1654-1656` (`--*clude-from`) and
+///   `rsync-3.5.1/exclude.c:1587` (`merge`) pass `XFLG_FATAL_ERRORS`.
 /// - `rsync-3.5.1/syscall.c:675` - `open_no_attacker_symlinks()`; the trust
 ///   rule is at `syscall.c:499`.
 fn open_operator_named(path: &Path) -> io::Result<File> {
@@ -272,7 +272,7 @@ pub(super) fn read_filter_patterns<R: BufRead>(
     let mut buffer = Vec::new();
     let mut patterns = Vec::new();
 
-    // upstream: exclude.c:1501 parse_filter_file - `if (eol_nulls? !ch : (ch ==
+    // upstream: exclude.c:1774 parse_filter_file - `if (eol_nulls? !ch : (ch ==
     // '\n' || ch == '\r'))` splits records on NUL when --from0/-0 is set, so an
     // exclude-from/include-from file becomes NUL-delimited and embedded newlines
     // are literal pattern bytes (never stripped).
@@ -289,12 +289,8 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         // upstream: exclude.c:1806. `filters::filter_file_line_is_rule` is the
         // single owner of that test; it looks at the FIRST BYTE and does not
         // trim. `--*clude-from` files are always line-parsed, never word-split.
-        //
-        // MEASURED against rsync 3.5.0 over a source holding files named
-        // `   ` (three spaces) and `  #a`: with an `--exclude-from` file whose
-        // only line is `   `, upstream excludes the file named `   ` and oc
-        // transferred it; with `  #a`, upstream excludes `  #a` and oc
-        // transferred it. Both at exit 0 - silent data selection divergence.
+        // MEASURED against rsync 3.5.0: an `--exclude-from` line of `   ` (three
+        // spaces) or `  #a` excludes a file of exactly that name.
         let chunk = String::from_utf8_lossy(&buffer);
 
         if eol_nulls {
@@ -447,9 +443,8 @@ mod tests {
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
-    /// upstream: exclude.c:1712-1719 - a missing --exclude-from/--include-from
-    /// file is fatal with RERR_FILEIO (11) and upstream's own wording, not the
-    /// generic exit 1 this previously accepted.
+    /// upstream: exclude.c:1703-1719 - a missing --exclude-from/--include-from
+    /// file is fatal with RERR_FILEIO (11) and upstream's own wording.
     #[test]
     fn load_filter_file_patterns_reports_a_missing_file_like_upstream() {
         let temp = test_support::create_tempdir();
@@ -634,7 +629,7 @@ mod tests {
 
     #[test]
     fn read_filter_patterns_splits_on_nul_when_eol_nulls() {
-        // upstream: exclude.c:1501 parse_filter_file - with eol_nulls (set by
+        // upstream: exclude.c:1774 parse_filter_file - with eol_nulls (set by
         // --from0/-0) records are split on NUL, so embedded newlines are literal
         // pattern bytes and a NUL-delimited --exclude-from parses one rule per
         // NUL-separated record rather than one per line.
@@ -646,7 +641,7 @@ mod tests {
 
     #[test]
     fn read_filter_patterns_nul_mode_handles_no_trailing_nul() {
-        // upstream: exclude.c:1516-1517 - the final record before EOF is parsed
+        // upstream: exclude.c:1806-1810 - the final record before EOF is parsed
         // even without a trailing delimiter.
         let input = b"only\0last";
         let mut reader = Cursor::new(input.to_vec());
@@ -656,7 +651,7 @@ mod tests {
 
     #[test]
     fn append_filter_rules_from_files_honors_from0_nul_split() {
-        // upstream: exclude.c:1501 parse_filter_file - --exclude-from with
+        // upstream: exclude.c:1774 parse_filter_file - --exclude-from with
         // --from0 reads NUL-delimited records; "a\nb" is one literal pattern.
         let temp = test_support::create_tempdir();
         let path = temp.path().join("exclude0.txt");

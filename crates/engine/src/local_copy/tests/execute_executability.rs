@@ -185,7 +185,7 @@ fn execute_executability_without_permissions_preserves_only_execute_bits() {
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
     let mode = metadata.permissions().mode() & 0o777;
-    // upstream: rsync.c:457-465 dest_mode() - when `-E` is on without `-p`,
+    // upstream: rsync.c:470-480 dest_mode() - when `-E` is on without `-p`,
     // the receiver keeps the destination's pre-transfer permission bits and
     // grants execute "to everyone who can already read" (`new_mode & 0444 >> 2`)
     // when the source has any x bit and the destination has none. Starting

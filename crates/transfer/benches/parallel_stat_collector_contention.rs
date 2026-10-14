@@ -9,7 +9,7 @@
 //! currently collects results via `into_par_iter().map(f).collect()`,
 //! which delegates to rayon's lock-free split-and-merge reducer.
 //!
-//! Several issues (#1192, #1271, #1297, #1370, #1682) ask whether moving
+//! The open question is whether moving
 //! to (or back to) a shared `Arc<Mutex<Vec<R>>>` collector would simplify
 //! the code, and how much throughput that would cost at 100K+ files on
 //! 8/16-core hosts. The static audit in
@@ -51,8 +51,8 @@
 //!   for a few cycles or the collector is hit < 1k times per transfer.)
 //! - If the crossover stays above T=16, the shared mutex remains a
 //!   viable simplification for any new collector under 100K items.
-//! - The numbers form the baseline for the lock-free replacement work
-//!   tracked in #1271 (sharded queue) and #1370 (per-thread fold).
+//! - The numbers form the baseline for lock-free replacements (a sharded
+//!   queue or a per-thread fold).
 //!
 //! Run: `cargo bench -p transfer -- parallel_stat_collector_contention`
 
@@ -134,7 +134,7 @@ where
 }
 
 /// Baseline: every worker pushes into a single shared `Mutex<Vec<R>>`.
-/// This is the shape #1192 asks us to characterise.
+/// This is the shape the bench characterises.
 fn shared_mutex(pool: &rayon::ThreadPool, threads: usize) -> usize {
     let sink: Arc<Mutex<Vec<StatRecord>>> = Arc::new(Mutex::new(Vec::with_capacity(ITEMS)));
     fan_out(pool, threads, |worker, count| {

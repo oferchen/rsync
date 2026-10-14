@@ -9,9 +9,9 @@
 //! oc-rsync and upstream. Each test documents the exact upstream CLI it was
 //! captured from and cites the upstream C that defines the semantic.
 //!
-//! # Upstream semantics (rsync 3.4.4 `exclude.c`)
+//! # Upstream semantics (rsync 3.5.1 `exclude.c`)
 //!
-//! The four modifiers are parsed at `exclude.c:1194-1207`:
+//! The four modifiers are parsed at `exclude.c:1345-1358`:
 //!
 //! - `S`/`show` -> `FILTRULE_INCLUDE | FILTRULE_SENDER_SIDE` (a sender-side
 //!   include: it re-shows a file a broader `hide` would omit).
@@ -23,9 +23,9 @@
 //!   receiver keeps the matching destination file during the `--delete` pass).
 //!
 //! The side of a rule selects WHEN it is consulted: `send_rules()`
-//! (`exclude.c:1605-1613`) elides receiver-side rules from the sender's
+//! (`exclude.c:1904-1913`) elides receiver-side rules from the sender's
 //! evaluation and sender-side rules from the receiver's, and `rule_matches()`
-//! skips rules whose `elide` matches the current side (`exclude.c:911`). Net
+//! skips rules whose `elide` matches the current side (`exclude.c:1010`). Net
 //! effect: `H`/`S` shape the sender file list; `P`/`R` shape the receiver
 //! delete pass. That is precisely the split oc-rsync implements - `hide`/`show`
 //! carry `applies_to_sender` and are checked in the `Transfer` context, while
@@ -89,9 +89,9 @@ fn populate(source: &Path, dest: &Path) {
 /// # dst/keep.log survives; dst/stale.log is deleted.
 /// ```
 ///
-/// upstream: `protect` sets `FILTRULE_RECEIVER_SIDE` (exclude.c:1204-1206); the
+/// upstream: `protect` sets `FILTRULE_RECEIVER_SIDE` (exclude.c:1355-1356); the
 /// delete pass consults receiver-side rules and a matched protect rule keeps
-/// the file (delete.c:delete_in_dir via name_is_excluded / check_filter).
+/// the file (generator.c:delete_in_dir() via name_is_excluded / check_filter).
 #[test]
 fn protect_keeps_extraneous_dest_file_from_delete() {
     let temp = tempdir().expect("tempdir");
@@ -137,8 +137,8 @@ fn protect_keeps_extraneous_dest_file_from_delete() {
 /// ```
 ///
 /// upstream: `risk` sets `FILTRULE_INCLUDE | FILTRULE_RECEIVER_SIDE`
-/// (exclude.c:1201-1206); `check_filter()` returns on the FIRST matching rule
-/// (exclude.c:1058-1061), so a risk (include) matched before a protect
+/// (exclude.c:1352-1356); `check_filter()` returns on the FIRST matching rule
+/// (exclude.c:1209), so a risk (include) matched before a protect
 /// (exclude) yields "may delete" and the delete pass removes the file.
 ///
 /// The engine's protect/risk evaluator in
@@ -194,7 +194,7 @@ fn risk_re_exposes_protected_dest_file_to_delete() {
 /// # dst/data.txt present; dst/data.bak absent.
 /// ```
 ///
-/// upstream: `hide` sets `FILTRULE_SENDER_SIDE` (exclude.c:1197-1199); the
+/// upstream: `hide` sets `FILTRULE_SENDER_SIDE` (exclude.c:1348-1349); the
 /// sender's file-list build consults sender-side rules and drops the match.
 #[test]
 fn hide_omits_source_file_from_transfer() {
@@ -232,7 +232,7 @@ fn hide_omits_source_file_from_transfer() {
 /// ```
 ///
 /// upstream: `show` sets `FILTRULE_INCLUDE | FILTRULE_SENDER_SIDE`
-/// (exclude.c:1194-1199); a sender-side include matched before the hide exclude
+/// (exclude.c:1345-1349); a sender-side include matched before the hide exclude
 /// keeps the file in the sender file list.
 #[test]
 fn show_re_includes_hidden_source_file() {
@@ -265,7 +265,7 @@ fn show_re_includes_hidden_source_file() {
 
 /// Side isolation: `H`/`S` (sender-side) must not affect the receiver delete
 /// pass, and `P`/`R` (receiver-side) must not affect the sender file list.
-/// This is the direct observable of the side split at exclude.c:1194-1207.
+/// This is the direct observable of the side split at exclude.c:1345-1358.
 ///
 /// Upstream capture (rsync 3.4.4):
 /// ```text
@@ -276,7 +276,7 @@ fn show_re_includes_hidden_source_file() {
 /// ```
 ///
 /// upstream: send_rules() elides sender-side rules from the receiver and
-/// receiver-side rules from the sender (exclude.c:1605-1613).
+/// receiver-side rules from the sender (exclude.c:1904-1913).
 #[test]
 fn side_modifiers_do_not_cross_over() {
     // Leg 1: hide is sender-side only -> no delete protection.

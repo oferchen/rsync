@@ -162,9 +162,9 @@ fn delay_updates_delete_during_removes_extraneous_in_subdirs() {
 /// This encodes WHY the restricted directory mode must be deferred: upstream
 /// keeps such a directory writable throughout the transfer and restores the
 /// restricted mode LAST, in touch_up_dirs, only after the deletion phase runs
-/// (generator.c:1508-1521 grants `mode | S_IRWXU` during the transfer;
-/// generator.c:2122-2127 `fix_dir_perms` reinstates the real mode;
-/// generator.c:2449-2451 runs touch_up_dirs after the delete phase). Applying
+/// (generator.c:1904-1911 grants `mode | S_IRWXU` during the transfer;
+/// generator.c:2594-2599 `fix_dir_perms` reinstates the real mode;
+/// generator.c:2923-2925 runs touch_up_dirs after the delete phase). Applying
 /// 0555 during traversal - before the deferred unlink - makes the unlink fail
 /// EACCES, so this test fails on that ordering and passes once the mode is
 /// deferred.
@@ -239,7 +239,7 @@ fn delete_after_into_readonly_dir_deletes_child_and_restores_mode() {
 ///
 /// Same upstream ordering as the delete-after case: the directory is kept
 /// writable until touch_up_dirs restores 0555 after the delayed-update rename
-/// sweep (generator.c:1508-1521, 2122-2127, 2449-2451). Applying 0555 during
+/// sweep (generator.c:1904-1911, 2594-2599, 2923-2925). Applying 0555 during
 /// traversal makes the staged rename into the directory fail EACCES.
 ///
 /// Runs as non-root only.

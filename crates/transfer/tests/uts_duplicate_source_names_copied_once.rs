@@ -1,16 +1,17 @@
-//! Port of the upstream rsync 3.4.4 testsuite `duplicates.test`.
+//! Port of the upstream rsync 3.5.1 testsuite `duplicates_test.py`.
 //!
 //! Upstream source of truth:
 //!   `testsuite/duplicates_test.py`
-//!   `flist.c` `clean_flist()` - the dedup pass that collapses repeated names.
+//!   `flist.c:3561` `flist_sort_and_clean()` - the dedup pass that collapses
+//!   repeated names.
 //!
 //! Why this matters: a user can name the same source more than once on the
 //! command line (shell variable expansion, overlapping wildcards). If the file
 //! list kept both copies, rsync could try to update the first copy while
 //! generating checksums for the second at the same time - a genuine race that
-//! upstream fixes by de-duplicating the flist in `clean_flist()`. The upstream
-//! test lists the same directory ten times and asserts each contained file is
-//! copied *exactly once* (the `grep -c '^name1$' == 1` check), not ten times.
+//! upstream fixes by de-duplicating the flist in `flist_sort_and_clean()`. The
+//! upstream test lists the same directory ten times and asserts each contained
+//! file is copied *exactly once* (the `name1_count == 1` check), not ten times.
 //!
 //! We assert the observable invariant two ways so the test fails if dedup
 //! regresses in either the wire path or the output path:
@@ -18,7 +19,7 @@
 //!      duplicated flist would still produce one file on disk, but a broken
 //!      dedup that mangled names could drop or misplace it).
 //!   2. With `-vv` itemized output, each transferred name is listed exactly
-//!      once - mirroring upstream's `grep -c` assertion that catches a flist
+//!      once - mirroring upstream's `name1_count` assertion that catches a flist
 //!      that carried the same entry N times.
 
 #![cfg(unix)]

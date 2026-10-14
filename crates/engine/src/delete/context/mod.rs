@@ -3,11 +3,10 @@
 //! [`DeleteEmitter`](super::emitter::DeleteEmitter) for every `--delete-*`
 //! timing mode.
 //!
-//! This module unifies two responsibilities introduced across the DDP
-//! task series:
+//! This module unifies two responsibilities:
 //!
 //! 1. The receiver-side observation API
-//!    ([`DeleteContext::observe_segment_for_delete`]) landed in DDP-B3.
+//!    ([`DeleteContext::observe_segment_for_delete`]).
 //!    The receiver calls it once per INC_RECURSE segment; the context
 //!    resolves the destination directory, computes per-directory extras
 //!    via [`compute_extras`](super::extras::compute_extras), publishes a
@@ -17,7 +16,7 @@
 //!    [`DirTraversalCursor`](super::traversal::DirTraversalCursor) so
 //!    the emitter can yield directories in upstream `f_name_cmp`
 //!    ascending order.
-//! 2. The timing-mode drain API (DDP-E1-E5). Each `--delete-*` timing
+//! 2. The timing-mode drain API. Each `--delete-*` timing
 //!    mode keeps the observable semantics it had under the legacy
 //!    batched-sweep path, but every unlink, itemize line, and stats
 //!    counter now flows through the single-threaded
@@ -33,8 +32,8 @@
 //! | `--delete-delay` | per-dir inside the copy walk          | [`DeleteContext::emit_all`] after all renames commit |
 //! | `--delete-excluded` (layered) | upstream of `compute_extras` - filter-excluded entries are appended to the segment-extras set | per timing mode above |
 //!
-//! The legacy batched sweep was retired in DDP-F3 (#2272); the emitter
-//! is now the sole production unlink path for every timing mode.
+//! The legacy batched sweep was retired; the emitter is now the sole
+//! production unlink path for every timing mode.
 //!
 //! # Concurrency
 //!

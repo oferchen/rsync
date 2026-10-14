@@ -4,13 +4,14 @@
 //! Every caller - the CLI front end, the `core` remote-invocation planner, and
 //! the local-copy executor - routes through [`operand_is_remote`] /
 //! [`classify_operand`] here so that one operand can never be classified two
-//! different ways by two code paths (a #7153-class defect: a divergent verdict
-//! ships the wrong operand to the remote server).
+//! different ways by two code paths (a divergent verdict ships the wrong
+//! operand to the remote server).
 //!
 //! # Upstream Reference
 //!
-//! Mirrors `options.c:check_for_hostspec()` / `parse_hostspec()` in upstream
-//! rsync 3.4.4. The canonical rule: scanning left to right, a `:` reached
+//! Mirrors `options.c:3311 check_for_hostspec()` / `options.c:3254
+//! parse_hostspec()` in upstream rsync 3.5.1. The canonical rule: scanning
+//! left to right, a `:` reached
 //! before any `/` marks a host spec (`host:path`); a following `:` marks a
 //! daemon module (`host::module`); an `[ipv6]` literal guards the colons of an
 //! address; and a `/` (or end of string) reached first means a plain local
@@ -186,7 +187,7 @@ mod tests {
     /// classifier. Encodes WHY each verdict holds: upstream
     /// `check_for_hostspec()` (a `:` before any `/` is a host; `::` is a daemon
     /// module; `[ipv6]:` guards the address colons) plus oc-rsync's documented
-    /// backslash-as-separator rule. This is the #7153-class regression guard: a
+    /// backslash-as-separator rule. This is the divergent-verdict regression guard: a
     /// single classifier means the CLI, core, and local-copy call sites can
     /// never disagree on one operand.
     ///

@@ -20,7 +20,7 @@ use crate::constants::{SPARSE_WRITE_SIZE, leading_zero_count, trailing_zero_coun
 /// `preallocated_len` (fresh temp file, or bytes past the old EOF) need no
 /// punch because a seek over never-written space already reads as zeros.
 ///
-/// upstream: `fileio.c:96` `if (sparse_past_write >= preallocated_len)`.
+/// upstream: `fileio.c:88` `if (sparse_past_write >= preallocated_len)`.
 #[derive(Debug, Default)]
 pub struct SparseWriteState {
     /// Accumulated pending zero bytes (upstream `sparse_seek`).
@@ -38,7 +38,7 @@ pub struct SparseWriteState {
     /// every data write and hole seek so no per-zero-run `stream_position()`
     /// query (and its buffer flush + `lseek`) is issued.
     ///
-    /// upstream: `fileio.c:82` `sparse_past_write = offset + len - l2`.
+    /// upstream: `fileio.c:186` `sparse_past_write = offset + len - l2`.
     stream_offset: u64,
     /// Whether [`Self::stream_offset`] has been primed from the writer's real
     /// position. Guards the single position query per file.
@@ -76,7 +76,7 @@ impl SparseWriteState {
     /// `stream_position()` query with at most one query per file.
     ///
     /// upstream: `write_file()` passes a caller-tracked `offset` rather than
-    /// querying the OS position (`fileio.c:154`).
+    /// querying the OS position (`fileio.c:247`).
     #[inline]
     fn ensure_offset<W: Seek>(&mut self, writer: &mut W) -> io::Result<u64> {
         if !self.offset_primed {
@@ -90,7 +90,7 @@ impl SparseWriteState {
     /// stale basis data are punched rather than merely seeked over (which would
     /// leave the old bytes on disk in an `--inplace` update).
     ///
-    /// upstream: `fileio.c:96` seek-vs-punch decision keyed on `preallocated_len`.
+    /// upstream: `fileio.c:88` seek-vs-punch decision keyed on `preallocated_len`.
     pub const fn set_preallocated_len(&mut self, len: u64) {
         self.preallocated_len = len;
     }
@@ -119,7 +119,7 @@ impl SparseWriteState {
     /// Flushes the pending zero run: seeks forward to leave a hole and records
     /// the range for punching when it overlaps the pre-existing basis extent.
     ///
-    /// upstream: `fileio.c:94-103` `write_sparse()`.
+    /// upstream: `fileio.c:84-99` `flush_sparse_hole()`.
     #[inline]
     pub fn flush<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<()> {
         if self.pending_zeros == 0 {
@@ -148,9 +148,13 @@ impl SparseWriteState {
     /// Writes data with sparse optimization.
     ///
     /// Zero runs are tracked and become holes; non-zero data is written normally.
-    /// Scans in `SPARSE_WRITE_SIZE` (1 KB) windows matching upstream rsync's
-    /// `write_file()` piece size so interior zero runs are punched exactly as
-    /// upstream does, not written as literal data.
+    /// Scans in `SPARSE_WRITE_SIZE` (1 KiB) windows: each window's leading and
+    /// trailing zeros are deferred as a hole and the rest is written.
+    ///
+    /// Deviation from upstream: 3.5.1 `write_sparse()` (`fileio.c:130-189`)
+    /// scans the whole span for interior zero runs of at least
+    /// `SPARSE_WRITE_SIZE` and writes the data between them in one `write()`,
+    /// so hole placement can differ at window edges.
     #[inline]
     pub fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
         self.write_spans(writer, data, true)
@@ -350,7 +354,7 @@ mod tests {
         // a distinct write, mirroring receive_data streaming SPARSE_WRITE_SIZE pieces;
         // interior zeros within one write are written literally (as upstream)
         // and correctly overwrite the basis, so only seeked runs are punched.
-        // upstream: fileio.c:94-103 write_sparse().
+        // upstream: fileio.c:84-99 flush_sparse_hole().
         let mut state = SparseWriteState::new();
         state.set_preallocated_len(1000);
         let mut cursor = Cursor::new(vec![0xAAu8; 2000]);
@@ -397,7 +401,8 @@ mod tests {
         // whole 16 KB fell in one window and the interior zeros were written
         // literally, leaving them allocated on disk (issue #257). The write pass
         // must therefore write only the 8 KB of real data and seek the 8 KB hole.
-        // upstream: fileio.c:153 write_file() -> MIN(len, SPARSE_WRITE_SIZE).
+        // upstream: fileio.c:144-177 write_sparse() defers interior zero runs of
+        // at least SPARSE_WRITE_SIZE as holes.
         let mut state = SparseWriteState::new();
         let mut w = CountingWriter {
             inner: Cursor::new(Vec::new()),
@@ -504,7 +509,7 @@ mod tests {
         // that syscall profile: N distinct zero runs cost N forward seeks and
         // at most one position query for the whole file, while the byte output
         // is identical to a plain (non-sparse) writer.
-        // upstream: fileio.c:79-101 write_sparse().
+        // upstream: fileio.c:130-189 write_sparse().
         let mut reference = vec![0xAAu8; 2048];
         reference.extend(std::iter::repeat_n(0u8, 3072)); // hole 1
         reference.extend(std::iter::repeat_n(0xBBu8, 2048));

@@ -13,7 +13,7 @@ fn transfer_request_with_filter_excludes_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -43,7 +43,7 @@ fn transfer_request_with_filter_clear_resets_rules() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -80,7 +80,7 @@ fn transfer_request_with_filter_merge_applies_rules() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -116,7 +116,7 @@ fn transfer_request_with_filter_merge_clear_resets_rules() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -282,7 +282,7 @@ fn transfer_request_with_filter_merge_allows_a_chain_within_the_cap() {
     );
 }
 
-/// upstream: exclude.c:1393-1402 resolves `FILTRULE_CLEAR_LIST` via
+/// upstream: exclude.c:1542-1550 resolves `FILTRULE_CLEAR_LIST` via
 /// `pop_filter_list` which truncates only the local section of the per-merge-file
 /// rule list. A `!` inside a merge file must not clear parent CLI `--filter`
 /// rules collected before the merge directive.
@@ -304,7 +304,7 @@ fn transfer_request_with_filter_merge_bang_preserves_parent_cli_rule() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -327,7 +327,7 @@ fn transfer_request_with_filter_merge_bang_preserves_parent_cli_rule() {
     assert!(!copied_root.join("skip.log").exists());
 }
 
-/// upstream: exclude.c:1393-1402 - a `!` inside a nested merge file clears only
+/// upstream: exclude.c:1542-1550 - a `!` inside a nested merge file clears only
 /// the nested scope. Rules added by the outer merge file before the nested
 /// reference survive.
 #[test]
@@ -350,7 +350,7 @@ fn transfer_request_with_filter_nested_merge_bang_preserves_outer_scope() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -370,7 +370,7 @@ fn transfer_request_with_filter_nested_merge_bang_preserves_outer_scope() {
     assert!(!copied_root.join("skip.log").exists());
 }
 
-/// upstream: exclude.c:1393-1402 - `!` inside an `--exclude-from FILE` clears
+/// upstream: exclude.c:1542-1550 - `!` inside an `--exclude-from FILE` clears
 /// only the scope of that file. Parent `--filter`/`--exclude` CLI rules survive.
 #[test]
 fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
@@ -388,7 +388,7 @@ fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // filter rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--filter"),
@@ -410,7 +410,7 @@ fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
     assert!(!copied_root.join("skip.log").exists());
 }
 
-/// upstream: exclude.c:1399 pop_filter_list - a bare `!` inside `$CVSIGNORE`
+/// upstream: exclude.c:1548 pop_filter_list - a bare `!` inside `$CVSIGNORE`
 /// (or `~/.cvsignore`) keeps FILTRULE_CLEAR_LIST and clears the ENTIRE shared
 /// cvs_filter_list, so the built-in CVS_EXCLUDE_PATTERNS collected before it
 /// (e.g. `core`) are wiped too. Only patterns added after the `!` survive.
@@ -435,7 +435,7 @@ fn transfer_request_with_cvsignore_bang_wipes_default_cvs_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); -r walks source/ so the
+        // recurse defaults to 0 (options.c:117); -r walks source/ so the
         // cvs-exclude rules are actually exercised, mirroring upstream.
         OsString::from("--recursive"),
         OsString::from("--cvs-exclude"),

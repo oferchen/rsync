@@ -11,8 +11,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:send_files()` - Main transfer loop (lines 210-462)
-//! - `main.c:906-937` - `read_final_goodbye()` with del_stats handling
+//! - `sender.c:send_files()` - Main transfer loop (lines 488-821)
+//! - `main.c:921-952` - `read_final_goodbye()` with del_stats handling
 
 mod goodbye;
 mod orchestrator;
@@ -25,7 +25,7 @@ pub(in crate::generator) use goodbye::GoodbyeArrival;
 mod send_debug_emission_tests {
     //! Wording tests for `--debug=send` producer emissions.
     //!
-    //! Each test asserts the exact wire string that upstream rsync 3.4.1
+    //! Each test asserts the exact wire string that upstream rsync 3.5.1
     //! emits from `sender.c send_files` under `DEBUG_GTE(SEND, 1)`. The
     //! strings are matched byte-for-byte because interop harnesses grep
     //! for these literals.
@@ -56,7 +56,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_starting_matches_upstream() {
-        // upstream: sender.c:220-221
+        // upstream: sender.c:506-507
         init_send_level1();
         debug_log!(Send, 1, "send_files starting");
         let msgs = send_messages();
@@ -68,7 +68,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_phase_matches_upstream() {
-        // upstream: sender.c:544-545 - "send_files phase=%d"
+        // upstream: sender.c:543-544 - "send_files phase=%d"
         init_send_level1();
         let phase: i32 = 2;
         debug_log!(Send, 1, "send_files phase={}", phase);
@@ -81,7 +81,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_per_file_matches_upstream() {
-        // upstream: sender.c:576-577 - "send_files(%d, %s%s%s)"
+        // upstream: sender.c:575-576 - "send_files(%d, %s%s%s)"
         // F_PATHNAME unset -> path/slash empty, only fname emitted.
         init_send_level1();
         let ndx: i32 = 7;

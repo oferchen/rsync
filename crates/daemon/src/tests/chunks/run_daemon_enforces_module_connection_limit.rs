@@ -101,7 +101,7 @@ fn run_daemon_enforces_module_connection_limit() {
         "@ERROR: max connections (1) reached -- try again later"
     );
 
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();
@@ -120,11 +120,11 @@ fn run_daemon_enforces_module_connection_limit() {
     first_reader
         .read_line(&mut line)
         .expect("first denial message");
-    // upstream: clientserver.c:764 - auth failure uses
+    // upstream: clientserver.c:812 - auth failure uses
     // "@ERROR: auth failed on module %s\n"
     assert!(line.starts_with("@ERROR: auth failed on module"));
 
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();

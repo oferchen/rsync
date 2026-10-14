@@ -42,7 +42,7 @@ where
     Err: Write,
 {
     // upstream imposes no daemon-only restriction on `--protocol`: setup_protocol
-    // (compat.c) runs for local copies too, so `--protocol=N` (20..=32) is
+    // (compat.c) runs for local copies too, so `--protocol=N` (20..=33) is
     // accepted locally; this build negotiates nothing for a local copy and uses
     // the value only to gate the protocol-dependent `--stats` lines. See
     // resolve_desired_protocol.

@@ -115,7 +115,7 @@ fn execute_with_report_records_min_size_skip_notice_without_copying() {
     // `SkippedExisting`, `SkippedMissingDestination`) upstream emits during the
     // generator loop. The record is the only channel that carries the
     // "%s is under min-size" notice to the renderer, which prints it ahead of
-    // the statistics block (upstream: generator.c:1712-1719; ClientEvents derive
+    // the statistics block (upstream: generator.c:2126-2133; ClientEvents derive
     // from records() in core `ClientSummary::from_report`). It is a skip notice,
     // not a copy: no data is written and no file is counted as copied.
     let records = report.records();
@@ -200,10 +200,10 @@ fn delta_matches_the_basis_short_final_block_at_a_full_eof_window() {
     // remainder is the only basis block whose recorded length is below the
     // block length, so it is the only one that can satisfy upstream's
     // `l = MIN(blength, len-offset); if (l != s->sums[i].len) continue;`
-    // (match.c:222-224) - and only at the file's own end, because upstream's
+    // (match.c:254-256) - and only at the file's own end, because upstream's
     // scan is bounded by that block's length
-    // (`end = len + 1 - s->sums[s->count-1].len`, match.c:174) and its window
-    // shrinks to reach it (match.c:321,331).
+    // (`end = len + 1 - s->sums[s->count-1].len`, match.c:197) and its window
+    // shrinks to reach it (match.c:338,364).
     //
     // WHY THIS ASSERTION AND NOT BYTE-EQUALITY: reconstruction is byte-exact
     // either way. The defect is that the trailing block is re-sent as literal

@@ -92,7 +92,7 @@ fn handshake_error_to_client_error(error: &io::Error) -> Option<ClientError> {
         return Some(daemon_protocol_error(input));
     }
 
-    // upstream: compat.c:619-623 setup_protocol - a daemon that advertises a
+    // upstream: compat.c:621-626 setup_protocol() - a daemon that advertises a
     // protocol version outside [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]
     // makes the client exit_cleanup(RERR_PROTOCOL) (exit 2). Both the
     // out-of-range (UnsupportedVersion) and no-mutual-version cases carry that
@@ -333,7 +333,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // WHY: upstream compat.c:619-623 setup_protocol exits RERR_PROTOCOL (2) when
+    // WHY: upstream compat.c:621-626 setup_protocol() exits RERR_PROTOCOL (2) when
     // the daemon advertises a protocol version outside
     // [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]. oc rejects the out-of-range
     // greeting during negotiation, so the daemon handshake mapper must report

@@ -1,16 +1,16 @@
-//! UTS-V3-D regression for the upstream `files-from.test` 4th invocation:
+//! Regression for the upstream `files-from_test.py` 4th invocation:
 //! upstream sender → oc-rsync server-receiver with
-//! `--files-from=host:path`. Upstream's `main.c:1191-1198` opens the
+//! `--files-from=host:path`. Upstream's `main.c:1226-1234` takes the
 //! local filesfrom file on the receiver side and forwards its bytes back
 //! to the sender via `start_filesfrom_forwarding(filesfrom_fd)`. Before
 //! this fix oc-rsync's receiver dropped the path on the floor, so the
 //! upstream sender blocked forever at `building file list ...` waiting
 //! for filenames that never arrived (300s testsuite timeout, then
-//! SIGTERM at `rsync.c:716`).
+//! SIGTERM, handled by `rsync.c:843 sig_int()`).
 //!
 //! The transport-layer half of the fix is
 //! `protocol::forward_files_from`, which is the receiver-side equivalent
-//! of upstream `io.c:388 forward_filesfrom_data()`. This test pins the
+//! of upstream `io.c:455 forward_filesfrom_data()`. This test pins the
 //! load-bearing byte contract that the upstream sender's `filesfrom_fd`
 //! reader expects.
 //!
@@ -45,7 +45,7 @@ from/./dir/subdir/foobar.baz\0\
 #[test]
 fn forwarded_wire_bytes_match_upstream_sender_expectation() {
     // Bind the receiver-side forwarding contract to a byte-exact wire
-    // pattern. The upstream sender's `flist.c:2501 read_line` parser
+    // pattern. The upstream sender's `flist.c:2809 read_line` parser
     // consumes NUL-terminated entries until it hits a NUL with an empty
     // entry buffer (the double-NUL terminator). Any deviation here -
     // missing terminator, dropped CR, premature flush - reproduces the

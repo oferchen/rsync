@@ -2,7 +2,7 @@
 //!
 //! Upstream's client advertises the `'i'` capability whenever
 //! `set_allow_inc_recurse()` leaves `allow_inc_recurse` set, whatever the
-//! transfer direction (`compat.c:162-181`, `options.c:3049`). oc-rsync's client
+//! transfer direction (`compat.c:162-180`, `options.c:3220`). oc-rsync's client
 //! has so far withheld it whenever it is the receiver, so every pull ran
 //! without INC_RECURSE. This flag stages the receiver's lazy sub-list
 //! consumption: when it is set, a pulling client advertises `'i'` under
@@ -48,9 +48,9 @@ fn enabled_from_value(value: &str) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `compat.c:162-181 set_allow_inc_recurse()` - the option gate, resolved by
+/// - `compat.c:162-180 set_allow_inc_recurse()` - the option gate, resolved by
 ///   [`ClientConfig::allow_inc_recurse`].
-/// - `options.c:3049 maybe_add_e_option()` - `if (allow_inc_recurse)` adds `'i'`.
+/// - `options.c:3220 maybe_add_e_option()` - `if (allow_inc_recurse)` adds `'i'`.
 pub(crate) fn advertise_inc_recurse(config: &ClientConfig, am_sender: bool) -> bool {
     advertise_inc_recurse_with(config, am_sender, pull_inc_recurse_enabled())
 }

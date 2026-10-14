@@ -18,7 +18,7 @@
 //!
 //! | field         | upstream anchor | meaning |
 //! |---------------|-----------------|---------|
-//! | `files`       | rsync.h:986 `files`, :988 `used`/`malloced` | entries in WIRE order; `used == files.len()`, `malloced == capacity` |
+//! | `files`       | rsync.h:986 `files`, :989 `used`/`malloced` | entries in WIRE order; `used == files.len()`, `malloced == capacity` |
 //! | `sorted`      | rsync.h:986 `sorted` | the sorted VIEW - alias of `files` or a cloned order (see below) |
 //! | `low`/`high`  | rsync.h:990 | 0-relative bounds of the sorted view excluding empties |
 //! | `ndx_start`   | rsync.h:991 | wire NDX of the first entry (inc_recurse offset) |
@@ -34,7 +34,7 @@
 //! numbers with the other side (since their names may not sort the same)"
 //! (flist.c:3270-3273). At every construction site `sorted` starts as a plain
 //! alias of `files` and is cloned only when `need_unsorted_flist` demands a
-//! separately-ordered copy (flist.c:2696-2700, :2811-2815, :3025-3046; the
+//! separately-ordered copy (flist.c:3268-3272, :2811-2815, :3025-3046; the
 //! flag is set for iconv at options.c:2200 and consumed at compat.c:800).
 //! [`SortedView`] models exactly that: `Alias` is the common case, and
 //! `Cloned` holds a permutation of indices into `files` so the entries are
@@ -111,11 +111,11 @@ pub enum SortedView {
 ///   separate `dir_flist`, so range validation against that list belongs to
 ///   the future `dir_flist` owner, not to this container.
 /// - `files` stays in wire order for the life of the segment; only the
-///   [`SortedView`] reorders (flist.c:3270-3273).
+///   [`SortedView`] reorders (flist.c:3513-3516).
 #[derive(Debug)]
 pub struct FlistSegment {
     /// Entries in wire order. upstream: `files`/`used`/`malloced`
-    /// (rsync.h:986, :988).
+    /// (rsync.h:986, :989).
     files: Vec<FileEntry>,
     /// The sorted view. upstream: `sorted` (rsync.h:986).
     sorted: SortedView,
@@ -238,8 +238,8 @@ impl FlistSegment {
     ///
     /// The `+ 1` in the chain arithmetic (flist.c:3511) leaves this slot
     /// unassigned; the remote generator uses it to itemize the segment's
-    /// parent directory (`ndx = cur_flist->ndx_start - 1`, generator.c:2313),
-    /// which the sender resolves through `parent_ndx` (sender.c:270-275).
+    /// parent directory (`ndx = cur_flist->ndx_start - 1`, generator.c:2787),
+    /// which the sender resolves through `parent_ndx` (sender.c:552-558).
     /// `NdxMap::resolve_itemize` relies on the same identity
     /// (`gap + 1 == ndx_start`).
     #[must_use]
@@ -267,7 +267,7 @@ impl FlistSegment {
     /// upstream: `f = flist->files[ndx - flist->ndx_start]` (rsync.c:437,
     /// after `flist_for_ndx()` selected the list). Always resolves through
     /// `files` - wire NDX values address the WIRE order, never the sorted
-    /// view (flist.c:3270-3273).
+    /// view (flist.c:3513-3516).
     #[must_use]
     pub fn entry_for_ndx(&self, wire_ndx: i32) -> Option<&FileEntry> {
         if !self.contains_ndx(wire_ndx) {
@@ -321,7 +321,7 @@ impl FlistSegment {
     /// Installs a cloned sorted order over the entries.
     ///
     /// upstream clones the pointer array only under `need_unsorted_flist`
-    /// (flist.c:2696-2700) and sorts the CLONE, leaving `files` in wire order
+    /// (flist.c:3268-3272) and sorts the CLONE, leaving `files` in wire order
     /// for the index-number exchange (flist.c:3270-3273). `order[i]` names
     /// the wire index of the view's `i`-th element.
     ///
@@ -412,7 +412,7 @@ mod tests {
 
     /// WHY: each successor must start at `prev.ndx_start + prev.used + 1`
     /// (flist.c:3511) - the skipped slot is the parent directory's gap NDX
-    /// that the remote generator itemizes through (generator.c:2313). An
+    /// that the remote generator itemizes through (generator.c:2787). An
     /// off-by-one here desyncs every NDX the peers exchange.
     #[test]
     fn gap_arithmetic_holds_across_three_chained_segments() {

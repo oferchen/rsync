@@ -84,7 +84,7 @@ impl LocalCopyOptions {
 
     /// Applies a `--compress-threads=N` request, forwarded to
     /// `ZSTD_c_nbWorkers` when zstd is the active codec.
-    /// upstream: `options.c:89` / `token.c:701`.
+    /// upstream: `options.c:93` / `token.c:752`.
     #[must_use]
     #[doc(alias = "--compress-threads")]
     pub const fn with_compression_threads(mut self, workers: Option<NonZeroU8>) -> Self {

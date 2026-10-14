@@ -973,7 +973,7 @@ fn prune_empty_dirs_cascading_after_filter_removes_all_files() {
 /// its preservation flag is off (here a symlink without `-l`) must still be
 /// kept, matching upstream `flist.c` prune_empty_dirs: the entry stays in the
 /// flist and reprieves its parent, and the generator only skips transferring
-/// it later (generator.c:1695-1701). Regression guard against over-pruning the
+/// it later (generator.c:2109-2116). Regression guard against over-pruning the
 /// parent directory of a skipped non-regular file.
 #[cfg(unix)]
 #[test]

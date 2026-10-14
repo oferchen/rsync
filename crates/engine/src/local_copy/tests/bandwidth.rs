@@ -78,8 +78,8 @@ fn execute_with_append_appends_missing_bytes() {
     // The 3-byte prefix the append skipped is neither literal nor matched.
     // Asserting 3 here encoded the old derivation `file_size - literal_bytes`,
     // which treats every non-literal byte as matched; upstream only ever
-    // increments `stats.matched_data` inside `matched()` (match.c:121), which
-    // append mode never reaches (match.c:389-390).
+    // increments `stats.matched_data` inside `matched()` (match.c:144), which
+    // append mode never reaches (match.c:430-431).
     assert_eq!(summary.matched_bytes(), 0);
 }
 
@@ -118,9 +118,9 @@ fn execute_with_append_verify_appends_then_redoes_on_mismatch() {
 
     // Zero matched bytes, matching upstream. The 3-byte prefix pass one
     // appended past is neither literal nor matched: upstream never calls
-    // `matched()` in append mode (match.c:389-390 sets
+    // `matched()` in append mode (match.c:430-431 sets
     // `last_match = s->flength; s->count = 0;` so the hash loop is skipped),
-    // and `stats.matched_data` grows nowhere else (match.c:121). Pass two is an
+    // and `stats.matched_data` grows nowhere else (match.c:144). Pass two is an
     // ordinary delta whose single 6-byte basis block does not match, so it
     // contributes nothing either.
     assert_eq!(summary.matched_bytes(), 0);
@@ -306,7 +306,7 @@ fn execute_with_compression_limits_post_compress_bandwidth() {
 /// Pacing on the full literal-read or source size would over-throttle a delta
 /// transfer whose actual wire volume is small.
 ///
-/// upstream: io.c:879 `sleep_for_bwlimit(n)`; token.c:`send_token()` writes the
+/// upstream: io.c:980 `sleep_for_bwlimit(n)`; token.c:`send_token()` writes the
 /// literal length + bytes and the negative block-reference tokens that `n`
 /// counts.
 #[test]

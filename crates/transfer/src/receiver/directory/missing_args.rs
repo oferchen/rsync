@@ -1,7 +1,7 @@
 //! Receiver-side handler for `--delete-missing-args` mode-0 sentinel entries.
 //!
 //! When the sender emits a mode-0 sentinel entry for a vanished top-level
-//! source (`flist.c:2491-2497`), the receiver must delete the corresponding
+//! source (`flist.c:2951-2955`), the receiver must delete the corresponding
 //! destination path if it exists and skip any further processing for that
 //! entry. Without this handler the sentinel survives in the file list but
 //! triggers no filesystem action, leaving stale destination state behind
@@ -10,9 +10,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1360-1366` - `if (missing_args == 2 && file->mode == 0)`:
+//! - `generator.c:1749-1755` - `if (missing_args == 2 && file->mode == 0)`:
 //!   apply the filter list, then `delete_item()` when `statret == 0`.
-//! - `flist.c:2491-2497` - `missing_args == 2` sender branch that emits
+//! - `flist.c:2951-2955` `send_file_list()` - `missing_args == 2` branch that emits
 //!   the mode-0 sentinel this handler consumes.
 
 use std::io;
@@ -54,7 +54,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1360-1366` - `missing_args == 2 && file->mode == 0`
+    /// - `generator.c:1749-1755` - `missing_args == 2 && file->mode == 0`
     ///   branch that calls `delete_item()` for an existing destination
     ///   and falls through (no creation) for a missing destination.
     /// - `generator.c:1629` - `del_opts` carries `DEL_RECURSE` only for
@@ -98,7 +98,7 @@ impl ReceiverContext {
         }
 
         for entry in &self.file_list[range] {
-            // upstream: generator.c:1348 - sentinel is identified by mode == 0.
+            // upstream: generator.c:1749 - sentinel is identified by mode == 0.
             if entry.mode() != 0 {
                 continue;
             }
@@ -111,7 +111,7 @@ impl ReceiverContext {
 
             let target = dest_dir.join(relative);
 
-            // upstream: generator.c:1351 - `statret == 0`: only delete an
+            // upstream: generator.c:1752 - `statret == 0`: only delete an
             // existing destination. `symlink_metadata` here mirrors
             // `link_stat()` so a symlink is removed rather than followed.
             let metadata = match std::fs::symlink_metadata(&target) {
@@ -187,8 +187,8 @@ impl ReceiverContext {
             match result {
                 Ok(()) => {
                     if is_dir {
-                        // upstream: log.c:845 log_delete uses one "deleting %n"
-                        // form; %n (log.c:633-641) appends a trailing slash for
+                        // upstream: log.c:918 log_delete() uses one "deleting %n"
+                        // form; %n (log.c:665-673) appends a trailing slash for
                         // directories, so a dir prints "deleting sub/" - no word
                         // "directory".
                         info_log!(Del, 1, "deleting {}/", target.display());

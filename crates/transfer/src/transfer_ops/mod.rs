@@ -100,7 +100,7 @@ pub struct RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:984-1000`: opens destination directly when inplace
+    /// - `receiver.c:1212-1231`: opens destination directly when inplace
     pub inplace: bool,
     /// Per-file inplace for partial-dir basis files (CF_INPLACE_PARTIAL_DIR).
     ///
@@ -149,8 +149,8 @@ pub struct RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:787-788` - generator skips writing signature blocks in append mode
-    /// - `sender.c:88-96` - `receive_sums()` returns early without reading blocks
+    /// - `generator.c:792-793` - generator skips writing signature blocks in append mode
+    /// - `sender.c:354-359` - `receive_sums()` returns early without reading blocks
     pub append: bool,
     /// Whether append-verify mode is active (`--append-verify`, append_mode == 2).
     ///
@@ -160,7 +160,7 @@ pub struct RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:370-386` - `if (append_mode == 2)` prefix `sum_update`
+    /// - `receiver.c:524-540` - `if (append_mode == 2)` prefix `sum_update`
     pub append_verify: bool,
 }
 
@@ -177,8 +177,8 @@ impl RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `token.c:271` - `recv_token()` selects plain or compressed based on `-z`
-    /// - `token.c:863-866` - zstd `r_init` only resets `rx_token`, not the DCtx
+    /// - `token.c:1100` - `recv_token()` selects plain or compressed based on `-z`
+    /// - `token.c:866-868` - zstd `r_init` only resets `rx_token`, not the DCtx
     ///
     /// # Errors
     ///
@@ -408,9 +408,9 @@ fn read_response_header<R: Read>(
 ) -> io::Result<HeaderOutcome> {
     let expected_ndx = pending.ndx();
 
-    // upstream: rsync.c:322-431 `read_ndx_and_attrs()`. The NDX must be read
+    // upstream: rsync.c:323-448 `read_ndx_and_attrs()`. The NDX must be read
     // through the marker-aware primitive, not the combined
-    // `read_with_codec_xattr` helper: `rsync.c:334-335` returns at `NDX_DONE`
+    // `read_with_codec_xattr` helper: `rsync.c:336-337` returns at `NDX_DONE`
     // *before* consuming any attribute byte, and `NDX_DONE` is a single 0x00 at
     // protocol >= 30. Reading the tail unconditionally would block in
     // `read_exact` for two `iflags` bytes the peer never sends - see the note on
@@ -420,7 +420,7 @@ fn read_response_header<R: Read>(
     // `ndx_segments` and `flist_eof`, so a sub-list marker arriving mid-response
     // is receivable rather than fatal. Nothing widens on its own: the sink's
     // `inc_recurse()` reads the negotiated compatibility flags, so a peer that
-    // never negotiated INC_RECURSE still trips the `rsync.c:343` gate on every
+    // never negotiated INC_RECURSE still trips the `rsync.c:344` gate on every
     // marker, exactly as this driver behaved before. `last_file_ndx` is
     // diagnostic context for that error only; it is not a classification input.
     let read = crate::receiver::ndx_stream::read_ndx_and_attrs(
@@ -432,7 +432,7 @@ fn read_response_header<R: Read>(
     );
     let (echoed_ndx, sender_attrs) = match read {
         Ok(Some(pair)) => pair,
-        // upstream: rsync.c:334-335 - `NDX_DONE` ends the phase before any
+        // upstream: rsync.c:336-337 - `NDX_DONE` ends the phase before any
         // attribute byte is read, and receiver.c:852-876 takes it as the
         // sender's phase boundary even with a request unanswered.
         Ok(None) => return Ok(HeaderOutcome::PhaseEnd),
@@ -509,7 +509,7 @@ fn read_response_header<R: Read>(
         sender_attrs.fnamecmp_type,
     );
 
-    // upstream: receiver.c:365-385 - in append mode, seek output fd to existing file length
+    // upstream: receiver.c:524-549 - in append mode, seek output fd to existing file length
     // (derived from echoed sum_head) before writing new data
     let append_offset = if ctx.config.append {
         echoed_sum_head.flength()
@@ -548,7 +548,7 @@ pub(crate) struct ResponseHeader {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:385-386` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    /// - `receiver.c:544-545` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
     append_offset: u64,
     /// Abbreviated xattr values from the sender (1-based num, value pairs).
     ///
@@ -565,9 +565,9 @@ mod tests {
 
     #[test]
     fn resolve_use_inplace_writes_to_destination_for_inplace() {
-        // upstream: receiver.c:984 - `inplace` selects the live destination as
+        // upstream: receiver.c:1212 - `inplace` selects the live destination as
         // the write target. `--append` reaches this through the same flag,
-        // promoted by apply_append_implies_inplace (options.c:2419).
+        // promoted by apply_append_implies_inplace (options.c:2561).
         assert!(resolve_use_inplace(true, false, false, None));
     }
 
@@ -589,7 +589,7 @@ mod tests {
         // needs_rename == true so an interrupt relocates the in-flight temp into
         // the partial dir (retain_partial_file's PartialDir branch) instead of
         // leaving a full-size but incomplete file at the live destination name.
-        // upstream: receiver.c:926,985 write one_inplace to partialptr, never fname.
+        // upstream: receiver.c:1212-1213 write one_inplace to partialptr, never fname.
         assert!(!resolve_use_inplace(
             false,
             true,
@@ -609,7 +609,7 @@ mod tests {
     #[test]
     fn resolve_use_inplace_partial_dir_claim_without_partial_dir_keeps_inplace() {
         // upstream: receiver.c:1153 - one_inplace needs a local partial_dir. With
-        // none, partialptr is fname (receiver.c:1008), so a peer that labels the
+        // none, partialptr is fname (receiver.c:1012), so a peer that labels the
         // basis FNAMECMP_PARTIAL_DIR still gets an --inplace write to the
         // destination, not a temp+rename.
         assert!(resolve_use_inplace(
@@ -697,7 +697,7 @@ mod tests {
         buf
     }
 
-    /// upstream: generator.c:1937-1947 - the generator writes the full itemize
+    /// upstream: generator.c:2377-2386 - the generator writes the full itemize
     /// iflags to the sender, so a new-file request carries ITEM_IS_NEW (0x2000)
     /// alongside ITEM_TRANSFER (0x8000) → wire shortint 0xA000 (LE 00 A0). The
     /// sender echoes these back and prints `<f+++++++++` (#301). A bare transfer
@@ -728,7 +728,7 @@ mod tests {
     /// `fnamecmp_type`/`xname` and owns the bytes they demand. ITEM_REPORT_XATTR
     /// is dropped here only because `request_bytes` runs with `-X` off; with
     /// `preserve_xattrs` false, upstream itemize() never sets it either
-    /// (generator.c:566/575).
+    /// (generator.c:571-575, 579-580).
     #[test]
     fn base_iflags_managed_bits_are_masked_off() {
         // Deliberately pollute base_iflags with the trailing-field bits and the
@@ -818,8 +818,8 @@ mod tests {
     /// ITEM_XNAME_FOLLOWS (0x9800), then the FNAMECMP_FUZZY byte (0x83), then the
     /// basename as a vstring. Without this the sender/receiver never learn the
     /// fuzzy basis over the wire, diverging from a real rsync generator.
-    /// upstream: generator.c:1944-1948 (iflags + fnamecmp_type + write_vstring),
-    /// io.c:2335 (vstring length prefix).
+    /// upstream: generator.c:2381-2384, 593-597 (iflags + fnamecmp_type + write_vstring),
+    /// io.c:2520 (vstring length prefix).
     #[test]
     fn fuzzy_request_emits_fnamecmp_fuzzy_and_xname_vstring() {
         let bytes = request_bytes_basis(protocol::FnameCmpType::Fuzzy(0), Some(b"old.txt"));
@@ -839,9 +839,9 @@ mod tests {
     /// FNAMECMP_BASIS_DIR_LOW + j byte (0x00 for j=0), and NO xname vstring - a
     /// basis-dir tag is below FNAMECMP_FUZZY so ITEM_XNAME_FOLLOWS stays clear.
     /// Without the basis-type byte a real upstream peer sees a bare FNAME request
-    /// and the wire diverges. upstream: generator.c:1054 returns
-    /// FNAMECMP_BASIS_DIR_LOW + j; generator.c:1943 sets ITEM_BASIS_TYPE_FOLLOWS;
-    /// generator.c:1945 gates ITEM_XNAME_FOLLOWS on fnamecmp_type >= FNAMECMP_FUZZY.
+    /// and the wire diverges. upstream: generator.c:1193 returns
+    /// FNAMECMP_BASIS_DIR_LOW + j; generator.c:2381-2382 sets ITEM_BASIS_TYPE_FOLLOWS;
+    /// generator.c:2383-2384 gates ITEM_XNAME_FOLLOWS on fnamecmp_type >= FNAMECMP_FUZZY.
     #[test]
     fn basis_dir_request_emits_basis_type_byte_no_xname() {
         let bytes = request_bytes_basis(protocol::FnameCmpType::BasisDir(0), None);
@@ -864,8 +864,8 @@ mod tests {
     /// FNAMECMP_FUZZY + (k + 1) (the dest dir is fuzzy-index 0), so reference dir
     /// 0 emits byte 0x84. iflags carry ITEM_TRANSFER|ITEM_BASIS_TYPE_FOLLOWS|
     /// ITEM_XNAME_FOLLOWS (0x9800, LE 00 98), then the 0x84 tag, then the basis
-    /// basename as a vstring. upstream: generator.c:861,903 (FNAMECMP_FUZZY + i),
-    /// generator.c:1944-1948 (iflags + fnamecmp_type + write_vstring).
+    /// basename as a vstring. upstream: generator.c:866,908 (FNAMECMP_FUZZY + i),
+    /// generator.c:2381-2384, 593-597 (iflags + fnamecmp_type + write_vstring).
     #[test]
     fn ref_dir_fuzzy_request_emits_fnamecmp_fuzzy_plus_index() {
         let bytes = request_bytes_basis(protocol::FnameCmpType::Fuzzy(1), Some(b"old.txt"));

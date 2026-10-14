@@ -12,7 +12,7 @@
 //! completion port drained with `GetQueuedCompletionStatusEx`. When neither
 //! batch is available or sparse mode is requested, the thread falls back to
 //! the buffered writer using a reusable 256 KB scratch buffer that mirrors
-//! upstream's static `wf_writeBuf` (fileio.c:165).
+//! upstream's static `wf_writeBuf` (fileio.c:262-266).
 
 use std::io;
 use std::thread::{self, JoinHandle};
@@ -40,7 +40,7 @@ pub struct DiskThreadHandle {
 
 /// Spawns the disk commit thread and returns channels + join handle.
 ///
-/// Buffer recycling mirrors upstream rsync's `simple_recv_token` (token.c:285)
+/// Buffer recycling mirrors upstream rsync's `simple_recv_token` (token.c:289)
 /// which uses a single static buffer that is never freed. Here, the disk thread
 /// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
 /// network thread, eliminating per-chunk malloc/free overhead.
@@ -194,7 +194,7 @@ fn log_iocp_status(policy: fast_io::IocpPolicy, batch_created: bool) {
 /// Main loop of the disk commit thread.
 ///
 /// Allocates a single 256KB write buffer reused across all files, matching
-/// upstream rsync's static `wf_writeBuf` (fileio.c:165). On Linux 5.6+
+/// upstream rsync's static `wf_writeBuf` (fileio.c:262-266). On Linux 5.6+
 /// with io_uring support, a batched ring writer is created once and reused
 /// across all files for reduced syscall overhead.
 fn disk_thread_main(

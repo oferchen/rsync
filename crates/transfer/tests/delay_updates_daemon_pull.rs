@@ -3,12 +3,12 @@
 //!
 //! # Background
 //!
-//! `--delay-updates` is a plain receiver-side option (upstream `options.c:777`,
+//! `--delay-updates` is a plain receiver-side option (upstream `options.c:791`,
 //! no `am_sender` gate). Upstream forwards `--delay-updates` to the remote only
-//! on a push (`options.c:2896-2902`, `partial_dir && am_sender`); on a pull the
+//! on a push (`options.c:3062-3068`, `partial_dir && am_sender`); on a pull the
 //! local client IS the receiver and the flag never travels over the wire, so
-//! whichever side plays the receiver must apply it itself (`receiver.c:672`,
-//! `1029-1050` - stage under the partial dir, then rename in the phase-2 sweep).
+//! whichever side plays the receiver must apply it itself (`receiver.c:1318-1331`
+//! stages under the partial dir, `receiver.c:701` renames in the phase-2 sweep).
 //!
 //! On a daemon pull the client-receiver's `ServerConfig` is assembled by
 //! `crates/core/src/client/remote/daemon_transfer/orchestration/server_config.rs::build_server_config_for_receiver`.
@@ -18,7 +18,7 @@
 //! in place and the atomic phase-2 rename never fired - `--delay-updates` was
 //! silently a no-op on this one transport/direction.
 //!
-//! # Why this matters (Rule 9)
+//! # Why this matters
 //!
 //! The contract is: an updated file is staged into the `.~tmp~/` partial dir
 //! and only moved into place during the end-of-transfer sweep, never written
@@ -56,10 +56,11 @@
 //!
 //! # Upstream References
 //!
-//! - `options.c:777` - `--delay-updates` is a plain option, not transport-gated.
-//! - `options.c:2896-2902` - the flag is forwarded to the remote only on a push
+//! - `options.c:791` - `--delay-updates` is a plain option, not transport-gated.
+//! - `options.c:3062-3068` - the flag is forwarded to the remote only on a push
 //!   (`partial_dir && am_sender`); a pull applies it on the local receiver.
-//! - `receiver.c:672,1045-1066` - stage under the partial dir, rename in phase 2.
+//! - `receiver.c:1318-1331,874-875,701` - stage under the partial dir, rename in
+//!   phase 2 via `handle_delayed_updates()`.
 
 #![cfg(unix)]
 

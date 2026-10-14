@@ -54,18 +54,19 @@
 //!
 //! ## Upstream Reference
 //!
-//! - `flist.c:2463 send_file_list()` - top-level + initial segment dispatch.
+//! - `flist.c:2739 send_file_list()` - top-level + initial segment dispatch.
 //! - `flist.c:send_extra_file_list()` - per-directory sub-segments,
 //!   `MIN_FILECNT_LOOKAHEAD` throttling, `NDX_FLIST_EOF` finalization.
-//! - `sender.c:206 send_files()` - main send loop, calls into segment
-//!   scheduling at the top and bottom of each iteration (lines ~227, ~261).
-//! - `generator.c:2243 generate_files()` - peer side that consumes the
+//! - `sender.c:488 send_files()` - main send loop, calls into segment
+//!   scheduling at the top and bottom of each iteration (lines 516 and 550).
+//! - `generator.c:2716 generate_files()` - peer side that consumes the
 //!   segmented stream and drives signature/data exchange.
-//! - `receiver.c:648 recv_files()` - receiver-side counterpart to the
+//! - `receiver.c:811 recv_files()` - receiver-side counterpart to the
 //!   sender's segmented dispatch.
-//! - `compat.c:161 set_allow_inc_recurse()` - capability negotiation gate
-//!   (`allow_inc_recurse` is cleared when `!recurse || use_qsort` or when
-//!   the sender side cannot satisfy the segmentation contract).
+//! - `compat.c:162 set_allow_inc_recurse()` - capability negotiation gate
+//!   (`allow_inc_recurse` is cleared when `!recurse || use_qsort`, on a
+//!   receiver with `--delete-before`/`--delete-after`/`--delay-updates`/
+//!   `--prune-empty-dirs`, or on a server whose client did not send `i`).
 //!
 //! ## Current status
 //!
@@ -75,7 +76,7 @@
 //! by default, mirroring upstream's `allow_inc_recurse = 1`
 //! initialization. `--no-inc-recursive` (or
 //! `ClientConfigBuilder::inc_recursive_send(false)`) clears the flag and
-//! suppresses the bit. Tracker #1862.
+//! suppresses the bit.
 
 mod context;
 mod delta;

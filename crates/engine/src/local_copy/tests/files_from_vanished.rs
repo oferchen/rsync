@@ -1,10 +1,10 @@
-// FFV-5/6/7: Tests for --files-from vanished file handling.
+// Tests for --files-from vanished file handling.
 //
 // Verifies that when source files listed in the plan vanish before
 // transfer, the engine produces the correct exit codes and behavior
 // for --ignore-missing-args and --delete-missing-args.
 
-// FFV-5: Missing source operand produces exit code 23 (link_stat failed).
+// Missing source operand produces exit code 23 (link_stat failed).
 //
 // When a source file is absent at scan time, upstream rsync emits
 // `link_stat "%s" failed: ...`, sets IOERR_GENERAL and exits RERR_PARTIAL
@@ -73,7 +73,7 @@ fn missing_source_exits_with_partial_code_and_copies_remaining() {
     );
 }
 
-// FFV-5 (single file variant): When the sole source file is missing at scan
+// Single file variant: when the sole source file is missing at scan
 // time, upstream exits 23 (RERR_PARTIAL) via the failed link_stat, not 24.
 #[test]
 fn sole_missing_source_exits_with_partial_code() {
@@ -100,7 +100,7 @@ fn sole_missing_source_exits_with_partial_code() {
     assert!(err.is_link_stat_failed());
 }
 
-// FFV-6: --ignore-missing-args suppresses warning and exits 0.
+// --ignore-missing-args suppresses warning and exits 0.
 //
 // With this flag, vanished sources are silently skipped.
 // The transfer succeeds (exit 0) and remaining files are copied.
@@ -148,7 +148,7 @@ fn ignore_missing_args_suppresses_vanished_error() {
     );
 }
 
-// FFV-6 (all files vanished): Even when every source file has vanished,
+// All files vanished: even when every source file has vanished,
 // --ignore-missing-args should succeed with exit 0.
 #[test]
 fn ignore_missing_args_all_vanished_exits_zero() {
@@ -185,7 +185,7 @@ fn ignore_missing_args_all_vanished_exits_zero() {
     assert_eq!(summary.files_copied(), 0, "no files should be copied");
 }
 
-// FFV-7: --delete-missing-args removes destination file for vanished source.
+// --delete-missing-args removes destination file for vanished source.
 //
 // When a source file listed as an operand vanishes between plan creation
 // and execution, --delete-missing-args deletes the corresponding destination
@@ -246,7 +246,7 @@ fn delete_missing_args_removes_destination_for_vanished_source() {
     );
 }
 
-// FFV-7 (no destination to delete): When the source vanishes but
+// No destination to delete: when the source vanishes but
 // no corresponding destination entry exists, --delete-missing-args
 // should still succeed without error.
 #[test]
@@ -292,7 +292,7 @@ fn delete_missing_args_no_destination_entry_succeeds() {
     );
 }
 
-// FFV-7 (directory vanished): a vanished directory operand reaches upstream's
+// Directory vanished: a vanished directory operand reaches upstream's
 // `delete_item(fname, mode, del_opts)` (generator.c:1749-1753), and `del_opts`
 // carries `DEL_RECURSE` only for `--delete` or `--force` (generator.c:1629).
 /// Copies `vanish_dir` (removed from the source after planning) and `keep.txt`

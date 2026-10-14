@@ -57,8 +57,8 @@ impl<F: FnMut(&TransferProgressEvent<'_>)> TransferProgressCallback for F {
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:330-340` - `rwrite()`: when `!am_server`, writes to stdout
-/// - `sender.c:290,431` - `maybe_log_item()` / `log_item()` after transfer
+/// - `log.c:336-345` - `rwrite()`: when `!am_server`, writes to stdout
+/// - `sender.c:585,787` - `maybe_log_item()` / `log_item()` after transfer
 pub trait ItemizeCallback {
     /// Called with a pre-formatted itemize line (including trailing newline).
     fn on_itemize(&mut self, line: &str);
@@ -92,21 +92,21 @@ impl<F: FnMut(&str)> ItemizeCallback for F {
 /// This is the daemon's OWN log-file write and is distinct from the client-side
 /// itemize forwarding driven by [`ItemizeCallback`]: upstream reaches it through
 /// `maybe_log_item()`'s `am_server` arm (`log.c:875`) and the unconditional
-/// per-transfer `log_item()` (`receiver.c:1290` / `sender.c:462`), neither of
+/// per-transfer `log_item()` (`receiver.c:1290` / `sender.c:787`), neither of
 /// which is gated on the client's `-i`.
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:866-874` - `log_item()` writes `FLOG` whenever `logfile_format` is set
+/// - `log.c:865-873` - `log_item()` writes `FLOG` whenever `logfile_format` is set
 /// - `log.c:875-891` - `maybe_log_item()` gates non-transfer items on the daemon
-/// - `receiver.c:1290` / `sender.c:462` - the per-transfer `log_item()`
+/// - `receiver.c:1290` / `sender.c:787` - the per-transfer `log_item()`
 pub trait DaemonFileLog {
     /// Renders and writes one daemon-log line for a processed entry.
     fn on_entry(&mut self, row: &DaemonLogRow);
 
     /// Writes one diagnostic line the transfer sent to the client.
     ///
-    /// upstream: log.c:312-331 `rwrite()` - a daemon passes every `FINFO`,
+    /// upstream: log.c:312-332 `rwrite()` - a daemon passes every `FINFO`,
     /// `FWARNING`, `FERROR` and `FERROR_XFER` message to `logit()` before the
     /// server frames it for the peer; only `FCLIENT` skips the log.
     ///

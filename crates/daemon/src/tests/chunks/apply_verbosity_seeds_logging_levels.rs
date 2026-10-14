@@ -2,7 +2,7 @@
 /// [`logging::VerbosityConfig`] so subsequent `info_gte` / `debug_gte`
 /// checks gate log output per upstream's `set_output_verbosity()` semantics.
 ///
-/// Before this wire-up landed (PR #5887 follow-up), the daemon stored the
+/// Before this wire-up landed, the daemon stored the
 /// `-v` count in `RuntimeOptions.verbosity` but never translated it into
 /// the logging crate's flag-level state, so any `info_gte(NAME, 2)` /
 /// `debug_gte(CMD, 1)` check anywhere in the protocol or transfer crates
@@ -20,7 +20,7 @@ fn apply_verbosity_seeds_logging_levels() {
 
     // verbosity = 0 -> only the default `nonreg` flag is set; nothing else
     // crosses the gate. Mirrors upstream's `info_verbosity[0] = "NONREG"`
-    // table entry in `options.c:228`.
+    // table entry in `options.c:256`.
     std::thread::spawn(|| {
         apply_verbosity(0);
         assert!(logging::info_gte(InfoFlag::Nonreg, 1));
@@ -60,7 +60,7 @@ fn apply_verbosity_seeds_logging_levels() {
 
     // verbosity = 3 -> RECV/SEND/GENR/OWN debug flags activate at level 1
     // (upstream `debug_verbosity[3]`). This is the cumulative behaviour
-    // documented in `set_output_verbosity()` (upstream: options.c:530).
+    // documented in `set_output_verbosity()` (upstream: options.c:532).
     std::thread::spawn(|| {
         apply_verbosity(3);
         assert!(logging::debug_gte(DebugFlag::Recv, 1));

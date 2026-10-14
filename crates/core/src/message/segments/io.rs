@@ -12,8 +12,7 @@ impl<'a> MessageSegments<'a> {
     /// trimmed before issuing the first vectored write to avoid writers
     /// reporting a spurious [`io::ErrorKind::WriteZero`] even though payload
     /// bytes remain. When the writer reports that vectored I/O is unsupported or
-    /// performs a partial write, the remaining bytes are flushed sequentially to
-    /// mirror upstream rsync's formatting logic.
+    /// performs a partial write, the remaining bytes are flushed sequentially.
     ///
     /// # Examples
     ///

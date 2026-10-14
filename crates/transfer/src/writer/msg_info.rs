@@ -21,7 +21,7 @@ use super::server::ServerWriter;
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:330-340` - `rwrite()` sends FINFO/FCLIENT as `MSG_INFO` when `am_server`
+/// - `log.c:355-366` - `rwrite()` sends FINFO/FCLIENT as `MSG_INFO` when `am_server`
 pub trait MsgInfoSender {
     /// Sends a `MSG_INFO` frame through the multiplexed output stream.
     ///
@@ -43,8 +43,8 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:310` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
-    /// - `log.c:311` - receipt of `FERROR_XFER` sets `got_xfer_error = 1`
+    /// - `receiver.c:466` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
+    /// - `log.c:338` - receipt of `FERROR_XFER` sets `got_xfer_error = 1`
     fn send_msg_error_xfer(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
@@ -61,9 +61,9 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1492` - `rprintf(FERROR, "*** Skipping any contents from
+    /// - `generator.c:1884` - `rprintf(FERROR, "*** Skipping any contents from
     ///   this failed directory ***\n")`
-    /// - `log.c:305-309` - `FERROR` maps to `MSG_ERROR` without touching
+    /// - `log.c:355-366` - `FERROR` maps to `MSG_ERROR` without touching
     ///   `got_xfer_error`
     fn send_msg_error(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
@@ -75,14 +75,14 @@ pub trait MsgInfoSender {
     /// text is framed instead of being written to the local stderr, so a client
     /// on the far end of a daemon or SSH connection renders it. Callers must
     /// downgrade to [`Self::send_msg_info`] below protocol 30, matching
-    /// `log.c:332-337`.
+    /// `log.c:359-364`.
     ///
     /// The default implementation is a no-op, matching [`Self::send_msg_info`].
     ///
     /// # Upstream Reference
     ///
-    /// - `log.c:330-346` - `rwrite()` sends `MSG_WARNING` when `am_server`
-    /// - `log.c:332-337` - `protocol_version < 30` maps `MSG_WARNING` to `MSG_INFO`
+    /// - `log.c:355-366` - `rwrite()` sends `MSG_WARNING` when `am_server`
+    /// - `log.c:359-364` - `protocol_version < 30` maps `MSG_WARNING` to `MSG_INFO`
     fn send_msg_warning(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
@@ -92,13 +92,13 @@ pub trait MsgInfoSender {
     /// A server generator emits one frame per deletion so the client renders the
     /// `deleting <path>` line itself (the client owns the verbosity and itemize
     /// gating). Directories carry a trailing NUL in `data` so the peer can tell
-    /// a directory from a regular file (upstream `io.c:1642`).
+    /// a directory from a regular file (upstream `log.c:913-914`).
     ///
     /// The default implementation is a no-op, matching [`Self::send_msg_info`].
     ///
     /// # Upstream Reference
     ///
-    /// - `log.c:866-869` - `am_server && protocol_version >= 29` sends
+    /// - `log.c:912-916` - `am_server && protocol_version >= 29` sends
     ///   `send_msg(MSG_DELETED, fname, len, am_generator)`.
     fn send_msg_deleted(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
@@ -115,8 +115,8 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1079-1085` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
-    /// - `io.c:1089-1104` - `send_msg_int(MSG_SUCCESS, ndx)` wire framing.
+    /// - `receiver.c:1345-1347` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `io.c:1194` `send_msg_success()` - `send_msg_int(MSG_SUCCESS, ndx)` wire framing.
     fn send_msg_success(&mut self, _ndx: i32) -> io::Result<()> {
         Ok(())
     }
@@ -152,8 +152,8 @@ pub trait MsgInfoSender {
     /// # Upstream Reference
     ///
     /// - `io.c:maybe_send_keepalive()` - the lull-gated empty-`MSG_DATA` emitter.
-    /// - `generator.c:296` `delete_in_dir()`, `generator.c:2138-2144`
-    ///   `touch_up_dirs()`, `generator.c:2348-2353` `generate_files()` - the
+    /// - `generator.c:302` `delete_in_dir()`, `generator.c:2612`
+    ///   `touch_up_dirs()`, `generator.c:2824` `generate_files()` - the
     ///   three generator sites that poke it during local disk work.
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         Ok(false)
@@ -170,7 +170,7 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:220` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
+    /// - `sender.c:502` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
     fn set_batch_route(&mut self, _route: BatchRoute) {}
 
     /// Returns `true` when ordinary writes are wrapped in `MSG_DATA` multiplex
@@ -196,7 +196,8 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1246` `start_filesfrom_forwarding` - `io_end_multiplex_out(MPLX_TO_BUFFERED)`.
+    /// - `io.c:1398-1405` `start_filesfrom_forwarding()` -
+    ///   `io_end_multiplex_out(MPLX_TO_BUFFERED)`.
     fn write_files_from_unframed(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
@@ -238,7 +239,7 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
-        // upstream: log.c:866-869 - the MSG_DELETED path only exists on a
+        // upstream: log.c:912-916 - the MSG_DELETED path only exists on a
         // multiplexed server stream; plain mode never reaches this branch.
         if self.is_multiplexed() {
             self.send_message(MessageCode::Deleted, data)
@@ -248,7 +249,7 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 
     fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
-        // upstream: receiver.c:1079-1085 - MSG_SUCCESS only rides the
+        // upstream: receiver.c:1345-1347 - MSG_SUCCESS only rides the
         // multiplexed server stream back to the sender; plain mode (e.g. tests)
         // never reaches this branch.
         if self.is_multiplexed() {
@@ -291,7 +292,7 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 
     fn write_files_from_unframed(&mut self, data: &[u8]) -> io::Result<()> {
-        // upstream: io.c:1246 start_filesfrom_forwarding switches the stream to
+        // upstream: io.c:1405 start_filesfrom_forwarding() switches the stream to
         // MPLX_TO_BUFFERED; write_raw flushes the pending frame and emits the
         // payload without MSG_DATA framing, leaving the stream multiplexed.
         self.write_raw(data)

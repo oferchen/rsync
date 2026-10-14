@@ -278,7 +278,7 @@ fn link_dest_uses_first_matching_directory() {
     assert!(summary.hard_links_created() >= 1);
 }
 
-// upstream: generator.c:954-983 try_dests_reg() scans every basis dir and picks
+// upstream: generator.c:1082-1102 try_dests_reg() scans every basis dir and picks
 // the BEST match_level, so an earlier match_level-2 basis (data matches but perms
 // differ) must NOT shadow a later match_level-3 basis (data + attrs match). The
 // exact basis is hard-linked with no attr reapply; a first-match scan would
@@ -360,7 +360,7 @@ fn link_dest_best_match_prefers_exact_over_content_only() {
     );
 }
 
-// upstream: generator.c:995-1031 - a LINK_DEST basis whose data matches but whose
+// upstream: generator.c:1114-1172 - a LINK_DEST basis whose data matches but whose
 // attributes differ (match_level 2) is NOT hard-linked; upstream falls through to
 // try_a_copy/copy_altdest_file, copying into a fresh inode and reapplying the
 // source attrs. Hard-linking + reapplying would corrupt the shared basis inode.
@@ -1357,7 +1357,7 @@ fn link_dest_permission_mismatch_with_perms_enabled() {
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn link_dest_copies_when_only_xattrs_differ() {
-    // upstream: generator.c:967-1054 try_dests_reg() - a --link-dest basis that
+    // upstream: generator.c:1073-1203 try_dests_reg() - a --link-dest basis that
     // matches the source's DATA (quick_check_ok) but whose preserved attributes
     // differ is match_level 2, NOT match_level 3. Upstream does not hard-link a
     // match_level-2 basis: it falls through to copy_altdest_file() + set_file_attrs,
@@ -1918,7 +1918,7 @@ fn alt_dest_arg_that_is_not_a_directory_does_not_fail_a_symlink_transfer() {
 /// the file into a fresh inode instead of linking it - silently, with exit 0.
 ///
 /// upstream: `rsync-3.5.1/util1.c:1744` `same_time()`;
-/// `generator.c:400` `mtime_differs()` -> `generator.c:1090` `try_dests_reg()`.
+/// `generator.c:402` `mtime_differs()` -> `generator.c:1090` `try_dests_reg()`.
 #[cfg(unix)]
 #[test]
 fn link_dest_hardlinks_a_basis_differing_only_in_mtime_nanoseconds() {

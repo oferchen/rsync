@@ -3,7 +3,7 @@
 //!
 //! # Background
 //!
-//! Upstream's `testsuite/reverse-daemon-delta_test.py` (3.4.4) exercises the
+//! Upstream's `testsuite/reverse-daemon-delta_test.py` (3.5.1) exercises the
 //! direction where an `rsyncd` module holds the authoritative copy and a
 //! client *pulls* it while already owning a perturbed basis. The receiver
 //! computes block signatures over its basis (`sum_head` + the `SignatureBlock`
@@ -17,10 +17,10 @@
 //!
 //! - daemon-sender delta generation:
 //!   `crates/transfer/src/generator/delta.rs::generate_delta_from_signature`
-//!   (refs `sender.c:390-431`), with wire decode of the signature in
+//!   (refs `sender.c:645-781`), with wire decode of the signature in
 //!   `crates/protocol/src/wire/signature.rs::read_signature`.
 //! - client receiver applying the delta:
-//!   `crates/transfer/src/receiver/` (`delta_apply`, `quick_check`).
+//!   `crates/transfer/src/receiver/` (`quick_check`).
 //!
 //! # What this test pins
 //!
@@ -39,8 +39,8 @@
 //! # Why a perturbed basis + `--ignore-times`
 //!
 //! The receiver only runs the delta algorithm against an *existing* basis, and
-//! the quick-check (`crates/transfer/src/receiver/quick_check.rs:46-87`) skips a
-//! file whose size and mtime both match. The basis here is the same size as the
+//! the quick-check (`crates/transfer/src/receiver/quick_check.rs::quick_check_matches`)
+//! skips a file whose size and mtime both match. The basis here is the same size as the
 //! authoritative file (so a same-second mtime could otherwise skip it), so
 //! `--ignore-times` forces the transfer to run and exercise the delta path. The
 //! middle third of the basis is overwritten while the leading and trailing
@@ -121,7 +121,7 @@ impl Drop for DaemonGuard {
 /// Spawn `oc-rsync --daemon` on `port` and wait until it accepts connections.
 fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
     // Acquire a race-free free port and start the daemon on it. Because the
-    // default daemon binds with SO_REUSEADDR only (upstream socket.c:455), a
+    // default daemon binds with SO_REUSEADDR only (upstream socket.c:605), a
     // port collision is a clean EADDRINUSE daemon exit - never a silent
     // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
     // See `test_support::daemon_port`.
@@ -189,7 +189,7 @@ fn run_oc_rsync_capture(
 }
 
 /// Parse the `Matched data: N bytes` line emitted by `--stats`
-/// (`crates/cli/src/frontend/progress/render.rs:503`). Returns the byte count
+/// (`crates/cli/src/frontend/progress/render.rs:877`). Returns the byte count
 /// with thousands separators stripped, or `None` if the line is absent.
 fn parse_matched_data(stats: &str) -> Option<u64> {
     let line = stats.lines().find(|l| l.contains("Matched data:"))?;

@@ -3,9 +3,9 @@
 /// When a username in `auth users` includes a suffix (`:ro`, `:rw`, or `:deny`),
 /// the access level overrides the module's default read_only/write_only settings.
 ///
-/// upstream: loadparm.c - `auth users` parameter supports `user:ro`, `user:rw`,
-/// and `user:deny` suffixes to control per-user access independently of the
-/// module's `read only` and `write only` settings.
+/// upstream: authenticate.c:358-371 `auth_server()` - an `auth users` token
+/// may carry a `:ro`, `:rw` or `:deny` suffix that controls per-user access
+/// independently of the module's `read only` and `write only` settings.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum UserAccessLevel {
     /// Use module's default access (read_only/write_only settings).
@@ -15,7 +15,7 @@ pub(crate) enum UserAccessLevel {
     ReadOnly,
     /// Read-write access regardless of module settings.
     ReadWrite,
-    /// Deny access (authentication succeeds but access is blocked).
+    /// Deny access; upstream refuses with "denied by rule" (authenticate.c:413-414).
     Deny,
 }
 
@@ -33,7 +33,7 @@ pub(crate) struct AuthUser {
 }
 
 impl AuthUser {
-    /// Creates a new AuthUser with default access level.
+    /// Creates a new `AuthUser` with default access level.
     #[allow(dead_code)] // Used in tests and for future use
     pub(crate) fn new(username: String) -> Self {
         Self {
@@ -42,7 +42,7 @@ impl AuthUser {
         }
     }
 
-    /// Creates a new AuthUser with a specific access level.
+    /// Creates a new `AuthUser` with a specific access level.
     pub(crate) fn with_access(username: String, access_level: UserAccessLevel) -> Self {
         Self {
             username,
@@ -76,7 +76,7 @@ pub(crate) trait GroupMembership {
 /// match - matching upstream, which compiles the `@group` branch only when
 /// `HAVE_GETGROUPLIST` is defined.
 ///
-/// upstream: authenticate.c:283-295 `auth_server()` resolves the authenticating
+/// upstream: authenticate.c:377-400 `auth_server()` resolves the authenticating
 /// user's groups with `getallgroups()` and `wildmatch`es each against `tok+1`.
 pub(crate) struct SystemGroupMembership;
 
@@ -102,7 +102,7 @@ impl GroupMembership for SystemGroupMembership {
 /// not the pattern - to `check_secret()` when looking up an `@group:` secret
 /// line. It is `None` for a plain-username match.
 ///
-/// upstream: authenticate.c:318 `auth_server()` -
+/// upstream: authenticate.c:416 `auth_server()` -
 /// `group_match >= 0 ? auth_uid_groups[group_match] : NULL`.
 pub(crate) struct AuthMatch<'a> {
     /// The matched `auth users` entry, carrying its `:ro`/`:rw`/`:deny` suffix.
@@ -126,7 +126,7 @@ pub(crate) struct AuthMatch<'a> {
 /// The user's group set is resolved lazily and at most once, only when an
 /// `@group` token is reached, mirroring upstream's cached `auth_uid_groups`.
 ///
-/// upstream: authenticate.c:274-304 `auth_server()` - `wildmatch(tok, line)`
+/// upstream: authenticate.c:356-407 `auth_server()` - `wildmatch(tok, line)`
 /// for plain tokens; for `@group`, `wildmatch(tok+1, auth_uid_groups[j])` over
 /// the authenticating user's own groups.
 pub(crate) fn authorize_auth_user<'a, G: GroupMembership>(

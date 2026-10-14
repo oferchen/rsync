@@ -1,7 +1,7 @@
-// Seccomp BPF allowlist for the daemon worker (LSM-SECCOMP).
+// Seccomp BPF allowlist for the daemon worker.
 //
-// Layers a kernel-enforced syscall allowlist above the SEC-1.p Landlock
-// LSM defense. Landlock denies path-based syscalls with EACCES; seccomp
+// Deviation from upstream: rsync installs no seccomp filter. This layers a
+// kernel-enforced syscall allowlist above the Landlock LSM defense. Landlock denies path-based syscalls with EACCES; seccomp
 // denies out-of-scope syscalls before the kernel ever consults the LSM
 // stack.
 //

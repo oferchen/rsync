@@ -15,9 +15,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1480-1482`/`:1605-1610`/`:1679-1682 itemize()`,
-//!   `receiver.c:742-802` (`stats.created_{dirs,symlinks,specials}`),
-//!   `receiver.c:575 no_batched_update()` (a missing special entry aborts
+//! - `generator.c:1869-1872`/`:2003-2009`/`:2093-2096 itemize()`,
+//!   `receiver.c:918-971` (`stats.created_{dirs,symlinks,specials}`),
+//!   `receiver.c:738 no_batched_update()` (a missing special entry aborts
 //!   the replay with exit 23).
 
 #![cfg(unix)]

@@ -47,18 +47,13 @@ pub(crate) fn parse_bracketed_host(
 
 // The daemon host and username are taken from the URL VERBATIM.
 //
-// upstream: options.c:3305 `check_for_hostspec()` parses `rsync://HOST:PORT/PATH`
-// and never decodes anything - rsync 3.5.0 contains no percent-decoder at all,
+// upstream: options.c:3311 `check_for_hostspec()` parses `rsync://HOST:PORT/PATH`
+// and never decodes anything - rsync 3.5.1 contains no percent-decoder at all,
 // so `%` is an ordinary hostname byte. That is load-bearing rather than an
-// omission: `socket.c:204-215 shell_unsafe_connect_host()` refuses a host
+// omission: `socket.c:204-217 shell_unsafe_connect_host()` refuses a host
 // beginning with `%` precisely because a nested fish would expand `%self`, and
 // it can only refuse what reaches it. An IPv6 zone id (`fe80::1%eth0`) relies on
 // the same literal treatment.
-//
-// oc previously decoded both components and rejected a lone `%` as a malformed
-// escape unless the text before it contained `:`. That rejected `%self` before
-// `RSYNC_CONNECT_PROG` validation could refuse it, and it silently rewrote any
-// host or username containing a `%XX` sequence.
 
 pub(crate) fn split_host_port(input: &str) -> Option<(&str, &str)> {
     let idx = input.rfind(':')?;
@@ -145,7 +140,7 @@ pub(crate) fn parse_host_port(
         // An empty authority stays empty. Upstream substitutes no default:
         // `rsync:///mod/` reaches getaddrinfo with an empty node and fails
         // there, and under RSYNC_CONNECT_PROG it reaches
-        // shell_unsafe_connect_host (socket.c:204-215), which refuses it -
+        // shell_unsafe_connect_host (socket.c:204-217), which refuses it -
         // an empty argument survives a direct exec but vanishes when a
         // nested shell re-splits, shifting every later argument left.
         let address = DaemonAddress::new(String::new(), default_port);
@@ -263,7 +258,7 @@ mod tests {
 
     /// A `%XX` sequence in the host reaches the connector as typed.
     ///
-    /// upstream: rsync 3.5.0 has no percent-decoder; `%` is an ordinary
+    /// upstream: rsync 3.5.1 has no percent-decoder; `%` is an ordinary
     /// hostname byte. These assertions are the INVERSE of what oc recorded
     /// while it decoded - `hello%20world` used to become `hello world`.
     #[test]

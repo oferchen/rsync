@@ -27,7 +27,7 @@
 //!
 //! # Upstream Reference
 //!
-//! See `fileio.c` in upstream rsync 3.4.1: `map_file()`, `map_ptr()`, `unmap_file()`.
+//! See `fileio.c` in upstream rsync 3.5.1: `map_file()`, `map_ptr()`, `unmap_file()`.
 
 mod buffered;
 mod wrapper;

@@ -31,9 +31,9 @@ pub(super) fn add_output_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::SetTrue),
         )
         .arg(
-            // upstream: options.c:616 `{"human-readable", 'h', POPT_ARG_NONE, ...}`
+            // upstream: options.c:625 declares `human-readable` (`-h`) as POPT_ARG_NONE:
             // takes no argument, so `--human-readable=N` is rejected. Each -h
-            // increments the level (options.c:1579): -h => base-1000 units,
+            // increments the level (options.c:1686): -h => base-1000 units,
             // -hh => base-1024 units.
             Arg::new("human-readable")
                 .short('h')
@@ -91,7 +91,7 @@ pub(super) fn add_output_args(command: ClapCommand) -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
-            // upstream: options.c - `-i`/`--itemize-changes` is a repeatable
+            // upstream: options.c:1693-1695 - `-i`/`--itemize-changes` is a repeatable
             // counter (`-ii` raises itemize detail), so accept multiple
             // occurrences via Count rather than SetTrue, which clap rejects on
             // repeat with "cannot be used multiple times".

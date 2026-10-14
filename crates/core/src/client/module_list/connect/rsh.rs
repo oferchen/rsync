@@ -8,7 +8,7 @@
 //! Shared by the transfer path (`remote::run_daemon_over_remote_shell`) and
 //! the module-listing path so both honour `-e PROG host::` identically.
 //!
-//! upstream: `main.c:616-626` + `main.c:1611-1626` - the daemon-over-rsh path
+//! upstream: `main.c:615-630` + `main.c:1648-1670` - the daemon-over-rsh path
 //! in `start_client()` runs `rsync_path --server --daemon .` with no
 //! `server_options()`, exports `RSYNC_PORT` into the shell environment, and
 //! then speaks the daemon protocol over the spawned process's stdin/stdout.
@@ -53,8 +53,11 @@ pub(crate) struct RshDaemonSpawn<'a> {
 /// Returns whether the remote-shell program is ssh (or an ssh-family binary
 /// such as `/usr/bin/ssh`), which understands the `-o`/`-J` connection
 /// options. A custom `-e` program (`rsh`, the testsuite `lsh.sh`, etc.) does
-/// not, and upstream only injects those SSH flags when the rsh is ssh. `-l
-/// <user>` is unaffected by this gate: upstream emits it for any program.
+/// not, so those SSH flags are only injected when the rsh is ssh. `-l <user>`
+/// is unaffected by this gate: upstream emits it for any program.
+///
+/// Deviation from upstream: `do_cmd()` (main.c:520-630) never injects `-o` or
+/// `-J`; these are oc-only additions.
 fn is_ssh_like(program: &OsStr) -> bool {
     let name = std::path::Path::new(program)
         .file_name()
@@ -88,8 +91,9 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
         args.push(opt.clone());
     }
 
-    // upstream: main.c - the `-o`/`-J` connection options are SSH-specific and
-    // are only injected when the remote-shell program is ssh. A custom
+    // Deviation from upstream: do_cmd() (main.c:520-630) never injects
+    // `-o`/`-J`. oc adds these SSH-specific connection options only when the
+    // remote-shell program is ssh. A custom
     // `-e PROG` (e.g. the testsuite `lsh.sh`, or `rsh`) is spawned verbatim as
     // `PROG <pre-args> <host> "<cmd>"`; passing it `-o ConnectTimeout=...`
     // breaks programs that do not understand SSH flags (lsh.sh reads the next
@@ -116,7 +120,7 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
         }
     }
 
-    // upstream: main.c:582-599 do_cmd() - `-l user` is emitted as a separate
+    // upstream: main.c:600-603 do_cmd() - `-l user` is emitted as a separate
     // argument for ANY remote-shell program, not just ssh: `lsh.sh` and
     // traditional `rsh` both parse `-l USER` (see `support/lsh.sh`), so
     // rendering `user@host` instead would leave those wrappers unable to
@@ -124,7 +128,7 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
     // parsed user is `daemon_connection && dash_l_set` - the caller already
     // wrote a literal `-l <user>` into the `--rsh`/`-e` string:
     // `for (i = 0; i < argc-1; i++) if (!strcmp(args[i], "-l") &&
-    // args[i+1][0] != '-') dash_l_set = 1;` (main.c:582-586), scanning the
+    // args[i+1][0] != '-') dash_l_set = 1;` (main.c:586-590), scanning the
     // whole tokenized `--rsh` argv. This path is always a daemon connection
     // (daemon-over-rsh), so the condition reduces to `!dash_l_set`.
     let dash_l_set = spec
@@ -138,7 +142,7 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
         args.push(OsString::from(user));
     }
 
-    // upstream: main.c:601-606 do_cmd() - -4/-6 appended when default_af_hint
+    // upstream: main.c:604-611 do_cmd() - -4/-6 appended when default_af_hint
     // set && strcmp(t,"ssh")==0, before the daemon_connection branch (applies
     // to daemon-over-rsh too). Placed immediately before the host operand,
     // after any `-l user`. Gated on the exact `ssh` basename, so ssh-family
@@ -158,7 +162,7 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
     // transfer never reaches this builder and keeps the name for ssh_config.
     args.push(OsString::from(idn::host_to_ascii(spec.host).as_ref()));
 
-    // upstream: main.c:616-626 - the remote command is
+    // upstream: main.c:615-630 - the remote command is
     // `rsync_path --server --daemon .` with no server_options().
     let rsync_path = spec.rsync_path.unwrap_or_else(|| OsStr::new("rsync"));
     args.push(rsync_path.to_os_string());
@@ -269,7 +273,7 @@ pub(crate) fn spawn_rsh_daemon_stream(
     let mut cmd = Command::new(&program);
     cmd.args(&args);
 
-    // upstream: main.c:1611-1612 - set_env_num("RSYNC_PORT", env_port)
+    // upstream: main.c:1649-1650 - set_env_num("RSYNC_PORT", env_port)
     cmd.env("RSYNC_PORT", spec.port.to_string());
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
@@ -388,7 +392,7 @@ mod tests {
 
     /// `--ipv4` over daemon-over-ssh must append `-4` immediately before the
     /// host operand, matching upstream do_cmd() which runs the family append
-    /// before the `daemon_connection` branch. upstream: main.c:601-602.
+    /// before the `daemon_connection` branch. upstream: main.c:605-606.
     #[test]
     fn appends_ipv4_flag_before_host_for_ssh() {
         let rendered = argv_strings("ssh", AddressMode::Ipv4);
@@ -409,7 +413,7 @@ mod tests {
         );
     }
 
-    /// upstream: main.c:605-606 - `--ipv6` appends `-6`.
+    /// upstream: main.c:609-610 - `--ipv6` appends `-6`.
     #[test]
     fn appends_ipv6_flag_for_ssh() {
         let rendered = argv_strings("ssh", AddressMode::Ipv6);
@@ -424,7 +428,7 @@ mod tests {
     }
 
     /// Default address mode injects neither flag; upstream gates the append on
-    /// `default_af_hint` being set. upstream: main.c:601/605.
+    /// `default_af_hint` being set. upstream: main.c:605/609.
     #[test]
     fn omits_family_flag_for_default_mode() {
         let rendered = argv_strings("ssh", AddressMode::Default);
@@ -440,7 +444,7 @@ mod tests {
 
     /// The gate is exact-`ssh`: an ssh-family wrapper like `autossh` (which
     /// `ends_with("ssh")`) must NOT receive `-4`, proving we match upstream's
-    /// `strcmp(t,"ssh")==0` rather than a suffix test. upstream: main.c:601.
+    /// `strcmp(t,"ssh")==0` rather than a suffix test. upstream: main.c:605.
     #[test]
     fn does_not_append_family_flag_for_autossh() {
         let rendered = argv_strings("autossh", AddressMode::Ipv4);
@@ -455,7 +459,7 @@ mod tests {
     }
 
     /// A non-ssh custom shell (`rsh`) never receives `-4`/`-6`.
-    /// upstream: main.c:601/605 gate on `strcmp(t,"ssh")==0`.
+    /// upstream: main.c:605/609 gate on `strcmp(t,"ssh")==0`.
     #[test]
     fn does_not_append_family_flag_for_rsh() {
         let rendered = argv_strings("rsh", AddressMode::Ipv4);
@@ -496,7 +500,7 @@ mod tests {
     /// branch and fail with "unable to connect to host user@localhost",
     /// silently breaking every `--rsh`/`-e` script written to the
     /// traditional `rsh -l user host` calling convention.
-    /// upstream: main.c:582-599 do_cmd() emits `-l user` unconditionally.
+    /// upstream: main.c:600-603 do_cmd() emits `-l user` for any program.
     #[test]
     fn renders_dash_l_user_for_non_ssh_program() {
         let rendered = argv_strings_with_user("lsh.sh", Some("backup"));
@@ -550,7 +554,7 @@ mod tests {
     /// `-l <user>` (the `dash_l_set` case), the parsed `user@host` login must
     /// not be re-emitted as a second `-l`, matching upstream's
     /// `daemon_connection && dash_l_set` skip.
-    /// upstream: main.c:582-586,596-599.
+    /// upstream: main.c:586-590,600-603.
     #[test]
     fn skips_dash_l_when_already_set_in_rsh_string() {
         let shell_args = vec![

@@ -58,7 +58,7 @@ impl LocalCopyOptions {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync.c:do_as_root()` -- bracket around privileged file operations
+    /// - `main.c:become_copy_as_user()` - where upstream applies the `--copy-as` IDs
     #[must_use]
     #[doc(alias = "--copy-as")]
     pub fn with_copy_as(mut self, ids: Option<CopyAsIds>) -> Self {

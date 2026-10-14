@@ -1,7 +1,7 @@
 //! # Overview
 //!
-//! Implements deterministic local filesystem copies used by the current
-//! `rsync` development snapshot. The module constructs
+//! Implements local filesystem copies, where both source and destination are
+//! local paths. The module constructs
 //! [`LocalCopyPlan`] values from CLI-style operands and executes them while
 //! preserving permissions, timestamps, and optional ownership metadata via
 //! [`metadata`].
@@ -244,8 +244,8 @@ pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf 
 /// absolute path.
 ///
 /// Upstream arrives at that string in two steps. `send_file_list()` splits each
-/// operand into a `dir`/`fn` pair and `push_dir()`s into `dir` before the
-/// `link_stat()` at `flist.c:2937`, which appends onto the `curr_dir` *string*
+/// operand into a `dir`/`fn` pair and `change_pathname()`s into `dir` before the
+/// `scan_link_stat()` at `flist.c:2937`, which appends onto the `curr_dir` *string*
 /// and cleans it lexically - it never re-reads the path from the kernel, so a
 /// symlinked component keeps the spelling the operator typed. `full_fname()`
 /// then prefixes the surviving relative `fn` with `curr_dir` before quoting it:
@@ -283,10 +283,11 @@ pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf 
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:1528-1559` - `full_fname()`; `:1445` is the
+/// - `rsync-3.5.1/util1.c:1528-1559` - `full_fname()`; `:1540` is the
 ///   leading-slash test this arm mirrors.
-/// - `rsync-3.5.1/flist.c:2928-2937` - the `dir`/`fn` split and the `push_dir()`
-///   that makes `curr_dir` the operand's parent before `link_stat()` runs.
+/// - `rsync-3.5.1/flist.c:2918-2937` - the `dir`/`fn` split and the
+///   `change_pathname()` that makes `curr_dir` the operand's parent before
+///   `scan_link_stat()` runs.
 pub(crate) fn operand_diagnostic_name(path: &std::path::Path) -> std::path::PathBuf {
     if path.has_root() {
         // Still collapsed, never re-anchored. On Unix this is exactly what the

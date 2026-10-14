@@ -55,7 +55,7 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[seg_start..])?
         {
-            // upstream: flist.c:1229 - `recv_user_name()` resolves an inline
+            // upstream: flist.c:1230 - `recv_user_name()` resolves an inline
             // name AS THE ENTRY IS DECODED, not after the list. A peer that
             // describes ownership only on the entry sends no trailing id list,
             // so deferring every lookup to `receive_id_lists` below would leave
@@ -78,7 +78,7 @@ impl ReceiverContext {
         // `--ignore-errors`, the local transcode failure not. Folding here
         // applied one rule to both.
 
-        // upstream: flist.c:3004-3005 - recv_id_list() called when !inc_recurse
+        // upstream: flist.c:3298-3299 - recv_id_list() called when !inc_recurse
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -97,12 +97,12 @@ impl ReceiverContext {
         // file list is complete. With INC_RECURSE the sender streams per-directory
         // sub-lists afterwards, terminated by NDX_FLIST_EOF, so leave `flist_eof`
         // clear until that marker is read (in `receive_one_extra_segment`'s caller).
-        // upstream: io.c:1788-1824 - `flist_eof` gates the on-demand fetch loop.
+        // upstream: generator.c:2775 - `flist_eof` gates the on-demand fetch loop.
         self.flist_eof = !inc_recurse;
 
         if !inc_recurse {
             self.receive_id_lists(reader)?;
-            // upstream: uidlist.c:483-494 recv_id_list() remaps the whole flist
+            // upstream: uidlist.c:484-496 recv_id_list() remaps the whole flist
             // from sender ids to local ids right after reading the name lists.
             self.remap_flist_ownership_from_id_lists();
             // upstream: flist.c:3298-3303 - the non-incremental receiver sets
@@ -115,7 +115,7 @@ impl ReceiverContext {
             self.remap_ownership(seg_start..self.file_list.len());
         }
 
-        // upstream: flist.c:3311-3315 - read io_error flag for protocol < 30.
+        // upstream: flist.c:3310-3314 - read io_error flag for protocol < 30.
         // The sender writes write_int(f, io_error) as a 4-byte LE integer after
         // the id lists. Protocol >= 30 uses MSG_IO_ERROR or SAFE_FILE_LIST instead.
         // `io_error |= err & IOERR_VALID_MASK` - a hostile peer must not be able
@@ -128,7 +128,7 @@ impl ReceiverContext {
             self.peer_flist_io_error |= protocol::sanitize_peer_io_error(i32::from_le_bytes(buf));
         }
 
-        // upstream: flist.c:1907 - send_file_entry() is called with flist->used
+        // upstream: flist.c:2072 - send_file_entry() is called with flist->used
         // (readdir-order position) BEFORE flist_sort_and_clean(). Leader GNUM values
         // (F_HL_GNUM) are readdir-order wire NDXes. Replace the u32::MAX sentinel
         // with the actual readdir-order wire NDX so followers can find their leader
@@ -143,38 +143,38 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: flist.c:3014 - flist_sort_and_clean() after recv_id_list()
+        // upstream: flist.c:3308 - flist_sort_and_clean() after recv_id_list()
         //
         // When `--iconv` is in effect, upstream sets `need_unsorted_flist = 1`
-        // (options.c:2076) so the receiver's NDX-addressed `flist->files[]`
+        // (options.c:2200) so the receiver's NDX-addressed `flist->files[]`
         // array stays in sender scan order; only a separate `flist->sorted[]`
         // pointer array is reordered. We do not maintain a parallel pointer
         // array, so we mirror upstream by skipping the in-place reorder when
         // an active (non-identity) iconv converter is configured. This keeps
         // `self.file_list` in wire (NDX) order so subsequent generator
         // requests resolve to the entry the sender meant.
-        // upstream: flist.c:2736-2738 - "both sides keep an unsorted
+        // upstream: flist.c:3046-3048 - "both sides keep an unsorted
         // file-list array because the names will differ on the sending and
         // receiving sides".
-        // upstream: flist.c:3259 flist_sort_and_clean() runs sort THEN the
-        // duplicate-clean pass (flist.c:3289-3325) on the receiver (am_sender
+        // upstream: flist.c:3308 flist_sort_and_clean() runs sort THEN the
+        // duplicate-clean pass (flist.c:3576-3650) on the receiver (am_sender
         // is false). A sender that emits the same normalized name twice
         // (redundant or hostile) must collapse to a single entry, keeping the
         // upstream survivor: a directory over a plain file of the same name
-        // "because it might have contents in the list" (flist.c:3303), else the
+        // "because it might have contents in the list" (flist.c:3610), else the
         // first entry. We reuse the shared sort+dedup primitive so both sides
         // clean identically. `_clean` stats mirror the DEBUG_GTE(DUP) trace and
         // are not surfaced elsewhere.
         //
         // When `--iconv` is in effect, upstream sets `need_unsorted_flist = 1`
-        // (options.c:2076) so the receiver's NDX-addressed `flist->files[]`
+        // (options.c:2200) so the receiver's NDX-addressed `flist->files[]`
         // array stays in sender scan order; only a separate `flist->sorted[]`
         // pointer array is reordered and dedup-cleared. We do not maintain a
         // parallel pointer array, so we mirror upstream by skipping the in-place
         // reorder+dedup when an active (non-identity) iconv converter is
         // configured. This keeps `self.file_list` in wire (NDX) order so
         // subsequent generator requests resolve to the entry the sender meant.
-        // upstream: flist.c:2736-2738 - "both sides keep an unsorted file-list
+        // upstream: flist.c:3046-3048 - "both sides keep an unsorted file-list
         // array because the names will differ on the sending and receiving
         // sides".
         let pre29 = self.protocol.as_u8() < 29;
@@ -182,7 +182,7 @@ impl ReceiverContext {
             let list = std::mem::take(self.file_list.whole_mut());
             // am_sender=false: the receiver always runs the duplicate-clean,
             // tombstoning dropped duplicates in place so NDX stays aligned with
-            // the sender's full un-deduped array (flist.c:3274,3332).
+            // the sender's full un-deduped array (flist.c:3634).
             let (cleaned, _clean) =
                 sort_and_clean_file_list(list, self.config.qsort, pre29, false, inc_recurse);
             *self.file_list.whole_mut() = cleaned;
@@ -196,7 +196,7 @@ impl ReceiverContext {
             self.dir_flist.append(pending, &self.file_list[seg_start..]);
         }
 
-        // upstream: flist.c:3364-3427 - flist_sort_and_clean() runs the
+        // upstream: flist.c:3666-3728 - flist_sort_and_clean() runs the
         // `--prune-empty-dirs` pass after sorting and dedup, before the caller's
         // match_hard_links() in recv_file_list(). Only the receiver runs this
         // pass (am_sender is false); the sender ships every directory.
@@ -211,7 +211,7 @@ impl ReceiverContext {
 
         // upstream: flist.c:3328 - dump the received flist at
         // DEBUG_GTE(FLIST, 3), after flist_sort_and_clean(). uid only shows
-        // for a root receiver (flist.c:3745 `(am_root || am_sender)`).
+        // for a root receiver (flist.c:3744 `(am_root || am_sender)`).
         protocol::flist::output_flist(
             protocol::flist::ProcessRole::PreForkReceiver,
             &self.file_list[seg_start..],
@@ -310,7 +310,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `flist.c:recv_file_list()` - per-sub-list entry decode
-    /// - `flist.c:3209` - `ndx_start = prev->ndx_start + prev->used + 1`
+    /// - `flist.c:3511` - `ndx_start = prev->ndx_start + prev->used + 1`
     pub(in crate::receiver) fn receive_one_extra_segment<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -333,9 +333,9 @@ impl ReceiverContext {
         let dir_ndx = NDX_FLIST_OFFSET - ndx;
         self.validate_extra_segment_dir_ndx(dir_ndx)?;
 
-        // upstream: rsync.c:373 - `[%s] receiving flist for dir %d` at
+        // upstream: rsync.c:374 - `[%s] receiving flist for dir %d` at
         // DEBUG_GTE(FLIST, 2). Upstream's forked receiver and generator each
-        // print their own copy (the second from io.c:1981); oc reads the
+        // print their own copy (the second from io.c:1982); oc reads the
         // stream once, so exactly one line appears.
         protocol::flist::trace_receiving_flist_for_dir(
             protocol::flist::ProcessRole::Receiver,
@@ -367,7 +367,7 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
         {
-            // upstream: flist.c:1229 - an inline name is resolved as the entry
+            // upstream: flist.c:1230 - an inline name is resolved as the entry
             // is decoded, exactly as in the initial list.
             #[cfg(unix)]
             self.register_inline_id_names(&entry)?;
@@ -390,7 +390,7 @@ impl ReceiverContext {
         // duplicate. See `DirFlist` for why the snapshot cannot wait.
         let pending_dirs = DirFlist::record_pre_clean(&self.file_list[flat_start..]);
 
-        // upstream: flist.c:2924-2935 - every entry in a sub-list must live under
+        // upstream: flist.c:3219-3233 - every entry in a sub-list must live under
         // the directory named by its header `dir_ndx`; a mismatch is an attempt
         // by a hostile sender to inject a path that escapes its declared parent,
         // which upstream aborts with `exit_cleanup(RERR_UNSUPPORTED)`. Validate
@@ -398,7 +398,7 @@ impl ReceiverContext {
         // escapes into the transfer.
         self.validate_extra_segment_path_belongs(dir_ndx, flat_start)?;
 
-        // upstream: flist.c:1871 - leader GNUM is readdir-order wire NDX,
+        // upstream: flist.c:1563 - leader GNUM is readdir-order wire NDX,
         // assigned before sorting.
         if self.config.flags.hard_links {
             for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
@@ -408,9 +408,9 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: flist.c:2426,3014 - both sides call flist_sort_and_clean()
+        // upstream: flist.c:2702,3308 - both sides call flist_sort_and_clean()
         // on EACH sub-list independently (send_extra_file_list / recv_file_list).
-        // That runs sort THEN the duplicate-clean pass (flist.c:3274, active for
+        // That runs sort THEN the duplicate-clean pass (flist.c:3576, active for
         // the receiver because `!am_sender || inc_recurse`), so a sub-list that
         // repeats a normalized name collapses to a single entry with the upstream
         // tie-break (a directory over a same-named file, else the first). We reuse
@@ -431,8 +431,8 @@ impl ReceiverContext {
         }
 
         // INC_RECURSE-on-pull security prerequisite: mirror upstream
-        // recv_file_entry()'s per-entry defenses (flist.c:994-996 clean_fname /
-        // absolute-path, 1022-1024 server-filter, 1026-1028 implied-include) for
+        // recv_file_entry()'s per-entry defenses (flist.c:1076-1077 clean_fname /
+        // absolute-path, 1363-1364 server-filter, 1368 implied-include) for
         // every sub-list entry, not just the level-1 list validated in
         // build_pipeline_setup(). Upstream aborts with exit_cleanup(RERR_UNSUPPORTED)
         // per offending entry; we abort too, so no Vec compaction runs on the
@@ -441,7 +441,7 @@ impl ReceiverContext {
         self.sanitize_segment_paths(flat_start)?;
         self.recheck_received_filter_entries(&self.file_list[flat_start..])?;
         self.recheck_received_implied_includes_entries(&self.file_list[flat_start..])?;
-        // upstream: flist.c:1455-1477 - the implied-parent downgrade is part of
+        // upstream: flist.c:1457-1484 - the implied-parent downgrade is part of
         // the same per-entry defense set, so sub-list dirs get it too.
         self.downgrade_implied_parent_dirs_from(flat_start)?;
 
@@ -463,7 +463,7 @@ impl ReceiverContext {
         self.dir_flist
             .append(pending_dirs, &self.file_list[flat_start..]);
 
-        // upstream: flist.c:3209 - ndx_start = prev->ndx_start + prev->used + 1
+        // upstream: flist.c:3511 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
         // upstream: io.c:1985-1986 / flist.c:3365-3366 - `flist->parent_ndx =
         // ndx`, the header's dir_flist index, not a transfer NDX.
@@ -493,7 +493,7 @@ impl ReceiverContext {
         // compression state (upstream's static recv_file_entry() variables).
         self.flist_reader_cache = Some(flist_reader);
 
-        // upstream: flist.c:3032 - each sub-list's raw wire bytes accumulate
+        // upstream: flist.c:3334 - each sub-list's raw wire bytes accumulate
         // into stats.flist_size via `+=` on every recv_file_list() call.
         self.flist_span_end(span_start);
 
@@ -521,11 +521,11 @@ impl ReceiverContext {
     ///
     /// - `flist.c:3149-3152` - `if (dir_ndx >= dir_flist->used) ... "refusing
     ///   invalid dir_ndx %u >= %u" ... exit_cleanup(RERR_PROTOCOL)`.
-    /// - `flist.c:3153-3161` - `if (!F_IS_ACTIVE(file)) ... "refusing flist for
+    /// - `flist.c:3153-3164` - `if (!F_IS_ACTIVE(file)) ... "refusing flist for
     ///   cleared dir_ndx %d"`. The clean pass can `clear_file()` a duplicate
     ///   directory while its `dir_flist` slot survives, and naming that slot
     ///   would put a NULL `f_name()` into the dirname comparison below.
-    /// - `flist.c:3162-3165` - `FLAG_GOT_DIR_FLIST` duplicate guard, "refusing
+    /// - `flist.c:3165-3168` - `FLAG_GOT_DIR_FLIST` duplicate guard, "refusing
     ///   malicious duplicate flist for dir %d", `exit_cleanup(RERR_PROTOCOL)`.
     pub(in crate::receiver) fn validate_extra_segment_dir_ndx(
         &mut self,
@@ -576,7 +576,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2924-2935` - `strcmp(cur_dir, d) != 0` -> "ABORTING due to
+    /// - `flist.c:3219-3233` - `strcmp(cur_dir, d) != 0` -> "ABORTING due to
     ///   invalid path from sender" -> `exit_cleanup(RERR_UNSUPPORTED)`.
     pub(in crate::receiver) fn validate_extra_segment_path_belongs(
         &mut self,
@@ -660,7 +660,7 @@ impl ReceiverContext {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2925-2926` - `if (relative_paths && *cur_dir == '/') cur_dir++;`
+/// - `flist.c:3222-3223` - `if (relative_paths && *cur_dir == '/') cur_dir++;`
 pub(in crate::receiver) fn strip_leading_slashes(p: &Path) -> &Path {
     let mut s = p;
     while let Ok(rest) = s.strip_prefix("/") {
@@ -681,7 +681,7 @@ pub(in crate::receiver) fn strip_leading_slashes(p: &Path) -> &Path {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:3314-3326` - `if (!file_total || !dir_flist->used ||
+/// - `flist.c:3315-3325` - `if (!file_total || !dir_flist->used ||
 ///   strcmp(flist->sorted[flist->low]->basename, ".") != 0) parent_ndx = -1`.
 fn initial_segment_parent_dir_ndx(segment: &[FileEntry], dir_flist_used: usize) -> Option<i32> {
     if dir_flist_used == 0 {

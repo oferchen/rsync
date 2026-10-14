@@ -10,8 +10,8 @@
 //! filtered_fwrite(logfile_fp, buf, len, 0, 1, trailing);
 //! ```
 //!
-//! (`log.c:126-131`). The `0, 1` pair is `use_isprint = 0, escape_c1 = 1`, so
-//! `filtered_fwrite` (`log.c:242-263`) escapes, as `\#ooo`:
+//! (`log.c:133-136`). The `0, 1` pair is `use_isprint = 0, escape_c1 = 1`, so
+//! `filtered_fwrite` (`log.c:242-264`) escapes, as `\#ooo`:
 //!
 //! - every byte below 0x20 except tab, which covers `LF` and `ESC`; and
 //! - the C1 range 0x80-0x9F, which covers the 8-bit `CSI` (0x9B).
@@ -157,7 +157,7 @@ fn assert_no_raw_escape_or_c1(name: &[u8]) {
     }
 }
 
-/// upstream: log.c:126-131 - `LF`, `ESC` and the 8-bit `CSI` are escaped as
+/// upstream: log.c:133-136 - `LF`, `ESC` and the 8-bit `CSI` are escaped as
 /// `\#ooo`, so a filename cannot forge a log line or drive the terminal of an
 /// operator who later `cat`s the log; `DEL`, the high bytes above the C1 range
 /// and tab survive verbatim because the log sink runs with `use_isprint = 0`.
@@ -166,7 +166,7 @@ fn log_file_escapes_controls_and_c1_but_keeps_high_bytes() {
     assert_rendering(PORTABLE_NAME, PORTABLE_RENDERING);
 }
 
-/// upstream: log.c:131 passes a fixed `use_isprint = 0, escape_c1 = 1` pair, so
+/// upstream: log.c:136 passes a fixed `use_isprint = 0, escape_c1 = 1` pair, so
 /// the log-file rendering is identical with and without `--8-bit-output`. A
 /// name-supplied control byte must not become raw just because `-8` was given.
 #[test]
@@ -208,7 +208,7 @@ mod non_utf8_names {
     /// [`NON_UTF8_NAME`] as the log file must render it.
     const NON_UTF8_RENDERING: &[u8] = b"A\\#033B\\#012C\\#233D\x7fE\xffF\tG";
 
-    /// upstream: log.c:126-131 - the 8-bit `CSI` is escaped as `\#233` because
+    /// upstream: log.c:133-136 - the 8-bit `CSI` is escaped as `\#233` because
     /// `escape_c1 = 1`, while 0xFF survives verbatim because `use_isprint = 0`,
     /// keeping a non-UTF-8 name readable in the log.
     #[test]

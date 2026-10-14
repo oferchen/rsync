@@ -367,7 +367,7 @@ mod tests {
     /// WHY: confinement beneath a root that is re-opened by path only moves
     /// the race up one level - swap the root itself and every confined open
     /// lands outside it. upstream: `rsync-3.5.1/flist.c:2967-2969` records each
-    /// source root by dev/ino and `sender.c:694-704` refuses a mismatch.
+    /// source root by dev/ino and `flist.c:311-342` refuses a mismatch with `ELOOP`.
     #[cfg(unix)]
     #[test]
     fn a_replaced_anchor_is_refused_with_eloop() {

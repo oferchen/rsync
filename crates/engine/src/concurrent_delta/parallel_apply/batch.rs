@@ -1,7 +1,6 @@
-//! Batched parallel apply path for the receive-side delta applier (SPL-38.d).
+//! Batched parallel apply path for the receive-side delta applier.
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the SPL-38 module
-//! decomposition. Sibling to [`super::handle::SlotHandle`] and
+//! Sibling to [`super::handle::SlotHandle`] and
 //! [`super::decrement_guard::DecrementGuard`]; reuses both via the per-slot
 //! handle returned by [`ParallelDeltaApplier::slot_for`].
 //!
@@ -43,7 +42,7 @@ impl ParallelDeltaApplier {
     /// batch, including any per-chunk strong-checksum mismatch surfaced by
     /// `Self::verify_chunk`.
     pub fn apply_batch_parallel(&self, chunks: Vec<DeltaChunk>) -> std::io::Result<()> {
-        // SAFETY (verify-write overlap contract - ABW-5.c audit:
+        // SAFETY (verify-write overlap contract - audit:
         //   docs/audit/abw-5c-verify-write-mutex-scope.md)
         //
         // The parallel verify step and the serial write loop access disjoint
@@ -76,7 +75,7 @@ impl ParallelDeltaApplier {
             .collect();
         let verified = verified?;
 
-        // ABW-5.a invariant 3: the rayon `collect` above is a hard barrier.
+        // Invariant 3: the rayon `collect` above is a hard barrier.
         // Every verify must complete before the first write starts. Assert
         // the batch is fully materialized (verified count equals submitted
         // count) so no verify work can still be in flight when the serial
@@ -94,7 +93,7 @@ impl ParallelDeltaApplier {
             let ndx = v.chunk.ndx;
             let handle = self.slot_for(ndx)?;
             let mut slot = handle.lock_slot(ndx, "apply_batch_parallel")?;
-            // ABW-5.a invariant 2: the per-file Mutex must be held for the
+            // Invariant 2: the per-file Mutex must be held for the
             // entire write critical section. The MutexGuard `slot` protects
             // the writer, reorder buffer, and bytes counter as a single
             // unit. In debug builds, capture bytes_written before and after
@@ -167,7 +166,7 @@ mod tests {
 
     #[test]
     fn verify_batch_rejects_mismatched_digest() {
-        // BR-3i.c error path under the batch entry point. The rayon
+        // Checksum-mismatch error path under the batch entry point. The rayon
         // parallel `collect` short-circuits on the first error, surfacing
         // the typed `ChecksumMismatch` instead of any successful write.
         let applier = ParallelDeltaApplier::new(4);
@@ -188,7 +187,7 @@ mod tests {
 
     #[test]
     fn parallel_apply_with_real_digests_matches_sequential_byte_for_byte() {
-        // BR-3i.e regression test: parallel apply with real per-chunk
+        // Regression test: parallel apply with real per-chunk
         // strong-checksum verification produces the same destination byte
         // stream as the sequential reference path. Guards against future
         // regressions where the verify path mutates `chunk.data` or

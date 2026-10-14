@@ -2,30 +2,30 @@
 //!
 //! Upstream gets this for free on a local transfer because "local" is just a
 //! client and a server exchanging the ordinary protocol over a socketpair
-//! (main.c:1486 sets `local_server`, main.c:662-668 forks `local_child`, and
-//! main.c:1063-1150 forks again so `recv_files()` and `generate_files()` run
+//! (main.c:1524 sets `local_server`, main.c:672 forks `local_child`, and
+//! main.c:1016-1181 forks again so `recv_files()` and `generate_files()` run
 //! concurrently). The local executor is a separate implementation of that
 //! transfer, so it has to reproduce the semantics explicitly:
 //!
 //! 1. **Append first.** The sender jumps `last_match` to the destination's
-//!    length and zeroes the block count (match.c:372-391), and the generator
-//!    writes a sum header with no block sums (generator.c:787), so pass one is
+//!    length and zeroes the block count (match.c:405-428), and the generator
+//!    writes a sum header with no block sums (generator.c:790), so pass one is
 //!    always a pure append.
 //! 2. **Verify the whole file.** `receive_data()` compares the sender's
 //!    whole-file checksum with the receiver's (receiver.c:534-535). With
 //!    `--append-verify` both sides fold the pre-existing prefix into that sum
-//!    (match.c:373-386, receiver.c:370-384) and then the identical appended
+//!    (match.c:414-428, receiver.c:529-543) and then the identical appended
 //!    tail, so the comparison is exactly "do the two prefixes agree".
 //! 3. **Retain the result.** `--append` implies `--inplace`
-//!    (options.c:2409-2420), so `finish_transfer()` runs even for `recv_ok == 0`
-//!    (receiver.c:1045) and the appended bytes stay on disk.
-//! 4. **Warn and request the redo** (receiver.c:1079-1113).
+//!    (options.c:2551-2562), so `finish_transfer()` runs even for `recv_ok == 0`
+//!    (receiver.c:1352-1357) and the appended bytes stay on disk.
+//! 4. **Warn and request the redo** (receiver.c:1342-1381).
 //! 5. **Redo as an ordinary delta.** The generator re-enters `recv_generator()`
 //!    with `append_mode` negated and `ignore_times` bumped
-//!    (generator.c:2186-2200), and `whole_file` was already forced to 0 for the
-//!    whole session because append mode is active (generator.c:2288-2289), so
+//!    (generator.c:2655-2690), and `whole_file` was already forced to 0 for the
+//!    whole session because append mode is active (generator.c:2761-2762), so
 //!    the retained partial is described as the delta basis
-//!    (generator.c:1967 -> generate_and_send_sums).
+//!    (generator.c:2405 -> generate_and_send_sums).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -104,7 +104,7 @@ pub(in crate::local_copy) fn execute_transfer(
                 Some(&retained),
                 // The destination existed before this pass: upstream counts
                 // `stats.created_files++` only on the non-redo leg
-                // (receiver.c:794).
+                // (receiver.c:961-970 recv_files()).
                 true,
                 file_type,
                 relative,
@@ -227,11 +227,11 @@ fn note_redo_discarded(context: &CopyContext, record_path: &Path, flags: &Transf
 
 /// The flag set upstream's generator installs around the phase-2 redo.
 ///
-/// upstream: generator.c:2186-2188 negates `append_mode` and bumps
-/// `ignore_times`; generator.c:2288-2289 already forced `whole_file = 0` for the
+/// upstream: generator.c:2655-2660 negates `append_mode` and bumps
+/// `ignore_times`; generator.c:2761-2762 already forced `whole_file = 0` for the
 /// session because append mode is active, which is what overrides the
 /// `whole_file = 1` default a local transfer would otherwise carry
-/// (main.c:665-666); receiver.c:777,787 negates `sparse_files` alongside
+/// (main.c:666); receiver.c:953-954,963-964 negates `sparse_files` alongside
 /// `append_mode`, restoring whatever `--sparse` asked for.
 fn redo_flags(flags: TransferFlags, sparse_enabled: bool) -> TransferFlags {
     TransferFlags {
@@ -249,12 +249,12 @@ fn redo_flags(flags: TransferFlags, sparse_enabled: bool) -> TransferFlags {
 
 /// Emits upstream's retained-update warning for a failed verification.
 ///
-/// upstream: receiver.c:1087-1110. The line is gated behind
-/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1088) and carries the
+/// upstream: receiver.c:1350-1371. The line is gated behind
+/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1351) and carries the
 /// transfer-relative name, never an absolute path.
 ///
 /// `keptstr` is unconditionally `"retained"`. Upstream reaches that string
-/// because `--append` implies `--inplace` (options.c:2409-2420), which takes
+/// because `--append` implies `--inplace` (options.c:2551-2562), which takes
 /// receiver.c:1089-1094 past both the `"discarded"` and the
 /// `"put into partial-dir"` leg. The local executor arrives at the same place by
 /// a different route: this warning is reachable only when `append_offset > 0`,
@@ -267,7 +267,7 @@ fn redo_flags(flags: TransferFlags, sparse_enabled: bool) -> TransferFlags {
 /// this warning announces has not run yet (upstream's `redoing` is still 0).
 ///
 /// The line goes to stderr because upstream emits it as `FWARNING`
-/// (rsync.h:278, routed by log.c:314-316), matching the other stderr notices
+/// (rsync.h:284, routed by log.c:337-339), matching the other stderr notices
 /// this executor writes.
 fn warn_verification_failed(context: &CopyContext, record_path: &Path) {
     if !logging::info_gte(logging::InfoFlag::Name, 1) && !context.options().is_itemize_active() {
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn redo_restores_sparse_writes_from_the_session_setting() {
-        // upstream: receiver.c:777,787 negates sparse_files alongside
+        // upstream: receiver.c:953-954,963-964 negates sparse_files alongside
         // append_mode, so --sparse suppressed during the append comes back for
         // the redo. Without --sparse it must stay off.
         assert!(redo_flags(flags(), true).use_sparse_writes);

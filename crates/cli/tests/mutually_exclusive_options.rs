@@ -75,7 +75,7 @@ fn test_delete_during_and_after_conflict() {
 
 #[test]
 fn test_delete_during_and_delay_are_same_when_term() {
-    // upstream: options.c:724-725,2219 - `--delete-during` and `--delete-delay`
+    // upstream: options.c:738-739,2336 - `--delete-during` and `--delete-delay`
     // both write the single `delete_during` counter, so combining them selects
     // one "during" WHEN term and is NOT a conflict (`!!delete_during` == 1).
     let result = parse_args([
@@ -236,7 +236,7 @@ fn test_multiple_usermap_concatenation_preserves_order() {
 
 #[test]
 fn test_append_and_whole_file_rejected() {
-    // upstream: options.c:2391 - --append cannot be used with --whole-file.
+    // upstream: options.c:2551-2556 - --append cannot be used with --whole-file.
     // Both flags parse cleanly individually; the conflict surfaces at config
     // build time and is reported through the rsync syntax-error path
     // (exit code 1).
@@ -262,7 +262,7 @@ fn test_append_and_whole_file_rejected() {
 
 #[test]
 fn test_old_args_and_secluded_args_rejected() {
-    // upstream: options.c:1983 - `--old-args` and `--secluded-args` are mutually
+    // upstream: options.c:2094-2099 - `--old-args` and `--secluded-args` are mutually
     // exclusive and abort with exit 1. Unlike most conflicts, upstream phrases
     // this one as "--secluded-args conflicts with --old-args." (secluded-args
     // named first, trailing period), which oc must reproduce verbatim.
@@ -302,7 +302,7 @@ fn test_rsh_and_ssh_url_operand_rejected() {
 
     assert_eq!(code, 1, "expected RERR_SYNTAX (exit code 1)");
     let stderr_text = String::from_utf8_lossy(&stderr);
-    // #7123: the reworded message names both --rsh/-e and RSYNC_RSH.
+    // The reworded message names both --rsh/-e and RSYNC_RSH.
     assert!(
         stderr_text.contains("a remote shell (from --rsh/-e or the RSYNC_RSH environment variable) cannot be combined with an ssh:// URL operand"),
         "stderr should explain the transport conflict and name RSYNC_RSH, got: {stderr_text}"
@@ -312,7 +312,7 @@ fn test_rsh_and_ssh_url_operand_rejected() {
 #[cfg(not(feature = "embedded-ssh"))]
 #[test]
 fn test_rsh_and_ssh_url_operand_reports_missing_embedded_ssh() {
-    // #7123: without the built-in SSH client, `ssh://` has no transport at all,
+    // Without the built-in SSH client, `ssh://` has no transport at all,
     // so `-e ssh` (or an implicit RSYNC_RSH) with an `ssh://` operand must
     // surface the "requires the embedded-ssh feature" diagnostic - NOT the -e
     // conflict, which would blame an option the user may never have typed on a

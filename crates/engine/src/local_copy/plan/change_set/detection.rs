@@ -11,7 +11,7 @@ impl LocalCopyChangeSet {
     /// Computes a change set for a file-like entry (regular files and symlinks).
     ///
     /// The position-2 `c` glyph is reserved for `--checksum` mode (upstream:
-    /// `generator.c:1942` - `if (always_checksum > 0) iflags |=
+    /// `generator.c:2379` - `if (always_checksum > 0) iflags |=
     /// ITEM_REPORT_CHANGE`); this constructor leaves it cleared. Callers
     /// running under `--checksum` should use
     /// [`for_file_with_checksum`](Self::for_file_with_checksum) and pass
@@ -42,7 +42,7 @@ impl LocalCopyChangeSet {
 
     /// Computes a change set, gating the `c` (checksum) glyph on `checksum_enabled`.
     ///
-    /// upstream: generator.c:1942 - `if (always_checksum > 0) iflags |=
+    /// upstream: generator.c:2379 - `if (always_checksum > 0) iflags |=
     /// ITEM_REPORT_CHANGE`. The position-2 `c` glyph fires only under
     /// `--checksum`; without it, even when the receiver wrote new data, the
     /// itemize line keeps `.` in slot 2. Callers that have an explicit
@@ -50,7 +50,7 @@ impl LocalCopyChangeSet {
     /// when checksum-mode is active.
     ///
     /// `xattrs_changed` is the *result* of the xattr comparison, not the `-X`
-    /// flag: upstream `generator.c:566-572` sets `ITEM_REPORT_XATTR` only when
+    /// flag: upstream `generator.c:571-577` sets `ITEM_REPORT_XATTR` only when
     /// `xattr_diff()` finds the destination's attributes differ from the
     /// sender's. Compute it with
     /// `xattrs_differ_from_source`
@@ -102,7 +102,7 @@ impl LocalCopyChangeSet {
         let is_symlink = metadata.file_type().is_symlink();
         let symlink_perms_ok = !is_symlink || ::metadata::CAN_CHMOD_SYMLINK;
 
-        // upstream: generator.c:531-533 - itemize() sets ITEM_REPORT_ATIME when
+        // upstream: generator.c:537-539 - itemize() sets ITEM_REPORT_ATIME when
         // `atimes_ndx` (`-U`) is active for a non-dir, non-symlink whose access
         // time differs from the destination. same_time() is called with a zero
         // nanosecond component for both sides (F_ATIME(file) and st_atime), so
@@ -134,7 +134,7 @@ impl LocalCopyChangeSet {
 
         // A `--chmod` spec never reaches a symlink's mode: upstream gates every
         // `tweak_mode()` call on `!S_ISLNK` (flist.c:1966-1967 send_file_name,
-        // flist.c:1221-1222 recv_file_entry, rsync.c:647-648 the daemon
+        // flist.c:1221-1222 recv_file_entry, rsync.c:795-796 the daemon
         // `outgoing chmod`), so a link's mode arrives at itemize() untweaked and
         // the `p` column stays driven by the plain `-p` / `-E` compare
         // (generator.c:424-433 `perms_differ`). Reporting `p` here would be a
@@ -184,8 +184,8 @@ impl LocalCopyChangeSet {
 
     /// Computes a change set for an existing destination directory.
     ///
-    /// Mirrors upstream `itemize()` (`generator.c:518-579`) for the directory
-    /// branch reached via `generator.c:1480-1483` when `statret == 0`: the
+    /// Mirrors upstream `itemize()` (`generator.c:517-585`) for the directory
+    /// branch reached via `generator.c:1869-1872` when `statret == 0`: the
     /// receiver flags `ITEM_REPORT_TIME` when `mtime_differs` (gated by
     /// `!omit_dir_times`), `ITEM_REPORT_PERMS` when the masked mode bits
     /// differ, and `ITEM_REPORT_OWNER`/`ITEM_REPORT_GROUP` when ownership
@@ -208,7 +208,7 @@ impl LocalCopyChangeSet {
             let new_mtime = metadata_modified_time(source);
             let old_mtime = metadata_modified_time(existing);
             // upstream: generator.c:533 - itemize() sets ITEM_REPORT_TIME via
-            // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1573)
+            // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1744)
             // compares whole seconds under `--modify-window`, so a sub-second
             // mtime drift on a directory must NOT light the `t` glyph. This is
             // type-agnostic in upstream: directories use the same same_time()
@@ -256,19 +256,19 @@ impl LocalCopyChangeSet {
     /// Computes a change set for a recreated symlink whose existing
     /// destination already pointed somewhere different.
     ///
-    /// Mirrors upstream `generator.c:1608-1609`, where the recreate path calls
+    /// Mirrors upstream `generator.c:2007-2008`, where the recreate path calls
     /// `itemize(... ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE ...)`.
     /// `ITEM_REPORT_CHANGE` lights up the `c` glyph in position 2 to signal
     /// that the link target itself changed. `itemize()` then adds
     /// `ITEM_REPORT_TIME` when `keep_time` holds and the symlink's mtime
     /// differs from the existing link's mtime; without `keep_time` (no `-t`,
-    /// or `-J`) the `ITEM_LOCAL_CHANGE` branch at generator.c:526-530 sets it
+    /// or `-J`) the `ITEM_LOCAL_CHANGE` branch at generator.c:532-536 sets it
     /// unconditionally.
     ///
     /// The mtime comparison uses `same_time()` semantics via
     /// `system_time_within_window`, not exact equality: upstream `itemize()` at
     /// `generator.c:533-534` calls `mtime_differs()` ->
-    /// `same_time(stp->st_mtime, ..., file->modtime, ...)` (util1.c:1573), which
+    /// `same_time(stp->st_mtime, ..., file->modtime, ...)` (util1.c:1744), which
     /// with the default `modify_window == 0` compares WHOLE SECONDS only
     /// (`f1_sec == f2_sec`) and ignores the fractional part. Two links whose
     /// mtimes fall in the same wall-clock second but differ in nanoseconds
@@ -296,9 +296,9 @@ impl LocalCopyChangeSet {
                 }
             }
         } else {
-            // upstream: generator.c:526-530 - without `keep_time` the
+            // upstream: generator.c:532-536 - without `keep_time` the
             // ITEM_LOCAL_CHANGE branch sets ITEM_REPORT_TIME unconditionally
-            // for a recreated link. log.c:714-717 renders it `t` when mtimes
+            // for a recreated link. log.c:746-749 renders it `t` when mtimes
             // are preserved (`-J` only drops keep_time, not preserve_mtimes)
             // and `T` when they are not.
             let change = if metadata_options.times() {
@@ -313,8 +313,8 @@ impl LocalCopyChangeSet {
         // not currently apply a symlink's mode (nothing calls lchmod or
         // setattrlist), so it must not report a change it will not make.
         // Upstream is not the reason - it chmods every file type
-        // (rsync.c:658-668, no S_ISLNK gate) and handles symlink portability
-        // inside do_chmod (syscall.c:900), which tries lchmod then
+        // (rsync.c:806-820, no S_ISLNK gate) and handles symlink portability
+        // inside do_chmod (syscall.c:1705), which tries lchmod then
         // setattrlist(FSOPT_NOFOLLOW). Revisit with symlink-mode support.
         change_set
     }
@@ -322,19 +322,19 @@ impl LocalCopyChangeSet {
     /// Computes a change set for a device or special file whose existing
     /// destination is being recreated because it differs from the source.
     ///
-    /// Mirrors upstream `generator.c:1677-1682`: after `atomic_create()`
+    /// Mirrors upstream `generator.c:2091-2096`: after `atomic_create()`
     /// recreates the node, `itemize()` runs with
     /// `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0`.
     /// `ITEM_REPORT_CHANGE` lights the position-2 `c` glyph; its source is the
     /// `st_rdev` mismatch (for devices) or the `_S_IFMT` mismatch (for
     /// specials) that made `quick_check_ok()` return false at
     /// `generator.c:657-671`, so the caller passes that comparison in via
-    /// `content_differs`. `itemize()` (`generator.c:508-549`) then derives the
+    /// `content_differs`. `itemize()` (`generator.c:517-585`) then derives the
     /// remaining glyphs exactly as for a regular file: `ITEM_REPORT_TIME`
     /// (rendered `t` when preserving mtimes and they differ, `T` when mtimes
     /// are not preserved because `ITEM_LOCAL_CHANGE` marks a fresh recreate),
     /// `ITEM_REPORT_PERMS`, and owner/group. Size is never reported because
-    /// `S_ISREG` is false for device and special nodes (`generator.c:521`).
+    /// `S_ISREG` is false for device and special nodes (`generator.c:527`).
     #[allow(clippy::too_many_arguments)]
     pub fn for_recreated_device(
         source: &fs::Metadata,
@@ -347,7 +347,7 @@ impl LocalCopyChangeSet {
     ) -> Self {
         let mut change_set = Self::new();
 
-        // upstream: generator.c:1680-1681 - the recreate path passes
+        // upstream: generator.c:2094-2095 - the recreate path passes
         // ITEM_REPORT_CHANGE, but it is only reached because quick_check_ok()
         // found a differing device number / special type. Light the `c` glyph
         // from that same comparison.
@@ -355,11 +355,11 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_checksum_changed(true);
         }
 
-        // upstream: generator.c:526-530 - with preserve_mtimes (`keep_time`),
+        // upstream: generator.c:532-536 - with preserve_mtimes (`keep_time`),
         // ITEM_REPORT_TIME fires only when the mtime differs (rendered `t`).
         // Without preserve_mtimes, the ITEM_LOCAL_CHANGE branch sets
         // ITEM_REPORT_TIME unconditionally for a freshly recreated node
-        // (rendered `T` via log.c:716-717). When the node is not being
+        // (rendered `T` via log.c:748-749). When the node is not being
         // recreated (`content_differs == false`, i.e. the upstream identical
         // branch that passes iflags 0) the time is reported only under
         // preserve_mtimes when it differs.
@@ -375,7 +375,7 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_time_change(Some(TimeChange::TransferTime));
         }
 
-        // upstream: generator.c:540-545 - perms compared via BITS_EQUAL under
+        // upstream: generator.c:553-558 - perms compared via BITS_EQUAL under
         // preserve_perms; an explicit --chmod always reports.
         if metadata_options.permissions() && permissions_changed(source, Some(existing), true) {
             change_set = change_set.with_permissions_changed(true);
@@ -384,7 +384,7 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_permissions_changed(true);
         }
 
-        // upstream: generator.c:546-549 - owner/group flags.
+        // upstream: generator.c:559-562 - owner/group flags.
         if owner_changed(metadata_options, source, Some(existing), true) {
             change_set = change_set.with_owner_changed(true);
         }
@@ -428,7 +428,7 @@ fn determine_time_change(
         let old_mtime = existing.and_then(metadata_modified_time);
 
         // upstream: generator.c:533 - the ITEM_REPORT_TIME bit is set via
-        // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1573)
+        // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1744)
         // treats two mtimes as equal when their whole-second delta is within
         // `--modify-window`, so a sub-window drift must NOT light the `t` glyph.
         match (new_mtime, old_mtime) {
@@ -526,7 +526,7 @@ fn metadata_modified_time(metadata: &fs::Metadata) -> Option<SystemTime> {
 
 /// Extracts the whole-second access time from filesystem metadata.
 ///
-/// upstream: generator.c:532 compares `st_atime` via `same_time(..., 0, ..., 0)`
+/// upstream: generator.c:538 compares `st_atime` via `same_time(..., 0, ..., 0)`
 /// - a zero nanosecond component on both sides - so only whole seconds matter.
 #[cfg(unix)]
 fn metadata_access_secs(metadata: &fs::Metadata) -> i64 {

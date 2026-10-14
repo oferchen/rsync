@@ -14,7 +14,7 @@ use super::rule_line::RuleLine;
 /// and whether `C` implied `.cvsignore`. Modifiers are matched case-sensitively
 /// to mirror upstream.
 ///
-/// upstream: exclude.c:1256-1264 - `e` (FILTRULE_EXCLUDE_SELF) and `n`
+/// upstream: exclude.c:1410-1419 - `e` (FILTRULE_EXCLUDE_SELF) and `n`
 /// (FILTRULE_NO_INHERIT) are guarded only by `FILTRULE_MERGE_FILE`, which is set
 /// for a plain merge (`.`) as well as a dir-merge (`:`), so both accept them.
 pub(super) fn parse_merge_modifiers(
@@ -32,7 +32,7 @@ pub(super) fn parse_merge_modifiers(
     let mut saw_exclude = false;
     let mut assume_cvsignore = false;
 
-    // upstream: exclude.c:1214-1287 parse_rule_tok - merge-file modifiers switch
+    // upstream: exclude.c:1365-1443 parse_rule_tok - merge-file modifiers switch
     // on the literal byte, so they are strictly case-sensitive. The cvs-ignore
     // modifier is the uppercase `C`; a lowercase `c` (and any uppercased form of
     // the other modifiers) reaches the `default:` arm and is rejected as an
@@ -114,7 +114,7 @@ pub(super) fn parse_merge_modifiers(
             }
             // upstream: exclude.c:1438 - `x` carries no guard and is legal on
             // every prefix, `.` and `:` included. It is consumed and then
-            // deliberately dropped: FILTRULES_FROM_CONTAINER (exclude.c:1229)
+            // deliberately dropped: FILTRULES_FROM_CONTAINER (exclude.c:1230)
             // is ABS_PATH|INCLUDE|DIRECTORY|NEGATE|PERISHABLE, so XATTR is NOT
             // inherited by the merged rules. Marking the container xattr-only
             // would silently turn every rule in the file into an xattr rule.
@@ -171,15 +171,14 @@ pub(super) fn parse_short_merge_directive(
     // `split_short_merge_modifiers` already consumed the ONE separator that ends
     // the modifier run (upstream exclude.c:1444-1445, `if (*s) s++`), and the
     // merge FILENAME is then the rest of the rule verbatim (`len = strlen(s)`,
-    // exclude.c:1465). `parse_merge_name` (exclude.c:696-752) only runs
+    // exclude.c:1465). `parse_merge_name` (exclude.c:696-753) only runs
     // `clean_fname` over it (:734), which collapses slashes and `..`, never
     // whitespace. So a trailing space is part of the merge file's NAME.
     //
-    // Trimming here changed WHICH FILES TRANSFER. MEASURED against rsync 3.5.0
-    // over a source holding `a`, `b` and a filter file literally named
-    // `.rsync-filter ` (trailing space) that reads `- b`, with
-    // `--filter=': .rsync-filter '`: upstream finds the merge file and copies
-    // only `a`; oc trimmed the name, found nothing, and copied `b` too.
+    // MEASURED against rsync 3.5.0 over a source holding `a`, `b` and a filter
+    // file literally named `.rsync-filter ` (trailing space) that reads `- b`,
+    // with `--filter=': .rsync-filter '`: upstream finds the merge file and
+    // copies only `a`.
     let pattern = rest;
     let pattern = if pattern.is_empty() {
         if assume_cvsignore {
@@ -194,8 +193,8 @@ pub(super) fn parse_short_merge_directive(
     };
 
     if is_dir_merge {
-        // upstream: exclude.c:359-361 add_rule takes the merge name after the
-        // LAST '/', and setup_merge_file (exclude.c:797-801) rewrites
+        // upstream: exclude.c:354-357 add_rule takes the merge name after the
+        // LAST '/', and setup_merge_file (exclude.c:799-801) rewrites
         // `ex->pattern` to that basename, so the per-directory open at
         // exclude.c:910 scans each directory for the basename. A path portion
         // only steers upstream's ancestor parent_dirscan; it is never joined
@@ -205,7 +204,7 @@ pub(super) fn parse_short_merge_directive(
         // hide is served instead.
         //
         // Only the dir-merge (`:`) arm takes the basename. A plain merge (`.`)
-        // names ONE file resolved once (exclude.c:696-752 parse_merge_name), so
+        // names ONE file resolved once (exclude.c:696-753 parse_merge_name), so
         // its path portion is load-bearing and stays intact below.
         //
         // Same owner as the long `dir-merge` spelling in `directives.rs`, as the
@@ -275,7 +274,7 @@ mod tests {
         assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
         assert!(options.uses_whitespace());
         assert!(!options.allows_comments());
-        // upstream: exclude.c:1248-1254 - `C` modifier sets FILTRULE_CVS_IGNORE.
+        // upstream: exclude.c:1402-1409 - `C` modifier sets FILTRULE_CVS_IGNORE.
         // We record this so the wire encoder can forward it as cvs_exclude=true.
         assert!(options.is_cvs_mode());
     }
@@ -294,7 +293,7 @@ mod tests {
 
     #[test]
     fn parse_merge_modifiers_exclude_self_plain_merge() {
-        // upstream exclude.c:1256-1259 guards `e` only by FILTRULE_MERGE_FILE,
+        // upstream exclude.c:1410-1414 guards `e` only by FILTRULE_MERGE_FILE,
         // which a plain merge (`.`) sets too, so `.e FILE` is valid.
         let (options, _) = parse_merge_modifiers("e", arg(".e file"), false).unwrap();
         assert!(options.excludes_self());
@@ -308,15 +307,14 @@ mod tests {
 
     #[test]
     fn parse_merge_modifiers_no_inherit_plain_merge() {
-        // upstream exclude.c:1260-1264 guards `n` the same way as `e`.
+        // upstream exclude.c:1415-1419 guards `n` the same way as `e`.
         let (options, _) = parse_merge_modifiers("n", arg(".n file"), false).unwrap();
         assert!(!options.inherit_rules());
     }
 
     #[test]
     fn parse_short_plain_merge_accepts_exclude_self_modifier() {
-        // Regression: `.e FILE` previously mis-split, treating `e` as part of
-        // the file name ("e FILE") instead of as a modifier.
+        // `.e FILE`: `e` is a modifier, not part of the file name.
         let directive = parse_short_merge_directive(arg(".e rules"))
             .expect("recognized")
             .expect("parses");
@@ -456,15 +454,13 @@ mod tests {
     }
 
     /// A dir-merge name is a NAME, so a path portion is dropped: upstream's
-    /// `setup_merge_file` (exclude.c:797-801) rewrites `ex->pattern` to the
-    /// basename `add_rule` took (exclude.c:359-361), and the per-directory open
+    /// `setup_merge_file` (exclude.c:799-801) rewrites `ex->pattern` to the
+    /// basename `add_rule` took (exclude.c:354-357), and the per-directory open
     /// at exclude.c:910 reads the rewritten value.
     ///
     /// MEASURED against rsync 3.5.0 with `-r --filter=': dir/.filt'` over
     /// `src/.filt` plus `src/sub/{.filt,bait,keep}` where `src/sub/.filt` reads
-    /// `- bait`: upstream hides `bait`. oc carried `dir/.filt` into `Path::join`,
-    /// searched every directory for `<dir>/dir/.filt`, found nothing, and SERVED
-    /// the file the merge existed to hide.
+    /// `- bait`: upstream hides `bait`.
     #[test]
     fn parse_short_dir_merge_takes_the_basename_after_the_last_slash() {
         for (given, want) in [
@@ -487,7 +483,7 @@ mod tests {
 
     /// The control that keeps the cell above honest, and the reason the basename
     /// rule is NOT applied to both arms: a plain `merge` names ONE file resolved
-    /// once (exclude.c:696-752 `parse_merge_name`), never re-opened per
+    /// once (exclude.c:696-753 `parse_merge_name`), never re-opened per
     /// directory, so its path portion is load-bearing. Taking the basename here
     /// would read a different file.
     #[test]

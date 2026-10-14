@@ -2,13 +2,13 @@
 //!
 //! Analyzes source and destination operands to determine whether a transfer is
 //! push (local -> remote), pull (remote -> local), or proxy (remote -> remote).
-//! This mirrors the operand analysis in upstream `main.c:do_cmd()` which
+//! This mirrors the operand analysis in upstream `main.c:start_client()` which
 //! determines the local process role based on which operands are remote.
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:do_cmd()` - Role determination from operand positions
-//! - `main.c:check_for_hostspec()` - Remote operand detection
+//! - `main.c:start_client()` - Role determination from operand positions
+//! - `options.c:check_for_hostspec()` - Remote operand detection
 
 use std::ffi::OsString;
 
@@ -21,8 +21,7 @@ use super::{RemoteOperandParsed, RemoteOperands, TransferSpec};
 /// upstream `options.c:check_for_hostspec()`. Sharing one classifier keeps this
 /// remote-invocation planner, the CLI front end, and the local-copy executor
 /// from ever disagreeing on whether an operand is local, remote, or a daemon
-/// module - a #7153-class defect where a divergent verdict shipped the wrong
-/// operand to the remote server.
+/// module; a divergent verdict would ship the wrong operand to the remote server.
 pub use engine::operand::operand_is_remote;
 
 /// Parses a remote operand string into its components for validation.
@@ -34,7 +33,9 @@ pub use engine::operand::operand_is_remote;
 /// - `user@[::1]:path` (IPv6)
 ///
 /// This is a simplified parser focused on extracting host/user for validation.
-/// Full operand parsing happens in the SSH transport layer.
+/// Full operand parsing happens in the SSH transport layer. The host ends at
+/// the LAST `:`, unlike upstream `options.c:parse_hostspec()`, which stops at
+/// the first `:` outside an IPv6 bracket.
 fn parse_remote_operand(operand: &str) -> Result<RemoteOperandParsed, ClientError> {
     let operand_str = operand.to_owned();
 

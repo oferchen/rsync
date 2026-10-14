@@ -86,7 +86,7 @@ pub(super) fn create_hard_link(source: &Path, destination: &Path) -> io::Result<
 /// the confined resolver, not the ownership one.
 ///
 /// upstream: `rsync-3.5.1/backup.c:239-246` `link_or_rename()`;
-/// `syscall.c:815` `do_link_at()` under `operator_path_resolve`.
+/// `syscall.c:1076` `do_link_at()` under `operator_path_resolve`.
 pub(super) fn create_backup_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(test)]
     if let Some(result) = HARD_LINK_OVERRIDE.with(|cell| {

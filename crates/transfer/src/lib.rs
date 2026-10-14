@@ -7,7 +7,7 @@
 //!
 //! This crate provides the server-side entry points for `--server` mode,
 //! handling both Receiver and Generator roles as negotiated with the client.
-//! It implements the rsync delta transfer algorithm with full protocol 32
+//! It implements the rsync delta transfer algorithm with full protocol 33
 //! compatibility, SIMD-accelerated checksums, and metadata preservation.
 //!
 //! # Architecture
@@ -284,11 +284,11 @@ fn client_args_request_zlib(args: &[String]) -> bool {
 
 /// Reports whether `--compress-level` turns the negotiated codec off, mirroring
 /// the `do_compression_level == off_level` branch of `init_compression_level()`
-/// (`token.c:76-98`).
+/// (`token.c:93-98`).
 ///
 /// Upstream calls `init_compression_level()` from `parse_compress_choice(1)`
-/// (`compat.c:820`), which runs *after* `negotiate_the_strings()`
-/// (`compat.c:809`) has selected the codec. Only then is the meaning of a raw
+/// (`compat.c:831`), which runs *after* `negotiate_the_strings()`
+/// (`compat.c:820`) has selected the codec. Only then is the meaning of a raw
 /// level known: zlib/zlibx have `off_level == Z_NO_COMPRESSION` (`0`), so a
 /// literal `0` sets `do_compression = CPRES_NONE`; zstd/lz4 have
 /// `off_level == CLVL_NOT_SPECIFIED` and map a literal `0` to their default
@@ -309,7 +309,7 @@ fn negotiated_level_disables_compression(
     if compression_level == protocol::nstr::CLVL_NOT_SPECIFIED {
         return false;
     }
-    // Reuse the single per-codec clamp (`token.c:59-98`): `off_level` is the only
+    // Reuse the single per-codec clamp (`token.c:55-104`): `off_level` is the only
     // level it maps to "no compression" (`None`), which for the build-supported
     // codecs is exactly zlib/zlibx at `0`.
     matches!(
@@ -330,7 +330,7 @@ fn negotiated_level_disables_compression(
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1647-1648` / `exclude.c:1676-1677` -
+/// `exclude.c:1946-1947` / `exclude.c:1975-1976` -
 /// `receiver_wants_list = prune_empty_dirs || (delete_mode && (!delete_excluded || protocol_version >= 29))`
 pub(crate) const fn receiver_wants_filter_list(
     prune_empty_dirs: bool,
@@ -349,7 +349,7 @@ pub(crate) const fn receiver_wants_filter_list(
 /// from a push (the sender applies it locally) while still crossing the wire on a
 /// pull. Explicitly-sided merges (`:s-`/`:r-`) carry their side flag and are
 /// handled by the side-local check, so the no-prefix branch never adds a spurious
-/// `s` modifier - upstream `add_rule()` deliberately spares per-directory merges
+/// `s` modifier - upstream `parse_rule_tok()` deliberately spares per-directory merges
 /// from the implicit sender-side flip.
 ///
 /// CVS rules produced by `-C`/`--cvs-exclude` follow a separate gate: upstream's
@@ -363,8 +363,8 @@ pub(crate) const fn receiver_wants_filter_list(
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1605-1612` (`send_rules`); `exclude.c:1330-1332` (`add_rule`);
-/// `exclude.c:1652-1668` (`send_filter_list`, the CVS role/protocol gate).
+/// `exclude.c:1903-1912` (`send_rules`); `exclude.c:1478-1481` (`parse_rule_tok`);
+/// `exclude.c:1951-1968` (`send_filter_list`, the CVS role/protocol gate).
 fn wire_rule_crosses_wire(
     rule: &protocol::filters::FilterRuleWireFormat,
     client_is_sender: bool,
@@ -374,13 +374,13 @@ fn wire_rule_crosses_wire(
     if rule.cvs_origin {
         // upstream: exclude.c:1951 send_filter_list() - `if (cvs_exclude && am_sender)`
         // adds the `-C` rules before send_rules(); a receiving client adds them
-        // only afterwards (exclude.c:1663-1668), so they never cross the wire.
+        // only afterwards (exclude.c:1962-1967), so they never cross the wire.
         if !client_is_sender {
             return false;
         }
-        // upstream: exclude.c:1653 send_filter_list() - the `:C` per-directory
+        // upstream: exclude.c:1952 send_filter_list() - the `:C` per-directory
         // merge is added to the transmitted list only when protocol_version >= 29;
-        // on a legacy peer it is kept local (exclude.c:1664) instead.
+        // on a legacy peer it is kept local (exclude.c:1963-1964) instead.
         if matches!(rule.rule_type, protocol::filters::RuleType::DirMerge)
             && protocol.uses_old_prefixes()
         {
@@ -409,23 +409,23 @@ fn wire_rule_crosses_wire(
 
 /// Fatal diagnostic emitted when a filter rule cannot be represented on a
 /// pre-30 peer's wire, matching upstream `send_rules()` byte-for-byte
-/// (exclude.c:1625). oc's error layer appends the standard `(code 2) at ...`
-/// trailer, mirroring upstream's `exclude.c(1627) [sender=<ver>]`.
+/// (exclude.c:1925). oc's error layer appends the standard `(code 2) at ...`
+/// trailer, mirroring upstream's `exclude.c(1926) [sender=<ver>]`.
 pub(crate) const TOO_MODERN_FILTER_RULES_MSG: &str =
     "filter rules are too modern for remote rsync.";
 
 /// Reports whether the transmitted filter list is too modern for the peer and
 /// the transfer must abort, mirroring upstream `send_rules()`.
 ///
-/// Upstream `get_rule_prefix()` (exclude.c:1573-1577) returns NULL for a
+/// Upstream `get_rule_prefix()` (exclude.c:1872-1876) returns NULL for a
 /// perishable rule when building the wire form (`for_xfer`) at a protocol below
 /// 30 **and** the local side is the sender: the pre-30 wire has no `p` modifier,
-/// so the rule cannot be represented. `send_rules()` (exclude.c:1624-1628)
+/// so the rule cannot be represented. `send_rules()` (exclude.c:1923-1927)
 /// treats that NULL as fatal - it prints "filter rules are too modern for remote
 /// rsync." and calls `exit_cleanup(RERR_PROTOCOL)` (exit code 2) rather than
 /// silently dropping the rule. A receiver at a pre-30 protocol instead omits the
 /// `p` char and keeps the rule (the `else if (am_sender)` guard at
-/// exclude.c:1576 does not fire), so this predicate never aborts on a pull.
+/// exclude.c:1875 does not fire), so this predicate never aborts on a pull.
 ///
 /// The check runs over `wire_rules` - the rules that survive
 /// [`wire_rule_crosses_wire`] - because those are exactly the rules that reach
@@ -434,7 +434,7 @@ pub(crate) const TOO_MODERN_FILTER_RULES_MSG: &str =
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1573-1577` (`get_rule_prefix`, the NULL return); `exclude.c:1624-1628`
+/// `exclude.c:1872-1876` (`get_rule_prefix`, the NULL return); `exclude.c:1923-1927`
 /// (`send_rules`, the fatal abort).
 fn perishable_rules_too_modern(
     wire_rules: &[protocol::filters::FilterRuleWireFormat],
@@ -557,11 +557,11 @@ fn send_client_filter_list<W: Write>(
 /// Upstream rsync activates multiplex output differently depending on
 /// the execution context:
 ///
-/// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1283-1284).
-/// - **Client sender** (push): always for protocol >= 30 (main.c:1336-1337).
+/// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1309-1310).
+/// - **Client sender** (push): always for protocol >= 30 (main.c:1374-1375).
 /// - **Client receiver** (pull): when `need_messages_from_generator` is set
-///   (main.c:1380-1383). Upstream sets this unconditionally for protocol >= 30
-///   (compat.c:776), so the client always activates multiplex output for pull.
+///   (main.c:1418-1419). Upstream sets this unconditionally for protocol >= 30
+///   (compat.c:788), so the client always activates multiplex output for pull.
 fn requires_multiplex_output(
     client_mode: bool,
     _role: ServerRole,
@@ -569,9 +569,10 @@ fn requires_multiplex_output(
     _compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> bool {
     if client_mode {
-        // upstream: both sender (main.c:1336) and receiver (main.c:1380)
-        // activate multiplex output when need_messages_from_generator is set,
-        // which is unconditional for protocol >= 30 (compat.c:776).
+        // upstream: the sender activates multiplex output at protocol >= 30
+        // (main.c:1374) and the receiver when need_messages_from_generator is
+        // set (main.c:1418), which is unconditional for protocol >= 30
+        // (compat.c:788).
         protocol.supports_generator_messages()
     } else {
         protocol.supports_multiplex_io()
@@ -583,14 +584,14 @@ fn requires_multiplex_output(
 /// Returns `Some` only when the local role is the sender
 /// ([`ServerRole::Generator`], i.e. an SSH `--server --sender`, a client push,
 /// or a daemon-sender on a pull) and a non-zero `--bwlimit` is in effect. The
-/// receiver always returns `None`: upstream `main.c:1081` sets
+/// receiver always returns `None`: upstream `main.c:1096` sets
 /// `bwlimit_writemax = 0` on the receiver, so it never paces its own writes. A
 /// `None` result makes the sender's socket writer a zero-overhead passthrough.
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:1081` - the receiver disables its own bwlimit.
-/// - `io.c:864,879` / `options.c:2403-2406` - the sender clamps each write to
+/// - `main.c:1096` - the receiver disables its own bwlimit.
+/// - `io.c:952-953,979-980` / `options.c:2546-2548` - the sender clamps each write to
 ///   `bwlimit_writemax` then `sleep_for_bwlimit(n)`.
 fn sender_bandwidth_limiter(config: &ServerConfig) -> Option<bandwidth::BandwidthLimiter> {
     if config.role != ServerRole::Generator {
@@ -624,7 +625,7 @@ pub fn run_server_stdio(
     stdout: &mut dyn Write,
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
-    // upstream: compat.c:600-602 - the non-local server reconciles the client's
+    // upstream: compat.c:602-604 - the non-local server reconciles the client's
     // pre-release subprotocol (carried in its `-e` capability string) before it
     // writes its protocol version. For a stock release peer this is a no-op and
     // the version exchange is byte-identical to a plain `perform_handshake`.
@@ -726,7 +727,7 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
     pub itemize: Option<&'i mut dyn ItemizeCallback>,
     /// Re-applies a daemon-advertised `MSG_IO_TIMEOUT` to the live socket.
     /// `Some` only on the daemon-pull (client receiver) path.
-    /// upstream: io.c:1577-1587 `read_a_msg()` case `MSG_IO_TIMEOUT`.
+    /// upstream: io.c:1750 `read_a_msg()` case `MSG_IO_TIMEOUT`.
     pub io_timeout_reapply: Option<IoTimeoutReapply>,
     /// Per-entry daemon transfer-log hook. `Some` only when a daemon module has
     /// `transfer logging = yes`; drives the per-file `log_item(FLOG)` writes.
@@ -734,7 +735,7 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
     /// Caller-owned counter for the raw bytes read once `setup_protocol` is
     /// done, so the caller can name them when the transfer fails.
     /// upstream: io.c:938 counts `stats.total_read` only through perform_io,
-    /// which setup_protocol's reads bypass (io.c:2158-2161, main.c:1307-1308).
+    /// which setup_protocol's reads bypass (io.c:2158-2161, main.c:1308).
     pub bytes_read: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
@@ -745,7 +746,7 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
 /// is the client receiver of a daemon transfer
 /// (`config.connection.client_mode && role == Receiver`) and a hook is supplied,
 /// the demultiplexer adopts a daemon-advertised timeout and re-applies it to the
-/// live socket, mirroring upstream `io.c:1577-1587`. Every other caller passes
+/// live socket, mirroring upstream `io.c:1750` (`read_a_msg()`). Every other caller passes
 /// `None` through the thin wrapper above, so the default path is unchanged and
 /// wire-identical.
 #[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
@@ -764,7 +765,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         daemon_log,
         bytes_read,
     } = hooks;
-    // upstream: options.c:2419 - `--append` implies `--inplace`, applied by the
+    // upstream: options.c:2551-2561 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
     // the client's in-process half, the `--server` process and the daemon, so
     // the implication lands before setup_protocol()'s protocol < 29 checks.
@@ -787,7 +788,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         Box::new(buffered.chain(stdin))
     };
 
-    // upstream: main.c:1281 start_server() → setup_protocol(f_out, f_in)
+    // upstream: main.c:1308 start_server() → setup_protocol(f_out, f_in)
     // Performs compat flags exchange + capability negotiation in RAW mode,
     // before multiplex activation.
     let is_server = !config.connection.client_mode;
@@ -798,7 +799,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
     // upstream: compat.c - do_compression is set by -z (short option) or by
     // --new-compress, --old-compress, --compress-choice=ALGO (long options).
-    // upstream: options.c:2732 only puts 'z' in argstr for CPRES_ZLIB.
+    // upstream: options.c:2899 only puts 'z' in argstr for CPRES_ZLIB.
     // For zlibx, zstd, lz4, upstream sends long options instead.
     let (do_compression, compress_choice) = if config.connection.client_mode {
         // upstream: compat.c - client knows its own compress_choice from CLI args.
@@ -812,7 +813,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
         let has_z = client_args_request_zlib(args);
 
-        // upstream: options.c:2828-2833 - long options for non-ZLIB compression:
+        // upstream: options.c:2994-2999 - long options for non-ZLIB compression:
         //   CPRES_ZLIBX → --new-compress
         //   CPRES_ZLIB with explicit choice → --old-compress
         //   other (zstd/lz4) → --compress-choice=ALGO
@@ -835,7 +836,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         // compression intent from the parsed flag string (`config.flags.compress`
         // for `-z`) and the explicit `--compress-choice` / `--new-compress` /
         // `--old-compress` long options preserved on `config.connection`.
-        // upstream: options.c:2724-2833 - server_options() emits `-z` in the
+        // upstream: options.c:2778 server_options() emits `-z` in the
         // compact arg string for CPRES_ZLIB, and the long-form variants for
         // other algorithms. Both flow through to ServerConfig here.
         let choice = config.connection.compress_choice.map(|algo| algo.as_str());
@@ -845,7 +846,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // upstream: options.c:2138-2140 - a `--compress-level` alone turns
     // compression on (CPRES_AUTO), with the codec left to negotiation.
     let do_compression = do_compression || config.connection.compression_level.is_some();
-    // upstream: compat.c:543 - compression vstrings are only exchanged when
+    // upstream: compat.c:547 - compression vstrings are only exchanged when
     // do_compression is active AND no explicit compress_choice was given.
     // When --compress-choice=ALGO is specified, both sides know the algorithm
     // and skip the vstring negotiation for compression.
@@ -860,20 +861,20 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             )
         })?;
 
-    // upstream: compat.c:161-179 set_allow_inc_recurse() - the server grants
+    // upstream: compat.c:162-178 set_allow_inc_recurse() - the server grants
     // INC_RECURSE in either direction, gated only on the transfer options.
     let allow_inc_recurse = config.allows_inc_recurse();
 
     // In SSH server mode (client_args is None), pass the compact flag string
     // so setup_protocol can extract the `-e.xxx` capability string from it.
-    // upstream: compat.c:163-164 - `client_info = shell_cmd` for SSH mode.
+    // upstream: compat.c:164-165 - `client_info = shell_cmd` for SSH mode.
     let flag_str_ref = if handshake.client_args.is_none() && is_server {
         Some(config.flag_string.as_str())
     } else {
         None
     };
 
-    // upstream: options.c:88,767 - do_compression_level is CLVL_NOT_SPECIFIED
+    // upstream: options.c:92,781 - do_compression_level is CLVL_NOT_SPECIFIED
     // unless the user passed --compress-level=N. The NSTR compress summary
     // renders it verbatim, so map an absent override to CLVL_NOT_SPECIFIED.
     let compression_level = config
@@ -895,7 +896,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
         options_allow_inc_recurse: config.allows_inc_recurse(),
-        // upstream: compat.c:751-753 - abort when --crtimes is requested but the
+        // upstream: compat.c:762-764 - abort when --crtimes is requested but the
         // negotiated peer lacks CF_VARINT_FLIST_FLAGS (rsync < 3.2.0).
         preserve_crtimes: config.flags.crtimes,
         // upstream: compat.c:412-414 getenv_nstr() - only the client sets
@@ -930,9 +931,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     handshake.compat_flags = setup_result.compat_flags;
     handshake.checksum_seed = setup_result.checksum_seed;
 
-    // upstream: compat.c:820 parse_compress_choice(1) -> token.c:55
+    // upstream: compat.c:831 parse_compress_choice(1) -> token.c:55
     // init_compression_level(), which runs AFTER negotiate_the_strings()
-    // (compat.c:809) and "might turn compression off". The meaning of
+    // (compat.c:820) and "might turn compression off". The meaning of
     // `--compress-level=0` depends on the codec's off_level, pinned or
     // negotiated, so it can only be resolved here. zlib/zlibx have
     // off_level 0, so a literal 0 sets do_compression = CPRES_NONE and the
@@ -941,7 +942,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // off case needs handling: every non-off level already reaches the encoder
     // correctly through the negotiated codec's own clamp. This runs identically
     // on both peers (each holds the negotiated codec and the forwarded
-    // do_compression_level, options.c:2765), so the framing decision stays
+    // do_compression_level, options.c:2931), so the framing decision stays
     // symmetric.
     if do_compression
         && let Some(negotiated) = handshake.negotiated_algorithms.as_mut()
@@ -962,20 +963,20 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         config.write.inplace_partial = true;
     }
 
-    // upstream: compat.c:722-723,747 - CF_AVOID_XATTR_OPTIM only signals
+    // upstream: compat.c:734,758 - CF_AVOID_XATTR_OPTIM only signals
     // "avoid the xattr hardlink optimization" (want_xattr_optim) and is
     // gated on protocol_version >= 31. Its absence does NOT mean the peer
     // lacks xattr support: proto-30 peers (rsync 3.0.x) never define the
     // flag yet fully preserve xattrs, and the 'x' capability that drives it
-    // is emitted unconditionally (options.c:3058). A remote genuinely built
+    // is emitted unconditionally (options.c:3229). A remote genuinely built
     // without SUPPORT_XATTRS rejects -X at option-parse time instead. So we
     // must NOT disable xattr preservation here - doing so half-disabled the
     // sender and desynced the proto-30 flist ("xa index out of range").
 
-    // upstream: options.c:1864-1890 - when compiled without SUPPORT_ACLS or
-    // SUPPORT_XATTRS, the server rejects -A/-X from the client. We mirror this
-    // by clearing feature-gated flags and warning instead of hard-failing, so
-    // the transfer proceeds without the unsupported metadata type.
+    // upstream: options.c:1971-1996 - when compiled without SUPPORT_ACLS or
+    // SUPPORT_XATTRS, the server rejects -A/-X from the client.
+    // Deviation from upstream: oc clears the feature-gated flags and warns
+    // instead of failing, so the transfer proceeds without that metadata type.
     let cleared = config.flags.clear_unsupported_features();
     for feature in &cleared {
         let role_suffix = match config.role {
@@ -992,13 +993,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;
 
-    // upstream: io.c:1427 iobuf.in is a fixed 32KB circular buffer that is never
-    // resized (io.c:597). IoBufReader is that buffer, and it sits beneath the
+    // upstream: io.c:1587 iobuf.in is a fixed 32KB circular buffer that is never
+    // resized (io.c:663). IoBufReader is that buffer, and it sits beneath the
     // multiplex demuxer so no decoder ever touches the descriptor - the layering
     // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:314).
     // The CountingReader wraps the raw transport (below the multiplex demuxer and
     // token decompression) so the running total reflects compressed wire bytes,
-    // matching upstream's `stats.total_read` (io.c:838).
+    // matching upstream's `stats.total_read` (io.c:938).
     let counting_stdin = match bytes_read {
         Some(counter) => reader::CountingReader::with_counter(chained_stdin, counter),
         None => reader::CountingReader::new(chained_stdin),
@@ -1007,7 +1008,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     let mut reader =
         reader::ServerReader::new_plain(protocol::iobuf::IoBufReader::new(counting_stdin));
 
-    // upstream: io.c:1577-1587 - only the client receiver adopts a
+    // upstream: io.c:1750-1751 - only the client receiver adopts a
     // daemon-advertised MSG_IO_TIMEOUT (`am_server || am_generator` treat it as
     // an invalid message). The re-apply hook is supplied only on the daemon-pull
     // path, so its presence plus the client-receiver role gates adoption exactly
@@ -1020,12 +1021,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         reader.enable_io_timeout_adoption(handshake.io_timeout.map(|secs| secs as u32), reapply);
     }
 
-    // upstream: log.c:870-874 - the client (a push client is the sender/generator
-    // role) renders each MSG_DELETED the remote receiver forwards, gating on its
-    // own info=del / itemize verbosity. Capture the gate now, on the setup
-    // thread where the verbosity thread-local is valid, so the read loop never
-    // depends on its own thread's state. `-v` sets INFO_GTE(DEL, 1)
-    // (options.c:251), so verbose_level covers the common case even if the
+    // upstream: io.c:1778 MSG_DELETED -> log.c:917-922 log_delete() - the client
+    // (a push client is the sender/generator role) renders each MSG_DELETED the
+    // remote receiver forwards, gating on its own info=del / itemize verbosity.
+    // Capture the gate now, on the setup thread where the verbosity
+    // thread-local is valid, so the read loop never depends on its own
+    // thread's state. `-v` sets INFO_GTE(DEL, 1)
+    // (options.c:257), so verbose_level covers the common case even if the
     // read loop runs elsewhere; --info=del without -v is caught by info_gte.
     if config.connection.client_mode && config.role == crate::role::ServerRole::Generator {
         reader.enable_deleted_render(reader::DeletedRender {
@@ -1035,19 +1037,19 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         });
     }
 
-    // upstream: main.c:1081 - only the sender paces its outbound writes; the
+    // upstream: main.c:1096 - only the sender paces its outbound writes; the
     // receiver sets `bwlimit_writemax = 0`. On this server body that is the
     // Generator role (SSH `--server --sender`, a client push, or a daemon-sender
     // on a pull). Install the limiter at the bottom of the writer stack so it
-    // paces the exact wire bytes the descriptor accepts (io.c:864,879), below
+    // paces the exact wire bytes the descriptor accepts (io.c:952,979), below
     // the multiplex framer.
     let throttled_stdout = writer::ThrottlingWriter::new(stdout, sender_bandwidth_limiter(&config));
 
-    // upstream: io.c:877 - stats.total_written counts every byte the raw
+    // upstream: io.c:977 - stats.total_written counts every byte the raw
     // descriptor accepts, multiplex frame headers included, in perform_io().
     // Wrap the transport below the multiplex framer so the shared counter
     // mirrors that raw wire total; the sender samples it at its handle_stats
-    // point (main.c:992-993) and reports it as "Total bytes sent".
+    // point (main.c:334-335) and reports it as "Total bytes sent".
     let counting_stdout = writer::CountingWriter::new_shared(throttled_stdout);
     let bytes_sent_counter = counting_stdout.counter();
 
@@ -1074,7 +1076,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         writer.set_allowed_lull(Some(allowed_lull));
     }
 
-    // upstream: exclude.c:1647-1648 send_filter_list() -
+    // upstream: exclude.c:1946-1947 send_filter_list() -
     //   receiver_wants_list = prune_empty_dirs
     //       || (delete_mode && (!delete_excluded || protocol_version >= 29));
     // Push mode applies exclusion locally in the generator; the receiver only
@@ -1089,7 +1091,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         handshake.protocol,
     );
 
-    // upstream: main.c:1294 - daemon sender always calls recv_filter_list(f_in).
+    // upstream: main.c:1332 - a server sender always calls recv_filter_list(f_in).
     let should_send_filter_list = if config.connection.client_mode {
         match config.role {
             ServerRole::Generator => receiver_wants_filter_list,
@@ -1110,7 +1112,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         )?;
     }
 
-    // upstream: main.c:1390-1392 - after sending filter list, forward
+    // upstream: main.c:1426-1431 - after sending filter list, forward
     // pre-read --files-from data to the remote daemon's generator so it
     // can build the file list from the forwarded filenames.
     // This applies only in client-mode pull (Receiver), where the daemon's
@@ -1119,10 +1121,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         && config.role == ServerRole::Receiver
         && let Some(data) = config.connection.files_from_data.take()
     {
-        // upstream: io.c:1246 start_filesfrom_forwarding - below protocol 31
+        // upstream: io.c:1398 start_filesfrom_forwarding - below protocol 31
         // the client-receiver forwards its files-from names un-multiplexed
         // (MPLX_TO_BUFFERED). At protocol 30 the client's output IS
-        // multiplexed (need_messages_from_generator, main.c:1380-1381), so
+        // multiplexed (need_messages_from_generator, main.c:1418-1419), so
         // without this bypass the names would be MSG_DATA-framed while a
         // real upstream sender reads them raw. At protocol >= 31 they stay
         // framed; below 30 the stream is already plain so both paths match.
@@ -1134,7 +1136,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         }
     }
 
-    // upstream: main.c:1312-1313 - `if (am_daemon && io_timeout &&
+    // upstream: main.c:1311-1313 - `if (am_daemon && io_timeout &&
     // protocol_version >= 31) send_msg_int(MSG_IO_TIMEOUT, io_timeout)`. The
     // gate is `am_daemon`, not "server": an SSH server process has an
     // `io_timeout` of its own once the client forwards `--timeout`, and it must
@@ -1154,7 +1156,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // but before file list data flows. The callback writes the batch header with
     // negotiated protocol values, then the recorder is attached at the multiplex layer.
     let mut chained_reader = reader;
-    // upstream: main.c:374-383 - a client sender writes the batch stats trailer
+    // upstream: main.c:377-387 - a client sender writes the batch stats trailer
     // straight to `batch_fd`, so keep a second handle on the batch file for the
     // generator role. `None` on a pull: there the whole trailer arrives over the
     // wire and the read tee already records it.
@@ -1200,10 +1202,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                         ctx.enable_daemon_log(dl.format_has_i);
                     }
                 }
-                // upstream: flist.c:2855/3032 - recv_file_list() measures its span
+                // upstream: flist.c:3130/3334 - recv_file_list() measures its span
                 // against the raw read counter to accumulate stats.flist_size.
                 ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
-                // upstream: io.c:877 - stats.total_written tracking
+                // upstream: io.c:977 - stats.total_written tracking
                 let mut counting_writer = writer::CountingWriter::new(&mut writer);
                 let mut stats = match ctx.run(chained_reader, &mut counting_writer, progress) {
                     Ok(stats) => stats,
@@ -1211,26 +1213,26 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 };
                 stats.flist_size = ctx.flist_size();
                 stats.bytes_sent = counting_writer.bytes_written();
-                // upstream: io.c:838 - stats.total_read counts raw bytes read off the
+                // upstream: io.c:938 - stats.total_read counts raw bytes read off the
                 // socket (mux frames + compressed tokens), below decompression. Source
                 // bytes_received from the wire counter so --stats reports compressed
                 // wire bytes, not the post-decompression literal byte total.
                 stats.bytes_received =
                     bytes_received_counter.load(std::sync::atomic::Ordering::Relaxed);
 
-                // upstream: main.c:325-372 handle_stats() - the sender is the only
+                // upstream: main.c:329-389 handle_stats() - the sender is the only
                 // process with the authoritative byte totals. A client receiver reads
-                // the sender's cached raw counters over the wire (main.c:365-372) and
+                // the sender's cached raw counters over the wire (main.c:368-376) and
                 // swaps their meaning: it prints the sender's total_read as "Total
                 // bytes sent" and the sender's total_written as "Total bytes received".
                 // Its own wire tally diverges by the trailing stats/goodbye bytes the
                 // sender wrote after sampling, so prefer the transmitted figures.
                 // Absent (empty file list, no stats trailer) keeps the local tally,
-                // matching upstream's `if (f < 0 && !am_sender)` no-op (main.c:363).
+                // matching upstream's `if (f < 0 && !am_sender)` no-op (main.c:366).
                 if client_mode && let Some(sender_stats) = ctx.sender_stats() {
                     stats.bytes_sent = sender_stats.total_read;
                     stats.bytes_received = sender_stats.total_written;
-                    // upstream: main.c:374-377 - the flist times are adopted too.
+                    // upstream: main.c:373-376 - the flist times are adopted too.
                     stats.flist_buildtime_ms = sender_stats.flist_buildtime_ms.unwrap_or(0);
                     stats.flist_xfertime_ms = sender_stats.flist_xfertime_ms.unwrap_or(0);
                 }
@@ -1273,10 +1275,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 if let Some(dl) = daemon_log.as_ref().filter(|dl| dl.transfer_logging) {
                     ctx.enable_daemon_log(dl.format_has_i);
                 }
-                // upstream: io.c:838/877 - the sender's handle_stats() reports the raw
+                // upstream: io.c:938/977 - the sender's handle_stats() reports the raw
                 // descriptor counters. Hand the generator the transport-level wire
                 // counters so it samples total_written/total_read at its handle_stats
-                // point (main.c:992-993), below multiplex framing, matching upstream.
+                // point (main.c:334-335), below multiplex framing, matching upstream.
                 ctx.set_wire_counters(
                     std::sync::Arc::clone(&bytes_sent_counter),
                     std::sync::Arc::clone(&bytes_received_counter),
@@ -1287,7 +1289,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 };
 
                 // upstream: the daemon sender's per-file `log_item(FLOG)` writes
-                // (sender.c:585 maybe_log_item / sender.c:462 log_item).
+                // (sender.c:585 maybe_log_item / sender.c:787 log_item).
                 if let Some(dl) = daemon_log {
                     for (_idx, rows) in ctx.drain_daemon_log_rows() {
                         for row in rows {

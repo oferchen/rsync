@@ -1,6 +1,6 @@
 //! Wire-format determinism fuzz test for the parallel delta dispatch path.
 //!
-//! Goal (#1649): catch any non-determinism introduced by the parallel dispatch
+//! Goal: catch any non-determinism introduced by the parallel dispatch
 //! path. The receiver-facing contract for `ParallelDeltaPipeline` is that the
 //! ordered `Vec<DeltaResult>` returned by `flush()` must be byte-identical to
 //! the `SequentialDeltaPipeline` baseline for the same input batch, regardless
@@ -61,7 +61,7 @@
 //!   functions of the input fields: `WholeFileStrategy` returns
 //!   `(target_size, target_size, 0)`; pre-computed `DeltaTransferStrategy`
 //!   returns `(target_size, literal_bytes, matched_bytes)` straight from the
-//!   work item (see `crates/engine/src/concurrent_delta/strategy.rs:99-148`).
+//!   work item (see `crates/engine/src/concurrent_delta/strategy.rs:109-164`).
 //! - `DeltaResult::status` is `Success` in every case because no I/O is
 //!   performed for the chosen work-item shapes (no `delta_with_source`, no
 //!   real basis files). The `NeedsRedo { reason }` and `Failed { reason }`
@@ -71,7 +71,7 @@
 //! No wall-clock timestamps, random checksum seeds, or hostname/PID values
 //! are read by either pipeline's hot path - both call only
 //! `engine::concurrent_delta::strategy::dispatch`, which is a pure function of
-//! the work item. This is verified by inspection of `strategy.rs:275-279`.
+//! the work item. This is verified by inspection of `strategy.rs:280-284`.
 //!
 //! # Cross-platform notes
 //!

@@ -1,7 +1,7 @@
 //! In-memory shape adapter from per-file [`DeltaWork`] to per-chunk
 //! [`DeltaChunk`].
 //!
-//! PIP-9.a substrate. The receiver pipeline today reads a per-file
+//! The receiver pipeline reads a per-file
 //! [`DeltaWork`] item that carries the NDX, basis path, and accumulated
 //! `literal_bytes`/`matched_bytes` counters, then streams a sequence of
 //! resolved per-chunk byte spans (either literal payloads or basis-file
@@ -14,11 +14,13 @@
 //!
 //! This adapter is the pure in-memory shape transformation between those two
 //! views. It performs no I/O, spawns no threads, holds no state, and does not
-//! touch the wire protocol - PIP-9.b will plug it into the production token
-//! loop without any wire-format change. PIP-7 surfaced the previous attempt's
-//! receiver corruption when scaffolding had a side-effect-only swap with no
-//! reader; the deliberate split between adapter (this file) and wire-up
-//! (PIP-9.b) keeps each step independently reviewable.
+//! touch the wire protocol. It is not yet called from the receiver's token
+//! loop; only tests drive it today. Keeping the adapter separate from that
+//! wire-up lets each step be reviewed on its own.
+//!
+//! Deviation from upstream: upstream `receiver.c:receive_data()` writes each
+//! token to the output file inline; per-chunk hand-off to parallel workers is
+//! oc-only.
 //!
 //! # Shape
 //!
@@ -40,12 +42,12 @@
 //!   receiver already owns the resolved bytes; the adapter must not duplicate
 //!   them on the hot path.
 //! - `DeltaChunk::expected_strong` round-trips byte-for-byte. When the
-//!   producer attached a basis-signature-derived strong checksum (BR-3i.d),
+//!   producer attached a basis-signature-derived strong checksum,
 //!   the applier will compare it against `strategy.compute(&data)` in
 //!   [`ParallelDeltaApplier::verify_chunk`].
 //! - `DeltaChunk::chunk_sequence` is taken verbatim from
 //!   [`ChunkPayload::chunk_sequence`]; the adapter does not assign or mutate
-//!   sequence numbers (PIP-9.b is responsible for that).
+//!   sequence numbers (the caller's wire-up is responsible for that).
 //!
 //! # Non-goals
 //!
@@ -56,7 +58,7 @@
 //! - This adapter does *not* touch any per-file state on the applier
 //!   ([`register_file`](super::ParallelDeltaApplier::register_file),
 //!   [`finish_file`](super::ParallelDeltaApplier::finish_file)). Those calls
-//!   remain the wire-up's responsibility in PIP-9.b.
+//!   remain the wire-up's responsibility.
 //!
 //! [`DeltaWork`]: super::DeltaWork
 //! [`DeltaChunk`]: super::DeltaChunk
@@ -110,7 +112,7 @@ impl ChunkSource {
 /// - `source` - literal-vs-copy discriminator carried through to the
 ///   [`DeltaChunk::is_literal`] flag.
 /// - `expected_strong` - optional strong-checksum digest derived from the
-///   basis signature (BR-3i.d). When present, the applier verifies the
+///   basis signature. When present, the applier verifies the
 ///   digest of `data` matches before committing the bytes.
 #[derive(Debug, Clone)]
 pub struct ChunkPayload {
@@ -161,14 +163,13 @@ impl ChunkPayload {
 ///
 /// All methods are pure in-memory transformations. Construct one with
 /// [`DeltaChunkAdapter::new`] and call [`Self::from_delta_work`] per chunk
-/// the wire reader produces. PIP-9.b will host the per-file loop that drives
-/// this adapter from the receiver's token loop.
+/// the wire reader produces.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DeltaChunkAdapter;
 
 impl DeltaChunkAdapter {
     /// Constructs a fresh adapter. Holds no state; provided for call-site
-    /// readability so PIP-9.b can spell the conversion as
+    /// readability so callers can spell the conversion as
     /// `DeltaChunkAdapter::new().from_delta_work(...)`.
     #[must_use]
     pub const fn new() -> Self {

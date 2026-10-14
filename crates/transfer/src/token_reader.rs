@@ -2,7 +2,7 @@
 //!
 //! Switches between plain 4-byte LE token format and compressed token
 //! format based on negotiated compression. This mirrors upstream rsync's
-//! `recv_token()` (token.c:271) which dispatches to `simple_recv_token()`
+//! `recv_token()` (token.c:1100) which dispatches to `simple_recv_token()`
 //! or `recv_deflated_token()` depending on whether compression is active.
 //!
 //! # Wire Formats
@@ -21,9 +21,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `token.c:271` - `recv_token()` dispatch
-//! - `token.c:285` - `simple_recv_token()` plain format
-//! - `token.c:500` - `recv_deflated_token()` compressed format
+//! - `token.c:1100` - `recv_token()` dispatch
+//! - `token.c:289` - `simple_recv_token()` plain format
+//! - `token.c:570` - `recv_deflated_token()` compressed format
 
 use std::io::{self, Read};
 
@@ -69,7 +69,7 @@ pub enum LiteralData {
 /// One `TokenReader` serves the whole session and is `reset()` between
 /// files. The reset clears per-file token state; the zstd decompression
 /// context survives it, because the sender's zstd stream spans every file
-/// (upstream: token.c:837-866 recv_zstd_token()).
+/// (upstream: token.c:839 recv_zstd_token()).
 #[allow(clippy::large_enum_variant)]
 pub enum TokenReader {
     /// Plain 4-byte LE token format (no compression).
@@ -182,7 +182,7 @@ impl TokenReader {
     ///
     /// # Upstream Reference
     ///
-    /// - `token.c:685` - `see_deflate_token()` called after each block match
+    /// - `token.c:1130` - `see_deflate_token()` called after each block match
     ///
     /// # Errors
     ///
@@ -253,7 +253,7 @@ mod tests {
     fn plain_reader_rejects_oversized_literal_token() {
         // A hostile plain literal claiming more than CHUNK_SIZE bytes must be
         // rejected before any buffer is reserved, matching upstream's
-        // simple_recv_token guard (token.c:299-305): otherwise a peer could
+        // simple_recv_token guard (token.c:298-305): otherwise a peer could
         // force a multi-gigabyte allocation with four wire bytes.
         let oversized = (protocol::wire::delta::CHUNK_SIZE as i32 + 1).to_le_bytes();
         let mut reader = TokenReader::new(None, 31).unwrap();

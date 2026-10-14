@@ -13,7 +13,7 @@
 //! basedir comes from the entry's own directory or from `basis_dir[]`. Honouring
 //! them is what makes oc's receiver behave like upstream's against any peer -
 //! and the reason the xname is sanitized before it ever reaches here
-//! (`receiver::wire::sanitize_basis_xname`, `rsync.c:407-427`).
+//! (`receiver::wire::sanitize_basis_xname`, `rsync.c:408-430`).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -73,7 +73,7 @@ impl WireBasis<'_> {
         let Some(protocol::FnameCmpType::Fuzzy(offset)) = fnamecmp_type else {
             return Ok(None);
         };
-        // upstream: rsync.c:410-412 - the basis arms read `xname` as the leaf.
+        // upstream: rsync.c:426-430 - the basis arms read `xname` as the leaf.
         // A basis type without one leaves nothing to resolve.
         let Some(leaf) = xname.filter(|name| !name.is_empty()) else {
             return Ok(None);
@@ -90,7 +90,7 @@ impl WireBasis<'_> {
             if self.fuzzy_level == 0 {
                 return Err(refusing_malicious_fuzzy(leaf));
             }
-            // upstream: receiver.c:1029-1031 - basedir = file->dirname, which
+            // upstream: receiver.c:1030-1032 - basedir = file->dirname, which
             // upstream resolves against the destination root it has chdir'd to.
             // oc carries the entry's already-resolved destination path, so the
             // same directory is that path's parent.

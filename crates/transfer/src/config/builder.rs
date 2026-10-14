@@ -234,7 +234,7 @@ impl ServerConfigBuilder {
     /// Forwarded to `ZSTD_c_nbWorkers` when zstd is the negotiated
     /// compression algorithm.
     ///
-    /// upstream: `options.c:89`, `token.c:749`
+    /// upstream: `options.c:93`, `token.c:752`
     pub fn compression_threads(&mut self, threads: Option<std::num::NonZeroU8>) -> &mut Self {
         self.connection.compression_threads = threads;
         self
@@ -331,7 +331,7 @@ impl ServerConfigBuilder {
     /// Enables `--open-noatime` propagation for source-file reads.
     ///
     /// Linux/Android only; ignored on other platforms. Mirrors upstream
-    /// `syscall.c:278 do_open` / `syscall.c:826 do_open_nofollow`.
+    /// `syscall.c:1603 do_open` / `syscall.c:2811 do_open_nofollow`.
     pub fn open_noatime(&mut self, enabled: bool) -> &mut Self {
         self.write.open_noatime = enabled;
         self
@@ -460,7 +460,7 @@ impl ServerConfigBuilder {
     /// Sets the `--modify-window` mtime comparison tolerance in whole seconds.
     ///
     /// A negative `seconds` selects upstream's nanosecond-exact comparison
-    /// (`modify_window < 0`, util1.c:1577).
+    /// (`modify_window < 0`, util1.c:1748).
     pub fn modify_window(&mut self, seconds: i64) -> &mut Self {
         self.file_selection.modify_window = ModifyWindow::from_secs(seconds);
         self
@@ -512,7 +512,7 @@ impl ServerConfigBuilder {
     ///
     /// # Upstream Reference
     ///
-    /// - `clientserver.c:1120-1121` - daemon `fake super = yes` demotes
+    /// - `clientserver.c:1198-1201` - daemon `fake super = yes` demotes
     ///   `am_root` and forces `--fake-super` semantics on the receiver
     /// - `loadparm.c` - `fake super` module parameter
     pub fn fake_super(&mut self, enabled: bool) -> &mut Self {
@@ -561,10 +561,10 @@ impl ServerConfigBuilder {
     ///
     /// # Upstream Reference
     ///
-    /// - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
+    /// - `clientserver.c:1070-1071` - daemon resolves `munge_symlinks` from
     ///   `lp_munge_symlinks()` and the `use_chroot` auto default.
-    /// - `flist.c:455-459` - sender-side strip.
-    /// - `flist.c:1375-1379` - receiver-side prepend.
+    /// - `flist.c:499-502` - sender-side strip.
+    /// - `flist.c:1521-1524` - receiver-side prepend.
     pub fn munge_symlinks(&mut self, enabled: bool) -> &mut Self {
         self.munge_symlinks = enabled;
         self
@@ -572,7 +572,8 @@ impl ServerConfigBuilder {
 
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), BuilderError> {
-        // upstream: options.c:2944 - --inplace and --delay-updates are mutually exclusive
+        // upstream: options.c:2572-2582 - --delay-updates implies a partial dir, which
+        // --inplace refuses
         if self.write.inplace && self.write.delay_updates {
             return Err(BuilderError::ConflictingOptions {
                 option1: "--inplace",
@@ -580,7 +581,8 @@ impl ServerConfigBuilder {
             });
         }
 
-        // upstream: options.c - --append implies --inplace, which conflicts with --partial-dir
+        // upstream: options.c:2551-2561, 2575-2582 - --append implies --inplace, which
+        // conflicts with --partial-dir
         if self.flags.append && self.has_partial_dir {
             return Err(BuilderError::ConflictingOptions {
                 option1: "--append",
@@ -588,7 +590,7 @@ impl ServerConfigBuilder {
             });
         }
 
-        // upstream: options.c:2432-2440 - `if (inplace) { if (partial_dir) {
+        // upstream: options.c:2575-2582 - `if (inplace) { if (partial_dir) {
         // "--inplace cannot be used with --partial-dir" }}`. --inplace writes
         // straight into the destination, so a partial-dir staging basis is
         // meaningless; upstream refuses the combination outright.

@@ -184,7 +184,7 @@ pub(super) fn allocate_test_port() -> (u16, TcpListener) {
 /// Sends the client's `@RSYNCD:` version banner, completing the half of the
 /// handshake a test performs before it issues a request.
 ///
-/// upstream: clientserver.c:180-184 - the daemon reads the client's banner
+/// upstream: clientserver.c:203-215 exchange_protocols() - the daemon reads the client's banner
 /// first and answers `@ERROR: protocol startup error` when the line is not one,
 /// so a request that arrives before the banner is refused rather than served.
 /// Verified against rsync 3.4.4 for `#list`, a bare module name, an empty
@@ -235,7 +235,8 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
 /// loudly rather than silently corrected, because that request can only be a
 /// mistake in a test.
 ///
-/// upstream: clientserver.c:1513 - `become_daemon()`
+/// upstream: clientserver.c:1779-1782 daemon_main() - `become_daemon()` unless
+/// `--no-detach`.
 fn force_no_detach(config: crate::DaemonConfig) -> crate::DaemonConfig {
     assert!(
         !config

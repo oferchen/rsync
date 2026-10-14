@@ -3,18 +3,18 @@
 /// Resolves the daemon module's `charset =` directive into a
 /// [`FilenameConverter`] that mirrors upstream rsync's iconv setup.
 ///
-/// Upstream `clientserver.c:760-764` sets `iconv_opt = lp_charset(i)` and
+/// Upstream `clientserver.c:rsync_module()` (lines 759-764) sets `iconv_opt = lp_charset(i)` and
 /// calls `setup_iconv()` whenever the value is non-empty. `setup_iconv()`
-/// (`rsync.c:87-140`) then opens two iconv handles:
+/// (`rsync.c:88-148`) then opens two iconv handles:
 ///
 /// - `ic_send = iconv_open(UTF8, charset)` - convert local-charset bytes to
 ///   UTF-8 wire bytes when sending file lists.
 /// - `ic_recv = iconv_open(charset, UTF8)` - convert UTF-8 wire bytes back
 ///   to the local charset when receiving file lists.
 ///
-/// When the directive includes a comma (`charset = LOCAL,REMOTE`), upstream
-/// honours the server side by using the segment after the comma
-/// (`rsync.c:118-120`, `am_server` branch). When no comma is present, the
+/// When the directive includes a comma (`charset = LOCAL,REMOTE`), this uses
+/// the segment after the comma, as upstream's `am_server` branch does
+/// (`rsync.c:118-123`). When no comma is present, the
 /// whole value is the charset. The literal value `.` and the empty string
 /// both resolve to the locale default per `rsync.c:125-126`.
 ///
@@ -25,23 +25,24 @@
 /// `"UTF-8"` on the remote (wire) side.
 ///
 /// Returns `None` when the directive is absent, empty, or unrecognised by
-/// `encoding_rs`. An unrecognised charset is treated as a soft failure: we
-/// log via `tracing` (when enabled) and fall through to identity conversion,
-/// matching the lenient behaviour `IconvSetting::resolve_converter` already
-/// uses on the client side.
+/// `encoding_rs`. An unrecognised charset is treated as a soft failure: it is
+/// logged via `tracing` (when enabled) and filenames are not transcoded,
+/// matching the lenient behaviour `IconvSetting::resolve_converter` uses on
+/// the client side. Deviation from upstream: `setup_iconv()` exits with
+/// `RERR_UNSUPPORTED` when either `iconv_open()` fails (`rsync.c:131-141`).
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:712-716` - `iconv_opt = lp_charset(i); setup_iconv();`
-/// - `rsync.c:87-140` - `setup_iconv()` opens `ic_send` and `ic_recv`.
-/// - `loadparm.c` - `charset` module parameter.
+/// - `clientserver.c:759-764` - `iconv_opt = lp_charset(i); setup_iconv();`
+/// - `rsync.c:88-148` - `setup_iconv()` opens `ic_send` and `ic_recv`.
+/// - `daemon-parm.txt:21` - `charset` module parameter.
 fn resolve_module_charset_converter(charset: Option<&str>) -> Option<FilenameConverter> {
     let raw = charset?.trim();
     if raw.is_empty() {
         return None;
     }
 
-    // upstream: rsync.c:118-120 - on the server side, the segment after the
+    // upstream: rsync.c:118-123 - on the server side, the segment after the
     // comma is the effective local charset; the segment before the comma
     // describes the peer's local charset and is irrelevant to the daemon.
     let local_part = match raw.split_once(',') {
@@ -75,8 +76,8 @@ fn resolve_module_charset_converter(charset: Option<&str>) -> Option<FilenameCon
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:parse_chmod()` - canonical chmod-spec grammar
-/// - `clientserver.c:1294-1302` - the sender reads only `outgoing chmod`, the
+/// - `chmod.c:parse_chmod()` - canonical chmod-spec grammar
+/// - `clientserver.c:1291-1304` - the sender reads only `outgoing chmod`, the
 ///   receiver only `incoming chmod`; a bad spec logs `Invalid "<dir>ing chmod"
 ///   directive: <spec>` and `start_server()` still runs
 fn daemon_chmod_for_session(

@@ -5,7 +5,7 @@
 /// one module section overwrites the value the earlier occurrence stored, so the
 /// last assignment wins.
 ///
-/// upstream: loadparm.c - per-module parameter accumulation.
+/// upstream: loadparm.c:498 do_parameter() - per-module parameter storage.
 struct ModuleDefinitionBuilder {
     name: String,
     path: Option<PathBuf>,
@@ -57,15 +57,15 @@ struct ModuleDefinitionBuilder {
     syslog_facility: Option<String>,
     /// Direct filter rules for this module.
     ///
-    /// upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
+    /// upstream: daemon-parm.txt:27 `filter` STRING, P_LOCAL.
     filter: Vec<String>,
     /// Direct exclude rules for this module.
     ///
-    /// upstream: daemon-parm.h - `exclude` STRING, P_LOCAL.
+    /// upstream: daemon-parm.txt:25 `exclude` STRING, P_LOCAL.
     exclude: Vec<String>,
     /// Direct include rules for this module.
     ///
-    /// upstream: daemon-parm.h - `include` STRING, P_LOCAL.
+    /// upstream: daemon-parm.txt:31 `include` STRING, P_LOCAL.
     include: Vec<String>,
 }
 

@@ -921,7 +921,7 @@ fn compare_dest_skips_identical_empty_file() {
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
-// upstream: generator.c:1029-1039 - a COMPARE_DEST basis whose data matches but
+// upstream: generator.c:1114-1178 - a COMPARE_DEST basis whose data matches but
 // whose attributes differ (match_level 2) is NOT treated as up-to-date; upstream
 // copies the basis into the destination via copy_altdest_file and reapplies the
 // source attributes. Only an exact (match_level 3) basis skips the write.

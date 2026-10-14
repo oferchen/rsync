@@ -1,4 +1,4 @@
-//! CF-P2a: the daemon-shaped delete escape, and the arm it actually takes.
+//! The daemon-shaped delete escape, and the arm it actually takes.
 //!
 //! The sibling [`super::unconfined_escape`] module pins the shape where
 //! no [`fast_io::DirSandbox`] is attached at all. This module pins the

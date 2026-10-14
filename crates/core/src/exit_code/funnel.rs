@@ -72,8 +72,8 @@ pub fn io_error_exit_code(io_error: i32, got_xfer_error: bool) -> Option<i32> {
 /// wakes any parked peer) and MUST NOT join the pipeline worker threads. On an
 /// abort a worker may be parked on a full or empty rope indefinitely, so joining
 /// it would block on progress that only the disconnect can unblock - a deadlock.
-/// upstream terminates via `_exit()` and never `waitpid()`s the I/O workers on
-/// this path.
+/// upstream terminates via `_exit()` on this path and never blocks on its
+/// children: the only wait is the `WNOHANG` poll at `cleanup.c:148`.
 pub fn abort(latch: &ExitCodeLatch, code: i32) -> Option<i32> {
     let code = latch.resolve(code);
     if !latch.claim_exit() {
@@ -137,7 +137,7 @@ mod tests {
         assert_eq!(latch.resolve(PARTIAL), SIGNAL);
     }
 
-    /// 432 rule pin. The single owner of cleanup.c:210-218: the bitfield
+    /// The single owner of cleanup.c:210-218: the bitfield
     /// precedence GENERAL > VANISHED > DEL_LIMIT, the `|| got_xfer_error` lift
     /// to RERR_PARTIAL, and a clean run mapping to `None`.
     #[test]
@@ -169,8 +169,8 @@ mod tests {
     /// on progress only the disconnect can unblock, which the watchdog below
     /// converts into a failed assertion rather than a hung test.
     ///
-    /// upstream: cleanup.c terminates via `_exit()`, never `waitpid()` on the
-    /// I/O workers reached from this path.
+    /// upstream: cleanup.c terminates via `_exit()` and only polls its child
+    /// with `WNOHANG` (cleanup.c:148), never a blocking wait.
     #[test]
     fn abort_disconnects_the_rope_and_never_joins_the_worker() {
         let (tx, rx) = transfer::pipeline::spsc::channel::<u8>(1);

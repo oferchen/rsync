@@ -24,7 +24,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:1106-1107` - daemon `fake super = yes` demotes the
+/// - `clientserver.c:1198-1201` - daemon `fake super = yes` demotes the
 ///   receiver's `am_root` and forces fake-super semantics.
 /// - `loadparm.c` - `fake super` module parameter.
 /// - `rsync.c:set_file_attrs()` - fake-super stores ownership in xattrs.

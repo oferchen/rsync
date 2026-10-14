@@ -8,17 +8,18 @@
 //! connection with a module dir). That sanitizer does NOT split the path into
 //! components and rejoin them: it copies each component *through the next
 //! slash* (`util1.c:1298`) and only then examines the following one, so a
-//! discarded `.` (`util1.c:1260-1269`) or `..` (`util1.c:1280-1288`) leaves the
+//! discarded `.` (`util1.c:1274-1280`) or `..` (`util1.c:1281-1292`) leaves the
 //! separator that preceded it in the output buffer. `sym-to-dir/.` therefore
 //! sanitizes to `sym-to-dir/`, not to `sym-to-dir`.
 //!
 //! That surviving slash is load-bearing. `send_file_list()` reads it at
-//! `flist.c:2829-2834` and sets `name_type = DOTDIR_NAME`, and the operand's
+//! `flist.c:2824-2834` and sets `name_type = DOTDIR_NAME`, and the operand's
 //! stat is then taken as
-//! `link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`
-//! (`flist.c:2936`). The second disjunct is the marker: with it, a symlink whose
-//! target is a directory is followed and the directory's CONTENTS are sent
-//! (`flist.c:511-524`); without it the operand is `lstat`ed and ships as a
+//! `scan_link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`
+//! (`flist.c:2937`, which lands in `link_stat()`). The second disjunct is the
+//! marker: with it, a symlink whose target is a directory is followed and the
+//! directory's CONTENTS are sent
+//! (`flist.c:511-526`); without it the operand is `lstat`ed and ships as a
 //! symlink under its own basename.
 //!
 //! oc-rsync's daemon resolved the client tail by splitting on `/`, dropping
@@ -66,11 +67,11 @@
 //!
 //! - `rsync-3.5.1/options.c:2411-2414` - the daemon's per-arg `sanitize_path()`
 //! - `rsync-3.5.1/clientserver.c:1068` - `if (module_dirlen) sanitize_paths = 1`
-//! - `rsync-3.5.1/util1.c:1260-1269` - a `.` component is skipped
+//! - `rsync-3.5.1/util1.c:1274-1280` - a `.` component is skipped
 //! - `rsync-3.5.1/util1.c:1298` - each component is copied *through* its slash
-//! - `rsync-3.5.1/flist.c:2829-2834` - a trailing `/` sets `DOTDIR_NAME`
-//! - `rsync-3.5.1/flist.c:2936` - `copy_dirlinks || name_type != NORMAL_NAME`
-//! - `rsync-3.5.1/flist.c:511-524` - `link_stat()`'s `follow_dirlinks` arm
+//! - `rsync-3.5.1/flist.c:2824-2834` - a trailing `/` sets `DOTDIR_NAME`
+//! - `rsync-3.5.1/flist.c:2937` - `copy_dirlinks || name_type != NORMAL_NAME`
+//! - `rsync-3.5.1/flist.c:511-526` - `link_stat()`'s `follow_dirlinks` arm
 
 #![cfg(unix)]
 
@@ -96,7 +97,7 @@ fn write_daemon_config(
     module_root: &Path,
 ) -> io::Result<()> {
     // `max connections > 0` makes every session claim a slot in the lock file
-    // (upstream: connection.c:26-46 claim_connection), and the default
+    // (upstream: connection.c:27 claim_connection()), and the default
     // /var/run/rsyncd.lock is unopenable for a non-root test process, so the
     // config must name a writable lock file beside itself in the tempdir.
     let body = format!(

@@ -90,9 +90,7 @@ impl<'a> MessageSegments<'a> {
     ///
     /// The destination slice must be at least [`Self::len`] bytes long. When the capacity is
     /// insufficient the method returns [`CopyToSliceError`] describing the required length so callers
-    /// can retry with a suitably sized buffer. This mirrors upstream rsync's approach of reusing
-    /// stack-allocated buffers for message rendering while preserving deterministic allocation
-    /// patterns.
+    /// can retry with a suitably sized buffer.
     ///
     /// # Examples
     ///

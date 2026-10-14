@@ -126,7 +126,7 @@ fn static_pool() -> Arc<BufferPool> {
 }
 
 /// Constructs an adaptive pool wired with the PID-style controller from
-/// `buffer_controller.rs` (#1834).
+/// `buffer_controller.rs`.
 ///
 /// `with_buffer_controller` also enables throughput tracking implicitly, so
 /// `record_transfer` samples feed both the EMA and the PID accumulator.

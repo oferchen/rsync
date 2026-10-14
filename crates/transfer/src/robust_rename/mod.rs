@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 /// Attempts `robust_rename()` makes before giving up on a busy target.
 ///
-/// upstream: `util1.c:599` `int tries = 4;`
+/// upstream: `util1.c:602` `int tries = 4;`
 const RENAME_TRIES: u32 = 4;
 
 /// How [`robust_rename`] put the file in place.
@@ -57,7 +57,7 @@ pub(crate) struct CommitAnchor<'a> {
 ///
 /// - `rsync-3.5.1/util1.c:609-635` - the retry loop and its `ETXTBSY` arm,
 ///   which unlinks the busy target and tries again.
-/// - `rsync-3.5.1/util1.c:636-663` - the `EXDEV` arm: `handle_partial_dir(
+/// - `rsync-3.5.1/util1.c:634-660` - the `EXDEV` arm: `handle_partial_dir(
 ///   partialptr, PDIR_CREATE)` and `to = partialptr`, then `copy_file()` and
 ///   `do_unlink_at(from)`.
 ///
@@ -121,7 +121,7 @@ pub(crate) fn robust_rename(
 ///   relative `--partial-dir`.
 /// - `rsync-3.5.1/rsync.c:918` - `robust_rename(fnametmp, fname,
 ///   temp_copy_name, ...)`.
-/// - `rsync-3.5.1/rsync.c:948-955` - the staged copy is renamed onto `fname`
+/// - `rsync-3.5.1/rsync.c:940-946` - the staged copy is renamed onto `fname`
 ///   and `handle_partial_dir(temp_copy_name, PDIR_DELETE)` removes its dir.
 ///
 /// # Errors
@@ -150,7 +150,7 @@ pub(crate) fn finish_rename(
 
 /// Creates the partial directory `partial` lives in.
 ///
-/// upstream: `util1.c:1519-1534` `handle_partial_dir(..., PDIR_CREATE)` -
+/// upstream: `util1.c:1596` `handle_partial_dir(..., PDIR_CREATE)` -
 /// clear a non-directory at the name, then create it.
 fn create_partial_dir(partial: &Path) -> io::Result<()> {
     let Some(dir) = partial.parent() else {

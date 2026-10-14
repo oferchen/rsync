@@ -292,7 +292,7 @@ fn daemon_link_dest_push_creates_hardlinks() {
 /// # Upstream Reference
 ///
 /// - `generator.c:recv_generator()` - copy_dest copies matching file locally
-/// - `util2.c:copy_file()` - performs the local file copy
+/// - `util1.c:copy_file()` - performs the local file copy
 #[cfg(unix)]
 #[test]
 fn daemon_copy_dest_push_copies_from_reference() {

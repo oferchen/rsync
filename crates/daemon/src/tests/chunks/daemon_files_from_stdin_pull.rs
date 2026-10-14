@@ -29,8 +29,8 @@
 /// # Upstream Reference
 ///
 /// - `io.c:forward_filesfrom_data()` - client reads stdin/file, writes to socket
-/// - `main.c:1372-1374` - `start_filesfrom_forwarding(filesfrom_fd)`
-/// - `options.c:2954-2966` - server_options() forwarding of files-from to remote
+/// - `main.c:1428-1430` - `start_filesfrom_forwarding(filesfrom_fd)`
+/// - `options.c:3143-3154` - server_options() forwarding of files-from to remote
 #[cfg(unix)]
 #[test]
 #[ignore = "task 1246: files-from stdin pull transfers none of the listed files"]

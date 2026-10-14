@@ -235,7 +235,7 @@ fn publish_spill_events(
 
 /// Republishes the cumulative `spill_excess` activation counter so callers
 /// can observe normal-operation spill pressure via
-/// [`crate::concurrent_delta::consumer::DeltaConsumer::stats`] (ROB-2).
+/// [`crate::concurrent_delta::consumer::DeltaConsumer::stats`].
 ///
 /// `spill_activations` is granularity-invariant: one increment per
 /// `spill_excess` call that wrote at least one record, regardless of

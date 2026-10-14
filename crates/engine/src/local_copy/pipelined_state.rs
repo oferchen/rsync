@@ -1,8 +1,9 @@
 //! State machine for 4-priority streaming file list processing pipeline.
 //!
-//! This module implements a priority-driven main loop controller used by
-//! `run_pipelined()` to coordinate concurrent file list reception, pipeline
-//! filling, entry processing, and response handling.
+//! This module implements a priority-driven main loop controller that
+//! coordinates file list reception, pipeline filling, entry processing, and
+//! response handling. No production driver uses it yet (the receiver's
+//! `run_pipelined()` has its own loop); `tests/incremental_flist.rs` exercises it.
 //!
 //! # Priority Model
 //!
@@ -14,6 +15,9 @@
 //! 4. **Process One Response** (lowest) - Process completed responses
 //!
 //! # State Machine
+//!
+//! The intended state flow is below. The controller never changes its state on
+//! its own; callers set it with `PipelineController::transition_to`.
 //!
 //! ```text
 //! Idle → FillingPipeline → ProcessingEntry
@@ -220,7 +224,7 @@ impl PipelineController {
 
     /// Marks an entry as ready to process.
     ///
-    /// The entry must currently be in the pending queue.
+    /// Does nothing if the entry is not in the pending queue.
     pub fn mark_ready(&mut self, entry_id: usize) {
         if let Some(pos) = self.pending_entries.iter().position(|&id| id == entry_id) {
             self.pending_entries.remove(pos);

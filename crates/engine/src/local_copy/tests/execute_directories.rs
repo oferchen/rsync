@@ -270,8 +270,8 @@ fn execute_with_delete_before_removes_conflicting_entries() {
     assert_eq!(fs::read(&target).expect("read copied file"), b"fresh");
     assert!(target.is_file());
     assert_eq!(summary.files_copied(), 1);
-    // upstream: generator.c:1240 clears the conflicting (empty) directory with
-    // DEL_FOR_FILE, which delete.c:179 delete_item() removes silently and
+    // upstream: generator.c:2148-2151 clears the conflicting (empty) directory with
+    // DEL_FOR_FILE, which delete.c:191 delete_item() removes silently and
     // without a stats.deleted_files bump. The directory has no contents to
     // recurse over, so no deletions are counted for the make-room replacement.
     assert_eq!(summary.items_deleted(), 0);
@@ -449,7 +449,7 @@ fn execute_dry_run_without_implied_dirs_skips_parent_check() {
     assert!(!destination.exists());
 }
 
-// upstream: main.c:749 get_local_name() - --implied-dirs (archive default) does
+// upstream: main.c:714 get_local_name() - --implied-dirs (archive default) does
 // NOT auto-create the destination arg's own missing leading prefix; only
 // --mkpath does. A single-file transfer to `.../missing/dest.txt` where
 // `missing/` is absent must fail with ENOENT and create nothing, exactly like
@@ -505,7 +505,7 @@ fn execute_with_mkpath_creates_missing_parents_without_implied_dirs() {
 
 #[test]
 fn execute_with_dry_run_silently_keeps_directory_on_conflict() {
-    // upstream: flist.c:3310-3324 keeps the directory and drops the regular
+    // upstream: flist.c:3606-3625 keeps the directory and drops the regular
     // file entry when both share a name. Dry-run reports the same outcome:
     // no error, destination directory preserved.
     let temp = create_tempdir();
@@ -1537,10 +1537,9 @@ fn execute_multiple_source_directories_to_destination() {
 /// Regression: upstream `testsuite/merge.test` runs
 /// `rsync -avv from1/ from2/ from3/ to/` where `from1/dir-and-not-dir/` is a
 /// directory and `from3/dir-and-not-dir` is a regular file of the same name.
-/// Upstream `flist.c:3310-3324 flist_sort_and_clean()` deduplicates the
+/// Upstream `flist.c:3606-3625 flist_sort_and_clean()` deduplicates the
 /// colliding entries by keeping the directory and dropping the regular file,
-/// then `generator.c:1734` falls back to silent skip when the existing
-/// directory would otherwise be replaced without `--force` or `--delete*`.
+/// so the regular file never reaches the generator.
 ///
 /// The expected outcome: exit code 0, `to/dir-and-not-dir/` preserved as a
 /// directory containing the file from `from1/`, and the conflicting file from
@@ -2052,7 +2051,7 @@ fn execute_mkpath_with_directory_source_creates_parents() {
     );
 }
 
-// upstream: main.c:800,809 get_local_name() - without --mkpath the destination
+// upstream: main.c:817 get_local_name() - without --mkpath the destination
 // root is created with a single do_mkdir(dest_path); when a leading directory is
 // absent that mkdir fails with ENOENT (mkdir_error -> RERR_FILEIO). A recursive
 // directory source into a dest with 2+ missing ancestor levels must therefore
@@ -2093,7 +2092,7 @@ fn execute_directory_source_deep_missing_dest_errors_without_mkpath() {
     assert!(!dest_root.exists());
 }
 
-// upstream: main.c:809 - a single missing final component is created by the lone
+// upstream: main.c:817 - a single missing final component is created by the lone
 // do_mkdir(dest_path) even without --mkpath (rsync always makes the immediate
 // destination directory). Only a missing PARENT is fatal.
 #[test]
@@ -2977,7 +2976,7 @@ fn execute_directory_archive_preserves_permissions_and_times_nested() {
 
 #[test]
 fn execute_single_nonempty_dir_without_trailing_slash_keeps_source_name() {
-    // Regression for #6086 / #6078: copying a single non-empty directory
+    // Regression: copying a single non-empty directory
     // without a trailing slash to a not-yet-existing destination must keep the
     // source directory name as a path component (`a` -> `n/a/...`), matching
     // upstream rsync's get_local_name (file_total > 1). Previously oc-rsync
@@ -3010,7 +3009,7 @@ fn execute_single_nonempty_dir_without_trailing_slash_keeps_source_name() {
 
 #[test]
 fn execute_single_empty_dir_without_trailing_slash_drops_source_name() {
-    // Counterpart to #6086: an EMPTY directory source (upstream file_total == 1)
+    // Counterpart to the test above: an EMPTY directory source (upstream file_total == 1)
     // takes the single-entry path and is materialised AS the destination, with
     // its own name dropped (`rsync -r empty n` -> `n/`). This must be preserved
     // when fixing the non-empty case above.

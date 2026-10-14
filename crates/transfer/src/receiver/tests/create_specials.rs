@@ -1,6 +1,6 @@
 //! Regression tests for `ReceiverContext::create_specials`.
 //!
-//! Issue #223: the protocol wire receiver silently dropped FIFO and device
+//! The protocol wire receiver silently dropped FIFO and device
 //! entries. The flist carried them (the daemon logged "built file list with N
 //! entries"), but the receiver only materialised regular files, directories,
 //! and symlinks, so a `rsync -a remote:src/ dst/` pull - or a push to an
@@ -59,7 +59,7 @@ fn special_receiver_config() -> ServerConfig {
     }
 }
 
-/// upstream: generator.c:1675 - `FT_SPECIAL` entries are materialised via
+/// upstream: generator.c:2089 - `FT_SPECIAL` entries are materialised via
 /// `atomic_create -> do_mknod_at`. Without `create_specials` the receiver
 /// dropped the FIFO entirely; this test fails (dest is empty) on the pre-fix
 /// receiver and passes once the node is created.
@@ -92,7 +92,7 @@ fn receiver_creates_fifo_from_flist_entry() {
 /// the process can actually create a device node (root), degrading gracefully
 /// otherwise so CI on unprivileged runners stays green.
 ///
-/// upstream: generator.c:1627 - `FT_DEVICE` entries are created via do_mknod().
+/// upstream: generator.c:2091 - `FT_DEVICE` entries are created via do_mknod().
 #[test]
 fn receiver_creates_char_device_from_flist_entry() {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -136,7 +136,7 @@ fn receiver_creates_char_device_from_flist_entry() {
 /// With `--backup`, an existing destination entry must be preserved to the
 /// backup location before the receiver replaces it with a fresh special node.
 /// Here a regular file sits where a FIFO is about to be created: upstream's
-/// `atomic_create` (generator.c:2018-2020) calls `make_backup` before removing
+/// `atomic_create` (generator.c:2477-2479) calls `make_backup` before removing
 /// it, so the old content must survive at `pipe~` and the new FIFO must land at
 /// `pipe`. Without the backup wiring the receiver would unlink the old file and
 /// lose it silently.

@@ -13,7 +13,7 @@
 //! asserts rsync does not die from a signal - a non-zero exit for the bogus
 //! input is fine, a SIGSEGV/SIGABRT is not.
 //!
-//! # Why this matters (Rule 9)
+//! # Why this matters
 //!
 //! This is a memory-safety / crash-hardening guard. `clean_fname()` runs on
 //! attacker-influenceable path strings (filter files, remote file lists), so a
@@ -33,7 +33,7 @@
 //!
 //! - `testsuite/clean-fname-underflow_test.py` - the upstream script this file
 //!   ports.
-//! - `util1.c` - `clean_fname()` in-place `.`/`..` collapsing.
+//! - `util1.c:1134` - `clean_fname()` in-place `.`/`..` collapsing.
 
 #![cfg(unix)]
 

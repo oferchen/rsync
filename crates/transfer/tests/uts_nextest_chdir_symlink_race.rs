@@ -43,7 +43,7 @@
 //! receiver-shaped nextest that runs on every PR. The asymmetry with
 //! the existing tests is deliberate:
 //!
-//! - the unit test in `setup.rs` only checks the root-level open;
+//! - the unit test in `setup/sandbox.rs` only checks the root-level open;
 //! - this file checks the descent step (the actual chdir-symlink-race
 //!   attack vector) and asserts the outside sentinel file is byte- and
 //!   mode-identical to its pristine state regardless of whether the

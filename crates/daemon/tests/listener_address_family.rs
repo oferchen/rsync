@@ -1,4 +1,4 @@
-//! Regression tests for UTS-DD-daemon-exit10.1 / .2.
+//! Regression tests for the daemon listener address-family selection.
 //!
 //! The default daemon listener binds IPv6 then IPv4 when no explicit family
 //! override is given, matching upstream rsync's `default_af_hint = 0`
@@ -12,7 +12,7 @@
 //! `OC_RSYNC_DAEMON_ADDRESS_FAMILY` configurations and verify a TCP client
 //! on the expected family receives the `@RSYNCD:` greeting.
 //!
-//! upstream: socket.c:410-507 (`open_socket_in`) iterates every
+//! upstream: socket.c:560-658 (`open_socket_in`) iterates every
 //! getaddrinfo result and only fails when zero sockets bound.
 
 use std::io::{BufRead, BufReader};
@@ -165,7 +165,7 @@ fn default_daemon_serves_ipv4_client_via_dual_stack() {
 }
 
 /// `OC_RSYNC_DAEMON_ADDRESS_FAMILY=ipv4` is the explicit CI override and
-/// must produce the same IPv4-only behaviour as the default.
+/// forces an IPv4-only listener that must still serve an IPv4 client.
 #[test]
 fn env_override_ipv4_serves_ipv4_client() {
     let _env = EnvGuard::set("OC_RSYNC_DAEMON_ADDRESS_FAMILY", "ipv4");
@@ -200,8 +200,7 @@ fn env_override_both_serves_ipv4_client() {
     shutdown_daemon(handle, flags);
 }
 
-/// `--ipv4 --ipv6` together used to be rejected as a CLI conflict. After
-/// this fix, the flag pair is the dual-stack opt-in: the daemon binds
+/// `--ipv4 --ipv6` together is the dual-stack opt-in: the daemon binds
 /// both families and serves traffic on whichever family is reachable.
 /// We assert IPv4 reachability (universally available on test runners)
 /// to keep this test stable across environments.

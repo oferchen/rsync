@@ -33,14 +33,15 @@ struct ModuleRequestContext<'a> {
     messages: &'a LegacyMessageCache,
     /// Early-input data sent by the client before the module name.
     ///
-    /// upstream: clientserver.c:583-584 - the daemon writes `early_input` to
-    /// the pre-xfer exec script's stdin.
+    /// upstream: clientserver.c:630-631 `write_pre_exec_args()` - the daemon
+    /// writes `early_input` to the stdin of the `early exec` command
+    /// (`exec_type == 1`).
     early_input_data: Option<Vec<u8>>,
     /// Digest name list the client advertised in its `@RSYNCD:` greeting.
     ///
-    /// upstream: clientserver.c:199-211 - `exchange_protocols()` stores it in the
+    /// upstream: clientserver.c:228-233 - `exchange_protocols()` stores it in the
     /// `daemon_auth_choices` global, which `negotiate_daemon_auth()` consumes at
-    /// authentication time (compat.c:857). An advertised-but-empty list is a
+    /// authentication time (compat.c:868-869). An advertised-but-empty list is a
     /// different state from no list at all, so the distinction is carried in the
     /// type rather than in an `Option<&str>`.
     client_digests: AdvertisedDigests<'a>,
@@ -156,8 +157,8 @@ fn send_error(
 /// Sends a fatal error to the client through the multiplex stream and
 /// terminates the session.
 ///
-/// upstream: clientserver.c:1175-1186 - once `io_start_multiplex_out()`
-/// has run (which happens around the `@RSYNCD: OK` exchange) the daemon
+/// upstream: clientserver.c:1226-1265 - once `io_start_multiplex_out()`
+/// has run (which happens after the `@RSYNCD: OK` exchange) the daemon
 /// emits errors via `rwrite(FERROR, ...)`, encoded as a `MSG_ERROR_XFER`
 /// frame, followed by `MSG_ERROR_EXIT` to synchronize the error exit.
 /// Raw `@ERROR: ...\n` text written here would be decoded by the client's
@@ -166,7 +167,7 @@ fn send_error(
 /// minus `MPLEX_BASE = 7`).
 ///
 /// A multi-line `payload` goes out one line per frame, as upstream's
-/// `rwrite()` loop does (clientserver.c:1257-1263): a client prints a control
+/// `rwrite()` loop does (clientserver.c:1256-1262): a client prints a control
 /// byte inside one message escaped, so a newline must end a frame.
 fn send_multiplexed_error_and_exit(
     stream: &mut DaemonStream,
@@ -180,7 +181,7 @@ fn send_multiplexed_error_and_exit(
         frame_bytes.push(b'\n');
         MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?.encode_into_writer(&mut buffer)?;
     }
-    // upstream: io.c:1078 send_msg_int() - little-endian 4-byte exit code.
+    // upstream: io.c:1183 send_msg_int() - little-endian 4-byte exit code.
     MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
         .encode_into_writer(&mut buffer)?;
     write_limited(stream, limiter, &buffer)?;
@@ -196,7 +197,7 @@ fn send_multiplexed_error_and_exit(
 /// message. This prevents unauthenticated clients from probing which hidden
 /// modules exist.
 ///
-/// upstream: clientserver.c:729-735 - when `!lp_list(i)`, sends
+/// upstream: clientserver.c:773-783 - when `!lp_list(i)`, sends
 /// `@ERROR: Unknown module '%s'`; otherwise sends
 /// `@ERROR: access denied to %s from %s (%s)`.
 fn deny_module(
@@ -208,7 +209,7 @@ fn deny_module(
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
     let error = if !module.listable {
-        // upstream: clientserver.c:730 - hide module existence for non-listable modules.
+        // upstream: clientserver.c:776-777 - hide module existence for non-listable modules.
         AtError::UnknownModule(module_display.into_owned())
     } else {
         AtError::AccessDenied {
@@ -238,7 +239,7 @@ fn send_daemon_ok(
 /// Sends an error message indicating the connection limit was reached and logs
 /// the event. `limit` is the configured number rendered verbatim, so a module
 /// disabled with a negative `max connections` keeps its minus sign, matching
-/// upstream's `%d` in clientserver.c:746-757.
+/// upstream's `%d` in clientserver.c:797-800.
 ///
 /// `active` arrives on the refusal itself rather than being read back from the
 /// module, because the mechanism that refused is the only one that knows it:
@@ -282,7 +283,7 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
 
 /// Handles refused options for a module after `@RSYNCD: OK` has been emitted.
 ///
-/// upstream: clientserver.c:1146-1186 - once the daemon has acknowledged the
+/// upstream: clientserver.c:1152-1268 - once the daemon has acknowledged the
 /// module, errors detected after `read_args()` (including refused options
 /// matched against the real argv in `parse_arguments()`) must be delivered
 /// through the multiplexed stream. Upstream funnels them through the very
@@ -341,8 +342,7 @@ fn handle_refused_option_post_handshake(
 /// write-only pull the same way. Both fire after `setup_protocol()` and
 /// `io_start_multiplex_out()`, so the message travels as a `MSG_ERROR_XFER`
 /// frame followed by `MSG_ERROR_EXIT`. Emitting the raw text with
-/// [`send_error`] instead desynchronises the client's multiplex decoder
-/// (issue #227): the client reads the plaintext line as a 4-byte frame
+/// [`send_error`] instead desynchronises the client's multiplex decoder: the client reads the plaintext line as a 4-byte frame
 /// header and aborts with `invalid multi-message 102 (code 12)` rather than
 /// the clean `ERROR: module is read only` + exit 1 upstream produces.
 fn handle_access_denied_post_handshake(
@@ -363,13 +363,13 @@ fn handle_access_denied_post_handshake(
 /// Rejects a post-`@RSYNCD: OK` client-argument parse failure through the
 /// multiplexed error path.
 ///
-/// upstream: clientserver.c:1258-1266 - when `parse_arguments()` returns 0 (or
+/// upstream: clientserver.c:1254-1267 - when `parse_arguments()` returns 0 (or
 /// leaves a deferred `err_msg`), `rsync_module()` runs `option_error()`, which
 /// emits the parser's own `err_buf` text over `FERROR`
 /// (options.c:915 `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`), and then
 /// `exit_cleanup(RERR_UNSUPPORTED)`. Both writes happen *after* the
 /// `setup_protocol()` + `io_start_multiplex_out()` pair at
-/// clientserver.c:1229-1251, which upstream performs precisely so "we can get
+/// clientserver.c:1226-1252, which upstream performs precisely so "we can get
 /// the error back to the client".
 ///
 /// Delivering this rejection with [`send_error`] instead put raw `@ERROR:`
@@ -398,7 +398,7 @@ fn handle_client_arg_rejection_post_handshake(
 /// daemon writes before turning on `io_start_multiplex_out()` for an error
 /// it needs to deliver after `@RSYNCD: OK`.
 ///
-/// upstream: clientserver.c:1146-1170 - when `read_args()` succeeds but
+/// upstream: clientserver.c:1226-1252 - when `read_args()` succeeds but
 /// `parse_arguments()` rejects an option (or any other post-OK fatal path),
 /// the daemon still has to finish the protocol setup that the client also
 /// runs unconditionally. Without it the client decodes the daemon's first
@@ -428,7 +428,7 @@ fn finalize_post_ok_protocol_for_error(
     };
     let stream = ctx.reader.get_mut();
     if protocol.uses_binary_negotiation() {
-        // upstream: compat.c:711-744 - server writes compat_flags as a
+        // upstream: compat.c:745-750 - server writes compat_flags as a
         // varint (or as a single byte when the client advertised the
         // pre-release `V` capability). Parse the client's `-e` capability
         // string out of the post-OK argv so the advertised flags match the
@@ -436,7 +436,7 @@ fn finalize_post_ok_protocol_for_error(
         let client_info = parse_client_capability_info(client_args);
         let compat_flags = build_default_post_ok_compat_flags(&client_info);
         if has_pre_release_capability(&client_info, 'V') {
-            // upstream: compat.c:737-740 - pre-release 'V' clients encode
+            // upstream: compat.c:745-748 - pre-release 'V' clients encode
             // the compat-flags byte directly rather than as a varint.
             // The flags we advertise here intentionally omit
             // `VARINT_FLIST_FLAGS`, even though upstream would have OR'd
@@ -450,7 +450,7 @@ fn finalize_post_ok_protocol_for_error(
             write_limited(stream, ctx.limiter, &buf)?;
         }
     }
-    // upstream: compat.c:811-814 - server writes a 4-byte little-endian
+    // upstream: compat.c:823-825 - server writes a 4-byte little-endian
     // checksum seed regardless of protocol version. The value is unused
     // because we abort before any transfer, but the slot has to be filled
     // so the client's matching `read_int()` consumes the same bytes
@@ -508,7 +508,7 @@ fn has_pre_release_capability(client_info: &str, letter: char) -> bool {
 /// never satisfy.
 ///
 /// The remaining flags are the platform-default subset upstream picks up
-/// from `compat.c:712-732` for any session that completes `setup_protocol()`
+/// from `compat.c:724-740` for any session that completes `setup_protocol()`
 /// without engaging in vstring negotiation: safe flist handling, the
 /// xattr-optimisation guard, the inplace partial-dir hint, ID-0 names,
 /// the corrected checksum-seed ordering, and incremental recursion only
@@ -549,9 +549,9 @@ fn handle_authentication(
 ) -> io::Result<Option<(Option<String>, UserAccessLevel)>> {
     if !module.requires_authentication() {
         // `@RSYNCD: OK` is deferred to the caller: upstream emits it only after
-        // chroot + privilege drop succeed (clientserver.c:1071), so those
+        // chroot + privilege drop succeed (clientserver.c:1152), so those
         // failures stay raw pre-OK lines instead of desyncing the client.
-        // upstream: authenticate.c:238-239 - an empty/absent `auth users` list
+        // upstream: authenticate.c:301-303 - an empty/absent `auth users` list
         // lets anyone in with no access-level override, so `read only` stays.
         return Ok(Some((None, UserAccessLevel::Default)));
     }
@@ -573,7 +573,7 @@ fn handle_authentication(
         ctx.log_sink,
     )? {
         AuthenticationStatus::DigestUnsupported => {
-            // upstream: compat.c:875 - `exit_cleanup(RERR_UNSUPPORTED)` right
+            // upstream: compat.c:882-886 - `exit_cleanup(RERR_UNSUPPORTED)` right
             // after the refusal line, with no challenge and no auth-failure log.
             *ctx.session_exit_code = Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE);
             ctx.conn_state = ctx.conn_state.close();
@@ -611,7 +611,7 @@ fn handle_authentication(
         } => {
             // upstream: authenticate.c auth_server() logs nothing on success -
             // the granted access is observable via the earlier "rsync allowed
-            // access on module" line (clientserver.c:742), so no auth-success
+            // access on module" line (clientserver.c:786-789), so no auth-success
             // line is emitted here.
             // `@RSYNCD: OK` is deferred to the caller (see the no-auth path
             // above): it is emitted only after chroot + privilege drop succeed.
@@ -705,7 +705,7 @@ fn respond_with_module_request(
         );
     };
 
-    // upstream: clientserver.c:897 `log_init(1)` reopens the daemon log to
+    // upstream: clientserver.c:956 `log_init(1)` reopens the daemon log to
     // `lp_log_file(module_id)` once the module is selected, so every subsequent
     // diagnostic for this connection lands in the module's `log file`. Keep the
     // reopened sink alive for the rest of the request; shadow `log_sink` so the
@@ -714,8 +714,8 @@ fn respond_with_module_request(
     let log_sink = module_log_sink.as_ref().or(log_sink);
 
     let mut hostname_cache: Option<Option<String>> = None;
-    // upstream: clientserver.c:1392 resolves the host when `lp_reverse_lookup(-1)`
-    // (the global default = `reverse_lookup`) is set, then rsync_module (:723)
+    // upstream: clientserver.c:1525 resolves the host when `lp_reverse_lookup(-1)`
+    // (the global default = `reverse_lookup`) is set, then rsync_module (:768-769)
     // resolves it per-module when `lp_reverse_lookup(i)` is set. The effective
     // per-module value is therefore the global default OR the module override.
     let module_reverse_lookup = reverse_lookup || module.reverse_lookup;

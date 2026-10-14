@@ -17,6 +17,10 @@ use super::{MMAP_THRESHOLD, MapStrategy};
 ///
 /// - **Small files (< 1 MB)**: Buffered I/O avoids mmap setup overhead
 /// - **Large files (>= 1 MB)**: Mmap provides zero-copy access
+///
+/// Deviation from upstream: `map_file()` never uses `mmap(2)`
+/// (`fileio.c:316-319`); oc maps large files unless the caller forces the
+/// buffered variant.
 #[derive(Debug)]
 pub enum AdaptiveMapStrategy {
     /// Buffered I/O for small files.
@@ -62,7 +66,7 @@ impl AdaptiveMapStrategy {
     /// `docs/audits/mmap-iouring-co-usage.md` finding F1.
     ///
     /// Mirrors upstream rsync's deliberate avoidance of `mmap(2)` for basis
-    /// files (`fileio.c:256-259`).
+    /// files (`fileio.c:316-319`).
     ///
     /// # Errors
     ///

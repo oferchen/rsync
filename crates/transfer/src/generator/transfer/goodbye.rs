@@ -8,7 +8,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:906-937` - `read_final_goodbye()` with del_stats handling
+//! - `main.c:921-952` - `read_final_goodbye()` with del_stats handling
 
 use std::io::{self, Read, Write};
 
@@ -57,7 +57,7 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
     }
 
     fn last_file_ndx(&self) -> i32 {
-        // upstream: rsync.c:345-348 - the last index of the newest flist, or -1
+        // upstream: rsync.c:346-349 - the last index of the newest flist, or -1
         // when nothing has been sent.
         self.0.file_list().len() as i32 - 1
     }
@@ -115,20 +115,24 @@ impl GeneratorContext {
     /// `read_ndx_and_attrs()` which loops over NDX_DEL_STATS, reading 5 varints of
     /// deletion counts before continuing to expect NDX_DONE.
     ///
-    /// Deletion statistics are only sent when `--stats` is active (INFO_GTE(STATS, 2))
-    /// and follow upstream's early/late timing:
+    /// Deletion statistics are only sent when `--stats` is active and follow the
+    /// early/late timing of upstream 3.4.3 and older (`INFO_GTE(STATS, 2)` gate):
     /// - **Early** (delete_during or delete_before): sent when `do_stats && delete_mode`.
     /// - **Late** (delete_delay or delete_after): sent when `do_stats`.
     ///
+    /// Deviation from upstream: 3.4.4+ (3.5.1 `generator.c:2866-2871`, `generator.c:2911-2916`)
+    /// drops the `INFO_GTE(STATS, 2)` term and sends them whenever
+    /// `delete_mode || force_delete || read_batch`.
+    ///
     /// # Upstream Reference
     ///
-    /// - `main.c:906-937` - `read_final_goodbye()`
+    /// - `main.c:921-952` - `read_final_goodbye()`
     /// - `main.c:914` - protocol < 29 uses `read_int(f_in)`
-    /// - `main.c:916-917` - protocol >= 29 uses `read_ndx_and_attrs()`
+    /// - `main.c:929-930` - protocol >= 29 uses `read_ndx_and_attrs()`
     /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
-    /// - `main.c:225-238` - `write_del_stats()` format
-    /// - `generator.c:2376-2381` - early del_stats path
-    /// - `generator.c:2420-2425` - late del_stats path
+    /// - `main.c:229-242` - `write_del_stats()` format
+    /// - `generator.c:2866-2871` - early del_stats path
+    /// - `generator.c:2911-2916` - late del_stats path
     #[cfg(test)]
     pub(in crate::generator) fn handle_goodbye<R: Read, W: Write>(
         &mut self,
@@ -157,14 +161,14 @@ impl GeneratorContext {
     /// closing deflate block that the sender has not yet emitted, while the
     /// sender simultaneously waits on the receiver's final NDX_DONE.
     ///
-    /// upstream: `main.c:992-996 do_server_sender()` runs
+    /// upstream: `main.c:1005-1009 do_server_sender()` runs
     /// `io_flush(FULL_FLUSH)` immediately before `read_final_goodbye()` so
     /// the FIN is preceded by every buffered byte. Under `-zz` upstream's
     /// `write_buf()` bypasses the deflate stream entirely (see
     /// `io.c:2293 write_buf()`), so no codec finalisation is required there.
     /// In our writer-graph the goodbye NDX_DONE rides through
     /// `CompressedWriter`, so we additionally need the finalizer to emit
-    /// `Z_FINISH` (`token.c:367 send_deflated_token()` performs the matching
+    /// `Z_FINISH` (`token.c:370 send_deflated_token()` performs the matching
     /// `deflateEnd()` at end of transfer) before the receiver tries to
     /// decompress past the in-flight block.
     #[cfg(test)]
@@ -214,12 +218,12 @@ impl GeneratorContext {
         }
 
         // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS.
-        // upstream: main.c:929 - read_ndx_and_attrs() handles NDX_DEL_STATS
+        // upstream: main.c:942 - read_ndx_and_attrs() handles NDX_DEL_STATS
         // internally and, like every sender read, treats EOF as fatal
         // (io.c:whine_about_eof(), RERR_STREAMIO).
         let ndx = self.read_ndx_skipping_del_stats(reader, ndx_read_codec)?;
         if ndx != NDX_DONE {
-            // upstream: main.c:1110 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
+            // upstream: main.c:1128 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
             // error so the core exit-code mapper yields 2, not RERR_STREAMIO(12).
             return Err(protocol::protocol_violation(format!(
                 "expected goodbye NDX_DONE (-1) from receiver, got {ndx} {}{}",
@@ -251,12 +255,13 @@ impl GeneratorContext {
     {
         // For protocol 31+: conditionally send del_stats, echo NDX_DONE, read final NDX_DONE.
         //
-        // Upstream gates del_stats sending on INFO_GTE(STATS, 2) (i.e. --stats was passed)
+        // The del_stats gate follows upstream 3.4.3 (INFO_GTE(STATS, 2), i.e. --stats)
         // and splits it into early vs late paths depending on deletion timing:
-        // - Early (generator.c:2393-2398): !(delete_during==2 || delete_after) =>
+        // - Early (generator.c:2866-2871): !(delete_during==2 || delete_after) =>
         //   send del_stats only when (do_stats && (delete_mode || force_delete))
-        // - Late (generator.c:2420-2425): (delete_during==2 || delete_after) =>
+        // - Late (generator.c:2911-2916): (delete_during==2 || delete_after) =>
         //   send del_stats when do_stats
+        // 3.4.4+ (incl. 3.5.1) sends them whenever delete_mode || force_delete || read_batch.
         if self.protocol.supports_extended_goodbye() {
             // Writes during goodbye may fail when the daemon has already closed
             // the connection (common in dry-run mode).
@@ -298,8 +303,8 @@ impl GeneratorContext {
             // write and the goodbye read, so the codec can emit its
             // end-of-stream trailer before the receiver tries to advance.
             //
-            // upstream: token.c:367 send_deflated_token() emits the
-            // Z_FINISH-terminated stream at end of transfer; main.c:995
+            // upstream: token.c:370 send_deflated_token() emits the
+            // Z_FINISH-terminated stream at end of transfer; main.c:1008
             // read_final_goodbye() is bracketed by io_flush(FULL_FLUSH).
             if let Err(e) = finalize_between_write_and_read(writer)
                 && !is_early_close_error(&e)
@@ -312,7 +317,7 @@ impl GeneratorContext {
             match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
                 Ok(final_ndx) => {
                     if final_ndx != NDX_DONE {
-                        // upstream: main.c:1110 exit_cleanup(RERR_PROTOCOL)
+                        // upstream: main.c:1128 exit_cleanup(RERR_PROTOCOL)
                         // (exit 2); tagged so the mapper yields 2 not streamio.
                         return Err(protocol::protocol_violation(format!(
                             "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx} {}{}",
@@ -332,23 +337,27 @@ impl GeneratorContext {
 
     /// Determines whether del_stats should be sent during the goodbye phase.
     ///
-    /// Mirrors upstream's conditional logic for `write_del_stats()` in the
+    /// Mirrors upstream 3.4.3's conditional logic for `write_del_stats()` in the
     /// generator goodbye sequence. The conditions differ for early vs late
     /// deletion timing:
     ///
     /// - **Early** (`!late_delete`): `do_stats && flags.delete`
-    ///   (upstream: generator.c:2377 - `INFO_GTE(STATS, 2) && (delete_mode || force_delete)`)
+    ///   (3.4.3 `generator.c:2387` - `INFO_GTE(STATS, 2) && (delete_mode || force_delete)`)
     /// - **Late** (`late_delete`): `do_stats`
-    ///   (upstream: generator.c:2422 - `INFO_GTE(STATS, 2)`)
+    ///   (3.4.3 `generator.c:2432` - `INFO_GTE(STATS, 2)`)
+    ///
+    /// Deviation from upstream: 3.5.1 `generator.c:2868` and `generator.c:2913` gate
+    /// both paths on `delete_mode || force_delete || read_batch` with no `--stats` term.
     pub(in crate::generator) fn should_send_del_stats(&self) -> bool {
         if !self.config.do_stats {
             return false;
         }
         if self.config.deletion.late_delete {
-            // upstream: generator.c:2422 - INFO_GTE(STATS, 2) (already checked above)
+            // upstream 3.4.3: generator.c:2432 - INFO_GTE(STATS, 2) (already checked above)
             true
         } else {
-            // upstream: generator.c:2377 - INFO_GTE(STATS, 2) && (delete_mode || force_delete)
+            // upstream 3.4.3: generator.c:2387 -
+            // INFO_GTE(STATS, 2) && (delete_mode || force_delete)
             self.config.flags.delete
         }
     }

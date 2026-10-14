@@ -21,7 +21,7 @@ use protocol::flist::FileEntry;
 ///
 /// # Upstream Reference
 ///
-/// - `xattrs.c:1172 from_wire_mode()` - the xattr's mode replaces st_mode
+/// - `xattrs.c:1260 from_wire_mode()` - the xattr's mode replaces st_mode
 /// - `flist.c:make_file()` - downstream branches pick the wire encoding
 ///   from the (now overridden) mode
 #[cfg(unix)]
@@ -165,7 +165,7 @@ mod fake_super_tests {
 
     #[test]
     fn build_from_fake_super_symlink_keeps_the_xattr_permission_bits() {
-        // upstream: xattrs.c:1172 `from_wire_mode()` - the stashed mode
+        // upstream: xattrs.c:1260 `from_wire_mode()` - the stashed mode
         // replaces st_mode wholesale, permission bits included. The symlink arm
         // has the same `perm_bits` in hand as every sibling arm and must not
         // substitute a constant for it.

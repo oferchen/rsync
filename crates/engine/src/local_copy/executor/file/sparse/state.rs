@@ -70,6 +70,7 @@ impl SparseWriteState {
         self.touched.total()
     }
 
+    /// Extends the pending zero run by `additional` bytes, saturating on overflow.
     pub(super) const fn accumulate(&mut self, additional: usize) {
         self.pending_zero_run = self.pending_zero_run.saturating_add(additional as u64);
     }
@@ -120,6 +121,7 @@ impl SparseWriteState {
         Ok(())
     }
 
+    /// Replaces the pending zero run with `next_run` bytes.
     pub(super) const fn replace(&mut self, next_run: usize) {
         self.pending_zero_run = next_run as u64;
     }

@@ -54,8 +54,8 @@ fn request_hooked_module(module_dir: &Path, config_dir: &Path, hook_lines: &str)
 
 /// Hook templates expand only upstream's `%NAME%` references.
 ///
-/// upstream: loadparm.c:250 expands `%` + uppercase letter + name + `%` through
-/// getenv, escaping an `RSYNC_` value for its quote context; nothing else is
+/// upstream: loadparm.c:237-255 expand_vars() expands `%` + uppercase letter +
+/// name + `%` through getenv, escaping an `RSYNC_` value for its quote context; nothing else is
 /// special. Measured on 3.5.1: `"%m %P %u %a %h %p %RSYNC_MODULE_NAME%
 /// %RSYNC_PID%"` inside double quotes reaches the hook as
 /// `%m %P %u %a %h %p 'pct' %RSYNC_PID%`.

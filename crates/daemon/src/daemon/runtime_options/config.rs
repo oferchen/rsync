@@ -10,13 +10,14 @@ impl RuntimeOptions {
         // settings (pid file, port, address, listener socket options and
         // backlog, the QUIC listener) from a globals-only load that stops at
         // the first module header; each connection then re-reads the whole
-        // file (clientserver.c:1433 load_config(0)) for everything else.
+        // file (clientserver.c:1434 load_config(0)) for everything else.
         let startup = parse_config_globals_only(&path, &self.dparams)?;
 
         // Retain the config path for SIGHUP reload. Only the first config
         // file loaded is reloadable; subsequent --config flags add modules
-        // but the first path is the one re-read on SIGHUP (matching upstream
-        // rsync behaviour where only the primary config is reloaded).
+        // but the first path is the one re-read on SIGHUP. Deviation from
+        // upstream: upstream has no SIGHUP reload and instead re-reads its one
+        // config file on every connection (clientserver.c:1434).
         if self.config_path.is_none() {
             self.config_path = Some(path.clone());
         }
@@ -105,7 +106,8 @@ impl RuntimeOptions {
         }
 
         // Apply the `address` directive only when no CLI --address/--bind was given.
-        // upstream: clientserver.c - CLI --address overrides the config file `address`.
+        // upstream: clientserver.c:1786-1787 `daemon_main()` - CLI --address
+        // overrides the config file `address`.
         if let Some((addr, _origin)) = startup.bind_address
             && !self.bind_address_overridden
         {
@@ -126,8 +128,8 @@ impl RuntimeOptions {
             self.set_listen_backlog_from_config(backlog, &origin)?;
         }
 
-        // upstream: clientserver.c - config `port` overrides the default
-        // listening port unless CLI `--port` was already given.
+        // upstream: clientserver.c:1784-1785 `daemon_main()` - config `port`
+        // overrides the default listening port unless CLI `--port` was given.
         if let Some((port, _origin)) = startup.rsync_port {
             self.rsync_port = Some(port);
             if !self.port_overridden {
@@ -425,7 +427,7 @@ impl RuntimeOptions {
     ///
     /// Mirrors `set_config_lock_file`: a repeated global directive is a config
     /// error unless it repeats the same path, and a CLI-sourced value is left
-    /// untouched so `--log-file` keeps precedence (log.c:215).
+    /// untouched so `--log-file` keeps precedence (log.c:216-217).
     fn set_config_log_file(
         &mut self,
         path: PathBuf,
@@ -477,8 +479,10 @@ impl RuntimeOptions {
 
     /// Resolves a uid string (username or numeric) and stores it as the daemon uid.
     ///
-    /// upstream: loadparm.c - global `uid` parameter accepts both numeric IDs and
-    /// usernames. Resolution happens at config load time via `getpwnam_r`.
+    /// upstream: daemon-parm.txt:6 `daemon uid` accepts both numeric IDs and
+    /// usernames, resolved per connection by `start_daemon()`
+    /// (clientserver.c:1512). Deviation from upstream: resolution happens at
+    /// config load time.
     fn set_daemon_uid_from_config(
         &mut self,
         value: &str,
@@ -500,8 +504,10 @@ impl RuntimeOptions {
 
     /// Resolves a gid string (groupname or numeric) and stores it as the daemon gid.
     ///
-    /// upstream: loadparm.c - global `gid` parameter accepts both numeric IDs and
-    /// groupnames. Resolution happens at config load time via `getgrnam_r`.
+    /// upstream: daemon-parm.txt:5 `daemon gid` accepts both numeric IDs and
+    /// group names, resolved per connection by `start_daemon()`
+    /// (clientserver.c:1499). Deviation from upstream: resolution happens at
+    /// config load time.
     fn set_daemon_gid_from_config(
         &mut self,
         value: &str,

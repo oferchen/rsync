@@ -7,7 +7,7 @@ pub enum LocalCopyAction {
     /// directory because it matched the source. Itemizes as a local change
     /// (`c`) rather than a network transfer (`>`).
     ///
-    /// upstream: generator.c:1039 - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
+    /// upstream: generator.c:1178 try_dests_reg() - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
     /// after `copy_altdest_file()` for `COPY_DEST`.
     ReferenceCopied,
     /// An existing destination file already matched the source.
@@ -30,12 +30,12 @@ pub enum LocalCopyAction {
     SkippedNewerDestination,
     /// A regular file was skipped because it exceeds `--max-size`.
     ///
-    /// upstream: generator.c:1704-1711 recv_generator() - `rprintf(FINFO,
+    /// upstream: generator.c:2118-2125 recv_generator() - `rprintf(FINFO,
     /// "%s is over max-size\n", fname)` then `goto cleanup`.
     SkippedOverMaxSize,
     /// A regular file was skipped because it is smaller than `--min-size`.
     ///
-    /// upstream: generator.c:1712-1719 recv_generator() - `rprintf(FINFO,
+    /// upstream: generator.c:2126-2133 recv_generator() - `rprintf(FINFO,
     /// "%s is under min-size\n", fname)` then `goto cleanup`.
     SkippedUnderMinSize,
     /// A non-regular file was skipped because support was disabled.

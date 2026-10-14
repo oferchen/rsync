@@ -8,7 +8,7 @@ fn parse_boolean_directive_interprets_common_forms() {
         assert_eq!(parse_boolean_directive(value), Some(false));
     }
 
-    // upstream: loadparm.c:363-376 set_boolean() accepts only yes/true/1 and
+    // upstream: loadparm.c:482-496 set_boolean() accepts only yes/true/1 and
     // no/false/0 - on/off are never recognized, so they are malformed (None),
     // like any other unrecognized value.
     for value in [" On ", " off ", "maybe"] {

@@ -491,8 +491,8 @@ fn window_slide_forward_reuses_overlap() {
 /// Reload that requests a smaller window than the buffer's current length
 /// must not drop bytes the overlap branch is about to relocate.
 ///
-/// Reproduces the data-loss path flagged during PR #5569 review: upstream
-/// `fileio.c:278` `realloc_array` only grows; mirroring that, `Vec::resize`
+/// Reproduces a data-loss path: upstream
+/// `fileio.c:365-368` `realloc_array` only grows; mirroring that, `Vec::resize`
 /// must never shrink the buffer while `copy_within` is about to shift a
 /// suffix of the old window to the head of the new window.
 #[test]
@@ -1761,7 +1761,7 @@ fn map_file_open_adaptive_buffered_is_buffered() {
 // panics the process. These tests pin the contract: every out-of-bounds
 // pattern that an attacker can synthesize from the wire must surface a typed
 // `io::Result::Err`, never a bare-slice panic. The fail-loud guard upgrade
-// for the in-window slice and overlap copy lives in PR #5566; these tests
+// for the in-window slice and overlap copy lives in `BufferedMap`; these tests
 // also exercise the pre-existing `offset.saturating_add(len) > self.size`
 // guard at the entry to `map_ptr`, ensuring it stays load-bearing.
 

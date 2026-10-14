@@ -1,11 +1,11 @@
 /// Regression test for the post-`@RSYNCD: OK` client-argument parse failure.
 ///
-/// upstream: clientserver.c:1258-1266 - `parse_arguments()` returning 0 sends
+/// upstream: clientserver.c:1253-1267 - `parse_arguments()` returning 0 sends
 /// the parser's own `err_buf` text through `option_error()`
 /// (options.c:915 `rprintf(FERROR, ...)`) and then
 /// `exit_cleanup(RERR_UNSUPPORTED)`. Both run *after* the
 /// `setup_protocol()` + `io_start_multiplex_out()` pair at
-/// clientserver.c:1229-1251, which upstream performs precisely so it "can get
+/// clientserver.c:1226-1251, which upstream performs precisely so it "can get
 /// the error back to the client".
 ///
 /// oc delivered this one rejection with the pre-handshake raw `@ERROR:` writer

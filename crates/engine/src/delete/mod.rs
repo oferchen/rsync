@@ -1,9 +1,8 @@
 //! Data structures for the parallel-deterministic-delete pipeline.
 //!
 //! This module hosts the foundational types described in
-//! `docs/design/parallel-deterministic-delete.md` (PR #4257). The data
-//! structures here are added in isolation; the receiver and emitter wiring
-//! that consumes them lands in later tasks in the DDP series.
+//! `docs/design/parallel-deterministic-delete.md`, together with the
+//! receiver-side [`DeleteContext`] and the [`emitter`] that consume them.
 //!
 //! # Components
 //!

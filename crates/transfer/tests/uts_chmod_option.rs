@@ -202,7 +202,7 @@ fn chmod_file_only_clears_world_execute() {
     );
 }
 
-/// Deliverable #1: a `--chmod` that strips the transfer-root directory's own
+/// A `--chmod` that strips the transfer-root directory's own
 /// owner-execute bit self-locks it.
 ///
 /// upstream: generator.c:1895-1912 - the generator chmods the transfer root
@@ -266,12 +266,12 @@ fn chmod_transfer_root_self_locks_without_owner_execute() {
     }
 }
 
-/// Deliverable #2: a subdirectory made owner-non-executable but owner-writable
+/// A subdirectory made owner-non-executable but owner-writable
 /// by `--chmod` regains owner-execute; owner-non-writable ones keep the strict
 /// mode.
 ///
 /// upstream: generator.c:1904-1912 raises a directory to owner-`rwx` while its
-/// contents are written, and generator.c:2579-2617 `touch_up_dirs()` restores
+/// contents are written, and generator.c:2565-2618 `touch_up_dirs()` restores
 /// the tweaked mode ONLY when the owner would otherwise lack write. A subdir is
 /// addressed by name (not "./"), so the re-add chmod always succeeds; the net
 /// on-disk mode therefore keeps the transient owner bits when the owner is

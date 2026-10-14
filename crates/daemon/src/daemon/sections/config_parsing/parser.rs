@@ -9,12 +9,12 @@
 /// comparison.
 ///
 /// Upstream compares a configuration parameter name against the `parm_table`
-/// labels with `strwiEQ` (loadparm.c:282), which walks both strings skipping
+/// labels with `strwiEQ` (loadparm.c:401), which walks both strings skipping
 /// every `isSpace()` character (itypes.h:37) and comparing the remaining
 /// characters case-insensitively via `toUpper()` (itypes.h:67). Two names are
 /// therefore equal exactly when they are equal after removing all whitespace
 /// and lowercasing, so `read only`, `readonly`, `Read Only`, and `read<TAB>only`
-/// all resolve to the same parameter (loadparm.c:344 map_parameter).
+/// all resolve to the same parameter (loadparm.c:463 map_parameter).
 ///
 /// Note that the labels themselves are generated with underscores rewritten to
 /// spaces (daemon-parm.awk `gsub(/_/, " ", pubname)`), while `strwiEQ` skips
@@ -164,7 +164,7 @@ impl<'a> ConfigParse<'a> {
 /// Sections are not finalized here: a string-typed P_LOCAL parameter a section
 /// never set falls back to the global value left standing at the end of the
 /// whole parse (upstream: loadparm.c:347-348), so only the top-level
-/// [`parse_config_modules`] finalizes them.
+/// `parse_config` finalizes them.
 fn parse_config_file(
     path: &Path,
     stack: &mut Vec<PathBuf>,
@@ -225,7 +225,7 @@ fn parse_config_file(
                 // section is accepted, EatComment() discards the rest of the
                 // line, so `[mod] junk` defines `mod`.
 
-                // upstream: loadparm.c:do_section:497-510 - a section named
+                // upstream: loadparm.c:do_section:616-629 - a section named
                 // "global" (whitespace/case-insensitive via strwiEQ) returns to
                 // the daemon-wide global scope instead of defining a module:
                 // bInGlobalSection = True and no module is added, so directives
@@ -320,7 +320,7 @@ fn parse_config_file(
 /// Reports a parameter name that is not a daemon parameter; the line is
 /// ignored.
 ///
-/// upstream: loadparm.c:map_parameter() logs `Unknown Parameter encountered:
+/// upstream: loadparm.c:463-477 map_parameter() logs `Unknown Parameter encountered:
 /// "<name>"` (silently for a name starting with `-`), and do_parameter() then
 /// logs `IGNORING unknown parameter "<name>"` and carries on. The name is the
 /// one params.c scanned: trimmed, with each whitespace run made one space.
@@ -479,7 +479,7 @@ fn continuation_offset(line: &str) -> Option<usize> {
 /// that string as given, so a relative value is resolved against the daemon's
 /// working directory - never against the config file's directory:
 ///
-/// - `log file`: log.c:216-218 `log_init()` takes `logfile_name` from
+/// - `log file`: log.c:217 `log_init()` takes `logfile_name` from
 ///   `lp_log_file(module_id)`, and log.c:169 `logfile_open()` hands it straight
 ///   to `open_no_attacker_symlinks()`.
 /// - `pid file`: clientserver.c:1584 `create_pid_file()` opens

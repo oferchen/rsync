@@ -9,11 +9,11 @@ const DESCRIPTION_COLUMN: usize = 25;
 
 /// Renders the daemon help text for the supplied branding profile.
 ///
-/// The shape mirrors upstream `usage.c:daemon_usage()`: the version banner, a
+/// The shape mirrors upstream `usage.c:369-379 daemon_usage()`: the version banner, a
 /// blank line, the `Usage:` line, the option list, a blank line, then the
 /// two-line trailer steering operators who did not mean to start a daemon.
 ///
-/// upstream: usage.c:daemon_usage
+/// upstream: usage.c:369 daemon_usage()
 pub(crate) fn help_text(brand: Brand) -> String {
     let program = brand.daemon_program_name();
     let default_config = brand.daemon_config_path_str();
@@ -187,11 +187,12 @@ fn push_extension_options(text: &mut String) {
 
 /// Appends upstream's closing advice.
 ///
-/// upstream ends with "See also the rsyncd.conf(5) manpage."; this build names
+/// Deviation from upstream: upstream ends with "See also the rsyncd.conf(5)
+/// manpage." (usage.c:378); this build names
 /// the configuration file and its default location instead, because that is
 /// what an operator can actually go and read here.
 ///
-/// upstream: usage.c:daemon_usage
+/// upstream: usage.c:369 daemon_usage()
 fn push_trailer(text: &mut String, program: &str, config_name: &str, default_config: &str) {
     text.push('\n');
     text.push_str(&format!(
@@ -209,7 +210,7 @@ mod tests {
     /// asserts `--daemon --help` names the daemon invocation, which is how it
     /// distinguishes daemon usage from client usage.
     ///
-    /// upstream: usage.c:daemon_usage - `Usage: rsync --daemon [OPTION]...`
+    /// upstream: usage.c:374 daemon_usage() - `Usage: rsync --daemon [OPTION]...`
     #[test]
     fn usage_line_names_the_daemon_invocation() {
         for (brand, program) in [(Brand::Upstream, "rsync"), (Brand::Oc, "oc-rsync")] {

@@ -336,9 +336,9 @@ fn append_verify_appends_then_redoes_when_prefix_mismatch() {
 
     // Two passes, not one. A failed --append-verify is not a licence to fall
     // back to a single whole-file copy: upstream appends the tail, keeps it
-    // (--append implies --inplace, options.c:2409-2420, so receiver.c:1045
+    // (--append implies --inplace, options.c:2551-2562, so receiver.c:1302
     // commits even for recv_ok == 0), warns, and redoes the file in phase 2
-    // against that retained partial (generator.c:2175-2217). Each pass counts
+    // against that retained partial (generator.c:2647-2684). Each pass counts
     // as a transfer, which is how the redo is observable at all - collapsing to
     // one means the retain-and-redo model is missing.
     // MEASURED against rsync 3.4.4: `Number of regular files transferred: 2`.
@@ -427,8 +427,8 @@ fn append_verify_failure_retains_the_appended_partial_for_the_redo() {
     // The load-bearing property of the whole cycle: after the verification
     // fails, the bytes the append wrote must still be on disk, because they are
     // the delta basis the second pass re-deltas against. This is what upstream
-    // buys with `--append` implying `--inplace` (options.c:2409-2420), which
-    // sends receiver.c:1045 down the `|| inplace` leg for recv_ok == 0.
+    // buys with `--append` implying `--inplace` (options.c:2551-2562), which
+    // sends receiver.c:1302 down the `|| inplace` leg for recv_ok == 0.
     //
     // The check is indirect but exact: the source's second half is byte-equal to
     // the destination's second half after pass one, so if the partial were
@@ -474,7 +474,7 @@ fn append_verify_failure_retains_the_appended_partial_for_the_redo() {
 #[test]
 fn append_verify_success_stays_a_single_pass() {
     // The redo must be reachable only through a real verification failure. A
-    // matching prefix means the whole-file sums agree (receiver.c:534-535), so
+    // matching prefix means the whole-file sums agree (receiver.c:690), so
     // upstream never sends MSG_REDO and the file is transferred once. Without
     // this guard a redo that fired unconditionally would still produce correct
     // bytes and go unnoticed.
@@ -505,7 +505,7 @@ fn append_verify_success_stays_a_single_pass() {
 
 #[test]
 fn plain_append_never_redoes_even_with_a_mismatching_prefix() {
-    // upstream: match.c:373-386 folds the pre-existing prefix into the
+    // upstream: match.c:414-428 folds the pre-existing prefix into the
     // whole-file sum only when `append_mode == 2` (--append-verify). Plain
     // --append leaves both sides summing just the appended tail, so the sums
     // always agree, no redo is ever requested, and the destination is left
@@ -538,7 +538,7 @@ fn plain_append_never_redoes_even_with_a_mismatching_prefix() {
     );
 
     // The prefix an append skips is neither literal nor matched. Upstream
-    // accumulates `stats.matched_data` only in `matched()` (match.c:121), and
+    // accumulates `stats.matched_data` only in `matched()` (match.c:144), and
     // append mode never reaches it, so upstream reports 0 - MEASURED on this
     // shape: `oc -a --append --ignore-times --stats` over a 100 KiB prefix
     // gives upstream `Literal 102,400 / Matched 0`.

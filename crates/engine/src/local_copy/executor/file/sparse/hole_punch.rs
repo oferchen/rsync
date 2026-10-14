@@ -38,7 +38,6 @@ use super::ZERO_WRITE_BUFFER_SIZE;
 /// * `len` - Length of the hole in bytes
 ///
 /// Not yet wired into the production delta transfer path (test-only).
-/// See task #677 for in-place update integration.
 #[cfg(target_os = "linux")]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn punch_hole(
@@ -95,7 +94,6 @@ pub(crate) fn punch_hole(
 /// matching the Linux implementation's behavior.
 ///
 /// Not yet wired into the production delta transfer path (test-only).
-/// See task #677 for in-place update integration.
 #[cfg(not(target_os = "linux"))]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn punch_hole(

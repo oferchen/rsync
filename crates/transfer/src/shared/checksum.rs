@@ -7,7 +7,7 @@
 //! # Upstream Reference
 //!
 //! - `checksum.c:sum_init()` - Checksum algorithm initialization
-//! - `match.c:85-120` - Seed handling for different algorithms
+//! - `checksum.c:get_checksum2()` - Seed handling for different algorithms
 //!
 //! # Example
 //!
@@ -140,7 +140,7 @@ impl ChecksumFactory {
         let seed_u64 = self.seed as u64;
 
         match self.algorithm {
-            // upstream: checksum.c:358-396 - MD4 appends the 4-byte LE seed
+            // upstream: checksum.c:376-396 get_checksum2() - MD4 appends the 4-byte LE seed
             // after the data when `checksum_seed != 0`. A zero seed is the
             // "no seed" case and produces an unseeded digest.
             ChecksumAlgorithm::None => {
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn signature_algorithm_md4_with_seed_returns_md4_seeded() {
-        // upstream: checksum.c:358-396 - MD4 appends checksum_seed when != 0
+        // upstream: checksum.c:376-396 - MD4 appends checksum_seed when != 0
         let factory = ChecksumFactory::new(ChecksumAlgorithm::MD4, 0x12345678, false);
         let sig = factory.signature_algorithm();
 

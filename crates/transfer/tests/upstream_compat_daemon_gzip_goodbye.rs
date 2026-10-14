@@ -1,18 +1,16 @@
-//! NXT-2: upstream-compat port of `testsuite/daemon-gzip-download_test.py`.
+//! Upstream-compat port of `testsuite/daemon-gzip-download_test.py`.
 //!
 //! Pairs an upstream rsync client (3.4.4 by default) against an oc-rsync
 //! daemon over a real TCP socket. The transfer pulls a ~1 MB fixture with
 //! `-zz` (new-style zlibx codec). The invariant under test is that the
 //! goodbye envelope reaches the upstream client without a premature
-//! connection drop - the regression family that UTS-9.REOPEN /
-//! UTS-10.REOPEN / UTS-V3.A surfaced and which PRs #5520, #5600, #5619,
-//! and #5725 fixed.
+//! connection drop.
 //!
 //! # Design references
 //!
 //! - `docs/design/nxt-1-nextest-harness.md` - NXT-1 harness shape.
 //! - `docs/design/uts-nextest-edge-b-test-harness.md` - sibling internal
-//!   harness (oc-rsync drives oc-rsync). NXT-2 uses the cross-binary
+//!   harness (oc-rsync drives oc-rsync). This test uses the cross-binary
 //!   surface from `test-support::upstream_compat`.
 //! - `docs/audits/uts-9-daemon-gzip-download-goodbye.md` - UTS-9
 //!   regression analysis the original goodbye flush patch addressed.
@@ -22,7 +20,7 @@
 //! - `testsuite/daemon-gzip-download_test.py`
 //!   - upstream script this port replaces.
 //! - `main.c:1011` `do_server_sender()` - `io_flush(FULL_FLUSH)` before
-//!   return; contract pinned by UTS-9.
+//!   return.
 //! - `options.c:2131-2132` - `-zz` -> `compress_choice = "zlibx"` mapping.
 //!
 //! # Gating

@@ -39,8 +39,7 @@ impl LocalCopyOptions {
     /// engine. Pass `None` to disable transcoding.
     ///
     /// This setter does not yet apply the converter on emit, ingest, or
-    /// filter matching; those producer wirings are tracked under
-    /// trackers #1912, #1913, and #1914 respectively.
+    /// filter matching.
     #[must_use]
     pub fn with_iconv(mut self, converter: Option<FilenameConverter>) -> Self {
         self.iconv = converter;

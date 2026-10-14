@@ -35,7 +35,7 @@ use signature::{
 
 use super::types::{DeltaResult, DeltaWork, DeltaWorkKind};
 
-/// Minimum basis-file size, in bytes, before the IUD-6 io_uring slurp
+/// Minimum basis-file size, in bytes, before the io_uring slurp
 /// dispatch fires. Below this threshold a single `BufReader` pass is faster
 /// than amortising io_uring ring construction and buffer registration.
 #[cfg(all(
@@ -48,15 +48,19 @@ const IOURING_BASIS_SLURP_THRESHOLD: u64 = 1024 * 1024;
 /// Strong checksum length used by self-contained delta computation in
 /// [`DeltaTransferStrategy`].
 ///
-/// Mirrors the upstream rsync default of `MAX_DIGEST_LEN = 16` bytes for the
-/// MD4-based signature pipeline (see `rsync.h:166`). Using the maximum length
-/// ensures the matcher does not produce false positives on synthetic inputs.
+/// Uses the full MD4 digest length (`MD4_DIGEST_LEN`, `lib/md-defines.h:11`)
+/// so the matcher does not produce false positives on synthetic inputs.
+///
+/// Deviation from upstream: upstream truncates the per-file strong sum to the
+/// `s2length` chosen by `generator.c:sum_sizes_sqroot()`; this local pipeline
+/// never puts the signature on the wire, so it always keeps all 16 bytes.
 const STRONG_SUM_LEN: u8 = 16;
 
 /// Signature algorithm used by self-contained delta computation.
 ///
-/// Matches upstream rsync's protocol-30 default (`compat.c:get_default_nonce`)
-/// when no explicit checksum negotiation has occurred.
+/// MD4 is upstream's default strong checksum below protocol 30
+/// (`checksum.c:parse_csum_name()`); protocol 30 and later default to MD5.
+/// This self-contained path never negotiates, so it always uses MD4.
 const SIGNATURE_ALGORITHM: SignatureAlgorithm = SignatureAlgorithm::Md4;
 
 /// Strategy for processing a delta work item.
@@ -93,8 +97,8 @@ pub trait DeltaStrategy: Send + Sync {
 /// # Upstream Reference
 ///
 /// Corresponds to the code path in `receiver.c:recv_files()` where
-/// `fd2 == -1` (no basis file opened), causing `receive_data()` to treat
-/// the entire incoming stream as literal data.
+/// `fd2 == -1` (no basis file opened), so `receive_data()` maps no basis and
+/// every incoming token is literal data.
 #[derive(Debug, Default)]
 pub struct WholeFileStrategy;
 
@@ -109,7 +113,6 @@ impl WholeFileStrategy {
 impl DeltaStrategy for WholeFileStrategy {
     fn process(&self, work: &DeltaWork) -> DeltaResult {
         let target_size = work.target_size();
-        // Whole-file transfer: all bytes are literal, none are matched from basis.
         DeltaResult::success(work.ndx(), target_size, target_size, 0)
     }
 
@@ -149,9 +152,10 @@ impl DeltaStrategy for DeltaTransferStrategy {
             return run_self_contained_delta(work, basis, source);
         }
 
-        // Pre-computed pipeline: receiver.c:receive_data() already split the
-        // wire stream into literal vs matched bytes; carry them through.
-        // upstream: receiver.c:receive_data() tracks these via data/match_sum.
+        // Pre-computed pipeline: the wire reader already split the stream into
+        // literal vs matched bytes; carry them through.
+        // upstream: receiver.c:receive_data() counts them in
+        // `stats.literal_data` and `stats.matched_data`.
         let target_size = work.target_size();
         let literal = work.literal_bytes();
         let matched = work.matched_bytes();
@@ -341,11 +345,11 @@ impl std::io::Seek for BasisReader {
 
 /// Opens a basis file as a `BasisReader`.
 ///
-/// When the `mmap-free-basis` feature is on, the experimental SMR-3a path
+/// When the `mmap-free-basis` feature is on, the experimental path
 /// short-circuits any other dispatch and returns `BasisReader::MmapFree`, a
 /// plain `BufReader<File>` that bypasses both the mmap branch (in callers
-/// that have one) and the io_uring slurp branch below. This matches the
-/// design intent of the SMR-3a flag as an opt-out: when on it overrides any
+/// that have one) and the io_uring slurp branch below. The flag is an
+/// opt-out: when on it overrides any
 /// size-threshold or mmap selection so callers can prove the mmap path was
 /// skipped.
 ///
@@ -354,8 +358,8 @@ impl std::io::Seek for BasisReader {
 /// bytes, the file is pre-read through `fast_io::read_file_with_io_uring`
 /// (a `READ_FIXED` pass against a registered buffer pool) and returned as
 /// `BasisReader::Slurped`. Below the threshold, on non-Linux targets, or
-/// when the feature is off, the default `BufReader<File>` path is used so
-/// production builds are byte-identical to today.
+/// when the feature is off, the default `BufReader<File>` path is used, so
+/// default builds read the basis exactly as before.
 #[cfg(feature = "mmap-free-basis")]
 fn open_basis_reader(path: &Path, _len: u64) -> std::io::Result<BasisReader> {
     let file = File::open(path)?;
@@ -637,8 +641,7 @@ mod tests {
     }
 
     /// Default builds keep the existing dispatch: small basis files take the
-    /// `Buffered` path, preserving byte-identical behaviour with the
-    /// pre-SMR-3a code path.
+    /// `Buffered` path.
     #[cfg(not(feature = "mmap-free-basis"))]
     #[test]
     fn default_basis_dispatch_returns_buffered_variant() {
@@ -653,10 +656,10 @@ mod tests {
         );
     }
 
-    /// SMR-3a Option 1: with the `mmap-free-basis` feature on, even a 1 KiB
+    /// With the `mmap-free-basis` feature on, even a 1 KiB
     /// basis file must go through the buffered path instead of mmap or the
     /// io_uring slurp branch. This pins the override semantics so a parallel
-    /// size-threshold selector (SMR-3b) cannot reintroduce mmap while this
+    /// size-threshold selector cannot reintroduce mmap while this
     /// flag is set.
     #[cfg(feature = "mmap-free-basis")]
     #[test]

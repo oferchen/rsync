@@ -35,7 +35,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:736` - `recv_files()` processes one file at a time
+    /// - `receiver.c:811` - `recv_files()` processes one file at a time
     pub fn run_sync<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
@@ -45,7 +45,7 @@ impl ReceiverContext {
         let (mut reader, file_count, setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
-        // upstream: main.c:1401-1410 - a client handed an empty list skips
+        // upstream: main.c:1438-1446 - a client handed an empty list skips
         // do_recv() entirely and reports the io_error the end marker carried.
         // Same gate as the two pipelined drivers; `setup_transfer` already
         // suppressed the pre-flight dest-root mkdir for this case, so entering
@@ -65,11 +65,11 @@ impl ReceiverContext {
             sandbox,
         } = setup;
 
-        // upstream: receiver.c:669-670 DEBUG_GTE(RECV, 1)
+        // upstream: receiver.c:685-686 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut files_transferred = 0;
-        // upstream: receiver.c:800 total_transferred_size, summed with files_transferred.
+        // upstream: receiver.c:976 total_transferred_size, summed with files_transferred.
         let mut transferred_file_size = 0u64;
         let mut bytes_received = 0u64;
 
@@ -102,7 +102,7 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_specials(&dest_dir, writer)?;
 
-        // upstream: generator.c:1360-1366 - missing_args == 2 && file->mode == 0
+        // upstream: generator.c:1749-1755 - missing_args == 2 && file->mode == 0
         // deletes the destination path and skips any creation for the sentinel.
         self.process_missing_args_sentinels(
             &dest_dir,
@@ -122,7 +122,7 @@ impl ReceiverContext {
 
         let deadline = crate::shared::TransferDeadline::from_system_time(self.config.stop_at);
 
-        // upstream: generator.c:1249 - list-only renders the flist without
+        // upstream: generator.c:1637-1643 - list-only renders the flist without
         // requesting any file data. Capture the entries and skip the per-file
         // NDX loop entirely so no per-file request crosses the wire.
         let list_only_entries = if self.config.flags.list_only {
@@ -131,7 +131,7 @@ impl ReceiverContext {
             Vec::new()
         };
 
-        // upstream: generator.c:2300-2305 - pre-read INC_RECURSE sub-lists so a
+        // upstream: generator.c:2773-2778 - pre-read INC_RECURSE sub-lists so a
         // hardlink follower's leader (which may live in a later segment) is
         // resolved before the per-file loop. No-op without INC_RECURSE.
         let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
@@ -139,7 +139,7 @@ impl ReceiverContext {
             self.prefetch_for_hardlinks(reader, &mut flist_ndx_codec)?;
         }
 
-        // upstream: generator.c:2299-2368 - walk the flist by a flat cursor,
+        // upstream: generator.c:2770-2841 - walk the flist by a flat cursor,
         // pulling the next INC_RECURSE segment on demand. Without INC_RECURSE the
         // list is already complete, so `ensure_flat_idx` never reads the wire and
         // this is a plain 0..len walk.
@@ -158,7 +158,7 @@ impl ReceiverContext {
 
             let file_entry = &self.file_list[file_idx];
             let relative_path = file_entry.path();
-            // upstream: receiver.c:724-725 DEBUG_GTE(RECV, 1)
+            // upstream: receiver.c:899-900 DEBUG_GTE(RECV, 1)
             debug_log!(Recv, 1, "recv_files({})", relative_path.display());
 
             let file_path = if relative_path.as_os_str() == "." {
@@ -186,7 +186,7 @@ impl ReceiverContext {
                 continue;
             }
 
-            // upstream: generator.c:1716-1731 - skip files outside the
+            // upstream: generator.c:2118-2133 - skip files outside the
             // min-size/max-size window with a SKIP-gated notice on FINFO.
             if self.emit_size_bound_skip(
                 writer,
@@ -217,7 +217,7 @@ impl ReceiverContext {
             let xname = basis_result.xname;
 
             // upstream: protocol >= 29 sender expects iflags after NDX.
-            // upstream: generator.c:1942-1948 - a non-FNAME basis sets
+            // upstream: generator.c:2380-2386 - a non-FNAME basis sets
             // ITEM_BASIS_TYPE_FOLLOWS followed by the fnamecmp_type byte, and a
             // fuzzy basis additionally sets ITEM_XNAME_FOLLOWS followed by the
             // basis basename as a vstring.
@@ -227,7 +227,7 @@ impl ReceiverContext {
                 if emit_basis_type {
                     iflags |= SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS;
                 }
-                // upstream: generator.c:1945 - ITEM_XNAME_FOLLOWS iff
+                // upstream: generator.c:2383 - ITEM_XNAME_FOLLOWS iff
                 // fnamecmp_type >= FNAMECMP_FUZZY. Only fuzzy carries an xname.
                 let emit_xname = fnamecmp_type.is_fuzzy() && xname.is_some();
                 if emit_xname {
@@ -238,9 +238,9 @@ impl ReceiverContext {
                     writer.write_all(&[u8::from(fnamecmp_type)])?;
                 }
                 if emit_xname {
-                    // upstream: generator.c:591,1948 write_vstring(sock_f_out,
+                    // upstream: generator.c:597,2384 write_vstring(sock_f_out,
                     // xname, strlen(xname)) - a 1- or 2-byte length prefix then
-                    // the basename bytes (io.c:2335), not a varint.
+                    // the basename bytes (io.c:2520), not a varint.
                     protocol::write_vstring(&mut *writer, xname.as_deref().unwrap_or(&[]))?;
                 }
             }
@@ -290,7 +290,7 @@ impl ReceiverContext {
             #[cfg(not(unix))]
             let open_result = open_tmpfile(&file_path, self.config.temp_dir.as_deref());
 
-            // upstream: receiver.c:1015-1022 - when open_tmpfile() returns fd == -1
+            // upstream: receiver.c:1254-1260 - when open_tmpfile() returns fd == -1
             // (e.g. EACCES from a read-only destination directory) the receiver
             // does NOT abort the receive loop. It logs the error, calls
             // discard_receive_data() to drain this file's delta off the wire, and
@@ -305,7 +305,7 @@ impl ReceiverContext {
                 Ok(pair) => pair,
                 Err(open_err) => {
                     // The checksum length matches what receive_data() would read
-                    // for this file's trailing whole-file sum (receiver.c:531).
+                    // for this file's trailing whole-file sum (receiver.c:687).
                     let checksum_len = ChecksumVerifier::new(
                         self.negotiated_algorithms.as_ref(),
                         self.protocol,
@@ -341,7 +341,7 @@ impl ReceiverContext {
             // the previous in-module `apply_delta_tokens` loop:
             //   - literal/block-ref dispatch with `see_token` after every
             //     block match keeps the `-z` inflate dictionary synced
-            //     (token.c:631);
+            //     (receiver.c:636, token.c:1124);
             //   - sparse mode runs the same `SparseWriteState`; the post-write
             //     size check against `file_entry.size()` is performed below on
             //     `result.final_pos`, byte-identical to the old standalone loop;
@@ -408,7 +408,7 @@ impl ReceiverContext {
                 }
             }
 
-            // upstream: io.c:838 - only literal bytes traverse the read fd;
+            // upstream: io.c:938 - only literal bytes traverse the read fd;
             // matched-from-basis bytes never do. Preserve the exact stat
             // mapping the old loop used (`literal_bytes` -> `bytes_received`).
             let literal_bytes = result.literal_bytes;
@@ -523,7 +523,7 @@ impl ReceiverContext {
                 metadata_errors.push((file_path.clone(), acl_err.to_string()));
             }
 
-            // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
+            // upstream: rsync.c:824-828 set_file_attrs emits the bare-name
             // notice AFTER the transfer/uptodate decision is known. Files
             // that take this branch are always `updated` (the receiver only
             // enters the delta loop when the generator selected the file
@@ -538,7 +538,7 @@ impl ReceiverContext {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
-            // upstream: io.c:838 stats.total_read only counts bytes read
+            // upstream: io.c:938 stats.total_read only counts bytes read
             // off the wire. Matched-from-basis bytes never traverse the
             // read fd, so exclude them from bytes_received.
             bytes_received += literal_bytes;
@@ -546,7 +546,7 @@ impl ReceiverContext {
             transferred_file_size += file_entry.size();
         }
 
-        // upstream: generator.c:2169 finish_hard_link() itemizes every follower
+        // upstream: generator.c:2641 finish_hard_link() itemizes every follower
         // before the phase's NDX_DONE. Emit through the request-phase NDX
         // diff-state so a pushing client's sender renders each `hf...` /
         // `=> leader` row (a no-op in client-mode pull).
@@ -571,14 +571,14 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_hardlinks(&dest_dir, writer)?;
 
-        // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
+        // upstream: generator.c:2565-2618 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&dest_dir, writer);
 
         self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
 
-        // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
-        // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that
+        // upstream: io.c:1740-1745 - io_error |= val on MSG_IO_ERROR from the sender.
+        // The sender emits MSG_IO_ERROR (sender.c:812-813) for source files that
         // vanished or could not be opened during its send loop. Fold those bits
         // into the exit-code io_error so the receiver reports 24/23; MSG_NO_SEND
         // alone only skips the file and carries no exit-code bits.
@@ -586,14 +586,14 @@ impl ReceiverContext {
 
         let total_source_bytes: u64 = self.total_source_size();
 
-        // upstream: main.c:816-818 - count the pre-flight-created destination
+        // upstream: main.c:829-831 - count the pre-flight-created destination
         // root as a created dir (FLAG_DIR_CREATED -> ITEM_IS_NEW). See the
         // incremental path for the full rationale.
         if self.dest_root_created {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
 
-        // upstream: flist.c:2939-2952 - per-type tally so the client
+        // upstream: flist.c:3236-3249 - per-type tally so the client
         // reconstructs the `--stats` "Number of files" breakdown.
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
 
@@ -608,15 +608,15 @@ impl ReceiverContext {
             bytes_received,
             bytes_sent: 0,
             total_source_bytes,
-            // upstream: flist.c:3032 - accumulated across recv_file_list spans.
+            // upstream: flist.c:3334 - accumulated across recv_file_list spans.
             flist_size: self.flist_size,
             flist_buildtime_ms: 0,
             flist_xfertime_ms: 0,
             metadata_errors,
             io_error: self.flist_reader_io_error() | self.flist_io_error | sender_io_error,
-            // upstream: log.c:310-311 - every MSG_ERROR_XFER the sender framed
+            // upstream: log.c:337-338 - every MSG_ERROR_XFER the sender framed
             // sets got_xfer_error on receipt, which is what reports a source
-            // that failed to be listed (flist.c:2671 leaves io_error clear).
+            // that failed to be listed (flist.c:3208 leaves io_error clear).
             got_xfer_error: reader.xfer_error_count() > 0 || self.got_xfer_error.get(),
             entries_received: 0,
             directories_created: 0,
@@ -627,7 +627,7 @@ impl ReceiverContext {
             delete_stats: self.effective_del_stats(),
             // Fold the per-type created tally reconstructed from ITEM_IS_NEW so
             // the client renders the "Number of created files" breakdown.
-            // upstream: receiver.c:749-762.
+            // upstream: receiver.c:925-938.
             created_stats: self.created_stats.get(),
             delete_limit_exceeded: false,
             literal_data: 0,

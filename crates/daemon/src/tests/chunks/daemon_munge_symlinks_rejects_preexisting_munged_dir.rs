@@ -11,7 +11,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:rsync_module` (998-1009) - after `change_dir()` into the
+/// - `clientserver.c:rsync_module` (1072-1081) - after `change_dir()` into the
 ///   module and resolving `munge_symlinks`, upstream stats the
 ///   `SYMLINK_PREFIX` name with its trailing slash trimmed (`rsyncd-munged`);
 ///   an existing directory triggers `@ERROR: daemon security issue --

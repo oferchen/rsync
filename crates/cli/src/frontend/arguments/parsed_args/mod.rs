@@ -81,7 +81,7 @@ pub struct ParsedArgs {
     ///
     /// Encodes the `old_style_args` level: `None` when unset, `Some(0)` for an
     /// explicit `--no-old-args`, and `Some(1)`/`Some(2)` for the counted
-    /// `--old-args` (doubled reaches level 2). upstream: options.c:1648.
+    /// `--old-args` (doubled reaches level 2). upstream: options.c:1755-1760.
     pub old_args: Option<u8>,
 
     /// `--ipv4`, `-4` / `--ipv6`, `-6` - address family preference.
@@ -95,9 +95,9 @@ pub struct ParsedArgs {
 
     /// `--tcp-fastopen` - TCP Fast Open mode selection (auto/on/off).
     ///
-    /// Wire-compatible with upstream rsync: the option only affects the
-    /// initial TCP SYN exchange. Defaults to `auto` which enables TFO
-    /// opportunistically on supported platforms.
+    /// Deviation from upstream: oc-only option. It affects only the initial
+    /// TCP SYN exchange, so the rsync wire stream is unchanged. Defaults to
+    /// `auto`, which enables TFO opportunistically on supported platforms.
     pub tcp_fastopen: TcpFastOpenMode,
 
     /// `--blocking-io` / `--no-blocking-io` - blocking I/O for remote shell.
@@ -145,7 +145,7 @@ pub struct ParsedArgs {
     #[cfg(feature = "quic")]
     pub quic_cipher: Option<rsync_io::quic::QuicCipher>,
 
-    /// `--protocol` - force a specific protocol version (28-32).
+    /// `--protocol` - force a specific protocol version (28-33).
     pub protocol: Option<OsString>,
 
     /// `--timeout` - I/O timeout in seconds.
@@ -276,7 +276,7 @@ pub struct ParsedArgs {
     /// (clap `overrides_with` mirrors upstream's last-wins popt semantics). The
     /// deprecated spelling is forwarded verbatim on the wire.
     ///
-    /// upstream: options.c:730, 2992-2995.
+    /// upstream: options.c:744, 3163-3166.
     pub remove_sent_files: bool,
 
     /// `--trust-sender` - trust the sending side's file list.
@@ -396,7 +396,7 @@ pub struct ParsedArgs {
 
     /// `--confine-root=DIR` - confine every operator- and peer-supplied path
     /// beneath DIR. Validated absolute at parse time
-    /// (upstream options.c:2395-2398).
+    /// (upstream options.c:2396-2398).
     pub confine_root: Option<PathBuf>,
 
     /// `--devices` / `--no-devices` - preserve device files.
@@ -544,7 +544,7 @@ pub struct ParsedArgs {
 
     /// `--io-uring-depth=N` - override io_uring submission queue depth.
     ///
-    /// `None` keeps the upstream default (64). When `Some(n)`, the value has
+    /// `None` keeps the built-in default (64). When `Some(n)`, the value has
     /// already been validated via [`fast_io::validate_io_uring_depth`] and is
     /// guaranteed to be a power of two in
     /// `[fast_io::IO_URING_DEPTH_MIN, fast_io::IO_URING_DEPTH_MAX]`.
@@ -611,7 +611,7 @@ pub struct ParsedArgs {
     ///
     /// Distinct from `verbosity == 0` (the default): captured separately so the
     /// server-arg builder can pack the compact `q` letter, which upstream
-    /// (`options.c:2637`) emits only when `quiet && msgs2stderr`.
+    /// (`options.c:2804`) emits only when `quiet && msgs2stderr`.
     pub quiet: bool,
 
     /// `--progress`, `--info=progress2` / `--no-progress`.
@@ -636,7 +636,7 @@ pub struct ParsedArgs {
     ///
     /// Forces the itemize line for entries whose `iflags == 0` (a quick-check
     /// match with no attribute drift), independently of `-vv`. See upstream
-    /// `generator.c:582-583` and `options.c:1587,2363`.
+    /// `generator.c:588-589` and `options.c:1694,2507`.
     pub itemize_repeated: bool,
 
     /// `--out-format` - format string for file transfer messages.
@@ -694,7 +694,8 @@ pub struct ParsedArgs {
     /// `--ssh-no-agent` - disable SSH agent authentication.
     pub ssh_no_agent: bool,
 
-    /// `--ssh-strict-host-key-checking` - host key verification policy (`yes`, `no`, `ask`, `accept-new`; `true`/`false`/`off` are upstream aliases).
+    /// `--ssh-strict-host-key-checking` - host key verification policy (`yes`, `no`,
+    /// `ask`, `accept-new`; `true`/`false`/`off` are also accepted).
     pub ssh_strict_host_key_checking: Option<String>,
 
     /// `--ssh-ipv6` - prefer IPv6 for embedded SSH connections.

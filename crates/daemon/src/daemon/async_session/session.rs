@@ -60,11 +60,15 @@ impl AsyncSession {
         &self.conn_id
     }
 
-    /// Handles the session using the legacy rsync daemon protocol.
+    /// Runs the greeting and module-request exchange for this session.
+    ///
+    /// The async path answers every request with an `@ERROR` line; module
+    /// transfers are served only by the synchronous daemon.
     ///
     /// # Errors
     ///
-    /// Returns an error if the session handling fails.
+    /// Returns an error if the session was already handled, a read times out,
+    /// or socket I/O fails.
     pub async fn handle(mut self) -> Result<SessionResult, AsyncDaemonError> {
         let stream = self
             .stream
@@ -114,7 +118,8 @@ pub struct SessionResult {
     pub success: bool,
 }
 
-/// Handles an async session.
+/// Sends the `@RSYNCD:` greeting, reads the client version and module request,
+/// and answers with an `@ERROR` line.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_async_session(
     stream: TcpStream,
@@ -149,7 +154,6 @@ pub(super) async fn handle_async_session(
             line_buf.trim().to_string()
         }
         Ok(Ok(_)) => {
-            // EOF
             return Ok(SessionResult {
                 peer_addr,
                 bytes_received,
@@ -201,8 +205,9 @@ pub(super) async fn handle_async_session(
 
     // Async path only emits an `@ERROR:` placeholder for now; full module
     // handling lives in the sync `legacy_session` path.
-    // upstream: clientserver.c:381-385 - the client treats `@ERROR` as fatal
-    // and returns before reading further, so no `@RSYNCD: EXIT` follows.
+    // upstream: clientserver.c:424-429 start_inband_exchange() - the client
+    // treats `@ERROR` as fatal and returns before reading further, so no
+    // `@RSYNCD: EXIT` follows.
     let error_wire =
         crate::daemon::AtError::message("daemon functionality limited in async mode").to_wire();
     writer.write_all(&error_wire).await?;

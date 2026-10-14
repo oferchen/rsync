@@ -1,7 +1,7 @@
 use super::*;
 
 /// Strips the upstream `%Y/%m/%d %H:%M:%S [pid] ` log-file prefix
-/// (upstream: log.c:122-132 logit()) so body assertions see the rendered text.
+/// (upstream: log.c:125 logit()) so body assertions see the rendered text.
 fn log_body(contents: &str) -> &str {
     contents.split_once("] ").map_or(contents, |(_, body)| body)
 }
@@ -677,7 +677,7 @@ fn reload_config_sighup_flag_triggers_reload() {
     assert!(!flags.reload_config.swap(false, Ordering::Relaxed));
 }
 
-/// upstream: clientserver.c:1396 - `start_daemon()` unconditionally enables
+/// upstream: clientserver.c:1529 - `start_daemon()` unconditionally enables
 /// SO_KEEPALIVE on the freshly accepted client socket, independent of any
 /// `socket options` config. This matters because idle daemon connections that
 /// traverse NAT or stateful firewalls are silently dropped without keepalive
@@ -691,7 +691,7 @@ fn reload_config_sighup_flag_triggers_reload() {
 /// is reported, and nothing is fatal - the valid option still reaches the
 /// socket.
 ///
-/// upstream: socket.c:807-895 - the `socket_options[]` table and its
+/// upstream: socket.c:799-896 - the `socket_options[]` table and its
 /// `strcmp()` lookup, "Unknown socket option %s" and "syntax error -- %s
 /// does not take a value".
 #[cfg(unix)]
@@ -1070,8 +1070,8 @@ fn admission_reaps_before_consulting_the_connection_cap() {
 }
 #[test]
 fn default_listen_backlog_matches_upstream() {
-    // upstream: daemon-parm.txt declares `INTEGER listen_backlog 5` and
-    // socket.c:562 passes `lp_listen_backlog()` to listen(2). The absent-
+    // upstream: daemon-parm.txt:12 declares `INTEGER listen_backlog 5` and
+    // socket.c:716 passes `lp_listen_backlog()` to listen(2). The absent-
     // directive default must match upstream's 5 so a drop-in daemon presents
     // the same accept-queue depth; operators raise it via `listen backlog`.
     assert_eq!(DEFAULT_LISTEN_BACKLOG, 5);
@@ -1082,7 +1082,7 @@ fn warn_per_family_bind_failure_labels_ipv6() {
     // The dual-stack startup must surface per-family failure with the
     // correct address-family label so operators investigating partial
     // listener reachability can identify which family degraded. This
-    // mirrors upstream socket.c:626-628's `(address-family %d)` diagnostic.
+    // mirrors upstream socket.c:625-627's `(address-family %d)` diagnostic.
     let addr: SocketAddr = "[::]:8873".parse().unwrap();
     let error = io::Error::new(io::ErrorKind::AddrNotAvailable, "test failure");
 
@@ -1115,7 +1115,7 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
     // must produce a working listener on the loopback family rather than
     // failing the whole startup.
     //
-    // upstream: socket.c::open_socket_in (rsync-3.4.1:428-498) iterates
+    // upstream: socket.c:560-658 open_socket_in() iterates
     // every getaddrinfo result and only fails when zero sockets bound.
     let unreachable = IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, 1));
     let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
@@ -1146,7 +1146,7 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
 
 #[test]
 fn bind_listeners_per_family_applies_socket_options_before_listen() {
-    // upstream: socket.c:457-460 - set_socket_options(s, sockopts) runs before
+    // upstream: socket.c:607-610 - set_socket_options(s, sockopts) runs before
     // bind(2)/listen(2), so options that shape the SYN-ACK (e.g.
     // SO_SNDBUF/SO_RCVBUF window scaling) take effect from the very first
     // connection. Prior to this fix the daemon applied `socket options =` /
@@ -1184,7 +1184,7 @@ fn bind_listeners_per_family_applies_socket_options_before_listen() {
 #[cfg(unix)]
 #[test]
 fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
-    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR only, never
+    // upstream: socket.c:605-606 - open_socket_in() sets SO_REUSEADDR only, never
     // SO_REUSEPORT, so a second bind on the same in-use port is refused with
     // EADDRINUSE rather than co-binding. This is what makes concurrent daemon
     // tests safe from cross-connection load-balancing.
@@ -1227,7 +1227,7 @@ fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
     // when no family in the input list can bind. Both addresses here are
     // TEST-NET-1 documentation prefixes (RFC 5737) which the kernel cannot
     // assign to a local socket, so every bind attempt returns
-    // `EADDRNOTAVAIL`. Matches upstream socket.c:500-506 which returns NULL
+    // `EADDRNOTAVAIL`. Matches upstream socket.c:650-656 which returns NULL
     // ("unable to bind any inbound sockets") only when the per-family loop
     // produced zero usable sockets.
     let bind_addresses = vec![
@@ -1271,7 +1271,7 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
     // IPv4, and produce a working IPv4 listener instead of failing the
     // whole daemon startup.
     //
-    // upstream: socket.c::open_socket_in (rsync-3.4.4:432-498) iterates
+    // upstream: socket.c:560-658 open_socket_in() iterates
     // every getaddrinfo result, accumulates per-family errors via
     // `errmsgs[ecnt++]`, and only fails when zero sockets bound.
     let unreachable_v6 = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1));
@@ -1778,7 +1778,7 @@ fn poll_accept_engine_poll_returns_connection_with_blocking_reset() {
 fn poll_accept_engine_poll_survives_transient_accept_error() {
     // Regression: a transient per-connection accept(2) failure (EMFILE under a
     // descriptor shortage, or ECONNABORTED when a client resets during the
-    // accept window) must NOT tear the daemon down. Upstream socket.c:601
+    // accept window) must NOT tear the daemon down. Upstream socket.c:756
     // `if (fd < 0) continue;` ignores every accept failure and keeps serving.
     // Before the fix, SingleListenerEngine::poll escalated such errors to a
     // fatal DaemonError, so one aborted connection under a burst killed the

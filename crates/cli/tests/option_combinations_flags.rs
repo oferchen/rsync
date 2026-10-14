@@ -25,7 +25,7 @@ fn test_backup_dir_implies_backup() {
 
 #[test]
 fn test_backup_suffix_does_not_imply_backup() {
-    // upstream: options.c:2305-2316 - `--suffix` sets the suffix string but does
+    // upstream: options.c:2447-2458 - `--suffix` sets the suffix string but does
     // not enable backups; only `--backup`/`--backup-dir` do.
     let args = parse_args(["oc-rsync", "--suffix=.bak", "src", "dest"]).unwrap();
     assert!(
@@ -104,7 +104,7 @@ fn test_compress_level_zero_disables_compression() {
 
 #[test]
 fn test_checksum_choice_none_parses() {
-    // upstream: options.c:740-741 accepts `none` as a checksum-choice value.
+    // upstream: checksum.c:63 lists `none` as a valid checksum-choice name.
     let args = parse_args(["oc-rsync", "--checksum-choice=none", "src", "dest"]).unwrap();
     let choice = args.checksum_choice.expect("checksum_choice must be set");
     assert!(

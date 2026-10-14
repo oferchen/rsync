@@ -1,3 +1,9 @@
+//! Client command execution: parses option values and drives the transfer.
+//!
+//! Option parsers (`--chown`, compression, `--stop-at`, sizes, protocol, iconv, info and
+//! debug words, file lists) live in sibling modules; `drive` builds the client
+//! configuration and runs the transfer workflow.
+
 mod chown;
 mod compression;
 mod drive;

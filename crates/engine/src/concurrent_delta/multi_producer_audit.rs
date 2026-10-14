@@ -1,6 +1,6 @@
 //! Audit of `WorkQueueSender` usage sites for multi-producer needs.
 //!
-//! Issue #1609: Determine which call sites could benefit from multi-producer
+//! Determines which call sites could benefit from multi-producer
 //! (multiple generators feeding one queue) vs single-producer.
 //!
 //! # Summary of Findings

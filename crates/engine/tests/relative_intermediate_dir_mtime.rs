@@ -8,8 +8,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c::make_path()` walks the chain of implied dirs.
-//! - `receiver.c::recv_generator()` applies source metadata to each.
+//! - `util1.c:make_path()` walks the chain of implied dirs.
+//! - `generator.c:recv_generator()` applies source metadata to each.
 
 #![cfg(unix)]
 

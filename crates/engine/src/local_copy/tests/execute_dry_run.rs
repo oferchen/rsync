@@ -26,8 +26,8 @@ fn dry_run_single_file_lists_but_does_not_copy() {
         .expect("dry run succeeds");
 
     // Summary reports what *would* happen. upstream: a dry run counts the file
-    // and its size (sender.c:343-344) but never reaches match_sums(), so
-    // literal_data (match.c:436) stays 0 - only transferred_file_size is 7.
+    // and its size (sender.c:634-635) but never reaches match_sums(), so
+    // literal_data (match.c:477) stays 0 - only transferred_file_size is 7.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 0);
     assert_eq!(summary.transferred_file_size(), 7); // "payload" is 7 bytes
@@ -537,8 +537,8 @@ fn dry_run_statistics_match_apply_mode_statistics() {
         summary_apply.directories_created(),
         "directories_created should match between dry-run and apply"
     );
-    // upstream: the transferred *size* (sender.c:343-344) matches between a dry
-    // run and a real run, but literal_data (match.c:436) is only accumulated by
+    // upstream: the transferred *size* (sender.c:634-635) matches between a dry
+    // run and a real run, but literal_data (match.c:477) is only accumulated by
     // the real run - a dry run never calls match_sums(), so its bytes_copied
     // stays 0 while the apply run reports the moved bytes.
     assert_eq!(
@@ -837,8 +837,8 @@ fn dry_run_multiple_files_all_reported() {
     let summary = report.summary();
     assert_eq!(summary.files_copied(), 3);
     // upstream: a --dry-run never reaches match_sums(), so stats.literal_data
-    // (match.c:436) stays 0; only the scan-derived transferred size (8 * 3)
-    // and the transferred-file count are tallied (sender.c:343-344).
+    // (match.c:477) stays 0; only the scan-derived transferred size (8 * 3)
+    // and the transferred-file count are tallied (sender.c:634-635).
     assert_eq!(summary.bytes_copied(), 0);
     assert_eq!(summary.transferred_file_size(), 24); // 8 * 3
 
@@ -933,7 +933,7 @@ fn dry_run_reports_up_to_date_file_as_unchanged() {
         )
         .expect("dry run succeeds");
 
-    // upstream: generator.c:526,645 - the generator runs the quick check in
+    // upstream: generator.c:630-652 quick_check_ok() - the generator runs the quick check in
     // dry-run exactly as in a real run, so a same-size, same-mtime destination
     // is up-to-date and NOT reported as a transfer (rsync -n prints nothing for
     // it). The destination must remain unchanged.
@@ -1121,7 +1121,7 @@ fn dry_run_with_no_implied_dirs_and_missing_parent_succeeds() {
 /// record carried an empty change set (rendering `>f.........`), while the real
 /// run reported the size/time drift (`>f.st......`).
 ///
-/// upstream: generator.c:1942-1960 - the generator itemizes against the
+/// upstream: generator.c:2377-2386 - the generator itemizes against the
 /// existing destination even under dry-run, so `-ni` matches `-i`.
 #[test]
 fn dry_run_existing_differing_dest_itemizes_size_and_time_change() {
@@ -1179,7 +1179,7 @@ fn dry_run_existing_differing_dest_itemizes_size_and_time_change() {
 /// and mtime, or an mtime difference absorbed by `--modify-window`) is skipped
 /// and reported as `MetadataReused` rather than a spurious `DataCopied`.
 ///
-/// upstream: generator.c:unchanged_file() drives the quick-check regardless of
+/// upstream: generator.c:quick_check_ok() drives the quick-check regardless of
 /// dry_run; util1.c:same_time() applies the `--modify-window` tolerance.
 #[test]
 fn dry_run_skips_up_to_date_and_window_absorbed_destinations() {

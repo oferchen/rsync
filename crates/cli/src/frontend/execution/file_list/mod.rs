@@ -1,3 +1,5 @@
+//! Loading, parsing and resolving `--files-from` lists and transfer operands.
+
 mod loader;
 mod parser;
 mod resolver;

@@ -1,8 +1,8 @@
 /// End-to-end test for `--delete` stats emission during a daemon upload.
 ///
-/// Reproduces the URV-6 upload-direction gap: with the default-features build
+/// Reproduces the upload-direction gap: with the default-features build
 /// the receiver runs `run_pipelined_incremental`, which previously skipped
-/// `delete_extraneous_files` entirely. Even with the URV-6.a `--stats` gate
+/// `delete_extraneous_files` entirely. Even with the `--stats` gate
 /// fix, the receiver never carried a non-zero `DeleteStats` and never wrote
 /// `NDX_DEL_STATS` during the goodbye handshake. The client sender therefore
 /// surfaced "Number of deleted files: 0" no matter how many extraneous
@@ -16,9 +16,9 @@
 /// # Upstream Reference
 ///
 /// - `generator.c:do_delete_pass()` - full tree walk deletion sweep
-/// - `generator.c:2393-2398` - `delete_mode || force_delete || read_batch`
+/// - `generator.c:2868` - `delete_mode || force_delete || read_batch`
 ///   gate for early `write_del_stats()`
-/// - `main.c:225-238` - `write_del_stats()` wire format
+/// - `main.c:229-242` - `write_del_stats()` wire format
 #[cfg(unix)]
 #[test]
 fn daemon_delete_push_reports_delete_stats() {
@@ -102,8 +102,8 @@ fn daemon_delete_push_reports_delete_stats() {
     );
 
     // The receiver must propagate NDX_DEL_STATS so the sender's --stats output
-    // reflects the count. Before URV-6.b + this PR the counter stayed at zero
-    // even though the deletion happened on disk.
+    // reflects the count. Before the fix the counter stayed at zero even
+    // though the deletion happened on disk.
     assert_eq!(
         summary.items_deleted(),
         1,

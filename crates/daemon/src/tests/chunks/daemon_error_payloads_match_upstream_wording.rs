@@ -1,11 +1,9 @@
 // Verifies the daemon's `@ERROR:` payload constants match upstream
-// rsync 3.4.1 wire wording byte-for-byte.
+// rsync 3.5.1 wire wording byte-for-byte.
 //
 // Backup tooling and log aggregators parse these specific strings, so any
 // drift breaks downstream classification. Each row pins one upstream
 // citation to its oc-rsync constant.
-//
-// upstream: clientserver.c:649,658,732,735,750,754,764,785,985,1024,1031,1053
 
 #[test]
 fn daemon_error_payloads_match_upstream_wording() {
@@ -104,7 +102,7 @@ fn daemon_error_payloads_match_upstream_wording() {
 /// upstream: every `io_printf(f_out, "@ERROR: ...\n")` in clientserver.c is
 /// followed by `return -1`; the server then closes the socket without emitting
 /// `@RSYNCD: EXIT`. The client treats `@ERROR` as fatal and returns before
-/// reading further (clientserver.c:381-385), so a trailing EXIT is a
+/// reading further (clientserver.c:424-428), so a trailing EXIT is a
 /// divergence from upstream. Only the successful module-listing path sends
 /// `@RSYNCD: EXIT`.
 #[test]
@@ -139,7 +137,7 @@ fn send_error_framing_matches_upstream() {
 /// `@ERROR: Unknown module` instead of `@ERROR: access denied`,
 /// matching upstream's `list = false` behaviour.
 ///
-/// upstream: clientserver.c:731-737 - when `!lp_list(i)`, the daemon hides
+/// upstream: clientserver.c:776-777 - when `!lp_list(i)`, the daemon hides
 /// the module's existence by reporting it as unknown.
 #[test]
 fn deny_hidden_module_sends_unknown_module_error() {

@@ -19,7 +19,7 @@
 //!
 //! The [`delta`] module implements rsync's block-matching pipeline:
 //! - [`SignatureLayout`] / [`calculate_signature_layout`] - upstream-compatible
-//!   block-size heuristics (mirrors `rsync.c:read_batch_protocol()`).
+//!   block-size heuristics (mirrors `generator.c:sum_sizes_sqroot()`).
 //! - [`DeltaGenerator`] - produces [`DeltaToken`] streams (`LITERAL` / `COPY`)
 //!   by matching rolling checksums against a [`DeltaSignatureIndex`].
 //! - [`apply_delta`] - reconstructs destination data from a [`DeltaScript`].
@@ -33,15 +33,16 @@
 //! - Temp-file write + atomic rename (`--inplace` bypasses the rename).
 //! - Sparse file support via [`SparseReader`] / [`SparseDetector`] with 16-byte
 //!   `u128` zero-run detection and a single seek-per-zero-run invariant.
-//! - Deletion passes controlled by [`DeleteTiming`] (before/after transfer).
+//! - Deletion passes controlled by [`DeleteTiming`] (before, during, delay, or
+//!   after the transfer).
 //! - Backup paths computed by [`compute_backup_path`].
 //! - Reference-directory comparisons via [`ReferenceDirectory`].
 //! - Filter-program execution via the `local_copy::filter_program` submodule.
 //! - Directory merging via the `local_copy::dir_merge` submodule.
 //!
-//! ## Buffer reuse and vectored I/O
+//! ## Buffer reuse
 //!
-//! `local_copy::buffer_pool` provides a `BufferPool` with RAII `PooledBuffer`
+//! `local_copy::buffer_pool` provides a `BufferPool` with RAII `BufferGuard`
 //! handles that return allocations to a shared pool on drop, eliminating
 //! per-file heap churn on the hot transfer path.
 //!
@@ -79,6 +80,7 @@
 //!       ├── metadata    (perms/uid/gid/mtime/xattrs/ACLs)
 //!       ├── filters     (include/exclude rule evaluation)
 //!       ├── bandwidth   (rate-limiting)
+//!       ├── logging     (info/debug verbosity and notices)
 //!       ├── batch       (batch-mode file I/O)
 //!       ├── matching    (fuzzy basis-file scoring)
 //!       └── fast_io     (io_uring on Linux 5.6+, std fallback)

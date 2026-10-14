@@ -4,7 +4,7 @@
 //! A server receiver itemizes every new hard-link follower to the client
 //! sender (`NDX + iflags + xname`), and the sender echoes each one back
 //! (upstream sender.c:584-602). Under INC_RECURSE the receiver also writes a
-//! per-sub-list `NDX_DONE` mid-walk and reads its echo (generator.c:2219-2239,
+//! per-sub-list `NDX_DONE` mid-walk and reads its echo (generator.c:2691-2698,
 //! sender.c:525-539). Both echoes share one ordered stream, so a follower echo
 //! left unread ahead of the `NDX_DONE` echo, or ahead of the next sub-list's
 //! transfer replies, desyncs the receiver and the push dies with exit 12 before
@@ -68,7 +68,7 @@ fn inc_recurse_push_links_a_follower_whose_leader_is_in_an_earlier_sub_list() {
         assert_eq!(meta.ino(), leader.ino(), "{name} must share name1's inode");
     }
 
-    // upstream: hlink.c:300-490 itemizes each follower once, while the
+    // upstream: hlink.c hard_link_check()/finish_hard_link() itemize each follower once, while the
     // generator walks the sub-list that holds it. Four names share one inode,
     // so exactly three distinct rows name a follower (which name leads is the
     // sender's choice).

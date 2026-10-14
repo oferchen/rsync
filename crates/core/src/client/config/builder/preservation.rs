@@ -94,7 +94,7 @@ impl ClientConfigBuilder {
     /// Confines every operator- and peer-supplied path beneath `root`.
     ///
     /// The value is validated absolute at parse time
-    /// (`options.c:2395-2398`) and is mutually exclusive with
+    /// (`options.c:2396-2398`) and is mutually exclusive with
     /// [`insecure_links`](Self::insecure_links) (`options.c:2400-2405`).
     #[must_use]
     #[doc(alias = "--confine-root")]

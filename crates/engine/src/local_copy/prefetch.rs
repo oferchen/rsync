@@ -1,8 +1,11 @@
 //! Prefetch hints for sequential file reads.
 //!
-//! Uses `posix_fadvise(FADV_SEQUENTIAL)` on Linux/Unix to hint to the kernel
-//! that the file will be read sequentially, enabling aggressive read-ahead.
-//! On unsupported platforms, the hints are silently ignored (no-op).
+//! Uses `posix_fadvise(FADV_SEQUENTIAL)` on Linux and Android to hint to the
+//! kernel that the file will be read sequentially, enabling aggressive
+//! read-ahead. On other platforms the hints are no-ops.
+//!
+//! Deviation from upstream: rsync 3.5.1 issues no `posix_fadvise` calls; these
+//! hints are an oc-only performance addition with no observable effect.
 
 #![allow(dead_code, unsafe_code)]
 
@@ -11,18 +14,18 @@ use std::io;
 
 /// Minimum file size to bother with fadvise hints.
 /// Small files are already in cache or read in a single I/O operation.
-const FADVISE_THRESHOLD: u64 = 256 * 1024; // 256KB
+const FADVISE_THRESHOLD: u64 = 256 * 1024;
 
 /// Advises the OS that the file will be read sequentially.
 ///
 /// This enables the kernel's read-ahead mechanism to prefetch pages,
 /// which can significantly improve throughput for large sequential reads.
 ///
-/// Files smaller than 256KB are skipped (overhead not worthwhile).
-/// On non-Linux platforms, this is a no-op.
+/// Files smaller than 256 KiB are skipped (overhead not worthwhile).
+/// On platforms other than Linux and Android, this is a no-op.
 pub fn advise_sequential_read(file: &File, file_size: u64) -> io::Result<()> {
     if file_size < FADVISE_THRESHOLD {
-        return Ok(()); // Too small to benefit
+        return Ok(());
     }
     advise_sequential_impl(file, file_size)
 }
@@ -31,6 +34,7 @@ pub fn advise_sequential_read(file: &File, file_size: u64) -> io::Result<()> {
 ///
 /// After finishing a transfer, this hint allows the kernel to evict
 /// the file's pages from the page cache, freeing memory for other uses.
+/// On platforms other than Linux and Android, this is a no-op.
 pub fn advise_dontneed(file: &File, file_size: u64) -> io::Result<()> {
     advise_dontneed_impl(file, file_size)
 }
@@ -77,12 +81,12 @@ fn advise_dontneed_impl(file: &File, file_size: u64) -> io::Result<()> {
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn advise_sequential_impl(_file: &File, _file_size: u64) -> io::Result<()> {
-    Ok(()) // No-op on non-Linux
+    Ok(())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn advise_dontneed_impl(_file: &File, _file_size: u64) -> io::Result<()> {
-    Ok(()) // No-op on non-Linux
+    Ok(())
 }
 
 #[cfg(test)]

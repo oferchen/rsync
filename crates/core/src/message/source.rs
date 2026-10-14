@@ -72,8 +72,7 @@ impl SourceLocation {
     /// Reports whether the stored path is relative to the workspace root.
     ///
     /// Paths pointing to files within the repository are normalised to a
-    /// workspace-relative representation, matching upstream rsync's practice of
-    /// omitting redundant prefixes in diagnostics. When the path escapes the
+    /// workspace-relative representation. When the path escapes the
     /// workspace (for example when the caller provides an absolute path outside
     /// the repository), the method returns `false` to signal that the location is
     /// already absolute.

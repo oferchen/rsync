@@ -52,13 +52,6 @@
 //! helpers on a receiver-shaped tree is the integration boundary the
 //! SEC-1.f/g cutovers actually defend, and it is the surface that must
 //! continue to behave correctly for legitimate symlink workflows.
-//!
-//! Dependency note: this test file uses the SEC-1.f API surface
-//! (`fast_io::DirSandbox`, `fast_io::lstat_via_sandbox_or_fallback`,
-//! `fast_io::LstatOutcome`) which is present in current master after
-//! #4668 merged. It does not consume the SEC-1.g `UnlinkFlags` /
-//! `unlink_via_sandbox_or_fallback` surface from #4671, so the file
-//! compiles cleanly against master while #4671 is still in CI.
 
 #![cfg(unix)]
 

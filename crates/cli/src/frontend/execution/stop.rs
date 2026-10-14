@@ -107,7 +107,7 @@ impl From<BuildError> for StopAtError {
     }
 }
 
-// upstream: options.c:1155 parse_time() - reference "now" comes from
+// upstream: options.c:1281-1284 parse_time() - reference "now" comes from
 // localtime(&now) and mktime() interprets the constructed tm as local time.
 // We mirror that by capturing the local OffsetDateTime once at the call site
 // and reusing its UTC offset for every candidate datetime.
@@ -312,10 +312,10 @@ fn parse_stop_at_internal(input: &str, now: OffsetDateTime) -> Result<SystemTime
     offset_datetime_to_system_time(datetime)
 }
 
-// upstream: options.c parse_time uses mktime() with the process's current
-// timezone for every candidate. We capture the offset once at "now" and reuse
-// it - this matches upstream when no DST transition falls between now and the
-// target datetime, which is the typical use case for --stop-at deadlines.
+// upstream: options.c:parse_time() uses mktime() with the process's current
+// timezone for every candidate. Deviation from upstream: the offset is captured
+// once at "now" and reused, so a DST transition between now and the target
+// shifts the deadline by the DST delta.
 fn build_offset_datetime(
     tm_year: i32,
     tm_mon: i32,

@@ -12,9 +12,9 @@ pub(crate) enum StopRequestKind {
 
 /// Captures a parsed `--stop-after` or `--stop-at` request.
 ///
-/// Holds the originating CLI text alongside the resolved absolute deadline so
-/// the transfer can both honour the cut-off and forward the original argument
-/// to remote peers verbatim.
+/// Holds the originating CLI text alongside the resolved absolute deadline.
+/// Only the deadline reaches the transfer; the kind and text accessors are
+/// used by tests.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StopRequest {
     kind: StopRequestKind,

@@ -33,24 +33,22 @@ pub(in crate::receiver) struct PipelineSetup {
     /// uid/gid id-lists plus `--usermap`/`--groupmap`. Shared with the disk
     /// commit thread via `Arc`. `None` when `--acls` is not active.
     ///
-    /// upstream: acls.c:1059-1081 `match_acl_ids()` converts every named ACL
-    /// entry id through the same table as file owners.
+    /// upstream: acls.c:1430-1450 `match_racl_ids()` / `match_acl_ids()` convert
+    /// every named ACL entry id through the same table as file owners.
     pub(in crate::receiver) acl_id_map: Option<Arc<AclIdMapper>>,
     /// Parent-dirfd carrier rooted at the destination tree.
     ///
     /// Opened once via [`fast_io::secure_open_dir`] when `setup_transfer`
     /// resolves the destination path. Threaded through the receiver
-    /// pipeline so the SEC-1.f-j cutover sites can replace path-based
-    /// syscalls with their `*at` siblings without re-walking the path
-    /// through the kernel. The carrier is threaded through to
-    /// `ReceiverContext` but no syscalls are migrated yet; the existing
-    /// path-based code paths remain the active code (SEC-1.e).
+    /// pipeline (directory, symlink, special and file-commit passes) so
+    /// destination writes use `*at` syscalls beneath this fd instead of
+    /// re-walking the path through the kernel.
     ///
     /// `None` on Unix when the destination root cannot be opened (for
     /// example because it does not yet exist - the receiver will create
     /// it later and the carrier stays absent for the duration of the
-    /// transfer). `None` on Windows where the carrier is not used
-    /// (handle-based NTFS APIs, see SEC-1.l audit).
+    /// transfer). The field does not exist on Windows, where the carrier is
+    /// not used (handle-based NTFS APIs).
     #[cfg(unix)]
     pub(in crate::receiver) sandbox: Option<Arc<fast_io::DirSandbox>>,
 }
@@ -63,8 +61,8 @@ pub(in crate::receiver) struct PipelineSetup {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors upstream `set_file_attrs()` in receiver.c which calls `set_acl()`
-/// after setting permissions, times, and ownership.
+/// Mirrors upstream `rsync.c:800-802` `set_file_attrs()`, which applies the
+/// ACL via `set_acl_fdat()` after ownership and before the final `chmod`.
 pub(in crate::receiver) fn apply_acls_from_receiver_cache(
     destination: &std::path::Path,
     entry: &FileEntry,
@@ -96,13 +94,13 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
 /// Returns `Some(filter_set)` when rules are present, `None` when empty.
 /// Used by the receiver to reject daemon-excluded files before accepting
 /// transfer data, mirroring upstream `check_filter(&daemon_filter_list, ...)`
-/// in `receiver.c:727-732`.
+/// in `receiver.c:903-905` `recv_files()`.
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:874-893` - daemon filter list is built from module
-///   filter/exclude/include/exclude_from/include_from directives
-/// - `receiver.c:727-732` - per-file check against daemon_filter_list
+/// - `clientserver.c:933-952` `rsync_module()` - daemon filter list is built from
+///   module filter/include_from/include/exclude_from/exclude directives
+/// - `receiver.c:903-905` - per-file check against `daemon_filter_list`
 pub(in crate::receiver) fn compile_daemon_filter_set(
     rules: &[FilterRuleWireFormat],
 ) -> Option<FilterSet> {
@@ -139,8 +137,8 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
                 // so narrowing an unsided clear to `with_sides(false, false)`
                 // would silently reinstate the drop.
                 //
-                // upstream: receiver.c:727-732 checks each file against
-                // `daemon_filter_list`, which `clientserver.c:874-893` builds
+                // upstream: receiver.c:903-905 checks each file against
+                // `daemon_filter_list`, which `clientserver.c:933-952` builds
                 // from the module's filter directives - a `clear` among them
                 // pops the earlier rules for the receiver exactly as it does
                 // for the sender.
@@ -154,13 +152,13 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
                 // A per-directory merge is not a flat rule and has no place in
                 // this set: upstream keeps it as a `FILTRULE_PERDIR_MERGE`
                 // entry that `check_filter` recurses into
-                // (exclude.c:1194-1198), holding whatever the current
+                // (exclude.c:1195-1198), holding whatever the current
                 // directory's merge file last supplied. That state lives in
                 // `DaemonFilterGate`, which takes these rules through
                 // [`compile_daemon_merge_configs`].
                 //
                 // A `merge` rule is eager: the daemon reads the named file at
-                // parse time (exclude.c:1581-1590), so its contents reach this
+                // parse time (exclude.c:1583-1590), so its contents reach this
                 // function as ordinary rules and the directive itself carries
                 // nothing further.
                 RuleType::DirMerge | RuleType::Merge => return None,
@@ -197,7 +195,7 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:349-391 add_rule()` registers every `FILTRULE_PERDIR_MERGE` rule
+/// `exclude.c:349-391` `add_rule()` registers every `FILTRULE_PERDIR_MERGE` rule
 /// in the global `mergelist_parents`, whichever list it was added to - so a
 /// rule from a module's `filter` directive, which lands in
 /// `daemon_filter_list` (`clientserver.c:934`), is registered alongside the

@@ -1,4 +1,4 @@
-//! Port of the upstream rsync 3.4.4 testsuite `executability.test`.
+//! Port of the upstream rsync 3.5.1 testsuite `executability.test`.
 //!
 //! Upstream source of truth:
 //!   `testsuite/executability_test.py`

@@ -252,7 +252,7 @@ fn remap_usermap_wildcard_rule_matches_sender_name() {
 /// old behaviour) would make the numeric rule `1500:5000` miss. The map must be
 /// applied on the raw id 1500 first.
 ///
-/// upstream: uidlist.c:262-267 + 483-494 - the uidmap scan runs on the raw id
+/// upstream: uidlist.c:255-267 + 486 - the uidmap scan runs on the raw id
 /// inside match_uid before F_OWNER is rewritten.
 #[test]
 #[cfg(unix)]
@@ -416,7 +416,7 @@ fn uid_list_wire() -> Vec<u8> {
 /// A name the converter does not know keeps the sender's numeric id - the
 /// tolerated outcome, and the control that makes the next test discriminating.
 ///
-/// upstream: uidlist.c:273-282 `recv_add_id()` - an unresolved name leaves the
+/// upstream: uidlist.c:243-294 `recv_add_id()` - an unresolved name leaves the
 /// sender's id in place.
 #[cfg(unix)]
 #[test]
@@ -466,7 +466,7 @@ fn a_dead_converter_aborts_instead_of_keeping_the_senders_id() {
 /// Under INC_RECURSE there is no trailing id list (`flist.c:3296-3299` reads it
 /// only `!inc_recurse`), so upstream maps each entry's group as it is decoded:
 /// `recv_file_entry()` calls `match_gid()`/`recv_group_name()`, which run the
-/// `--groupmap` rules (`flist.c:1235-1244`, `uidlist.c:243-282`). A push into
+/// `--groupmap` rules (`flist.c:1235-1244`, `uidlist.c:243-294`). A push into
 /// an oc daemon negotiates INC_RECURSE, so a receiver that only remapped after
 /// the trailing list kept the sender's gid in every segment.
 #[cfg(unix)]

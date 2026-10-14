@@ -1,4 +1,4 @@
-//! DG-3.e (#2694): 1000-thread x 10K-iter stress for the register ->
+//! DG-3.e: 1000-thread x 10K-iter stress for the register ->
 //! dispatch -> decrement cycle under the DG-3 SlotData/BarrierState
 //! split.
 //!

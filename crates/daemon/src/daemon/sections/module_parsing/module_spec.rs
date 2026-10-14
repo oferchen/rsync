@@ -7,7 +7,7 @@
 
 /// Extracts the client's forwarded `--timeout=N` from the transfer argv.
 ///
-/// upstream: `options.c` - `server_options()` emits `--timeout=%d` whenever the
+/// upstream: `options.c:2969-2972` - `server_options()` emits `--timeout=%d` whenever the
 /// client has `io_timeout` set, and the daemon's own `parse_arguments()` run
 /// over the received argv lands it in the global `io_timeout`, which
 /// `options.c:2520 set_io_timeout(io_timeout)` then arms. oc's daemon has no
@@ -62,8 +62,8 @@ fn apply_io_timeout(stream: &DaemonStream, timeout: Option<NonZeroU64>) -> io::R
         stream.set_write_timeout(Some(duration))?;
     } else {
         // When the module sets no `timeout`, the data phase is untimed, matching
-        // upstream's `io_timeout = 0` default (options.c:107; io.c:197
-        // short-circuits the timeout check when unset). Clearing both directions
+        // upstream's `io_timeout = 0` default (options.c:107; io.c:244
+        // check_timeout() short-circuits the timeout check when unset). Clearing both directions
         // is defensive: it guarantees the accepted socket carries no inherited
         // I/O deadline into the delta phase, so a legitimately slow but live
         // transfer is never aborted as `code 23`.
@@ -245,12 +245,12 @@ fn parse_module_definition(
     //
     // upstream: `normalize_path` (util1.c:1500-1521) makes a non-`/` path
     // absolute by joining it onto `curr_dir`, and `rsync_module()` routes both
-    // the chroot and no-chroot arms through it (clientserver.c:898-918).
+    // the chroot and no-chroot arms through it (clientserver.c:897-918).
     // Upstream's config parser has no absolute-path requirement at all.
     //
     // The bare root `/` is already absolute and is preserved verbatim:
     // upstream treats it as a legitimate module path under either `use chroot`
-    // setting (loadparm.c P_PATH preserves it; clientserver.c serves from it
+    // setting (loadparm.c:562-568 P_PATH preserves it; clientserver.c serves from it
     // directly when chroot is off and chroots into it as a no-op when on).
     if !module_path_is_absolute(&module.path) {
         let current_dir = std::env::current_dir().map_err(|err| {

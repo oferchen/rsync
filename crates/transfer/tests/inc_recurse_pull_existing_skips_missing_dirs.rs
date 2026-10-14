@@ -1,8 +1,8 @@
 //! `--existing` skips a destination directory that does not exist, and that
 //! skip is not an error.
 //!
-//! upstream: generator.c:1755-1761 - with `ignore_non_existing` an absent
-//! directory sets `skip_dir` and `FLAG_MISSING_DIR`, and generator.c:1646-1658
+//! upstream: generator.c:1757-1763 - with `ignore_non_existing` an absent
+//! directory sets `skip_dir` and `FLAG_MISSING_DIR`, and generator.c:1648-1658
 //! returns early for every entry below it. Neither path touches `io_error`, so
 //! the pull exits 0. Under incremental recursion each sub-list reaches the
 //! receiver separately; a receiver that records the skipped directory as a
@@ -84,7 +84,7 @@ fn assert_dirs_only_pull(inc_recurse: bool) {
     fixture(tmp.path());
     let out = pull(tmp.path(), inc_recurse, &["--include=*/", "--exclude=*"]);
     assert_skipped_cleanly(&out, tmp.path(), &["bar", "foo"]);
-    // upstream: generator.c:1505 names only directories set_file_attrs()
+    // upstream: generator.c:1894-1896 names only directories set_file_attrs()
     // changed; a skipped missing directory is never named.
     for missing in ["foo/down/", "new/"] {
         assert!(
@@ -103,7 +103,7 @@ fn eager_pull_existing_skips_missing_dirs_and_exits_0() {
     assert_dirs_only_pull(false);
 }
 /// Entries below a skipped directory are skipped silently too: upstream
-/// returns at generator.c:1646-1656 before the "not creating new" notices, so
+/// returns at generator.c:1648-1656 before the "not creating new" notices, so
 /// `--info=skip` names only the topmost missing directories, by their
 /// transfer-relative names.
 #[test]

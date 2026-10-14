@@ -21,7 +21,7 @@ pub(crate) fn convert_server_stats_to_summary(
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
 
-    // upstream: generator.c:1249 - in list-only mode the receiver captures every
+    // upstream: generator.c:1638-1644 - in list-only mode the receiver captures every
     // flist entry's metadata instead of requesting file data; convert those into
     // metadata-bearing events so the client can render the listing.
     let list_only_events: Vec<ClientEvent> = match stats {
@@ -135,7 +135,7 @@ mod tests {
     use std::time::Duration;
     use transfer::TransferStats;
 
-    /// 432 dedup pin (daemon leg). A `got_xfer_error` with no io_error bit lifts
+    /// Daemon-leg pin: a `got_xfer_error` with no io_error bit lifts
     /// a clean daemon transfer to RERR_PARTIAL through the shared funnel rule.
     /// If this converter's `|| got_xfer_error` arm is dropped or diverges from
     /// the SSH leg's, this turns RED - the two legs can no longer disagree

@@ -3,15 +3,15 @@
 //! With `--copy-dirlinks` the flist generator transmits a symlink whose target
 //! is a directory as a real directory (using `stat`, descending into it),
 //! while a symlink to a non-directory (a file) stays a symlink. This mirrors
-//! upstream `link_stat()` (`flist.c:1587-1595`): `follow_dirlinks` follows only
+//! upstream `link_stat()` (`flist.c:511-526`): `follow_dirlinks` follows only
 //! symlinks-to-directories, unlike `--copy-links` (`-L`), which follows all
 //! symlinks. Without `-k` every symlink is recorded unfollowed.
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1587-1595` - `link_stat()` follows a symlink-to-dir when
+//! - `flist.c:511-526` - `link_stat()` follows a symlink-to-dir when
 //!   `follow_dirlinks` (set to `copy_dirlinks`) and the target is a directory.
-//! - `options.c:687` / `options.c:2668-2669` - `-k` / compact `k`.
+//! - `options.c:701` / `options.c:2834-2835` - `-k` / compact `k`.
 
 #![cfg(unix)]
 

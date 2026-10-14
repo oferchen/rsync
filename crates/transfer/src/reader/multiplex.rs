@@ -136,10 +136,10 @@ fn escape_terminal_line(buf: &[u8], style: EscapeStyle) -> Vec<u8> {
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:870-874` - the client renders `stdout_format` (itemize) when set,
+/// - `log.c:917-922` - the client renders `stdout_format` (itemize) when set,
 ///   else `"deleting %n"`, and skips output when neither `INFO_GTE(DEL, 1)` nor
 ///   `stdout_format` is active.
-/// - `io.c:1642-1647` - a trailing NUL in the payload marks a directory.
+/// - `io.c:1802-1803` - a trailing NUL in the payload marks a directory.
 #[derive(Clone, Copy)]
 pub(crate) struct DeletedRender {
     /// `--itemize-changes` is active: render the `*deleting` row form.
@@ -153,13 +153,13 @@ impl DeletedRender {
     /// Formats a received `MSG_DELETED` payload into the client-visible line, or
     /// `None` when the current verbosity suppresses it.
     ///
-    /// upstream: log.c:870-874 - `stdout_format` (itemize) wins over
+    /// upstream: log.c:917-922 - `stdout_format` (itemize) wins over
     /// `"deleting %n"`; both append a trailing slash for a directory (log.c:%n).
     fn format(&self, payload: &[u8]) -> Option<String> {
         if !self.itemize && !self.show_plain {
             return None;
         }
-        // upstream: io.c:1642 - a trailing NUL byte marks a deleted directory.
+        // upstream: io.c:1802-1803 - a trailing NUL byte marks a deleted directory.
         let (is_dir, name_bytes) = match payload.split_last() {
             Some((0, rest)) => (true, rest),
             _ => (false, payload),
@@ -199,9 +199,9 @@ impl DeletedRender {
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:1568-1575`: receiver reads `MSG_IO_ERROR`, OR's value into
+/// - `io.c:1740-1748`: receiver reads `MSG_IO_ERROR`, OR's value into
 ///   `io_error`, and forwards it to the generator when `am_receiver`.
-/// - `io.c:1644-1653`: `MSG_NO_SEND` received on the sender/receiver pipe;
+/// - `io.c:1847-1856`: `MSG_NO_SEND` received on the sender/receiver pipe;
 ///   if `am_generator`, calls `got_flist_entry_status(FES_NO_SEND, val)`,
 ///   otherwise forwards to the generator.
 pub(crate) struct MultiplexReader<R> {
@@ -210,7 +210,7 @@ pub(crate) struct MultiplexReader<R> {
     /// across calls, so a reader that stops mid-frame is retried rather than
     /// dropping the bytes already in `buffer` and resynchronising on the wrong
     /// byte. upstream needs no equivalent because its decoders never touch the
-    /// descriptor (io.c:807 is the sole `read()`).
+    /// descriptor (io.c:907 is the sole `read()`).
     frames: protocol::FrameReader,
     pub(super) buffer: Vec<u8>,
     pub(super) pos: usize,
@@ -218,20 +218,20 @@ pub(crate) struct MultiplexReader<R> {
     /// upstream: io.c:1745 `io_error |= val;`
     pub(super) io_error: i32,
     /// File indices received via `MSG_NO_SEND` from the sender.
-    /// upstream: io.c:1644-1653, sender.c:368-369
+    /// upstream: io.c:1847-1856, sender.c:670,725,753
     pub(super) no_send_indices: Vec<i32>,
     /// File indices received via `MSG_REDO` from the receiver.
-    /// upstream: io.c:1561-1566, receiver.c:1109-1113
+    /// upstream: io.c:1733-1739, receiver.c:1375
     pub(super) redo_indices: Vec<i32>,
     /// File indices received via `MSG_SUCCESS` from the peer's generator or
     /// receiver, each confirming that the file was fully received and committed
     /// to its final destination. The sender drains these to drive the deferred
     /// `--remove-source-files` unlink - a source is removed only after its
     /// transfer is confirmed, never inline right after the bytes are sent.
-    /// upstream: io.c:1649-1663, sender.c:396 `successful_send()`.
+    /// upstream: io.c:1831-1846, sender.c:396 `successful_send()`.
     pub(super) success_indices: Vec<i32>,
     /// Exit code from MSG_ERROR_EXIT. When set, the remote has requested
-    /// immediate termination. upstream: io.c:1710-1760 calls _exit_cleanup().
+    /// immediate termination. upstream: io.c:1892-1930 calls _exit_cleanup().
     pub(super) error_exit_code: Option<i32>,
     /// Count of MSG_ERROR_XFER messages received from the remote.
     ///
@@ -251,7 +251,7 @@ pub(crate) struct MultiplexReader<R> {
     /// Live-socket re-apply hook for an adopted daemon `MSG_IO_TIMEOUT`. `Some`
     /// only when this reader is the client receiver of a daemon transfer; its
     /// absence also marks the `am_server || am_generator` role for which a
-    /// received `MSG_IO_TIMEOUT` is an invalid message. upstream: io.c:1577-1587.
+    /// received `MSG_IO_TIMEOUT` is an invalid message. upstream: io.c:1750-1769.
     io_timeout_reapply: Option<IoTimeoutReapply>,
     /// Set once a received `MSG_IO_TIMEOUT` violated the upstream `msg_bytes == 4`
     /// / role invariant (upstream `goto invalid_msg`, fatal `RERR_STREAMIO`).
@@ -265,7 +265,7 @@ pub(crate) struct MultiplexReader<R> {
     /// Client-sender rendering state for `MSG_DELETED` frames. `Some` only on
     /// the client side of a push, where the remote receiver runs `--delete`;
     /// every other reader leaves it `None` so the frame is dropped like upstream
-    /// drops it on `am_server`. upstream: log.c:870-874.
+    /// drops it on `am_server`. upstream: log.c:917-922.
     deleted_render: Option<DeletedRender>,
     /// Daemon-receiver routing of a peer's log frames. Set only when this
     /// reader is a daemon's receiver, which hands a peer `MSG_INFO`,
@@ -277,7 +277,7 @@ pub(crate) struct MultiplexReader<R> {
     forward_peer_log: bool,
     /// Whether a received `MSG_BLOCK_STATS` is valid here. Set only on a sender
     /// reader once protocol 33 is negotiated; on every other reader the frame
-    /// is an invalid message. upstream: io.c:1722 `if (msg_bytes != 8 ||
+    /// is an invalid message. upstream: io.c:1724 `if (msg_bytes != 8 ||
     /// protocol_version < 33 || (!am_generator && !am_sender)) goto invalid_msg;`
     block_stats_accepted: bool,
     /// The remote receiver's touched-block count from its last
@@ -289,7 +289,7 @@ pub(crate) struct MultiplexReader<R> {
 /// Exit code for partial transfer due to error.
 ///
 /// upstream: errcode.h `RERR_PARTIAL = 23`. Produced only when
-/// `got_xfer_error` is set (cleanup.c:217-218, main.c:1648-1649).
+/// `got_xfer_error` is set (cleanup.c:217-218, main.c:1710-1711).
 pub(super) const RERR_PARTIAL: i32 = 23;
 
 /// Typed error carrying the exit code a remote peer requested via
@@ -306,7 +306,7 @@ pub(super) const RERR_PARTIAL: i32 = 23;
 /// inline string form (`"remote error exit (code N)"`), so any diagnostic that
 /// rendered the wrapping `io::Error` verbatim is unchanged.
 ///
-/// upstream: io.c:1710-1760 - on `MSG_ERROR_EXIT` the client calls the NORETURN
+/// upstream: io.c:1892-1930 - on `MSG_ERROR_EXIT` the client calls the NORETURN
 /// `_exit_cleanup(val)`, exiting with the peer-supplied code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteExitError {
@@ -331,7 +331,7 @@ impl std::error::Error for RemoteExitError {}
 /// # Why this must interrupt a read rather than accumulate silently
 ///
 /// The sender answers `MSG_NO_SEND` and moves straight on to the next file
-/// (`sender.c:725`, and `:669` / `:751` for the other two refusal cases), so no
+/// (`sender.c:725`, and `:670` / `:753` for the other two refusal cases), so no
 /// response for this index will ever arrive. Recording the index and continuing
 /// to wait for a frame is therefore an unconditional hang: the message is
 /// consumed *inside* the very read it needs to abort.
@@ -339,7 +339,7 @@ impl std::error::Error for RemoteExitError {}
 /// Upstream never faces this because the message lands on the generator's
 /// channel and the generator retires the entry (`io.c:1847-1856` ->
 /// `got_flist_entry_status(FES_NO_SEND, ndx)`), while its receiver is
-/// NDX-addressed and simply never awaits the file (`rsync.c:322-431`). oc fuses
+/// NDX-addressed and simply never awaits the file (`rsync.c:323-448`). oc fuses
 /// those two roles into one loop, so the decline has to be able to unwind an
 /// in-flight positional read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,7 +366,7 @@ const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 64 * 1024;
 /// Returns the timeout the client should adopt from a daemon-advertised
 /// `MSG_IO_TIMEOUT` value `val`, or `None` to keep the current setting.
 ///
-/// Mirrors upstream `io.c:1765` `if (!io_timeout || io_timeout > val)`: adopt
+/// Mirrors upstream `io.c:1764` `if (!io_timeout || io_timeout > val)`: adopt
 /// the stricter (smaller, non-zero) timeout. A current value of `None` or `0`
 /// means the client set no timeout (infinite), so any daemon value is adopted;
 /// otherwise the daemon value is adopted only when it is smaller than the
@@ -437,7 +437,7 @@ impl<R> MultiplexReader<R> {
     /// `drain_buffered`: deliverable payload exists only when no frame is
     /// mid-decode (`!in_progress`) and `pos` has not caught up to the buffered
     /// length. The sender loop consults it to skip its pre-read flush while more
-    /// requests remain buffered, matching upstream `perform_io()` (io.c:658-742)
+    /// requests remain buffered, matching upstream `perform_io()` (io.c:647)
     /// which drains output only while genuinely waiting on input.
     pub(super) fn has_buffered_payload(&self) -> bool {
         !self.frames.in_progress() && self.pos < self.buffer.len()
@@ -460,7 +460,7 @@ impl<R> MultiplexReader<R> {
     /// leaves the state unset and silently drops any `MSG_DELETED` frame,
     /// mirroring upstream's `am_server`/`am_generator` non-rendering path.
     ///
-    /// upstream: log.c:870-874 `log_delete()` renders on the non-server side.
+    /// upstream: log.c:917-922 `log_delete()` renders on the non-server side.
     pub(super) fn set_deleted_render(&mut self, render: DeletedRender) {
         self.deleted_render = Some(render);
     }
@@ -499,7 +499,7 @@ impl<R> MultiplexReader<R> {
     /// other reader leaves it unset and treats a received `MSG_IO_TIMEOUT` as an
     /// invalid message, mirroring upstream's `am_server || am_generator` guard.
     ///
-    /// upstream: io.c:1577-1587 `read_a_msg()` case `MSG_IO_TIMEOUT`.
+    /// upstream: io.c:1750-1769 `read_a_msg()` case `MSG_IO_TIMEOUT`.
     pub(super) fn set_io_timeout_adoption(
         &mut self,
         current: Option<u32>,
@@ -513,7 +513,7 @@ impl<R> MultiplexReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1573-1575`: `io_error |= val; if (am_receiver) send_msg_int(MSG_IO_ERROR, val);`
+    /// - `io.c:1745-1747`: `io_error |= val; if (am_receiver) send_msg_int(MSG_IO_ERROR, val);`
     pub(super) fn take_io_error(&mut self) -> i32 {
         std::mem::take(&mut self.io_error)
     }
@@ -526,8 +526,8 @@ impl<R> MultiplexReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `log.c:311`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
-    /// - `main.c:1648-1649`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// - `log.c:338`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
+    /// - `main.c:1710-1711`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
     pub(super) fn xfer_error_count(&self) -> u32 {
         self.xfer_error_count
     }
@@ -536,8 +536,8 @@ impl<R> MultiplexReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1561-1566`: `MSG_REDO` received, calls `got_flist_entry_status(FES_REDO, val)`.
-    /// - `receiver.c:1109-1113`: receiver sends `MSG_REDO` when `!redoing`.
+    /// - `io.c:1733-1739`: `MSG_REDO` received, calls `got_flist_entry_status(FES_REDO, val)`.
+    /// - `receiver.c:1375`: receiver sends `MSG_REDO` when `!redoing`.
     pub(super) fn take_redo_indices(&mut self) -> Vec<i32> {
         std::mem::take(&mut self.redo_indices)
     }
@@ -551,7 +551,7 @@ impl<R> MultiplexReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1649-1663`: `MSG_SUCCESS` received; when `!am_generator` it
+    /// - `io.c:1831-1846`: `MSG_SUCCESS` received; when `!am_generator` it
     ///   drives `successful_send(val)`.
     /// - `sender.c:396`: `successful_send()` performs the deferred unlink.
     pub(super) fn take_success_indices(&mut self) -> Vec<i32> {
@@ -584,13 +584,13 @@ impl<R> MultiplexReader<R> {
     /// (confirming the daemon filter scenario) or the connection closes
     /// naturally via EOF.
     ///
-    /// upstream: generator.c:1281 - `rprintf(FERROR_XFER, "daemon refused...")`
+    /// upstream: generator.c:1670-1672 - `rprintf(FERROR_XFER, "daemon refused...")`
     /// upstream: log.c:338 - `got_xfer_error = 1;` on FERROR_XFER receipt
-    /// upstream: main.c:1648-1649 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// upstream: main.c:1710-1711 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
     fn check_error_exit(&self) -> io::Result<()> {
         if let Some(code) = self.error_exit_code {
             // RERR_PARTIAL is only produced when got_xfer_error is set
-            // (upstream cleanup.c:217-218, main.c:1648-1649), so receiving
+            // (upstream cleanup.c:217-218, main.c:1710-1711), so receiving
             // exit code 23 guarantees that FERROR_XFER messages exist in the
             // wire even if we haven't read them yet. Suppression is always
             // safe - FERROR_XFER may still be in flight due to the msg2sndr
@@ -652,7 +652,7 @@ impl<R> MultiplexReader<R> {
     ///
     /// The payload must be exactly 4 bytes (little-endian `i32` file index); any
     /// other size is a fatal invalid message.
-    /// upstream: io.c:1561-1566 (`if (msg_bytes != 4 || !am_generator) goto invalid_msg;`)
+    /// upstream: io.c:1733-1739 (`if (msg_bytes != 4 || !am_generator) goto invalid_msg;`)
     fn handle_redo_msg(&mut self) {
         if !self.require_payload_len(&[4]) {
             return;
@@ -691,7 +691,7 @@ impl<R> MultiplexReader<R> {
     ///
     /// The payload must be exactly 4 bytes (little-endian `i32` file index); any
     /// other size is a fatal invalid message.
-    /// upstream: io.c:1665-1673 (`if (msg_bytes != 4) goto invalid_msg;`)
+    /// upstream: io.c:1847-1849 (`if (msg_bytes != 4) goto invalid_msg;`)
     fn handle_no_send_msg(&mut self) {
         if !self.require_payload_len(&[4]) {
             return;
@@ -722,7 +722,7 @@ impl<R> MultiplexReader<R> {
     /// 4-byte index form is valid on the wire. Any other size is a fatal invalid
     /// message.
     ///
-    /// upstream: io.c:1089-1104 `send_msg_success()`, io.c:1649-1663 handler
+    /// upstream: io.c:1194 `send_msg_success()`, io.c:1831-1846 handler
     /// (`if (msg_bytes != (local_server ? 4+8+8 : 4)) goto invalid_msg;`).
     fn handle_success_msg(&mut self) {
         if !self.require_payload_len(&[4]) {
@@ -739,7 +739,7 @@ impl<R> MultiplexReader<R> {
 
     /// Handles a received `MSG_IO_TIMEOUT` (a daemon's advertised `--timeout`).
     ///
-    /// Mirrors upstream `io.c:1577-1587` `read_a_msg()`:
+    /// Mirrors upstream `io.c:1750-1769` `read_a_msg()`:
     ///
     /// ```text
     /// case MSG_IO_TIMEOUT:
@@ -767,7 +767,7 @@ impl<R> MultiplexReader<R> {
             // generator. Aborting there would break an otherwise valid transfer
             // (the client's own --timeout already covers the socket), so a reader
             // without the adoption hook silently ignores the frame - matching the
-            // pre-adoption behaviour. upstream: io.c:1577-1587.
+            // pre-adoption behaviour. upstream: io.c:1750-1769.
             return;
         };
         if self.buffer.len() != 4 {
@@ -910,7 +910,7 @@ impl<R> MultiplexReader<R> {
             protocol::MessageCode::Data => return true,
             protocol::MessageCode::Info | protocol::MessageCode::Client => {
                 // upstream: log.c:rwrite() - FINFO and FCLIENT go to stdout
-                // (log.c:309 rewrites FCLIENT to FINFO first), and the FINFO
+                // (log.c:310-311 rewrites FCLIENT to FINFO first), and the FINFO
                 // arm returns early under `--quiet` (log.c:344-346). A frame
                 // arriving from the peer is delivered through `read_a_msg()` ->
                 // `rwrite()`, so it meets that same arm: `--quiet` silences a
@@ -939,7 +939,7 @@ impl<R> MultiplexReader<R> {
                 sink.error(&out);
             }
             protocol::MessageCode::ErrorXfer => {
-                // upstream: log.c:311 - receipt of FERROR_XFER sets
+                // upstream: log.c:338 - receipt of FERROR_XFER sets
                 // got_xfer_error = 1. Track the count so check_error_exit
                 // can distinguish daemon filter refusals from real errors.
                 self.xfer_error_count += 1;
@@ -970,15 +970,15 @@ impl<R> MultiplexReader<R> {
                 self.require_payload_len(&[0]);
             }
             protocol::MessageCode::IoError => {
-                // upstream: io.c:1568-1573
+                // upstream: io.c:1740-1747
                 self.handle_io_error_msg();
             }
             protocol::MessageCode::NoSend => {
-                // upstream: io.c:1644-1653
+                // upstream: io.c:1847-1856
                 self.handle_no_send_msg();
             }
             protocol::MessageCode::Redo => {
-                // upstream: io.c:1561-1566
+                // upstream: io.c:1733-1739
                 self.handle_redo_msg();
             }
             protocol::MessageCode::BlockStats => {
@@ -986,18 +986,18 @@ impl<R> MultiplexReader<R> {
                 self.handle_block_stats_msg();
             }
             protocol::MessageCode::Success => {
-                // upstream: io.c:1649-1663 - MSG_SUCCESS carries a committed
+                // upstream: io.c:1831-1846 - MSG_SUCCESS carries a committed
                 // file index. On the sender it drives successful_send() (the
                 // deferred --remove-source-files unlink); accumulate it here so
                 // the transfer driver can consume it, instead of dropping it.
                 self.handle_success_msg();
             }
             protocol::MessageCode::IoTimeout => {
-                // upstream: io.c:1577-1587
+                // upstream: io.c:1750-1769
                 self.handle_io_timeout_msg(sink);
             }
             protocol::MessageCode::Deleted => {
-                // upstream: io.c:1640-1647 + log.c:870-874 - the client formats
+                // upstream: io.c:1802-1803 + log.c:917-922 - the client formats
                 // the raw deleted name (a trailing NUL marks a directory) and
                 // gates on its own info=del / itemize verbosity. A server or
                 // client-receiver reader has no render state and drops the frame,
@@ -1376,7 +1376,7 @@ mod peer_log_forward_tests {
     /// WHY: upstream forwards each tag with its own log code (rsync.h
     /// `MSG_ERROR = FERROR` ...), so the daemon log priority and any echo to
     /// the client keep the peer's severity. `MSG_ERROR_XFER` still counts as a
-    /// transfer error (log.c:311).
+    /// transfer error (log.c:338).
     #[test]
     fn daemon_receiver_keeps_each_forwarded_tag_s_log_code() {
         for (code, expected) in [
@@ -1465,7 +1465,7 @@ mod remote_exit_error_tests {
 }
 
 /// Tests for the client-side `MSG_DELETED` render, encoding the upstream
-/// `log.c:870-874` + `io.c:1640-1647` contract: the client formats the raw
+/// `log.c:917-922` + `io.c:1802-1803` contract: the client formats the raw
 /// deleted name (a trailing NUL marks a directory), itemize (`stdout_format`)
 /// wins over `"deleting %n"`, and a reader without render state drops the frame
 /// exactly as upstream drops it on `am_server`.
@@ -1509,7 +1509,7 @@ mod deleted_render_tests {
 
     #[test]
     fn itemize_render_wins_over_plain() {
-        // upstream: log.c:873 - stdout_format (itemize) is used instead of the
+        // upstream: log.c:920 - stdout_format (itemize) is used instead of the
         // plain form when active, even at -v.
         let cfg = DeletedRender {
             itemize: true,
@@ -1521,7 +1521,7 @@ mod deleted_render_tests {
 
     #[test]
     fn suppressed_when_neither_gate_active() {
-        // upstream: log.c:870 - `!INFO_GTE(DEL,1) && !stdout_format` prints
+        // upstream: log.c:917 - `!INFO_GTE(DEL,1) && !stdout_format` prints
         // nothing even though the frame arrived.
         let cfg = DeletedRender {
             itemize: false,
@@ -1543,7 +1543,7 @@ mod deleted_render_tests {
 }
 
 /// Tests for the client-receiver adoption of a daemon-advertised
-/// `MSG_IO_TIMEOUT`. Encodes the upstream `io.c:1577-1587` contract: adopt the
+/// `MSG_IO_TIMEOUT`. Encodes the upstream `io.c:1750-1769` contract: adopt the
 /// stricter timeout, ignore a non-stricter one, treat a bad length or the
 /// wrong role as an invalid (fatal) message, and re-apply the adopted value to
 /// the live socket.
@@ -1737,12 +1737,12 @@ mod success_dispatch_tests {
     /// commit was confirmed and would never remove the source. This test fails
     /// against the drop-on-the-floor behaviour.
     ///
-    /// upstream: io.c:1649-1663 - `!am_generator` runs `successful_send(val)`.
+    /// upstream: io.c:1831-1846 - `!am_generator` runs `successful_send(val)`.
     #[test]
     fn msg_success_is_dispatched_not_dropped() {
         let mut reader = MultiplexReader::new(io::empty());
         // A non-local_server MSG_SUCCESS payload is the bare 4-byte LE ndx
-        // (io.c:1104 send_msg_int(MSG_SUCCESS, ndx)).
+        // (io.c:1194 send_msg_int(MSG_SUCCESS, ndx)).
         reader.buffer = 42i32.to_le_bytes().to_vec();
         let is_data = reader.dispatch_message_with(protocol::MessageCode::Success, &mut RealSink);
         assert!(!is_data, "MSG_SUCCESS is a control frame, not MSG_DATA");
@@ -1777,7 +1777,7 @@ mod success_dispatch_tests {
     /// fails against the previous `if len >= 4` accept-and-truncate behaviour,
     /// which happily read a malformed frame's first 4 bytes.
     ///
-    /// upstream: io.c:1650 `if (msg_bytes != (local_server ? 4+8+8 : 4)) goto invalid_msg;`
+    /// upstream: io.c:1832 `if (msg_bytes != (local_server ? 4+8+8 : 4)) goto invalid_msg;`
     #[test]
     fn msg_success_wrong_payload_length_aborts() {
         let mut reader = MultiplexReader::new(io::empty());

@@ -103,7 +103,7 @@ pub(super) fn apply_final_directory_metadata(
         context.record_finalized_directory(destination, mtime, restore_mode);
     }
 
-    // upstream: generator.c:1422 - implied parent dirs are finalized via
+    // upstream: generator.c:1811 - implied parent dirs are finalized via
     // set_file_attrs() when --implied-dirs is active (the default). With
     // --no-implied-dirs upstream skips them via FLAG_IMPLIED_DIR.
     if let Some(rel) = relative
@@ -298,7 +298,7 @@ pub(super) fn enforce_transfer_root_self_lock(
     // upstream: generator.c:1904 - the transfer-root owner-rwx re-add (whose
     // failure is the self-lock) is guarded by `!am_root`. Under --fake-super
     // upstream sets am_root = -1, so `!am_root` is false and the strict tweaked
-    // mode is never applied to the real inode: set_stat_xattr() (rsync.c:577-578)
+    // mode is never applied to the real inode: set_stat_xattr() (rsync.c:714)
     // forces the directory to 0700 and stashes the intended mode in the
     // `user.rsync.%stat` xattr. The root therefore cannot self-lock, so skip the
     // check entirely and let the fake-super permission apply do its work.

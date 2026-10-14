@@ -20,15 +20,20 @@ impl ReceiverContext {
     ///
     /// - Entries with absolute paths are rejected (unless `--relative` is active)
     /// - Entries containing `..` path components are rejected
-    /// - Symlink entries pointing outside the transfer tree are rejected
+    /// - On Windows, entries carrying a drive or UNC prefix are rejected
     ///
     /// Rejected entries are removed from the file list and warnings are emitted.
     /// Returns the number of entries removed.
     ///
+    /// Deviation from upstream: `recv_file_entry()` applies these checks to
+    /// every entry regardless of `--trust-sender` and aborts with
+    /// `RERR_UNSUPPORTED`; this level-1 pass skips them under `trust_sender`
+    /// and otherwise drops the offending entry instead of aborting.
+    ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:994`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
-    /// - `options.c:2604`: `trust_sender_args = trust_sender_filter = 1`
+    /// - `flist.c:1076-1080`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
+    /// - `options.c:2675-2676`: `trust_sender_args = trust_sender_filter = 1`
     pub(in crate::receiver) fn sanitize_file_list(&mut self) -> usize {
         let relative_paths = self.config.flags.relative;
 
@@ -101,7 +106,7 @@ impl ReceiverContext {
             original_len - self.file_list.len()
         };
 
-        // upstream: flist.c:3349-3362 - strip_root in flist_sort_and_clean()
+        // upstream: flist.c:3651-3663 - strip_root in flist_sort_and_clean()
         // Runs unconditionally: leading-slash stripping is a functional
         // requirement for --relative mode, not a security check.
         if relative_paths {
@@ -120,7 +125,7 @@ impl ReceiverContext {
     ///
     /// Unlike [`sanitize_file_list`](Self::sanitize_file_list) - which runs once
     /// on the level-1 list and drops offending entries - sub-list entries mirror
-    /// upstream `recv_file_entry()` (flist.c:994-996), which calls
+    /// upstream `recv_file_entry()` (flist.c:1076-1080), which calls
     /// `exit_cleanup(RERR_UNSUPPORTED)` on the first entry carrying a `..`
     /// component, an absolute path (without `--relative`), or (on Windows) a
     /// drive/UNC prefix. Aborting rather than dropping is also required for
@@ -131,6 +136,9 @@ impl ReceiverContext {
     ///
     /// Returns [`io::ErrorKind::Unsupported`] so the error maps to
     /// `RERR_UNSUPPORTED` (exit 4), matching upstream.
+    ///
+    /// Deviation from upstream: the check is skipped under `trust_sender`;
+    /// upstream applies it unconditionally.
     pub(in crate::receiver) fn sanitize_segment_paths(
         &mut self,
         flat_start: usize,
@@ -170,7 +178,7 @@ impl ReceiverContext {
                     ));
                 }
 
-                // upstream: flist.c:994 clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0
+                // upstream: flist.c:1077 clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0
                 if path_contains_dot_dot(path) {
                     return Err(io::Error::new(
                         io::ErrorKind::Unsupported,
@@ -183,7 +191,8 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: flist.c:3349-3362 strip_root in flist_sort_and_clean() -
+        // upstream: flist.c:3651-3663 strip_root in flist_sort_and_clean() -
+
         // leading-slash stripping is a functional requirement for --relative,
         // applied in place (no removal, segment-safe).
         if relative_paths {

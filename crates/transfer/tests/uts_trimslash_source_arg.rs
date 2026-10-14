@@ -6,7 +6,7 @@
 //! # Background
 //!
 //! Upstream's `trimslash_test.py` exercises rsync's tiny trailing-slash trimmer
-//! (upstream `util1.c:trim_trailing_slashes`) via a standalone `trimslash`
+//! (upstream `syscall.c:trim_trailing_slashes`) via a standalone `trimslash`
 //! helper. The rule it enforces: any run of trailing slashes on a path
 //! collapses to the semantics of a single trailing slash, except that a path
 //! of pure slashes (`//`, `////`) trims down to a single `/`.
@@ -39,7 +39,7 @@
 //! # Upstream References
 //!
 //! - `testsuite/trimslash_test.py` - the upstream script this file ports.
-//! - `util1.c` - `trim_trailing_slashes()`, the function under test.
+//! - `syscall.c:2165` - `trim_trailing_slashes()`, the function under test.
 //! - `flist.c` - trailing-slash handling of source args (`send_file_list`).
 
 #![cfg(unix)]

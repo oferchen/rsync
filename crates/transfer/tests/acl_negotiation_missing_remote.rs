@@ -44,7 +44,7 @@ const SERVER_FLAGS_NO_ACL_NO_XATTR: &str = "-logDtpre.iLsfxC";
 
 /// Compact flag string from a modern peer that DOES support ACLs and xattrs.
 ///
-/// `A` and `X` sit BEFORE the `e`: upstream emits them at options.c:2871-2879,
+/// `A` and `X` sit BEFORE the `e`: upstream emits them at options.c:2870-2879,
 /// well ahead of `maybe_add_e_option`, which appends the `e.<caps>` suffix last
 /// (options.c:2904). The `-e` argument is the tail of the bundle by
 /// construction, so no peer - upstream or oc - ever places a transfer letter
@@ -118,9 +118,6 @@ fn protocol_30_plus_does_not_reject_acls_at_restriction_layer() {
 /// expected outcome is the graceful path - no panic, no error, parsed
 /// `acls` ends up `false`, and any local "I want ACLs" flag clears
 /// itself when reconciled against the parsed peer flags.
-///
-/// This is the integration scenario for Task #1392: "Test ACL capability
-/// negotiation when remote lacks ACL support".
 #[test]
 fn end_to_end_remote_without_acl_support_at_protocol_32() {
     // Step 1: protocol-version gate - protocol 32 lets ACLs through.

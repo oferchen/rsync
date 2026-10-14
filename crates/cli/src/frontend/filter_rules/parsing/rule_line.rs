@@ -2,7 +2,7 @@
 //!
 //! upstream keeps these two together implicitly: `*rulestr_ptr` is the line and
 //! the file-scope `rule_src_*` statics record whether the parser is currently
-//! reading a file's contents (`exclude.c:56-68`). Every diagnostic built from
+//! reading a file's contents (`exclude.c:56-69`). Every diagnostic built from
 //! the line then crosses one of two chokepoints - `rule_text` for the text
 //! itself and `rule_detail` for the extra detail *about* the text
 //! (`exclude.c:88-131`).
@@ -11,7 +11,7 @@
 //! them in one value is what preserves upstream's stated property: "Doing it
 //! here rather than at each site is the point: a message added later cannot
 //! reintroduce the leak by forgetting to check, and there is one place to
-//! audit." (`exclude.c:96-99`).
+//! audit." (`exclude.c:97-98`).
 
 use std::borrow::Cow;
 

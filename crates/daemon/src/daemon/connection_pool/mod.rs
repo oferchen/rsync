@@ -1,9 +1,12 @@
-//! Thread-safe connection pool with per-IP rate limiting.
+//! Thread-safe connection pool with per-IP connection counting.
 //!
-//! Provides connection tracking and rate limiting capabilities that complement
-//! the file-based `ConnectionLimiter` for cross-process limits. Uses `DashMap`
-//! for lock-free concurrent access, allowing multiple threads to query and
-//! update connection state without blocking.
+//! Tracks in-process connections and per-IP counts, complementing the
+//! file-based `ConnectionLimiter` that enforces cross-process limits. Uses
+//! `DashMap`, whose sharded locks let threads query and update connection
+//! state concurrently.
+//!
+//! Deviation from upstream: upstream has no per-IP limit; its only connection
+//! cap is the per-module `max connections` lock-file scan.
 
 #![allow(dead_code)] // REASON: async daemon path not yet wired to production; types used in tests
 

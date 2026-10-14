@@ -104,7 +104,7 @@ pub fn process_file_response<R: Read>(
 
     // Inplace: write directly to destination. Otherwise temp+rename for atomicity.
     let (mut file, mut cleanup_guard, needs_rename) = if use_inplace {
-        // upstream: receiver.c:984 - do_open(fname, O_WRONLY|O_CREAT, 0600)
+        // upstream: receiver.c:1222-1225 - open(fnametmp, O_WRONLY|O_CREAT, 0600)
         let f = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -137,7 +137,7 @@ pub fn process_file_response<R: Read>(
         cleanup_guard.mark_registered();
     }
 
-    // upstream: receiver.c:385-386 - in append mode, seek past existing content
+    // upstream: receiver.c:544-545 - in append mode, seek past existing content
     // so new data is written at the end of the file
     let append_offset = header.append_offset;
     if append_offset > 0 {
@@ -147,7 +147,7 @@ pub fn process_file_response<R: Read>(
     // Length of the pre-existing basis extent for sparse hole-punching. Only
     // in-place writes reuse existing bytes; a temp file is fresh, so its runs
     // are seeked (natural holes) and need no punch.
-    // upstream: receiver.c:331-351 sets preallocated_len from the basis size.
+    // upstream: receiver.c:492-508 sets preallocated_len from the basis size.
     let basis_len = if use_inplace {
         file.metadata().map(|m| m.len()).unwrap_or(0)
     } else {
@@ -184,7 +184,7 @@ pub fn process_file_response<R: Read>(
         None
     };
 
-    // upstream: token.c:863-866 - reset per-file token state. For zstd the
+    // upstream: token.c:866-868 - reset per-file token state. For zstd the
     // decompression context is preserved (single continuous stream across all
     // files); for zlib it reinitializes the inflate context (per-file streams).
     token_reader.reset();
@@ -199,7 +199,7 @@ pub fn process_file_response<R: Read>(
                 reader.read_exact(&mut expected[..checksum_len])?;
 
                 let algo = checksum_verifier.algorithm();
-                // upstream: checksum.c:600-611 sum_init() prepends the seed only
+                // upstream: checksum.c:624-628 sum_init() prepends the seed only
                 // for the legacy MD4 variants (protocol < 30).
                 let old_verifier = std::mem::replace(
                     checksum_verifier,
@@ -305,7 +305,7 @@ pub fn process_file_response<R: Read>(
                     }
                     checksum_verifier.update(block_data);
 
-                    // upstream: token.c:685 - see_deflate_token() keeps the
+                    // upstream: token.c:688 - see_deflate_token() keeps the
                     // decompressor dictionary in sync after block matches.
                     token_reader.see_token(block_data)?;
 
@@ -425,7 +425,7 @@ pub fn process_file_response<R: Read>(
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
     } else if ctx.config.inplace && sparse_state.is_none() {
         // Inplace: truncate to final size.
-        // upstream: receiver.c:353 - set_file_length(fd, F_LENGTH(file))
+        // upstream: receiver.c:668-670 - `do_ftruncate(fd, offset)` under `inplace_sizing`
         // In append mode, total_bytes only counts newly received data -
         // the full file size includes the existing content we seeked past.
         // The sparse path already truncated to its logical length above.

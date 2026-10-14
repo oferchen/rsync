@@ -233,7 +233,7 @@ mod create_directory_incremental_tests {
         assert_eq!(failed.count(), 0);
     }
 
-    /// Regression (exclude-lsh / upstream generator.c:1368-1383): with
+    /// Regression (exclude-lsh / upstream generator.c:1757-1772): with
     /// `--existing` (`ignore_non_existing`), a directory that is missing at
     /// the destination must NOT be created, and it must be marked missing so
     /// its descendants are skipped too. Before the fix, the remote-pull
@@ -413,7 +413,7 @@ mod create_directory_incremental_tests {
     /// existing directory) emits a `.d..t......` itemize row.
     ///
     /// WHY: upstream's `itemize()` (`generator.c:518-579`, reached from
-    /// `generator.c:1480-1483` with `statret == 0`) sets `ITEM_REPORT_TIME`
+    /// `generator.c:1869-1872` with `statret == 0`) sets `ITEM_REPORT_TIME`
     /// whenever `mtime_differs(&sxp->st, file)` for a directory under `--times`
     /// (`keep_time` true). This is independent of `--checksum`: a quick-check
     /// hunt surfaced it under `-c` because content-identical files are skipped
@@ -559,7 +559,7 @@ mod create_directory_incremental_tests {
     /// `--keep-dirlinks` off, a symlink at the target (even a dangling one)
     /// lstats as `FT_SYMLINK != FT_DIR`, so upstream removes it via
     /// `delete_item(fname, ..., del_opts | DEL_FOR_DIR)` and then
-    /// `do_mkdir_at()` (`generator.c:1451-1455`). The receiver's
+    /// `do_mkdir_at()` (`generator.c:1840-1844`). The receiver's
     /// `classify_dir_destination` reproduces this: it removes the conflicting
     /// symlink and reports `ReplacedSymlink`, which drives a fresh `mkdir`.
     ///
@@ -1018,7 +1018,7 @@ mod incremental_mode_tests {
     }
 }
 
-/// #517: the `*deleting` itemize stream must be deterministic and match
+/// The `*deleting` itemize stream must be deterministic and match
 /// upstream `generator.c:delete_in_dir()` order across runs. Before the
 /// fix, the scan set derived from `HashMap::keys()` (hash-randomized per
 /// process), so a multi-directory `--delete` emitted its `*deleting`

@@ -38,7 +38,7 @@ pub(super) fn apply_file_metadata(
     if begin.is_device_target {
         None
     } else {
-        // upstream: receiver.c:980 dest_mode() runs against the PRE-transfer
+        // upstream: receiver.c:1208 dest_mode() runs against the PRE-transfer
         // destination stat. When metadata is applied to a temp/staged file
         // (target_path != final path), the final destination still holds the
         // file it had before this transfer, so stat it to reproduce
@@ -54,7 +54,7 @@ pub(super) fn apply_file_metadata(
         // mode 000 whenever the entry carries no perm bits - where upstream
         // preserves the destination's own bits.
         //
-        // upstream: rsync.c:449-472 dest_mode() is called (receiver.c:980) with
+        // upstream: rsync.c:464 dest_mode() is called (receiver.c:1208) with
         // `statret == 0` for an inplace write, because the destination exists.
         // upstream: receiver.c:1191-1194 - the basis fd is dropped again
         // unless it is a regular file, so a symlink / fifo / device obstacle
@@ -77,7 +77,7 @@ pub(super) fn apply_file_metadata(
                 xattr_list: begin.xattr_list.as_ref(),
                 xattr_filter: config.xattr_filter.as_deref(),
                 pre_transfer_meta,
-                // upstream: xattrs.c:944 rsync_xal_set(fname, ..., fnamecmp) -
+                // upstream: xattrs.c:1175 rsync_xal_set(fname, ..., fnamecmp) -
                 // an abbreviated entry the generator left unrequested resolves
                 // against the basis (fnamecmp) actually used. `xattr_basis`
                 // carries the --fuzzy / --link-dest / --compare-dest /
@@ -165,7 +165,7 @@ fn apply_metadata_acls_and_xattrs(
         && let Some(access_ndx) = entry.acl_ndx()
     {
         let follow = !entry.is_symlink();
-        // upstream: acls.c:930-971 - under `--fake-super`, set_rsync_acl()
+        // upstream: acls.c:1181 - under `--fake-super`, set_rsync_acl()
         // stashes the ACL in an xattr instead of calling sys_acl_set_file(),
         // since an unprivileged account cannot reliably apply an arbitrary
         // ACL (particularly named user/group entries).

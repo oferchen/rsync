@@ -181,7 +181,7 @@ impl ClientConfigBuilder {
         /// (`--no-old-args`); `None` uses the default (disabled unless
         /// `RSYNC_OLD_ARGS` is set).
         ///
-        /// upstream: options.c:1648 OPT_OLD_ARGS, options.c:2560 safe_arg.
+        /// upstream: options.c:1755 OPT_OLD_ARGS, options.c:2703 safe_arg().
         #[doc(alias = "--old-args")]
         #[doc(alias = "--no-old-args")]
         old_args: Option<u8>,

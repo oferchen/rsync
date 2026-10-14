@@ -1,14 +1,13 @@
 //! Client-side TCP performance socket options applied to daemon
 //! connections.
 //!
-//! Wraps `TCP_NOTSENT_LOWAT` under a best-effort apply path so unsupported
-//! platforms become silent no-ops. Client-side `TCP_FASTOPEN` is deferred
-//! to a follow-up that wires a `sendto(MSG_FASTOPEN)` adapter; the
-//! [`TcpFastOpenMode`] argument is kept on the signature so the call site
-//! does not need to change when that work lands.
+//! Applies `TCP_NOTSENT_LOWAT`, `TCP_QUICKACK` and (with `--bwlimit`)
+//! `SO_MAX_PACING_RATE` on a best-effort path so unsupported platforms become
+//! silent no-ops. Client-side TCP Fast Open is requested before `connect(2)`
+//! in `connect_with_optional_bind`, not here.
 //!
-//! Wire-compatible with upstream rsync: both options only touch kernel
-//! socket behaviour and never alter the rsync protocol stream.
+//! Deviation from upstream: rsync sets none of these options. They only touch
+//! kernel socket behaviour and never alter the rsync protocol stream.
 
 use std::net::TcpStream;
 
@@ -19,9 +18,10 @@ use fast_io::{
 
 use crate::client::TcpFastOpenMode;
 
-/// Apply client-side perf options to a connected stream.
+/// Applies client-side perf options to a connected stream.
 ///
-/// Sets `TCP_NOTSENT_LOWAT` when the platform supports it. Client-side TFO is
+/// Sets `TCP_NOTSENT_LOWAT` and `TCP_QUICKACK` when the platform supports
+/// them. Client-side TFO is
 /// requested earlier, before `connect(2)`, via `TCP_FASTOPEN_CONNECT` in
 /// `connect_with_optional_bind`; that mechanism is compatible with the
 /// standard `connect`/`write` flow, so this post-connect helper does not act

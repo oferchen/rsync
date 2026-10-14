@@ -5,19 +5,17 @@
 //! (upstream depth-first traversal) and issues one filesystem operation
 //! per planned entry through a [`DeleteFs`] trait.
 //!
-//! # Task scope
+//! # Behaviour
 //!
-//! - DDP-C1 (#2259) - trait, fakes, scaffold drain loop.
-//! - DDP-C2 (#2260) - full dispatch by entry kind matching upstream
-//!   `delete.c::delete_item` (`rmdir` for empty dirs, recursive descent on
-//!   `ENOTEMPTY` via a nested plan or `remove_dir_all` fallback that
-//!   mirrors `delete_dir_contents`, `unlink` for everything else).
-//! - DDP-C3 (#2261) - [`EmitterErrorPolicy`] mirroring upstream's
-//!   continue-vs-abort behaviour: non-fatal errors set the `io_error`
-//!   flag (upstream `IOERR_GENERAL`) and the drain keeps going; fatal
-//!   classifications abort and surface an [`std::io::Error`] mapped to
-//!   `RERR_PARTIAL` (23) / `RERR_VANISHED` (24).
-//! - DDP-C4 (#2262) - unit tests for synthetic plan sequences.
+//! - Dispatch by entry kind follows upstream `delete.c:delete_item()`:
+//!   `rmdir` for directories, with a recursive descent on `ENOTEMPTY` via
+//!   a nested plan or a `remove_dir_all` fallback that mirrors
+//!   `delete_dir_contents()`, and `unlink` for everything else.
+//! - [`EmitterErrorPolicy`] mirrors upstream's continue-vs-abort
+//!   behaviour: non-fatal errors set the `io_error` flag (upstream
+//!   `IOERR_GENERAL`) and the drain keeps going; fatal classifications
+//!   abort and surface an [`std::io::Error`] mapped to `RERR_PARTIAL` (23)
+//!   / `RERR_VANISHED` (24).
 //!
 //! # Submodules
 //!
@@ -34,14 +32,15 @@
 //!   (`delete_dir_contents`): recursive directory peel used when an
 //!   `rmdir` would fail with `ENOTEMPTY`.
 //! - `target/interop/upstream-src/rsync-3.5.1/delete.c:191-288`
-//!   (`delete_item`): dispatch by `S_ISDIR` / `S_ISLNK` / `IS_DEVICE` /
-//!   `IS_SPECIAL`, with `do_rmdir` for directories and `robust_unlink`
-//!   for everything else; `ENOTEMPTY` recurses, other errors are logged
-//!   and reported via `DR_FAILURE`.
+//!   (`delete_item`): empties a directory through `delete_dir_contents`
+//!   first, then `rmdir`s it; everything else goes through `del_unlink`
+//!   (`robust_unlink` fallback). `ENOTEMPTY` on a directory yields
+//!   `DR_NOT_EMPTY`, `ENOENT` counts as success, and any other error is
+//!   logged as `FERROR_XFER` and reported via `DR_FAILURE`.
 //! - `target/interop/upstream-src/rsync-3.5.1/generator.c:285-360`
 //!   (`delete_in_dir`): reverse iteration over the sorted destination
 //!   listing, one `delete_item` call per non-matched entry.
-//! - `target/interop/upstream-src/rsync-3.5.0/errcode.h`: `RERR_PARTIAL`
+//! - `target/interop/upstream-src/rsync-3.5.1/errcode.h`: `RERR_PARTIAL`
 //!   (23) and `RERR_VANISHED` (24).
 
 use std::io;
@@ -110,14 +109,14 @@ pub struct DeleteEmitter<F: DeleteFs> {
     /// arrives. `None` while the cursor is fully drained or not yet
     /// blocked.
     pending: Option<PathBuf>,
-    /// Optional [`DirSandbox`] anchor for the SEC-1.q sandbox-anchored
-    /// dispatch. When `Some`, every entry is removed through the
+    /// Optional [`DirSandbox`] anchor for sandbox-anchored dispatch. When
+    /// `Some`, every entry is removed through the
     /// dirfd-bearing `*_at` trait methods so the parent walk cannot be
     /// redirected by a mid-syscall symlink swap. The dirfd for each
     /// plan directory is opened against [`DirSandbox::root_dirfd`] just
     /// before dispatch; on open failure the emitter falls back to the
-    /// path-based methods so the drain stays compatible with the
-    /// pre-SEC-1.q caller contract.
+    /// path-based methods so the drain stays compatible with callers that
+    /// attach no sandbox.
     #[cfg(unix)]
     sandbox: Option<Arc<DirSandbox>>,
     /// Absolute root the attached [`DirSandbox`] was opened at.
@@ -167,7 +166,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     }
 
     /// Attaches a [`DirSandbox`] to this emitter so every subsequent
-    /// dispatch routes through the SEC-1.q dirfd-anchored trait methods.
+    /// dispatch routes through the dirfd-anchored trait methods.
     ///
     /// The dirfd for each plan directory is opened against
     /// [`DirSandbox::root_dirfd`] just before dispatch and dropped after
@@ -284,8 +283,8 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// caller should surface when the drain completed without a fatal
     /// abort. Returns `0` on a clean run, `24` if every failure was a
     /// vanished-file race, and `23` for any other I/O error. Mirrors
-    /// upstream `main.c::cleanup_and_exit` which prefers `RERR_VANISHED`
-    /// only when no other error class was observed.
+    /// upstream `cleanup.c:210-219 _exit_cleanup()`, where `RERR_PARTIAL`
+    /// overrides `RERR_VANISHED` when `IOERR_GENERAL` is also set.
     #[must_use]
     pub fn exit_code(&self) -> i32 {
         if self.io_error == 0 {
@@ -312,8 +311,9 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// [`EmitterErrorPolicy::continue_on_error`] is `false` and a per-entry
     /// failure occurs. Under the default policy every failure other than
     /// ENOENT and dir-ENOTEMPTY sets [`Self::io_error`] and the drain
-    /// continues, matching upstream `delete.c:141-273` which never aborts the
-    /// pass on a per-entry errno.
+    /// continues, matching upstream `delete.c:141-164` (`delete_dir_contents()`)
+    /// and `delete.c:259-270` (`delete_item()`), which never abort the pass on
+    /// a per-entry errno.
     pub fn emit_all(&mut self) -> io::Result<()> {
         loop {
             let dir = match self.pending.take() {
@@ -341,7 +341,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// iterates the dirlist and keeps going after each per-entry
     /// failure.
     fn drain_plan(&mut self, plan: &DeletePlan) -> io::Result<()> {
-        // SEC-1.q: open the plan directory once via the sandbox so every
+        // Open the plan directory once via the sandbox so every
         // entry under it can dispatch through the `*_at` trait methods.
         // A failure to open the dirfd leaves `parent_fd` as `None` and
         // each entry transparently falls back to the path-based methods.
@@ -365,7 +365,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     }
 
     /// Opens a dirfd for `plan_directory` against the attached
-    /// [`DirSandbox`]'s root for SEC-1.q dispatch.
+    /// [`DirSandbox`]'s root for dirfd-anchored dispatch.
     ///
     /// Returns `None` when no sandbox is attached, when the plan
     /// directory cannot be opened (already-removed parent during an
@@ -394,7 +394,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// record `io_error` and return `Ok(())` so the caller's loop
     /// continues.
     ///
-    /// `parent_fd` carries the SEC-1.q sandbox dirfd anchor for the
+    /// `parent_fd` carries the sandbox dirfd anchor for the
     /// containing plan directory. When `Some`, the dispatcher routes
     /// through the dirfd-anchored `*_at` trait methods; when `None`,
     /// the dispatcher uses the path-based fallback. `leaf` is the
@@ -450,8 +450,8 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                     );
                     return Ok(());
                 }
-                // upstream: delete.c:141-273 `delete_dir_contents` /
-                // `delete_item` never abort the pass on a per-entry errno.
+                // upstream: delete.c:141-164 `delete_dir_contents` and
+                // delete.c:259-270 `delete_item` never abort the pass on a per-entry errno.
                 // Every failure other than ENOENT (idempotent) and
                 // dir-ENOTEMPTY (DR_NOT_EMPTY) is logged via FERROR_XFER,
                 // sets `io_error |= IOERR_GENERAL`, and the pass keeps
@@ -493,7 +493,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// [`Self::dispatch_dir`] so the `ENOTEMPTY` fallback can recurse via
     /// a nested plan or [`DeleteFs::remove_dir_all`].
     ///
-    /// On Unix, `parent_fd` and `leaf` together carry the SEC-1.q
+    /// On Unix, `parent_fd` and `leaf` together carry the
     /// sandbox anchor: when `parent_fd` is `Some`, the dispatcher
     /// routes through the dirfd-anchored `*_at` trait methods,
     /// otherwise it uses the path-based fallback.
@@ -534,8 +534,12 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// the nested directory's published plan and drains it through the
     /// shared [`Self::drain_plan`] loop, or falls back to
     /// [`DeleteFs::remove_dir_all`] when no plan was published (upstream
-    /// `delete.c:91-183 delete_dir_contents`). The retried `rmdir` after
-    /// a successful drain matches `delete_item`'s second pass.
+    /// `delete.c:91-183 delete_dir_contents`). The `rmdir` is retried after
+    /// a successful drain.
+    ///
+    /// Deviation from upstream: `delete_item()` empties the directory first
+    /// (`delete.c:205-215`) and issues a single `rmdir`; this tries `rmdir`
+    /// first and only peels the contents on `ENOTEMPTY`.
     #[cfg(unix)]
     fn dispatch_dir(
         &mut self,
@@ -676,8 +680,8 @@ pub(crate) fn plan_directory_to_relative(plan_directory: &Path) -> &Path {
 /// [`fast_io::openat`] with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`.
 ///
 /// Multi-component `relative` paths walk component-by-component so each
-/// step refuses to follow a terminal symlink, matching the SEC-1.s
-/// recursive peel's descent policy. An empty or `.` relative re-opens
+/// step refuses to follow a terminal symlink, matching the recursive
+/// peel's descent policy. An empty or `.` relative re-opens
 /// `parent_fd` itself via `openat(parent_fd, ".", O_DIRECTORY)` so the
 /// caller always receives an `OwnedFd` it can borrow uniformly.
 #[cfg(unix)]

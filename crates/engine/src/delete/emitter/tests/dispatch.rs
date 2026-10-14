@@ -1,4 +1,4 @@
-//! DDP-C1 / DDP-C4 dispatch-matrix tests for the delete emitter.
+//! Dispatch-matrix tests for the delete emitter.
 //!
 //! The recorded dispatch order is the load-bearing upstream-parity
 //! invariant from section 9.1 of the parallel-deterministic-delete

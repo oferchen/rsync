@@ -666,6 +666,11 @@ impl DestinationWriteGuard {
     /// The abort path is deliberately unchanged: the temp now already sits at
     /// its partial-dir resting place, so an interrupted run leaves it there to
     /// be resumed exactly as before.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the partial directory cannot be created or the temp
+    /// file cannot be renamed into it.
     pub fn stage_into_partial_dir(&mut self) -> Result<Option<PathBuf>, LocalCopyError> {
         #[allow(irrefutable_let_patterns)]
         let GuardStrategy::NamedTempFile { temp_path, partial } = &mut self.strategy else {
@@ -812,9 +817,8 @@ impl DestinationWriteGuard {
     /// through `fast_io::rename_no_follow` (handle-anchored, reparse-point
     /// hardened - CVE-2024-12747 residual) and the cross-device fallback is
     /// keyed on [`fast_io::is_cross_device`] (raw `ERROR_NOT_SAME_DEVICE` = 17
-    /// on Windows / `EXDEV` on Unix), the single source of truth. This closes
-    /// the #7153-class divergence where this guard and the transfer commit
-    /// hardened the same operation differently.
+    /// on Windows / `EXDEV` on Unix), the single source of truth, so this guard
+    /// and the transfer commit harden the same operation identically.
     fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<bool, LocalCopyError> {
         let mut tries = 4u32;
         loop {
@@ -1283,7 +1287,7 @@ mod tests {
         guard.discard();
     }
 
-    /// #7153-class one-source-of-truth: the engine local-copy commit must share
+    /// One source of truth: the engine local-copy commit must share
     /// the transfer disk-commit's EXDEV fallback. A cross-device rename (a
     /// `--temp-dir` on a different mount) reports `EXDEV` on Unix and
     /// `ERROR_NOT_SAME_DEVICE` (17) on Windows; both must fall back to

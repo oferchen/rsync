@@ -17,7 +17,7 @@ use crate::client::{
 /// Resolves the daemon address, iterates through candidates filtered by
 /// `address_mode`, and returns the first successful connection. I/O timeouts
 /// are applied to the resulting stream. `sockopts`, when given, is applied to
-/// each candidate socket before `connect(2)` (upstream: socket.c:279-280), so
+/// each candidate socket before `connect(2)` (upstream: socket.c:434 `open_socket_out()`), so
 /// options that shape the SYN (e.g. `SO_SNDBUF`/`SO_RCVBUF`) take effect.
 pub(crate) fn connect_direct(
     addr: &DaemonAddress,
@@ -51,17 +51,17 @@ pub(crate) fn connect_direct(
 /// Iterates `candidates` in order, calling `attempt` for each and returning
 /// the first success.
 ///
-/// Mirrors upstream's per-address connect loop (upstream: socket.c:262-310
+/// Mirrors upstream's per-address connect loop (upstream: socket.c:413-462
 /// `open_socket_out()`), including one easy-to-miss subtlety: an ordinary
 /// connect failure (e.g. `ECONNREFUSED`) falls through to the next address,
 /// but a `--contimeout` expiry does not.
 ///
-/// Upstream's retry loop is
-/// `while (connect(...) < 0) { if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT); ... }`;
+/// Upstream's loop body is
+/// `if (connect_polled(...) < 0) { if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT); ... }`;
 /// once the `SIGALRM` handler has set `connect_timeout` negative, the
 /// process exits immediately without ever reaching `res->ai_next`. A plain
-/// connection failure instead `close(s)`s and `break`s out to the outer
-/// `for` loop, which does advance to the next address. `attempt` returning
+/// connection failure instead stashes `errno`, `close(s)`s and `continue`s
+/// to the next address. `attempt` returning
 /// `io::ErrorKind::TimedOut` while `connect_timeout` is `Some` is treated as
 /// that alarm firing, so iteration stops there rather than trying the
 /// remaining candidates with a fresh timeout budget.
@@ -92,7 +92,7 @@ pub(crate) fn try_candidates<T>(
 /// Connects to the first reachable candidate, preserving upstream's
 /// "try every address" contract.
 ///
-/// upstream: socket.c:336 - "Try to connect to all addresses for this machine
+/// upstream: socket.c:413-416 - "Try to connect to all addresses for this machine
 /// until we get through. It might e.g. be multi-homed, or have both IPv4 and
 /// IPv6 addresses." The fallback is what makes a dual-stack host reachable when
 /// only one family is served, so nothing may quietly truncate the walk.
@@ -148,7 +148,7 @@ fn fastopen_mode_for(candidates: &[SocketAddr], requested: TcpFastOpenMode) -> T
 /// OS SYN timeout when no `--contimeout` was requested - keeps the generic
 /// socket-I/O code (10).
 ///
-/// upstream: socket.c:280-282 - `if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT);`
+/// upstream: socket.c:436-437 - `if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT);`
 pub(crate) fn map_connect_failure(
     connect_timeout: Option<Duration>,
     candidate: SocketAddr,
@@ -232,7 +232,7 @@ pub(crate) fn resolve_daemon_addresses(
 /// when `tfo` requests it, and so `sockopts` (`--sockopts`), when given, can
 /// be applied before `connect(2)` too.
 ///
-/// upstream: socket.c:267-280 `open_socket_out()` - `try_bind_local()` runs
+/// upstream: socket.c:417-435 `open_socket_out()` - `try_bind_local()` runs
 /// first, then `set_socket_options(s, sockopts)`, then `connect(s, ...)`.
 /// Applying `--sockopts` after `connect(2)` returns is a no-op for options
 /// that shape the SYN (e.g. `SO_SNDBUF`/`SO_RCVBUF` window scaling), so the
@@ -267,7 +267,7 @@ pub(crate) fn connect_with_optional_bind(
         socket.bind(&SockAddr::from(bind_addr))?;
     }
 
-    // upstream: socket.c:279 - set_socket_options(s, sockopts) runs here,
+    // upstream: socket.c:434 - set_socket_options(s, sockopts) runs here,
     // after the optional bind and before connect(2).
     if let Some(options) = sockopts {
         apply_socket_options(&socket, options);
@@ -352,7 +352,7 @@ mod tests {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 873)
     }
 
-    // upstream: socket.c:280-282 - a --contimeout expiry mid-connect exits with
+    // upstream: socket.c:435-437 - a --contimeout expiry mid-connect exits with
     // RERR_CONTIMEOUT (35). When a connect bound was requested and connect(2)
     // times out, oc must report 35, not the generic socket-I/O code 10.
     #[test]
@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(mapped.exit_code(), 10);
     }
 
-    // upstream: socket.c:336 - the address loop exists so a multi-homed or
+    // upstream: socket.c:413-416 - the address loop exists so a multi-homed or
     // dual-stack host stays reachable when only one address is served. TFO
     // defers the SYN, so connect(2) cannot observe the refusal and the loop
     // would stop at the first, dead candidate. With more than one candidate
@@ -449,7 +449,7 @@ mod tests {
             .collect()
     }
 
-    // upstream: socket.c:262-310 - the address loop tries each getaddrinfo()
+    // upstream: socket.c:413-462 - the address loop tries each getaddrinfo()
     // result in order; a success on the first candidate must never attempt
     // the rest.
     #[test]
@@ -464,7 +464,7 @@ mod tests {
         assert_eq!(attempted, vec![addrs[0]]);
     }
 
-    // upstream: socket.c:285-296 - an ordinary connect() failure (e.g.
+    // upstream: socket.c:438-442 - an ordinary connect() failure (e.g.
     // ECONNREFUSED) `close(s)`s and falls through to the next
     // `res->ai_next` address rather than aborting.
     #[test]
@@ -483,12 +483,10 @@ mod tests {
         assert_eq!(attempted, addrs);
     }
 
-    // upstream: socket.c:280-282 - once the contimeout alarm has fired,
-    // `exit_cleanup(RERR_CONTIMEOUT)` runs immediately from inside the
-    // current address's retry loop; `res->ai_next` is never reached, even
-    // though a second (perhaps reachable) address remains. This is the
-    // GAP L15 fix: previously oc kept iterating past a --contimeout expiry
-    // and gave every remaining candidate a fresh timeout budget.
+    // upstream: socket.c:435-437 - once the contimeout alarm has fired,
+    // `exit_cleanup(RERR_CONTIMEOUT)` runs immediately inside the current
+    // address's iteration; `res->ai_next` is never reached, even though a
+    // second (perhaps reachable) address remains.
     #[test]
     fn try_candidates_stops_on_contimeout_expiry_without_trying_next() {
         let addrs = candidates(2);
@@ -527,7 +525,7 @@ mod tests {
         assert_eq!(attempted, addrs);
     }
 
-    // upstream: socket.c:312-323 - when every address fails, upstream
+    // upstream: socket.c:464-475 - when every address fails, upstream
     // reports on all of them but the caller only needs the final one to
     // construct the exit-code mapping; the last candidate/error pair must
     // be preserved.
@@ -544,7 +542,7 @@ mod tests {
         assert_eq!(candidate, addrs[1]);
     }
 
-    // upstream: socket.c:279-280 - set_socket_options(s, sockopts) runs before
+    // upstream: socket.c:434-435 - set_socket_options(s, sockopts) runs before
     // connect(s, ...), so options that shape the SYN (e.g. SO_SNDBUF/SO_RCVBUF
     // window scaling) take effect. connect_with_optional_bind applies sockopts
     // to the socket2::Socket before either connect() or connect_timeout() is

@@ -75,7 +75,7 @@ impl<'a> CopyContext<'a> {
     /// user/group names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
     /// the post-flist ID lists are empty (just varint30(0) terminators).
     ///
-    /// upstream: flist.c:2788 - `if (numeric_ids <= 0 && !inc_recurse)
+    /// upstream: flist.c:3063 - `if (numeric_ids <= 0 && !inc_recurse)
     /// send_id_lists(f)`. ID lists are only emitted when INC_RECURSE is
     /// inactive; under INC_RECURSE the uid/gid names are inlined into
     /// each flist entry via XMIT_USER_NAME_FOLLOWS / XMIT_GROUP_NAME_FOLLOWS
@@ -106,7 +106,7 @@ impl<'a> CopyContext<'a> {
             )
         };
 
-        // upstream: flist.c:2788 - `if (numeric_ids <= 0 && !inc_recurse)
+        // upstream: flist.c:3063 - `if (numeric_ids <= 0 && !inc_recurse)
         // send_id_lists(f)`. Under --numeric-ids no id-lists are emitted, so the
         // reader (reader/flist.rs) must find none. numeric_ids is not a stream
         // flag; it is carried in the batch config from the invocation.
@@ -114,7 +114,7 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        // upstream: flist.c:2788 - skip send_id_lists() under INC_RECURSE.
+        // upstream: flist.c:3063 - skip send_id_lists() under INC_RECURSE.
         let inc_recurse = compat_flags
             .map(|cf| {
                 protocol::CompatibilityFlags::from_bits(cf as u32)
@@ -174,7 +174,7 @@ impl<'a> CopyContext<'a> {
 
     /// Appends a literal token for the current file to the batch delta buffer.
     ///
-    /// upstream: `token.c:1065 send_token()` dispatches on `do_compression`.
+    /// upstream: `token.c:1068 send_token()` dispatches on `do_compression`.
     /// With `-z` (stream-flag bit 8, `batch.c:68`) the batch tee records
     /// `send_deflated_token()` framing; without it, `simple_send_token()`'s
     /// plain 4-byte length prefix. A no-op when batch mode is inactive.
@@ -205,7 +205,7 @@ impl<'a> CopyContext<'a> {
     /// upstream: `token.c:simple_send_token()` writes `write_int(-(token+1))`;
     /// `token.c:send_deflated_token()` emits the run-length encoded form. Under
     /// CPRES_ZLIB the sender must also feed the matched bytes into the deflate
-    /// history (`token.c:471-484`) so the receiver's inflate dictionary stays in
+    /// history (`token.c:475-510`) so the receiver's inflate dictionary stays in
     /// sync; `see_data` carries those bytes for that purpose.
     pub(super) fn write_batch_block_match_token(
         &mut self,
@@ -236,7 +236,7 @@ impl<'a> CopyContext<'a> {
     /// buffer, flushing any pending compressed output.
     ///
     /// upstream: `token.c:simple_send_token()` writes `write_int(0)`;
-    /// `token.c:468-470 send_deflated_token()` writes `END_FLAG` after draining
+    /// `token.c:468-474 send_deflated_token()` writes `END_FLAG` after draining
     /// the deflate stream.
     fn write_batch_token_end(
         &mut self,
@@ -271,7 +271,7 @@ impl<'a> CopyContext<'a> {
     /// reserved here and [`Self::finalize_batch_file_delta`] overwrites it with
     /// the geometry the body was actually built against. Composing the head up
     /// front is what produced batches advertising `count=0` ahead of a body
-    /// full of block matches, which upstream rejects at `receiver.c:427`.
+    /// full of block matches, which upstream rejects at `receiver.c:587-589`.
     ///
     /// Must be called before any token writes for this file (before
     /// `capture_batch_whole_file` or inline delta token writes).
@@ -291,7 +291,7 @@ impl<'a> CopyContext<'a> {
         delta_file.get_mut().clear();
         delta_file.set_position(0);
 
-        // upstream: token.c:387 - send_deflated_token() reinitialises the
+        // upstream: token.c:390 - send_deflated_token() reinitialises the
         // deflate context at the start of every file, so the batch's per-file
         // token streams stay independently decodable.
         if let Some(encoder) = self.batch_token_encoder.as_mut() {
@@ -302,7 +302,7 @@ impl<'a> CopyContext<'a> {
         // traversal index here.
         self.batch_current_delta_idx = self.batch_flist_index - 1;
 
-        // upstream: rsync.c:383 - write iflags (u16 LE) for protocol >= 29.
+        // upstream: rsync.c:384 - write iflags (u16 LE) for protocol >= 29.
         // ITEM_TRANSFER (0x8000) indicates delta data follows.
         let batch_writer_arc = self
             .options
@@ -428,17 +428,17 @@ impl<'a> CopyContext<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1480-1482` (directory), `:1605-1610` (symlink),
+    /// - `generator.c:1869-1871` (directory), `:2004-2009` (symlink),
     ///   `:1679-1682` (device/special) - `itemize()` runs with a base of
     ///   `ITEM_LOCAL_CHANGE` (dirs) or `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE`
     ///   (symlinks/specials); `generator.c:583-584` ORs in `ITEM_IS_NEW` when
-    ///   the destination is absent, and `generator.c:576-590` writes `NDX`
+    ///   the destination is absent, and `generator.c:588-596` writes `NDX`
     ///   then the shortint iflags with no sum_head because `ITEM_TRANSFER` is
     ///   clear.
-    /// - `receiver.c:742-802` reads the word in the `!(iflags & ITEM_TRANSFER)`
+    /// - `receiver.c:916-940` reads the word in the `!(iflags & ITEM_TRANSFER)`
     ///   branch, logs the item, and bumps `stats.created_{dirs,symlinks,
     ///   devices,specials}` under the `ITEM_IS_NEW` guard.
-    /// - `receiver.c:575-586 no_batched_update()` - a special needs this entry:
+    /// - `receiver.c:738-751 no_batched_update()` - a special needs this entry:
     ///   without it the replay aborts (exit 23) and the node is never created.
     ///   Dirs and symlinks are created from the flist regardless, but a missing
     ///   entry makes an upstream reader under-count them and drop their
@@ -458,7 +458,7 @@ impl<'a> CopyContext<'a> {
         if proto < 29 {
             return;
         }
-        // upstream: rsync.h:258 SIGNIFICANT_ITEM_FLAGS + generator.c:582-583
+        // upstream: rsync.h:265 SIGNIFICANT_ITEM_FLAGS + generator.c:588-589
         // emit gate - only these bits (or ITEM_REPORT_XATTR) reach the wire;
         // ITEM_LOCAL_CHANGE, ITEM_BASIS_TYPE_FOLLOWS and ITEM_XNAME_FOLLOWS do
         // not qualify an entry on their own.
@@ -480,7 +480,7 @@ impl<'a> CopyContext<'a> {
     /// geometry, refusing to record a token the replaying receiver would
     /// reject.
     ///
-    /// upstream: `receiver.c:427` aborts with `RERR_PROTOCOL` on an index that
+    /// upstream: `receiver.c:587-589` aborts with `RERR_PROTOCOL` on an index that
     /// is not below `sum.count`. Checking here means a sum_head/body mismatch
     /// fails while writing the batch instead of silently shipping a file that
     /// crashes the peer replaying it.
@@ -510,12 +510,12 @@ impl<'a> CopyContext<'a> {
     /// file-level MD5 checksum of `s2length` bytes (16) is written, computed
     /// over the source file contents.
     ///
-    /// upstream: match.c:370 sum_init(xfer_sum_nni, checksum_seed) then
+    /// upstream: match.c:403 sum_init(xfer_sum_nni, checksum_seed) then
     /// sum_update on file content then sum_end(sender_file_sum). For MD5
     /// (protocol >= 30), sum_init ignores the seed - the checksum is plain
     /// MD5 of the file bytes.
     ///
-    /// upstream: receiver.c:531 - read_buf(f_in, sender_file_sum, xfer_sum_len)
+    /// upstream: receiver.c:687 - read_buf(f_in, sender_file_sum, xfer_sum_len)
     pub(crate) fn finalize_batch_file_delta(
         &mut self,
         source: &std::path::Path,
@@ -528,7 +528,7 @@ impl<'a> CopyContext<'a> {
 
         self.write_batch_token_end(source)?;
 
-        // upstream: match.c:370-411 - compute MD5 of source file content.
+        // upstream: match.c:403-452 - compute MD5 of source file content.
         // For MD5 (protocol >= 30), sum_init() ignores checksum_seed.
         let file_sum = {
             let mut reader = std::fs::File::open(source).map_err(|e| {
@@ -681,7 +681,7 @@ impl<'a> CopyContext<'a> {
         // traversal-order entry ends up in the sorted flist.
         let traversal_to_sorted = self.build_batch_sort_mapping();
 
-        // upstream: hlink.c:113-194 match_gnums() - one member per hardlink
+        // upstream: hlink.c:113-208 match_gnums() - one member per hardlink
         // cluster is transferred and the rest are linked to it, so the batch
         // must carry the payload exactly once per cluster.
         let suppressed = self.batch_hlink_suppressed_indices(&traversal_to_sorted);
@@ -689,7 +689,7 @@ impl<'a> CopyContext<'a> {
         // A cluster's single payload must be shipped under the NDX of its
         // sorted-LAST member, the one match_gnums() flags FLAG_HLINK_LAST and
         // whose transfer finish_hard_link() completes before linking every other
-        // member to it (hlink.c:113-194, hlink.c:496-565). Shipping under any
+        // member to it (hlink.c:113-208, hlink.c:517-586). Shipping under any
         // other member leaves the real data-holder without data and breaks
         // cross-implementation replay (task #18).
         let cluster_leader_ndx = self.batch_hlink_cluster_leader_ndx(&traversal_to_sorted);
@@ -867,9 +867,9 @@ impl<'a> CopyContext<'a> {
     /// member, keyed by the cluster's group number.
     ///
     /// After the replaying receiver runs `flist_sort_and_clean()` and
-    /// `match_hard_links()` (hlink.c:113-194), the *sorted-last* member of each
+    /// `match_hard_links()` (hlink.c:113-208), the *sorted-last* member of each
     /// cluster is the one flagged `FLAG_HLINK_LAST`; upstream's generator
-    /// transfers that member and `finish_hard_link()` (hlink.c:496-565) then
+    /// transfers that member and `finish_hard_link()` (hlink.c:517-586) then
     /// links every other member to it. The cluster's single recorded payload
     /// must therefore be emitted under the sorted-last member's NDX, so a
     /// replaying receiver (upstream or oc) finds the data on the member it
@@ -899,9 +899,9 @@ impl<'a> CopyContext<'a> {
     /// Traversal indices whose recorded delta data must not reach the batch
     /// because a hardlink cluster mate carries it instead.
     ///
-    /// upstream: `hlink.c:113-194 match_gnums()` marks the *sorted-first*
+    /// upstream: `hlink.c:113-208 match_gnums()` marks the *sorted-first*
     /// member of each group `FLAG_HLINK_FIRST`; `generator.c` then routes every
-    /// other member through `hlink.c:300 hard_link_check()`, which returns 1
+    /// other member through `hlink.c:314 hard_link_check()`, which returns 1
     /// (skip) so no data is ever requested for it. A batch that repeated the
     /// payload for each mate would therefore not be one upstream could have
     /// produced.

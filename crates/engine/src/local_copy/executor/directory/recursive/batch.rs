@@ -3,7 +3,8 @@
 //! When `--write-batch` is active, each transferred entry is serialized into
 //! the protocol's file-list wire format for later replay.
 //!
-//! upstream: batch.c:write_batch_flist_info()
+//! upstream: no dedicated writer - `io.c:2747` `start_write_batch()` tees the
+//! flist wire bytes into the batch file.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,7 +60,7 @@ fn build_protocol_file_entry(
         // upstream: flist.c:send_file_entry() - symlink target is read and
         // included in the flist entry so batch replay can recreate symlinks.
         let link_target = fs::read_link(source_path).unwrap_or_default();
-        // upstream: flist.c:1690 - symlinks carry stat.st_size (the target byte
+        // upstream: flist.c:1887 - symlinks carry stat.st_size (the target byte
         // length), matching the directory case above; only devices/specials are
         // zeroed.
         let mut symlink_entry =
@@ -71,7 +72,7 @@ fn build_protocol_file_entry(
         // nodes carry their own S_IFMT type (and, for devices, the rdev),
         // never a regular-file entry, and devices/specials are size-zeroed.
         // Encoding them as a regular file makes an upstream --read-batch peer
-        // expect file data (exit 23, receiver.c:575 no_batched_update) and
+        // expect file data (exit 23, receiver.c:738 no_batched_update) and
         // mis-count the node as regular. `-a`/`-D` selects them for transfer,
         // so the batch flist has to preserve the type.
         #[cfg(unix)]
@@ -328,7 +329,7 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// upstream: flist.c:1690 - a symlink's `F_LENGTH` is its `st_size`, which
+    /// upstream: flist.c:1887 - a symlink's `F_LENGTH` is its `st_size`, which
     /// lstat reports as the target byte length. Batch capture must record the
     /// same value the network flist would, otherwise `--list-only`/`%l` and the
     /// `--stats` total computed from a replayed batch diverge from upstream.

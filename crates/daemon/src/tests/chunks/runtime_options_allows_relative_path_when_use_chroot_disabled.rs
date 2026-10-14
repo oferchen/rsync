@@ -12,7 +12,7 @@ fn runtime_options_allows_relative_path_when_use_chroot_disabled() {
     // The no-chroot arm resolves a relative `path` against the current
     // directory, exactly as the chroot arm does. upstream `rsync_module()`
     // routes BOTH arms through the same `normalize_path` call - the chroot arm
-    // at clientserver.c:904 and this one at clientserver.c:915 - so the absence
+    // at clientserver.c:900-905 and this one at clientserver.c:916 - so the absence
     // of `use chroot` changes which directory the daemon serves FROM, never
     // whether the operator's spelling is made absolute.
     let expected = std::env::current_dir()

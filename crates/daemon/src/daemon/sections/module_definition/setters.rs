@@ -5,7 +5,7 @@
 // `last_wins_setters!` expansion below is the one place that assignment
 // happens, so no directive can drift into a different duplicate policy.
 //
-// upstream: loadparm.c:379-470 do_parameter() - the parameter pointer is
+// upstream: loadparm.c:498 do_parameter() - the parameter pointer is
 // resolved from parm_table and assigned unconditionally (`case P_INTEGER:
 // *(int *)parm_ptr = atoi(parmvalue)`, `case P_STRING: string_set(parm_ptr,
 // parmvalue)`). There is no seen-set and no duplicate check, so the last
@@ -69,20 +69,20 @@ last_wins_setters! {
     set_log_file => log_file: PathBuf,
     /// Sets the per-module `reverse lookup` override.
     ///
-    /// upstream: daemon-parm.h:78 `reverse_lookup` BOOL, P_LOCAL.
+    /// upstream: daemon-parm.txt:63 `reverse_lookup` BOOL, P_LOCAL.
     set_reverse_lookup => reverse_lookup: bool,
     /// Sets the per-module `lock file` override.
     ///
-    /// upstream: daemon-parm.h:46 `lock_file` STRING, P_LOCAL.
+    /// upstream: daemon-parm.txt:34 `lock_file` STRING, P_LOCAL.
     set_lock_file => lock_file: PathBuf,
     /// Sets the per-module `syslog tag` override.
     ///
-    /// upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL, default "rsyncd").
+    /// upstream: daemon-parm.txt:44 `syslog_tag` STRING, P_LOCAL, default "rsyncd".
     set_syslog_tag => syslog_tag: String,
     /// Sets the per-module `syslog facility` override to a canonical facility
     /// name.
     ///
-    /// upstream: loadparm.c syslog_facility (P_ENUM, P_LOCAL, default LOG_DAEMON).
+    /// upstream: daemon-parm.txt:54 `syslog_facility` ENUM, P_LOCAL, default LOG_DAEMON.
     set_syslog_facility => syslog_facility: String,
 }
 
@@ -98,9 +98,9 @@ last_wins_setters! {
 /// The `Vec` holds ONE entry, the directive's whole value with its whitespace
 /// intact, rather than one entry per directive occurrence. Upstream keeps a
 /// single string per slot and `string_set()` frees the previous one
-/// (loadparm.c:379-470), so a second occurrence replaces the first rather than
-/// extending it. Splitting a value into individual rules happens later, at
-/// rule-parse time, not here.
+/// (loadparm.c:382 string_set(), loadparm.c:571-572 do_parameter()), so a
+/// second occurrence replaces the first rather than extending it. Splitting a
+/// value into individual rules happens later, at rule-parse time, not here.
 macro_rules! last_wins_rule_setters {
     ($( $(#[$attr:meta])* $setter:ident => $field:ident ),+ $(,)?) => {
         impl ModuleDefinitionBuilder {
@@ -117,15 +117,15 @@ macro_rules! last_wins_rule_setters {
 last_wins_rule_setters! {
     /// Sets the module's `filter` rules.
     ///
-    /// upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
+    /// upstream: daemon-parm.txt:27 `filter` STRING, P_LOCAL.
     set_filter => filter,
     /// Sets the module's `exclude` rules.
     ///
-    /// upstream: daemon-parm.h - `exclude` STRING, P_LOCAL.
+    /// upstream: daemon-parm.txt:25 `exclude` STRING, P_LOCAL.
     set_exclude => exclude,
     /// Sets the module's `include` rules.
     ///
-    /// upstream: daemon-parm.h - `include` STRING, P_LOCAL.
+    /// upstream: daemon-parm.txt:31 `include` STRING, P_LOCAL.
     set_include => include,
 }
 
@@ -147,19 +147,20 @@ impl ModuleDefinitionBuilder {
 
     /// Stores the module's `auth digest` floor.
     ///
-    /// Infallible by design: upstream accepts any string here (P_STRING,
-    /// daemon-parm.h:273) and only discovers an unsupported name when a client
+    /// Infallible by design: upstream accepts any string here (STRING,
+    /// daemon-parm.txt:19) and only discovers an unsupported name when a client
     /// connects, refusing that one module rather than the daemon
-    /// (authenticate.c:316-322).
+    /// (authenticate.c:313-323 auth_server()).
     fn set_auth_digest(&mut self, digest: &str) {
         self.auth_digest = normalize_auth_digest(digest);
     }
 
-    /// Stores the `refuse options` list, rejecting an empty one.
+    /// Stores the `refuse options` list, rejecting a value that parsed to no
+    /// options.
     ///
-    /// upstream: options.c:parse_refuse_options - the daemon builds its refusal
-    /// table from a non-empty list; an empty directive would silently refuse
-    /// nothing, which is always an operator mistake.
+    /// An empty directive value never reaches this setter: the caller stores an
+    /// empty list for it, which refuses nothing like upstream's empty P_STRING
+    /// (options.c:1016 set_refuse_options()).
     fn set_refuse_options(
         &mut self,
         options: Vec<String>,

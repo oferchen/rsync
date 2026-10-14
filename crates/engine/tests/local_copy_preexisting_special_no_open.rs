@@ -4,7 +4,7 @@
 //!
 //! Upstream never opens a special or symlink to transfer content: a
 //! same-`_S_IFMT` special quick-checks equal and its attributes are applied in
-//! place (`generator.c:2032-2055` `set_file_attrs`), and a symlink is recreated
+//! place (`generator.c:2040-2053` `set_file_attrs`), and a symlink is recreated
 //! or its attributes set - neither is ever `open()`ed. oc mirrors this: the
 //! special/symlink copy path is entirely path-based (`mkfifo`/`mknod` +
 //! `utimensat(AT_SYMLINK_NOFOLLOW)` + `fchmodat`), so it never issues an

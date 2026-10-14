@@ -8,13 +8,13 @@
 //!
 //! Previously the failure surfaced as
 //! `io::Error::new(ErrorKind::Other, "...")` with no strong-count and
-//! no machine-readable variant. ATU-3 (tracked in #2380, per the audit
-//! at `docs/audits/arc-try-unwrap-classification.md`) introduces a
+//! no machine-readable variant. Following the audit at
+//! `docs/audits/arc-try-unwrap-classification.md`, this module defines a
 //! strongly typed enum so callers can match on the failure mode and
 //! operators see the residual [`Arc::strong_count`] in diagnostics.
 //!
-//! The cursor side migrated to channel-shutdown semantics in ATU-4
-//! (#2381), so the historical `CursorStillShared`/`CursorPoisoned`
+//! The cursor side migrated to channel-shutdown semantics, so the
+//! historical `CursorStillShared`/`CursorPoisoned`
 //! variants are no longer reachable; the residual cursor-side failure
 //! mode is `CursorReceiverAlreadyTaken`, which only fires if
 //! `super::DeleteContext::into_emitter` is called twice on the same

@@ -42,10 +42,10 @@ fn force_file_replaces_non_empty_directory() {
 // upstream: generator.c:2148-2153 makes room for the arriving regular file with
 // `delete_item(fname, mode, del_opts | DEL_FOR_FILE)`, called with no option
 // gate at all; `del_opts` carries DEL_RECURSE only under --delete/--force and
-// selects the RECURSION (delete.c:207-209). An EMPTY directory obstacle is
+// selects the RECURSION (delete.c:205-210). An EMPTY directory obstacle is
 // therefore rmdir'd and the file written, with no --force.
 //
-// The flist.c:3310-3324 rule this cell used to cite is the MULTI-SOURCE merge -
+// The flist.c:3606-3625 rule this cell used to cite is the MULTI-SOURCE merge -
 // see `force_disabled_multi_source_keeps_the_directory` - and a single source
 // never reaches it. Measured against rsync 3.5.0.
 #[test]
@@ -240,12 +240,12 @@ fn force_replaces_file_entry_with_directory_during_recursive_copy() {
 // upstream: generator.c:2148-2153 calls `delete_item(fname, mode, del_opts |
 // DEL_FOR_FILE)` UNCONDITIONALLY when a regular file arrives over a
 // destination that is not a regular file. `del_opts` carries `DEL_RECURSE`
-// only under `--delete`/`--force`, and delete.c:207-209 says what that flag
+// only under `--delete`/`--force`, and delete.c:209 says what that flag
 // selects: "If DEL_RECURSE is not set, this just reports emptiness". So an
 // EMPTY directory is rmdir'd and the file written with no options at all.
 //
 // This cell used to assert the opposite - that the directory survived and the
-// file was silently dropped at exit 0 - citing flist.c:3310-3324. That
+// file was silently dropped at exit 0 - citing flist.c:3606-3625. That
 // citation is the MULTI-SOURCE merge rule (see
 // `force_disabled_multi_source_keeps_the_directory` below); it does not reach
 // a single-source recursive copy, where the file is in the flist and the
@@ -282,7 +282,7 @@ fn force_disabled_recursive_copy_replaces_an_empty_directory() {
 
 // The multi-source exception the cell above used to claim for itself.
 //
-// upstream: flist.c:3310-3324 flist_sort_and_clean() drops the colliding
+// upstream: flist.c:3606-3625 flist_sort_and_clean() drops the colliding
 // regular file and keeps the directory, so the entry never reaches
 // recv_generator and the destination directory is left alone at exit 0.
 #[test]
@@ -377,8 +377,8 @@ fn force_dry_run_make_room_for_empty_directory_is_silent() {
         .expect("dry-run succeeds");
 
     let summary = report.summary();
-    // upstream: generator.c:1240 clears the conflicting directory with
-    // DEL_FOR_FILE; delete.c:179 delete_item() removes the make-room target
+    // upstream: generator.c:2148-2151 clears the conflicting directory with
+    // DEL_FOR_FILE; delete.c:191 delete_item() removes the make-room target
     // silently and uncounted. An empty directory has no contents to recurse
     // over, so no deletion is itemized or counted.
     assert_eq!(
@@ -619,7 +619,7 @@ fn force_replacement_counts_deletion() {
 
     let summary = report.summary();
     // upstream: the make-room removal of the conflicting directory node is
-    // silent (DEL_FOR_FILE), but delete.c:83 delete_dir_contents() recurses
+    // silent (DEL_FOR_FILE), but delete.c:91 delete_dir_contents() recurses
     // with DEL_MAKE_ROOM stripped, so its non-empty contents are counted like
     // ordinary deletions.
     assert!(

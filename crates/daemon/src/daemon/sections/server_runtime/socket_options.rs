@@ -18,14 +18,14 @@ fn apply_daemon_socket_options(
 
 /// Unconditionally enables `SO_KEEPALIVE` on a freshly accepted client stream.
 ///
-/// upstream: clientserver.c:1396 - daemon unconditionally enables SO_KEEPALIVE
+/// upstream: clientserver.c:1529 - daemon unconditionally enables SO_KEEPALIVE
 /// on the accepted client socket via `set_socket_options(f_in, "SO_KEEPALIVE")`
 /// in `start_daemon()`, before the protocol handshake and independent of the
 /// per-module `socket options` config (which is a separate concern applied via
 /// `lp_socket_options()`). Without it, idle daemon connections can be silently
 /// dropped by NAT/firewall timeouts. Best-effort: a failed `setsockopt(2)`
 /// warns and the session still proceeds, mirroring upstream's warn-and-continue
-/// in socket.c:738-741.
+/// in socket.c:889-892 `set_socket_options()`.
 fn enable_accepted_stream_keepalive(stream: &TcpStream, log_sink: Option<&SharedLogSink>) {
     if let Err(error) = socket2::SockRef::from(stream).set_keepalive(true) {
         warn_socket_option(
@@ -36,7 +36,7 @@ fn enable_accepted_stream_keepalive(stream: &TcpStream, log_sink: Option<&Shared
 }
 /// Emits a non-fatal socket-option warning through the daemon log sink.
 ///
-/// upstream: socket.c:set_socket_options() reports parse and `setsockopt(2)`
+/// upstream: socket.c:837 `set_socket_options()` reports parse and `setsockopt(2)`
 /// problems via `rprintf(FERROR, ...)` / `rsyserr(FERROR, ...)` and continues.
 /// The daemon routes those through its log sink at warning level.
 fn warn_socket_option(log_sink: Option<&SharedLogSink>, text: String) {

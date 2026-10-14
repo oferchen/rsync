@@ -88,7 +88,7 @@ pub struct DeltaConsumerStats {
     /// record. Granularity-invariant: a single call increments this counter
     /// by exactly one even when [`SpillGranularity::PerItem`](super::spill::SpillGranularity::PerItem)
     /// produces many on-disk records. Always zero when the consumer was
-    /// spawned without a spill threshold. ROB-2 (#3667) surfaces this
+    /// spawned without a spill threshold. This is surfaced
     /// through the consumer-side stats so operators can observe normal-
     /// operation spill rate without instrumenting the spillable buffer
     /// directly.
@@ -161,8 +161,8 @@ pub struct DeltaConsumer {
     /// event. Exposed via [`DeltaConsumer::stats`].
     pub(super) spill_events: Arc<AtomicU64>,
     /// Shared counter incremented by the reorder thread on each
-    /// `spill_excess` call that wrote at least one record. ROB-2 (#3667)
-    /// surfaces this granularity-invariant counter through
+    /// `spill_excess` call that wrote at least one record. This
+    /// surfaces the granularity-invariant counter through
     /// [`DeltaConsumer::stats`] so operators see normal-operation spill
     /// pressure without compensating for `PerItem` vs `WholeBatch`
     /// record fan-out.

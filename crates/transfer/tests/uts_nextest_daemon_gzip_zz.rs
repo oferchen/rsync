@@ -20,11 +20,10 @@
 //! `crates/compress`.
 //!
 //! The recurring failure mode that motivates the UTS-NEXTEST-EDGE family
-//! port of these scenarios is the daemon-sender goodbye flush regression
-//! tracked as UTS-9.REOPEN / UTS-10.REOPEN / UTS-V3.A: the last ~2KB of
-//! compressed data was lost before the daemon-receiver could decode the
-//! final `NDX_DONE`, surfacing as truncated output past ~615KB. The fix
-//! shipped under PRs #5520, #5600, #5619 and the V3 cluster A drain
+//! port of these scenarios is the daemon-sender goodbye flush regression:
+//! the last ~2KB of compressed data was lost before the daemon-receiver could
+//! decode the final `NDX_DONE`, surfacing as truncated output past ~615KB. The
+//! fix is the sender-side drain in
 //! (`crates/daemon/src/daemon/sections/module_access/transfer.rs`).
 //!
 //! The upstream testsuite runs in CI under `continue-on-error: true`, so a
@@ -39,8 +38,8 @@
 //! - The transfer exits cleanly (status 0).
 //! - The destination file is byte-identical to the source.
 //! - The goodbye envelope arrived intact - stderr is free of the
-//!   `connection unexpectedly closed` signature that the UTS-9 regression
-//!   surfaced.
+//!   `connection unexpectedly closed` signature that the goodbye-flush
+//!   regression surfaced.
 //! - `--stats` reports a transferred-bytes count materially smaller than
 //!   the source size on the compressible portion - evidence the wire
 //!   codec actually engaged rather than degrading to identity.
@@ -64,9 +63,10 @@
 //! - `testsuite/daemon-gzip-download_test.py` - upstream download script.
 //! - `testsuite/daemon-gzip-upload_test.py` - upstream upload script.
 //! - `options.c:2131-2132` - `-zz` -> `compress_choice = "zlibx"` mapping.
-//! - `compat.c::setup_compress()` - codec negotiation across the wire.
+//! - `compat.c:538` `negotiate_the_strings()` and `compat.c:182`
+//!   `parse_compress_choice()` - codec negotiation across the wire.
 //! - `main.c:1011` `do_server_sender()` - `io_flush(FULL_FLUSH)` before
-//!   return; the contract pinned by UTS-9.
+//!   return; the goodbye-flush contract.
 //! - `crates/transfer/src/generator/transfer/orchestrator.rs` - matching
 //!   flush on the oc-rsync sender side.
 

@@ -13,7 +13,7 @@
 //!   dropped from the `--stats` created breakdown and lose their `cd`/`cL`
 //!   itemize rows;
 //! - a special is worse - the generator expects the entry and, finding none,
-//!   aborts the replay with exit 23 (`receiver.c:575 no_batched_update()`)
+//!   aborts the replay with exit 23 (`receiver.c:738 no_batched_update()`)
 //!   and never creates the node.
 //!
 //! This pins the fix at the byte level without an external upstream binary:
@@ -25,13 +25,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1480-1482` (directory), `:1605-1610` (symlink),
-//!   `:1679-1682` (device/special) - `itemize()` runs with a base of
+//! - `generator.c:1869-1872` (directory), `:2003-2009` (symlink),
+//!   `:2093-2096` (device/special) - `itemize()` runs with a base of
 //!   `ITEM_LOCAL_CHANGE` (dirs) or `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE`
 //!   (symlinks/specials) and ORs in `ITEM_IS_NEW` for an absent destination
 //!   (`generator.c:583-584`); the word is written with no sum_head because
 //!   `ITEM_TRANSFER` is clear.
-//! - `receiver.c:742-802` reads the word in the `!(iflags & ITEM_TRANSFER)`
+//! - `receiver.c:918-971` reads the word in the `!(iflags & ITEM_TRANSFER)`
 //!   branch and bumps `stats.created_{dirs,symlinks,devices,specials}` under
 //!   the `ITEM_IS_NEW` guard.
 
@@ -49,14 +49,14 @@ use protocol::CompatibilityFlags;
 use protocol::codec::{NdxCodec, NdxCodecEnum};
 use tempfile::tempdir;
 
-/// `rsync.h:257` - `#define ITEM_TRANSFER (1<<15)`.
+/// `rsync.h:259` - `#define ITEM_TRANSFER (1<<15)`.
 const ITEM_TRANSFER: u16 = 0x8000;
 /// A created directory: `ITEM_LOCAL_CHANGE | ITEM_IS_NEW`
-/// (`generator.c:1480-1482` + `:583-584`).
+/// (`generator.c:1869-1872` + `:583-584`).
 const CREATED_DIR: u16 = 0x4000 | 0x2000;
 /// A created symlink or special:
 /// `ITEM_LOCAL_CHANGE | ITEM_REPORT_CHANGE | ITEM_IS_NEW`
-/// (`generator.c:1605-1610` / `:1679-1682` + `:583-584`).
+/// (`generator.c:2003-2009` / `:2093-2096` + `:583-584`).
 const CREATED_NONREG: u16 = 0x4000 | 0x0002 | 0x2000;
 
 /// Builds a `--write-batch` writer with the header written eagerly, matching
@@ -157,7 +157,7 @@ fn write_batch_records_iflags_for_created_dirs_symlinks_and_specials() {
     // No id-list bytes are emitted (no preserve_uid/gid/acls), so the bytes
     // after the flist are a run of `NDX` + 2-byte iflags words - no sum_head
     // or token body, because none of these entries carry ITEM_TRANSFER -
-    // terminated by NDX_DONE (rsync.h:285, -1).
+    // terminated by NDX_DONE (rsync.h:316, -1).
     let mut body = reader.into_body().expect("batch body reader");
     let mut ndx_codec = NdxCodecEnum::new(32);
     let mut iflags_seen = Vec::new();

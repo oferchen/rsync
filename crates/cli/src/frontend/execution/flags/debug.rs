@@ -103,7 +103,7 @@ impl DebugFlagSettings {
     }
 
     /// Sets all debug flags to the given level.
-    /// upstream: options.c:452-453 - "all" with numeric suffix sets every flag.
+    /// upstream: options.c:459,470-471 - "all" with numeric suffix sets every flag.
     fn set_all(&mut self, level: u8) {
         self.acl = Some(level);
         self.backup = Some(level);
@@ -223,7 +223,7 @@ impl DebugFlagSettings {
 /// upstream: options.c:484-488 -
 /// `rprintf(FERROR, "Unknown %s item: \"%.*s\"\n", words[j].help, len, str);`
 /// followed by `exit_cleanup(RERR_SYNTAX)`. `words[j]` is the table's NULL
-/// sentinel, whose `help` field is the literal `"--debug"` (options.c:333), and
+/// sentinel, whose `help` field is the literal `"--debug"` (options.c:330), and
 /// `len` is the token length with the level suffix already stripped. The text
 /// goes to `FERROR` (stderr) and the exit code is `RERR_SYNTAX` = 1
 /// (errcode.h:25).
@@ -274,14 +274,14 @@ fn parse_debug_flags_inner(
 
 /// Body of `--debug=help`, reproduced byte-for-byte from upstream.
 ///
-/// upstream: options.c output_item_help (rsync-3.4.1:474-510). Reproduced
+/// upstream: options.c:493-529 output_item_help(). Reproduced
 /// byte-for-byte from upstream's runtime output so `--debug=help` matches
-/// `rsync --debug=help`. Layout matches `"%-10s %s\n"` from options.c:478.
+/// `rsync --debug=help`. Layout matches `"%-10s %s\n"` from options.c:497.
 /// ALL/NONE descriptions inline the sentinel's `--debug` help
-/// (options.c:489-495). The per-verbosity summary lines are rendered by
+/// (options.c:508-514). The per-verbosity summary lines are rendered by
 /// upstream's `make_output_option` over `debug_verbosity[]`
-/// (options.c:228-235) and emit names in `debug_words[]` order
-/// (options.c:289-315). Levels 0-1 are empty in `debug_verbosity[]`, so the
+/// (options.c:244-251) and emit names in `debug_words[]` order
+/// (options.c:305-331). Levels 0-1 are empty in `debug_verbosity[]`, so the
 /// summary block lists levels 2-5 only.
 pub(crate) const DEBUG_HELP_TEXT: &str = "\
 Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\

@@ -3,14 +3,10 @@
 //! Upstream rsync emits every daemon refusal in the ASCII negotiation phase as
 //! `io_printf(f_out, "@ERROR: <msg>\n")` and then closes the socket; the client
 //! treats a line beginning with `@ERROR` as fatal
-//! (upstream: clientserver.c:381-385). Historically each refusal site in this
-//! crate built that wire line with an ad-hoc `format!("@ERROR: ...")` and a
-//! separate `\n`, so the `@ERROR: ` prefix and the terminating newline were
-//! spelled out in a dozen places with no single point that guaranteed the exact
-//! bytes.
+//! (upstream: clientserver.c:424-430 `start_inband_exchange()`).
 //!
-//! [`AtError`] is that single point. Each variant maps to one upstream message;
-//! the message wording stays single-sourced in the `*_PAYLOAD` constants in the
+//! [`AtError`] is the single point that guarantees those exact bytes. Each
+//! variant maps to one upstream message; the message wording stays single-sourced in the `*_PAYLOAD` constants in the
 //! parent module (which the upstream-wording pin tests guard), while this type
 //! owns the `@ERROR: ` prefix and the trailing `\n`. The inverse is the client's
 //! own parse path (`protocol::parse_legacy_error_message`), so the round-trip is
@@ -45,17 +41,17 @@ pub(crate) const AT_ERROR_PREFIX: &str = "@ERROR: ";
 /// truth for both the text (the constants) and the framing (this type).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AtError {
-    /// upstream: clientserver.c:180-184 - the client's first line is not a
+    /// upstream: clientserver.c:209-213 - the client's first line is not a
     /// version banner (`@ERROR: protocol startup error`).
     ProtocolStartupError,
-    /// upstream: clientserver.c:732 - requested module does not exist, and the
-    /// non-listable masking of an access-denied module
+    /// upstream: clientserver.c:1570 - requested module does not exist, and
+    /// clientserver.c:777 - the non-listable masking of an access-denied module
     /// (`@ERROR: Unknown module '<name>'`).
     UnknownModule(String),
-    /// upstream: clientserver.c:1429 - a `#`-prefixed request that is neither
+    /// upstream: clientserver.c:1563 - a `#`-prefixed request that is neither
     /// `#list` nor `#early_input=` (`@ERROR: Unknown command '<line>'`).
     UnknownCommand(String),
-    /// upstream: clientserver.c:735-736 - host denied access to a listable
+    /// upstream: clientserver.c:779-781 - host denied access to a listable
     /// module (`@ERROR: access denied to <module> from <host> (<addr>)`).
     AccessDenied {
         /// Module name, sanitized for display.
@@ -65,42 +61,42 @@ pub(crate) enum AtError {
         /// Peer address in string form.
         addr: String,
     },
-    /// upstream: clientserver.c:764 - authentication failed on a protected
+    /// upstream: clientserver.c:812 - authentication failed on a protected
     /// module (`@ERROR: auth failed on module <name>`).
     AuthFailed {
         /// Module name, sanitized for display.
         module: String,
     },
-    /// upstream: compat.c:872-874 - none of the client's daemon-auth digests is
+    /// upstream: compat.c:884-886 - none of the client's daemon-auth digests is
     /// supported here (`@ERROR: your client does not support ...: <list>`).
     UnsupportedAuthDigest {
         /// This build's advertised daemon-auth digest list.
         digests: String,
     },
-    /// upstream: clientserver.c:754 - a module reached its connection cap
+    /// upstream: clientserver.c:799 - a module reached its connection cap
     /// (`@ERROR: max connections (<n>) reached -- try again later`). The count
     /// is rendered verbatim so a negative `max connections` keeps its sign.
     MaxConnections {
         /// The configured limit, rendered with upstream's `%d`.
         limit: i64,
     },
-    /// upstream: clientserver.c:750 - opening the module lock file failed
+    /// upstream: clientserver.c:795 - opening the module lock file failed
     /// (`@ERROR: failed to open lock file`).
     ModuleLockError,
-    /// upstream: clientserver.c:985 - chroot failed during module setup.
+    /// upstream: clientserver.c:1052 - chroot failed during module setup.
     ChrootFailed,
-    /// upstream: clientserver.c:649 - chdir failed during module setup.
+    /// upstream: clientserver.c:694 - chdir failed during module setup.
     ChdirFailed,
-    /// upstream: clientserver.c:1053 - setuid failed after chroot.
+    /// upstream: clientserver.c:1129 - setuid failed after chroot.
     SetuidFailed,
-    /// upstream: clientserver.c:1024 - setgid failed after chroot.
+    /// upstream: clientserver.c:1100 - setgid failed after chroot.
     SetgidFailed,
-    /// upstream: clientserver.c:1031 - setgroups failed after chroot.
+    /// upstream: clientserver.c:1107 - setgroups failed after chroot.
     SetgroupsFailed,
-    /// upstream: clientserver.c:785 - a module uid NAME failed to resolve
+    /// upstream: clientserver.c:837 - a module uid NAME failed to resolve
     /// (`@ERROR: invalid uid <name>`).
     InvalidUid(String),
-    /// upstream: clientserver.c:658 - a module gid NAME failed to resolve
+    /// upstream: clientserver.c:703 - a module gid NAME failed to resolve
     /// (`@ERROR: invalid gid <name>`).
     InvalidGid(String),
     /// A refusal whose body is composed at the call site (client-omitted

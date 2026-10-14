@@ -1,13 +1,12 @@
-//! Cohort batching wire-up over the DEL-2.a re-ordering buffer.
+//! Cohort batching over the re-ordering buffer.
 //!
 //! This module implements the batching strategy specified by
 //! `docs/design/del-1c-cohort-batching-strategy.md` on top of the
-//! DEL-2.a [`super::ReorderBuffer`] primitive. It is the DEL-2.b
-//! deliverable: a synchronous consumer-side adapter that surfaces
-//! sealed cohorts in strict wire-ordering rank order, capped at
-//! `DRAIN_BATCH_CAP` per batch, with the panic-isolation rules
-//! from DEL-1.c section 6 layered in. The parallel consumer flag flip
-//! and `Condvar`-driven scope wiring are DEL-2.c.
+//! [`super::ReorderBuffer`] primitive: a synchronous consumer-side
+//! adapter that surfaces sealed cohorts in strict wire-ordering rank
+//! order, capped at `DRAIN_BATCH_CAP` per batch, with the
+//! panic-isolation rules from DEL-1.c section 6 layered in. The
+//! `Condvar`-driven scope wiring lives in `super::parallel_consumer`.
 //!
 //! # Cohort key choice
 //!
@@ -22,10 +21,10 @@
 //!
 //! # Why a separate adapter
 //!
-//! The DEL-2.a primitive exposes the [`super::ReorderBuffer::insert`],
+//! The buffer primitive exposes the [`super::ReorderBuffer::insert`],
 //! [`super::ReorderBuffer::seal`], and
 //! [`super::ReorderBuffer::try_drain_ready`] surface as a pure data
-//! structure. DEL-2.b wraps that surface with three behaviours the
+//! structure. This adapter wraps that surface with three behaviours the
 //! consumer needs but the buffer deliberately leaves out:
 //!
 //! 1. A single-call `enqueue_cohort` that inserts all of a cohort's
@@ -42,9 +41,9 @@
 //!
 //! # Default-byte-identity property
 //!
-//! The DEL-2.b adapter is dormant by default: the production
-//! [`super::emitter::DeleteEmitter`] is unchanged (DEL-2.c flips the
-//! flag that routes the receiver through this adapter). With the
+//! The adapter is dormant by default: only `super::parallel_consumer`
+//! uses it, and that module is compiled only with the
+//! `parallel-delete-consumer` feature (off by default). With the
 //! adapter unused, the sequential emitter's syscall trace and on-wire
 //! `MSG_DELETED` / `NDX_DEL_STATS` order are byte-for-byte unchanged.
 //!
@@ -145,11 +144,11 @@ impl CohortBatch {
 }
 
 /// Synchronous adapter that wires DEL-1.c's cohort batching strategy
-/// onto a DEL-2.a [`ReorderBuffer`].
+/// onto a [`ReorderBuffer`].
 ///
-/// The adapter is single-threaded for DEL-2.b: it owns the buffer and
+/// The adapter is single-threaded: it owns the buffer and
 /// surfaces every producer/consumer operation as a direct method call.
-/// DEL-2.c layers a [`std::sync::Condvar`] scope on top so multiple
+/// `super::parallel_consumer` layers a [`std::sync::Condvar`] scope on top so multiple
 /// rayon producers and a single consumer thread can share one adapter
 /// instance.
 ///
@@ -181,7 +180,7 @@ impl CohortBatcher {
 
     /// Returns the number of cohorts currently buffered (sealed or not).
     ///
-    /// Mirrors [`ReorderBuffer::len`] so DEL-2.c can drive its
+    /// Mirrors [`ReorderBuffer::len`] so the parallel consumer can drive its
     /// `Condvar` predicates without piercing the abstraction.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -287,7 +286,7 @@ impl CohortBatcher {
     /// per DEL-1.c section 6.
     ///
     /// The flag is sticky: subsequent calls to [`Self::is_panicked`]
-    /// return `true` for the lifetime of the batcher. DEL-2.c's
+    /// return `true` for the lifetime of the batcher. The parallel consumer's
     /// consumer thread reads it between dispatches inside one drained
     /// batch and bails at the first panicked cohort rather than at
     /// wake-up start.
@@ -299,7 +298,7 @@ impl CohortBatcher {
     ///
     /// The acquire ordering pairs with [`Self::record_panic`]'s
     /// release so producer-side panic state is visible to a consumer
-    /// running on a different thread once DEL-2.c wires this through
+    /// running on a different thread once the parallel consumer wires this through
     /// the parallel scope.
     #[must_use]
     pub fn is_panicked(&self) -> bool {
@@ -328,7 +327,7 @@ mod tests {
         )
     }
 
-    /// DEL-2.b: with a single sealed cohort the batcher collapses to a
+    /// With a single sealed cohort the batcher collapses to a
     /// one-entry batch carrying the producer's ops in insertion order.
     /// This is the byte-identity property: a cohort-size-1 drain looks
     /// exactly like one plan dispatch from the sequential emitter.

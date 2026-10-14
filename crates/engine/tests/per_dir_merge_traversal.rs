@@ -9,14 +9,14 @@
 //!
 //! # Upstream Reference
 //!
-//! - `exclude.c:200-207 add_rule` - an anchored pattern loaded from a per-dir
+//! - `exclude.c:318 add_rule` - an anchored pattern loaded from a per-dir
 //!   merge file is rooted at the merge file's directory, not the transfer root.
-//! - `exclude.c:1248-1255 parse_rule_tok` - the `:C` modifier registers a
+//! - `exclude.c:1404-1408 parse_rule_tok` - the `:C` modifier registers a
 //!   `.cvsignore` per-directory merge.
-//! - `exclude.c:787-789 push_local_filters` - the push loop walks the GROWING
+//! - `exclude.c:886-888 push_local_filters` - the push loop walks the GROWING
 //!   `mergelist_cnt`, so a `dir-merge` directive registered while loading a
 //!   directory's merge file is itself loaded against that same directory.
-//! - `delete.c:65-115 delete_in_dir` - the destination deletion scan pushes the
+//! - `generator.c:285-360 delete_in_dir()` - the destination deletion scan pushes the
 //!   destination's per-dir filters onto a separate chain and pops them
 //!   afterwards, never perturbing the sender's filter list.
 
@@ -60,7 +60,7 @@ fn copy_with_dir_merge(source: &Path, dest: &Path) {
 /// it must exclude `foo/file1` while leaving `foo/sub/file1` (a deeper path
 /// that the anchor does not reach) transferred.
 ///
-/// upstream: exclude.c:200-207 add_rule prepends `dirbuf + module_dirlen` to a
+/// upstream: exclude.c:318 add_rule prepends `dirbuf + module_dirlen` to a
 /// leading-`/` pattern, turning `- /file1` in `foo/.filt` into an anchored
 /// `foo/file1` rule. Without that prefix the anchor would (wrongly) bind to the
 /// transfer root and match nothing, leaking `foo/file1` into the destination.
@@ -92,8 +92,8 @@ fn anchored_rule_in_per_dir_merge_anchors_at_merge_file_directory() {
 /// `mid/.cvsignore` listing `one-in-one-out` must therefore exclude
 /// `mid/one-in-one-out`.
 ///
-/// upstream: exclude.c:1248-1255 - the `C` modifier on a `:` (dir-merge) rule
-/// sets `FILTRULE_CVS_IGNORE` with the `.cvsignore` default; exclude.c:787-789
+/// upstream: exclude.c:1404-1408 - the `C` modifier on a `:` (dir-merge) rule
+/// sets `FILTRULE_CVS_IGNORE` with the `.cvsignore` default; exclude.c:886-888
 /// then loads that registration against the current directory (not only
 /// subdirectories) because the push loop walks the growing mergelist count.
 #[test]
@@ -125,9 +125,9 @@ fn cvs_modifier_in_per_dir_merge_loads_cvsignore_for_current_dir() {
 /// `bar/.filt2` rule `- *.deep` must therefore exclude `bar/baz/file5.deep`,
 /// which lives in a sub-subdirectory below the registration point.
 ///
-/// upstream: exclude.c:787-789 push_local_filters - registering a per-dir merge
+/// upstream: exclude.c:886-888 push_local_filters - registering a per-dir merge
 /// while loading `bar/.filt` grows `mergelist_cnt`, so `bar/.filt2` is loaded
-/// for `bar/` itself; exclude.c:801 sets `lp->tail = NULL`, keeping the loaded
+/// for `bar/` itself; exclude.c:900 sets `lp->tail = NULL`, keeping the loaded
 /// rule in `lp->head` so it continues matching descendants like
 /// `bar/baz/file5.deep`.
 #[test]
@@ -172,9 +172,9 @@ fn same_dir_nested_dir_merge_applies_to_current_dir_and_descendants() {
 /// the source-side `allows()` evaluation, so the `- .filt`/`- *.old`/`- *.bak`
 /// rules stopped matching and the excluded files were copied back and survived.
 ///
-/// upstream: delete.c:65-115 delete_in_dir runs the destination per-dir filter
+/// upstream: generator.c:285-360 delete_in_dir runs the destination per-dir filter
 /// push/pop against a separate delete_filt chain, isolating it from the sender
-/// filter_list; exclude.c:801 push_local_filters keeps inherited rules in
+/// filter_list; exclude.c:900 push_local_filters keeps inherited rules in
 /// lp->head, so a destination merge file may register nested directives an
 /// arbitrary depth deep that a per-index pop cannot balance.
 #[test]

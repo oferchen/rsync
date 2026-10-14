@@ -5,9 +5,9 @@
 //! equal to the limit is always kept:
 //!
 //! ```c
-//! // upstream: generator.c:1704
+//! // upstream: generator.c:2118
 //! if (max_size >= 0 && F_LENGTH(file) > max_size) { ... goto cleanup; }
-//! // upstream: generator.c:1712
+//! // upstream: generator.c:2126
 //! if (min_size >= 0 && F_LENGTH(file) < min_size) { ... goto cleanup; }
 //! ```
 //!

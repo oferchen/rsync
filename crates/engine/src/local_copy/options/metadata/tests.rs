@@ -150,7 +150,7 @@ fn fake_super_round_trip() {
     assert!(!disabled.fake_super_enabled());
 }
 
-// upstream: options.c:89 - am_root tri-state, -1 is "fake-super"
+// upstream: options.c:95 - am_root tri-state, -1 is "fake-super"
 // upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes placeholder
 #[test]
 fn effective_am_root_super_true_fake_super_true_is_false() {

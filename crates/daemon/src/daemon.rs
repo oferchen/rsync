@@ -122,8 +122,8 @@ pub(crate) const RERR_UNSUPPORTED_EXIT_CODE: i32 = 4;
 /// failure, name-converter or early-exec spawn failure, and similar setup
 /// errors that occur after the module child has been forked).
 ///
-/// upstream: clientserver.c - these paths `return -1` from `rsync_module()`
-/// after the `post-xfer exec` fork point (clientserver.c:908-933); the
+/// upstream: clientserver.c:rsync_module() - these paths `return -1` after
+/// the `post-xfer exec` fork point (clientserver.c:966-991); the
 /// forked child's `_exit(-1)` truncates to the low 8 bits, so the waiting
 /// parent's `WEXITSTATUS()` observes 255.
 pub(crate) const MODULE_ABORT_EXIT_CODE: i32 = 255;
@@ -140,7 +140,7 @@ const DEFAULT_PORT: u16 = 873;
 /// Default `lock file` path used when no CLI or config value names one.
 ///
 /// upstream: rsync.h:33 `#define DEFAULT_LOCK_FILE "/var/run/rsyncd.lock"`,
-/// installed as the `lock_file` default by daemon-parm.h:178.
+/// installed as the `lock_file` default by daemon-parm.txt:34.
 #[cfg(unix)]
 const DEFAULT_LOCK_FILE: &str = "/var/run/rsyncd.lock";
 
@@ -171,13 +171,14 @@ pub(crate) const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {mod
 /// `{digests}` is replaced with this build's own daemon-auth list, exactly as
 /// upstream re-renders `get_default_nno_list()` into the message.
 ///
-/// upstream: compat.c:872-874 - `@ERROR: your client does not support one of our
-/// daemon-auth checksums: %s\n`, followed by `exit_cleanup(RERR_UNSUPPORTED)`.
+/// upstream: compat.c:884-886 `negotiate_daemon_auth()` - `@ERROR: your client
+/// does not support one of our daemon-auth checksums: %s\n`, followed by
+/// `exit_cleanup(RERR_UNSUPPORTED)`.
 pub(crate) const UNSUPPORTED_AUTH_DIGEST_PAYLOAD: &str =
     "@ERROR: your client does not support one of our daemon-auth checksums: {digests}";
 /// Exit code used when the client and daemon share no auth digest.
 ///
-/// upstream: compat.c:875 - `exit_cleanup(RERR_UNSUPPORTED)`. The refusal happens
+/// upstream: compat.c:886 - `exit_cleanup(RERR_UNSUPPORTED)`. The refusal happens
 /// in the per-connection child, so the listening parent is unaffected; only the
 /// single-session modes (stdio, inetd) surface it as the process exit status.
 pub(crate) const UNSUPPORTED_AUTH_DIGEST_EXIT_CODE: ExitCode = ExitCode::Unsupported;
@@ -271,7 +272,7 @@ pub(crate) use self::module_state::{
 use self::module_state::{build_module_runtimes, build_module_runtimes_with_lock_file};
 use self::module_state::{peer_host_display, resolve_peer_hostname};
 
-// upstream: log.c:122-132 logit() - every daemon log-file line is stamped
+// upstream: log.c:135 logit() - every daemon log-file line is stamped
 // with `%Y/%m/%d %H:%M:%S [pid] `, provided by the LogFileWriter wrapper.
 type SharedLogSink = Arc<Mutex<MessageSink<logging_sink::logfile::LogFileWriter<std::fs::File>>>>;
 
@@ -300,11 +301,12 @@ include!("daemon/sections/config_helpers.rs");
 /// (inetd/connect-program mode) or binds a TCP listener and enters the
 /// connection accept loop.
 ///
-/// upstream: clientserver.c:1546-1560 - `daemon_main()` checks
-/// `is_a_socket(STDIN_FILENO)` before binding TCP. When stdin is a socket
-/// (inetd, xinetd, systemd socket activation, or `RSYNC_CONNECT_PROG`),
-/// the daemon serves one session over the inherited file descriptors and
-/// exits. Otherwise it proceeds to the normal TCP accept loop.
+/// upstream: clientserver.c:1746-1760 - `daemon_main()` checks
+/// `is_inetd_socket(STDIN_FILENO)` before binding TCP. When stdin is a
+/// connected stream socket with an `AF_INET`/`AF_INET6` peer (inetd, xinetd,
+/// systemd socket activation), the daemon serves one session over the
+/// inherited file descriptors and exits. Otherwise it proceeds to the normal
+/// TCP accept loop.
 ///
 /// # Errors
 ///
@@ -322,9 +324,9 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 
     apply_verbosity(options.verbosity());
 
-    // upstream: clientserver.c:1748 - `if (is_a_socket(STDIN_FILENO))`
-    // When stdin is a socket, serve a single session over stdio (inetd mode)
-    // instead of binding a TCP listener.
+    // upstream: clientserver.c:1748 - `if (is_inetd_socket(STDIN_FILENO))`
+    // serves a single session over stdio (inetd mode) instead of binding a
+    // TCP listener.
     if is_stdin_socket() {
         return serve_inetd_session(options);
     }
@@ -338,13 +340,9 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 /// requested verbosity.
 ///
 /// upstream: options.c:2188 `set_output_verbosity(verbose, DEFAULT_PRIORITY)`
-/// is invoked once after option parsing in `main.c`/`daemon-main` startup.
-/// Without this seeding the daemon's `INFO_GTE`/`DEBUG_GTE` checks short-
-/// circuit at level 0 regardless of how many `-v` flags were stacked on the
-/// daemon command line, producing diagnostically silent daemons under
-/// `-vv`/`-vvv` and breaking upstream verbosity parity (the bug surfaced
-/// as a UTS testsuite divergence after PR #5887 made the daemon accept
-/// `-v`/`-vv`/`-vvv` without wiring the count to log-message filtering).
+/// runs once after option parsing. Without this seeding the daemon's
+/// `INFO_GTE`/`DEBUG_GTE` checks short-circuit at level 0 regardless of how
+/// many `-v` flags were stacked on the daemon command line.
 pub(crate) fn apply_verbosity(level: u8) {
     logging::init(logging::VerbosityConfig::from_verbose_level(level));
 }
@@ -360,7 +358,7 @@ pub(crate) fn apply_verbosity(level: u8) {
 /// the module table, and serves a single connection on the provided
 /// stdin/stdout streams. No TCP binding or signal handler registration occurs.
 ///
-/// upstream: main.c:1894-1895 - `if (am_server && am_daemon) return
+/// upstream: main.c:1971-1975 - under `am_server`, `if (am_daemon) return
 /// start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 ///
 /// # Errors
@@ -369,10 +367,10 @@ pub(crate) fn apply_verbosity(level: u8) {
 /// encounters an I/O error.
 pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let brand = config.brand();
-    // upstream: clientserver.c:1275-1283 `load_config()` - when invoked as
-    // `--server --daemon` (rsh-spawned, am_daemon < 0) without an explicit
-    // `--config`, upstream picks `RSYNCD_USERCONF` (`./rsyncd.conf` - relative
-    // to CWD) before falling back to `/etc/rsyncd.conf`. The test harness
+    // upstream: clientserver.c:1400-1408 `load_config()` - when invoked as
+    // `--server --daemon` (rsh-spawned, am_daemon < 0) by a non-root user
+    // without an explicit `--config`, upstream picks `RSYNCD_USERCONF`
+    // (`./rsyncd.conf`, relative to CWD) instead of `/etc/rsyncd.conf`. The test harness
     // (`testsuite/daemon_test.py`) drops a `rsyncd.conf` symlink in the
     // scratch dir and invokes `rsync -e lsh.sh --rsync-path=oc-rsync host::`
     // - lsh.sh stays in CWD via `--no-cd`, so the CWD lookup is what makes
@@ -429,7 +427,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 
     let (modules, _connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
 
-    // LSM-CAP.5: verify required Linux capabilities are present before serving
+    // Verify required Linux capabilities are present before serving
     // the remote-shell daemon session. Same pre-flight as the standalone and
     // inetd paths so capability misconfiguration fails loud and uniformly.
     // No-op on non-Linux targets.
@@ -444,7 +442,6 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         ));
     }
 
-    // Build a DaemonStream::Stdio from process stdin/stdout.
     let stdin = io::stdin();
     let stdout = io::stdout();
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
@@ -537,7 +534,8 @@ fn remote_shell_session_peer() -> Result<SocketAddr, DaemonError> {
 /// Privilege drop, chroot, and setuid/setgid are **not** plumbed through the
 /// async accept path. To avoid a silent security regression, this function
 /// fails closed: if any module sets `uid`, `gid`, or `use chroot = true`
-/// (the upstream default for `use chroot` is `true`), or a global daemon
+/// (`use chroot` defaults to unset, which upstream resolves to a chroot whenever
+/// `chroot("/")` succeeds, clientserver.c:883-895), or a global daemon
 /// `uid`/`gid`/`chroot` is configured, it returns a `DaemonError` instructing
 /// the operator to use the synchronous daemon. Non-privileged modules
 /// (`use chroot = false`, no `uid`/`gid`) - the benchmark case - run fine.
@@ -653,7 +651,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 
     // The async accept path carries the same trust gate as the sync one: a
     // PROXY header is read only from a listed trusted proxy, and an enabled
-    // feature with no list warns once at startup (clientserver.c:1768-1777).
+    // feature with no list warns once at startup (clientserver.c:1771-1777).
     let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
     warn_if_proxy_protocol_trusts_nobody(&proxy_policy, log_sink.as_ref());
 
@@ -797,7 +795,7 @@ pub(crate) fn async_max_inflight(max_connections: Option<usize>) -> usize {
 /// Writes the upstream-compatible max-connections refusal to an accepted
 /// async socket, then lets it drop.
 ///
-/// upstream: clientserver.c:754 - `@ERROR: max connections (%d) reached --
+/// upstream: clientserver.c:799 - `@ERROR: max connections (%d) reached --
 /// try again later\n`. Mirrors the sync accept loop's `refuse_if_at_capacity`
 /// wording so clients see an identical reply regardless of accept engine.
 #[cfg(feature = "async-daemon")]

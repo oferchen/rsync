@@ -1,12 +1,12 @@
 //! Unit tests for the delete emitter.
 //!
 //! Split into focused submodules:
-//! - [`dispatch`] - DDP-C1 scaffold tests covering the dispatch matrix.
-//! - [`error_policy`] - DDP-C3 error-classification / continue-on-error
-//!   behaviour, mirroring upstream `delete.c:178-207`.
-//! - [`cohort`] - DDP-D2 hardlink-cohort observer log.
-//! - [`unconfined_escape`] - CF-P0a/CF-P0b RED baseline pinning the
-//!   symlink escape the path-based `RealDeleteFs` methods still allow.
+//! - [`dispatch`] - tests covering the dispatch matrix.
+//! - [`error_policy`] - error-classification / continue-on-error
+//!   behaviour, mirroring upstream `delete.c:141-164`.
+//! - [`cohort`] - hardlink-cohort observer log.
+//! - [`unconfined_escape`] - baseline pinning the symlink escape the
+//!   path-based `RealDeleteFs` methods still allow without a session root.
 //!
 //! Shared helpers (synthetic plan/entry builders, the [`ScriptedDeleteFs`]
 //! failure fake) live here.

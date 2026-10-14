@@ -151,9 +151,9 @@ pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<AuthUser>, String>
             continue;
         }
 
-        // upstream: authenticate.c:276 keeps each token verbatim (including
-        // `@group`) and matches it at auth time via wildmatch / group
-        // membership. Do not expand `@group` to member usernames here.
+        // upstream: authenticate.c:372-402 `auth_server()` keeps each token
+        // verbatim (including `@group`) and matches it at auth time via
+        // wildmatch / group membership. Do not expand `@group` to member usernames here.
         let key = name_part.to_ascii_lowercase();
         if seen.insert(key) {
             result.push(AuthUser::with_access(name_part.to_owned(), access_level));
@@ -208,7 +208,7 @@ enum BooleanDirective {
 
 /// Classifies a boolean directive value the way upstream `set_boolean()` does.
 ///
-/// upstream: loadparm.c:363-376. Accepts only `yes`/`true`/`1` and
+/// upstream: loadparm.c:482-495. Accepts only `yes`/`true`/`1` and
 /// `no`/`false`/`0` (case-insensitive); when `allow_unset` is set (P_BOOL3
 /// params) also accepts `unset`/`-1` as a tri-state. Upstream does NOT accept
 /// `on`/`off`.
@@ -241,9 +241,9 @@ pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
 /// `Some(flag)` for a concrete value. Returns `None` when the value is the
 /// BOOL3 `unset` tri-state (leave the setting unconfigured) or is malformed.
 ///
-/// upstream: loadparm.c:418-423 - `do_parameter()` calls `set_boolean()` and
+/// upstream: loadparm.c:537-543 - `do_parameter()` calls `set_boolean()` and
 /// ignores its failure return, so a badly formed boolean only warns
-/// (loadparm.c:372) and the directive's previous default is retained rather
+/// (loadparm.c:491) and the directive's previous default is retained rather
 /// than aborting the load.
 pub(crate) fn apply_bool3_directive(
     value: &str,
@@ -288,7 +288,7 @@ pub(crate) fn apply_boolean_directive(
 /// Strips trailing `/` characters from a `P_PATH` value, keeping at least one
 /// character.
 ///
-/// upstream: loadparm.c:443-449 `case P_PATH` - `while (len > 1 && ptr[len-1] ==
+/// upstream: loadparm.c:562-569 `case P_PATH` - `while (len > 1 && ptr[len-1] ==
 /// '/') len--`, so `/srv/data/` is stored as `/srv/data`, `//` becomes `/`, and
 /// a bare `/` is left unchanged. Applied to the `path` and `temp dir` directives.
 pub(crate) fn strip_trailing_slashes(value: &str) -> String {
@@ -302,7 +302,7 @@ pub(crate) fn strip_trailing_slashes(value: &str) -> String {
 
 /// Parses the leading integer of a config value the way C `atoi()` does.
 ///
-/// upstream: loadparm.c:431-433 stores `atoi(parmvalue)` for P_INTEGER
+/// upstream: loadparm.c:550-552 stores `atoi(parmvalue)` for P_INTEGER
 /// directives. `atoi` skips leading whitespace, reads an optional sign followed
 /// by the leading run of decimal digits, and stops at the first non-digit (so
 /// `"5x"` yields `5`). It yields `0` when no digits are present. Overflow
@@ -356,7 +356,7 @@ pub(crate) fn parse_numeric_identifier(value: &str) -> Option<u32> {
 /// config error it already produced for a bad numeric id.
 ///
 /// upstream: uidlist.c:144 `user_to_uid()` called with `num_ok = True`
-/// (clientserver.c:783) - a value made only of digits is `id_parse()`d, any
+/// (clientserver.c:835 `rsync_module()`) - a value made only of digits is `id_parse()`d, any
 /// other value goes through `getpwnam()`.
 pub(crate) fn parse_uid_setting(value: &str) -> Option<u32> {
     let trimmed = value.trim();
@@ -379,7 +379,7 @@ pub(crate) fn parse_uid_setting(value: &str) -> Option<u32> {
 /// `*` requests every group the target user belongs to; it must appear first,
 /// and any following tokens are extra explicit gids.
 ///
-/// upstream: clientserver.c:793-824 `rsync_module()` splits `lp_gid()` with
+/// upstream: clientserver.c:844-875 `rsync_module()` splits `lp_gid()` with
 /// `conf_strtok`; `*` triggers `want_all_groups`, and each remaining token is
 /// added via `add_a_group`. The whole list is later installed with
 /// `setgroups`, clearing inherited supplementary groups.
@@ -441,7 +441,7 @@ fn rejected_gid_token(value: &str) -> String {
 /// is an error, matching the config value rejection upstream performs.
 ///
 /// upstream: uidlist.c:170 `group_to_gid()` called with `num_ok = True`
-/// (clientserver.c:807 `add_a_group()`) - a digits-only token is `id_parse()`d,
+/// (clientserver.c:701 `add_a_group()`) - a digits-only token is `id_parse()`d,
 /// any other token goes through `getgrnam()`.
 fn parse_gid_token(token: &str) -> Result<u32, String> {
     if token.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -458,7 +458,7 @@ fn parse_gid_token(token: &str) -> Result<u32, String> {
 
 /// Parses a timeout directive value in seconds.
 ///
-/// upstream: `timeout` is a P_INTEGER directive (daemon-parm.h:294), so the
+/// upstream: `timeout` is a P_INTEGER directive (daemon-parm.txt:52), so the
 /// value is read with `atoi()` leniency: a leading integer is parsed and
 /// trailing non-digits are tolerated. A non-positive result (including an
 /// empty or non-numeric value, which `atoi` maps to `0`) disables the timeout,
@@ -475,12 +475,12 @@ pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
 
 /// Parses a max-connections directive value.
 ///
-/// upstream: `max connections` is a P_INTEGER directive (daemon-parm.h:292),
+/// upstream: `max connections` is a P_INTEGER directive (daemon-parm.txt:50),
 /// so the value is read with `atoi()` leniency: a leading integer is parsed and
 /// trailing non-digits are tolerated. A zero result (including an empty or
 /// non-numeric value, which `atoi` maps to `0`) means unlimited and a positive
 /// result is a slot count. A negative value disables the module - upstream's
-/// slot scan in connection.c:claim_connection never runs, so every connection
+/// slot scan in connection.c:39 `claim_connection()` never runs, so every connection
 /// is refused - so the sign is preserved rather than clamped. Never returns
 /// `None`.
 pub(crate) fn parse_max_connections_directive(value: &str) -> Option<MaxConnections> {

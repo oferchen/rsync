@@ -1,4 +1,4 @@
-/// NXT-8 regression test ported from the upstream `daemon` testsuite: a
+/// Regression test ported from the upstream `daemon` testsuite: a
 /// module-list request must complete - returning the listing and
 /// `@RSYNCD: EXIT` - even when the listed module carries a `timeout`
 /// directive.
@@ -6,8 +6,8 @@
 /// # Why this matters
 ///
 /// Upstream applies a module's timeout only *after* a module has been
-/// selected (`clientserver.c:1206` sets the io timeout against the chosen
-/// `module_id`). The module listing (`clientserver.c:1423`,
+/// selected (`clientserver.c:1288-1289` sets the io timeout against the chosen
+/// `module_id`). The module listing (`clientserver.c:1557`,
 /// `send_listing()`) runs *before* any module is selected, so a per-module
 /// timeout must neither gate nor block the pre-selection listing path. A
 /// naive implementation that armed the module read/write timeout before
@@ -46,7 +46,7 @@ fn run_daemon_lists_modules_with_module_timeout() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
-    // upstream: clientserver.c:1423 - an empty request lists modules.
+    // upstream: clientserver.c:1554 - an empty request lists modules.
     send_client_greeting(&mut stream);
     stream.write_all(b"\n").expect("send empty request");
     stream.flush().expect("flush empty request");

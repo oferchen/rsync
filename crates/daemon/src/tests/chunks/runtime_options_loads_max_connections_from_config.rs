@@ -13,7 +13,7 @@ fn runtime_options_loads_max_connections_from_config() {
     ])
     .expect("config parses");
 
-    // upstream: connection.c:33 - a positive value is the slot-scan bound.
+    // upstream: connection.c:39 - a positive value is the slot-scan bound.
     assert_eq!(
         options.modules[0].max_connections(),
         MaxConnections::Limited(NonZeroU32::new(7).expect("non-zero"))

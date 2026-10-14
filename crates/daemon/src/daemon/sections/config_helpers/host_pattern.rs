@@ -74,7 +74,7 @@ impl HostPattern {
         // netgroup (`tok[1]` is required, access.c:44) and falls through to be
         // treated as an ordinary hostname token. The name is lowercased to
         // match upstream's `strlower(list2)` over the whole host list
-        // (access.c:262).
+        // (access.c:268 access_match()).
         if let Some(name) = token.strip_prefix('@')
             && !name.is_empty()
         {
@@ -220,8 +220,8 @@ impl HostPattern {
     /// Forward-resolves a config-specified hostname token and matches the
     /// connecting `addr` against the token's A/AAAA records.
     ///
-    /// This mirrors the forward-DNS branch of upstream `access.c:match_hostname`
-    /// (access.c:60-81): when `forward lookup` is enabled and the token is a
+    /// This mirrors the forward-DNS branch of upstream `access.c:match_hostname()`
+    /// (access.c:60-87): when `forward lookup` is enabled and the token is a
     /// simple hostname (not an address or wildcarded entry), rsync resolves the
     /// token via name lookup and compares the connecting address against the
     /// returned records. It complements the reverse-DNS name-pattern match in
@@ -229,17 +229,18 @@ impl HostPattern {
     /// either because its reverse-DNS name matches the pattern or because the
     /// rule's hostname forward-resolves to the peer's address.
     ///
-    /// Resolution is gated on `forward_lookup` (upstream `allow_forward_dns`
-    /// from `lp_forward_lookup`, access.c:60) and applies only to the
+    /// Resolution is gated on `forward_lookup` (upstream `allow_forward_dns`,
+    /// set from `lp_forward_lookup()` at access.c:291 and tested at
+    /// access.c:60) and applies only to the
     /// [`HostPattern::Hostname`] variant; address and CIDR variants are matched
     /// numerically by [`HostPattern::matches`] and never forward-resolved.
     ///
-    /// `deny` says which list is being scanned, and it is the whole of
-    /// CVE-2026-70452's sibling fix: a token the resolver cannot resolve
+    /// `deny` says which list is being scanned, and it is the whole of the
+    /// CVE-2026-70452 fix (a sibling of CVE-2026-43617): a token the resolver cannot resolve
     /// returns `deny` (access.c:68-74), so an unresolvable **deny** token
     /// matches - we cannot prove the peer is not the denied host - while an
     /// unresolvable **allow** token still does not. Both gates above return 0
-    /// regardless of `deny`, exactly as upstream does at access.c:60-64.
+    /// regardless of `deny`, exactly as upstream does at access.c:60-65.
     fn forward_resolve_matches(&self, addr: IpAddr, forward_lookup: bool, deny: bool) -> bool {
         if !forward_lookup {
             return false;
@@ -254,7 +255,8 @@ impl HostPattern {
 
 /// Compares `addr` and `network` under `mask`, all of one address family.
 ///
-/// upstream: access.c match_binary() - `(a & m) == (t & m)` byte by byte.
+/// upstream: access.c:90 match_binary() - `(b1[i] ^ b2[i]) & mask[i]` must be
+/// zero for every byte, which is `(a & m) == (t & m)`.
 fn masked_equal(addr: IpAddr, network: IpAddr, mask: IpAddr) -> bool {
     match (addr, network, mask) {
         (IpAddr::V4(a), IpAddr::V4(n), IpAddr::V4(m)) => {
@@ -327,7 +329,7 @@ impl HostnamePattern {
         let trimmed = core::idn::host_to_ascii(trimmed);
         let trimmed = trimmed.as_ref();
 
-        // upstream: access.c:262 `strlower(list2)` lowercases the whole host
+        // upstream: access.c:268 `strlower(list2)` lowercases the whole host
         // list before tokenizing; the token is used verbatim (dots retained)
         // for the forward `gethostbyname` lookup at access.c:68.
         let original = trimmed.to_ascii_lowercase();
@@ -361,7 +363,7 @@ impl HostnamePattern {
     ///
     /// upstream: access.c:63-81 - forward DNS applies only to simple hostname
     /// tokens; the token is resolved and each returned address is compared to
-    /// the connecting address (access.c:71-72). The eligibility gate is
+    /// the connecting address (access.c:77-78). The eligibility gate is
     /// [`token_is_forward_resolvable`]; resolution goes through the shared
     /// [`module_state::forward_resolve`] seam so failures fail closed.
     fn forward_resolve_matches(&self, addr: IpAddr, deny: bool) -> bool {
@@ -381,7 +383,7 @@ impl HostnamePattern {
 
     fn matches(&self, hostname: &str) -> bool {
         // Every pattern kind is lowercased at parse time (mirroring upstream's
-        // `strlower(list2)`, access.c:262), so the comparison must fold the HOST
+        // `strlower(list2)`, access.c:268), so the comparison must fold the HOST
         // too - upstream's matcher is `iwildmatch`, the case-INSENSITIVE form
         // (access.c:57). The resolved name keeps the resolver's case, and
         // `UNKNOWN`/`UNDETERMINED`, which upstream documents as usable in a
@@ -490,7 +492,7 @@ pub(in crate::daemon) enum ProxyHeaderDecision {
 /// The daemon's PROXY protocol configuration as one value.
 ///
 /// upstream keeps `proxy protocol` and `proxy protocol hosts` as two
-/// directives (daemon-parm.h) but reads them at one site: `rsync_module()`
+/// directives (daemon-parm.txt) but reads them at one site: `rsync_module()`
 /// consults `lp_proxy_protocol()` and, if set, calls `proxy_peer_allowed()`,
 /// which consults `lp_proxy_protocol_hosts()` (clientserver.c:1443-1446). The
 /// two are only ever meaningful together - a trusted-proxy list with the

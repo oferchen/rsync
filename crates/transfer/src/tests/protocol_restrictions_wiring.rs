@@ -6,7 +6,7 @@
 //! started anyway and died mid-stream with RERR_STREAMIO (12), while upstream
 //! refuses up front with RERR_PROTOCOL (2).
 //!
-//! upstream: compat.c:663-676 (protocol < 30), compat.c:684-713 (protocol < 29).
+//! upstream: compat.c:664-682 (protocol < 30), compat.c:690-720 (protocol < 29).
 use crate::handshake::HandshakeResult;
 use crate::{ServerConfig, ServerRole, run_server_with_handshake};
 use engine::{ReferenceDirectory, ReferenceDirectoryKind};
@@ -107,7 +107,7 @@ fn every_role_refuses_an_option_the_protocol_cannot_carry() {
             assert_eq!(err.to_string(), message, "{cell}");
             assert_eq!(crate::error::rerr_for_io_error(&err), 2, "{cell}");
             // The refusal precedes the checksum-seed exchange, so a server
-            // writes nothing at all (compat.c:663-713 runs before compat.c:822).
+            // writes nothing at all (compat.c:664-720 runs before compat.c:822).
             assert!(written.is_empty(), "{cell}: wrote {written:?}");
         }
     }

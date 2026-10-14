@@ -1,4 +1,4 @@
-// Concurrent File Modification Tests (Task #185)
+// Concurrent file modification tests.
 //
 // This module contains comprehensive tests for handling files modified during transfer.
 // These scenarios simulate real-world race conditions where files change while rsync

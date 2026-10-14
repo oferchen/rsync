@@ -1,4 +1,4 @@
-// upstream: clientserver.c - `rsync_module()` processes a client's module
+// upstream: clientserver.c:rsync_module() processes a client's module
 // request after the `@RSYNCD:` greeting exchange.
 
 include!("module_access/listing.rs");

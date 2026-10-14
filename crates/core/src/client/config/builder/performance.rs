@@ -41,7 +41,7 @@ impl ClientConfigBuilder {
     /// Calling this method marks the choice as explicit, so the invocation
     /// builder will forward it to the remote peer via `--compress-choice`,
     /// `--new-compress`, or `--old-compress` - matching upstream
-    /// `options.c:2828-2833`.
+    /// `options.c:2994-2999`.
     #[must_use]
     #[doc(alias = "--compress-choice")]
     pub const fn compression_algorithm(mut self, value: CompressionAlgorithm) -> Self {
@@ -54,7 +54,7 @@ impl ClientConfigBuilder {
     ///
     /// [`CompressionAlgorithm`] collapses `zlibx` onto `Zlib` (shared deflate
     /// codec), so the enum cannot round-trip the exact name upstream prints in
-    /// its `--debug=NSTR` compress summary (`compat.c:206-219`). This retains
+    /// its `--debug=NSTR` compress summary (`compat.c:206-220`). This retains
     /// the verbatim string so the local-copy summary matches upstream.
     #[must_use]
     #[doc(alias = "--compress-choice")]
@@ -97,7 +97,7 @@ impl ClientConfigBuilder {
     /// Records the raw `--skip-compress` spec to forward to the remote sender.
     ///
     /// `Some` marks the suffix list as explicitly set so the builder emits
-    /// `--skip-compress=<spec>` verbatim, matching upstream options.c:2868-2870.
+    /// `--skip-compress=<spec>` verbatim, matching upstream options.c:3035-3036.
     #[must_use]
     #[doc(alias = "--skip-compress")]
     pub fn skip_compress_spec(mut self, spec: Option<String>) -> Self {
@@ -114,8 +114,8 @@ impl ClientConfigBuilder {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:760-761` - `--compress-threads` / `--zt` long options.
-    /// - `token.c:701` - `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`.
+    /// - `options.c:783-784` - `--compress-threads` / `--zt` long options.
+    /// - `token.c:752` - `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`.
     #[must_use]
     #[doc(alias = "--compress-threads")]
     #[doc(alias = "--zt")]
@@ -190,7 +190,7 @@ impl ClientConfigBuilder {
     ///
     /// Forwarded to the peer in place of the resolved byte count, so each
     /// side resolves `0` against its own address-space ceiling
-    /// (upstream: options.c:2078-2084).
+    /// (upstream: options.c:2078-2086).
     #[doc(alias = "--max-alloc")]
     #[must_use]
     pub fn max_alloc_arg(mut self, value: Option<String>) -> Self {
@@ -252,16 +252,14 @@ impl ClientConfigBuilder {
     /// Sets whether oc-rsync advertises the INC_RECURSE (`'i'`) capability
     /// during connection setup.
     ///
-    /// Defaults to `false` while sender-side incremental recursion is
-    /// validated against upstream rsync 3.0.9 / 3.1.3 / 3.4.1; pass `true`
-    /// (or `--inc-recursive` on the CLI) to opt in. `--no-inc-recursive`
-    /// also clears the flag, matching upstream `set_allow_inc_recurse()`
-    /// when `--no-inc-recursive` is the only signal.
+    /// Unset defaults to `true` at build time, matching upstream's default-on
+    /// `allow_inc_recurse`; `--no-inc-recursive` passes `false`, which
+    /// `set_allow_inc_recurse()` then cannot re-enable.
     ///
     /// # Upstream Reference
     ///
-    /// - `compat.c:720 set_allow_inc_recurse()` - capability gate.
-    /// - `options.c:3013-3060 maybe_add_e_option()` - capability string.
+    /// - `compat.c:162 set_allow_inc_recurse()` - capability gate.
+    /// - `options.c:3202-3246 maybe_add_e_option()` - capability string.
     #[must_use]
     #[doc(alias = "--inc-recursive")]
     #[doc(alias = "--no-inc-recursive")]

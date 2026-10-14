@@ -24,7 +24,7 @@
 //!   - Position 5 (p): permissions differ
 //!   - Position 6 (o): owner differs
 //!   - Position 7 (g): group differs
-//!   - Position 8 (u): reserved for atime/ctime (`u` = atime, `n` = ctime, `b` = both)
+//!   - Position 8 (u): access/create time (`u` = atime, `n` = crtime, `b` = both)
 //!   - Position 9 (a): ACL differs
 //!   - Position 10 (x): extended attributes differ
 //!

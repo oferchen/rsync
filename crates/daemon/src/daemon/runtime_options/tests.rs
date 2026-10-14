@@ -96,7 +96,7 @@ mod runtime_options_tests {
 
     #[test]
     fn parse_port_zero_coerces_to_well_known_rsync_port() {
-        // upstream: clientserver.c:1573-1574 -
+        // upstream: clientserver.c:1784-1785 -
         //   `if (rsync_port == 0 && (rsync_port = lp_rsync_port()) == 0)
         //        rsync_port = RSYNC_PORT;`
         // A resolved port of 0 (from `--port 0`) falls back to the well-known
@@ -396,7 +396,7 @@ mod runtime_options_tests {
     /// A global `log file` must reach the daemon-wide sink, not just the
     /// per-module default.
     ///
-    /// upstream: `log file` is `P_LOCAL` (daemon-parm.h:289), but
+    /// upstream: `log file` is a Locals entry (daemon-parm.txt:35), but
     /// `FN_LOCAL_STRING(lp_log_file, log_file)` falls back to the global value
     /// at `module_id < 0` and `daemon_main` calls `log_init(0)`
     /// (clientserver.c:1789) before accepting anything. So the global value
@@ -440,7 +440,7 @@ mod runtime_options_tests {
     ///
     /// Recording the directive only as a module default left this `None`, so
     /// the pre-module phase silently took the 60s built-in bound instead of the
-    /// configured one. The 3.5.0 `daemon-handshake-timeout` cell configures
+    /// configured one. The upstream testsuite's `daemon-handshake-timeout` cell configures
     /// exactly this shape - a global `timeout = 2` with no module involved -
     /// and observes the greeting phase end at ~2s.
     #[test]
@@ -482,7 +482,7 @@ mod runtime_options_tests {
 
     /// `--log-file` outranks the config global, in either argument order.
     ///
-    /// upstream: log.c:215 - `if (am_daemon && !logfile_name) logfile_name =
+    /// upstream: log.c:216-217 - `if (am_daemon && !logfile_name) logfile_name =
     /// lp_log_file(module_id)`. The command line fills `logfile_name` first and
     /// the config value only fills a still-empty slot, so order cannot matter.
     #[test]
@@ -521,7 +521,7 @@ mod runtime_options_tests {
 
     /// A repeated global `log file` inside ONE file is last-wins, not an error.
     ///
-    /// upstream: params.c:Parse assigns each directive as it is read, so a
+    /// upstream: params.c:489 Parse() assigns each directive as it is read, so a
     /// second occurrence simply overwrites the first. Mirrors the same rule the
     /// other global path directives follow through `store_global_directive`.
     #[test]
@@ -732,7 +732,7 @@ mod runtime_options_tests {
 
     #[test]
     fn parse_config_listen_backlog_directive_overrides_default() {
-        // upstream: socket.c:562 passes lp_listen_backlog() to listen(2), so
+        // upstream: socket.c:716 passes lp_listen_backlog() to listen(2), so
         // a configured `listen backlog` must reach RuntimeOptions intact or
         // the directive is cosmetic and the accept queue silently stays at 5.
         let mut file = NamedTempFile::new().expect("config file");
@@ -1184,7 +1184,7 @@ mod runtime_options_tests {
 
     #[test]
     fn dparam_sets_daemon_values_of_a_config_without_modules() {
-        // upstream: clientserver.c:1765-1766 daemon_main() applies the
+        // upstream: clientserver.c:1762-1766 daemon_main() applies the
         // overrides after reading the global section.
         let options = parse_with_config("pid file = /run/a.pid\n", |path| {
             vec![
@@ -1199,7 +1199,7 @@ mod runtime_options_tests {
 
     #[test]
     fn dparam_without_equals_is_refused() {
-        // upstream: options.c:1559-1562 and :1594-1596.
+        // upstream: options.c:1560-1564 and :1594-1596.
         let error = RuntimeOptions::parse(&[OsString::from("--dparam=noequals")])
             .expect_err("missing '=' must fail");
         let text = error.to_string();
@@ -1230,7 +1230,7 @@ mod runtime_options_tests {
 
     #[test]
     fn sockopts_replaces_the_config_socket_options() {
-        // upstream: socket.c:606-610 - a given --sockopts is used instead of
+        // upstream: socket.c:607-610 - a given --sockopts is used instead of
         // `socket options`, even when it is empty.
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("rsyncd.conf");

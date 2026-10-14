@@ -28,7 +28,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
 
-    // upstream: generator.c:1249 - in list-only mode the receiver captures every
+    // upstream: generator.c:1642 - in list-only mode the receiver captures every
     // flist entry's metadata instead of requesting file data; convert those into
     // metadata-bearing events so the client can render the listing. The daemon
     // transport does the same in `daemon_transfer/orchestration/stats.rs`;
@@ -136,7 +136,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
 
 /// Maps an SSH child process exit status to an rsync exit code.
 ///
-/// Mirrors upstream rsync's `wait_process_with_flush()` in `main.c:194`:
+/// Mirrors upstream rsync's `wait_process_with_flush()` in `main.c:198`:
 /// - Normal exit: `WEXITSTATUS(status)` is propagated raw. Known RERR_*
 ///   codes keep their named variant; any other status (for example a remote
 ///   rsync exit 42 or an SSH connection failure exit 255) round-trips
@@ -146,9 +146,9 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
 /// - `waitpid()` failure / did not exit normally: `RERR_WAITCHILD` (21).
 ///
 /// The resulting raw i32 flows unchanged into the worst-wins comparison
-/// (cleanup.c:150) and ultimately to `process::exit`.
+/// (cleanup.c:150-152) and ultimately to `process::exit`.
 ///
-/// upstream: main.c:194 `wait_process_with_flush()`; cleanup.c:150.
+/// upstream: main.c:198 `wait_process_with_flush()`; cleanup.c:150-152.
 pub(in crate::client::remote) fn map_child_exit_status(
     status: std::process::ExitStatus,
 ) -> ExitCode {
@@ -159,7 +159,7 @@ pub(in crate::client::remote) fn map_child_exit_status(
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        // upstream: main.c:208-217 - a child that did not exit normally maps to
+        // upstream: main.c:215-224 - a child that did not exit normally maps to
         // RERR_CRASHED (core dump) or RERR_TERMINATED (killed by signal).
         if status.signal().is_some() {
             return if status.core_dumped() {
@@ -171,9 +171,9 @@ pub(in crate::client::remote) fn map_child_exit_status(
     }
 
     match status.code() {
-        // upstream: main.c:221 - WEXITSTATUS is returned raw, never collapsed.
+        // upstream: main.c:226 - WEXITSTATUS is returned raw, never collapsed.
         Some(code) => ExitCode::from_raw(code),
-        // upstream: main.c:206/218 - a failed waitpid() maps to RERR_WAITCHILD.
+        // upstream: main.c:212-214/224 - a failed waitpid() maps to RERR_WAITCHILD.
         None => ExitCode::WaitChild,
     }
 }
@@ -187,9 +187,9 @@ mod windows_exit_status_tests {
 
     // #202: On Windows the `#[cfg(unix)]` signal branch of `map_child_exit_status`
     // is compiled out, so every non-success child status is classified purely by
-    // its exit code. These pins assert the upstream `main.c:221` contract that
+    // its exit code. These pins assert the upstream `main.c:226` contract that
     // `WEXITSTATUS` is propagated raw into the worst-wins comparison
-    // (cleanup.c:150), driving the mapper directly (no live SSH needed).
+    // (cleanup.c:150-152), driving the mapper directly (no live SSH needed).
 
     #[test]
     fn windows_exit_zero_maps_to_ok() {
@@ -271,7 +271,7 @@ mod list_only_conversion_tests {
     /// pins. The daemon transport reaches the same result through
     /// `daemon_transfer/orchestration/stats.rs`.
     ///
-    /// upstream: generator.c:1249 `list_file_entry()`.
+    /// upstream: generator.c:1318 `list_file_entry()`.
     #[test]
     fn receiver_list_only_entries_become_client_events() {
         let summary =

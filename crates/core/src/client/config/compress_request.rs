@@ -107,7 +107,7 @@ impl CompressRequest {
 
     /// Returns the codec an explicit `compress_choice` pins on both peers.
     ///
-    /// upstream: compat.c:543 - a set `compress_choice` skips the vstring
+    /// upstream: compat.c:547 - a set `compress_choice` skips the vstring
     /// negotiation, and a `none` choice stays set (compat.c:209-211) even when
     /// a level re-enables `do_compression`. `None` when no choice was given.
     #[must_use]

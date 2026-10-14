@@ -1,7 +1,7 @@
 //! Permanent CLI-argument fidelity guard against upstream rsync 3.4.4.
 //!
 //! Every entry in this suite is derived from the upstream `poptOption`
-//! table (`options.c:600` `long_options[]`), NOT from oc-rsync's current
+//! table (`options.c:609` `long_options[]`), NOT from oc-rsync's current
 //! behaviour. The upstream table is the contract: each long name (plus its
 //! aliases), the associated short character, the argument type
 //! (`POPT_ARG_NONE`/`POPT_ARG_VAL`/`POPT_ARG_INT`/`POPT_ARG_STRING`), and the
@@ -87,7 +87,7 @@ const fn value(
 }
 
 /// Exhaustive mirror of the user-facing entries in upstream `long_options[]`
-/// (`options.c:600`). Daemon-transition and internal options (`--server`,
+/// (`options.c:609`). Daemon-transition and internal options (`--server`,
 /// `--sender`, `--daemon`, `--config`, `--dparam`, `--detach`) are covered
 /// separately in [`internal_and_daemon_options_are_recognized`].
 const UPSTREAM_OPTS: &[Opt] = &[
@@ -612,7 +612,7 @@ fn defaults_match_upstream() {
 #[test]
 fn internal_and_daemon_options_are_recognized() {
     // `--server`/`--sender` are internal (set by remote invocation) but the
-    // client parser must still accept them (upstream options.c:848-849).
+    // client parser must still accept them (upstream options.c:862-863).
     assert!(
         recognize(&["--server"]).is_ok(),
         "--server must be recognised"
@@ -622,7 +622,7 @@ fn internal_and_daemon_options_are_recognized() {
         "--sender must be recognised"
     );
 
-    // Daemon-transition options (upstream options.c:851-855). These are defined
+    // Daemon-transition options (upstream options.c:864-869). These are defined
     // on the client command and parse into the daemon-related fields.
     let daemon = parse_args(["oc-rsync", "--daemon"]).expect("--daemon parses");
     assert!(daemon.daemon_mode, "--daemon sets daemon_mode");
@@ -674,7 +674,7 @@ fn client_dparam_is_refused_as_a_daemon_option() {
 /// missing `--daemon`.
 ///
 /// upstream: options.c:1583-1584 runs set_dparams(1) after the daemon-option
-/// re-parse and before the `!daemon_opt` check at options.c:1591. Measured on
+/// re-parse and before the `!daemon_opt` check at options.c:1592. Measured on
 /// 3.5.1: `rsync --dparam=x=1 a b` exits 1 with `Unknown parameter "x"` and
 /// no usage hint.
 #[test]
@@ -742,27 +742,26 @@ fn client_daemon_option_reparses_argv_in_daemon_mode() {
     }
 }
 
-// --- Tracked divergences (upstream-correct contract; oc not yet compliant) ---
+// --- Short-option value forms (upstream-correct contract) -------------------
 //
-// Each test below asserts the UPSTREAM behaviour. It is `#[ignore]`d because
-// oc-rsync currently diverges; removing the attribute must make it pass once
-// the gap is closed. Do NOT weaken these assertions to make them green.
+// Each test below asserts the UPSTREAM behaviour for a short option that takes
+// a value. Do NOT weaken these assertions to make them green.
 
-/// upstream options.c:660 `{"modify-window", '@', POPT_ARG_INT, ...}`.
+/// upstream options.c:669 `{"modify-window", '@', POPT_ARG_INT, ...}`.
 #[test]
 fn modify_window_short_at_is_accepted() {
     recognize(&["-@", "2"]).expect("-@ 2 must be accepted as --modify-window=2");
 }
 
-/// upstream options.c:752 `{"block-size", 'B', POPT_ARG_STRING, ...}`.
+/// upstream options.c:766 `{"block-size", 'B', POPT_ARG_STRING, ...}`.
 #[test]
 fn block_size_short_b_is_accepted() {
     recognize(&["-B", "1024"]).expect("-B 1024 must be accepted as --block-size=1024");
 }
 
 /// popt accepts an attached value on any value-taking short option, including
-/// path-like values (`-T/tmp`). oc's `expand_short_options` omits `T` from its
-/// value-short set, so the token leaks into the operand list.
+/// path-like values (`-T/tmp`); the value must bind to `--temp-dir` rather than
+/// leak into the operand list.
 #[test]
 fn temp_dir_short_attached_value_is_accepted() {
     let parsed = recognize(&["-T/tmp"]).expect("-T/tmp must bind temp-dir");
@@ -772,8 +771,8 @@ fn temp_dir_short_attached_value_is_accepted() {
     );
 }
 
-/// popt accepts `-S=value` equals form on value-taking short options. oc
-/// rejects `-T=/tmp` (only `-e=`, `-M=`, `-f=` are handled today).
+/// popt accepts the `-S=value` equals form on value-taking short options, so
+/// `-T=/tmp` must bind to `--temp-dir`.
 #[test]
 fn temp_dir_short_equals_value_is_accepted() {
     recognize(&["-T=/tmp"]).expect("-T=/tmp must bind temp-dir");
@@ -804,7 +803,7 @@ fn run_oc(args: &[&str]) -> std::process::ExitStatus {
         .expect("spawn oc-rsync")
 }
 
-/// upstream options.c:1129 - a trailing `+1`/`-1` adjusts a size argument
+/// upstream options.c:1230 - a trailing `+1`/`-1` adjusts a size argument
 /// (`1K-1` == 1023). oc's size parser rejects the modifier.
 #[test]
 #[ignore = "oc divergence: --max-size/--min-size trailing +1/-1 modifier rejected"]
@@ -823,7 +822,7 @@ fn size_trailing_plus_minus_one_modifier_is_accepted() {
     );
 }
 
-/// upstream options.c:1930 - `--stderr` accepts only `errors`, `all`, or
+/// upstream options.c:2025-2039 - `--stderr` accepts only `errors`, `all`, or
 /// `client`; any other mode is a fatal error. oc silently accepts any string.
 #[test]
 #[ignore = "oc divergence: invalid --stderr mode not rejected"]

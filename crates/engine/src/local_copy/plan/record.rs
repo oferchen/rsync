@@ -99,7 +99,7 @@ impl LocalCopyRecord {
 
     /// Marks a `HardLink` record whose destination already shared the source
     /// group leader's inode. Used by the verbose renderer to emit the
-    /// upstream `"is uptodate"` notice (upstream: hlink.c:218-224, gated by
+    /// upstream `"is uptodate"` notice (upstream: hlink.c:232-238, gated by
     /// `INFO_GTE(NAME, 2) && maybe_ATTRS_REPORT`).
     #[must_use]
     pub(in crate::local_copy) const fn with_hardlink_uptodate(mut self, uptodate: bool) -> Self {
@@ -155,7 +155,7 @@ impl LocalCopyRecord {
 
     /// Returns whether this record describes a hardlink whose destination
     /// already shared the source group leader's inode (upstream:
-    /// hlink.c:218-224).
+    /// hlink.c:232-238).
     #[must_use]
     pub const fn is_hardlink_uptodate(&self) -> bool {
         self.hardlink_uptodate

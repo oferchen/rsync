@@ -63,7 +63,7 @@ pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
 /// remote shell wrappers (e.g., `lsh.sh`) that invoke rsync as:
 ///   `rsync --config=<file> --server --daemon .`
 ///
-/// upstream: main.c:1894-1895 - when both `am_server` and `am_daemon` are set,
+/// upstream: main.c:1974-1975 - when both `am_server` and `am_daemon` are set,
 /// `start_daemon(STDIN_FILENO, STDOUT_FILENO)` is called.
 pub(crate) fn server_daemon_mode_requested(args: &[OsString]) -> bool {
     let mut has_server = false;

@@ -113,7 +113,7 @@ pub(super) fn handle_directory_contents_copy(
     // so the batch file matches upstream's wire format.
     capture_batch_file_entry(context, source_path, Path::new("."), metadata, true)?;
 
-    // upstream: flist.c:2682 - trailing-slash sources (DOTDIR_NAME /
+    // upstream: flist.c:2992 - trailing-slash sources (DOTDIR_NAME /
     // SLASH_ENDING_NAME) walk their immediate children even when global
     // recursion is off, so `--files-from` entries like `from/./` and
     // `subsubdir2/` populate the destination with one level of contents.
@@ -192,7 +192,7 @@ pub(super) fn handle_directory_copy(
     // (file_total == 1) keeps the flag false and is materialised AS the
     // destination (its own name dropped), matching `rsync -r empty n` -> `n/`.
     let target = if destination_behaves_like_directory || multiple_sources {
-        // upstream: flist.c:1804-1828 + flist.c:963-979 - filename is
+        // upstream: flist.c:2000-2023 + flist.c:1058-1072 - filename is
         // transcoded LOCAL -> wire -> REMOTE; for local-copy this
         // collapses to LOCAL -> REMOTE applied here before joining.
         let converted = transcode_filename_component(name, context.options().iconv());
@@ -236,7 +236,7 @@ pub(super) fn handle_symlink_copy(
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
 ) -> Result<(), LocalCopyError> {
-    // upstream: generator.c:1155 list_file_entry() lists every flist entry,
+    // upstream: generator.c:1642 list_file_entry() lists every flist entry,
     // so `--list-only` must record the symlink (dry-run only reports it) even
     // when `--links` is off; a real transfer without `--links` still skips it.
     if context.links_enabled() || context.list_only_enabled() {
@@ -279,7 +279,7 @@ pub(super) fn handle_fifo_copy(
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
 ) -> Result<bool, LocalCopyError> {
-    // upstream: generator.c:1155 list_file_entry() lists FIFOs/sockets in
+    // upstream: generator.c:1642 list_file_entry() lists FIFOs/sockets in
     // `--list-only` output regardless of `--specials`; a real transfer without
     // `--specials` still skips them.
     if !context.specials_enabled() && !context.list_only_enabled() {
@@ -336,7 +336,7 @@ pub(super) fn handle_device_copy(
     if context.copy_devices_as_files_enabled() {
         let _ = copy_file(context, source_path, &target, metadata, record_path)?;
     } else if !context.may_create_devices() && !context.list_only_enabled() {
-        // upstream: generator.c:1155 list_file_entry() lists devices in
+        // upstream: generator.c:1642 list_file_entry() lists devices in
         // `--list-only` output regardless of `--devices`; a real transfer
         // without `--devices` still skips them.
         //

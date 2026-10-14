@@ -47,13 +47,16 @@
 //! # Upstream Reference
 //!
 //! - `receiver.c:recv_files()` - sequential per-file loop this module parallelizes
-//! - `receiver.c:receive_data()` - literal vs delta data path (`fd2 == -1` selects whole-file)
+//! - `receiver.c:receive_data()` - literal vs delta data path (no basis map when `fd2 == -1`)
+//!
+//! Deviation from upstream: upstream handles one file at a time and never
+//! queues ahead; the bounded queue, worker pool and reorder buffer are oc-only.
 //!
 //! # Rayon Ordering Audit
 //!
 //! rsync's wire protocol requires strictly monotonic NDX (file index) ordering.
-//! Every `par_iter` site in the codebase was audited for potential ordering
-//! violations. Each site is classified as:
+//! The `par_iter` sites below were audited for potential ordering violations.
+//! Each site is classified as:
 //!
 //! - **SAFE** - output order is irrelevant (computation-only, no wire output)
 //! - **GUARDED** - parallel execution feeds ordered output, but a reordering
@@ -70,82 +73,86 @@
 //! before wire output, with O(1) insert and drain. **GUARDED** by
 //! `ReorderBuffer`.
 //!
-//! ### `transfer::receiver::transfer::pipeline` (`pipeline.rs:180`)
+//! ### `transfer::receiver::transfer::pipeline` (`pipeline.rs`)
 //! Parallel signature computation in the pipelined receiver. Results are
 //! collected into a `Vec<_>` via `par_iter().map().collect()` which preserves
 //! input order (rayon's `IndexedParallelIterator::collect` guarantee). The
 //! batch is then iterated sequentially to send signatures in NDX order.
 //! **GUARDED** by indexed collect preserving order.
 //!
-//! ### `transfer::parallel_io` (`parallel_io.rs:121`)
+//! ### `transfer::parallel_io` (`parallel_io.rs`, `map_blocking`)
 //! Generic `map_blocking` helper using `into_par_iter().map(f).collect()`.
 //! Rayon's indexed parallel iterator preserves input order in the collected
 //! `Vec`. Used for stat/chmod/chown batches where results map 1:1 back to
 //! the input file list. **GUARDED** by indexed collect preserving order.
 //!
-//! ### `signature::parallel` (`parallel.rs:137`)
+//! ### `signature::parallel` (`parallel.rs`)
 //! Parallel signature block computation via `par_chunks().enumerate()
 //! .flat_map_iter()`. Each chunk tracks its `base_index` from `enumerate`,
 //! and blocks within each chunk are produced in order via `flat_map_iter`
 //! (not `flat_map`). The final `collect()` assembles blocks in correct
 //! index order. **GUARDED** by chunk-indexed enumeration.
 //!
-//! ### `engine::local_copy::executor::directory::support` (`support.rs:105`)
+//! ### `engine::local_copy::executor::directory::support` (`support.rs`)
 //! Parallel metadata fetching for directory entries via `into_par_iter()
 //! .map().collect()`. Results are sorted by filename after collection
 //! (`sort_unstable_by`). **GUARDED** by post-collection sort.
 //!
+//! ### `matching::generator` (`generator.rs`, `scan_ranges_and_merge`)
+//! Striped delta scan. Each stripe is scanned in parallel and collected via
+//! indexed `par_iter().map().collect()`; the per-stripe scripts are then
+//! merged sequentially in stripe order into one token stream. **GUARDED**
+//! by indexed collect plus the sequential merge.
+//!
 //! ## SAFE Sites
 //!
-//! ### `match::index` (`index/mod.rs:135,208`)
-//! `find_any` on candidate block indices during delta matching. Returns
-//! the first matching block index found by any thread. Order of candidate
-//! evaluation does not matter - any match is equally valid. Output is a
-//! single `Option<usize>` block index, not a sequence. **SAFE**.
-//!
-//! ### `engine::local_copy::executor::directory::parallel_planner` (`parallel_planner.rs:99`)
+//! ### `engine::local_copy::executor::directory::parallel_planner` (`parallel_planner.rs`)
 //! Parallel prefetch of symlink targets and device metadata. Results are
 //! collected into a `Vec` indexed by `enumerate()`, used only for local
 //! file operations (not wire protocol). **SAFE**.
 //!
-//! ### `engine::local_copy::executor::directory::parallel_checksum` (`parallel_checksum.rs:95`)
+//! ### `engine::local_copy::executor::directory::parallel_checksum` (`parallel_checksum.rs`)
 //! Parallel checksum computation for local copy quick-check. Results go
 //! into a `HashMap` keyed by path. No wire protocol involvement - purely
 //! local comparison logic. **SAFE**.
 //!
-//! ### `checksums::parallel::blocks` (`blocks.rs:114,142,166,201,242,270`)
+//! ### `checksums::parallel::blocks` (`blocks.rs`)
 //! Six `par_iter` sites computing rolling checksums, strong digests, and
 //! block signatures from in-memory data blocks. All return `Vec` via
 //! indexed `par_iter().map().collect()` preserving input order. These are
 //! pure computation functions with no direct wire protocol interaction.
 //! **SAFE**.
 //!
-//! ### `checksums::parallel::files` (`files.rs:160,194,300`)
+//! ### `checksums::parallel::files` (`files.rs`)
 //! Three `par_iter` sites hashing files in parallel. Return `Vec` via
 //! indexed `par_iter().map().collect()` preserving input order. Pure
 //! computation with no direct wire protocol interaction. **SAFE**.
 //!
-//! ### `fast_io::parallel` (`parallel.rs:133,186`)
+//! ### `fast_io::parallel` (`parallel.rs`)
 //! Generic parallel file processing (`process` and `process_files`). Uses
 //! `fold/reduce` which does not preserve order, but results are returned
 //! as unordered success/error lists for batch reporting - not used for
 //! wire protocol sequencing. **SAFE**.
 //!
-//! ### `fast_io::cached_sort` (`cached_sort.rs:118`)
+//! ### `fast_io::cached_sort` (`cached_sort.rs`)
 //! Parallel key extraction for cached sorting. Keys are collected via
 //! indexed `par_iter().map().collect()`, then used to build a permutation
 //! applied in-place. Sorting utility with no wire protocol involvement.
 //! **SAFE**.
 //!
-//! ### `engine::benches::parallel_checksum` (`parallel_checksum.rs:52`)
+//! ### `engine::benches::parallel_checksum` (`parallel_checksum.rs`)
 //! Benchmark-only code. Not part of the production binary. **SAFE**.
 //!
 //! ## RISK Sites
 //!
-//! None identified. All `par_iter` usage either operates on data that
-//! does not feed into wire protocol ordering, or has an explicit
+//! None identified among the sites listed above. Each either operates on
+//! data that does not feed into wire protocol ordering, or has an explicit
 //! reordering mechanism (sort, `ReorderBuffer`, or rayon's indexed
 //! collect guarantee) that restores monotonic order before wire output.
+//!
+//! Not classified here: the `par_iter` sites in `engine::delete::parallel_consumer`,
+//! `engine::local_copy::context`, `engine::local_copy::executor::cleanup`,
+//! `concurrent_delta::parallel_apply::batch`, and the remaining benches.
 //!
 //! # See Also
 //!

@@ -63,7 +63,7 @@ pub struct ClientSummary {
     ///
     /// Defaults to the newest supported version for local copies.
     /// Set to the actual negotiated version for remote/daemon transfers.
-    /// upstream: main.c:429-433 gates stats lines on protocol version.
+    /// upstream: main.c:434-437 gates stats lines on protocol version.
     protocol_version: u8,
 }
 
@@ -249,7 +249,7 @@ impl ClientSummary {
     /// `reg:` sub-count. Distinct from [`Self::files_copied`], which also
     /// counts in-place updates.
     ///
-    /// upstream: receiver.c:749-762 / sender.c:587-600 - the reg portion of
+    /// upstream: receiver.c:925-938 / sender.c:587-600 - the reg portion of
     /// `stats.created_files`.
     #[must_use]
     pub const fn created_regular_files(&self) -> u64 {
@@ -259,7 +259,7 @@ impl ClientSummary {
     /// Returns the number of newly created symbolic links for the `link:`
     /// sub-count of "Number of created files".
     ///
-    /// upstream: receiver.c:756-757 `stats.created_symlinks++`.
+    /// upstream: receiver.c:932-933 `stats.created_symlinks++`.
     #[must_use]
     pub const fn created_symlinks(&self) -> u64 {
         self.stats.created_symlinks()
@@ -268,7 +268,7 @@ impl ClientSummary {
     /// Returns the number of newly created device nodes for the `dev:`
     /// sub-count of "Number of created files".
     ///
-    /// upstream: receiver.c:759-760 `stats.created_devices++`.
+    /// upstream: receiver.c:935-936 `stats.created_devices++`.
     #[must_use]
     pub const fn created_devices(&self) -> u64 {
         self.stats.created_devices()
@@ -277,7 +277,7 @@ impl ClientSummary {
     /// Returns the number of newly created special files (FIFOs, sockets) for
     /// the `special:` sub-count of "Number of created files".
     ///
-    /// upstream: receiver.c:761-762 `stats.created_specials++`.
+    /// upstream: receiver.c:937-938 `stats.created_specials++`.
     #[must_use]
     pub const fn created_specials(&self) -> u64 {
         self.stats.created_specials()
@@ -349,8 +349,8 @@ impl ClientSummary {
     /// Returns the number of basis blocks the delta matcher reused, reported as
     /// `matches=` on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:435` `total_matches`, printed by `match_report()`
-    /// (`match.c:439`).
+    /// upstream: `match.c:476` `total_matches`, printed by `match_report()`
+    /// (`match.c:480-489`).
     #[must_use]
     pub const fn delta_matches(&self) -> u64 {
         self.stats.delta_matches()
@@ -359,7 +359,7 @@ impl ClientSummary {
     /// Returns the delta matcher's cumulative hash hits, reported as
     /// `hash_hits=` on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:433` `total_hash_hits`.
+    /// upstream: `match.c:474` `total_hash_hits`.
     #[must_use]
     pub const fn delta_hash_hits(&self) -> u64 {
         self.stats.delta_hash_hits()
@@ -368,7 +368,7 @@ impl ClientSummary {
     /// Returns the delta matcher's cumulative false alarms, reported as
     /// `false_alarms=` on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:434` `total_false_alarms`.
+    /// upstream: `match.c:475` `total_false_alarms`.
     #[must_use]
     pub const fn delta_false_alarms(&self) -> u64 {
         self.stats.delta_false_alarms()
@@ -475,7 +475,7 @@ impl ClientSummary {
     ///
     /// Used by the CLI to emit upstream's `created directory <dest>` notice
     /// before per-entry itemize lines when itemize-changes is enabled.
-    /// upstream: main.c:829-830 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// upstream: main.c:828-829 - `rprintf(FINFO, "created directory %s\n", dest_path)`
     /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`.
     #[must_use]
     pub const fn destination_root_created(&self) -> bool {
@@ -503,7 +503,7 @@ impl ClientSummary {
     ///
     /// Defaults to the newest supported version for local copies.
     /// For remote/daemon transfers, reflects the actual negotiated version.
-    /// upstream: main.c:429-433 gates stats lines on this value.
+    /// upstream: main.c:434-437 gates stats lines on this value.
     #[must_use]
     pub const fn protocol_version(&self) -> u8 {
         self.protocol_version

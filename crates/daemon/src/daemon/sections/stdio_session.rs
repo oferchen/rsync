@@ -1,13 +1,12 @@
 // Stdio daemon session - runs a single daemon session over stdin/stdout.
 //
-// upstream: main.c:1894-1895 - when both `am_server` and `am_daemon` are set,
+// upstream: main.c:1971-1975 - when both `am_server` and `am_daemon` are set,
 // upstream rsync calls `start_daemon(STDIN_FILENO, STDOUT_FILENO)`. This runs
 // the daemon protocol over the process's stdin and stdout, used by remote-shell
 // daemon mode (`rsync -e ssh host::module`) and by `RSYNC_CONNECT_PROG`.
 //
-// upstream: clientserver.c:1546-1559 - `daemon_main()` detects
-// `is_a_socket(STDIN_FILENO)` for inetd-style invocations and calls
-// `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
+// The inetd case (clientserver.c:1748-1759, `is_inetd_socket(STDIN_FILENO)`
+// then `start_daemon(STDIN_FILENO, STDIN_FILENO)`) is served by `inetd.rs`.
 
 /// Runs a single daemon session over stdin/stdout.
 ///
@@ -36,7 +35,6 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
     let mut seen_modules = HashSet::new();
     let mut has_explicit_config = false;
 
-    // Parse --config and --log-file from the provided arguments.
     let mut iter = arguments.iter();
     while let Some(argument) = iter.next() {
         if let Some(value) = take_option_value(argument, &mut iter, "--config").map_err(|e| {
@@ -54,9 +52,14 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
     }
 
     // When no --config was given, search for a config file.
-    // upstream: clientserver.c:1277-1281 - load_config() uses RSYNCD_USERCONF
+    // upstream: clientserver.c:1400-1409 - load_config() uses RSYNCD_USERCONF
     // ("rsyncd.conf" relative to CWD) for rsh-daemon non-root invocations,
     // and RSYNCD_SYSCONF ("/etc/rsyncd.conf") otherwise.
+    //
+    // Deviation from upstream: oc tries the CWD file for any rsh daemon
+    // (upstream only when not root) and, when it is missing or fails to load,
+    // falls back to the environment override and the default path; upstream
+    // exits with RERR_SYNTAX (clientserver.c:1434-1435).
     if !has_explicit_config {
         let mut loaded = false;
 

@@ -3,6 +3,9 @@
 //! These parse and range-check the integer and byte-sized arguments
 //! (`--rayon-threads`, `--tokio-threads`, `--spill-threshold-bytes`) before
 //! they reach the strongly-typed [`ParsedArgs`](super::ParsedArgs) struct.
+//!
+//! Deviation from upstream: every option parsed here is an oc-only local
+//! tuning knob with no upstream rsync 3.5.1 counterpart.
 
 use std::ffi::OsString;
 

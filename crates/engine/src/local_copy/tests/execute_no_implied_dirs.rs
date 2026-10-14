@@ -102,7 +102,7 @@ fn no_implied_dirs_works_with_relative_paths() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // With --relative and --no-implied-dirs the implied leading dirs are still
-    // materialized on demand (upstream generator.c:1329-1333 make_path), but
+    // materialized on demand (upstream generator.c:1718-1722 make_path), but
     // without the source's attributes. The deep file must transfer.
     let options = LocalCopyOptions::default()
         .relative_paths(true)
@@ -223,7 +223,7 @@ fn no_implied_dirs_with_relative_and_deep_file() {
         .relative_paths(true)
         .implied_dirs(false);
 
-    // upstream generator.c:1329-1333: relative + --no-implied-dirs still
+    // upstream generator.c:1718-1722: relative + --no-implied-dirs still
     // make_path()s the missing leading dirs (a/b/c) with default attrs and
     // transfers the deep file. This is exactly the relative-implied testsuite
     // scenario that previously errored with "file has vanished".
@@ -333,7 +333,7 @@ fn no_implied_dirs_dry_run_skips_parent_check() {
 
 // Regression: a recursive dry-run into a not-yet-existing destination directory
 // must succeed with --no-implied-dirs (the default when relative paths are off).
-// Upstream `do_mkdir` returns 0 under `dry_run` (syscall.c:1151), so the missing
+// Upstream `do_mkdir` returns 0 under `dry_run` (syscall.c:2185), so the missing
 // destination root and its subdirs never fail a dry run regardless of implied
 // dirs. This mirrors `--only-write-batch` (which forces dry_run) copying into a
 // missing dest dir; previously the missing root was misclassified as a vanished
@@ -527,7 +527,7 @@ fn no_implied_dirs_collection_reports_correct_events() {
 // the implied leading dirs with the default mode - upstream's make_path()
 // passes ACCESSPERMS (0777) to do_mkdir_at, so the umask decides - rather than
 // the source dir's distinctive 0750. Previously oc-rsync errored with
-// "file has vanished". upstream: generator.c:1329-1333 make_path().
+// "file has vanished". upstream: generator.c:1718-1722 make_path().
 #[cfg(unix)]
 #[test]
 fn relative_no_implied_dirs_creates_leading_dirs_with_default_mode() {
@@ -581,7 +581,7 @@ fn relative_no_implied_dirs_creates_leading_dirs_with_default_mode() {
     );
 }
 
-// upstream: main.c:749 get_local_name() - without --mkpath a missing leading
+// upstream: main.c:714 get_local_name() - without --mkpath a missing leading
 // prefix of the destination ARGUMENT is never auto-created; the transfer fails
 // with ENOENT. Archive defaults enable --implied-dirs, which only governs
 // source-relative subdirs created UNDER an existing destination root, NOT the
@@ -623,7 +623,7 @@ fn default_does_not_create_missing_dest_arg_parent() {
     assert!(!destination.exists());
 }
 
-// upstream: main.c:751 make_path(dest_path, MKP_DROP_NAME) - --mkpath creates
+// upstream: main.c:759 make_path(dest_path, MKP_DROP_NAME) - --mkpath creates
 // the destination arg's leading directories (dropping the final name) and the
 // transfer then proceeds. Mirrors the `mkpath` conformance test's positive leg.
 #[test]

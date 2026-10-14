@@ -8,7 +8,7 @@
 //! # Ordering
 //!
 //! Inside a plan, entries are ordered to match upstream
-//! `delete_in_dir`'s loop (`generator.c:320`), which iterates the sorted
+//! `delete_in_dir`'s loop (`generator.c:333`), which iterates the sorted
 //! destination directory list in reverse. Callers obtain that ordering by
 //! sorting with [`super::super::delete::DeletePlan::sort_by_name`], which
 //! uses upstream's protocol-29 `f_name_cmp` (files before directories)
@@ -210,15 +210,16 @@ impl DeletePlan {
     /// temporary [`FileEntry`] per entry (using the plan's `directory` as
     /// the parent), then reversed in place. The comparator is
     /// [`compare_file_entries`], which honours the `t_PATH`/`t_ITEM`
-    /// distinction (upstream: `flist.c:3466`): within a directory,
+    /// distinction (upstream: `flist.c:3797 f_name_cmp()`): within a directory,
     /// non-directories sort before directories, so `get_dirlist`'s sorted
     /// order places files first and directories last. A plain byte sort
     /// would instead order dirs and files by name alone, so an
     /// upper-case directory name like `D` would wrongly sort ahead of a
     /// file `a` - diverging from upstream's traversal and, under
     /// `--max-delete`, changing which entries survive when the cap trips.
-    /// The sort is unstable to match upstream's `qsort` choice (upstream:
-    /// `flist.c:3495-3621`, `generator.c:320`).
+    /// The sort is unstable; names within one directory are unique, so
+    /// stability cannot change the result (upstream sorts with
+    /// `flist.c:2173 fsort()`, then walks it backwards at `generator.c:333`).
     pub fn sort_by_name(&mut self) {
         let dir = &self.directory;
         self.extras.sort_unstable_by(|a, b| {

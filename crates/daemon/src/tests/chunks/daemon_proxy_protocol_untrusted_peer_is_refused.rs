@@ -4,7 +4,7 @@
     ignore = "flaky on Windows CI: in-process daemon intermittently fails to respond; the trust gate is platform-independent and covered on Linux/macOS"
 )]
 fn daemon_proxy_protocol_untrusted_peer_is_refused() {
-    // upstream: clientserver.c:1443-1446 - with `proxy protocol = true` the
+    // upstream: clientserver.c:1443-1446 - with `lp_proxy_protocol()` set the
     // daemon consults `proxy_peer_allowed()` on the REAL socket address before
     // reading a single header byte. A direct peer not on `proxy protocol
     // hosts` is dropped without a greeting, and the refusal is logged with

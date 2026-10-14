@@ -130,8 +130,8 @@ fn parse_filter_directive_clear_keyword() {
 
 /// upstream: exclude.c:1290 - `RULE_STRCMP(s, "clear")` sits under `case 'c':`
 /// of the switch at :1288, which has only lower-case initials, and
-/// `rule_strcmp` is `strncmp` (:1218). `CLEAR` therefore takes the `default:`
-/// arm at :1324 and is reported as an unknown rule.
+/// `rule_strcmp` is `strncmp` (:1219). `CLEAR` therefore takes the `default:`
+/// arm at :1325 and is reported as an unknown rule.
 ///
 /// MEASURED against rsync 3.5.0: `--filter=CLEAR` prints
 /// `Unknown filter rule: CLEAR` and exits 1; `--filter=clear` exits 0.
@@ -390,7 +390,7 @@ fn dir_merge_modifiers_override_rule_side_overrides() {
     assert!(receiver_adjusted.applies_to_receiver());
 }
 
-/// upstream: exclude.c:1324-1332 parse_rule_tok - rules expanded from a
+/// upstream: exclude.c:1479-1481 parse_rule_tok - rules expanded from a
 /// merge file under --delete-excluded carry FILTRULE_SENDER_SIDE when
 /// neither side modifier is set on the wrapper. Per-token rules from
 /// `:C .cvsignore` or built-in CVS patterns must follow the same rule so
@@ -407,7 +407,7 @@ fn dir_merge_defaults_apply_implicit_sender_side_under_delete_excluded() {
 
 /// Explicit side modifiers on the dir-merge wrapper take precedence over
 /// the implicit `--delete-excluded` flip, mirroring upstream's check on
-/// FILTRULES_SIDES in `exclude.c:1330`.
+/// FILTRULES_SIDES in `exclude.c:1480`.
 #[test]
 fn dir_merge_defaults_respect_explicit_side_modifier_under_delete_excluded() {
     let receiver_only = DirMergeOptions::default().receiver_modifier();

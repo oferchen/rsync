@@ -27,7 +27,7 @@ impl ClientConfig {
     /// Reports whether the user passed `--list-only` explicitly.
     ///
     /// Mirrors upstream `list_only > 1`: only the explicit flag is forwarded to
-    /// the remote as `--list-only` (`options.c:2757`); the implicit single-source
+    /// the remote as `--list-only` (`options.c:2923-2924`); the implicit single-source
     /// listing (`list_only == 1`) is not.
     #[must_use]
     #[doc(alias = "--list-only")]
@@ -70,7 +70,7 @@ impl ClientConfig {
     /// `write_batch < 0`).
     ///
     /// The batch is still recorded in full, but no destination is updated:
-    /// `main.c:1866` turns the flag into `dry_run = 1` and `sender.c:220`
+    /// `main.c:1946-1947` turns the flag into `dry_run = 1` and `sender.c:502`
     /// points the token stream at the batch file instead of the wire.
     #[doc(alias = "--only-write-batch")]
     #[must_use]
@@ -89,7 +89,7 @@ impl ClientConfig {
     /// report `true` when the destination is remote AND every source is
     /// local - the exact case upstream renders as `<`.
     ///
-    /// upstream: log.c:742-745 - `!local_server && *op == 's' ? '<' : '>'`
+    /// upstream: log.c:739-742 - `!local_server && *op == 's' ? '<' : '>'`
     #[must_use]
     pub fn is_local_sender(&self) -> bool {
         use crate::client::remote::operand_is_remote;
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn is_local_sender_local_copy_reports_receiver() {
-        // Pure-local copy: `oc-rsync src/ dst/`. Upstream's `log.c:704` falls
+        // Pure-local copy: `oc-rsync src/ dst/`. Upstream's `log.c:742` falls
         // into the `local_server` branch which emits `>`. The oc-rsync formatter
         // does not model `local_server`, so report `false` here to keep the
         // arrow defaulting to `>` and stay byte-identical with upstream.
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn is_local_sender_push_reports_sender() {
         // Push: `oc-rsync src/ host:dst/`. Local client is the sender; upstream
-        // log.c:704 emits `<` because !local_server && am_sender.
+        // log.c:742 emits `<` because !local_server && am_sender.
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("src/"), OsString::from("host:dst/")])
             .build();
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn is_local_sender_pull_reports_receiver() {
         // Pull: `oc-rsync host:src/ dst/`. Local client is the receiver; upstream
-        // log.c:704 emits `>` because *op != 's'.
+        // log.c:742 emits `>` because *op != 's'.
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("host:src/"), OsString::from("dst/")])
             .build();

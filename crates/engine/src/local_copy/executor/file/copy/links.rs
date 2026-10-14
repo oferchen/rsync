@@ -123,7 +123,7 @@ pub(super) fn process_links(
         ignore_times_enabled,
         checksum_enabled,
     )? {
-        // upstream: generator.c:967-1054 try_dests_reg() - a LINK_DEST candidate
+        // upstream: generator.c:1073-1198 try_dests_reg() - a LINK_DEST candidate
         // that passes the quick-check (data matches) is hard-linked only when its
         // preserved attributes also match the source (match_level 3). When the
         // attributes differ (match_level 2) upstream does NOT hard-link: it falls
@@ -191,7 +191,7 @@ pub(super) fn process_links(
         }
 
         // No notice is emitted for a link made from an alt-dest basis.
-        // `hlink.c:236` belongs to maybe_hard_link(), the -H COHORT path, which
+        // `hlink.c:251` belongs to maybe_hard_link(), the -H COHORT path, which
         // names the in-transfer group leader by its relative realname.
         // --link-dest goes through a DIFFERENT upstream function -
         // hard_link_one(file, fname, oldname, terse) at hlink.c:475-492 - which
@@ -199,7 +199,7 @@ pub(super) fn process_links(
         // try_dests_reg() (generator.c) then itemizes with an EMPTY xname, so
         // the itemize row is the only output upstream produces here.
 
-        // upstream: hlink.c:215-224 / generator.c:1020-1025 - a `--link-dest`
+        // upstream: hlink.c:475-494 / generator.c:1122-1137 - a `--link-dest`
         // cluster member is linked from the basis, so it ends up sharing the
         // same inode as its already-placed in-transfer leader. `maybe_hard_link`
         // then takes the same-inode branch, itemizing with an empty xname and
@@ -248,7 +248,7 @@ pub(super) fn process_links(
             Some(record_path),
             file_type,
         )?;
-        // upstream: generator.c:1006-1007 try_dests_reg() - at match_level 3 the
+        // upstream: generator.c:1114 try_dests_reg() - at match_level 3 the
         // file is only hard-linked; set_file_attrs runs *only* under --atimes.
         // Rewriting metadata unconditionally would, under --fake-super, write a
         // `user.rsync.%stat` xattr onto the shared basis inode that upstream never
@@ -351,7 +351,7 @@ pub(super) fn process_links(
                 },
                 context.options().modify_window(),
             );
-            // upstream: hlink.c:218-222 + generator.c:528-530 - the hardlink
+            // upstream: hlink.c:246-249 + generator.c:533-536 - the hardlink
             // leader-reuse path emits `itemize(..., ITEM_LOCAL_CHANGE, ...)`,
             // and ITEM_REPORT_TIME fires whenever the leader's source mtime
             // differs from the existing destination alias's mtime, even
@@ -364,11 +364,11 @@ pub(super) fn process_links(
                 change_set =
                     change_set.with_time_change(Some(crate::local_copy::TimeChange::TransferTime));
             }
-            // upstream: hlink.c:218-222 - when the destination already
+            // upstream: hlink.c:246-249 - when the destination already
             // shares the source group leader's inode, `maybe_hard_link()`
             // calls `itemize(fname, file, ndx, statret, sxp,
             // ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0, "")` with an
-            // empty xname. `log.c:643-654` skips the `%L` `=> %s` suffix
+            // empty xname. `log.c:675-689` skips the `%L` `=> %s` suffix
             // when the xname is empty, so the upstream `-i` row for an
             // already-linked alias is `hf<dots>` with no trailer (line
             // 122 of `testsuite/itemize.test`: `hf$allspace foo/extra`).
@@ -390,7 +390,7 @@ pub(super) fn process_links(
                     Some(reuse_snapshot),
                 )
                 .with_change_set(change_set)
-                // upstream: hlink.c:218-224 - when the destination already
+                // upstream: hlink.c:246-249 - when the destination already
                 // shares the source group leader's inode, the generator
                 // emits `"%s is uptodate"` at INFO_GTE(NAME, 2). Mark the
                 // record so the CLI verbose renderer prints that suffix
@@ -453,7 +453,7 @@ pub(super) fn process_links(
         }
 
         // The alias notice is NOT emitted here. upstream hard_link_one()
-        // (hlink.c:229-253) picks exactly one of two notices and the choice is
+        // (hlink.c:236-252) picks exactly one of two notices and the choice is
         // enforced by an early return: a destination that already shares the
         // leader's dev+ino prints `"%s is uptodate"` at INFO_GTE(NAME, 2) and
         // returns (hlink.c:238-241), so it never reaches the
@@ -468,7 +468,7 @@ pub(super) fn process_links(
         // from here as well produced a second, absolute-path copy of a line the
         // renderer had already written correctly.
 
-        // upstream: hlink.c:474-521 finish_hard_link() - every alias in a cohort
+        // upstream: hlink.c:496-537 finish_hard_link() - every alias in a cohort
         // is linked against the group's data-holder (`our_name` stays fixed for
         // the whole `F_HL_PREV` walk), so all aliases itemize `=> <holder>` (a
         // star), never chaining to the most recently created alias. The holder is
@@ -476,7 +476,7 @@ pub(super) fn process_links(
         // follower must NOT overwrite that mapping with its own path; doing so
         // would point later followers at this alias instead of the holder.
         context.summary_mut().record_hard_link();
-        // upstream: hlink.c:237 + log.c:643-654 - thread the leader's
+        // upstream: hlink.c:246-249 + log.c:675-689 - thread the leader's
         // relative path through the snapshot's `symlink_target` slot so the
         // `%L` placeholder emits the upstream `=> %s` suffix. Strip the
         // destination root so the path is relative.
@@ -488,13 +488,13 @@ pub(super) fn process_links(
             LocalCopyMetadata::from_metadata(metadata, Some(link_target_display))
                 .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
-        // upstream: hlink.c:218-222 - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
+        // upstream: hlink.c:246-249 - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
         // is emitted whether the alias was created from scratch or the
         // existing inode was reused. Build a change_set so the attribute
         // slots reflect the real deltas (mtime / perms / etc.) instead of
         // collapsing to all-dots-or-spaces.
         //
-        // upstream: generator.c:1009-1013 - the itemize for a hardlinked alias
+        // upstream: generator.c:1142-1146 - the itemize for a hardlinked alias
         // is computed with `statret = 1` against the group leader's stat
         // (`sxp->st`), not a (possibly absent) prior destination. Comparing the
         // source against the leader (`existing_target`) keeps the size/time/perm
@@ -534,7 +534,7 @@ pub(super) fn process_links(
             },
             context.options().modify_window(),
         );
-        // upstream: generator.c:528-530 - ITEM_REPORT_TIME fires for the
+        // upstream: generator.c:533-536 - ITEM_REPORT_TIME fires for the
         // hardlink-create path when the source mtime differs from the
         // existing destination alias, even without `-t`. Use `TransferTime`
         // (`T`) to mirror the `testsuite/itemize.test` golden at line 78.
@@ -554,23 +554,23 @@ pub(super) fn process_links(
             Some(metadata_snapshot),
         )
         .with_change_set(change_set);
-        // upstream: hlink.c:228-234 maybe_hard_link() - a freshly linked
+        // upstream: hlink.c:224-258 maybe_hard_link() - a freshly linked
         // follower is itemized through atomic_create() with the follower's
         // *own* statret, which is < 0 when its destination did not yet exist.
-        // log.c:736-738 then sets ITEM_IS_NEW, filling attribute slots 2-10
+        // log.c:768-772 then sets ITEM_IS_NEW, filling attribute slots 2-10
         // with '+' so the row renders `hf+++++++++`. The already-shared-inode
         // (uptodate) alias is handled by the `is_already_hardlinked` branch
         // above and stays blank, so only a genuinely new follower is marked
         // created here.
         //
-        // upstream: hlink.c:385-414 hard_link_check() - before that itemize,
+        // upstream: hlink.c:300 hard_link_check() - before that itemize,
         // when the follower's own destination is absent (statret < 0) and an
         // alt-dest basis is configured (`basis_dir[0] != NULL`), the follower's
         // name is quick_check_ok()'d against the --copy-dest/--link-dest tree.
         // A match bumps statret to 1, so the itemize above never sets
         // ITEM_IS_NEW and the follower renders blank (`hf          `) - mirroring
         // the leader that was itself satisfied from the alt-dest tree
-        // (generator.c:995-1052 try_dests_reg). Mark the follower created only
+        // (generator.c:1073-1198 try_dests_reg). Mark the follower created only
         // when its destination is new AND no alt-dest basis satisfies it, so a
         // fresh local group still renders `hf+++++++++`.
         let matched_from_dests = !context.reference_directories().is_empty()
@@ -633,7 +633,7 @@ pub(super) fn process_links(
     {
         match decision {
             ReferenceDecision::Skip(basis) => {
-                // upstream: generator.c:1154,1145 / rsync.c:828 - "is uptodate"
+                // upstream: generator.c:1154,1143-1145 / rsync.c:828 - "is uptodate"
                 // emitted at INFO_GTE(NAME, 2) when a reference-directory match
                 // means no transfer is needed. Rendered by the CLI from the
                 // MetadataReused event (cli::frontend::progress::render) so
@@ -641,7 +641,7 @@ pub(super) fn process_links(
                 // info_log! would route it through the post-summary
                 // diagnostic drain and break upstream ordering.
                 //
-                // upstream: generator.c:1140 - a `--compare-dest` match itemizes
+                // upstream: generator.c:1299 - a `--compare-dest` match itemizes
                 // `.f` against the compare basis (`sxp->st`), so the attribute
                 // columns reflect drift vs the basis, not the absent
                 // destination. Compare source against the basis with
@@ -730,7 +730,7 @@ pub(super) fn process_links(
                 }
             }
             ReferenceDecision::Copy(path) => {
-                // upstream: generator.c:1033-1039 - copy_altdest_file() copies
+                // upstream: generator.c:1163-1172 - copy_altdest_file() copies
                 // the basis into place and itemizes as ITEM_LOCAL_CHANGE (`c`).
                 // The copy still flows through the transfer pipeline via
                 // `copy_source_override`; `reference_basis` flags the record so
@@ -775,7 +775,7 @@ pub(super) fn process_links(
                 }
 
                 if degrade_to_copy {
-                    // upstream: generator.c:1031 try_a_copy - a cross-device
+                    // upstream: generator.c:1163 try_a_copy - a cross-device
                     // hard-link failure falls back to copy_altdest_file(), which
                     // still itemizes as a local change (`c`).
                     reference_basis = Some(path.clone());
@@ -800,7 +800,7 @@ pub(super) fn process_links(
                     // shared inode and followers inherit for free.
                     //
                     // upstream: hlink.c::hard_link_check returns 1 for
-                    // followers; generator.c:1552 exits before
+                    // followers; generator.c:1943-1945 exits before
                     // set_file_attrs() so set_acl() is never invoked on a
                     // follower alias.
                     #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -867,7 +867,7 @@ mod tests {
     //! link path. Strings are matched byte-for-byte against upstream rsync.
     //!
     //! upstream: log.c log_item / send_directory NAME emissions
-    //! upstream: hlink.c:236 ("=>"), generator.c:1010/1133 ("is uptodate").
+    //! upstream: hlink.c:251 ("=>"), generator.c:1154/1305 ("is uptodate").
 
     use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 
@@ -906,7 +906,7 @@ mod tests {
 
     #[test]
     fn local_copy_uptodate_emission_matches_upstream() {
-        // upstream: rsync.c:672-676 - "%s is uptodate" at INFO_GTE(NAME, 2)
+        // upstream: rsync.c:824-828 - "%s is uptodate" at INFO_GTE(NAME, 2)
         init_name_level(2);
         info_log!(Name, 2, "{} is uptodate", "out/file.txt");
         let msgs = name_messages();
@@ -918,7 +918,7 @@ mod tests {
 
     #[test]
     fn local_copy_uptodate_suppressed_below_level_two() {
-        // upstream: rsync.c:672 - INFO_GTE(NAME, 2) gates the emission
+        // upstream: rsync.c:824 - INFO_GTE(NAME, 2) gates the emission
         init_name_level(1);
         info_log!(Name, 2, "{} is uptodate", "out/file.txt");
         assert!(
@@ -927,15 +927,13 @@ mod tests {
         );
     }
 
-    /// Windows-only regression test for POST-4 / WAS-6 (#2415, audit PR
-    /// #4399). The `--copy-dest` Link branch hardlinks every cohort follower
-    /// to the same reference inode. On NTFS the DACL lives on the MFT
-    /// record, so each `SetNamedSecurityInfoW` call writes to the shared
-    /// inode regardless of which alias was opened.
+    /// Windows-only regression test: the `--copy-dest` Link branch hardlinks
+    /// every cohort follower to the same reference inode. On NTFS the DACL
+    /// lives on the MFT record, so each `SetNamedSecurityInfoW` call writes to
+    /// the shared inode regardless of which alias was opened.
     ///
-    /// Before the fix the loop invoked `sync_acls_if_requested` once per
-    /// follower (O(N) per N-link cohort). The cohort gate routes the write
-    /// through the first call only; followers inherit through the inode.
+    /// The cohort gate routes the write through the first call only instead of
+    /// once per follower; followers inherit through the inode.
     ///
     /// upstream: hlink.c::hard_link_check returns 1 for followers so the
     /// generator never calls `set_file_attrs()` -> `set_acl()` on a

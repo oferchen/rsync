@@ -43,8 +43,12 @@ fn is_global_only_directive(key: &str) -> bool {
 
 /// Applies a single per-module directive to the builder.
 ///
-/// Returns `Ok(true)` if the key was recognized (even if unknown and warned),
-/// `Ok(false)` is never returned - unknown keys are warned and accepted.
+/// Unknown keys are accepted here; the parser already reported them.
+///
+/// # Errors
+///
+/// Returns an error when a value cannot be parsed, or when an oc-only QUIC
+/// identity directive appears in a module section.
 fn apply_module_directive(
     builder: &mut ModuleDefinitionBuilder,
     key: &str,
@@ -92,7 +96,7 @@ fn apply_module_directive(
         "authdigest" => {
             builder.set_auth_digest(value);
         }
-        // upstream: authenticate.c:143-160 check_secret() opens the file when a
+        // upstream: authenticate.c:138-166 check_secret() opens the file when a
         // client authenticates, so a missing or unusable file fails only that
         // authentication. An empty value is legal and means no secrets file.
         "secretsfile" if value.is_empty() => builder.secrets_file = None,
@@ -312,10 +316,10 @@ fn apply_module_directive(
         // verbatim and resolved at read time against the daemon's cwd.
         "includefrom" if value.is_empty() => builder.include_from = None,
         "includefrom" => builder.set_include_from(daemon_parameter_path(value)),
-        // upstream: daemon-parm.h - `filter` STRING, P_LOCAL. Last-wins like
+        // upstream: daemon-parm.txt:27 - `filter` STRING, P_LOCAL. Last-wins like
         // every other directive: `do_parameter()` reaches `string_set()`, which
-        // frees the previous value before storing the new one
-        // (loadparm.c:379-470), so a second `filter` line REPLACES the first.
+        // overwrites the previous value
+        // (loadparm.c:571-573), so a second `filter` line REPLACES the first.
         // It does not extend it - a value carrying several rules says so with
         // whitespace inside that one value.
         "filter" => {
@@ -323,20 +327,20 @@ fn apply_module_directive(
                 builder.set_filter(vec![value.to_owned()]);
             }
         }
-        // upstream: daemon-parm.h - `exclude` STRING, P_LOCAL.
+        // upstream: daemon-parm.txt:25 - `exclude` STRING, P_LOCAL.
         "exclude" => {
             if !value.is_empty() {
                 builder.set_exclude(vec![value.to_owned()]);
             }
         }
-        // upstream: daemon-parm.h - `include` STRING, P_LOCAL.
+        // upstream: daemon-parm.txt:31 - `include` STRING, P_LOCAL.
         "include" => {
             if !value.is_empty() {
                 builder.set_include(vec![value.to_owned()]);
             }
         }
-        // upstream: daemon-parm.h:78 `reverse_lookup` BOOL, P_LOCAL. Consumed
-        // per-module at clientserver.c:723 `lp_reverse_lookup(i)`.
+        // upstream: daemon-parm.txt:63 `reverse_lookup` BOOL, P_LOCAL. Consumed
+        // per-module at clientserver.c:768 `lp_reverse_lookup(i)`.
         "reverselookup" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "reverse lookup", path, line_number)
@@ -344,20 +348,20 @@ fn apply_module_directive(
                 builder.set_reverse_lookup(parsed);
             }
         }
-        // upstream: daemon-parm.h:46 `lock_file` STRING, P_LOCAL. Consumed
-        // per-module at clientserver.c:746 `claim_connection(lp_lock_file(i), ...)`.
+        // upstream: daemon-parm.txt:34 `lock_file` STRING, P_LOCAL. Consumed
+        // per-module at clientserver.c:791 `claim_connection(lp_lock_file(i), ...)`.
         // An empty value is stored as "" and, being non-NULL, wins over the
         // global value (loadparm.c:347 FN_LOCAL_STRING), so a limited module
         // then fails to open its lock file.
         "lockfile" => builder.set_lock_file(daemon_parameter_path(value)),
-        // upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL). Consumed
-        // per-module at log.c:143 `openlog(lp_syslog_tag(module_id), ...)`.
+        // upstream: daemon-parm.txt:44 `syslog_tag` (STRING, P_LOCAL). Consumed
+        // per-module at log.c:152 `openlog(lp_syslog_tag(module_id), ...)`.
         // An empty value is kept as "", not replaced by the global tag.
         "syslogtag" => builder.set_syslog_tag(value.to_owned()),
-        // upstream: loadparm.c syslog_facility (P_ENUM, P_LOCAL). Consumed
-        // per-module at log.c:143 `openlog(..., lp_syslog_facility(module_id))`.
+        // upstream: daemon-parm.txt:54 `syslog_facility` (ENUM, P_LOCAL). Consumed
+        // per-module at log.c:152 `openlog(..., lp_syslog_facility(module_id))`.
         "syslogfacility" => {
-            // upstream: loadparm.c:456-467 `case P_ENUM` - a name that matches a
+            // upstream: loadparm.c:575-586 `case P_ENUM` - a name that matches a
             // facility is stored canonically; an unrecognised name that parses as
             // a positive integer (`atoi(value) > 0`) is stored as that raw
             // numeric facility; any other unrecognised name leaves the inherited
@@ -393,7 +397,7 @@ fn apply_module_directive(
             ));
         }
         _ if is_global_only_directive(key) => {
-            // upstream: loadparm.c:do_parameter - a known P_GLOBAL parameter
+            // upstream: loadparm.c:517-520 do_parameter() - a known P_GLOBAL parameter
             // that appears inside a module section is reported and ignored,
             // never applied to the module (loadparm.c: "Global parameter %s
             // found in module section!").

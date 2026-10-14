@@ -4,9 +4,9 @@
 /// than that between the greeting and its request had the connection aborted;
 /// dropping the socket with the client's pending bytes unread sent an RST that
 /// the client saw as "Connection reset by peer" (soak run: 14/3000 pulls under
-/// a CPU-starved 64-way burst). Upstream keeps `io_timeout` at 0 (options.c:102)
+/// a CPU-starved 64-way burst). Upstream keeps `io_timeout` at 0 (options.c:107)
 /// throughout the greeting exchange, only arming `lp_timeout(module_id)`
-/// (clientserver.c:1206) after a module is selected, so the handshake is
+/// (clientserver.c:1288-1289) after a module is selected, so the handshake is
 /// untimed. This test pauses longer than the former 10-second guard and asserts
 /// the module listing is still delivered.
 ///

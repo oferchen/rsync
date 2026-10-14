@@ -23,9 +23,9 @@
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
+/// - `clientserver.c:1070-1071` - daemon resolves `munge_symlinks` from
 ///   `lp_munge_symlinks()` before fork-and-serve.
-/// - `flist.c:1347-1351` - receiver prepends `SYMLINK_PREFIX` to the wire
+/// - `flist.c:1520-1524` - receiver prepends `SYMLINK_PREFIX` to the wire
 ///   target so the on-disk link cannot resolve outside the module root.
 /// - `rsync.h:36` - `SYMLINK_PREFIX "/rsyncd-munged/"` (trailing slash kept).
 #[cfg(unix)]

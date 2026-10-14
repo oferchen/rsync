@@ -48,11 +48,11 @@ pub(super) fn try_skip_up_to_date(
         None
     };
 
-    // upstream: generator.c:624-647 `quick_check_ok()` FT_REG - the up-to-date
+    // upstream: generator.c:630-653 `quick_check_ok()` FT_REG - the up-to-date
     // decision reads exactly four knobs: size, `always_checksum` (-c),
     // `size_only`, `ignore_times` (-I), then mtime. `make_backups` is NOT among
-    // them; its only uses in generator.c are the backup action itself (:2018)
-    // and the inplace duplicate-backup guard (:1862, :1898, :2187, :2214).
+    // them; its only uses in generator.c are the backup actions themselves
+    // (:2281, :2328, :2477) and the phase-2 duplicate-backup guard (:2659, :2686).
     // Deciding to transfer because a backup was requested would read both files
     // that upstream never opens.
     #[cfg_attr(not(all(unix, feature = "xattr")), allow(unused_mut))]

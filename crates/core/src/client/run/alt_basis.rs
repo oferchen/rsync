@@ -24,7 +24,7 @@ use logging::warn_log;
 /// upstream: `options.c:1450` `alt_dest_opt()`. Upstream reads the single
 /// `alt_dest_type` in effect rather than a per-entry kind, which it can do
 /// because combining two alt-dest options is rejected outright
-/// (`main.c:1913`, exit 1) - so at most one kind is ever present and the
+/// (`options.c:1854-1858`, exit 1) - so at most one kind is ever present and the
 /// per-entry kind carries exactly the same information.
 fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
     match kind {
@@ -36,7 +36,7 @@ fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
 
 /// Removes at most ONE trailing separator, and never from a bare root.
 ///
-/// upstream: `main.c:889-890`
+/// upstream: `main.c:889-891`
 /// `if (bd_len > 1 && bdir[bd_len-1] == '/') bdir[--bd_len] = '\0';`
 ///
 /// Exactly one, because the count decides *which* diagnostic fires. Measured
@@ -52,9 +52,10 @@ fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
 /// A general path normalisation would collapse both separators and flip the
 /// third row to `is not a dir`.
 ///
-/// oc accepts either platform separator where upstream hardcodes `'/'`: a
-/// Windows operator writes `--link-dest=..\prev`, and `is_separator` is what
-/// the rest of this module tree already uses to decide the question.
+/// Deviation from upstream: oc accepts either platform separator where upstream
+/// hardcodes `'/'`: a Windows operator writes `--link-dest=..\prev`, and
+/// `is_separator` is what the rest of this module tree already uses to decide
+/// the question.
 fn strip_one_trailing_separator(path: &Path) -> PathBuf {
     #[cfg(unix)]
     {
@@ -127,7 +128,7 @@ fn resolve_against_destination(basis: &Path, destination: &Path) -> PathBuf {
 /// upstream: `main.c:1442` runs `check_alt_basis_dirs()` on the client only
 /// when the client is the receiver, i.e. on a pull. On a push the remote server
 /// is the receiver and checks its own forwarded argv (`main.c:1259`), because
-/// `options.c:2921-2944` emits the basis-dir args only in that direction - so
+/// `options.c:3114-3123` emits the basis-dir args only in that direction - so
 /// warning here too would double-report.
 ///
 /// The remote-operand conjunct keeps a purely local copy out: that path has its
@@ -257,7 +258,7 @@ mod tests {
     /// ONE trailing separator is stripped, so the stat lands on the file and
     /// the message is `is not a dir` - not `does not exist`.
     ///
-    /// upstream: `main.c:889-890`; measured against real 3.5.0.
+    /// upstream: `main.c:889-891`; measured against real 3.5.0.
     #[test]
     fn one_trailing_separator_is_stripped_before_the_stat() {
         let temp = test_support::create_tempdir();

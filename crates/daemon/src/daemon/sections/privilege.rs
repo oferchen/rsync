@@ -5,20 +5,20 @@
 /// requested isolation.
 ///
 /// On success, fires the `--debug=CHDIR` emission to mirror upstream
-/// `util1.c:1265-1266` (`[%s] change_dir(%s)`). Upstream's
-/// `clientserver.c:987` calls `change_dir(module_chdir, CD_NORMAL)`
+/// `util1.c:1493` (`[%s] change_dir(%s)`). Upstream's
+/// `clientserver.c:1059` calls `change_dir(module_chdir, CD_NORMAL)`
 /// immediately after `chroot(module_chdir)`; in oc-rsync the
 /// `platform::privilege::apply_chroot` call performs both the chroot and the
 /// follow-up `chdir("/")`, so the post-syscall `curr_dir` is `"/"` (the new
 /// root). The emission carries the upstream `who_am_i()` role string for the
-/// daemon's pre-fork code path (`"Receiver"`, see `rsync.c:823-830`).
+/// daemon's pre-fork code path (`"Receiver"`, see `rsync.c:987` `who_am_i()`).
 ///
-/// Caveat: chroot is process-wide, so in our thread-per-connection model this
-/// affects every concurrent session. Per-module chroot only works correctly
-/// when the daemon serves a single module or all modules share the same root.
-/// See `docs/DAEMON_PROCESS_MODEL.md`.
+/// Caveat: chroot is process-wide. On Unix each session runs in its own
+/// forked child, so the chroot is confined to that session; a session served
+/// on a thread (Windows, which has no chroot anyway) would share it. See
+/// `docs/DAEMON_PROCESS_MODEL.md`.
 ///
-/// upstream: `clientserver.c:978-987` `rsync_module()` - `chroot(module_chdir)`
+/// upstream: `clientserver.c:1040-1059` `rsync_module()` - `chroot(module_chdir)`
 /// then `change_dir(module_chdir, CD_NORMAL)` after sanitising the module
 /// path; `@ERROR: chroot failed` returned to the client when chroot fails.
 #[cfg(unix)]
@@ -49,18 +49,15 @@ fn apply_chroot(_module_path: &Path, _log_sink: &SharedLogSink) -> io::Result<()
 ///
 /// Delegates to `platform::privilege::drop_privileges()`. The underlying call
 /// sequence is `setgid` -> `setgroups` -> `setuid` (upstream
-/// clientserver.c:1022-1047), with the irreversible `setuid` last. Any failure
+/// clientserver.c:1096-1134), with the irreversible `setuid` last. Any failure
 /// is propagated; the
 /// daemon must refuse to serve rather than continue as root.
 ///
-/// Caveat: on Linux the setuid system call is propagated to every thread of
-/// the process, so a per-module privilege drop affects all concurrent sessions
-/// in our thread-per-connection model. Per-module `uid`/`gid` directives only
-/// work correctly when the daemon serves a single module. Operators that need
-/// privilege separation across modules should run a separate daemon per
-/// identity.
+/// Caveat: the identity change is process-wide (on Linux `setuid` reaches
+/// every thread). On Unix each session runs in its own forked child, so the
+/// drop is confined to that session.
 ///
-/// upstream: `clientserver.c:1006-1044` `rsync_module()` - `setgid`/
+/// upstream: `clientserver.c:1096-1134` `rsync_module()` - `setgid`/
 /// `setgroups`/`setuid` after chroot. Each failure returns `@ERROR: setgid
 /// failed`, `@ERROR: setgroups failed`, or `@ERROR: setuid failed` and the
 /// connection is dropped.
@@ -97,7 +94,7 @@ fn drop_privileges(uid: Option<u32>, gids: &[u32], log_sink: &SharedLogSink) -> 
 /// of the inner directory reachable inside the jail for modules that need
 /// to share a parent directory with other served paths.
 ///
-/// upstream: clientserver.c:847-864 `rsync_module()` - `strstr(module_dir,
+/// upstream: clientserver.c:897-918 `rsync_module()` - `strstr(module_dir,
 /// "/./")` locates the marker; the outer half becomes `module_chdir` (the
 /// chroot target) and the normalized remainder becomes `module_dir` (the
 /// post-chroot `change_dir` target).
@@ -126,7 +123,7 @@ fn split_chroot_path(path: &Path) -> (PathBuf, PathBuf) {
 ///   rootless-daemon case) resolves to `no` with a log notice matching
 ///   upstream's wording.
 ///
-/// upstream: clientserver.c:706,831-844 `rsync_module()`.
+/// upstream: clientserver.c:751,883-895 `rsync_module()`.
 fn resolve_use_chroot(module: &ModuleDefinition, log_sink: &SharedLogSink) -> bool {
     if module.use_chroot_explicit {
         return module.use_chroot;
@@ -159,7 +156,7 @@ fn resolve_use_chroot(module: &ModuleDefinition, log_sink: &SharedLogSink) -> bo
 /// is always fatal, matching upstream's unconditional `@ERROR: chroot
 /// failed` once the tri-state is settled.
 ///
-/// upstream: clientserver.c:831-990 `rsync_module()`.
+/// upstream: clientserver.c:883-1059 `rsync_module()`.
 fn chroot_or_fallback(
     module: &ModuleDefinition,
     log_sink: &SharedLogSink,
@@ -175,7 +172,7 @@ fn chroot_or_fallback(
 
 /// The uid and complete group set the daemon will drop to for a connection.
 ///
-/// upstream: clientserver.c:779-822 `rsync_module()` resolves the effective
+/// upstream: clientserver.c:831-875 `rsync_module()` resolves the effective
 /// identity before `setgid`/`setgroups`/`setuid`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DropTarget {
@@ -191,8 +188,8 @@ struct DropTarget {
 /// Upstream distinguishes two failure points with two different strings: a
 /// `user_to_uid()`/`group_to_gid()` NAME lookup that returns no match yields
 /// `@ERROR: invalid uid <name>` / `@ERROR: invalid gid <name>`
-/// (clientserver.c:783-786 / 656-658), which is separate from the later
-/// `setuid`/`setgid` SYSCALL failures (clientserver.c:1053 / 1024). oc-rsync
+/// (clientserver.c:835-838 / 698-703), which is separate from the later
+/// `setuid`/`setgid` SYSCALL failures (clientserver.c:1123-1129 / 1098-1100). oc-rsync
 /// resolves configured `uid`/`gid` names at parse time, so the only NAME that
 /// reaches connection-time resolution is the `nobody` default a root daemon
 /// falls back to when the module sets no explicit identity.
@@ -205,7 +202,7 @@ enum DropResolutionError {
     /// upstream: clientserver.c:703 `@ERROR: invalid gid %s`.
     InvalidGid(String),
     /// A `gid = *` group enumeration failed - not a name lookup.
-    /// upstream: clientserver.c:797 `want_all_groups`.
+    /// upstream: clientserver.c:849-852 `want_all_groups`.
     GroupEnumeration(io::Error),
 }
 
@@ -218,7 +215,7 @@ impl DropResolutionError {
     /// collapsed again.
     ///
     /// upstream: clientserver.c:836-838 (`Invalid uid %s` / `@ERROR: invalid
-    /// uid %s`) and clientserver.c:657-658 (`Invalid gid %s` / `@ERROR: invalid
+    /// uid %s`) and clientserver.c:702-703 (`Invalid gid %s` / `@ERROR: invalid
     /// gid %s`).
     fn upstream_reply(&self) -> (String, AtError) {
         match self {
@@ -267,15 +264,15 @@ fn daemon_is_root() -> bool {
 /// default-to-`nobody` policy when the daemon runs as root.
 ///
 /// - An explicit module `uid` always wins; otherwise a root daemon defaults to
-///   the `nobody` user (upstream clientserver.c:781
+///   the `nobody` user (upstream clientserver.c:833
 ///   `am_root ? NOBODY_USER : NULL`).
 /// - An explicit module `gid` list wins; `gid = *` expands to the target user's
-///   full group set (clientserver.c:797 `want_all_groups`); otherwise a root
-///   daemon defaults to the `nobody` group (clientserver.c:820-821).
+///   full group set (clientserver.c:849-852 `want_all_groups`); otherwise a root
+///   daemon defaults to the `nobody` group (clientserver.c:872-873).
 /// - When the daemon is not root and the module sets no `uid`/`gid`, nothing is
 ///   dropped, matching `set_uid = 0` with an empty `gid_list`.
 ///
-/// upstream: clientserver.c:779-822 `rsync_module()`.
+/// upstream: clientserver.c:831-875 `rsync_module()`.
 fn resolve_drop_target(
     module: &ModuleDefinition,
     am_root: bool,
@@ -313,7 +310,7 @@ fn resolve_drop_target(
 
 /// Resolves the `nobody` user to its uid via NSS.
 ///
-/// upstream: clientserver.c:783 `user_to_uid(NOBODY_USER, ...)`; NOBODY_USER is
+/// upstream: clientserver.c:833-835 `user_to_uid(NOBODY_USER, ...)`; NOBODY_USER is
 /// `"nobody"` (config.h). Errors when the account is absent, mirroring
 /// upstream's `@ERROR: invalid uid nobody`.
 #[cfg(unix)]
@@ -337,7 +334,7 @@ fn resolve_nobody_uid() -> io::Result<u32> {
 
 /// Candidate names for the unprivileged default group, in upstream's order.
 ///
-/// upstream: configure.sh:7388-7398 picks NOBODY_GROUP by probing `/etc/group`
+/// upstream: configure.sh:7384-7398 picks NOBODY_GROUP by probing `/etc/group`
 /// at BUILD time - `nobody` if that group exists, else `nogroup`, else `nobody`
 /// as a last resort. Debian and Ubuntu ship `nogroup`; most others ship
 /// `nobody`, which is why a build configured on one family names a group the
@@ -400,7 +397,7 @@ fn resolve_nobody_gid() -> io::Result<u32> {
 /// `uid` variable in `want_all_groups`.
 ///
 /// upstream: clientserver.c:849 `want_all_groups(f_out, uid)` ->
-/// uidlist.c:576 `getallgroups`.
+/// uidlist.c:578 `getallgroups()`.
 #[cfg(unix)]
 fn resolve_all_user_groups(uid: Option<u32>) -> io::Result<Vec<u32>> {
     let target = uid.unwrap_or_else(platform::privilege::effective_uid);
@@ -529,7 +526,7 @@ mod privilege_tests {
             .expect("no candidate uid lacks a passwd entry; the fixture cannot discriminate")
     }
 
-    /// WHY: upstream resolves the drop identity at clientserver.c:851-875
+    /// WHY: upstream resolves the drop identity at clientserver.c:833-875
     /// (`user_to_uid`, `want_all_groups`, `add_a_group`) and does not
     /// `chroot()` until clientserver.c:1050. Every impure arm of
     /// `resolve_drop_target` is an NSS lookup, so a jail without
@@ -689,7 +686,7 @@ mod privilege_tests {
     }
 
     /// Chroot failure must propagate so the daemon refuses to serve rather
-    /// than continuing as root. Mirrors upstream `clientserver.c:978-982`
+    /// than continuing as root. Mirrors upstream `clientserver.c:1050-1053`
     /// where `@ERROR: chroot failed` is sent and the connection returns -1.
     #[cfg(unix)]
     #[test]
@@ -702,7 +699,7 @@ mod privilege_tests {
         assert!(result.is_err(), "chroot to missing path must fail");
     }
 
-    /// WHY: upstream clientserver.c:781,820 - a root daemon whose module sets
+    /// WHY: upstream clientserver.c:833,872-873 - a root daemon whose module sets
     /// no `uid`/`gid` MUST drop to `nobody:nobody`, not keep serving as root.
     /// A regression here re-exposes the HIGH-severity default-root-worker gap.
     /// Asserts the resolver picks the `nobody` account, not that we perform a
@@ -736,7 +733,7 @@ mod privilege_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:778-779 recomputes `am_root` from the live
+    /// WHY: upstream clientserver.c:830-831 recomputes `am_root` from the live
     /// uid; a non-root daemon with an unconfigured module leaves the identity
     /// untouched (`set_uid = 0`, empty `gid_list`). Guarantees we never attempt
     /// a spurious drop that would EPERM and break unprivileged daemons.
@@ -752,7 +749,7 @@ mod privilege_tests {
         assert!(target.gids.is_empty());
     }
 
-    /// WHY: upstream clientserver.c:1022,1029 - `setgid(gid_array[0])` then
+    /// WHY: upstream clientserver.c:1098,1105 - `setgid(gid_array[0])` then
     /// `setgroups(gid_list)` install EXACTLY the configured list, clearing every
     /// inherited supplementary group. The resolver must hand `drop_privileges`
     /// the full list verbatim so the `setgroups` call replaces the group set.
@@ -772,7 +769,7 @@ mod privilege_tests {
         assert_eq!(target.uid, None);
     }
 
-    /// WHY: upstream clientserver.c:781 - an explicit module `uid` overrides the
+    /// WHY: upstream clientserver.c:833 - an explicit module `uid` overrides the
     /// nobody default even on a root daemon. Preserves existing deployments.
     #[cfg(unix)]
     #[test]
@@ -787,7 +784,7 @@ mod privilege_tests {
         assert_eq!(target.gids, vec![5678]);
     }
 
-    /// WHY: upstream clientserver.c:831-838 - when `use chroot` is UNSET and the
+    /// WHY: upstream clientserver.c:883-895 - when `use_chroot` is UNSET and the
     /// runtime `chroot()` probe fails (rootless daemon), the daemon switches to
     /// no-chroot instead of aborting. Non-root callers cannot chroot, so this
     /// reproduces the rootless case and asserts the connection is not refused.
@@ -810,9 +807,9 @@ mod privilege_tests {
         assert!(!applied, "rootless fallback must report chroot NOT applied");
     }
 
-    /// WHY: upstream clientserver.c:656-658 / 783-786 - a uid/gid NAME that
+    /// WHY: upstream clientserver.c:698-703 / 833-838 - a uid/gid NAME that
     /// fails to resolve is a DISTINCT failure point from the setgid/setuid
-    /// SYSCALL failures (clientserver.c:1024 / 1053). The resolution failure
+    /// SYSCALL failures (clientserver.c:1098 / 1123). The resolution failure
     /// must reply `@ERROR: invalid uid/gid <name>` (FLOG `Invalid uid/gid
     /// <name>`), never `@ERROR: setuid failed`. Collapsing the two hides which
     /// stage failed from the operator and diverges from upstream's wire output.
@@ -838,7 +835,7 @@ mod privilege_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:781-786 - when a root daemon's `nobody`
+    /// WHY: upstream clientserver.c:833-838 - when a root daemon's `nobody`
     /// default user does not resolve, `user_to_uid()` fails and the daemon
     /// replies `@ERROR: invalid uid nobody`. This drives the real
     /// `resolve_drop_target` path (not just the mapping helper) on hosts that
@@ -866,7 +863,7 @@ mod privilege_tests {
         assert_ne!(error.line(), SETUID_FAILED_PAYLOAD);
     }
 
-    /// WHY: upstream clientserver.c:831 - an EXPLICIT `use chroot = yes` has no
+    /// WHY: upstream clientserver.c:883 - an EXPLICIT `use chroot = yes` has no
     /// unset-fallback escape; a chroot failure must abort so the operator's
     /// isolation guarantee is never silently dropped.
     #[cfg(unix)]
@@ -888,7 +885,7 @@ mod privilege_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:847-864 - a module path without `/./`
+    /// WHY: upstream clientserver.c:897-918 - a module path without `/./`
     /// chroots into the whole path and starts the session at the new root.
     /// Pure path-string logic, no syscall involved.
     #[test]
@@ -898,7 +895,7 @@ mod privilege_tests {
         assert_eq!(inner, PathBuf::from("/"));
     }
 
-    /// WHY: upstream clientserver.c:848-857 - a `/./` marker splits the path
+    /// WHY: upstream clientserver.c:898-907 - a `/./` marker splits the path
     /// into the outer chroot root and the inner post-chroot working
     /// directory, e.g. `path = /var/data/./module` chroots to `/var/data`
     /// then starts the session at `/module` (still reachable: siblings of
@@ -930,7 +927,7 @@ mod privilege_tests {
         assert_eq!(inner, PathBuf::from("/b/./c"));
     }
 
-    /// WHY: upstream clientserver.c:832-833 - `strstr(module_dir, "/./") !=
+    /// WHY: upstream clientserver.c:883-885 - `strstr(module_dir, "/./") !=
     /// NULL` short-circuits the tri-state straight to enabled, with no
     /// `chroot("/")` probe at all. This must hold even on an unprivileged
     /// runner (no root guard needed), because the marker check happens

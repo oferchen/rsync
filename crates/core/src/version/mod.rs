@@ -26,8 +26,8 @@
 //!   strings.
 //! - [`VersionInfoReport`](crate::version::VersionInfoReport) renders the full
 //!   `--version` text, including capability sections and checksum/compressor
-//!   listings, so the CLI can display upstream-identical banners branded for
-//!   `rsync`.
+//!   listings, so the CLI can display upstream-style banners branded for
+//!   oc-rsync.
 //!
 //! This structure keeps other crates free of conditional compilation logic
 //! while avoiding string duplication across the workspace.
@@ -70,7 +70,7 @@
 //!
 //! - [`crate::message`] uses [`crate::version::RUST_VERSION`] when rendering
 //!   error trailers.
-//! - Future CLI modules rely on [`crate::version::compiled_features`] and
+//! - The CLI relies on [`crate::version::compiled_features`] and
 //!   [`crate::version::VersionInfoReport`] to mirror upstream `--version`
 //!   capability listings while advertising the Rust-branded binary name.
 

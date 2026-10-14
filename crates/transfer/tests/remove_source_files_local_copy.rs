@@ -3,7 +3,8 @@
 //! Confirms that running `oc-rsync -av --remove-source-files SRC/ DST/`
 //! deletes each transferred file from the source tree while leaving the
 //! source directory structure intact. Mirrors the upstream rsync
-//! testsuite `delete.test` scenario:
+//! testsuite delete scenario (`delete_test.py` in 3.5.1; the older shell
+//! form was):
 //!
 //! ```sh
 //! $RSYNC -av --remove-source-files "$fromdir/" "$todir/"
@@ -12,10 +13,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:396` - `successful_send()` performs the unlink
-//! - `options.c:765,2974-2975` - `remove_source_files` global and
-//!   `--remove-source-files` forwarding to the server-side sender
-//! - `testsuite/delete.test` - end-to-end coverage
+//! - `sender.c:396` - `successful_send()` performs the unlink (`sender.c:454`)
+//! - `options.c:745,3163-3164` - `--remove-source-files` option and its
+//!   forwarding to the server-side sender
+//! - `testsuite/delete_test.py` - end-to-end coverage
 
 use std::fs;
 use std::process::Command;
@@ -78,8 +79,8 @@ fn remove_source_files_unlinks_transferred_files() {
         "source dir/subdir/leaf.txt should have been removed"
     );
 
-    // upstream: sender.c:155-159 - successful_send() never removes the
-    // directory entry itself, so the empty dir hierarchy must survive.
+    // upstream: sender.c:396 successful_send() unlinks only the sent file,
+    // never its parent directory, so the empty dir hierarchy must survive.
     assert!(from.join("dir").is_dir(), "source dir/ should remain");
     assert!(
         from.join("dir/subdir").is_dir(),
@@ -92,9 +93,10 @@ fn remove_source_files_unlinks_transferred_files() {
 }
 
 /// `--remove-source-files` under `--dry-run` must NOT touch the source
-/// tree. Upstream `successful_send()` returns early when `do_xfers` is
-/// false (sender.c:406-407 via the `!remove_source_files` short-circuit
-/// combined with the global `do_xfers` gate).
+/// tree. Upstream never reaches `successful_send()` under `--dry-run`: the
+/// receiver skips the file before any success message when `!do_xfers`
+/// (receiver.c:997-1002) and the generator gates its success path on
+/// `!dry_run` (generator.c:2256-2257).
 #[test]
 fn remove_source_files_dry_run_preserves_source() {
     let rsync_bin = test_support::oc_rsync_bin();

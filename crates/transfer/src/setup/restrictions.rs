@@ -1,14 +1,14 @@
 //! Protocol version compatibility restrictions.
 //!
-//! Implements the feature-version checks from upstream `compat.c:641-709`.
+//! Implements the feature-version checks from upstream `compat.c:664-720`.
 //! After protocol setup completes, certain features require a minimum protocol
 //! version. This module validates those constraints and returns appropriate
 //! errors when features are incompatible with the negotiated protocol.
 //!
 //! # Upstream Reference
 //!
-//! - `compat.c:652-668` - Protocol < 30 restrictions (ACLs, xattrs)
-//! - `compat.c:678-709` - Protocol < 29 restrictions (fuzzy, inplace+basis, multi-basis, prune)
+//! - `compat.c:664-682` - Protocol < 30 restrictions (ACLs, xattrs)
+//! - `compat.c:690-720` - Protocol < 29 restrictions (fuzzy, inplace+basis, multi-basis, prune)
 
 use std::io;
 
@@ -48,9 +48,9 @@ pub struct ProtocolRestrictionFlags {
 ///
 /// # Upstream Reference
 ///
-/// - `compat.c:663-676` - `--acls` / `--xattrs` require protocol 30
+/// - `compat.c:667-680` - `--acls` / `--xattrs` require protocol 30
 ///   unless `local_server`
-/// - `compat.c:684-713` - `--fuzzy`, a basis dir with `--inplace`, several
+/// - `compat.c:690-720` - `--fuzzy`, a basis dir with `--inplace`, several
 ///   basis dirs and `--prune-empty-dirs` require protocol 29
 pub fn refuse_unsupported_options(
     protocol: ProtocolVersion,

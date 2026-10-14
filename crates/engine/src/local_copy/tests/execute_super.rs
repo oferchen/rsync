@@ -133,7 +133,7 @@ fn builder_fake_super_set_true() {
 
 #[test]
 fn builder_super_mode_and_fake_super_combined() {
-    // upstream: options.c:89 - --fake-super forces am_root=-1 even after --super.
+    // upstream: options.c:95 - --fake-super forces am_root=-1 even after --super.
     // The tri-state demotion means am_root() must report false whenever
     // fake_super is set, regardless of super_mode, so privileged ops route
     // through the xattr placeholder branch.
@@ -424,10 +424,10 @@ fn fake_super_with_directory_tree() {
 /// Regression: `--fake-super` with a `--chmod` that strips the transfer-root
 /// directory's owner-execute bit must NOT self-lock the root.
 ///
-/// upstream: generator.c:1512 gates the transfer-root owner-`rwx` re-add (whose
+/// upstream: generator.c:1904 gates the transfer-root owner-`rwx` re-add (whose
 /// failure is the self-lock, exit 23) on `!am_root`. Under `--fake-super`
 /// upstream sets `am_root = -1`, so that block is skipped: `set_stat_xattr()`
-/// (rsync.c:577-578, xattrs.c:1219) forces the real directory mode to `0700`
+/// (rsync.c:713-714, xattrs.c:1315) forces the real directory mode to `0700`
 /// and stashes the intended `a=` (`0000`) mode in the `user.rsync.%stat` xattr.
 /// Verified against upstream rsync 3.4.4: `--fake-super --chmod=a=` on a
 /// directory tree exits 0 with the root left at `0700` (`drwx------`), whereas
@@ -754,7 +754,7 @@ fn super_true_with_group_preserves_gid_when_root() {
 #[test]
 fn super_and_fake_super_both_enabled() {
     // Both flags can be set simultaneously. Upstream's am_root tri-state
-    // (options.c:89) treats --fake-super (-1) as a hard demotion even after
+    // (options.c:95) treats --fake-super (-1) as a hard demotion even after
     // --super (2), routing privileged ops through the xattr placeholder
     // branch. am_root() therefore reports false.
     // upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes placeholder

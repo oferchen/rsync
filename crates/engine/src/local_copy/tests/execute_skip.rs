@@ -547,7 +547,7 @@ fn execute_skip_checksum_large_files_single_byte_difference() {
 /// content-identical destination is reported as matched (not transferred) while
 /// a differing file is reported as a would-be-copy.
 ///
-/// upstream: generator.c:645 - `unchanged_file()` (which honours `--checksum`)
+/// upstream: generator.c:645 - `quick_check_ok()` (which honours `--checksum`)
 /// runs in dry-run just as in a real run, so `rsync -nc` itemizes only the file
 /// whose checksum differs.
 #[test]
@@ -802,7 +802,7 @@ fn execute_with_size_only_and_checksum_skips_same_size() {
 
 #[test]
 fn execute_with_size_only_and_ignore_times_skips_same_size() {
-    // Upstream: generator.c:unchanged_file() checks size_only before
+    // Upstream: generator.c:quick_check_ok() checks size_only before
     // ignore_times. When both are set and sizes match, size_only wins.
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
@@ -995,7 +995,7 @@ fn execute_with_size_only_copies_smaller_file() {
 /// Size-only in dry run runs the same quick check as a real run: a same-size
 /// destination is matched (not transferred) even when its content differs.
 ///
-/// upstream: generator.c:645 - `unchanged_file()` under `--size-only` compares
+/// upstream: generator.c:645 - `quick_check_ok()` under `--size-only` compares
 /// only file sizes, and the generator runs it in dry-run just as in a real run,
 /// so `rsync -n --size-only` reports nothing for a same-size destination.
 #[test]
@@ -2234,7 +2234,7 @@ fn execute_skip_checksum_with_times_syncs_mtime_on_skip() {
 }
 
 /// Update with modify-window: destination 1s newer with 2s window.
-/// Upstream `generator.c:1721-1722`: `source - dest = -1 < 2` -> skip.
+/// Upstream `generator.c:2135-2136`: `source - dest = -1 < 2` -> skip.
 /// The destination is genuinely newer, so --update skips regardless of window.
 #[test]
 fn execute_skip_update_respects_modify_window() {

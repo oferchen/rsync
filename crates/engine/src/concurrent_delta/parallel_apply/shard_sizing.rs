@@ -1,5 +1,4 @@
-//! Adaptive DashMap shard-count sizing for [`super::ParallelDeltaApplier`]
-//! (DMC-CON.2/.3, #3996/#3997).
+//! Adaptive DashMap shard-count sizing for [`super::ParallelDeltaApplier`].
 //!
 //! DashMap's default constructor picks `available_parallelism() * 4` rounded
 //! up to a power of two. That target tracks the host's CPU count, not the
@@ -52,7 +51,7 @@ pub(super) const MAX_SHARDS: usize = 1024;
 /// Set to a positive integer to pin the shard count; any parse failure or
 /// zero value falls back to [`default_shard_count`] so a mistyped override
 /// never breaks the applier. Useful for micro-benchmarks, A/B comparisons
-/// against the BR-3j.f / DMB.b sweeps, and production tuning on hosts where
+/// against earlier shard-count sweeps, and production tuning on hosts where
 /// the sequential `FileNdx` distribution clusters into a subset of shards
 /// (see `docs/design/dmc-con-adaptive-sharding.md`).
 pub(super) const SHARDS_ENV: &str = "OC_RSYNC_DASHMAP_SHARDS";

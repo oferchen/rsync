@@ -2,7 +2,7 @@ use super::common::*;
 use super::*;
 
 /// Asserts the upstream log-file line prefix shape
-/// `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[\d+\] ` (upstream: log.c:127).
+/// `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[\d+\] ` (upstream: log.c:135).
 fn assert_upstream_log_prefix(line: &str) -> &str {
     let bytes = line.as_bytes();
     let shape_ok = bytes.len() > 21
@@ -86,9 +86,9 @@ fn local_transfer_respects_custom_log_format() {
     assert!(stderr.is_empty());
 
     // upstream routing for a verbosity-0 `--log-file` run: the FLOG banner
-    // (flist.c:2484), the per-file logfile-format line (log.c:818-826), and
-    // the FLOG totals trailer (log.c:894-899 via the cleanup.c:222-226
-    // `!INFO_GTE(STATS, 1)` gate) - each stamped by logit() (log.c:122-132).
+    // (flist.c:2760), the per-file logfile-format line (log.c:871-872), and
+    // the FLOG totals trailer (log.c:943-948 via the cleanup.c:222-226
+    // `!INFO_GTE(STATS, 1)` gate) - each stamped by logit() (log.c:125-141).
     let logged = std::fs::read_to_string(&log_path).expect("read log file");
     let bodies: Vec<&str> = logged.lines().map(assert_upstream_log_prefix).collect();
     assert_eq!(bodies.len(), 3, "unexpected log lines: {logged:?}");
@@ -152,11 +152,10 @@ fn log_file_multiple_files_produce_multiple_entries() {
     let mut source_trailing = source_dir.into_os_string();
     source_trailing.push(std::path::MAIN_SEPARATOR.to_string());
 
-    // upstream: options.c:117 defaults `recurse = 0` and flist.c:3986 prints
-    // `skipping directory %s` for a directory operand without -r/-a/-d, so a
+    // upstream: options.c:117 defaults `recurse = 0`; for a directory operand
+    // without -r/-a/-d, flist.c:2964 prints `skipping directory %s`, so a
     // trailing-slash directory source must be paired with --recursive to fan
-    // out into the per-child %f log entries this test verifies. Mirrors the
-    // pattern from PRs #5985, #5946, #5934, #5955.
+    // out into the per-child %f log entries this test verifies.
     let (code, _stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--recursive"),
@@ -303,9 +302,9 @@ fn log_file_successive_transfers_append() {
 }
 
 /// upstream: rwrite() mirrors FINFO to the log when `--log-file` is active
-/// (log.c:290-303): a `-v` run logs the `bytes/sec` + `speedup` trailer pair
+/// (log.c:312-329): a `-v` run logs the `bytes/sec` + `speedup` trailer pair
 /// instead of the FLOG totals line, which cleanup.c:222-226 suppresses once
-/// `INFO_GTE(STATS, 1)` holds. FLOG lines never reach stdout (log.c:304-307).
+/// `INFO_GTE(STATS, 1)` holds. FLOG lines never reach stdout (log.c:331-334).
 #[test]
 fn verbose_log_file_mirrors_info_trailer_and_keeps_flog_off_stdout() {
     let temp = test_support::create_tempdir();

@@ -1,7 +1,7 @@
 /// A `refuse options` directive repeated in the global section replaces the
 /// earlier list instead of accumulating both.
 ///
-/// upstream: loadparm.c:452-454 writes the `refuse_options` P_STRING slot with
+/// upstream: loadparm.c:571-572 writes the `refuse_options` P_STRING slot with
 /// string_set(), so the daemon refuses only what the last directive named.
 #[test]
 fn runtime_options_last_wins_global_refuse_options() {

@@ -129,7 +129,7 @@ pub(super) fn parse_short_merge_directive_line(
     };
 
     if allow_extended {
-        // upstream: exclude.c:1419-1428 - ':' short form is a per-directory
+        // upstream: exclude.c:1332-1339 - ':' short form is a per-directory
         // merge that registers a filename to look up in each subdirectory,
         // not an eager merge of the parent file's adjacent rule file.
         return Ok(Some(ParsedFilterDirective::DirMerge {

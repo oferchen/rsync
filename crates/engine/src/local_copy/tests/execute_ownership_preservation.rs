@@ -608,7 +608,7 @@ fn owner_and_group_preserved_on_symlink() {
     assert!(summary.symlinks_copied() >= 1);
 }
 
-// GAP M8: upstream's `change_uid = am_root && ...` gate (rsync.c:526) applies
+// upstream's `change_uid = am_root && ...` gate (rsync.c:655) applies
 // to explicit `--chown`/`--usermap` overrides exactly as to `-o`/`-a` preserve.
 // A non-root process that cannot set the target uid skips the chown and
 // finishes the transfer - it does not surface the kernel's EPERM as fatal.
@@ -657,7 +657,7 @@ fn non_root_owner_override_to_different_user_is_skipped_not_fatal() {
     );
 }
 
-// GAP M8: upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284) drops a non-member
+// upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284) drops a non-member
 // group before `do_lchown`, whether the gid came from `-g`/`-a` preserve or an
 // explicit `--chown`/`--groupmap` override.
 #[cfg(unix)]

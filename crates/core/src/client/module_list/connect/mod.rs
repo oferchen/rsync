@@ -226,8 +226,8 @@ impl DaemonStreamWriter {
 /// so either updates the pair). Returns `None` for connect-program transports,
 /// which have no socket timeout to adjust.
 ///
-/// upstream: io.c:1166-1175 `set_io_timeout()` - the client-side effect of
-/// adopting a daemon `MSG_IO_TIMEOUT` (io.c:1577-1587).
+/// upstream: io.c:1284-1314 `set_io_timeout()` - the client-side effect of
+/// adopting a daemon `MSG_IO_TIMEOUT` (io.c:1750-1769 `read_a_msg()`).
 pub(crate) fn build_io_timeout_reapply(
     reader: &DaemonStreamReader,
     writer: &DaemonStreamWriter,
@@ -262,8 +262,8 @@ pub(crate) fn build_io_timeout_reapply(
 /// path. Returns `None` for connect-program (pipe) transports, which own no
 /// socket to shut down.
 ///
-/// upstream: `io.c:768` polls `got_kill_signal` from `perform_io()` once its
-/// `select()` returns; a multi-threaded process cannot rely on the signal
+/// upstream: io.c:849-850 polls `got_kill_signal` from `perform_io()` once its
+/// `poll()` returns; a multi-threaded process cannot rely on the signal
 /// reaching the thread that is blocked on the wire, so the socket is closed
 /// from the watcher instead.
 pub(crate) fn register_shutdown_wake(
@@ -295,7 +295,7 @@ pub(crate) struct DaemonConnectTimeouts {
 /// Holds the trust-source inputs the QUIC ladder needs: the `--quic-ca` private
 /// CA bundle path (when supplied) anchors the daemon chain; otherwise the
 /// platform trust store is the CA layer, and either way a self-signed daemon
-/// falls to the SSH-style accept-new `quic_known_hosts` default (task 134). The
+/// falls to the SSH-style accept-new `quic_known_hosts` default. The
 /// struct is empty (a zero-sized value) and never read when the `quic` feature
 /// is disabled, so it threads through the shared connect signature without a cfg
 /// on the parameter itself.
@@ -364,7 +364,7 @@ pub(crate) fn open_daemon_stream(
         ),
         // QUIC dials over UDP and hands the resulting blocking stream to the
         // same `@RSYNCD` handshake TCP uses; the daemon-protocol bytes after the
-        // QUIC handshake are unchanged (the QUIC-7 wire-identity invariant). A
+        // QUIC handshake are unchanged (the wire-identity invariant). A
         // failed dial hard-fails and never silently downgrades to plaintext TCP
         // (design: `docs/design/quic-transport-policy.md`, Decision D, "No
         // silent downgrade").
@@ -376,7 +376,7 @@ pub(crate) fn open_daemon_stream(
 /// Opens a QUIC connection to a daemon (the [`Transport::Quic`] path).
 ///
 /// Resolves the client trust source through the QUIC verification ladder - the
-/// SSH-style accept-new default (task 134): a chain that validates against
+/// SSH-style accept-new default: a chain that validates against
 /// `--quic-ca` or the platform trust store wins, otherwise a self-signed daemon
 /// is trusted on first use and pinned in `quic_known_hosts`. Builds the
 /// connector with ALPN `rsync`, resolves the daemon host to `host:port`
@@ -387,8 +387,7 @@ pub(crate) fn open_daemon_stream(
 ///
 /// Any dial or handshake failure - unreachable endpoint, certificate rejection,
 /// or ALPN mismatch - maps to `RERR_STARTCLIENT` (exit 5). This is an interim
-/// mapping; the full quinn-proto error -> exit-code schema is a separate task
-/// (#57). Crucially it is an error, never a TCP fallback.
+/// mapping. Crucially it is an error, never a TCP fallback.
 #[cfg(feature = "quic")]
 fn open_quic_daemon_stream(
     addr: &DaemonAddress,
@@ -424,7 +423,7 @@ fn open_quic_daemon_stream(
             ));
         }
     };
-    // Trust ladder (policy B), SSH-style accept-new default (task 134):
+    // Trust ladder, SSH-style accept-new default:
     // `--quic-ca` anchors the chain against a private CA, otherwise the platform
     // trust store is the CA layer; a chain that validates against either wins,
     // and a self-signed daemon that validates against neither falls to
@@ -558,8 +557,8 @@ fn open_tcp_daemon_stream(
 /// phase - it only governs per-read/write I/O on an established stream. Hence a
 /// connect is bounded only when `--contimeout=N` (`N > 0`) was given.
 ///
-/// upstream: socket.c:274-277 `open_socket_out()` installs `alarm(connect_timeout)`
-/// solely for `connect_timeout > 0`; options.c:125 defaults `connect_timeout = 0`.
+/// upstream: socket.c:429-432 `open_socket_out()` installs `alarm(connect_timeout)`
+/// solely for `connect_timeout > 0`; options.c:130 defaults `connect_timeout = 0`.
 pub(crate) const fn resolve_connect_timeout(connect_timeout: TransferTimeout) -> Option<Duration> {
     match connect_timeout {
         // --contimeout=N (N > 0): bound the connect phase.
@@ -713,7 +712,7 @@ impl DaemonStreamGuard {
     /// reached through `RSYNC_CONNECT_PROG` runs its `post-xfer exec` hook
     /// after the last transfer byte - before exiting.
     ///
-    /// upstream: socket.c:1054 `sock_exec()` forks the connect program and
+    /// upstream: socket.c:1054-1084 `sock_exec()` forks the connect program and
     /// never signals it; the child ends when the socket closes.
     pub(crate) fn finish(mut self) {
         if let Self::Child(child) = &mut self
@@ -906,7 +905,7 @@ mod quic_connect_tests {
     /// yields a `DaemonStream`, and that stream is a byte-transparent
     /// `Read`+`Write` drop-in - the server reads exactly what the client wrote
     /// and vice versa, with no framing added by the transport. This is the
-    /// QUIC-7 wire-identity invariant at the transport boundary: whatever the
+    /// wire-identity invariant at the transport boundary: whatever the
     /// `@RSYNCD` handshake writes reaches the peer unchanged.
     #[test]
     fn quic_ca_trust_path_dials_and_is_byte_transparent() {
@@ -917,7 +916,7 @@ mod quic_connect_tests {
         // Daemon-speaks-first (the real @RSYNCD order): the server writes its
         // greeting bytes first, the client reads them, then the client writes
         // its request and the server reads it. Both directions must arrive
-        // byte-identical - the QUIC-7 wire-identity invariant.
+        // byte-identical - the wire-identity invariant.
         let greeting = b"@RSYNCD: 32.0\n@RSYNCD: OK\n".to_vec();
         let request = b"@RSYNCD: 32.0\nmodule\n".to_vec();
 
@@ -956,7 +955,7 @@ mod quic_connect_tests {
     }
 
     /// A `--quic-ca` that does NOT anchor the presented certificate falls
-    /// through to the accept-new default (task 134), mirroring SSH: a
+    /// through to the accept-new default, mirroring SSH: a
     /// `@cert-authority` line that does not sign the host key does not veto the
     /// connection, it just doesn't apply, and the decision falls to
     /// `known_hosts`/accept-new. So dialing a self-signed daemon with an
@@ -1082,7 +1081,7 @@ mod quic_connect_tests {
     }
 
     /// The zero-config DEFAULT now trusts a self-signed daemon on first use
-    /// (task 134, SSH `accept-new`): with no `--quic-ca`, dialing a self-signed
+    /// (SSH `accept-new`): with no `--quic-ca`, dialing a self-signed
     /// loopback daemon SUCCEEDS, learns the presented certificate, and PERSISTS
     /// it to `quic_known_hosts` - where the pre-task system-roots default
     /// hard-failed with `RERR_STARTCLIENT` (5). Pins that the accept-new default
@@ -1090,7 +1089,7 @@ mod quic_connect_tests {
     /// (`open_quic_daemon_stream` -> `resolve(ca, authority, None)` -> the
     /// accept-new verifier), not merely unit-tested in isolation.
     /// `XDG_CONFIG_HOME` is redirected to a temp dir so the pin never touches the
-    /// real user config. Encodes WHY: the whole point of task 134 is that a
+    /// real user config. Encodes WHY: the point of the accept-new default is that a
     /// self-signed daemon works with no flags, exactly as `ssh` accepts an
     /// unknown host on first contact; a resolver that still hard-failed here
     /// (the old default) would fail the dial.
@@ -1153,18 +1152,15 @@ mod quic_connect_tests {
     /// own greeting, the daemon parses that, and the exchange completes with
     /// `@RSYNCD: OK`. Encodes WHY: QUIC is only useful for a daemon transfer if
     /// the actual version negotiation - not just arbitrary bytes - reaches and
-    /// completes over it (the QUIC-5e connect->handshake requirement); a
+    /// completes over it (the connect->handshake requirement); a
     /// transport that reordered or dropped a greeting line would fail the parse.
     ///
-    /// ORDER NOTE: upstream `@RSYNCD` has the *daemon* speak first, and that is
-    /// now reachable in-process. QUIC-6d (task 55) wired the daemon acceptor to
-    /// OPEN the bidirectional stream eagerly (server-speaks-first,
-    /// [`QuicAcceptor::from_socket_server_first`]) and the dial path to ACCEPT
+    /// Order: upstream `@RSYNCD` has the *daemon* speak first. The daemon
+    /// acceptor OPENs the bidirectional stream eagerly (server-speaks-first,
+    /// [`QuicAcceptor::from_socket_server_first`]) and the dial path ACCEPTs
     /// it ([`QuicConnector::connect_server_first`]); the server's greeting is the
-    /// first frame, which surfaces the stream to the client. An earlier revision
-    /// pinned only the client-first exchange because a client-opened bidi stream
-    /// is not announced until the client sends bytes (daemon-first deadlocked);
-    /// that limitation is closed, so this test now exercises the true order.
+    /// first frame, which surfaces the stream to the client, so this test
+    /// exercises the true order.
     #[test]
     fn quic_real_rsyncd_greeting_codec_round_trips_over_quic() {
         let version = ProtocolVersion::NEWEST;
@@ -1339,7 +1335,7 @@ mod connect_timeout_tests {
 
     #[test]
     fn resolve_connect_timeout_prefers_explicit_setting() {
-        // --contimeout=N bounds the connect phase (upstream: socket.c:274-277).
+        // --contimeout=N bounds the connect phase (upstream: socket.c:429-432).
         let explicit = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
         assert_eq!(
             resolve_connect_timeout(explicit),
@@ -1357,7 +1353,7 @@ mod connect_timeout_tests {
     #[test]
     fn resolve_connect_timeout_disables_when_requested() {
         // --contimeout=0 (Disabled) and the unset default both leave connect
-        // unbounded, matching upstream's default connect_timeout=0 (options.c:125).
+        // unbounded, matching upstream's default connect_timeout=0 (options.c:130).
         assert!(resolve_connect_timeout(TransferTimeout::Disabled).is_none());
         assert!(resolve_connect_timeout(TransferTimeout::Default).is_none());
     }

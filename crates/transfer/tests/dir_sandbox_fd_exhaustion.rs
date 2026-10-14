@@ -52,7 +52,7 @@ use rustix::stdio::{dup2_stderr, stderr};
 
 /// The hint text, byte for byte as upstream prints it.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:3071-3072`. Held as a literal rather
+/// upstream: `rsync-3.5.1/syscall.c:3073-3074`. Held as a literal rather
 /// than read from `fast_io` (the constant is private) so this cell fails on
 /// a reworded or enveloped emit, not just a deleted one.
 const FD_EXHAUSTION_HINT: &str =

@@ -18,7 +18,7 @@ fn log_module_limit_logs_cap_reached() {
     drop(log);
 
     let contents = fs::read_to_string(&path).expect("read log");
-    // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` ahead
+    // upstream: log.c:125-135 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` ahead
     // of the rendered warning body.
     let body = contents
         .split_once("] ")

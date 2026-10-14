@@ -1,17 +1,18 @@
-//! ABW-5.b empirical stress test for the verify/write-overlap safety of
+//! Empirical stress test for the verify/write-overlap safety of
 //! [`ParallelDeltaApplier::apply_batch_parallel`].
 //!
-//! Spec: `docs/design/abw-5b-verify-write-stress-test.md`. The ABW-5.c audit
+//! Spec: `docs/design/abw-5b-verify-write-stress-test.md`. The audit in
+//! `docs/audit/abw-5c-verify-write-mutex-scope.md`
 //! proved on paper that the parallel verify step and the serial per-file
 //! write loop touch disjoint state, so a batch whose verify overlaps another
-//! batch's write can never race. ABW-5.a wired debug assertions that witness
+//! batch's write can never race. Debug assertions in `batch.rs` witness
 //! the three invariants inline. This module is the missing empirical leg: it
 //! drives the applier under adversarial concurrency and asserts the only
 //! observable consequence that a broken overlap would produce - a destination
 //! byte stream that diverges from a serial reference, a lost/duplicated
 //! write, a panic, or a deadlock.
 //!
-//! # The three invariants under stress (ABW-5.c)
+//! # The three invariants under stress
 //!
 //! 1. `verify_chunk` is pure - it reads only its owned `chunk.data` and the
 //!    immutable `Arc<dyn ChecksumStrategy>`. It never touches a `FileSlot`.
@@ -84,7 +85,7 @@ fn seed(index: usize, salt: u64) -> u64 {
 
 /// The negotiated strong-checksum strategy for the run. XXH3 (spec 9.4) keeps
 /// the verify step cheap so it never dominates the wall clock, while still
-/// exercising the full `strategy.compute` path that ABW-5.a invariant 1
+/// exercising the full `strategy.compute` path that invariant 1
 /// asserts over.
 fn xxh3_strategy() -> Arc<dyn ChecksumStrategy> {
     Arc::from(ChecksumStrategySelector::for_algorithm(
@@ -219,7 +220,7 @@ fn stress_abw5b_batch_spans_file_boundary() {
 /// pushing every thread through the shared DashMap shard locks, the shared
 /// rayon pool, and the shared per-file Mutex machinery at once.
 ///
-/// WHY this catches unsoundness: the whole point of ABW-5.c is that batch N's
+/// WHY this catches unsoundness: the whole point of the audit is that batch N's
 /// write may overlap batch N+1's verify. Here that overlap is realized across
 /// threads on one applier - while thread A holds file X's Mutex mid-write,
 /// thread B is verifying (invariant 1, pure, no slot access) and writing file
@@ -327,7 +328,7 @@ fn stress_abw5b_concurrent_disjoint_files_overlap() {
 /// one thread's half overlaps the write of the other's half on one Mutex and
 /// one reorder buffer.
 ///
-/// WHY this catches unsoundness: this is the sharpest form of the ABW-5.c
+/// WHY this catches unsoundness: this is the sharpest form of the audited
 /// overlap - two writers contend the identical per-file `Mutex<FileSlot>` and
 /// feed the identical reorder buffer. If invariant 2 (single-unit Mutex) or
 /// invariant 3 (order restoration under arbitrary Mutex-acquisition order)

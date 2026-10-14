@@ -1,8 +1,8 @@
 //! Delta matching trace functions.
 //!
 //! Traces block matching operations that correspond to upstream rsync's
-//! `match.c`. All tracing is conditionally compiled behind the `tracing`
-//! feature flag.
+//! `match.c` (`match_sums()`, `hash_search()`, `match_report()`). All tracing
+//! is conditionally compiled behind the `tracing` feature flag.
 
 use std::time::Duration;
 
@@ -12,7 +12,7 @@ use super::DELTASUM_TARGET;
 /// Traces the start of delta matching for a file.
 ///
 /// Emits a tracing event when beginning to match target file data against
-/// basis file checksums. Corresponds to matching logic in upstream `match.c`.
+/// basis file checksums. Corresponds to upstream `match.c:match_sums()`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_match_start(file_name: &str, basis_size: u64, target_size: u64) {

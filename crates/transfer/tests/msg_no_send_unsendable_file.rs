@@ -4,12 +4,12 @@
 //!
 //! When the sender cannot open a file it has already been asked for, it does
 //! not answer the request. It emits `MSG_NO_SEND` carrying the file's index and
-//! moves on to the next file (`sender.c:725`, plus `:669` for an over-long path
-//! and `:751` for a diminished file under `--append`). Upstream's generator
+//! moves on to the next file (`sender.c:725`, plus `:670` for an over-long path
+//! and `:753` for a diminished file under `--append`). Upstream's generator
 //! retires the entry on receipt (`io.c:1847-1856` ->
 //! `got_flist_entry_status(FES_NO_SEND, ndx)`), and its receiver is unaffected
 //! because it is *NDX-addressed*: it reads whatever index arrives and looks the
-//! file up by it (`rsync.c:322-431`).
+//! file up by it (`rsync.c:323-448`).
 //!
 //! oc's pipelined receiver is instead *FIFO-positional* - it pops the oldest
 //! outstanding request to interpret each response. A declined file therefore
@@ -27,7 +27,7 @@
 //!    reaching `NDX_DONE` (a single `0x00` at protocol >= 30) it blocked in
 //!    `read_exact` for two `iflags` bytes the peer never sends. Upstream
 //!    returns at that point *before* consuming any attribute byte
-//!    (`rsync.c:334-335`).
+//!    (`rsync.c:335-336`).
 //! 2. The `MSG_NO_SEND` ledger was decoded and accumulated but never drained,
 //!    so the declined file's request was never evicted from the in-flight
 //!    window.
@@ -52,15 +52,15 @@
 //!
 //! # Upstream References
 //!
-//! - `sender.c:584-586` - non-transfer items are echoed and `continue`d
+//! - `sender.c:584-602` - non-transfer items are echoed and `continue`d
 //!   *above* every `MSG_NO_SEND` emitter, so the message only ever names a
 //!   transfer item.
 //! - `sender.c:670,725,753` - the three emitters; each `continue`s without
 //!   writing a response.
 //! - `io.c:1847-1856` - `MSG_NO_SEND` -> `got_flist_entry_status(FES_NO_SEND)`.
-//! - `sender.c:669,721` - `io_error |= IOERR_GENERAL`, which is what makes the
+//! - `sender.c:666,718` - `io_error |= IOERR_GENERAL`, which is what makes the
 //!   run exit 23; the exit code travels via `MSG_IO_ERROR`, not `MSG_NO_SEND`.
-//! - `rsync.c:334-335` - `NDX_DONE` returns before any attribute byte.
+//! - `rsync.c:335-336` - `NDX_DONE` returns before any attribute byte.
 
 #![cfg(unix)]
 

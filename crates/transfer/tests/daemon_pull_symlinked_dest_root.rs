@@ -54,7 +54,7 @@
 //! - `clientserver.c:1093` - `use_secure_symlinks = am_daemon && ...`
 //! - `syscall.c:163` - `confinement_root()` returns `module_dir` only for a daemon
 //! - `receiver.c:165` - `if (!am_daemon || ...)` plain-open arm of `secure_basis_open()`
-//! - `main.c:770` - `change_dir(dest_path, CD_NORMAL)` resolves a symlinked
+//! - `main.c:778` - `change_dir(dest_path, CD_NORMAL)` resolves a symlinked
 //!   destination root once, for every non-daemon receiver
 
 #![cfg(unix)]

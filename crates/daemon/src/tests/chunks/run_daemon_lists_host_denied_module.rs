@@ -7,7 +7,7 @@ fn run_daemon_lists_host_denied_module() {
     let (port, held_listener) = allocate_test_port();
 
     // env::temp_dir() so the path exists on Windows; forward-slash normalised
-    // so the daemon module-arg parser doesn't swallow escapes (see PR #4560).
+    // so the daemon module-arg parser doesn't swallow escapes.
     let module_path = std::env::temp_dir()
         .display()
         .to_string()
@@ -45,10 +45,10 @@ fn run_daemon_lists_host_denied_module() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
-    // upstream: clientserver.c:1261-1272 send_listing() lists every module with
+    // upstream: clientserver.c:1374-1386 send_listing() lists every module with
     // `list = yes` and applies NO hosts allow/deny filtering. The host-denied
     // `private` module therefore appears alongside `public`; the deny only
-    // takes effect on the module-open path (clientserver.c:728 allow_access).
+    // takes effect on the module-open path (clientserver.c:773 allow_access).
     line.clear();
     reader.read_line(&mut line).expect("public module");
     assert_eq!(line, "public         \t\n");

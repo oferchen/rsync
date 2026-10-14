@@ -64,10 +64,9 @@ pub const HIGHEST_PROTOCOL_VERSION: u8 = workspace::protocol_version_u8();
 ///
 /// Whitespace surrounding the revision string is trimmed so the value can be embedded in version
 /// banners without introducing stray spaces or newlines. When the environment variable is unset or
-/// only contains whitespace the function returns `"unknown"`, mirroring upstream rsync's
-/// behaviour when revision metadata is unavailable. Embedded newlines are ignored by taking the
-/// first non-empty line, and control characters cause the revision to be reported as
-/// `"unknown"` to avoid rendering artifacts in version banners.
+/// only contains whitespace the function returns `"unknown"`. Embedded newlines are ignored by
+/// taking the first non-empty line, and control characters cause the revision to be reported
+/// as `"unknown"` to avoid rendering artifacts in version banners.
 #[must_use]
 pub const fn build_revision() -> &'static str {
     branding_build_revision()

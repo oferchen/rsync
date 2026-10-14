@@ -3,12 +3,12 @@
 //!
 //! The `-R` implied parents of `a/b/c/file.txt` are `a/`, `a/b/` and `a/b/c/`.
 //! Upstream builds every one of them through a confined mkdir. The file list's
-//! own directory pass uses `gen_entry_mkdir()`, which classifies the
-//! destination first and DELETES a conflicting symlink before creating a real
+//! own directory pass in `recv_generator()` classifies the destination first
+//! and DELETES a conflicting symlink before `gen_entry_mkdir()` creates a real
 //! directory in its place:
 //!
 //! ```c
-//! /* generator.c:1451-1455 */
+//! /* generator.c:1840-1842 */
 //! delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_DIR);
 //! /* generator.c:1873 */
 //! gen_entry_mkdir(fname, file, file->mode|added_perms)
@@ -17,7 +17,7 @@
 //! and the `relative_paths` fallback at `generator.c:1718-1725` uses
 //! `make_path()`, whose every component goes through `do_mkdir_at()`
 //! (`util1.c:241`, `util1.c:280`) - the ownership walk plus `mkdirat()`, not a
-//! bare `mkdir(2)` (`syscall.c:2205`).
+//! bare `mkdir(2)` (`syscall.c:2205` `do_mkdir_at()`).
 //!
 //! oc had a third, unconfined creator: `ensure_relative_parents` ran as a
 //! PRE-pass over the file list and built every implied parent with a
@@ -288,7 +288,7 @@ fn relative_implied_parents_must_not_be_built_outside_the_module() {
 /// THE SAME PIN where `ensure_relative_parents` is the SOLE creator.
 ///
 /// `--no-implied-dirs` below protocol 30 omits the implied parents from the
-/// file list entirely (`flist.c:2708`, mirrored at
+/// file list entirely (`flist.c:2769-2770`, `flist.c:2983`, mirrored at
 /// `generator/file_list/mod.rs:134`), so the directory pass has nothing to
 /// create and the `make_path()` equivalent is the only thing that builds `a/b`.
 /// Without this cell the ordering fix alone would keep the pin above green and
@@ -311,7 +311,7 @@ fn a_sole_creator_relative_parent_must_not_escape_the_module() {
 /// must not turn a working transfer into a failure: the module still receives
 /// the whole `-R` path. Measured identical to rsync 3.5.0, which likewise
 /// replaces the conflicting symlink with a real directory
-/// (`generator.c:1451-1455`).
+/// (`generator.c:1840-1842`).
 #[test]
 fn a_confined_relative_push_still_delivers_the_whole_path() {
     let Some(outcome) = push_relative(Plant::DirSymlinkOutsideModule, &[], Sandbox::OptedOut)

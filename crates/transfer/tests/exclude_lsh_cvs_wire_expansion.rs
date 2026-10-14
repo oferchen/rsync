@@ -24,7 +24,7 @@
 //! - A wire `-C ` exclude with an empty pattern expands into the default
 //!   `cvs_exclusion_rules` (perishable at proto >= 30) plus tokens from the
 //!   server's `$HOME/.cvsignore` and `$CVSIGNORE` environment, mirroring
-//!   `exclude.c:get_cvs_excludes()`.
+//!   `exclude.c:1489` `get_cvs_excludes()`.
 //! - A wire `:C .cvsignore` dir-merge switches the `DirMergeConfig` into
 //!   CVS-mode so the chain parses each whitespace token in `.cvsignore` as
 //!   an exclude rule instead of failing on `Unknown filter rule:
@@ -121,7 +121,7 @@ fn cvs_mode_dir_merge_does_not_inherit_to_subdirs() {
 /// which file gets merged, so echoing the line back would hand it a read
 /// primitive. upstream: exclude.c:55 "Report where the bad rule is, not what
 /// it says"; the substitution happens at the `rule_text()` chokepoint
-/// (exclude.c:90-118), which swaps file-sourced text for `<rule from FILE
+/// (exclude.c:88-124), which swaps file-sourced text for `<rule from FILE
 /// line N>` whenever `rule_src_in_file` is set.
 #[test]
 fn standard_dir_merge_rejects_unprefixed_cvsignore_token() {

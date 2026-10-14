@@ -1,13 +1,13 @@
-//! V61D-2 - v0.6.1 daemon-push performance regression repro.
+//! v0.6.1 daemon-push performance regression repro.
 //!
-//! Locks in the symptom the V61D-1 audit (`docs/audit/v061-daemon-push-
-//! regression.md`) traced to PR #3557's flip of `inc_recursive_send` to
+//! Locks in the symptom the audit (`docs/audit/v061-daemon-push-
+//! regression.md`) traced to the flip of `inc_recursive_send` to
 //! `true` by default: push transfers (client-as-sender) against an
 //! upstream rsync daemon ran 95-201x slower than the v0.6.0 baseline.
-//! The mitigation (PR #3744) restored the default to `false` behind a
-//! temporary `sender-inc-recurse` cargo feature; ISI.h later re-flipped
-//! the default to `true` unconditionally once the regression was fixed,
-//! and ISI.i.2 retired the now-redundant feature flag.
+//! The mitigation restored the default to `false` behind a
+//! temporary `sender-inc-recurse` cargo feature; the default was later
+//! re-flipped to `true` unconditionally once the regression was fixed,
+//! and the now-redundant feature flag was retired.
 //!
 //! This test guards the fixed path permanently. It pushes a small
 //! (~1 MiB) source tree from `oc-rsync` (sender) to an upstream
@@ -35,15 +35,15 @@
 //!
 //! ## References
 //!
-//! - V61D-1 audit (`docs/audit/v061-daemon-push-regression.md`) - root
-//!   cause and mitigation summary.
-//! - V61D-5 design (planned `docs/design/v061-daemon-push-increcurse-
-//!   disable.md`) - documents the disable plan this test guards.
-//! - ISI.a (`docs/design/isi-a-sender-inc-recurse-call-graph.md`) -
-//!   sender-side call graph.
-//! - PR #3557 / commit `39d47722b` - the regression-introducing flip.
-//! - PR #3744 / commit `b3a264061` - the mitigation that restored the
-//!   default to `false`.
+//! - `docs/audit/v061-daemon-push-regression.md` - root cause and
+//!   mitigation summary.
+//! - `docs/design/v061-daemon-push-increcurse-disable.md` - documents the
+//!   disable plan this test guards.
+//! - `docs/design/isi-a-sender-inc-recurse-call-graph.md` - sender-side
+//!   call graph.
+//! - commit `39d47722b` - the regression-introducing flip.
+//! - commit `b3a264061` - the mitigation that restored the default to
+//!   `false`.
 
 #![cfg(all(unix, not(target_os = "macos")))]
 
@@ -177,7 +177,7 @@ impl Drop for DaemonGuard {
 /// Spawn `rsync --daemon` on `port` against `config_path`. Waits for the
 /// port to accept connections before returning.
 fn spawn_upstream_daemon(rsync_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    // Race-free free port: upstream rsync binds SO_REUSEADDR only (socket.c:455),
+    // Race-free free port: upstream rsync binds SO_REUSEADDR only (socket.c:605),
     // so a collision is a clean EADDRINUSE exit the helper retries. See
     // `test_support::daemon_port`.
     let (child, port) = test_support::spawn_daemon_on_free_port(|port| {

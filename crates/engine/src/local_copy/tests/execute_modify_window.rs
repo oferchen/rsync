@@ -386,7 +386,7 @@ fn modify_window_with_update_skips_when_dest_newer_outside_window() {
 }
 
 /// When --update and --modify-window are combined, dest is 0.5s newer
-/// than source. Upstream `generator.c:1721-1722` skips because
+/// than source. Upstream `generator.c:2135-2136` skips because
 /// `source_mtime - dest_mtime < 0 < modify_window`.
 #[test]
 fn modify_window_with_update_skips_when_dest_slightly_newer() {
@@ -424,7 +424,7 @@ fn modify_window_with_update_skips_when_dest_slightly_newer() {
 }
 
 /// Variant B: different sizes but dest is newer (within window).
-/// Upstream `generator.c:1721-1722` skips unconditionally when
+/// Upstream `generator.c:2135-2136` skips unconditionally when
 /// `source_mtime - dest_mtime < modify_window`, regardless of size.
 #[test]
 fn modify_window_with_update_skips_when_dest_newer_within_window_despite_size_diff() {
@@ -504,7 +504,7 @@ fn modify_window_with_update_copies_when_source_definitively_newer() {
 
 /// Upstream two-sided clamp: when source is slightly newer than dest but
 /// within the modify window, `--update` still skips (treats as equal).
-/// upstream `generator.c:1721-1722`: `source - dest = 1 < 2 = window` -> skip
+/// upstream `generator.c:2135-2136`: `source - dest = 1 < 2 = window` -> skip
 #[test]
 fn modify_window_with_update_skips_when_source_slightly_newer_within_window() {
     let temp = tempdir().expect("tempdir");
@@ -819,7 +819,7 @@ fn modify_window_dry_run_reports_correctly() {
 }
 
 /// A dry-run itemize must apply `--modify-window` to the quick check exactly
-/// as a real run does. Upstream `generator.c:533,652` runs `same_time()` in
+/// as a real run does. Upstream `generator.c:533,651` runs `same_time()` in
 /// both modes, so a destination whose only drift is a sub-window mtime
 /// difference is up-to-date and is NOT reported as a transfer. This is the
 /// exact scenario the upstream `compare` testsuite exercises with

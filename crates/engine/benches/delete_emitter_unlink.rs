@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! Task DDP-I2 (#2283). `engine::delete::DeleteEmitter::emit_all` is
+//! Task DDP-I2. `engine::delete::DeleteEmitter::emit_all` is
 //! the single-threaded drain that consumes a pre-populated
 //! `DeletePlanMap` in `DirTraversalCursor` order, issuing one
 //! `DeleteFs` call per planned entry. The pipeline assumes the

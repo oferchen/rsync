@@ -1,4 +1,4 @@
-//! Per-thread buffer slab (#1271, #1370).
+//! Per-thread buffer slab.
 //!
 //! Replaces the single-slot [`thread_local_cache`](super::thread_local_cache)
 //! with a depth-bounded LIFO `Vec<Vec<u8>>` per thread. Used when

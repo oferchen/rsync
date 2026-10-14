@@ -2,7 +2,7 @@
 //!
 //! Handles writing and exchanging compatibility flags between server and client,
 //! including the pre-release `'V'` capability encoding difference. Mirrors
-//! upstream `compat.c:736-741`.
+//! upstream `compat.c:745-750`.
 
 use super::capability::{
     build_compat_flags_from_client_info, client_has_pre_release_v_flag, parse_client_info,
@@ -25,7 +25,7 @@ use std::net::TcpStream;
 ///
 /// # Upstream reference
 ///
-/// `compat.c:737-741`:
+/// `compat.c:745-750`:
 /// ```c
 /// if (strchr(client_info, 'V') != NULL) {
 ///     if (!write_batch)
@@ -42,7 +42,7 @@ pub(crate) fn write_compat_flags<W: Write + ?Sized>(
     if client_has_pre_release_v_flag(client_info) {
         // Pre-release 'V' client: implicitly enable VARINT_FLIST_FLAGS and
         // write as a single byte (upstream: write_batch is never true here).
-        // upstream: compat.c:738-740
+        // upstream: compat.c:746-748
         flags |= CompatibilityFlags::VARINT_FLIST_FLAGS;
         writer.write_all(&[flags.bits() as u8])?;
     } else {
@@ -80,7 +80,7 @@ pub fn exchange_compat_flags_direct(
         return Ok(None);
     }
 
-    // Parse client capabilities from -e option (mirrors upstream compat.c:712-732)
+    // Parse client capabilities from -e option (mirrors upstream compat.c:729-745)
     let client_info = parse_client_info(client_args);
 
     // Build compat flags based on client capabilities.
@@ -88,7 +88,7 @@ pub fn exchange_compat_flags_direct(
     // advertises 'i', the CF_INC_RECURSE flag will be set.
     let our_flags = build_compat_flags_from_client_info(&client_info, allow_inc_recurse);
 
-    // Server ONLY WRITES compat flags (upstream compat.c:736-741)
+    // Server ONLY WRITES compat flags (upstream compat.c:722-750)
     // The client reads but DOES NOT send anything back - it's unidirectional!
     // CRITICAL: Write directly to TcpStream, NOT through any trait abstraction!
     // Handle pre-release 'V' flag: use single-byte write instead of varint.

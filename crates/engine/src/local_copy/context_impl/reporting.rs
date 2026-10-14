@@ -27,9 +27,9 @@ impl<'a> CopyContext<'a> {
 
     /// Records a skip event for a non-regular file (e.g. socket, unknown type).
     ///
-    /// Emits an `--info=NONREG` notice mirroring upstream rsync 3.4.1
-    /// (generator.c:1696) under `INFO_GTE(NONREG, 1)`. NONREG is part of
-    /// `info_verbosity[0]` (options.c:250), so the flag is enabled by
+    /// Emits an `--info=NONREG` notice mirroring upstream rsync 3.5.1
+    /// (generator.c:2110) under `INFO_GTE(NONREG, 1)`. NONREG is part of
+    /// `info_verbosity[0]` (options.c:256), so the flag is enabled by
     /// default and fires regardless of `-v`. The wording matches upstream
     /// byte-for-byte: `skipping non-regular file "%s"`.
     pub(super) fn record_skipped_non_regular(&mut self, relative: Option<&Path>) {
@@ -58,7 +58,7 @@ impl<'a> CopyContext<'a> {
         // render boundary and is escaped there, rather than being replaced with
         // U+FFFD by `format!()`'s `Display`. This mirrors upstream, whose
         // buffer is `skipping non-regular file "%s"` with the raw filename bytes
-        // (generator.c:1696 `rprintf(FINFO, ...)`), escaped once in
+        // (generator.c:2113 `rprintf(FINFO, ...)`), escaped once in
         // `filtered_fwrite` (log.c:250). A control byte in the name is escaped
         // at the sink too, closing the CWE-117 terminal-injection facet.
         let mut message = b"skipping non-regular file \"".to_vec();
@@ -113,7 +113,7 @@ impl<'a> CopyContext<'a> {
     /// arm alone is unreachable in exactly the case upstream prints. `--quiet`
     /// still suppresses it, at `rwrite()`'s FINFO arm, which
     /// `logging::message_stream` owns.
-    /// upstream: flist.c:1563 and flist.c:2692 -
+    /// upstream: flist.c:1709 and flist.c:2964 -
     /// `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare relative name
     /// with no surrounding quotes and no trailing "(no recursion)" suffix.
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
@@ -185,7 +185,7 @@ impl<'a> CopyContext<'a> {
     /// `--stats` counters, verbose line), `false` when an earlier source arg
     /// already surfaced the same ancestor.
     ///
-    /// upstream: flist.c:2162 `send_implied_dirs()` dedups shared ancestors via
+    /// upstream: flist.c:2444 `send_implied_dirs()` dedups shared ancestors via
     /// its `lastpath` cache and the later `flist_sort_and_clean()` pass so each
     /// implied directory appears once even when several `--relative` operands
     /// share a prefix. The local-copy executor never builds a shared sorted
@@ -207,7 +207,7 @@ impl<'a> CopyContext<'a> {
     /// extra/./down/3/deep/extra.added.value`), and only the one physically
     /// living inside an already-walked source directory is redundant. Matching
     /// on the source path reproduces upstream's `flist_sort_and_clean()`
-    /// (flist.c:3259) collapse - which drops an entry only when an earlier
+    /// (flist.c:3594-3624) collapse - which drops an entry only when an earlier
     /// operand already contributed that exact file/subtree - without wrongly
     /// dropping a distinct source that merely shares the relative suffix.
     pub(super) fn source_root_already_covered(&self, source_path: &Path) -> bool {
@@ -276,8 +276,8 @@ impl<'a> CopyContext<'a> {
     /// absent). The flush executes `plan` verbatim, without re-scanning the
     /// destination or re-evaluating filters.
     ///
-    /// upstream: generator.c:345 `remember_delete()` records the concrete
-    /// victim during `delete_in_dir`; `do_delayed_deletions()` (generator.c:2419)
+    /// upstream: generator.c:351 `remember_delete()` records the concrete
+    /// victim during `delete_in_dir`; `do_delayed_deletions()` (generator.c:2899-2900)
     /// later unlinks it without any further filter check.
     pub(super) fn defer_decided_deletion(
         &mut self,
@@ -360,9 +360,9 @@ impl<'a> CopyContext<'a> {
             self.options.backup_enabled() && self.options.backup_directory().is_none();
         let do_times = preserve_times && !backup_without_dir;
 
-        // Deepest-first, mirroring upstream's reverse flist walk, so a child's
-        // perm/mtime change cannot re-clobber a parent handled earlier.
-        // upstream: generator.c:2581 for (i = dir_flist->used - 1; i >= 0; i--).
+        // Deepest-first, so a child's perm/mtime change cannot re-clobber a
+        // parent handled earlier. Deviation from upstream: generator.c:2581
+        // touch_up_dirs() walks the list forward (`for (i = start; i <= end; ...)`).
         dirs.sort_by(|a, b| {
             b.path
                 .components()
@@ -412,7 +412,7 @@ impl<'a> CopyContext<'a> {
     /// source mtime). It is intentionally retained here to keep this change
     /// scoped to one concern; folding it into the final pass is a deferred DRY
     /// cleanup. Both set the identical value, so the overlap is harmless.
-    /// upstream: generator.c:2419 do_delayed_deletions() runs after generate_files()
+    /// upstream: generator.c:2899-2900 do_delayed_deletions() runs after generate_files()
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
         // Nothing queued means no delete pass ran, so there is no notice to
         // emit - upstream only prints the skip notice from inside delete_in_dir
@@ -425,7 +425,7 @@ impl<'a> CopyContext<'a> {
         }
         // No I/O-error gate here, deliberately. Upstream has exactly ONE
         // `io_error & IOERR_GENERAL && !ignore_errors` test, inside
-        // `delete_in_dir()` (generator.c:304) - the site that DECIDES what to
+        // `delete_in_dir()` (generator.c:285) - the site that DECIDES what to
         // delete. `do_delayed_deletions()` (generator.c:265-278) is a pure
         // executor: it replays the recorded plan through `delete_item()` with
         // no gate at all. `--delete-delay` keeps `allow_inc_recurse` set
@@ -447,7 +447,7 @@ impl<'a> CopyContext<'a> {
         // (generator.c:368-389). Restore that pre-order so the persistent
         // destination delete-filter chain loads each parent's `.rsync-filter`
         // rules BEFORE a subdirectory's sweep, letting them inherit down the
-        // destination tree (exclude.c:801). A path-ascending sort places every
+        // destination tree (exclude.c:900). A path-ascending sort places every
         // ancestor directory before its descendants.
         pending.sort_by(|a, b| a.destination.cmp(&b.destination));
         for entry in pending {
@@ -552,7 +552,7 @@ impl<'a> CopyContext<'a> {
 /// source filesystem paths, so a descendant match means `candidate`'s bytes were
 /// physically walked when `root`'s subtree was expanded.
 ///
-/// upstream: flist.c:3259 flist_sort_and_clean() collapses an operand that
+/// upstream: flist.c:3594-3624 flist_sort_and_clean() collapses an operand that
 /// duplicates a subtree already contributed by an earlier `--relative` operand.
 fn source_root_covers(root: &Path, candidate: &Path) -> bool {
     candidate == root || candidate.starts_with(root)

@@ -1,4 +1,4 @@
-//! Daemon mode authentication matching upstream rsync 3.4.4.
+//! Daemon mode authentication matching upstream rsync 3.5.1.
 //!
 //! This module implements the rsync daemon challenge-response authentication protocol
 //! that protects modules configured with `auth users`. The implementation mirrors
@@ -9,7 +9,8 @@
 //!
 //! The daemon authentication follows this sequence:
 //!
-//! 1. **Server generates challenge**: A unique base64-encoded random string
+//! 1. **Server generates challenge**: A base64-encoded digest of peer address,
+//!    time and PID
 //! 2. **Server sends**: `@RSYNCD: AUTHREQD <challenge>\n`
 //! 3. **Client computes response**: Base64(MD4/MD5(password + challenge))
 //! 4. **Client sends**: `<username> <response>\n`
@@ -47,11 +48,11 @@
 //! - MD4 (legacy compatibility)
 //!
 //! Both sides advertise their list in the `@RSYNCD:` greeting. A client picks the
-//! entry of the server's list that ranks highest in its own; a server takes the
-//! *first* entry of the client's list that it supports, so client preference wins
-//! (upstream: compat.c:333-356 `parse_negotiate_str`, whose `am_server` branch
-//! stops at the first acceptable client choice). The single winner then drives both
-//! the challenge and the verification.
+//! entry of the server's list that ranks highest in its own; this server takes the
+//! *first* entry of the client's list that it supports, so client preference wins.
+//! Deviation from upstream: 3.5.1's `parse_negotiate_str()` (compat.c:333-364)
+//! keeps the mutual entry ranked highest in the server's own list on both sides.
+//! The single winner then drives both the challenge and the verification.
 //!
 //! # Examples
 //!
@@ -670,7 +671,7 @@ mod tests {
     /// response length: MD4 and MD5 share a base64 length, yet only the digest
     /// negotiation settled on may verify.
     ///
-    /// upstream: authenticate.c:76,90 - both halves use
+    /// upstream: authenticate.c:104,128 - both halves use
     /// `valid_auth_checksums.negotiated_nni`.
     #[test]
     fn verify_client_response_ignores_a_non_negotiated_digest() {
@@ -695,12 +696,11 @@ mod tests {
         ));
     }
 
-    // upstream: compat.c:838-842 `output_daemon_greeting()` prints
+    // upstream: compat.c:844-853 `output_daemon_greeting()` prints
     // `get_default_nno_list(&valid_auth_checksums, ...)` verbatim into
     // `@RSYNCD: %d.%d %s\n` with no protocol filtering, so there is exactly one
-    // advertised list and every protocol era sees it. Confirmed against rsync
-    // 3.4.4: `--daemon --protocol=28` greets
-    // `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
+    // advertised list and every protocol era sees it: `--daemon --protocol=28`
+    // greets `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.
     #[test]
     fn the_daemon_greeting_advertises_the_same_list_at_every_protocol() {
         use protocol::ProtocolVersion;

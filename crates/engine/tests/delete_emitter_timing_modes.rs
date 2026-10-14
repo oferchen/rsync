@@ -61,7 +61,7 @@ fn dir_child(parent: &str, name: &str) -> FileEntry {
 
 /// Collects the leaf name of every recorded delete dispatch.
 ///
-/// The production drain now attaches a `DirSandbox` (#506), so on unix the
+/// The production drain now attaches a `DirSandbox`, so on unix the
 /// emitter dispatches through the dirfd-anchored `*_at` trait methods and
 /// `RecordingDeleteFs` records the LEAF name; the path-based fallback (and
 /// non-unix) records the absolute path. `file_name()` normalises both to the
@@ -84,7 +84,7 @@ fn deleted_leaves(events: &[engine::delete::DeleteEvent]) -> Vec<OsString> {
 // Per-mode wiring tests
 // ---------------------------------------------------------------------------
 
-/// DDP-E1 (#2265): --delete-during. emit_one runs BEFORE the per-dir
+/// DDP-E1: --delete-during. emit_one runs BEFORE the per-dir
 /// copy step for each work unit. The test simulates the copy walk by
 /// calling emit_one once per directory.
 #[test]
@@ -119,7 +119,7 @@ fn during_mode_emits_one_directory_per_work_unit() {
     assert_eq!(outcome.stats.files, 2);
 }
 
-/// DDP-E2 (#2266): --delete-before. emit_all runs as a pre-pass before
+/// DDP-E2: --delete-before. emit_all runs as a pre-pass before
 /// any content transfer. All plans must already be published when
 /// emit_all fires.
 #[test]
@@ -165,7 +165,7 @@ fn before_mode_drains_all_plans_in_one_pre_pass() {
     assert!(leaves.contains(&OsString::from("b1")));
 }
 
-/// DDP-E3 (#2267): --delete-after. Plans accumulate during transfer;
+/// DDP-E3: --delete-after. Plans accumulate during transfer;
 /// emit_all runs at the end. The test simulates incremental publication.
 #[test]
 fn after_mode_accumulates_plans_then_drains_at_end() {
@@ -212,7 +212,7 @@ fn after_mode_accumulates_plans_then_drains_at_end() {
     assert!(leaves.contains(&OsString::from("three")));
 }
 
-/// DDP-E4 (#2268): --delete-delay. Identical drain shape to After at the
+/// DDP-E4: --delete-delay. Identical drain shape to After at the
 /// emitter level; the difference (drain happens after all renames
 /// commit) is enforced by the caller, not the context.
 #[test]
@@ -237,7 +237,7 @@ fn delay_mode_drains_post_transfer_like_after() {
     assert_eq!(outcome.exit_code, 0);
 }
 
-/// DDP-E5 (#2269): --delete-excluded. The flag widens the extras set
+/// DDP-E5: --delete-excluded. The flag widens the extras set
 /// (filter-excluded names are appended) BEFORE compute_extras runs. The
 /// timing mode is orthogonal; here we layer it on top of During.
 #[test]

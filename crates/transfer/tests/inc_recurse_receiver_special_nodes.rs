@@ -9,8 +9,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1948-2002` - symlinks created inline in `recv_generator()`.
-//! - `generator.c:2031` - devices/specials created inline in `recv_generator()`.
+//! - `generator.c:1948-2024` - symlinks created inline in `recv_generator()`.
+//! - `generator.c:2030-2033` - devices/specials created inline in `recv_generator()`.
 
 #![cfg(unix)]
 
@@ -123,7 +123,7 @@ fn inc_recurse_receiver_loopback_recreates_links_and_specials() {
     add_special_nodes(&src);
 
     // Sender: `--server --sender -rte.iLsfxCIvu . src/`. The `i` letter is what
-    // an upstream client sends to request INC_RECURSE (options.c:3045).
+    // an upstream client sends to request INC_RECURSE (options.c:3221).
     let mut src_arg = src.clone().into_os_string();
     src_arg.push("/");
     let sender_cfg = ServerConfig::from_flag_string_and_args(

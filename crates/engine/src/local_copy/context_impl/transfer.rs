@@ -89,12 +89,12 @@ impl<'a> CopyContext<'a> {
     /// per-directory filter stacks and returning a guard that pops them (and
     /// restores any inherited entries a `clear` directive wiped) on drop.
     ///
-    /// upstream: delete.c:63 - `delete_dir_contents()` calls
+    /// upstream: delete.c:106 - `delete_dir_contents()` calls
     /// `push_local_filters(fname, dlen)` with the destination directory so the
     /// receiver applies any `: filter` rules found in the directory being
     /// scanned for extraneous entries. The returned guard pops the loaded rules
     /// when it drops, mirroring the matching `pop_local_filters()` call on
-    /// `delete.c:115`.
+    /// `delete.c:176`.
     ///
     /// # Incremental isolation (PEX, #333)
     ///
@@ -112,7 +112,7 @@ impl<'a> CopyContext<'a> {
     /// - the ONLY unbalanced mutation is a `clear` directive
     ///   (`clear_inherited`) calling `layers[index].clear()` /
     ///   `marker_layers[index].clear()`, which discards inherited entries the
-    ///   per-index pop cannot restore (exclude.c:801 keeps inherited rules in
+    ///   per-index pop cannot restore (exclude.c:900 keeps inherited rules in
     ///   `lp->head` an arbitrary number of indices deep). Those wiped vectors
     ///   are captured before the clear and restored after the pop, so the
     ///   source-visible state is left byte-identical to before the load.
@@ -136,7 +136,7 @@ impl<'a> CopyContext<'a> {
 
     /// Advances the persistent destination delete-filter chain to `destination`.
     ///
-    /// Mirrors upstream `change_local_filter_dir` (exclude.c:875): pops every
+    /// Mirrors upstream `change_local_filter_dir` (exclude.c:974): pops every
     /// held guard whose depth is `>= destination`'s depth, then loads this
     /// destination directory's per-dir merge files onto the isolated
     /// [`Self::delete_dir_merge`] chain, inheriting the surviving ancestor
@@ -297,7 +297,7 @@ impl<'a> CopyContext<'a> {
 
             let mut segment = FilterSegment::default();
             for compiled in entries.rules.drain(..) {
-                // upstream: exclude.c:200-207 add_rule - an anchored pattern in a
+                // upstream: exclude.c:297-304 add_rule - an anchored pattern in a
                 // per-dir merge file is rooted at the merge file's directory, not
                 // the transfer root: `pre_len = dirbuf_len - module_dirlen - 1`
                 // prepends the dir prefix. Mirror that so `- /file1` in `foo/.filt`
@@ -336,7 +336,7 @@ impl<'a> CopyContext<'a> {
             let markers = entries.exclude_if_present;
             let clear_inherited = entries.clear_inherited;
 
-            // upstream: exclude.c:787-789 - dir-merge directives found in a
+            // upstream: exclude.c:886-888 - dir-merge directives found in a
             // top-level merge file register per-directory rules that the growing
             // push loop then loads against this same directory (and descendants).
             // Append them to the dynamic frame's active set; the growing while
@@ -353,7 +353,7 @@ impl<'a> CopyContext<'a> {
                 // destination-deletion scan. The captured vectors are restored
                 // after the guard's per-index pop so source-visible state is
                 // left byte-identical (the per-index pop alone cannot rebuild
-                // cleared inherited entries - exclude.c:801).
+                // cleared inherited entries - exclude.c:900).
                 if capture_cleared_layers
                     && !cleared_layers.iter().any(|restore| restore.index == index)
                 {
@@ -400,7 +400,7 @@ impl<'a> CopyContext<'a> {
         drop(layers);
         drop(marker_layers);
 
-        // upstream: exclude.c:787-789 - walk the GROWING active-rule list so a
+        // upstream: exclude.c:886-888 - walk the GROWING active-rule list so a
         // dir-merge directive registered while loading an inherited file (or a
         // top-level merge file above) is itself loaded against THIS directory.
         // Loading a rule may append further nested rules; the re-read bound then
@@ -457,7 +457,7 @@ impl<'a> CopyContext<'a> {
     /// file registered.
     ///
     /// Anchored patterns are rewritten relative to `relative_dir` to mirror
-    /// upstream `exclude.c:200-207 add_rule`.
+    /// upstream `exclude.c:297-304 add_rule`.
     fn load_nested_dir_merge(
         &self,
         source: &Path,
@@ -572,7 +572,7 @@ impl<'a> CopyContext<'a> {
         // output channels are drained at different times.
         record.stamp();
 
-        // upstream: receiver.c:749-762 / sender.c:587-600 - every ITEM_IS_NEW
+        // upstream: receiver.c:924-938 / sender.c:587-600 - every ITEM_IS_NEW
         // entry bumps `stats.created_*` for its type, whether or not file data
         // moved. `was_created()` is the ITEM_IS_NEW mirror; classify by action
         // to hit the right per-type counter. Directories are counted separately
@@ -598,16 +598,16 @@ impl<'a> CopyContext<'a> {
         // and the transfer root (".") is not itemized as a created entry, so
         // record only the created non-regular ones here. Without this an
         // upstream `--read-batch` peer under-counts created dirs/symlinks and,
-        // for a special, aborts with exit 23 (receiver.c:575 no_batched_update).
+        // for a special, aborts with exit 23 (receiver.c:738 no_batched_update).
         if record.was_created() && record.relative_path() != std::path::Path::new(".") {
             const ITEM_REPORT_CHANGE: u16 = 1 << 1;
             const ITEM_IS_NEW: u16 = 1 << 13;
             const ITEM_LOCAL_CHANGE: u16 = 1 << 14;
             let iflags = match record.action() {
-                // upstream: generator.c:1480-1482 - a created directory is
+                // upstream: generator.c:1869-1871 - a created directory is
                 // itemized ITEM_LOCAL_CHANGE, and itemize() ORs in ITEM_IS_NEW.
                 LocalCopyAction::DirectoryCreated => Some(ITEM_LOCAL_CHANGE | ITEM_IS_NEW),
-                // upstream: generator.c:1605-1610 / :1679-1682 - a created
+                // upstream: generator.c:2004-2009 / :2093-2096 - a created
                 // symlink or special is itemized
                 // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE + ITEM_IS_NEW.
                 LocalCopyAction::SymlinkCopied

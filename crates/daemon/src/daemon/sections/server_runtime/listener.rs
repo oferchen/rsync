@@ -68,7 +68,7 @@ fn read_address_family_env_override() -> Option<AddressFamilyOverride> {
 /// which lets `getaddrinfo(NULL, port, AI_PASSIVE, ...)` return every
 /// available family - on glibc that is `::` then `0.0.0.0`.
 ///
-/// upstream: socket.c:410-507 (`open_socket_in`) walks every getaddrinfo
+/// upstream: socket.c:560-658 (`open_socket_in`) walks every getaddrinfo
 /// result, binds one socket per family, and only returns NULL when zero
 /// sockets bound.
 fn resolve_bind_addresses(
@@ -148,18 +148,19 @@ const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
 /// Default TCP listen backlog when not overridden by `listen backlog` in the
 /// daemon configuration file.
 ///
-/// Mirrors upstream rsync's default of 5: `daemon-parm.txt` declares
-/// `INTEGER listen_backlog 5`, and `socket.c:562` passes `lp_listen_backlog()`
+/// Mirrors upstream rsync's default of 5: `daemon-parm.txt:12` declares
+/// `INTEGER listen_backlog 5`, and `socket.c:716` passes `lp_listen_backlog()`
 /// to `listen(2)`. An operator who needs a deeper accept queue raises it with
 /// the `listen backlog` directive, exactly as upstream allows.
 const DEFAULT_LISTEN_BACKLOG: i32 = 5;
 
 /// Logs a progress summary when SIGUSR2 is received.
 ///
-/// Outputs the number of active worker threads, total connections served, and
-/// daemon uptime. Mirrors upstream rsync's SIGUSR2 behaviour of dumping
-/// transfer statistics to the log.
-/// upstream: main.c - SIGUSR2 handler outputs transfer progress info.
+/// Outputs the number of active sessions, total connections served, and
+/// daemon uptime.
+///
+/// Deviation from upstream: the daemon has no SIGUSR2 summary upstream;
+/// main.c:1695 sigusr2_handler() only makes a receiver child wrap up.
 fn log_progress_summary(
     log: Option<&SharedLogSink>,
     active_workers: usize,
@@ -191,21 +192,21 @@ fn log_progress_summary(
 /// `"socket(...) failed"` / `"bind() failed: ... (address-family %d)"`
 /// debug emissions. Linux uses `AF_INET = 2` and `AF_INET6 = 10` (see
 /// `<bits/socket.h>`), which oc-rsync reproduces verbatim so the trace
-/// output stays byte-comparable with upstream `socket.c:440-478`.
+/// output stays byte-comparable with upstream `socket.c:595-627`.
 const fn address_family_int(addr: SocketAddr) -> i32 {
     if addr.is_ipv4() { 2 } else { 10 }
 }
 
 /// `SOCK_STREAM` numeric value used by upstream `socket(2)` calls.
 ///
-/// upstream: `socket.c:437-438` - `socket(resp->ai_family, resp->ai_socktype,
+/// upstream: `socket.c:591-592` - `socket(resp->ai_family, resp->ai_socktype,
 /// resp->ai_protocol)` where `ai_socktype == SOCK_STREAM` for the TCP
-/// listener path (`open_socket_in(SOCK_STREAM, ...)` at
-/// `clientserver.c:1099`). Linux defines `SOCK_STREAM = 1`.
+/// listener path (`open_socket_in(SOCK_STREAM, ...)` at `socket.c:705`).
+/// Linux defines `SOCK_STREAM = 1`.
 const UPSTREAM_SOCK_STREAM: i32 = 1;
 /// `IPPROTO_TCP` numeric value used by upstream `socket(2)` calls.
 ///
-/// upstream: `socket.c:437-438` - `resp->ai_protocol` is set by
+/// upstream: `socket.c:591-592` - `resp->ai_protocol` is set by
 /// `getaddrinfo` to `IPPROTO_TCP` (`6`) when `ai_socktype == SOCK_STREAM`.
 const UPSTREAM_IPPROTO_TCP: i32 = 6;
 
@@ -217,16 +218,15 @@ const UPSTREAM_IPPROTO_TCP: i32 = 6;
 /// `listen(sp[i], lp_listen_backlog())`.
 ///
 /// `socket_options` (the `socket options =` config directive / `--sockopts`)
-/// is applied before `bind(2)` - upstream: socket.c:455-473 applies
+/// is applied before `bind(2)` - upstream: socket.c:605-623 applies
 /// `SO_REUSEADDR` then `set_socket_options(s, sockopts)` then `bind(2)`.
-/// Applying user socket options only after `listen(2)` (as a prior version of
-/// this function did, via a caller-side post-bind pass) is a no-op for
-/// options that shape the window scale advertised in the SYN-ACK the kernel
-/// sends once the socket starts accepting connections.
+/// Options applied only after `listen(2)` cannot shape the window scale
+/// advertised in the SYN-ACK the kernel sends once the socket starts
+/// accepting connections.
 ///
 /// Failed `socket(2)` and `bind(2)` syscalls are reported through the
 /// `--debug=BIND` producer (`protocol::bind::trace`), mirroring upstream
-/// `socket.c:440-478` per-address-family accumulation. The errors are
+/// `socket.c:590-647` per-address-family accumulation. The errors are
 /// propagated to the caller unchanged.
 fn bind_with_backlog(
     addr: SocketAddr,
@@ -253,18 +253,18 @@ fn bind_with_backlog(
 
     // Allow port reuse so the daemon can restart quickly without waiting for
     // TIME_WAIT sockets to expire.
-    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR (and only
+    // upstream: socket.c:605-606 - open_socket_in() sets SO_REUSEADDR (and only
     // SO_REUSEADDR) on every listener.
     socket.set_reuse_address(true)?;
 
-    // upstream: socket.c:457-460 - set_socket_options(s, sockopts) runs here,
+    // upstream: socket.c:607-610 - set_socket_options(s, sockopts) runs here,
     // after SO_REUSEADDR and before bind(2), so options that shape the SYN-ACK
     // (e.g. SO_SNDBUF/SO_RCVBUF window scaling) take effect from the first
     // connection the listener accepts.
     apply_daemon_socket_options(&socket, socket_options, log_sink);
 
     // For IPv6 sockets, set IPV6_V6ONLY to avoid conflicts with the separate
-    // IPv4 listener in dual-stack mode.
+    // IPv4 listener in dual-stack mode. upstream: socket.c:612-620.
     if addr.is_ipv6() {
         socket.set_only_v6(true)?;
     }
@@ -335,10 +335,11 @@ fn warn_tcp_fastopen_unsupported(log: Option<&SharedLogSink>) {
 /// Emits a one-shot warning when a per-family bind fails while another
 /// family in the dual-stack startup is still available to try.
 ///
-/// upstream: `socket.c:471-473` in rsync-3.4.1 logs the per-family failure
-/// via `asprintf(&errmsgs[ecnt++], "bind() failed: %s (address-family %d)")`
-/// and prints it through `rwrite(FLOG, ...)` either when all addresses fail
-/// or when running with `-vv` debug. oc-rsync surfaces it unconditionally on
+/// upstream: `socket.c:625-627` records the per-family failure via
+/// `asprintf(&errmsgs[ecnt++], "bind() failed: %s (address-family %d)")` and
+/// `socket.c:643-647` prints it through `rwrite(FLOG, ...)` only when all
+/// addresses fail or under `--debug=BIND`. Deviation from upstream: oc-rsync
+/// surfaces it unconditionally on
 /// the assumption that operators of a long-lived daemon want to know that the
 /// dual-stack listener is degraded - GitHub Actions runners that have IPv6
 /// partially configured but unroutable trigger this path, and the silent
@@ -369,14 +370,12 @@ fn warn_per_family_bind_failure(
 /// Emits a warning when `accept(2)` fails with a transient, per-connection
 /// error that the accept loop deliberately survives.
 ///
-/// upstream: `socket.c:601` - `if (fd < 0) continue;`. The daemon accept loop
+/// upstream: `socket.c:756` - `if (fd < 0) continue;`. The daemon accept loop
 /// ignores every `accept(2)` failure and keeps serving. Errors such as
 /// `ECONNABORTED` (a client reset between the TCP handshake and `accept`) or
 /// `EMFILE`/`ENFILE` (a transient descriptor shortage under a connection
 /// burst) are per-connection: the affected client is dropped, but the listener
-/// stays up. Prior to this the single-listener engine escalated any such error
-/// to a fatal daemon exit, so one aborted connection under load could tear the
-/// whole daemon down. Surfacing the error at warning level keeps operator
+/// stays up. Surfacing the error at warning level keeps operator
 /// visibility into the churn without implying the daemon is degraded.
 fn warn_transient_accept_failure(
     log: Option<&SharedLogSink>,
@@ -399,7 +398,7 @@ fn warn_transient_accept_failure(
 /// Binds one TCP listener per entry in `bind_addresses`, tolerating per-family
 /// failures while at least one family still binds successfully.
 ///
-/// Mirrors upstream `socket.c::open_socket_in` (rsync-3.4.1, lines 428-498):
+/// Mirrors upstream `socket.c:560-658` `open_socket_in()`:
 /// the loop attempts every getaddrinfo result, emits a per-family diagnostic
 /// when a bind fails, and only returns an error when zero sockets bound. The
 /// dual-stack default (IPv6 then IPv4) tolerates GitHub Actions runners where

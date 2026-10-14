@@ -1,7 +1,7 @@
 //! Regression coverage for the server's INC_RECURSE grant and the upstream
 //! option predicate `ServerConfig::allows_inc_recurse` it rests on.
 //!
-//! upstream: compat.c:161-179 set_allow_inc_recurse, compat.c:724 (the server
+//! upstream: compat.c:162-178 set_allow_inc_recurse, compat.c:724 (the server
 //! writes `CF_INC_RECURSE` whenever `allow_inc_recurse` survives).
 
 use crate::{ServerConfig, ServerRole};
@@ -37,7 +37,7 @@ mod server_receiver_grant {
 
     /// Runs a server receiver against a client that sent `flag_string` and
     /// returns the compat flags it wrote. They are the first bytes a server
-    /// writes (compat.c:724-727); the empty input ends the session right after.
+    /// writes (compat.c:724, sent at :745-749); the empty input ends the session right after.
     fn written_compat_flags(flag_string: &str) -> CompatibilityFlags {
         let mut server = config(ServerRole::Receiver, true, false);
         server.flag_string = flag_string.to_owned();
@@ -68,7 +68,7 @@ mod server_receiver_grant {
     }
 
     /// Opposed control: without the client's `i` the server withholds it
-    /// (compat.c:178-179).
+    /// (compat.c:177-178).
     #[test]
     fn server_receiver_withholds_inc_recurse_the_client_did_not_offer() {
         let flags = written_compat_flags("-re.LsfxCIvu");
@@ -93,7 +93,7 @@ fn plain_recursive_receiver_options_allow_inc_recurse() {
     assert!(receiver.allows_inc_recurse());
 }
 
-/// Each of upstream's four receiver clauses (compat.c:174-176) needs the full
+/// Each of upstream's four receiver clauses (compat.c:173-176) needs the full
 /// file list before the transfer walk, so each alone must refuse inc-recursion.
 #[test]
 fn receiver_options_needing_the_whole_list_refuse_inc_recurse() {

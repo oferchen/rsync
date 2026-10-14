@@ -6,8 +6,8 @@
 //! # Upstream Reference
 //!
 //! - `generator.c:recv_generator()` sends NDX, iflags, sum_head
-//! - `match.c:write_sum_head()` sends signature header
-//! - `match.c:395` sends signature blocks
+//! - `io.c:write_sum_head()` sends signature header
+//! - `generator.c:generate_and_send_sums()` sends signature blocks
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -48,9 +48,9 @@ use super::RequestConfig;
 /// # Upstream Reference
 ///
 /// - `generator.c:recv_generator()` sends NDX, iflags, sum_head
-/// - `match.c:write_sum_head()` sends signature header
-/// - `match.c:395` sends signature blocks
-/// - `xattrs.c:623` - `send_xattr_request()` writes abbreviated xattr request
+/// - `io.c:write_sum_head()` sends signature header
+/// - `generator.c:generate_and_send_sums()` sends signature blocks
+/// - `xattrs.c:651` - `send_xattr_request()` writes abbreviated xattr request
 #[allow(clippy::too_many_arguments)]
 pub fn send_file_request<W: Write + ?Sized>(
     writer: &mut W,
@@ -89,8 +89,8 @@ pub fn send_file_request<W: Write + ?Sized>(
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:196-199` - sender reads xattr request when ITEM_REPORT_XATTR set
-/// - `xattrs.c:623-675` - `send_xattr_request()` writes request from generator
+/// - `sender.c:578-581` - sender reads xattr request when ITEM_REPORT_XATTR set
+/// - `xattrs.c:651-707` - `send_xattr_request()` writes request from generator
 #[allow(clippy::too_many_arguments)]
 pub fn send_file_request_xattr<W: Write + ?Sized>(
     writer: &mut W,
@@ -116,7 +116,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
             list.iter()
                 .any(|e| e.state().needs_send() || e.state().needs_request())
         });
-        // upstream: generator.c:1937-1947 - the generator forwards the full
+        // upstream: generator.c:2377-2386 - the generator forwards the full
         // itemize iflags (ITEM_TRANSFER plus the pre-transfer attribute-diff
         // bits from itemize(), including ITEM_IS_NEW when the destination did
         // not exist). The sender reads them, echoes them back, and prints the
@@ -125,7 +125,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         //
         // upstream: generator.c:587 `iflags &= 0xffff` keeps every low-16
         // report bit - including ITEM_REPORT_XATTR (1<<8), which itemize() set
-        // from the xattr_diff() comparison (generator.c:565-576). Only bits
+        // from the xattr_diff() comparison (generator.c:571-581). Only bits
         // 16-18 (ITEM_MISSING_DATA/DELETED/MATCHED, all log-only locals) are
         // masked off, and ITEM_REPORT_XATTR is not among them. We additionally
         // strip the two trailing-field bits (BASIS/XNAME) because this function
@@ -138,7 +138,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         let mut iflags = ((base_iflags & 0xFFFF) as u16
             & !(MANAGED | SenderAttrs::ITEM_REPORT_XATTR))
             | SenderAttrs::ITEM_TRANSFER;
-        // upstream: generator.c:566/575 gate the xattr comparison on
+        // upstream: generator.c:571-575 gate the xattr comparison on
         // preserve_xattrs, so base_iflags only carries the bit when -X is
         // active; re-gate here for safety. The bit is set from the itemized
         // value diff (base_iflags) or from a TODO/abbrev request in xattr_list.
@@ -147,9 +147,9 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         if report_xattr {
             iflags |= SenderAttrs::ITEM_REPORT_XATTR;
         }
-        // upstream: generator.c:1942-1943 - a non-FNAME basis sets
+        // upstream: generator.c:2381-2382 - a non-FNAME basis sets
         // ITEM_BASIS_TYPE_FOLLOWS so the sender reads the trailing fnamecmp_type
-        // byte and echoes it back to the receiver (rsync.c:403-405). The
+        // byte and echoes it back to the receiver (rsync.c:404-406). The
         // --partial-dir resume basis (FNAMECMP_PARTIAL_DIR) and the
         // `--inplace --backup` delta basis (FNAMECMP_BACKUP, which clears the
         // sender's `updating_basis_file`, sender.c:629-630) are emitted here;
@@ -158,7 +158,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         if emit_basis_type {
             iflags |= SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS;
         }
-        // upstream: generator.c:1945-1946 - a fuzzy basis also sets
+        // upstream: generator.c:2383-2384 - a fuzzy basis also sets
         // ITEM_XNAME_FOLLOWS and sends the basis basename as a vstring so the
         // peer's receiver can open the same file.
         let emit_xname = fnamecmp_type.is_fuzzy() && xname.is_some();
@@ -167,23 +167,23 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         }
         writer.write_all(&iflags.to_le_bytes())?;
 
-        // upstream: sender.c:189-192 - the basis-type byte precedes the xname
+        // upstream: rsync.c:404-411 - the basis-type byte precedes the xname
         // vstring, which precedes any xattr-request payload.
         if emit_basis_type {
             writer.write_all(&[u8::from(fnamecmp_type)])?;
         }
         if emit_xname {
-            // upstream: generator.c:591,1948 write_vstring() - 1- or 2-byte
-            // length prefix then the basename bytes (io.c:2335), not a varint.
+            // upstream: generator.c:596-597 write_vstring() - 1- or 2-byte
+            // length prefix then the basename bytes (io.c:2520), not a varint.
             protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
 
-        // upstream: generator.c:592-599 - the xattr request payload follows the
+        // upstream: generator.c:598-605 - the xattr request payload follows the
         // basis/xname fields whenever ITEM_REPORT_XATTR is on the wire; the
         // peer's send_files() reads it under the identical condition
-        // (sender.c:86-88). want_xattr_optim combined with
+        // (sender.c:578-581). want_xattr_optim combined with
         // ITEM_XNAME_FOLLOWS+ITEM_LOCAL_CHANGE suppresses the payload on both
-        // sides (generator.c:595-596), so the bit rides the wire with no
+        // sides (generator.c:601-602), so the bit rides the wire with no
         // trailing request. Coupling the payload to the same `report_xattr`
         // value that set the bit keeps the two in lockstep: an upstream sender
         // that sees the bit always reads exactly the bytes we write here.
@@ -196,7 +196,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
                     Some(list) => write_xattr_request(writer, list)?,
                     // upstream: send_xattr_request() with no XSTATE_TODO items
                     // writes only the terminating `write_byte(f_out, 0)`, read
-                    // back as a varint by recv_xattr_request (xattrs.c:685).
+                    // back as a varint by recv_xattr_request (xattrs.c:727).
                     None => protocol::write_varint(writer, 0)?,
                 }
             }
@@ -208,7 +208,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         None => SumHead::empty(),
     };
     // The `generating and sending sums for %d` line is NOT emitted here.
-    // Upstream prints it (generator.c:2363) between `gen mapped` and the
+    // Upstream prints it (generator.c:2364-2365) between `gen mapped` and the
     // geometry line that `sum_sizes_sqroot()` produces, i.e. while the basis is
     // being checksummed - which in oc is `receiver::basis`, the owner of all
     // four generator-half DELTASUM lines. Emitting it at this point put it after
@@ -216,8 +216,8 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     // 3.5.0 on a `--debug=deltasum2` pull).
     sum_head.write(writer)?;
 
-    // upstream: generator.c:787-788 - in append mode, generator skips writing
-    // signature blocks after sum_head. The sender's receive_sums() (sender.c:88-96)
+    // upstream: generator.c:792-793 - in append mode, generator skips writing
+    // signature blocks after sum_head. The sender's receive_sums() (sender.c:354-359)
     // returns early without reading blocks, using sum_head to calculate existing length.
     if !config.append
         && let Some(ref sig) = signature

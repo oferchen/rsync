@@ -60,8 +60,8 @@ fn start_auth_digest_floor_daemon(
 /// attacker takes away to brute-force offline, and a weak digest is what makes
 /// that cheap. The assertion is therefore on the answer line itself.
 ///
-/// upstream: authenticate.c:324-332 returns NULL before `gen_challenge()`
-/// (:334), and clientserver.c:812 turns that into `@ERROR: auth failed on
+/// upstream: authenticate.c:324-331 returns NULL before `gen_challenge()`
+/// (:335), and clientserver.c:812 turns that into `@ERROR: auth failed on
 /// module %s`.
 #[test]
 fn auth_digest_floor_refuses_a_weak_client_without_sending_a_challenge() {
@@ -136,7 +136,7 @@ fn auth_digest_floor_admits_a_client_at_or_above_the_floor() {
 /// connection rather than being ignored - an unrecognised floor must never fail
 /// open into "no floor".
 ///
-/// upstream: authenticate.c:316-322, the `floor_rank < 0` arm. Note that the
+/// upstream: authenticate.c:317-323, the `floor_rank < 0` arm. Note that the
 /// daemon itself still started and parsed the config: upstream discovers this at
 /// connection time, per module, so one module's typo cannot take the daemon down.
 #[test]
@@ -201,7 +201,7 @@ fn no_auth_digest_directive_imposes_no_floor() {
 /// The whole decision surface, every floor against every negotiated digest.
 ///
 /// Upstream's rule is one comparison - `got_rank > floor_rank` refuses
-/// (authenticate.c:330) - so the expected value is derivable rather than
+/// (authenticate.c:324) - so the expected value is derivable rather than
 /// enumerated: a digest clears a floor exactly when it is at least as strong.
 /// Writing it that way means the table cannot disagree with itself, and any
 /// change to the *ordering* is caught by
@@ -248,7 +248,7 @@ fn absent_auth_digest_floor_admits_every_digest() {
 
 /// `Md4Old` is not an advertisable name but *is* a reachable negotiated value:
 /// it is what a peer sending no digest list resolves to below protocol 30
-/// (compat.c:879-881). It must be ranked as the `md4` it spells, so an
+/// (compat.c:890-893). It must be ranked as the `md4` it spells, so an
 /// `auth digest = md4` floor admits it and any stronger floor refuses it.
 ///
 /// Ranking it as unknown would refuse it under *every* floor, silently locking
@@ -282,7 +282,7 @@ fn unresolvable_auth_digest_floor_refuses_every_digest() {
     }
 }
 
-/// Upstream matches the floor name with `strcasecmp` (checksum.c:104), so the
+/// Upstream matches the floor name with `strcasecmp` (checksum.c:102), so the
 /// case an operator writes must not decide whether their floor works.
 #[test]
 fn auth_digest_floor_name_is_case_insensitive() {
@@ -293,7 +293,7 @@ fn auth_digest_floor_name_is_case_insensitive() {
 /// The two refusal arms carry upstream's wording into the log line; the
 /// credential arm deliberately carries none, leaving the bare prefix.
 ///
-/// upstream: authenticate.c:318-321 and :327-331.
+/// upstream: authenticate.c:318-321 and :325-329.
 #[test]
 fn auth_denial_log_reasons_match_upstream_wording() {
     assert_eq!(AuthDenial::Credentials.log_suffix(), None);

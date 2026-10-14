@@ -1,4 +1,4 @@
-// DMC-6: end-to-end test that proves a per-module `max connections = N`
+// End-to-end test that proves a per-module `max connections = N`
 // directive binds before the daemon-global `--max-connections` cap when
 // the per-module value is smaller.
 //
@@ -110,8 +110,8 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
         .expect("send second module");
     second_stream.flush().expect("flush second module");
 
-    // Pin the refusal line byte-for-byte to upstream rsync 3.4.1
-    // `clientserver.c:752`. The cap value reported is the per-module
+    // Pin the refusal line byte-for-byte to upstream rsync 3.5.1
+    // `clientserver.c:799`. The cap value reported is the per-module
     // limit (1), not the global cap (10) - confirming the per-module
     // directive is the binding constraint.
     line.clear();
@@ -121,7 +121,7 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
         "@ERROR: max connections (1) reached -- try again later",
     );
 
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();
@@ -142,7 +142,7 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
         .expect("first denial message");
     assert!(line.starts_with("@ERROR: auth failed on module"));
 
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();

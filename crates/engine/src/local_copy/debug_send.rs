@@ -1,9 +1,12 @@
 //! DEBUG_SEND tracing for sender operations.
 //!
-//! This module provides structured tracing for file send/delta operations
-//! that match upstream rsync's sender.c debug output format. All tracing is
-//! conditionally compiled behind the `tracing` feature flag and produces no-op
-//! inline functions when disabled.
+//! This module provides structured tracing for file send/delta operations, the
+//! counterpart of upstream's `DEBUG_GTE(SEND, ...)` output in `sender.c`. All
+//! tracing is conditionally compiled behind the `tracing` feature flag and
+//! produces no-op inline functions when disabled.
+//!
+//! Deviation from upstream: events are structured `tracing` records, not
+//! upstream's `rprintf(FINFO, ...)` text lines.
 //!
 //! # Examples
 //!
@@ -24,12 +27,13 @@
 
 use std::time::{Duration, Instant};
 
-/// Target name for tracing events, matching rsync's debug category.
+/// Target name for tracing events, named after upstream's `SEND` debug category.
 const SEND_TARGET: &str = "rsync::send";
 
 /// Traces the start of a file send operation.
 ///
-/// In upstream rsync, this corresponds to the entry point of `send_files()`.
+/// Counterpart of upstream's per-file `send_files(%d, %s)` line in
+/// `sender.c:send_files()`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_send_file_start(name: &str, file_size: u64, index: usize) {

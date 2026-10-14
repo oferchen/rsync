@@ -23,7 +23,7 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `main.c:347-357` - `handle_stats()` server-sender write path
-    /// - `main.c:991-993` - `do_server_sender()` calls `handle_stats(f_out)`
+    /// - `main.c:1008` - `do_server_sender()` calls `handle_stats(f_out)`
     pub(super) fn send_stats<W: Write>(
         &self,
         writer: &mut W,
@@ -39,8 +39,8 @@ impl GeneratorContext {
         // sub-list, and which would also count directory sizes upstream omits).
         let total_size: u64 = self.flist_send_stats.total_size;
 
-        // upstream: main.c:349-350 - handle_stats() writes the sender's cached raw
-        // descriptor counters (total_read, total_written; io.c:838/877) as the
+        // upstream: main.c:353-354 - handle_stats() writes the sender's cached raw
+        // descriptor counters (total_read, total_written; io.c:938/977) as the
         // first two varlong30 values, sampled at the caller's handle_stats point.
         let stats = TransferStats::with_bytes(total_read, total_written, total_size)
             .with_flist_times(flist_buildtime_ms, flist_xfertime_ms);
@@ -65,8 +65,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:374-383` - `handle_stats()` `else if (write_batch)` arm
-    /// - `main.c:1363-1365` - `handle_stats(-1)` then `read_final_goodbye()`
+    /// - `main.c:378-388` - `handle_stats()` `else if (write_batch)` arm
+    /// - `main.c:1401-1403` - `handle_stats(-1)` then `read_final_goodbye()`
     pub(super) fn record_batch_stats(
         &self,
         total_read: u64,
@@ -78,7 +78,7 @@ impl GeneratorContext {
             return Ok(());
         };
 
-        // upstream: main.c:377-378 - the client sender's --write-batch trailer
+        // upstream: main.c:378-388 - the client sender's --write-batch trailer
         // records the same cached raw descriptor counters it would send on the
         // wire, so --read-batch reproduces the identical "Total bytes" report.
         let stats =
@@ -132,8 +132,8 @@ mod tests {
     /// `send_stats` transmits the raw wire totals it is handed, verbatim.
     ///
     /// WHY: upstream's `handle_stats()` writes the sender's cached raw descriptor
-    /// counters `stats.total_read`/`stats.total_written` (main.c:349-350,
-    /// io.c:838/877), not any logical delta/token tally. The orchestrator samples
+    /// counters `stats.total_read`/`stats.total_written` (main.c:353-354,
+    /// io.c:938/977), not any logical delta/token tally. The orchestrator samples
     /// those raw counters at the `handle_stats` point and passes them in; this
     /// pins that they reach the wire unchanged so a pulling client reports the
     /// exact byte totals the sender observed.

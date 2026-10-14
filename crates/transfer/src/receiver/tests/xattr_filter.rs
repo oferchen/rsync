@@ -1,6 +1,6 @@
 //! The generator's destination xattr read honours `x`-modifier filter rules.
 //!
-//! upstream: `xattrs.c:250-257` - `saw_xattr_filter` is a global consulted
+//! upstream: `xattrs.c:262-269` - `saw_xattr_filter` is a global consulted
 //! inside `rsync_xal_get()` on *every* call, so it screens the generator's
 //! destination read exactly as it screens the sender's source read. An
 //! excluded name is therefore invisible to `xattr_diff()` on both sides and
@@ -60,7 +60,7 @@ fn receiver_with(rules: Vec<::filters::FilterRule>) -> ReceiverContext {
 /// read, the excluded attribute survives on the destination list alone and
 /// `xattr_diff()` reports a change that upstream never reports - and that no
 /// transfer could settle, since the same filter stops the receiver from ever
-/// removing it (`xattrs.c:1026`).
+/// removing it (`xattrs.c:1096`).
 #[test]
 fn an_excluded_name_does_not_flip_the_x_column() {
     let dir = TempDir::new().expect("temp dir");
@@ -129,7 +129,7 @@ fn a_name_the_filter_admits_still_flips_the_x_column() {
 /// A rule *without* the `x` modifier governs paths only and must leave the
 /// destination read alone.
 ///
-/// upstream: `exclude.c:914` - `rule_matches()` gates every rule on
+/// upstream: `exclude.c:1013` - `rule_matches()` gates every rule on
 /// `!(name_flags & NAME_IS_XATTR) ^ !(ex->rflags & FILTRULE_XATTR)`, and
 /// `saw_xattr_filter` is set only by `x`-modifier rules, so a plain `-` rule
 /// never reaches `rsync_xal_get()`.

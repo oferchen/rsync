@@ -11,7 +11,7 @@ use super::super::support::{test_config, test_handshake};
 
 #[test]
 fn receiver_ndx_convert_call_counter_increments() {
-    // INC_RECURSE diagnostic I4 (#2199): every flat_to_wire_ndx invocation
+    // INC_RECURSE diagnostic: every flat_to_wire_ndx invocation
     // must bump the global call counter. The assertion uses >= because the
     // counter is shared across the process and other tests may run
     // concurrently.
@@ -36,7 +36,7 @@ fn receiver_ndx_convert_call_counter_increments() {
 
 #[test]
 fn receiver_ndx_convert_partition_point_depth_grows() {
-    // INC_RECURSE diagnostic I4 (#2199): the cumulative partition_point depth
+    // INC_RECURSE diagnostic: the cumulative partition_point depth
     // must monotonically grow as the segment table is queried. A 4-segment
     // table contributes at least depth(4)=3 per call. Uses >= because the
     // counter is shared across the process.

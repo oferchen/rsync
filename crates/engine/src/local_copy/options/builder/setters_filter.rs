@@ -28,7 +28,7 @@ impl LocalCopyOptionsBuilder {
     /// converter is propagated to
     /// [`LocalCopyOptions::iconv`](crate::local_copy::LocalCopyOptions::iconv)
     /// for later use by file-list emit, file-list ingest, and filter
-    /// matching once those producer wirings land (#1912, #1913, #1914).
+    /// matching once those producer wirings land.
     #[must_use]
     pub fn iconv(mut self, converter: Option<FilenameConverter>) -> Self {
         self.iconv = converter;

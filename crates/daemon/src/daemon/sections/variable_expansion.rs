@@ -42,7 +42,7 @@ fn expand_config_vars(template: &str, vars: &HookVariables<'_>) -> String {
 /// Called before authentication with `user_name` unset, which expands only
 /// `secrets file`, and again after it to expand the rest.
 ///
-/// upstream: `loadparm.c:333` `RETURN_EXPANDED` expands each string parameter
+/// upstream: `loadparm.c:330` `RETURN_EXPANDED` expands each string parameter
 /// on its first read.
 fn expand_module_vars(module: &mut ModuleDefinition, vars: &HookVariables<'_>) {
     let expand_path = |path: &Path, vars: &HookVariables<'_>| {

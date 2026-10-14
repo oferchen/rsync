@@ -13,8 +13,8 @@ use crate::client::config::{ClientConfig, IconvSetting, TransferTimeout};
 
 #[test]
 fn builds_receiver_invocation_with_sender_flag() {
-    // Pull: local is receiver -> remote needs --sender (upstream options.c:2625).
-    // upstream: options.c:2738 - capability string is embedded in the compact
+    // Pull: local is receiver -> remote needs --sender (upstream options.c:2789-2790).
+    // upstream: options.c:2904 - capability string is embedded in the compact
     // flag string, producing one argument like `-re.LsfxCIvu`.
     // The local Receiver does not advertise 'i' because oc-rsync's receiver
     // path strips CF_INC_RECURSE from compat_flags (lib.rs::compute_allow_inc_recurse).
@@ -42,7 +42,7 @@ fn builds_receiver_invocation_with_sender_flag() {
 #[test]
 fn builds_sender_invocation_no_sender_flag() {
     // Push: local is sender -> remote is receiver, no --sender flag.
-    // upstream: options.c:2738 - capability string is embedded in the compact
+    // upstream: options.c:2904 - capability string is embedded in the compact
     // flag string, producing one argument like `-re.iLsfxCIvu`.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
@@ -111,7 +111,7 @@ fn ssh_sender_omits_inc_recurse_without_recursion_or_under_qsort() {
     // upstream: compat.c:172 set_allow_inc_recurse() runs `if (!recurse ||
     // use_qsort) allow_inc_recurse = 0;` from server_options() right before
     // maybe_add_e_option(), so a non-recursive push never advertises 'i' even
-    // though `allow_inc_recurse` initializes to 1 (options.c:114).
+    // though `allow_inc_recurse` initializes to 1 (options.c:119).
     //
     // Ground truth from rsync 3.4.4 (protocol 32), server argv captured with a
     // stub `-e` shell:
@@ -150,7 +150,7 @@ fn ssh_receiver_omits_inc_recurse_capability_by_default() {
     // skip `receive_extra_file_lists`, and the leftover 0xFF byte would
     // trip read_varint overflow on the next decode.
     //
-    // upstream: compat.c:162-181 set_allow_inc_recurse() ties 'i' to the
+    // upstream: compat.c:162-180 set_allow_inc_recurse() ties 'i' to the
     // local side's actual ability to honor CF_INC_RECURSE.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
@@ -231,7 +231,7 @@ fn includes_compress_flag() {
     assert!(flags.contains('z'), "expected 'z' in flags: {flags}");
 }
 
-// upstream: options.c:2732 - the compact 'z' is packed only for
+// upstream: options.c:2898-2899 - the compact 'z' is packed only for
 // do_compression == CPRES_ZLIB. An explicit non-zlib --compress-choice is
 // forwarded as a long-form arg and must NOT also pack 'z'.
 #[cfg(feature = "zstd")]
@@ -264,7 +264,7 @@ fn omits_compress_flag_for_zlibx() {
 
 #[test]
 fn includes_log_format_for_itemize() {
-    // upstream: options.c:2354-2367,2782-2785 - `-i` alone installs the default
+    // upstream: options.c:2496-2509,2946-2956 - `-i` alone installs the default
     // "%i %n%L" format, so `stdout_format_has_i` is set and the server arg is
     // --log-format=%i. The CLI models this by setting `out_format_forwards_i`.
     let config = ClientConfig::builder()
@@ -296,7 +296,7 @@ fn includes_log_format_for_itemize() {
 
 #[test]
 fn includes_ii_log_format_for_itemize_unchanged() {
-    // upstream: options.c:164-175 server_options - `-ii` forwards
+    // upstream: options.c:2948-2949 server_options - `-ii` forwards
     // `--log-format=%i%I` so the remote generator also itemizes unchanged rows.
     let config = ClientConfig::builder()
         .itemize_changes(true)
@@ -503,8 +503,8 @@ fn omits_ignore_errors_flag_when_not_set() {
     );
 }
 
-// WHY: upstream options.c:2656-2657 emits `--fsync` inside the `if (am_sender)`
-// block, so it rides only on a PUSH (RemoteRole::Sender) where the remote
+// WHY: upstream options.c:3111-3112 (`if (do_fsync)`) emits --fsync inside the
+// am_sender block, so it rides only on a PUSH (RemoteRole::Sender) where the remote
 // receiver fsyncs the files it writes. On a PULL the remote sender writes no
 // destination files, so forwarding --fsync would be meaningless (and upstream
 // never does), while the local receiver still fsyncs its own writes.
@@ -873,7 +873,7 @@ fn no_w_suppressed_on_pull_and_without_sparse_or_whole_file() {
 
 #[test]
 fn ignore_missing_args_is_pull_only_delete_missing_is_both() {
-    // upstream: options.c:2876-2881 - "--delete-missing-args needs the
+    // upstream: options.c:3042-3047 - "--delete-missing-args needs the
     // cooperation of both sides, but the sender can handle
     // --ignore-missing-args by itself." WHY: forwarding --ignore-missing-args
     // on a PUSH would steer the remote receiver for a decision the local
@@ -940,7 +940,7 @@ fn includes_checksum_choice_long_arg() {
 
 #[test]
 fn includes_copy_links_flag() {
-    // upstream: options.c:2665-2667 - copy_links ('L') is a receiver-branch
+    // upstream: options.c:2831-2833 - copy_links ('L') is a receiver-branch
     // compact letter: it is forwarded to the remote only when the remote is the
     // sender (a pull), so the builder must run in the Receiver role to emit it.
     let config = ClientConfig::builder().copy_links(true).build();
@@ -968,7 +968,7 @@ fn includes_executability_flag() {
     assert!(flags.contains('E'), "expected 'E' in flags: {flags}");
 }
 
-/// upstream: options.c:2702 - 'E' is only sent when preserve_perms is false.
+/// upstream: options.c:2868-2869 - 'E' is only sent when preserve_perms is false.
 #[test]
 fn executability_suppressed_when_permissions_set() {
     let config = ClientConfig::builder()
@@ -1063,7 +1063,7 @@ fn includes_backup_related_args() {
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
 
-    // upstream: options.c:2657-2658 - `make_backups` rides in the compact
+    // upstream: options.c:2806-2807 - `make_backups` rides in the compact
     // flag string as `b`, NOT as a standalone `--backup` long arg.
     let flag_string = find_flag_string(&string_args);
     assert!(
@@ -1099,7 +1099,7 @@ fn includes_link_dest_via_reference_directories() {
     );
 }
 
-// upstream: options.c:2921-2944 - basis-dir args (--link-dest/--copy-dest/
+// upstream: options.c:3114-3123 - basis-dir args (--link-dest/--copy-dest/
 // --compare-dest) live inside the `if (am_sender)` block, so they are forwarded
 // only on a PUSH. On a PULL (RemoteRole::Receiver) the local receiver applies
 // them locally and must NOT forward them, or the remote sender would link_stat()
@@ -1125,14 +1125,14 @@ fn reference_directories_not_forwarded_on_pull() {
     );
 }
 
-// upstream: options.c:2862-2863 - only `--super` (am_root > 1) is forwarded,
+// upstream: options.c:3028-3029 - only `--super` (am_root > 1) is forwarded,
 // solely on a push. `--fake-super` (am_root == -1) is receiver-local and is
 // never forwarded in either direction. Covered by
 // `fake_super_not_forwarded_on_pull` / `fake_super_not_forwarded_on_push`.
 
 #[test]
 fn forwards_write_devices_to_remote_receiver_only() {
-    // upstream: options.c:2989 - `if (write_devices && am_sender) args[ac++] =
+    // upstream: options.c:3160-3161 - `if (write_devices && am_sender) args[ac++] =
     // "--write-devices"`. am_sender is a PUSH, so the flag reaches the remote
     // receiver (RemoteRole::Sender) but never a remote sender (a PULL).
     let config = ClientConfig::builder().write_devices(true).build();
@@ -1154,7 +1154,7 @@ fn forwards_write_devices_to_remote_receiver_only() {
 
 #[test]
 fn forwards_copy_devices_to_remote_sender_only() {
-    // upstream: options.c:2997 - `if (copy_devices && !am_sender) args[ac++] =
+    // upstream: options.c:3168-3169 - `if (copy_devices && !am_sender) args[ac++] =
     // "--copy-devices"`. !am_sender is a PULL, so the flag reaches the remote
     // sender (RemoteRole::Receiver) but never a remote receiver (a PUSH).
     let config = ClientConfig::builder().copy_devices(true).build();
@@ -1207,7 +1207,7 @@ fn partial_dir_not_forwarded_on_pull_receiver() {
 
 #[test]
 fn delay_updates_not_forwarded_on_pull_receiver() {
-    // upstream: options.c:2901 - --delay-updates is emitted only inside the
+    // upstream: options.c:3067-3068 - --delay-updates is emitted only inside the
     // `partial_dir && am_sender` block. On a pull the receiver applies it
     // locally and must not forward it to the remote sender.
     let config = ClientConfig::builder().delay_updates(true).build();
@@ -1221,7 +1221,7 @@ fn delay_updates_not_forwarded_on_pull_receiver() {
 
 #[test]
 fn inplace_suppressed_when_append_mode() {
-    // upstream: options.c:2961-2966 - `if (append_mode) {...} else if (inplace)`.
+    // upstream: options.c:3132-3141 - `if (append_mode) {...} else if (inplace)`.
     // append_mode takes precedence, so --inplace must not accompany --append.
     let config = ClientConfig::builder().inplace(true).append(true).build();
     let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
@@ -1250,7 +1250,7 @@ fn includes_remove_source_files_long_arg() {
 
 #[test]
 fn forwards_deprecated_remove_sent_files_spelling() {
-    // upstream: options.c:2992-2995 - the deprecated `--remove-sent-files`
+    // upstream: options.c:3163-3166 - the deprecated `--remove-sent-files`
     // spelling is forwarded verbatim; the canonical form must not also appear.
     let config = ClientConfig::builder()
         .remove_source_files(true)
@@ -1271,7 +1271,7 @@ fn forwards_deprecated_remove_sent_files_spelling() {
 
 #[test]
 fn forwards_log_format_o_when_out_format_has_operation() {
-    // upstream: options.c:2786-2787 - an out-format with `%o` (and no `%i`)
+    // upstream: options.c:2952-2953 - an out-format with `%o` (and no `%i`)
     // forwards `--log-format=%o` so the remote emits operation output.
     let config = ClientConfig::builder()
         .out_format_has_operation(true)
@@ -1291,7 +1291,7 @@ fn forwards_log_format_o_when_out_format_has_operation() {
 
 #[test]
 fn omits_log_format_o_on_pull() {
-    // upstream: options.c:2778 - the whole chain is gated on `am_sender`; a pull
+    // upstream: options.c:2946 - the whole chain is gated on `am_sender`; a pull
     // (RemoteRole::Receiver) never forwards a --log-format arg.
     let config = ClientConfig::builder()
         .out_format_has_operation(true)
@@ -1311,7 +1311,7 @@ fn omits_log_format_o_on_pull() {
 
 #[test]
 fn forwards_log_format_placeholder_when_not_verbose() {
-    // upstream: options.c:2788-2789 - an out-format with neither `%i` nor `%o`
+    // upstream: options.c:2954-2955 - an out-format with neither `%i` nor `%o`
     // forwards the placeholder `--log-format=X` for a non-verbose client.
     let config = ClientConfig::builder().out_format_placeholder(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
@@ -1329,7 +1329,7 @@ fn forwards_log_format_placeholder_when_not_verbose() {
 
 #[test]
 fn omits_log_format_placeholder_when_verbose() {
-    // upstream: options.c:2788 - the `X` placeholder is only forwarded when the
+    // upstream: options.c:2954-2955 - the `X` placeholder is only forwarded when the
     // client is not verbose (`else if (!verbose)`).
     let config = ClientConfig::builder()
         .out_format_placeholder(true)
@@ -1350,7 +1350,7 @@ fn omits_log_format_placeholder_when_verbose() {
 
 #[test]
 fn out_format_without_i_forwards_o_not_i_even_with_dash_i() {
-    // upstream: options.c:2354-2367 - `stdout_format_has_i` is derived from the
+    // upstream: options.c:2496-2509 - `stdout_format_has_i` is derived from the
     // resolved out-format string, not the `-i` flag. `--out-format="%o" -i`
     // leaves the explicit "%o" format in place (no `%i`), so has_i stays 0 and
     // the server arg must be `--log-format=%o`, NOT `%i`. The CLI models this by
@@ -1379,7 +1379,7 @@ fn out_format_without_i_forwards_o_not_i_even_with_dash_i() {
 
 #[test]
 fn explicit_out_format_with_i_forwards_log_format_i() {
-    // upstream: options.c:2354-2358 - an explicit `--out-format="%i"` sets
+    // upstream: options.c:2499-2500 - an explicit `--out-format="%i"` sets
     // `stdout_format_has_i` even without `-i`, so the server arg is
     // --log-format=%i. The CLI models this by setting `out_format_forwards_i`.
     let config = ClientConfig::builder().out_format_forwards_i(true).build();
@@ -1410,7 +1410,7 @@ fn includes_size_only_long_arg() {
 
 #[test]
 fn includes_no_implied_dirs_when_disabled() {
-    // upstream: options.c:2986 - `--no-implied-dirs` is forwarded only when
+    // upstream: options.c:3157 - `--no-implied-dirs` is forwarded only when
     // relative paths are active, so the disabled case must also enable
     // relative paths to reproduce upstream's emission.
     let config = ClientConfig::builder()
@@ -1440,8 +1440,8 @@ fn omits_no_implied_dirs_when_default() {
 
 #[test]
 fn omits_no_implied_dirs_when_disabled_without_relative_paths() {
-    // upstream: options.c:2334-2335 forces `implied_dirs = 0` when relative
-    // paths are off, and options.c:2986 gates the `--no-implied-dirs`
+    // upstream: options.c:2333-2334 forces `implied_dirs = 0` when relative
+    // paths are off, and options.c:3157 gates the `--no-implied-dirs`
     // forwarding on `relative_paths`. A non-relative transfer must therefore
     // never forward `--no-implied-dirs`; otherwise the remote sender
     // link_stat()s the flag as a source path and fails with exit 23.
@@ -1484,12 +1484,12 @@ fn secluded_invocation_disabled_returns_normal_args() {
 
 #[test]
 fn secluded_invocation_enabled_keeps_flags_and_capability_on_command_line() {
-    // upstream: options.c:2613-2755 server_options() keeps `--server`, the
+    // upstream: options.c:2778-2921 server_options() keeps `--server`, the
     // compact flag string (with 's' and the capability suffix), and
     // `--iconv` on the actual spawned command line even under
     // `--secluded-args`; only the long-form tail, `.`, and the path
     // arguments are deferred to the stdin stream after the
-    // `protect_args && !local_server` NULL cutoff (rsync.c:283-320
+    // `protect_args && !local_server` NULL cutoff (rsync.c:284-321
     // send_protected_args()).
     let config = ClientConfig::builder().protect_args(Some(true)).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
@@ -1630,12 +1630,12 @@ fn secluded_invocation_explicitly_disabled_returns_normal() {
 /// Locks the exact cmdline-vs-stdin split for a representative
 /// `--secluded-args` push invocation with an `--iconv` charset configured.
 ///
-/// upstream: `options.c:2613-2755 server_options()` builds `--server`, the
+/// upstream: `options.c:2778-2921 server_options()` builds `--server`, the
 /// compact flag string (`s` first, then transfer flags, then the
 /// capability suffix), and `--iconv` before the `protect_args &&
 /// !local_server` NULL cutoff; everything emitted afterward (here just
 /// `--ignore-errors`, `.`, and the destination path) is deferred to
-/// `send_protected_args()` (`rsync.c:283-320`).
+/// `send_protected_args()` (`rsync.c:284-321`).
 #[test]
 fn secluded_invocation_locks_cmdline_and_stdin_sequence() {
     let config = ClientConfig::builder()
@@ -1767,7 +1767,7 @@ fn default_config_produces_expected_flags() {
         flags.contains('r'),
         "default builder enables recursive: {flags}"
     );
-    // upstream: options.c:2672-2676 - 'W' is only sent when explicitly set.
+    // upstream: options.c:2838-2842 - 'W' is only sent when explicitly set.
     // The default for remote transfers is no-whole-file.
     assert!(
         !flags.contains('W'),
@@ -1819,7 +1819,7 @@ fn includes_links_flag() {
 
 #[test]
 fn includes_copy_dirlinks_flag() {
-    // upstream: options.c:2668-2669 - copy_dirlinks ('k') is a receiver-branch
+    // upstream: options.c:2834-2835 - copy_dirlinks ('k') is a receiver-branch
     // compact letter, emitted only when the remote is the sender (a pull).
     let config = ClientConfig::builder().copy_dirlinks(true).build();
     let flags = receiver_flag_string(&config);
@@ -1833,9 +1833,9 @@ fn includes_devices_flag() {
     assert!(flags.contains('D'), "expected 'D' in flags: {flags}");
 }
 
-// upstream: options.c:2687-2688 - the compact 'D' letter tracks preserve_devices
+// upstream: options.c:2853-2854 - the compact 'D' letter tracks preserve_devices
 // ONLY. specials-only sends NO 'D'; specials ride as the long-form --specials
-// (options.c:2770-2775). oc previously packed 'D' for specials, diverging.
+// (options.c:2937-2942). oc previously packed 'D' for specials, diverging.
 #[test]
 fn specials_only_emits_long_form_specials_not_compact_d() {
     let config = ClientConfig::builder().specials(true).build();
@@ -1851,7 +1851,7 @@ fn specials_only_emits_long_form_specials_not_compact_d() {
     );
 }
 
-// upstream: options.c:2687-2688,2770-2775 - devices sets 'D'; when devices are
+// upstream: options.c:2853-2854,2937-2942 - devices sets 'D'; when devices are
 // preserved but specials are not, --no-specials is sent (never --devices).
 #[test]
 fn devices_without_specials_emits_d_and_no_specials() {
@@ -1892,7 +1892,7 @@ fn includes_atimes_flag() {
     assert!(flags.contains('U'), "expected 'U' in flags: {flags}");
 }
 
-// upstream: options.c:2691-2695 - `if (preserve_atimes) { 'U'; if
+// upstream: options.c:2857-2861 - `if (preserve_atimes) { 'U'; if
 // (preserve_atimes > 1) 'U'; }`. Level 1 emits a single `-U`, level 2 must emit
 // the doubled `-UU` so the remote also preserves directory access times.
 // WHY: dropping the doubled letter silently downgrades `-UU` to `-U`, so the
@@ -1919,7 +1919,7 @@ fn atimes_level_two_emits_doubled_uu() {
     );
 }
 
-// upstream: options.c:2708-2714 - `if (preserve_xattrs) { 'X'; if
+// upstream: options.c:2874-2880 - `if (preserve_xattrs) { 'X'; if
 // (preserve_xattrs > 1) 'X'; }`. WHY: a `-XX` request that collapses to `-X`
 // tells the remote to omit xattrs in a fake-super store, diverging from the
 // user's explicit level-2 intent.
@@ -1949,7 +1949,7 @@ fn xattrs_level_two_emits_doubled_xx() {
 
 // The doubled letter is only useful if the server half recovers the level from
 // it: the sender gates the `rsync.%FOO` fake-super store on `preserve_xattrs <
-// 2` (xattrs.c:262). Both the in-process server config and a remote peer are
+// 2` (xattrs.c:272-279). Both the in-process server config and a remote peer are
 // built by re-parsing this same string, so a level that survives emission but
 // not parsing still leaves `-XX` behaving as `-X`.
 #[cfg(all(unix, feature = "xattr"))]
@@ -1969,7 +1969,7 @@ fn xattrs_level_survives_the_flag_string_round_trip() {
     }
 }
 
-// upstream: options.c:2719-2720 - `if (cvs_exclude) argstr[x++] = 'C';`. The
+// upstream: options.c:2885-2886 - `if (cvs_exclude) argstr[x++] = 'C';`. The
 // letter is forwarded unconditionally (outside the am_sender block) so the
 // remote peer runs get_cvs_excludes() itself. WHY: without the letter, an
 // upstream peer never activates its own CVS-ignore handling ($HOME/.cvsignore,
@@ -1994,7 +1994,7 @@ fn cvs_exclude_absent_by_default() {
     );
 }
 
-// upstream: options.c:2868-2870 - `else { if (skip_compress)
+// upstream: options.c:3034-3037 - `else { if (skip_compress)
 // safe_arg("--skip-compress", skip_compress); }`. Emitted only in the
 // `!am_sender` (PULL) branch so the remote sender skips the same suffixes.
 // WHY: an explicit `--skip-compress` list that is not forwarded makes the
@@ -2060,7 +2060,7 @@ fn numeric_ids_is_long_form_not_in_flag_string() {
     );
 }
 
-// upstream: options.c:2520 - server_options() NEVER forwards --trust-sender. It
+// upstream: server_options() NEVER forwards --trust-sender. It
 // only sets internal trust_sender/trust_sender_args locals; the server always
 // trusts the client (am_server implies trust). oc previously forwarded it,
 // diverging from every upstream server invocation.
@@ -2136,7 +2136,7 @@ fn includes_relative_paths_flag() {
 
 // upstream: options.c has NO compact 'P' letter. keep_partial rides as the
 // long-form --partial, emitted only on a PUSH (am_sender) without --partial-dir
-// (options.c:2894-2903). oc previously packed 'P', diverging from upstream.
+// (options.c:3062-3070). oc previously packed 'P', diverging from upstream.
 #[test]
 fn partial_emits_long_form_not_compact_p_on_push() {
     let config = ClientConfig::builder().partial(true).build();
@@ -2152,7 +2152,7 @@ fn partial_emits_long_form_not_compact_p_on_push() {
     );
 }
 
-// upstream: options.c:2894-2903 - the whole partial block is gated on am_sender,
+// upstream: options.c:3062-3070 - the whole partial block is gated on am_sender,
 // so a PULL (local is receiver, RemoteRole::Receiver) forwards neither 'P' nor
 // --partial; the local receiver keeps partials itself.
 #[test]
@@ -2174,8 +2174,8 @@ fn includes_update_flag() {
     assert!(flags.contains('u'), "expected 'u' in flags: {flags}");
 }
 
-// upstream: options.c:2643-2644 - the compact 'n' letter tracks `!do_xfers`,
-// which is set by dry_run ONLY (options.c:2375-2376), never by list_only
+// upstream: options.c:2810-2811 - the compact 'n' letter tracks `!do_xfers`,
+// which is set by dry_run ONLY (options.c:2517-2518), never by list_only
 // (the "Note: NOT dry_run!" comment). list_only == 1 packs neither 'n' nor
 // --list-only. Guards against regressing 'n' back onto the list-only path.
 #[test]
@@ -2188,7 +2188,7 @@ fn list_only_does_not_pack_dry_run_n() {
     );
 }
 
-// upstream: options.c:2375-2376 - dry_run (and only dry_run) sets do_xfers=0,
+// upstream: options.c:2517-2518 - dry_run (and only dry_run) sets do_xfers=0,
 // which packs 'n'. The real dry-run path must be preserved.
 #[test]
 fn dry_run_still_packs_n() {
@@ -2197,7 +2197,7 @@ fn dry_run_still_packs_n() {
     assert!(flags.contains('n'), "dry_run must pack 'n': {flags}");
 }
 
-// upstream: options.c:2757-2758 - `if (list_only > 1) "--list-only"`. An
+// upstream: options.c:2923-2924 - `if (list_only > 1) "--list-only"`. An
 // explicit `--list-only` on a pull forwards the long flag and NEVER packs 'n'
 // (list_only does not set do_xfers=0). Sealed argv:
 // `-logDtpre.iLsfxCIvu --list-only`.
@@ -2231,7 +2231,7 @@ fn implicit_list_only_does_not_forward_long_flag() {
     );
 }
 
-// upstream: options.c:2862-2863 - only `--super` (am_root > 1) is forwarded,
+// upstream: options.c:3028-3029 - only `--super` (am_root > 1) is forwarded,
 // and only on a push (am_sender). `--fake-super` (am_root == -1) is a
 // receiver-local storage mode and is NEVER forwarded in either direction.
 #[test]
@@ -2254,7 +2254,7 @@ fn fake_super_not_forwarded_on_push() {
     );
 }
 
-// upstream: options.c:2655-2656 - `if (quiet && msgs2stderr) 'q'`. Default
+// upstream: options.c:2804-2805 - `if (quiet && msgs2stderr) 'q'`. Default
 // msgs2stderr is 2 (nonzero), so plain `-q` packs 'q'. Sealed argv:
 // `-qe.LsfxCIvu --msgs2stderr` (with --msgs2stderr) / `-q...` (plain quiet).
 #[test]
@@ -2264,7 +2264,7 @@ fn quiet_with_default_msgs2stderr_packs_q() {
     assert!(flags.contains('q'), "quiet must pack 'q': {flags}");
 }
 
-// upstream: options.c:2637 - `--no-msgs2stderr` (msgs2stderr == 0) suppresses
+// upstream: options.c:2804-2805 - `--no-msgs2stderr` (msgs2stderr == 0) suppresses
 // the 'q' letter even when quiet is set.
 #[test]
 fn quiet_with_no_msgs2stderr_does_not_pack_q() {
@@ -2279,7 +2279,7 @@ fn quiet_with_no_msgs2stderr_does_not_pack_q() {
     );
 }
 
-// upstream: options.c:2792-2795 - `--msgs2stderr` (== 1) forwarded long-form.
+// upstream: options.c:2958-2961 - `--msgs2stderr` (== 1) forwarded long-form.
 #[test]
 fn msgs2stderr_forwarded_long_form() {
     let config = ClientConfig::builder().msgs2stderr(Some(true)).build();
@@ -2291,7 +2291,7 @@ fn msgs2stderr_forwarded_long_form() {
     assert!(!args.iter().any(|a| a == "--no-msgs2stderr"));
 }
 
-// upstream: options.c:2794-2795 - `--no-msgs2stderr` (== 0) forwarded long-form.
+// upstream: options.c:2960-2961 - `--no-msgs2stderr` (== 0) forwarded long-form.
 #[test]
 fn no_msgs2stderr_forwarded_long_form() {
     let config = ClientConfig::builder().msgs2stderr(Some(false)).build();
@@ -2303,7 +2303,7 @@ fn no_msgs2stderr_forwarded_long_form() {
     assert!(!args.iter().any(|a| a == "--msgs2stderr"));
 }
 
-// upstream: options.c:2637,2792 - the default (no -q, msgs2stderr == 2) packs
+// upstream: options.c:2804-2805,2958-2961 - the default (no -q, msgs2stderr == 2) packs
 // neither 'q' nor any msgs2stderr long flag. Guards the `-a`-matches seal.
 #[test]
 fn default_config_no_q_no_msgs2stderr() {
@@ -2472,7 +2472,7 @@ fn includes_modify_window_long_arg() {
 
 #[test]
 fn negative_modify_window_uses_short_at_spelling() {
-    // WHY: upstream options.c:2884 forwards a negative modify_window via the
+    // WHY: upstream options.c:3050 forwards a negative modify_window via the
     // short `-@%d` spelling (`-@-1`), NOT `--modify-window=-1`, so a stock
     // upstream `--server` receiver honours nanosecond-exact comparison. The
     // long form would be rejected as an invalid unsigned value on the peer.
@@ -2490,7 +2490,7 @@ fn negative_modify_window_uses_short_at_spelling() {
 
 #[test]
 fn modify_window_not_forwarded_on_pull() {
-    // WHY: upstream options.c:2883 gates the forwarded arg on `am_sender`. On a
+    // WHY: upstream options.c:3049 gates the forwarded arg on `am_sender`. On a
     // pull the local client is the receiver and runs the mtime quick-check
     // itself, so nothing is sent to the remote sender. Forwarding it would
     // diverge from upstream's argv byte-for-byte.
@@ -2547,7 +2547,7 @@ fn includes_compress_level_default() {
 
 #[test]
 fn includes_old_compress_for_explicit_zlib() {
-    // upstream: options.c:2830 - explicit zlib sent as --old-compress
+    // upstream: options.c:2996-2997 - explicit zlib sent as --old-compress
     let config = ClientConfig::builder()
         .compression_algorithm(CompressionAlgorithm::Zlib)
         .build();
@@ -2606,7 +2606,7 @@ fn includes_compress_choice_for_lz4() {
 
 #[test]
 fn includes_new_compress_for_explicit_zlibx() {
-    // upstream: options.c:2828 - zlibx sent as --new-compress
+    // upstream: options.c:2994-2995 - zlibx sent as --new-compress
     let config = ClientConfig::builder()
         .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
         .build();
@@ -2627,7 +2627,7 @@ fn includes_block_size_short_arg() {
         .block_size_override(Some(NonZeroU32::new(8192).unwrap()))
         .build();
     let args = build_sender_args(&config);
-    // upstream: options.c:2798 - block_size forwards as the SHORT `-B%u` token,
+    // upstream: options.c:2963-2967 - block_size forwards as the SHORT `-B%u` token,
     // never a long `--block-size=` flag (which the server parser would leak as
     // a positional destination path).
     assert!(
@@ -2655,7 +2655,7 @@ fn includes_temp_dir_long_arg() {
 #[test]
 fn includes_append_long_arg() {
     // Plain --append (append_mode == 1) emits exactly one --append and never
-    // --append-verify. upstream: options.c:2961-2964 server_options().
+    // --append-verify. upstream: options.c:3132-3135 server_options().
     let config = ClientConfig::builder().append(true).build();
     let args = build_sender_args(&config);
     let count = args.iter().filter(|a| *a == "--append").count();
@@ -2674,7 +2674,7 @@ fn append_verify_emits_doubled_append() {
     // --append-verify (append_mode == 2) is encoded on the wire as two bare
     // --append flags, never --append-verify. The server's OPT_APPEND increments
     // append_mode on am_server, so the second flag is what selects verify mode.
-    // upstream: options.c:2961-2964 server_options() + options.c:1728-1732.
+    // upstream: options.c:3132-3135 server_options() + options.c:1835-1840.
     let config = ClientConfig::builder().append_verify(true).build();
     let args = build_sender_args(&config);
     let count = args.iter().filter(|a| *a == "--append").count();
@@ -2710,7 +2710,7 @@ fn includes_safe_links_long_arg() {
 
 /// upstream: `--munge-links` never appears in `server_options()` (options.c) -
 /// it is applied locally where the symlink is written and is gated on
-/// `!am_daemon` (options.c:2263), so the remote is never told about it.
+/// `!am_daemon` (options.c:2380), so the remote is never told about it.
 #[test]
 fn omits_munge_links_long_arg() {
     let config = ClientConfig::builder().munge_links(true).build();
@@ -2744,8 +2744,8 @@ fn never_forwards_insecure_links_to_the_remote() {
 }
 
 /// upstream: `confine_root` is a local global consulted by `confinement_root()`
-/// (syscall.c:145-170) and never appears in `server_options()`. A daemon
-/// ignores a peer-supplied one outright (options.c:2391-2395), and a restricted
+/// (syscall.c:163-171) and never appears in `server_options()`. A daemon
+/// ignores a peer-supplied one outright (options.c:2394-2395), and a restricted
 /// shell wrapper - not rsync - is what appends `--confine-root=DIR` to a server
 /// argv, so the client forwarding it would be a second, unaudited source.
 #[test]
@@ -2768,7 +2768,7 @@ fn never_forwards_confine_root_to_the_remote() {
     }
 }
 
-/// upstream: options.c:2721-2722 - `--ignore-times` is emitted as the compact
+/// upstream: options.c:2887-2888 - `--ignore-times` is emitted as the compact
 /// `I` letter in the flag string, never as a long-form `--ignore-times` arg.
 /// The long form leaks onto the remote server's positional path list
 /// (`link_stat "--ignore-times" failed`), so the compact letter is required.
@@ -2809,7 +2809,7 @@ fn includes_existing_only_long_arg() {
 
 #[test]
 fn includes_omit_dir_times_compact_flag() {
-    // upstream: options.c:2655-2656 - omit_dir_times rides the compact flag
+    // upstream: options.c:2822-2823 - omit_dir_times rides the compact flag
     // string as 'O' inside the am_sender block, not as a standalone long arg.
     let config = ClientConfig::builder().omit_dir_times(true).build();
     let args = build_sender_args(&config);
@@ -2826,7 +2826,7 @@ fn includes_omit_dir_times_compact_flag() {
 
 #[test]
 fn includes_omit_link_times_compact_flag() {
-    // upstream: options.c:2657-2658 - omit_link_times rides the compact flag
+    // upstream: options.c:2824-2825 - omit_link_times rides the compact flag
     // string as 'J' inside the am_sender block, not as a standalone long arg.
     let config = ClientConfig::builder().omit_link_times(true).build();
     let args = build_sender_args(&config);
@@ -2916,7 +2916,7 @@ fn default_rsync_path_is_rsync() {
 
 #[test]
 fn capability_string_embedded_in_sender_flag_string() {
-    // upstream: options.c:2738 - capability suffix is embedded in the compact
+    // upstream: options.c:2904 - capability suffix is embedded in the compact
     // flag string, not sent as a separate argument.
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
@@ -2936,7 +2936,7 @@ fn capability_string_embedded_in_sender_flag_string() {
 
 #[test]
 fn capability_string_embedded_in_receiver_flag_string() {
-    // upstream: options.c:2738 - capability suffix is embedded in the compact
+    // upstream: options.c:2904 - capability suffix is embedded in the compact
     // flag string, not sent as a separate argument.
     // The local Receiver omits 'i' from its advertised capability because
     // its receive path strips CF_INC_RECURSE from compat_flags. See
@@ -3071,7 +3071,7 @@ fn compress_with_level_emits_both_flag_and_level() {
     );
 }
 
-// upstream: options.c:2894-2903 - `if (partial_dir && am_sender) { --partial-dir
+// upstream: options.c:3062-3070 - `if (partial_dir && am_sender) { --partial-dir
 // ... } else if (keep_partial && am_sender) --partial`. With --partial-dir set,
 // the else-if is not taken: --partial-dir is emitted and bare --partial is NOT,
 // and there is never a compact 'P'.
@@ -3100,7 +3100,7 @@ fn partial_dir_emits_partial_dir_not_compact_p_nor_bare_partial() {
 fn backup_without_dir_or_suffix_emits_only_b_short_flag() {
     let config = ClientConfig::builder().backup(true).build();
     let args = build_sender_args(&config);
-    // upstream: options.c:2657-2658 - bare `--backup` is `b` in the compact
+    // upstream: options.c:2806-2807 - bare `--backup` is `b` in the compact
     // flag string, not a standalone long arg.
     let flag_string = find_flag_string(&args);
     assert!(
@@ -3383,7 +3383,7 @@ fn all_flags_enabled_produces_valid_invocation() {
 
     let full_flags = find_flag_string(&args);
     let flags = transfer_flags_portion(full_flags);
-    // upstream: options.c:2665-2669 - copy_links ('L') and copy_dirlinks ('k')
+    // upstream: options.c:2831-2836 - copy_links ('L') and copy_dirlinks ('k')
     // are receiver-branch compact letters, so a Sender (push) invocation like
     // this one does NOT emit them. keep_dirlinks ('K') is sender-branch and is
     // present.
@@ -3396,12 +3396,12 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('t', "times"),
         ('U', "atimes"),
         ('p', "permissions"),
-        // upstream: options.c:2702 - 'E' is only sent when preserve_perms
+        // upstream: options.c:2868-2869 - 'E' is only sent when preserve_perms
         // is false (else-if), so it is absent when 'p' is also set.
         ('r', "recursive"),
         ('z', "compress"),
         ('c', "checksum"),
-        // upstream: options.c:2721-2722 - ignore_times rides as compact 'I'.
+        // upstream: options.c:2887-2888 - ignore_times rides as compact 'I'.
         ('I', "ignore_times"),
         ('H', "hard_links"),
         ('n', "dry_run"),
@@ -3415,7 +3415,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('u', "update"),
         ('N', "crtimes"),
         ('m', "prune_empty_dirs"),
-        // upstream: options.c:2655-2658 - omit_dir_times ('O') and
+        // upstream: options.c:2822-2825 - omit_dir_times ('O') and
         // omit_link_times ('J') ride in the compact flag string inside the
         // am_sender block, never as standalone long args.
         ('O', "omit_dir_times"),
@@ -3466,7 +3466,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    // upstream: options.c:2798 - block_size forwards as the SHORT `-B%u` token.
+    // upstream: options.c:2963-2967 - block_size forwards as the SHORT `-B%u` token.
     assert!(
         args.iter().any(|a| a == "-B4096"),
         "all-flags test: missing -B4096 in args: {args:?}"
@@ -3477,14 +3477,14 @@ fn all_flags_enabled_produces_valid_invocation() {
     );
 
     // upstream: `--munge-links` is absent from server_options() entirely - it is
-    // applied locally where the symlink is written (options.c:2263, gated on
+    // applied locally where the symlink is written (options.c:2380, gated on
     // !am_daemon), so it must never reach the remote.
     assert!(
         !args.iter().any(|a| a == "--munge-links"),
         "all-flags test: --munge-links must not be forwarded to the remote: {args:?}"
     );
 
-    // upstream: options.c:2835,2862-2863 - the super flag is forwarded only in
+    // upstream: options.c:3001,3028-3029 - the super flag is forwarded only in
     // the am_sender branch (to a remote receiver), so a remote-sender (pull)
     // invocation never carries --fake-super even with fake_super(true).
     assert!(
@@ -3500,7 +3500,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         "all-flags test: --copy-devices must not be forwarded on a push: {args:?}"
     );
 
-    // upstream: options.c:2830 - explicit zlib is sent as --old-compress
+    // upstream: options.c:2996-2997 - explicit zlib is sent as --old-compress
     assert!(
         args.iter().any(|a| a == "--old-compress"),
         "all-flags test: expected --old-compress for explicit zlib: {args:?}"
@@ -3524,7 +3524,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    // upstream: options.c:2738 - capability suffix is embedded in flag string.
+    // upstream: options.c:2904 - capability suffix is embedded in flag string.
     let expected_suffix = build_capability_string_suffix(true);
     let flag_str = find_flag_string(&args);
     assert!(
@@ -3780,9 +3780,9 @@ fn daemon_double_colon_to_local_is_pull() {
 }
 
 // --iconv server-arg forwarding tests.
-// upstream: options.c:2744-2751 - the post-comma half of iconv_opt is
+// upstream: options.c:2909-2918 - the post-comma half of iconv_opt is
 // forwarded; without a comma the whole spec is forwarded; --iconv=- and the
-// default forward nothing because options.c:2058-2060 nulls iconv_opt.
+// default forward nothing because options.c:2196-2198 nulls iconv_opt.
 
 #[test]
 fn iconv_unspecified_omits_iconv_arg() {
@@ -3827,7 +3827,7 @@ fn iconv_locale_default_forwards_dot() {
 
 #[test]
 fn iconv_explicit_pair_forwards_only_remote_half() {
-    // upstream: options.c:2745-2749 - `set = strchr(iconv_opt, ','); if (set)
+    // upstream: options.c:2911-2915 - `set = strchr(iconv_opt, ','); if (set)
     // set++;` so only the post-comma half (the remote charset) reaches the
     // server. The local charset stays on the client side.
     let config = ClientConfig::builder()
@@ -3850,7 +3850,7 @@ fn iconv_explicit_pair_forwards_only_remote_half() {
 
 #[test]
 fn iconv_explicit_single_forwards_whole_spec() {
-    // upstream: options.c:2746-2749 - `else set = iconv_opt;` so when there
+    // upstream: options.c:2914-2915 - `else set = iconv_opt;` so when there
     // is no comma the entire spec is forwarded as the remote charset.
     let config = ClientConfig::builder()
         .iconv(IconvSetting::Explicit {
@@ -3996,7 +3996,7 @@ fn shell_safe_leading_tilde_unescaped_when_not_requested() {
 
 #[test]
 fn shell_safe_leading_tilde_escaped_when_requested() {
-    // upstream: options.c:2562-2567 / :2581 - on a pull the leading ~ of a
+    // upstream: options.c:2717-2722 / :2754-2755 - on a pull the leading ~ of a
     // bare-name source path is backslash-escaped to \~foo so the remote shell
     // does not tilde-expand a path literally named ~foo.
     assert_eq!(shell_safe_tilde("~foo", true), "\\~foo");
@@ -4060,7 +4060,7 @@ fn shell_safe_escaping_in_normal_mode() {
 
 #[test]
 fn old_args_level_one_skips_filename_escaping() {
-    // upstream: options.c:2560 safe_arg() - for a filename arg the escape gate
+    // upstream: options.c:2715 safe_arg() - for a filename arg the escape gate
     // is `!protect_args && old_style_args == 0`, so a single `--old-args`
     // (level 1) already passes the path through unescaped and the remote
     // shell's `eval` performs the pre-3.0 word-splitting the user asked for.
@@ -4083,7 +4083,7 @@ fn old_args_level_one_skips_filename_escaping() {
 
 #[test]
 fn old_args_level_two_skips_filename_escaping() {
-    // upstream: options.c:2560 - the doubled `--old-args` (level 2) is the
+    // upstream: options.c:2715 - the doubled `--old-args` (level 2) is the
     // terminal state where the `old_style_args < 2` gate drops every remaining
     // safe_arg escape. A boolean flag could never reach it; the doubled counter
     // must still leave filename args verbatim (never re-escaping at level 2).
@@ -4109,7 +4109,7 @@ fn old_args_level_two_skips_filename_escaping() {
 #[cfg(unix)]
 #[test]
 fn includes_groupmap_wildcard_verbatim() {
-    // upstream: options.c:2926 - --groupmap is forwarded verbatim under
+    // upstream: options.c:3096-3097 - --groupmap is forwarded verbatim under
     // `protect_args` (the default). The wildcard `*` must survive so the
     // receiver's `uidlist.c:parse_name_map()` installs a wildcard rule.
     let mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse");
@@ -4224,7 +4224,7 @@ fn stop_at_is_not_forwarded_in_secluded_mode() {
 
 #[test]
 fn remote_options_appended_to_sender_invocation() {
-    // upstream: options.c:3014-3021 - remote_options[] appended after all
+    // upstream: options.c:3185-3193 - remote_options[] appended after all
     // other server args, before "." and remote paths.
     let config = ClientConfig::builder()
         .remote_options(vec!["--bwlimit=100", "--compress-level=1"])
@@ -4360,7 +4360,7 @@ fn remote_option_short_flag_forwarded_verbatim() {
 }
 
 /// SSH push with a local `--files-from` must NOT forward the option to the
-/// remote receiver. Upstream's `options.c:2972` gate
+/// remote receiver. Upstream's `options.c:3143` gate
 /// `if (files_from && (!am_sender || filesfrom_host))` skips emission when
 /// the client is the sender and the list lives locally. The local sender
 /// reads the file directly to build the file list; emitting
@@ -4459,10 +4459,10 @@ fn pull_with_local_files_from_sends_files_from_stdin_to_remote() {
     );
 }
 
-/// upstream: options.c:368-369 - a PULL with `--files-from --no-relative`
+/// upstream: options.c:3153-3154 - a PULL with `--files-from --no-relative`
 /// (relative_paths resolved off) must forward `--no-relative` to the remote
 /// sender AND must NOT pack the compact `R` letter. Without this the remote
-/// defaults relative_paths=1 (options.c:2214-2215) and keeps the leading path
+/// defaults relative_paths=1 (options.c:2331-2332) and keeps the leading path
 /// components (`sub/file` instead of the flattened `file`).
 #[test]
 fn pull_with_files_from_no_relative_forwards_no_relative_and_omits_r() {
@@ -4487,7 +4487,7 @@ fn pull_with_files_from_no_relative_forwards_no_relative_and_omits_r() {
     );
 }
 
-/// upstream: options.c:109-110 - a PULL with `--files-from` defaulting to
+/// upstream: options.c:2889-2890 - a PULL with `--files-from` defaulting to
 /// relative (relative_paths resolved on) packs the compact `R` letter and does
 /// NOT forward `--no-relative`.
 #[test]
@@ -4514,7 +4514,7 @@ fn pull_with_files_from_relative_packs_r_and_omits_no_relative() {
 }
 
 /// SSH pull with a remote-hosted `--files-from` forwards the absolute path
-/// (matching upstream `options.c:2974 safe_arg("", files_from)`).
+/// (matching upstream `options.c:3146 safe_arg("", files_from)`).
 #[test]
 fn pull_with_remote_files_from_forwards_path() {
     use crate::client::config::FilesFromSource;
@@ -4533,7 +4533,7 @@ fn pull_with_remote_files_from_forwards_path() {
 }
 
 // WHY: `--use-qsort` must reach the peer so both sides sort file lists with
-// the same comparator; upstream forwards it unconditionally (options.c:2918).
+// the same comparator; upstream forwards it unconditionally (options.c:3089-3090).
 #[test]
 fn ssh_forwards_use_qsort_when_set() {
     let config = ClientConfig::builder().qsort(true).build();
@@ -4553,7 +4553,7 @@ fn ssh_forwards_use_qsort_when_set() {
 
 // WHY: `--super` (explicit, upstream am_root > 1) is forwarded only on a push,
 // where the remote receiver performs the privileged operations
-// (options.c:2862, inside the am_sender block).
+// (options.c:3028-3029, inside the am_sender block).
 #[test]
 fn ssh_forwards_super_on_push_only() {
     let config = ClientConfig::builder().super_user(true).build();
@@ -4577,7 +4577,7 @@ fn ssh_forwards_super_on_push_only() {
 }
 
 // WHY: `--stats` is forwarded only on a push, where the remote
-// receiver/generator computes the transfer statistics (options.c:2866, inside
+// receiver/generator computes the transfer statistics (options.c:3032-3033, inside
 // the am_sender block).
 #[test]
 fn ssh_forwards_stats_on_push_only() {
@@ -4602,7 +4602,7 @@ fn ssh_forwards_stats_on_push_only() {
 
 // WHY: explicitly-set --info / --debug levels must reach the peer so its
 // diagnostic output matches the user's request (upstream make_output_option,
-// options.c:2957). `del` is receiver-side, so on a push it forwards as
+// options.c:3126-3130). `del` is receiver-side, so on a push it forwards as
 // `--info=del`; `send` is sender-side, so on a pull it forwards as
 // `--debug=send`.
 #[test]
@@ -4637,13 +4637,11 @@ fn ssh_forwards_info_and_debug_when_set() {
     );
 }
 
-// WHY (OPT-GAP-01, HIGH DATA-LOSS): upstream options.c:2836-2841 remaps a
+// WHY (OPT-GAP-01, HIGH DATA-LOSS): upstream options.c:3002-3007 remaps a
 // max-delete ceiling of 0 to `--max-delete=-1` before forwarding. The remote
-// receiver treats `--max-delete=0` as UNLIMITED (options.c:2191-2193 disables
-// the cap for max_delete <= 0), so a client that ran `--max-delete=0 --delete`
-// - meaning "delete NOTHING" - would instead delete EVERY extraneous file if we
-// forwarded `--max-delete=0` verbatim. The inversion (0 -> -1) is what makes the
-// remote enforce the "delete nothing" ceiling the user asked for.
+// receiver folds the negative value back to 0 ("no deletions",
+// options.c:2308-2311), so `--max-delete=0 --delete` - meaning "delete
+// NOTHING" - reaches the remote as the same "delete nothing" ceiling.
 #[test]
 fn max_delete_zero_forwards_minus_one_not_zero_on_push() {
     let config = ClientConfig::builder().max_delete(Some(0)).build();
@@ -4671,7 +4669,7 @@ fn max_delete_positive_forwarded_verbatim_on_push() {
 }
 
 // WHY (OPT-GAP-01 + OPT-GAP-05): every option in upstream's `if (am_sender)`
-// block (options.c:2835-2867) is receiver-steering, so on a PULL (the local
+// block (options.c:3001-3034) is receiver-steering, so on a PULL (the local
 // process is the receiver, RemoteRole::Receiver) NONE of them may be forwarded
 // to the remote sender. In particular --max-delete=0 must not leak even in its
 // remapped form, because the remote sender performs no deletion at all.
@@ -4709,7 +4707,7 @@ fn sender_only_delete_and_size_options_not_forwarded_on_pull() {
     );
 }
 
-// WHY (OPT-GAP-05, most-important leak): upstream options.c:2856-2857 emits
+// WHY (OPT-GAP-05, most-important leak): upstream options.c:3022-3023 emits
 // --delete-excluded only inside `if (am_sender)`. On a PULL, forwarding it
 // rewrites the remote sender's send_rules so excluded files vanish from the
 // file list, corrupting what the receiver sees. It must ride only on a PUSH.
@@ -4735,7 +4733,7 @@ fn delete_excluded_forwarded_on_push_only() {
 
 // WHY (OPT-GAP-05): --usermap / --groupmap, --ignore-existing / --existing,
 // --temp-dir and --preallocate all live in upstream's `if (am_sender)` block
-// (options.c:2921-2953, 3000). They steer the remote receiver, so a PULL must
+// (options.c:3092-3124). They steer the remote receiver, so a PULL must
 // not forward them to the remote sender.
 #[cfg(unix)]
 #[test]
@@ -4782,9 +4780,9 @@ fn sender_only_mapping_and_dest_options_not_forwarded_on_pull() {
     }
 }
 
-// WHY (OPT-GAP-02): upstream options.c:2976 forwards `--bwlimit=%d` in whole KiB
-// (options.c:1724 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The remote
-// peer re-parses the value with a default `K` suffix (options.c:1720), so a raw
+// WHY (OPT-GAP-02): upstream options.c:2975-2979 forwards `--bwlimit=%d` in whole KiB
+// (options.c:1831 `bwlimit = (size + 512) / 1024`), NOT bytes/sec. The remote
+// peer re-parses the value with a default `K` suffix (options.c:1827), so a raw
 // byte count is scaled up 1024x and the throttle effectively vanishes. A rate of
 // 1 MiB/s (1048576 B/s) must travel as `--bwlimit=1024`.
 #[test]
@@ -4807,7 +4805,7 @@ fn bwlimit_forwarded_in_kib_not_bytes() {
     );
 }
 
-// upstream: options.c:2760-2763 - `--no-r` tells the remote receiver that a
+// upstream: options.c:2926-2929 - `--no-r` tells the remote receiver that a
 // dirs-mode delete (`-d --delete`) is NOT recursive. Without it the receiver
 // could re-enable recursion and delete beyond the top level, so the flag is
 // load-bearing for delete correctness, not cosmetic.
@@ -4827,7 +4825,7 @@ fn dirs_delete_push_forwards_no_r() {
     );
 }
 
-// upstream: options.c:2762 - the guard requires !recurse; with recursion on the
+// upstream: options.c:2928 - the guard requires !recurse; with recursion on the
 // receiver already recurses, so --no-r must NOT be sent.
 #[test]
 fn recursive_delete_push_omits_no_r() {
@@ -4843,7 +4841,7 @@ fn recursive_delete_push_omits_no_r() {
     );
 }
 
-// upstream: options.c:2762 - the guard requires delete_mode; without --delete
+// upstream: options.c:2928 - the guard requires delete_mode; without --delete
 // there is nothing to protect, so --no-r must NOT be sent.
 #[test]
 fn dirs_push_without_delete_omits_no_r() {
@@ -4855,7 +4853,7 @@ fn dirs_push_without_delete_omits_no_r() {
     );
 }
 
-// upstream: options.c:2762 - the guard requires am_sender; on a PULL the local
+// upstream: options.c:2928 - the guard requires am_sender; on a PULL the local
 // process is the receiver, so --no-r must NOT be forwarded to the remote sender.
 #[test]
 fn dirs_delete_pull_omits_no_r() {
@@ -4883,7 +4881,7 @@ fn open_noatime_forwarded_without_atimes() {
     );
 }
 
-// upstream: options.c:3003 - a single -U (preserve_atimes == 1) is still <= 1,
+// upstream: options.c:3174 - a single -U (preserve_atimes == 1) is still <= 1,
 // so --open-noatime is forwarded.
 #[test]
 fn open_noatime_forwarded_with_single_atimes() {
@@ -4895,7 +4893,7 @@ fn open_noatime_forwarded_with_single_atimes() {
     );
 }
 
-// upstream: options.c:3003 - `-UU` (preserve_atimes == 2) exceeds the threshold,
+// upstream: options.c:3174 - `-UU` (preserve_atimes == 2) exceeds the threshold,
 // so --open-noatime is suppressed even though open_noatime is set.
 #[test]
 fn open_noatime_suppressed_with_double_atimes() {
@@ -4907,7 +4905,7 @@ fn open_noatime_suppressed_with_double_atimes() {
     );
 }
 
-// upstream: options.c:3035-3038 maybe_add_e_option() - "checking the
+// upstream: options.c:3206-3209 maybe_add_e_option() - "checking the
 // pre-negotiated value allows the user to use a --protocol=29 override to avoid
 // the use of this -eFLAGS opt". At protocol 28/29 the compact flag string must
 // carry the transfer letters ONLY; a stock 3.4.4 client sends `-r`, not
@@ -4934,7 +4932,7 @@ fn capability_suffix_omitted_below_protocol_30() {
     }
 }
 
-// upstream: options.c:3038 - the `>= 30` gate keeps the suffix for every
+// upstream: options.c:3209 - the `>= 30` gate keeps the suffix for every
 // protocol the capability string is defined for, so a 30/31/32 request is
 // wire-identical to the uncapped default.
 #[test]
@@ -4961,7 +4959,7 @@ fn capability_suffix_retained_at_protocol_30_and_above() {
     }
 }
 
-// upstream: options.c:2740 - `if (x > 1) args[ac++] = argstr;`. Once the
+// upstream: options.c:2906-2907 - `if (x > 1) args[ac++] = argstr;`. Once the
 // capability suffix is gated on protocol >= 30 the compact flag string can
 // collapse to a bare `-`, which upstream never places on the command line.
 #[test]
@@ -4978,7 +4976,7 @@ fn empty_flag_string_omitted_below_protocol_30() {
     );
 }
 
-// upstream: options.c:2986 - `if (relative_paths && !implied_dirs && (!am_sender
+// upstream: options.c:3157 - `if (relative_paths && !implied_dirs && (!am_sender
 // || protocol_version >= 30))`. The `am_sender` half of the guard drops
 // --no-implied-dirs on a PUSH below protocol 30; a PULL forwards it at every
 // version.
@@ -5102,7 +5100,7 @@ mod oc_flag_forwarding {
         "--suffix",
         "--temp-dir",
         "--timeout",
-        // upstream: options.c:2918-2919 - server_options() spells the qsort
+        // upstream: options.c:3089-3090 - server_options() spells the qsort
         // request as `--use-qsort` even though the popt table entry is
         // `qsort`; we mirror the emitted spelling.
         "--use-qsort",

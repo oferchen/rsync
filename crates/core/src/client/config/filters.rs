@@ -16,6 +16,9 @@ pub enum FilterRuleKind {
     /// Merge per-directory filter rules from `.rsync-filter` style files.
     DirMerge,
     /// Exclude directories containing a specific marker file.
+    ///
+    /// Deviation from upstream: rsync 3.5.1 has no exclude-if-present rule;
+    /// this kind is an oc-only extension.
     ExcludeIfPresent,
 }
 
@@ -34,7 +37,7 @@ pub struct FilterRuleSpec {
     /// the wire projection can reproduce upstream's CVS send gating (local on a
     /// receiving client; `:C` only on protocol >= 29).
     ///
-    /// upstream: exclude.c:1652-1668 send_filter_list().
+    /// upstream: exclude.c:1944-1967 send_filter_list().
     cvs_origin: bool,
     /// Set by the `/` modifier (`-/ foo`), upstream's `FILTRULE_ABS_PATH`.
     ///
@@ -270,7 +273,7 @@ impl FilterRuleSpec {
     ///
     /// # Upstream Reference
     ///
-    /// `exclude.c:1330-1332` (`add_rule`):
+    /// `exclude.c:1478-1481` (`parse_rule_tok`):
     ///
     /// ```c
     /// if (delete_excluded
@@ -301,9 +304,9 @@ impl FilterRuleSpec {
     /// "no side bit set" as *both* sides applying, so any rule that is not
     /// both-sided has named one. That deliberately includes `P`/`R`
     /// (protect/risk), which default to receiver-only here and set
-    /// `FILTRULE_RECEIVER_SIDE` upstream - measured against rsync 3.5.0, a
-    /// `P` or `R` line inside a sided merge file is refused exactly like an
-    /// explicit `-r`/`-s`.
+    /// `FILTRULE_RECEIVER_SIDE` upstream (`exclude.c:1352-1357`), so a `P` or
+    /// `R` line inside a sided merge file is refused exactly like an explicit
+    /// `-r`/`-s`.
     #[must_use]
     pub const fn specifies_side(&self) -> bool {
         !(self.applies_to_sender && self.applies_to_receiver)
@@ -390,7 +393,7 @@ impl FilterRuleSpec {
     /// Marks the rule as originating from the `-C`/`--cvs-exclude` built-in
     /// expansion.
     ///
-    /// upstream: exclude.c:1652-1668 send_filter_list() - CVS rules follow a
+    /// upstream: exclude.c:1944-1967 send_filter_list() - CVS rules follow a
     /// distinct wire-vs-local send path keyed on the sending role and protocol
     /// version.
     #[must_use]
@@ -468,7 +471,7 @@ mod tests {
         assert!(!rule.applies_to_receiver());
     }
 
-    /// upstream: exclude.c:1330-1332 add_rule() applies the implicit
+    /// upstream: exclude.c:1478-1481 parse_rule_tok() applies the implicit
     /// FILTRULE_SENDER_SIDE flag when --delete-excluded is active and the
     /// rule carries neither FILTRULES_SIDES nor merge/dir-merge. A bare
     /// `--exclude *.tmp` must therefore become sender-side under
@@ -486,7 +489,7 @@ mod tests {
     }
 
     /// Include rules without an explicit side also gain the implicit
-    /// FILTRULE_SENDER_SIDE flag, matching upstream `exclude.c:1330-1332`.
+    /// FILTRULE_SENDER_SIDE flag, matching upstream `exclude.c:1478-1481`.
     #[test]
     fn delete_excluded_applies_implicit_sender_side_to_include() {
         let mut rule = FilterRuleSpec::include("keep/**");
@@ -496,7 +499,7 @@ mod tests {
         assert!(!rule.applies_to_receiver());
     }
 
-    /// Upstream's check at `exclude.c:1331` masks against `FILTRULES_SIDES`.
+    /// Upstream's check at `exclude.c:1480` masks against `FILTRULES_SIDES`.
     /// A rule that already specifies one side (via `s`, `r`, `show`, `hide`,
     /// etc.) must not be retargeted.
     #[test]
@@ -525,7 +528,7 @@ mod tests {
     /// receiver side already (`FilterRuleSpec::protect`/`risk` set
     /// `sender=false`) or carry their own `FILTRULE_MERGE_FILE` /
     /// `FILTRULE_PERDIR_MERGE` bits that upstream excludes from the mask in
-    /// `exclude.c:1330-1332`.
+    /// `exclude.c:1478-1481`.
     ///
     /// DirMerge wrappers themselves remain a no-op here because the wrapper
     /// directive is the "merge file" rule that upstream's mask spares; the

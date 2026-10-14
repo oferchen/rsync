@@ -11,8 +11,8 @@
 //!
 //! Only the message sites that upstream routes through `full_fname()` carry the
 //! suffix. Sites that hard-code the quotes around a plain `%s` (for example
-//! `copying unsafe symlink "%s" -> "%s"` at `flist.c:231`, or
-//! `not creating new %s "%s"` at `generator.c:1380`) never gain it, so they must
+//! `copying unsafe symlink "%s" -> "%s"` at `flist.c:494`, or
+//! `not creating new %s "%s"` at `generator.c:1769`) never gain it, so they must
 //! keep formatting their own quotes.
 //!
 //! # The two independent axes
@@ -85,7 +85,7 @@
 //!   daemon server that has selected a module.
 //! - `clientserver.c:106` - `unsigned int module_dirlen = 0;` - the strip
 //!   length outside a daemon module.
-//! - `clientserver.c:864,993` - inside a module `module_dirlen` is the length
+//! - `clientserver.c:903,916` - inside a module `module_dirlen` is the length
 //!   of the normalized module path, and the server `chdir()`s there before
 //!   serving.
 //! - `clientserver.c:922-923` - `if (module_dirlen == 1) module_dirlen = 0;` -
@@ -123,7 +123,7 @@ pub(crate) struct FullFnamePaths<'a> {
     pub module_root: Option<&'a Path>,
     /// Absolute directory names are rendered against. upstream: `curr_dir` -
     /// the receiver's destination, the sender's per-arg `dir` from the
-    /// `flist.c:2848-2877` split, or the process working directory.
+    /// `flist.c:2853-2868` split, or the process working directory.
     pub curr_dir: &'a Path,
 }
 
@@ -403,7 +403,7 @@ mod tests {
     /// relative, which is what oc emitted before this pin.
     #[test]
     fn module_rooted_at_slash_keeps_the_leading_slash() {
-        // The case #7728 pinned: a module rooted at `/` with `curr_dir` also
+        // The case pinned here: a module rooted at `/` with `curr_dir` also
         // `/`. `module_dirlen` is forced from 1 to 0, so nothing is stripped
         // and the whole name survives.
         assert_eq!(

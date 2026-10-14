@@ -166,7 +166,8 @@ impl ErrorCodification for DaemonError {
             ExitCode::CommandKilled => "RERR_CMD_KILLED",
             ExitCode::CommandRun => "RERR_CMD_RUN",
             ExitCode::CommandNotFound => "RERR_CMD_NOTFOUND",
-            // upstream: log.c:905 - an unrecognized code has no RERR_* name.
+            // upstream: log.c:950-952 log_exit() - an unrecognized code has no
+            // RERR_* name.
             ExitCode::Other(_) => "RERR_UNKNOWN",
         }
     }

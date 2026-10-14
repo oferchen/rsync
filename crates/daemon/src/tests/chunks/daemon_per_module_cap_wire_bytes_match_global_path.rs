@@ -1,8 +1,8 @@
-// DMC-6: verifies the per-module cap-exceeded payload and the
+// Verifies the per-module cap-exceeded payload and the
 // daemon-global cap-exceeded payload produce byte-identical wire bytes
 // for the same limit value.
 //
-// Upstream rsync 3.4.1 emits a single literal at `clientserver.c:752`
+// Upstream rsync 3.5.1 emits a single literal at `clientserver.c:799`
 // (`@ERROR: max connections (%d) reached -- try again later\n`).
 // oc-rsync has two call sites that build this reply:
 //
@@ -45,7 +45,7 @@ fn daemon_per_module_cap_wire_bytes_match_global_path() {
         );
 
         // Pin both to the upstream literal so neither call site can
-        // silently drift away from upstream rsync 3.4.1.
+        // silently drift away from upstream rsync 3.5.1.
         let expected =
             format!("@ERROR: max connections ({limit}) reached -- try again later\n").into_bytes();
         assert_eq!(

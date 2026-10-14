@@ -214,7 +214,7 @@ fn during_mode_drains_one_directory_through_emitter() {
         .expect("drain succeeds");
     let events = outcome.fs.events();
     assert_eq!(events.len(), 1);
-    // #506: the production emit path now dispatches through the SEC-1.q
+    // The production emit path now dispatches through the
     // dirfd anchor on unix, so `RecordingDeleteFs` records the leaf-only
     // name; the path-based fallback records the absolute path. Either way
     // the entry identified is "drop" and the stats/outcome are identical.
@@ -226,7 +226,7 @@ fn during_mode_drains_one_directory_through_emitter() {
 
 /// Returns the leaf name of a `RecordingDeleteFs` event path.
 ///
-/// The production emit path dispatches through the SEC-1.q dirfd anchor on
+/// The production emit path dispatches through the dirfd anchor on
 /// unix (recording the leaf only) and through the path-based methods on the
 /// fallback and non-unix (recording the absolute path). `file_name()`
 /// normalises both to the leaf so assertions stay mechanism-agnostic while
@@ -263,7 +263,7 @@ fn before_mode_drains_pre_walk_pass_across_dirs() {
     let outcome = ctx
         .emit_all(RecordingDeleteFs::new())
         .expect("drain succeeds");
-    // #506: leaf-only under the dirfd anchor, absolute under the path
+    // Leaf-only under the dirfd anchor, absolute under the path
     // fallback; compare on leaf names so the assertion is mechanism-agnostic.
     let leaves: Vec<OsString> = outcome
         .fs
@@ -372,13 +372,13 @@ fn record_drain_outcome_carries_recorded_events() {
     let outcome = ctx.emit_one(RecordingDeleteFs::new()).unwrap();
     let events = outcome.fs.events();
     assert_eq!(events.len(), 1);
-    // #506: leaf-only under the SEC-1.q dirfd anchor, absolute under the
+    // Leaf-only under the dirfd anchor, absolute under the
     // path-based fallback; assert the identified entry and kind.
     assert_eq!(recorded_leaf(&events[0].path), OsStr::new("victim"));
     assert_eq!(events[0].kind, DeleteEntryKind::File);
 }
 
-/// ATU-4 (#2381): channel-shutdown drain terminates as soon as every
+/// Channel-shutdown drain terminates as soon as every
 /// worker drops its `Arc<DeleteContext>` clone. We spawn N producer
 /// threads, each enqueueing one cursor observation through the
 /// shared context, join them all (so every Arc clone is gone), and
@@ -423,7 +423,7 @@ fn channel_drain_completes_when_workers_drop_normally() {
     );
 }
 
-/// ATU-4 (#2381): even if a worker panics mid-send, the channel-
+/// Even if a worker panics mid-send, the channel-
 /// shutdown semantics still let the drain finish. Each producer's
 /// `Sender` clone is dropped by the panic-unwind, the `recv` loop
 /// terminates, and the drain returns successfully with whatever
@@ -655,9 +655,9 @@ fn should_use_fast_path_at_threshold_boundary() {
     );
 }
 
-/// #506 (production wiring): the drain built by `DeleteContext` now attaches
+/// Production wiring: the drain built by `DeleteContext` now attaches
 /// a `DirSandbox` opened at the delete root, so the emitter dispatches every
-/// unlink through the SEC-1.q dirfd-anchored `*_at` syscalls rather than the
+/// unlink through the dirfd-anchored `*_at` syscalls rather than the
 /// TOCTOU-prone path-based `std::fs::remove_*`. `RecordingDeleteFs` records
 /// the leaf-only name for a `*_at` dispatch and the absolute path for the
 /// path-based fallback, so a leaf-only recording proves the anchor is engaged
@@ -691,7 +691,7 @@ fn production_drain_dispatches_through_dirfd_anchor() {
     assert_eq!(outcome.stats.files, 1);
 }
 
-/// #506 (TOCTOU regression): the dirfd anchor the production drain attaches
+/// TOCTOU regression: the dirfd anchor the production drain attaches
 /// refuses to delete through a parent component that was swapped for a
 /// symlink pointing outside the destination tree. Proven deterministically
 /// by program order (no threads, no sleeps): the emitter opens the delete

@@ -17,7 +17,7 @@ pub(crate) struct FilterSegment {
     protect_risk: Vec<CompiledRule>,
     /// Running source-definition counter stamped onto each compiled rule so the
     /// deletion decision can merge the two chains back into the single
-    /// first-match-wins pass upstream `check_filter()` performs (exclude.c:1038).
+    /// first-match-wins pass upstream `check_filter()` performs (exclude.c:1192-1212).
     next_order: usize,
 }
 
@@ -90,12 +90,12 @@ impl FilterSegment {
         // deletion scan a directory-only unanchored wildcard exclude (`foo/*/`)
         // therefore keeps `foo/sub/file1` off the delete pass via its
         // deletion-only descendant matchers; the Transfer path must NOT see
-        // those (it would re-trip the #6015 `foo/*/` over-exclusion).
+        // those (it would re-trip the `foo/*/` over-exclusion).
         let for_deletion = matches!(context, FilterContext::Deletion);
-        // upstream: exclude.c:1044 check_filter() only skips a perishable rule
+        // upstream: exclude.c:1193 check_filter() only skips a perishable rule
         // when `ignore_perishable` is set, which happens exclusively while
         // deleting the contents of a directory being wholly removed
-        // (delete.c:147). The top-level delete scan runs with it unset, so a
+        // (delete.c:205-211 delete_item()). The top-level delete scan runs with it unset, so a
         // perishable rule still matches and protects a candidate here; the
         // wholly-deleted-directory case never reaches this evaluator because
         // the local-copy delete pass removes such directories en masse.
@@ -136,7 +136,7 @@ impl FilterSegment {
         }
 
         for rule in &self.protect_risk {
-            // upstream check_filter() (exclude.c:1058-1061) returns on the first
+            // upstream check_filter() (exclude.c:1207-1210) returns on the first
             // matching rule, so the first protect/risk decision wins. Stop once a
             // protect/risk rule has applied rather than letting a later rule
             // overwrite it (last-match-wins).
@@ -171,7 +171,7 @@ impl FilterSegment {
             }
         }
 
-        // upstream: exclude.c:1038 check_filter() walks ONE list first-match-wins
+        // upstream: exclude.c:1192-1212 check_filter() walks ONE list first-match-wins
         // and returns `ent->rflags & FILTRULE_INCLUDE ? 1 : -1`. oc partitions
         // that list into the include/exclude and protect/risk chains, so the two
         // decisions above latch independently and would let a protect override an
@@ -219,7 +219,7 @@ impl FilterSegment {
 /// withheld, so upstream drops it "along with the text it describes"
 /// (exclude.c:127-131).
 ///
-/// This trace runs at level 1 for a sender or generator (exclude.c:1093), so
+/// This trace runs at level 1 for a sender or generator (exclude.c:1087), so
 /// plain `-vv` reaches it with no `--debug` at all - which is why an unredacted
 /// pattern here echoes a peer-chosen merge file's contents to any client.
 fn report_filter_result(rule: &CompiledRule, path: &Path, is_dir: bool, who: &str) {
@@ -294,7 +294,7 @@ pub(crate) struct FilterOutcome {
     excluded_for_delete_excluded: bool,
     /// Unified deletion verdict: the include-flag of the single first-matching
     /// rule across BOTH chains in source order, mirroring upstream
-    /// `check_filter()` (exclude.c:1060 `rflags & FILTRULE_INCLUDE ? 1 : -1`).
+    /// `check_filter()` (exclude.c:1209 `rflags & FILTRULE_INCLUDE ? 1 : -1`).
     /// Latched once decided so later segments cannot override it.
     deletion_deletable: bool,
     deletion_decided: bool,
@@ -397,7 +397,7 @@ struct CompiledRule {
     /// Populated for directory-only unanchored wildcard excludes (`foo/*/`) so
     /// the receiver keeps `foo/sub/file1` off the delete pass while the
     /// Transfer path never sees `foo/*/**` (mirrors the filters-crate
-    /// `CompiledRule`; preserves the #6015 `foo/*/` over-exclusion fix).
+    /// `CompiledRule`; preserves the `foo/*/` over-exclusion fix).
     deletion_descendant_matchers: Vec<GlobMatcher>,
     applies_to_sender: bool,
     applies_to_receiver: bool,
@@ -407,7 +407,7 @@ struct CompiledRule {
     /// Source-definition order within the owning segment, assigned by
     /// [`FilterSegment::push_rule`]. Lets the deletion decision merge the
     /// include/exclude and protect/risk chains back into the single
-    /// first-match-wins pass upstream `check_filter()` runs (exclude.c:1038).
+    /// first-match-wins pass upstream `check_filter()` runs (exclude.c:1192-1212).
     order: usize,
     /// Provenance of [`Self::pattern`], carried from the parse.
     ///
@@ -469,7 +469,7 @@ impl CompiledRule {
                 }
             } else if is_directory_only_unanchored_wildcard {
                 // upstream: a directory-only unanchored wildcard (`foo/*/`)
-                // emits no `foo/*/**` transfer rule (#6015); the sender walk
+                // emits no `foo/*/**` transfer rule; the sender walk
                 // prunes the matched directory. The receiver's per-candidate
                 // deletion scan has no such pruning, so route `{core}/**` into
                 // a deletion-only set so excluded-directory children stay off
@@ -665,7 +665,7 @@ fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
 fn normalise_pattern(pattern: &str) -> (bool, bool, String) {
     let starts_with_slash = pattern.starts_with('/');
 
-    // upstream: exclude.c:243-248 - a trailing `/***` (SLASH_WILD3_SUFFIX)
+    // upstream: exclude.c:340-345 + 1034-1036 - a trailing `/***` (FILTRULE_WILD3_SUFFIX)
     // means "match both the directory and everything inside it". Normalize
     // by stripping `/***` and treating the result as directory-only.
     let (stripped, directory_only) = if pattern.ends_with("/***") && pattern.len() > 4 {
@@ -765,7 +765,7 @@ mod tests {
     /// echoed by the match trace - and the trailing `/` goes with it, because
     /// it reports a property of the withheld text.
     ///
-    /// The trace runs at level 1 for a sender or generator (exclude.c:1093),
+    /// The trace runs at level 1 for a sender or generator (exclude.c:1087),
     /// so plain `-vv` reaches it: an unredacted pattern here hands a
     /// peer-chosen per-directory merge file's contents to any client.
     #[test]
@@ -840,7 +840,7 @@ mod tests {
     /// `--exclude '*/'` (a directory-only unanchored wildcard) routes its
     /// `*/**` descendant into the deletion-only set, mirroring upstream
     /// `exclude.c:rule_matches()`: the transfer path emits no `*/**` rule (the
-    /// sender walk prunes the matched directory, #6015), while the receiver
+    /// sender walk prunes the matched directory), while the receiver
     /// deletion scan must protect children of the excluded directory from
     /// over-deletion (`exclude` / `exclude-lsh` regression).
     #[test]
@@ -849,7 +849,7 @@ mod tests {
         // Directory entry matches directly in both contexts.
         assert!(rule.matches(Path::new("subdir"), true, false));
         // Transfer path never matches a child via a synthetic descendant, even
-        // with check_descendants requested (#6015 guard).
+        // with check_descendants requested.
         assert!(!rule.matches(Path::new("subdir/debug.log"), false, true));
         assert!(!rule.matches(Path::new("subdir/debug.log"), false, false));
         // Deletion path protects the child regardless of check_descendants.
@@ -948,7 +948,7 @@ mod tests {
     /// (`- foo/*/`) must protect the children of the matched directory from
     /// deletion. `FilterSegment::apply` calls with `check_descendants = false`,
     /// so the protection rides on the deletion-only descendant matchers. The
-    /// transfer evaluation of the same child must stay "allowed" so #6015's
+    /// transfer evaluation of the same child must stay "allowed" so the
     /// `foo/*/` over-exclusion does not return.
     #[test]
     fn deletion_dir_only_wildcard_protects_children() {
@@ -967,7 +967,7 @@ mod tests {
         );
 
         // The transfer path must NOT exclude the child via a synthetic
-        // descendant - the sender walk prunes the directory instead (#6015).
+        // descendant - the sender walk prunes the directory instead.
         let mut xfer = FilterOutcome::default();
         segment.apply(child, false, &mut xfer, FilterContext::Transfer);
         assert!(

@@ -313,7 +313,7 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
 /// before `parse_filter_directive_line` runs, so they carry their own copy of
 /// the keyword rule and a parser-level test cannot reach them.
 ///
-/// upstream: exclude.c:1290 - `clear` is matched with `strncmp` (:1218) under
+/// upstream: exclude.c:1290 - `clear` is matched with `strncmp` (:1219) under
 /// the lower-case-only `case 'c':`, so `CLEAR` reaches the unknown-rule arm
 /// (:1362). A merge file carries no `FILTRULE_NO_PREFIXES`, so there is no
 /// bare-pattern fallback: the line is a hard error, not an exclude.
@@ -402,7 +402,7 @@ fn dir_merge_lower_case_clear_still_clears_in_both_parser_modes() {
 /// referenced filename for lookup in each visited subdirectory, NOT load it
 /// eagerly against the enclosing file's directory.
 ///
-/// upstream: exclude.c:1419-1428 - mirrors the testsuite `exclude-lsh.test`
+/// upstream: exclude.c:1573-1583 - mirrors the testsuite `exclude-lsh.test`
 /// fixture where `bar/.filt` declares `dir-merge .filt2`, and the actual
 /// `.filt2` exclusion rules live in subdirectories like `bar/baz/.filt2`.
 #[test]
@@ -456,7 +456,7 @@ fn nested_dir_merge_registers_per_directory_rule() {
     );
 }
 
-/// Builds the bug #273 repro tree under `root` and returns the trailing-slash
+/// Builds the repro tree under `root` and returns the trailing-slash
 /// source operand plus the destination directory. The root `.rsync-filter`
 /// (protecting `*.bak`, descending all dirs) is transferred to the destination;
 /// the destination is pre-seeded with an extraneous `normal.bak` at the root and
@@ -486,7 +486,7 @@ fn perdir_delete_program() -> FilterProgram {
     .expect("compile filter program")
 }
 
-/// bug #273: with `--delete-after`, a per-dir-merge `.rsync-filter` rule
+/// With `--delete-after`, a per-dir-merge `.rsync-filter` rule
 /// protects matching destination files from deletion, and the ROOT directory's
 /// rule INHERITS into subdirectories - so `sub/x.bak` survives even though only
 /// the root carries a `.rsync-filter`. The destination merge files are present
@@ -495,7 +495,7 @@ fn perdir_delete_program() -> FilterProgram {
 /// would be silent data loss.
 ///
 /// upstream: `rsync -avF --delete-after` keeps both `normal.bak` and
-/// `sub/x.bak` (delete.c:63 push_local_filters + exclude.c:801 inherited head).
+/// `sub/x.bak` (delete.c:106 push_local_filters + exclude.c:900 inherited head).
 #[test]
 fn perdir_merge_delete_after_inherits_into_subdirs() {
     let temp = tempdir().expect("tempdir");
@@ -524,7 +524,7 @@ fn perdir_merge_delete_after_inherits_into_subdirs() {
     assert!(dest.join("sub/keep2.txt").exists());
 }
 
-/// bug #273: with `--delete` (delete-DURING), the destination `.rsync-filter`
+/// With `--delete` (delete-DURING), the destination `.rsync-filter`
 /// has not been written yet when the per-directory delete sweep runs (it arrives
 /// with the transfer), so the isolated delete chain is empty and BOTH `.bak`
 /// files are removed - matching upstream, which is why the manual recommends

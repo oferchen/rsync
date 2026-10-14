@@ -405,8 +405,8 @@ fn relative_pull_pivots_at_the_leafs_parent() {
 ///
 /// upstream: `util1.c:1240` makes `drop_dot_dirs` true whenever
 /// `relative_paths` is off, whatever `SP_KEEP_DOT_DIRS` says, and
-/// `flist.c:2848` then splits on the LAST `/` - so the wire name is the bare
-/// basename. A green pin beside the two red ones above proves the fix rides
+/// `flist.c:2850-2860` then splits on the LAST `/` - so the wire name is the
+/// bare basename. A green pin beside the two red ones above proves the fix rides
 /// `--relative` and not the daemon-ness of the process.
 #[test]
 fn a_non_relative_pull_of_a_pivot_operand_still_drops_the_dot_dir() {
@@ -429,11 +429,11 @@ fn a_non_relative_pull_of_a_pivot_operand_still_drops_the_dot_dir() {
 /// Concurrency cell: one daemon, two SIMULTANEOUS connections whose operands
 /// pivot at different depths.
 ///
-/// oc-rsync serves every daemon connection on a worker thread of one process
-/// (`spawn_connection_worker`), not a forked child like upstream, so any
-/// process-global carrying this decision - a `chdir()`, a `curr_dir`, a
-/// static `relative_paths` - would let one connection's operand shape decide
-/// the other's transmitted names. The fix threads the value as a parameter of
+/// oc-rsync forks per connection on Unix like upstream but keeps a worker
+/// thread per connection on Windows (`spawn_connection_worker`), so on that
+/// backing any process-global carrying this decision - a `chdir()`, a
+/// `curr_dir`, a static `relative_paths` - would let one connection's operand
+/// shape decide the other's transmitted names. The fix threads the value as a parameter of
 /// the per-connection resolvers, so there is nothing shared to race; this cell
 /// is what says so out loud. It fails if the decision is ever hoisted to a
 /// global: the two destinations would converge on one pivot.

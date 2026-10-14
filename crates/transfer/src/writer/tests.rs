@@ -481,7 +481,7 @@ fn server_writer_send_redo_plain_mode_fails() {
 
 /// A remote receiver only learns of vanished/unreadable source files - and thus
 /// reports exit 24/23 - if the sender emits `MSG_IO_ERROR` with the io_error
-/// bits as a 4-byte LE payload (upstream sender.c:486-487, io.c:1568-1575).
+/// bits as a 4-byte LE payload (upstream sender.c:811-812, io.c:1740-1747).
 /// `MSG_NO_SEND` alone carries no exit-code bits. This pins the wire encoding a
 /// real upstream receiver folds via `io_error |= val`.
 #[test]
@@ -613,7 +613,7 @@ fn multiplex_writer_no_recorder_still_works() {
     assert!(!wire.is_empty());
 }
 
-/// upstream `sender.c:220` picks the token stream's destination:
+/// upstream `sender.c:502` picks the token stream's destination:
 /// `f_xfer = write_batch < 0 ? batch_fd : f_out`. Under `--only-write-batch`
 /// the payload goes into the batch INSTEAD of the socket, which is what allows
 /// the remote receiver to run dry and read nothing. Teeing it as well would
@@ -1158,8 +1158,8 @@ fn server_writer_write_raw_clears_dirty() {
 // payload via the standard CompressedReader path AND see a clean
 // end-of-stream so read_to_end returns the full payload without truncation.
 //
-// upstream: token.c:send_deflated_token() runs deflateEnd() at end of
-// session to emit the Z_FINISH-terminated stream.
+// Deviation from upstream: upstream token.c never finalises the deflate
+// stream (send_deflated_token() only issues Z_SYNC_FLUSH, token.c:446-447).
 #[test]
 fn server_writer_finalize_compression_emits_zlib_eos_for_receiver() {
     use crate::compressed_reader::CompressedReader;

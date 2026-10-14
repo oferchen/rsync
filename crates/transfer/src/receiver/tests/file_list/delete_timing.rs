@@ -1,11 +1,11 @@
 //! Late (`--delete-after` / `--delete-delay`) vs early (`--delete-before` /
 //! `--delete-during`) delete-pass scheduling on the receiver.
 //!
-//! WHY this matters (the #280 data-loss bug): upstream defers the delete sweep
+//! WHY this matters (a data-loss bug): upstream defers the delete sweep
 //! for `--delete-after` / `--delete-delay` until after every file has been
-//! transferred (generator.c:2425-2428), because the sweep reloads each
+//! transferred (generator.c:2899-2902), because the sweep reloads each
 //! destination directory's per-directory `.rsync-filter` merge file at delete
-//! time (exclude.c:875 `change_local_filter_dir`). A merge-file protect rule
+//! time (exclude.c:974 `change_local_filter_dir`). A merge-file protect rule
 //! (e.g. `- *.bak`) can only shield a matching destination entry once that
 //! `.rsync-filter` is present in the destination - which it is not until the
 //! transfer has run. Running the sweep before the transfer (as oc did for all
@@ -28,12 +28,12 @@ use super::super::support::{TestDeletionWriter, test_config, test_handshake};
 /// way upstream does:
 ///
 /// - `--delete-before` / `--delete-during`: EARLY only (immediate pre-loop
-///   sweep, generator.c:2280 / 2315).
+///   sweep, generator.c:2753 / 2315).
 /// - `--delete-after`: LATE only (`do_delete_pass()` after the transfer,
-///   generator.c:2427).
+///   generator.c:2901).
 /// - `--delete-delay`: BOTH sites. Upstream decides the victim set during the
-///   walk (generator.c:2315 `remember_delete`) but unlinks them only in
-///   `do_delayed_deletions()` after the whole transfer (generator.c:2419), so
+///   walk (generator.c:351 `remember_delete`) but unlinks them only in
+///   `do_delayed_deletions()` after the whole transfer (generator.c:2899-2900), so
 ///   oc collects at the early site and executes at the late site. Verified vs
 ///   upstream 3.4.4 over SSH: delay DELETES a per-dir-merge-protected entry
 ///   (its decision matches during/before), yet the unlink is deferred to the
@@ -97,7 +97,7 @@ fn delete_pass_timing_predicates_partition_the_four_modes() {
 /// during unlinks an extraneous file as its directory is processed, while delay
 /// only *records* the victim during the walk and unlinks it after the whole
 /// transfer completes. This is upstream's crash-safety guarantee for delay
-/// (generator.c:345 `remember_delete` vs generator.c:2419
+/// (generator.c:351 `remember_delete` vs generator.c:2899-2900
 /// `do_delayed_deletions`): if the transfer aborts mid-way, a delay run has not
 /// deleted anything yet, whereas a during run already has.
 ///
@@ -234,7 +234,7 @@ fn build_receiver_with_perdir_merge(dest: &std::path::Path) -> ReceiverContext {
     // after parsing a `-F` (`dir-merge /.rsync-filter`) rule off the wire
     // (setup/wire_filters.rs -> parse_wire_filters_for_receiver). The delete pass
     // (deletion.rs) consults this chain and reloads each destination directory's
-    // `.rsync-filter` at delete time (upstream exclude.c:759 push_local_filters).
+    // `.rsync-filter` at delete time (upstream exclude.c:858 push_local_filters).
     // The chain carries no global rules, so protection can only come from a
     // `.rsync-filter` read off the disk - which is the whole point of deferral.
     let mut chain = ::filters::FilterChain::empty();
@@ -248,7 +248,7 @@ fn build_receiver_with_perdir_merge(dest: &std::path::Path) -> ReceiverContext {
 /// deferred sweep reloads it per directory and the protect rule shields both
 /// the root `normal.bak` and the inherited nested `sub/x.bak`. This is the
 /// behaviour upstream produces for `--delete-after` / `--delete-delay`, and the
-/// on-disk survival is exactly what oc failed to preserve before #280.
+/// on-disk survival is exactly what oc failed to preserve before the fix.
 #[test]
 fn late_delete_pass_with_dest_rsync_filter_protects_bak() {
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -505,7 +505,7 @@ fn delete_pass_without_dest_rsync_filter_deletes_bak() {
 /// - INC_RECURSE after `NDX_FLIST_EOF`: all file lists known (flist.c:114) -
 ///   complete;
 /// - a reclaimed segment (`reclaim_oldest_segment` freed its entries' names,
-///   mirroring flist.c:3223 `flist_free`): those entries can no longer protect
+///   mirroring flist.c:3525 `flist_free`): those entries can no longer protect
 ///   their files - incomplete again even though every list arrived.
 #[test]
 fn delete_pass_completeness_predicate_tracks_flist_state() {

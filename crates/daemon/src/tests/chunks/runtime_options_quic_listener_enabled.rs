@@ -1,4 +1,4 @@
-// QUIC listener enablement (QUIC-6c). The daemon opens a UDP/QUIC listener only
+// QUIC listener enablement. The daemon opens a UDP/QUIC listener only
 // when QUIC is configured. Until the dedicated `quic = yes` enable directive
 // lands, "configured" means any QUIC directive is present: a cert path, a key
 // path, or an explicit `quic port`. A config with no QUIC directives leaves the

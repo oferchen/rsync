@@ -15,8 +15,10 @@ pub struct SetupResult {
     /// Compatibility flags exchanged during protocol setup.
     /// None for protocols < 30 or when compat exchange was skipped.
     pub compat_flags: Option<CompatibilityFlags>,
-    /// Checksum seed sent to client for XXHash algorithms.
-    /// This seed is sent for all protocols and should be used when creating XXHash instances.
+    /// Checksum seed the server writes and the client reads during setup.
+    ///
+    /// Exchanged at every protocol and mixed into the strong checksums.
+    /// upstream: compat.c:822-827.
     pub checksum_seed: i32,
 }
 
@@ -57,7 +59,7 @@ pub struct ProtocolSetupConfig<'a> {
     /// server extracts the capability chars from it instead of unconditionally
     /// enabling all compat flags.
     ///
-    /// upstream: compat.c:163-164 - `client_info = shell_cmd ? shell_cmd : ""`
+    /// upstream: compat.c:164-165 - `client_info = shell_cmd ? shell_cmd : ""`
     /// where `shell_cmd` is the value of the `-e` option parsed from the
     /// compact flag string.
     pub flag_string: Option<&'a str>,
@@ -86,7 +88,7 @@ pub struct ProtocolSetupConfig<'a> {
     /// `--new-compress` (zlibx), or `--old-compress` (zlib).
     ///
     /// When set, compression vstring negotiation is skipped and this algorithm
-    /// is used directly - matching upstream compat.c:543 which only exchanges
+    /// is used directly - matching upstream compat.c:547 which only exchanges
     /// compression vstrings when `do_compression && !compress_choice`.
     pub compress_choice: Option<CompressionAlgorithm>,
 
@@ -95,7 +97,7 @@ pub struct ProtocolSetupConfig<'a> {
     ///
     /// Threaded into the capability negotiator so the `parse_compress_choice`
     /// NSTR summary renders the real level. Mirrors upstream's raw
-    /// `do_compression_level` (`options.c:88`), which stays `CLVL_NOT_SPECIFIED`
+    /// `do_compression_level` (`options.c:92`), which stays `CLVL_NOT_SPECIFIED`
     /// unless `--compress-level` was passed.
     pub compression_level: i32,
 
@@ -106,8 +108,8 @@ pub struct ProtocolSetupConfig<'a> {
     /// the negotiator's `checksum_override`, mirroring how `compress_choice`
     /// feeds `compression_override`.
     ///
-    /// upstream: compat.c:819 parse_checksum_choice(1) - an explicit
-    /// `checksum_choice` bypasses `negotiate_the_strings()` (compat.c:541
+    /// upstream: compat.c:830 parse_checksum_choice(1) - an explicit
+    /// `checksum_choice` bypasses `negotiate_the_strings()` (compat.c:544
     /// only sends the checksum vstring `if (!checksum_choice)`).
     pub checksum_choice: Option<ChecksumAlgorithm>,
 
@@ -117,7 +119,7 @@ pub struct ProtocolSetupConfig<'a> {
     /// a random one. This makes transfers reproducible (useful for testing/debugging).
     ///
     /// When `None`, the server generates a seed from current time XOR PID
-    /// (matching upstream rsync's default behavior).
+    /// (upstream compat.c:823-824).
     ///
     /// A value of `0` means "use current time" in upstream rsync, which is
     /// equivalent to `None` (the default random seed generation).
@@ -133,7 +135,7 @@ pub struct ProtocolSetupConfig<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `allow_inc_recurse` in upstream `compat.c:161-179`.
+    /// Mirrors `allow_inc_recurse` in upstream `compat.c:162-178`.
     /// Disabled when: `!recurse`, `use_qsort`, or receiver with
     /// `delete_before`/`delete_after`/`delay_updates`/`prune_empty_dirs`.
     pub allow_inc_recurse: bool,
@@ -158,7 +160,7 @@ pub struct ProtocolSetupConfig<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors `preserve_crtimes` in upstream `compat.c:751-753`.
+    /// Mirrors `preserve_crtimes` in upstream `compat.c:762-764`.
     pub preserve_crtimes: bool,
     /// Whether this process is recording a `--write-batch` file.
     ///

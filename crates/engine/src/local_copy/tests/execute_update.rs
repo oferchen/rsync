@@ -311,7 +311,7 @@ fn update_handles_subsecond_precision() {
         )
         .expect("copy succeeds");
 
-    // WHY: upstream generator.c:1721 compares whole-second `time_t` values
+    // WHY: upstream generator.c:2135-2136 compares whole-second `time_t` values
     // (`file->modtime - sx.st.st_mtime < modify_window`), so a dest that is
     // only sub-second newer within the SAME whole second is NOT treated as
     // newer and `--update` does not skip it. Because the sizes differ, the

@@ -1,8 +1,12 @@
-//! Parallel receive-side delta apply (#1368).
+//! Parallel receive-side delta apply.
 //!
-//! Unconditionally compiled as of PFF-7. The design at
+//! Always compiled (no feature gate). The design at
 //! `docs/design/parallel-receive-delta-application.md` documents the
-//! phased rollout that validated this path through PIP-9 and PIP-10.
+//! phased rollout that validated this path.
+//!
+//! Deviation from upstream: upstream `receiver.c:receive_data()` verifies
+//! and writes each token sequentially on one thread; fanning the verify
+//! step across a worker pool is oc-only.
 //!
 //! # Shape
 //!
@@ -34,10 +38,8 @@
 //!
 //! # Module layout
 //!
-//! The applier was decomposed into cohesive submodules; this `mod.rs` is the
-//! hub that wires them together and re-exports the previously module-visible
-//! items so callers (`concurrent_delta::parallel_apply::...`) compile
-//! unchanged.
+//! This `mod.rs` is the hub that wires the submodules together and
+//! re-exports their items under `concurrent_delta::parallel_apply::...`.
 //!
 //! * `error` - typed [`ParallelApplyError`] and its `io::Error` bridge.
 //! * `chunk` - public [`DeltaChunk`] segment plus the internal
@@ -73,7 +75,7 @@ pub use error::ParallelApplyError;
 
 // Re-exported at `parallel_apply` scope so the sibling submodules
 // (`batch`, `drain`, `slot_barrier`) that reference these items by bare
-// `super::X` paths keep resolving unchanged after the decomposition. The
+// `super::X` paths resolve them. The
 // visibility matches each item's own `pub(in ...)` / `pub(super)` origin
 // so the re-export never widens it.
 pub(in crate::concurrent_delta::parallel_apply) use chunk::VerifiedChunk;

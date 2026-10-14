@@ -1,19 +1,19 @@
 /// Tracks the number of active client connections in the daemon server loop.
 ///
-/// The counter uses an [`AtomicUsize`] for lock-free concurrent access from
-/// worker threads. Each accepted connection increments the counter via
+/// The counter uses an [`AtomicUsize`] for lock-free concurrent access. Each
+/// accepted connection increments the counter via
 /// [`ConnectionCounter::acquire`], which returns a [`ConnectionGuard`] that
 /// automatically decrements the counter when dropped.
 ///
 /// The counter is wrapped in an `Arc` so it can be shared between the main
-/// accept loop and spawned worker threads. The accept loop consults
+/// accept loop and the workers it tracks. The accept loop consults
 /// `ConnectionCounter::active` before spawning a worker and refuses the
 /// connection once `--max-connections` is reached, enforcing the daemon-level
 /// limit (as opposed to the per-module limits already tracked by
 /// `ModuleRuntime::active_connections`).
 ///
-/// upstream: clientserver.c - `count_connections()` tracks active children
-/// for the `max connections` global directive.
+/// Deviation from upstream: upstream has no daemon-wide connection limit; its
+/// `max connections` is per module (clientserver.c:791 `claim_connection()`).
 #[derive(Debug)]
 pub(crate) struct ConnectionCounter {
     active: Arc<AtomicUsize>,
@@ -29,11 +29,11 @@ impl ConnectionCounter {
 
     /// Returns the current number of active connections.
     ///
-    /// Consulted by the accept loop before spawning a worker thread so that
+    /// Consulted by the accept loop before spawning a worker so that
     /// the daemon can refuse a connection with `@ERROR: max connections (N)
     /// reached -- try again later` once `--max-connections` is reached.
     ///
-    /// upstream: clientserver.c:744-756 enforces `lp_max_connections()` per
+    /// upstream: clientserver.c:791-801 enforces `lp_max_connections()` per
     /// module via `claim_connection()` and emits the same error wording.
     pub(crate) fn active(&self) -> usize {
         self.active.load(Ordering::Acquire)

@@ -173,9 +173,9 @@ fn create_hardlinks_multiple_groups() {
 /// was skipped) but another group member did materialize, upstream promotes
 /// that present member to a "virtual first" and links the rest to it rather
 /// than aborting. This mirrors upstream `hlink.c`: `skip_hard_link()`
-/// (hlink.c:546-565) flags the absent leader `FLAG_SKIP_HLINK`, `check_prior()`
+/// (hlink.c:567-586) flags the absent leader `FLAG_SKIP_HLINK`, `check_prior()`
 /// (hlink.c:246-282) walks past it to the next present member, and
-/// `hard_link_check()` (hlink.c:299-310) promotes it. Before this fix the
+/// `hard_link_check()` (hlink.c:300-320) promotes it. Before this fix the
 /// receiver recorded the absent leader unconditionally and `fast_io::hard_link`
 /// returned ENOENT, which propagated as a fatal receiver abort.
 #[test]
@@ -227,7 +227,7 @@ fn create_hardlinks_promotes_present_member_when_leader_absent() {
 /// When a `-H` group's leader is absent and no other member materialized, the
 /// group has no data to link. Upstream leaves it unlinked (the earlier transfer
 /// error already set io_error); the receiver must record a soft error and keep
-/// going, never abort with a fatal ENOENT. upstream: hlink.c:299-310 virtual
+/// going, never abort with a fatal ENOENT. upstream: hlink.c:300-320 virtual
 /// first with no present member; `maybe_hard_link()` failure is non-fatal.
 #[test]
 fn create_hardlinks_leader_absent_no_members_is_non_fatal() {
@@ -643,7 +643,7 @@ fn create_hardlinks_surfaces_non_eacces_error() {
 /// A `--delay-updates` leader is committed under the `.~tmp~` partial-dir and is
 /// renamed to its final path only in phase 2 by `handle_delayed_updates`. A
 /// follower may be hard-linked to it only *after* that rename - upstream
-/// `receiver.c:710-711` (the phase-2 rename) then `:551-552`
+/// `receiver.c:874-875` (the phase-2 `handle_delayed_updates()` rename) then
 /// (`send_msg_success` -> `finish_hard_link`). `create_hardlinks` links the
 /// follower against the leader's FINAL path (`dest_dir.join(rel)`), so if it ran
 /// before the delayed rename the follower's `linkat` would target a leader still
@@ -759,9 +759,9 @@ fn pull_receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
 /// A hardlink follower is never sent for transfer, so a server-mode push
 /// receiver must forward its itemize record (`NDX + iflags + xname`)
 /// explicitly; otherwise the pushing client's sender has nothing to render and
-/// the follower's `hf...` / `=> leader` row is silently dropped (issue #119).
+/// the follower's `hf...` / `=> leader` row is silently dropped.
 /// This pins the exact wire shape upstream emits (`generator.c:585-591`,
-/// `hlink.c:218-234`) and proves the peer's own sender decoder round-trips it.
+/// `hlink.c:232-248`) and proves the peer's own sender decoder round-trips it.
 #[test]
 fn server_push_emits_follower_ndx_iflags_and_leader_xname() {
     use crate::generator::ItemFlags;
@@ -927,11 +927,11 @@ fn server_push_without_followers_emits_nothing() {
     assert_eq!(ctx.hardlink_follower_echoes.get(), 0);
 }
 
-/// HL-2 (#79, wire): a server-mode push whose destination already hard-links
+/// Wire: a server-mode push whose destination already hard-links
 /// the follower to its leader (a re-run) must forward NOTHING for that
-/// follower. Upstream `hlink.c:215-227` itemizes an up-to-date follower with
+/// follower. Upstream `hlink.c:229-241` itemizes an up-to-date follower with
 /// `ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS` and an EMPTY xname; neither flag is
-/// significant (`rsync.h:258-259`), so the `generator.c:582` emit gate is false
+/// significant (`rsync.h:258-259`), so the `generator.c:601` emit gate is false
 /// and no wire record is written. Emitting one here would make the pushing
 /// client's sender print a spurious `hf...` row on every unchanged re-run.
 #[cfg(unix)]
@@ -971,7 +971,7 @@ fn server_push_skips_up_to_date_follower_on_wire() {
 /// HL-2 companion: a first-time transfer (destination leader present, follower
 /// not yet linked) MUST still forward the follower's itemize record carrying a
 /// non-empty leader xname - the `atomic_create` path at upstream
-/// `hlink.c:230-237`, whose `(xname && *xname)` makes the `generator.c:582`
+/// `hlink.c:244-251`, whose `(xname && *xname)` makes the `generator.c:588`
 /// gate true. This pins that the up-to-date gate narrows emission without
 /// suppressing genuinely new followers.
 #[cfg(unix)]
@@ -1031,7 +1031,7 @@ fn server_push_emits_new_follower_when_not_yet_linked() {
 }
 
 /// The peer's sender echoes every non-transfer item back (upstream
-/// `sender.c:289-295`), but the request-count-driven pipeline response loop
+/// `sender.c:581-587`), but the request-count-driven pipeline response loop
 /// never reads them. If they are not drained at the phase boundary, the first
 /// `read_expected_ndx_done` reads a follower echo's NDX instead of NDX_DONE and
 /// aborts with a protocol error (the exit-10 `hardlinks` testsuite failure).
@@ -1083,7 +1083,7 @@ fn phase_done_read_drains_pending_follower_echoes() {
 }
 
 /// A non-UTF-8 leader name must reach the xname as its raw bytes. Upstream
-/// writes `f_name()` verbatim (`generator.c:591`); an empty xname tells the
+/// writes `f_name()` verbatim (`generator.c:597`); an empty xname tells the
 /// peer the follower is already linked, so a lossy name drops the `=> leader`
 /// half of the row.
 #[cfg(unix)]

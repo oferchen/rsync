@@ -239,7 +239,7 @@ pub(crate) fn parse_filter_directive_line(
 ///
 /// upstream: exclude.c:1533-1538, in `parse_filter_str`'s token loop. It
 /// measures `pat_len` - the pattern *alone*, since `parse_rule_tok` has already
-/// consumed the action prefix and any modifiers (exclude.c:1456-1464) - then
+/// consumed the action prefix and any modifiers (exclude.c:1365-1446) - then
 /// `continue`s, so the rule contributes nothing and parsing exits 0. `Ok(None)`
 /// is oc's `continue`: this parser already uses it for a line that yields no
 /// rule.
@@ -882,7 +882,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// upstream: exclude.c:1419-1428 - the `dir-merge` keyword and the `:`
+    /// upstream: exclude.c:1332-1339 - the `dir-merge` keyword and the `:`
     /// short form both register a per-directory merge rule. Both forms must
     /// produce `ParsedFilterDirective::DirMerge` so the runtime can defer
     /// the file lookup to each subdirectory rather than loading it eagerly

@@ -51,7 +51,7 @@
 //!   without writing a response.
 //! - `io.c:1847-1856` -> `got_flist_entry_status(FES_NO_SEND, ndx)` retires the
 //!   declined entry by index, not by any window front (`io.c:1225-1274`).
-//! - `sender.c:669,721` - `io_error |= IOERR_GENERAL`, which travels via
+//! - `sender.c:666,718` - `io_error |= IOERR_GENERAL`, which travels via
 //!   `MSG_IO_ERROR` and makes the run exit 23.
 
 #![cfg(unix)]

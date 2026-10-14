@@ -3,12 +3,12 @@
 //!
 //! # Why this exists
 //!
-//! BR-3j.c/d/e (PRs #4634/#4635/#4636) replaced the applier's outer
+//! BR-3j.c/d/e replaced the applier's outer
 //! `Mutex<HashMap<FileNdx, Arc<Mutex<FileSlot>>>>` slot map with a
 //! [`DashMap`]-backed shard layout. The original BR-3i.f harness in
 //! `parallel_verify_chunk.rs` was authored against the pre-DashMap shape
 //! and produced the baseline cores-vs-throughput curve the receiver's
-//! parallel-vs-sequential gate (#4666) was sized against. BR-3j.f re-runs
+//! parallel-vs-sequential gate was sized against. BR-3j.f re-runs
 //! the same workload through the new applier so the curve can be
 //! captured after the outer-lock removal.
 //!
@@ -61,10 +61,6 @@
 //!
 //! # Cross-references
 //!
-//! - PR #4640 - BR-3i.c real `verify_chunk` (prerequisite shipped).
-//! - PR #4616 - BR-3i.b strategy plumbing.
-//! - PR #4634 - BR-3j.c DashMap migration under audit by this re-bench.
-//! - PR #4653 - BR-3i.f baseline harness in `parallel_verify_chunk.rs`.
 //! - `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md` -
 //!   DashMap-vs-sharded selection audit; cells in this bench validate
 //!   the audit's "shard guard is short, never iterated in hot path"

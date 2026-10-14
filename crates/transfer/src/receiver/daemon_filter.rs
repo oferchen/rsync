@@ -3,9 +3,9 @@
 //! Upstream keeps exactly one `daemon_filter_list` and consults it, per
 //! incoming name, at `generator.c:1662-1676`. Its `FILTRULE_PERDIR_MERGE`
 //! entries are not flat rules: `check_filter` recurses into
-//! `ent->u.mergelist` (`exclude.c:1194-1198`), and that mergelist holds
+//! `ent->u.mergelist` (`exclude.c:1195-1198`), and that mergelist holds
 //! whatever `push_local_filters` last read out of the directory currently
-//! being processed (`exclude.c:858-925`). So the same rule list answers
+//! being processed (`exclude.c:858-924`). So the same rule list answers
 //! differently in each directory, and this module is where the receiver holds
 //! that per-directory state.
 //!
@@ -42,7 +42,7 @@ pub(in crate::receiver) struct DaemonFilterGate {
     prototype: FilterChain,
     /// Destination root the merge file names are resolved against. This is the
     /// module root for a daemon receiver, matching upstream's post-`chdir`
-    /// `curr_dir` in `set_filter_dir()` (`exclude.c:756-776`).
+    /// `curr_dir` in `set_filter_dir()` (`exclude.c:756-778`).
     dest_dir: PathBuf,
     /// Whether any per-directory merge directive is active. False collapses
     /// every probe onto `prototype`, so a module with only plain rules costs
@@ -71,7 +71,7 @@ impl DaemonFilterGate {
         for config in merge_configs {
             prototype.add_merge_config(config.clone());
         }
-        // upstream: exclude.c:200-228 - a leading-`/` rule read from a per-dir
+        // upstream: exclude.c:297-304 add_rule() - a leading-`/` rule read from a per-dir
         // merge file is re-anchored to that file's directory relative to the
         // module root, which is what the transfer root records here.
         prototype.set_transfer_root(dest_dir.to_path_buf());
@@ -112,8 +112,8 @@ impl DaemonFilterGate {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1258-1266` - `if (skip_dir) { if (is_below(file, skip_dir)) ... return; }`
-    /// - `generator.c:1284-1285` / `generator.c:1491-1495` - a refused directory
+    /// - `generator.c:1648-1659` - `if (skip_dir) { if (is_below(file, skip_dir)) ... return; }`
+    /// - `generator.c:1673-1674` / `generator.c:1883-1885` - a refused directory
     ///   jumps to `skipping_dir_contents`, which assigns `skip_dir = file`
     pub(in crate::receiver) fn refuses_ancestor(&mut self, name: impl AsRef<Path>) -> bool {
         name.as_ref()

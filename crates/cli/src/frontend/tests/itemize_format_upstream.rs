@@ -8,7 +8,7 @@
 //
 // The format string is always 11 characters, followed by a space and the
 // filename. Deletions use "*deleting  " (padded to 11 chars) followed by
-// a space and the filename, matching upstream log.c:697.
+// a space and the filename, matching upstream log.c:735.
 
 use super::common::*;
 use super::*;
@@ -125,7 +125,7 @@ fn itemize_updated_file_shows_change_indicators() {
 
     assert_eq!(&format_str[0..1], ">");
     assert_eq!(&format_str[1..2], "f");
-    // upstream: generator.c:1942 - ITEM_REPORT_CHECKSUM is set only under
+    // upstream: generator.c:2379-2380 - ITEM_REPORT_CHANGE is set only under
     // `always_checksum > 0` (i.e. `--checksum`); without it, position 2 is '.'.
     assert_eq!(
         &format_str[2..3],
@@ -481,8 +481,8 @@ fn itemize_last_toggle_wins_disabled() {
 /// against a non-existent dest emits a created-directory notice, a synthetic
 /// root `cd+++++++++ ./` row, a `cd+++++++++ <subdir>/` row for every
 /// directory entered during the recursive walk (including nested children),
-/// and then the per-file rows. Mirrors upstream `main.c:811-812` +
-/// `generator.c:566-572`.
+/// and then the per-file rows. Mirrors upstream `main.c:828-829` +
+/// `generator.c:1869-1872`.
 #[test]
 fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
     let tmp = test_support::create_tempdir();
@@ -536,15 +536,15 @@ fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
     );
 }
 
-/// UTS-IT.15: focused regression for the synthetic root `cd+++++++++ ./` row.
+/// Focused regression for the synthetic root `cd+++++++++ ./` row.
 ///
-/// Upstream `generator.c:566-572` emits a single dir-row for the destination
+/// Upstream `generator.c:1869-1872` emits a single dir-row for the destination
 /// root on an initial recursive transfer under `-i`/`--itemize-changes`, even
 /// when the source tree contains only top-level files. This locks down that
 /// behaviour in isolation so a regression cannot hide behind a broader test
 /// also asserting per-file rows.
 ///
-/// upstream: generator.c:566-572 root row emission.
+/// upstream: generator.c:1869-1872 root row emission.
 #[test]
 fn itemize_initial_recursive_transfer_emits_root_dir_row() {
     let tmp = test_support::create_tempdir();
@@ -596,7 +596,7 @@ fn itemize_initial_recursive_transfer_emits_root_dir_row() {
     );
 }
 
-/// UTS-IT.16: focused regression for `cd+++++++++ <subdir>/` rows on every
+/// Focused regression for `cd+++++++++ <subdir>/` rows on every
 /// implicitly-created intermediate directory.
 ///
 /// Upstream emits one dir-row per directory entered during the recursive
@@ -605,7 +605,7 @@ fn itemize_initial_recursive_transfer_emits_root_dir_row() {
 /// asserts both rows are present, in upstream order, before the per-file
 /// row inside the nested directory.
 ///
-/// upstream: generator.c:566-572 + flist walk recursion.
+/// upstream: generator.c:1869-1872 + flist walk recursion.
 #[test]
 fn itemize_initial_recursive_transfer_emits_intermediate_subdir_rows() {
     let tmp = test_support::create_tempdir();

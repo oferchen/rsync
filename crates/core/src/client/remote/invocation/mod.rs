@@ -12,7 +12,8 @@
 //! # Upstream Reference
 //!
 //! - `options.c:server_options()` - Server argument generation
-//! - `main.c:do_cmd()` - Role determination from operand positions
+//! - `main.c:start_client()` - Role determination from operand positions
+//! - `main.c:do_cmd()` - Remote-shell command line assembly
 
 mod builder;
 #[cfg(test)]
@@ -43,6 +44,9 @@ pub enum RemoteRole {
     ///
     /// Used for remote-to-remote transfers: `oc-rsync user@src:file user@dst:file`
     /// The local machine spawns two SSH connections and relays protocol messages.
+    ///
+    /// Deviation from upstream: upstream refuses this with "The source and
+    /// destination cannot both be remote." (`main.c:1486-1489`).
     Proxy,
 }
 
@@ -57,7 +61,8 @@ pub(super) struct RemoteOperandParsed {
     pub(super) host: String,
     /// Optional user portion (e.g., "user").
     pub(super) user: Option<String>,
-    /// Optional port (extracted from host if present).
+    /// Optional port. Always `None` today: `parse_remote_operand` does not
+    /// extract a port from the host portion.
     pub(super) port: Option<u16>,
 }
 
@@ -69,7 +74,7 @@ pub(super) struct RemoteOperandParsed {
 ///
 /// Operands are held as [`OsString`] so a non-UTF-8 remote path (a legal Unix
 /// filename, carried by rsync as raw `char*`) survives verbatim to the
-/// remote-shell command line. upstream: `main.c:do_cmd()` forwards the raw
+/// remote-shell command line. upstream: `main.c:639 do_cmd()` forwards the raw
 /// `remote_argv` bytes through `safe_arg()` without transcoding.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RemoteOperands {
@@ -84,8 +89,7 @@ pub enum RemoteOperands {
 
 /// Full specification of a transfer, capturing both endpoints and their types.
 ///
-/// This enum replaces the previous tuple return type of `determine_transfer_role`
-/// to provide a cleaner, more explicit representation of all transfer types.
+/// Returned by `determine_transfer_role`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransferSpec {
     /// Push transfer: local sources -> remote destination.
@@ -138,7 +142,7 @@ impl TransferSpec {
 /// protected head (`--server`, `--sender`, the compact flag string with
 /// capability suffix, `--iconv`) and the deferred remainder (long-form
 /// options, `.`, and paths) is provided separately for transmission over
-/// stdin after SSH connection (upstream: `options.c:2755-2756` NULL cutoff).
+/// stdin after SSH connection (upstream: `options.c:2920-2921` NULL cutoff).
 #[derive(Debug)]
 pub struct SecludedInvocation {
     /// Arguments to place on the SSH command line. Under secluded-args this

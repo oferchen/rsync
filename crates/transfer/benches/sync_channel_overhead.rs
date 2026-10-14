@@ -52,12 +52,12 @@
 //!
 //! Action this evidence informs:
 //!
-//! - If crossbeam beats stdlib by > 20% at any contention shape, #1681
-//!   (transfer pipeline channel standardisation) should land on crossbeam
+//! - If crossbeam beats stdlib by > 20% at any contention shape, the
+//!   transfer pipeline channel standardisation should land on crossbeam
 //!   workspace-wide.
-//! - If stdlib MPSC is within 10% across all shapes, #1370 (replace
-//!   crossbeam in low-fan-out sites) becomes attractive: drop a dependency
-//!   for parity performance.
+//! - If stdlib MPSC is within 10% across all shapes, replacing crossbeam
+//!   in low-fan-out sites becomes attractive: drop a dependency for parity
+//!   performance.
 //! - The bounded vs unbounded delta sets the threshold at which adding
 //!   back-pressure to a hot path is free versus measurable.
 //!

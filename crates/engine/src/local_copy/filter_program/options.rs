@@ -61,7 +61,7 @@ pub struct DirMergeOptions {
     /// instead of having to reverse-engineer it from a combination of
     /// derived properties.
     ///
-    /// upstream: exclude.c:1248-1254 - `C` modifier sets NO_PREFIXES |
+    /// upstream: exclude.c:1402-1409 - `C` modifier sets NO_PREFIXES |
     /// WORD_SPLIT | NO_INHERIT | CVS_IGNORE on the rule template.
     cvs_mode: bool,
 }
@@ -200,7 +200,7 @@ impl DirMergeOptions {
 
     /// Marks this dir-merge entry as carrying the `C` (CVS-ignore) modifier.
     ///
-    /// upstream: exclude.c:1248-1254 - `C` modifier toggles FILTRULE_NO_PREFIXES |
+    /// upstream: exclude.c:1402-1409 - `C` modifier toggles FILTRULE_NO_PREFIXES |
     /// FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT | FILTRULE_CVS_IGNORE on the
     /// rule template. The first three are already modelled by `use_whitespace`,
     /// `allow_comments(false)`, and `inherit(false)`; this flag records the

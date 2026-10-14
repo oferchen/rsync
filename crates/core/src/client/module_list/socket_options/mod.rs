@@ -2,7 +2,7 @@
 //!
 //! Translates user-facing option strings (e.g. `SO_KEEPALIVE,TCP_NODELAY`)
 //! into platform-specific `setsockopt` calls on the pre-connect socket.
-// upstream: socket.c:set_socket_options()
+// upstream: socket.c:837 set_socket_options()
 
 mod apply;
 mod consts;

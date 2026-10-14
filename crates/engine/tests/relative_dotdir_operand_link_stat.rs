@@ -12,7 +12,8 @@
 //!    dangling symlink came back `ENOENT`, so both operands aborted the
 //!    transfer at exit 23 instead of being sent.
 //! 2. The marker itself survives as `name_type` and feeds the stat's follow
-//!    decision (`flist.c:2937` - `copy_dirlinks || name_type != NORMAL_NAME`).
+//!    decision (`flist.c:2937` - `copy_dirlinks || name_type != NORMAL_NAME`),
+//!    which `scan_link_stat()` (`flist.c:454-468`) hands to `link_stat()`.
 //!    `link_stat()` (`flist.c:511-526`) is then a two-step: `lstat` first, and
 //!    the `stat` result replaces it ONLY when the target is a directory.
 //!
@@ -26,7 +27,7 @@
 //! - `flist.c:117-120` - `NORMAL_NAME` / `SLASH_ENDING_NAME` / `DOTDIR_NAME`.
 //! - `flist.c:511-526` - `link_stat()`, the lstat-then-dir-only-upgrade pair.
 //! - `flist.c:2892-2897` - the marker is stripped from the name it stats.
-//! - `flist.c:2937` - `link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`.
+//! - `flist.c:2937` - `scan_link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`.
 
 #![cfg(unix)]
 

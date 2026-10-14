@@ -4,7 +4,7 @@
 /// Runs the module's `post-xfer exec` hook, once it has been armed, with the
 /// given transfer `exit_status`.
 ///
-/// upstream: clientserver.c:908-933 - the daemon forks a child that runs the
+/// upstream: clientserver.c:964-991 - the daemon forks a child that runs the
 /// whole module session while the parent waits for the child's exit status and
 /// then runs `post-xfer exec` with it. Because the parent waits for *any* child
 /// outcome, the hook fires regardless of transfer success - including a refused
@@ -204,7 +204,7 @@ fn process_approved_module(
     // or an inherited global-section value). The guard restores the daemon-global
     // logger on drop, so it is held for the module's whole session. In log-file
     // mode (`log_sink` is Some) syslog is inactive, so the reconfiguration is
-    // skipped. upstream: log.c:169 log_init reopens syslog per selected module.
+    // skipped. upstream: log.c:186-205 log_init(1) reopens syslog per selected module.
     #[cfg(unix)]
     let _module_syslog_guard = if ctx.log_sink.is_none() {
         module.reconfigure_syslog()
@@ -239,7 +239,7 @@ fn process_approved_module(
         return Ok(());
     }
 
-    // upstream: clientserver.c:930-951 - the five daemon filter parameters
+    // upstream: clientserver.c:933-952 - the five daemon filter parameters
     // (`filter`, `include from`, `include`, `exclude from`, `exclude`) are
     // parsed HERE, and the ordering is the substance of this placement:
     //
@@ -287,7 +287,7 @@ fn process_approved_module(
         }
     };
 
-    // upstream: clientserver.c:959-1031 - the hook directives are read, and so
+    // upstream: clientserver.c:959-1032 - the hook directives are read, and so
     // expanded, after authentication (RSYNC_USER_NAME is set at :815) and the
     // daemon filter parse (:930-954), and before the post-xfer fork, the early
     // exec and the chroot:
@@ -375,7 +375,7 @@ fn process_approved_module(
                 }
                 let error = AtError::message("early exec failed".to_string());
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                // upstream: clientserver.c:945-949 - early exec runs after
+                // upstream: clientserver.c:994-1010 - early exec runs after
                 // the post-xfer-exec fork point, so its failure is a
                 // child exit the waiting parent still observes.
                 let host_owned = ctx.host_display().to_owned();
@@ -445,13 +445,13 @@ fn process_approved_module(
     // never desync the client's multiplex decoder. Client args are not yet
     // available (the client blocks on OK before sending its argv), so the
     // post-xfer-exec hook fires with an empty arg list - matching upstream's
-    // pre-read_args fork position (clientserver.c:908).
+    // pre-read_args fork position (clientserver.c:967-968).
     //
     // ⚠ The daemon filter parameters are read ABOVE this point, not below it -
     // see the ordering table there for why each of the three steps in this
     // block would break a different working configuration.
     if !validate_module_path(ctx, module)? {
-        // upstream: clientserver.c:992-993 - the change_dir() into the module
+        // upstream: clientserver.c:1059-1060 - the change_dir() into the module
         // path is post-fork, so a missing/unreachable path still hooks.
         let host_owned = ctx.host_display().to_owned();
         run_post_xfer_finalizer(
@@ -465,7 +465,7 @@ fn process_approved_module(
         return Ok(());
     }
 
-    // upstream: clientserver.c:rsync_module (998-1009) - once munge_symlinks is
+    // upstream: clientserver.c:rsync_module (1070-1082) - once munge_symlinks is
     // resolved and the daemon has entered the module root, a pre-existing
     // `rsyncd-munged` directory (SYMLINK_PREFIX without its trailing slash)
     // would let an attacker plant real paths through which munged
@@ -541,10 +541,10 @@ fn process_approved_module(
         client_args: &client_args,
     };
 
-    // upstream: clientserver.c:1178-1181 - the pre-xfer hook is handed the
+    // upstream: clientserver.c:1180-1183 - the pre-xfer hook is handed the
     // request and argv as soon as read_args() has them, and its verdict is
     // taken before any other use of the argv. Its failure shares the single
-    // post-OK fatal exit with a refused option (:1229-1267), and wins over it:
+    // post-OK fatal exit with a refused option (:1254-1268), and wins over it:
     // `err_msg` is printed in preference to option_error(). So the hook runs
     // here, ahead of the refuse-options and read-only/write-only checks.
     if let Some(expanded_command) = pre_xfer_command.as_deref() {
@@ -562,12 +562,12 @@ fn process_approved_module(
             }
         };
         if let Some(text) = failure {
-            // upstream: clientserver.c:1229-1267 - finish the protocol setup so
+            // upstream: clientserver.c:1226-1268 - finish the protocol setup so
             // the error can travel multiplexed, send the text as FERROR, and
             // exit RERR_UNSUPPORTED. Nothing is written raw after `@RSYNCD: OK`.
             let payload = text.strip_suffix('\n').unwrap_or(&text);
             // upstream: a daemon's rwrite() also logs every FERROR line
-            // (log.c:311-330) before sending it.
+            // (log.c:312-332) before sending it.
             if let Some(log) = ctx.log_sink {
                 for line in payload.lines() {
                     log_message(log, &rsync_info!(line.to_owned()).with_role(Role::Daemon));
@@ -600,13 +600,13 @@ fn process_approved_module(
     // to multiplexed input. The error must travel as `MSG_ERROR_XFER` +
     // `MSG_ERROR_EXIT` frames; raw `@ERROR:` text would surface on the
     // receiver as `unexpected tag 77` (the 'T' from "The server ..." minus
-    // `MPLEX_BASE = 7`). upstream: clientserver.c:1169 io_start_multiplex_out
+    // `MPLEX_BASE = 7`). upstream: clientserver.c:1251 io_start_multiplex_out
     // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
         let host_owned = ctx.host_display().to_owned();
         let result =
             handle_refused_option_post_handshake(ctx, &refused, negotiated_protocol, &client_args);
-        // upstream: clientserver.c:1079/1171 - parse_arguments() rejecting a
+        // upstream: clientserver.c:1160-1166 - parse_arguments() rejecting a
         // refused option runs after the post-xfer-exec fork point and exits
         // via exit_cleanup(RERR_UNSUPPORTED), which the waiting parent
         // observes and still hooks.
@@ -622,8 +622,8 @@ fn process_approved_module(
     }
 
     // Enforce read-only / write-only access restrictions.
-    // upstream: main.c:1183-1187 `do_server_recv()` rejects a read-only push
-    // and main.c:949-952 `do_server_sender()` rejects a write-only pull, both
+    // upstream: main.c:1201-1205 `do_server_recv()` rejects a read-only push
+    // and main.c:962-965 `do_server_sender()` rejects a write-only pull, both
     // via `rprintf(FERROR, "ERROR: module is ...\n")` + `exit_cleanup(
     // RERR_SYNTAX)`. When --sender is absent the client is pushing (server =
     // Receiver); a read-only module must reject pushes and a write-only module
@@ -634,20 +634,20 @@ fn process_approved_module(
     // `MSG_ERROR_XFER` + `MSG_ERROR_EXIT` rather than written as a raw line.
     // The `@RSYNCD: OK` acknowledgement already flipped the client to
     // multiplexed input; a raw `ERROR: ...\n` line would be decoded as a
-    // 4-byte frame header and desync the stream (issue #227:
-    // `invalid multi-message 102 (code 12)`).
+    // 4-byte frame header and desync the stream
+    // (`invalid multi-message 102 (code 12)`).
     // `handle_access_denied_post_handshake` finishes the post-OK protocol
     // setup, then emits the framed error and exit code.
     //
-    // upstream: clientserver.c:760 seeds `read_only = lp_read_only(module_id)`;
-    // auth_server() (authenticate.c:340-343) then overrides it from the
+    // upstream: clientserver.c:805 seeds `read_only = lp_read_only(i)`;
+    // auth_server() (authenticate.c:436-441) then overrides it from the
     // authenticated user's `:ro` / `:rw` suffix. Apply that override here so a
     // `name:rw` user may push to a `read only = yes` module and a `name:ro`
     // user is refused writes to a `read only = no` module. The `write only`
     // check is unaffected: upstream's auth override only touches `read_only`.
     let role = determine_server_role(&client_args);
     let effective_read_only = access_effective_read_only(module.read_only, auth_access_level);
-    // upstream: clientserver.c:908-933 - the post-xfer parent waits for the
+    // upstream: clientserver.c:964-991 - the post-xfer parent waits for the
     // module child and runs `post-xfer exec` regardless of outcome. A refused
     // read-only push / write-only pull exits `RERR_SYNTAX` (1) in the child, so
     // the hook still fires with `RSYNC_EXIT_STATUS=1`. Emit the framed
@@ -695,7 +695,7 @@ fn process_approved_module(
     // operator's configuration permits, so the Landlock allowlist below can
     // be widened to cover them (URV-5.b.REOPEN). Out-of-module paths are
     // silently dropped here and again in `build_server_config`'s ref_dir
-    // retain block - upstream `main.c:867 check_alt_basis_dirs` warns on
+    // retain block - upstream `main.c:880 check_alt_basis_dirs` warns on
     // a missing/out-of-tree basis but never aborts, and the standalone
     // link-dest / copy-dest interop fixtures rely on that contract.
     //
@@ -709,8 +709,9 @@ fn process_approved_module(
         return Ok(());
     };
 
-    // upstream: clientserver.c:964-971 - spawn name converter after privilege
-    // reduction so it runs with reduced privileges inside the chroot.
+    // Spawn the name converter after privilege reduction so it runs with
+    // reduced privileges inside the chroot. Deviation from upstream:
+    // clientserver.c:1024-1031 starts it before the chroot and privilege drop.
     #[cfg(unix)]
     let _name_converter_guard = if let Some(expanded) = name_converter_command {
         match NameConverter::spawn(&expanded) {
@@ -718,7 +719,7 @@ fn process_approved_module(
             Err(err) => {
                 let error = AtError::message(format!("name-converter exec failed: {err}"));
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                // upstream: clientserver.c:965-970 - the name-converter spawn
+                // upstream: clientserver.c:964-992 - the name-converter spawn
                 // runs after the post-xfer-exec fork point, so its failure
                 // is a child exit the waiting parent still observes.
                 let host_owned = ctx.host_display().to_owned();
@@ -747,7 +748,7 @@ fn process_approved_module(
     // process is not chrooted, so the real absolute module path must be
     // preserved. The inner directory is "/" unless the module path carried a
     // `/./` marker, in which case it is the normalized remainder after it.
-    // upstream: clientserver.c:847-864 - `module_dir` after the `/./` split.
+    // upstream: clientserver.c:897-914 - `module_dir` after the `/./` split.
     let effective_module;
     // An unchrooted module whose root is now the working directory is served
     // as `.`; see `enter_pinned_module_root`.
@@ -767,7 +768,7 @@ fn process_approved_module(
         module
     };
 
-    // upstream's `module_dir`: the chroot rewrites it (clientserver.c:916-926),
+    // upstream's `module_dir`: the chroot rewrites it (clientserver.c:897-914),
     // entering the module as the working directory does not - the process is
     // served from `.`, but `module_dir` stays the module's real path.
     let module_dir = if privilege_outcome.served_root.is_some() {
@@ -880,13 +881,13 @@ fn process_approved_module(
     // stamped onto the module), never the client's. `Disabled` and the
     // default `Auto` never dispatch SEND_ZC; only `Enabled` does.
     let zero_copy_policy = config.write.zero_copy_policy;
-    // upstream: io.c:211-250 `check_timeout()`. The reconciled `io_timeout` is
+    // upstream: io.c:229-268 `check_timeout()`. The reconciled `io_timeout` is
     // armed on the socket as `SO_RCVTIMEO`/`SO_SNDTIMEO`, but that option lives
     // on the shared socket and the drain thread's own 50 ms poll cadence
     // overwrites it on a `try_clone`d fd - so the session timeout needs a
     // userspace clock of its own. See `io_progress.rs`.
     //
-    // upstream: io.c:239-240 `if (am_receiver) return;`. A receiver can spend a
+    // upstream: io.c:257-258 `if (am_receiver) return;`. A receiver can spend a
     // long time hashing without touching the socket; upstream leaves the timing
     // decision to the generator process sharing that socket. oc fuses both roles
     // into one thread, so honouring the gate means a daemon RECEIVING a push has
@@ -915,7 +916,7 @@ fn process_approved_module(
             }
         };
 
-    // upstream: clientserver.c:1207-1220 - the per-request line, emitted once
+    // upstream: clientserver.c:1208-1219 - the per-request line, emitted once
     // the argv is parsed, the refusals have been applied and the pre-xfer hook
     // has run, and before the transfer's own output starts.
     log_daemon_request(ctx, &client_args, role, auth_user.as_deref());
@@ -1027,7 +1028,7 @@ fn process_approved_module(
     // Every drain is bounded by a read timeout so a wedged peer can never
     // pin the connection thread (never an unbounded blocking read).
     //
-    // upstream: io.c:943-963 noop_io_until_death() loops on read() until
+    // upstream: io.c:1066-1085 noop_io_until_death() loops on read_buf() until
     // the peer sends FIN; cleanup.c:265 then calls close_all(). Our
     // sequence collapses that pattern to fit the threaded daemon model.
     //
@@ -1070,7 +1071,7 @@ fn process_approved_module(
         // on the implicit Drop-time close. The companion SO_LINGER set
         // above is the catastrophic-failure fallback.
         //
-        // upstream: cleanup.c::handle_cleanup() -> close_all() emits the
+        // upstream: cleanup.c:_exit_cleanup() -> close_all() (cleanup.c:265) emits the
         // kernel FIN as the process exits; the threaded daemon collapses
         // that pattern into the explicit shutdown here.
         if let Some(tcp) = stream.tcp_stream()
@@ -1123,7 +1124,7 @@ fn process_approved_module(
 ///
 /// The path becomes the post-chroot inner directory: `/` unless the configured
 /// path carried a `/./` marker, in which case it is the normalized remainder
-/// after it. upstream: clientserver.c:847-864 - `module_dir` after the split.
+/// after it. upstream: clientserver.c:897-914 - `module_dir` after the split.
 ///
 /// Any decision that reads the *pre-chroot* path must be resolved here, before
 /// the rewrite consumes its input. `munge symlinks` is such a decision: upstream

@@ -244,7 +244,7 @@ pub(crate) fn copy_symlink(
     // If the link is unsafe but we were told to copy what it points to, do that.
     if unsafe_target {
         if context.copy_unsafe_links_enabled() {
-            // upstream: flist.c:231 - INFO_GTE(SYMSAFE, 1) fires before
+            // upstream: flist.c:493 - INFO_GTE(SYMSAFE, 1) fires before
             // an unsafe symlink is dereferenced into a regular entry.
             info_log!(
                 Symsafe,
@@ -321,7 +321,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // upstream: generator.c:1140 + try_dests_non() - a `--compare-dest` symlink
+    // upstream: generator.c:1299 + try_dests_non() - a `--compare-dest` symlink
     // whose target matches the basis is neither recreated nor transferred; it
     // itemizes `.L` against the basis. Detect that before any creation work so
     // the destination stays empty (compare-dest semantics) and the row collapses
@@ -347,7 +347,7 @@ pub(crate) fn copy_symlink(
             false,
             context.options().modify_window(),
         );
-        // upstream: generator.c:1140 + receiver.c:750 - a `--compare-dest`
+        // upstream: generator.c:1299 + receiver.c:750 - a `--compare-dest`
         // match leaves the destination absent and itemizes `.L` with no
         // ITEM_IS_NEW, so `stats.created_files`/`created_symlinks` do NOT count
         // it. It is still tallied into num_symlinks via `record_symlink_total`
@@ -380,7 +380,7 @@ pub(crate) fn copy_symlink(
         context.prepare_parent_directory(parent)?;
     }
 
-    // upstream: generator.c:1572-1585 - `quick_check_ok(FT_SYMLINK, ...)` -
+    // upstream: generator.c:1963-1970 - `quick_check_ok(FT_SYMLINK, ...)` -
     // when the existing destination is already a symlink pointing at the
     // same target, skip the re-create and only re-apply metadata. The
     // itemize line collapses to `.L         ` under `-vv` and is suppressed
@@ -407,7 +407,7 @@ pub(crate) fn copy_symlink(
             apply_symlink_metadata_with_options(destination, metadata, &symlink_options)
                 .map_err(map_metadata_error)?;
         }
-        // upstream: generator.c:1572-1585 + receiver.c:747-762 - an existing
+        // upstream: generator.c:1963-1970 + receiver.c:925-926 - an existing
         // symlink already pointing at the same target quick-checks equal:
         // `itemize(..., 0, ...)` sets no ITEM_IS_NEW, so `stats.created_files`
         // does not count it. A no-change re-run therefore reports 0 created
@@ -416,7 +416,7 @@ pub(crate) fn copy_symlink(
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());
-            // upstream: generator.c:1577 - `itemize(..., 0, ...)` with
+            // upstream: generator.c:1969 - `itemize(..., 0, ...)` with
             // iflags=0 produces no significant change bits when the link
             // already points at the right place, so the `-i` golden omits
             // the entry entirely. Emit a MetadataReused record without
@@ -456,8 +456,8 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // upstream: generator.c:1606-1609 - when the existing destination is a
-    // symlink with a different target, `statret == 0 && stype == FT_SYMLINK`
+    // upstream: generator.c:2005-2008 recv_generator() - when the existing
+    // destination is a symlink with a different target, `statret == 0 && stype == FT_SYMLINK`
     // and the recreate-itemize fires with the existing `sx.st` so
     // `mtime_differs()` can compare against the OLD symlink's mtime.
     // Capture that snapshot before removal so the change-set can flag
@@ -482,14 +482,14 @@ pub(crate) fn copy_symlink(
     if !mode.is_dry_run()
         && let Some(existing) = destination_metadata.take()
     {
-        // upstream: generator.c:2019 atomic_create() - `make_backup(fname,
+        // upstream: generator.c:2478 atomic_create() - `make_backup(fname,
         // skip_atomic)` with `skip_atomic` false here, so the hard-link tier
         // runs before the rename.
         context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
         remove_existing_destination(destination)?;
     }
 
-    // upstream: generator.c:1117-1134 try_dests_non() - a `--link-dest` basis
+    // upstream: generator.c:1258-1302 try_dests_non() - a `--link-dest` basis
     // symlink with the same target is hard-linked into place rather than
     // recreated, itemizing as `hL` + blank against the basis. Only applies when
     // the destination is being created fresh (no prior symlink to recreate).
@@ -792,7 +792,7 @@ pub(crate) fn copy_symlink(
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
-        // upstream: generator.c:1119-1148 try_dests_non() - a symlink absent
+        // upstream: generator.c:1205-1316 try_dests_non() - a symlink absent
         // from the destination but present (with the same target) in a
         // `--copy-dest` basis itemizes as a local change (`cL` + blank)
         // against the basis instead of a new entry (`cL+++++++++`).
@@ -805,8 +805,8 @@ pub(crate) fn copy_symlink(
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
         let total_bytes = Some(metadata_snapshot.len());
 
-        // upstream: generator.c:1606-1607 - when the existing destination is
-        // not a symlink (e.g. a regular file being replaced), the recreate
+        // upstream: generator.c:2005-2006 recv_generator() - when the existing
+        // destination is not a symlink (e.g. a regular file being replaced), the recreate
         // path flips `statret = -1` so `itemize()` lights up `ITEM_IS_NEW`
         // and the row renders `cL+++++++++`. Mirror that by treating a
         // non-symlink replacement as a fresh creation.
@@ -823,8 +823,8 @@ pub(crate) fn copy_symlink(
         )
         .with_creation(was_created);
 
-        // upstream: generator.c:1605-1609 - when the existing destination was
-        // a symlink with a different target, the recreate-itemize is called
+        // upstream: generator.c:2005-2008 recv_generator() - when the existing
+        // destination was a symlink with a different target, the recreate-itemize is called
         // with `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0`;
         // `itemize()` then ORs in `ITEM_REPORT_TIME` when `mtime_differs`
         // against the OLD symlink's stat. Mirror that here so the itemize

@@ -1,7 +1,7 @@
 /// A `reverse lookup` directive repeated in the global section keeps its last
 /// value.
 ///
-/// upstream: loadparm.c:379-470 do_parameter() assigns the BOOL slot
+/// upstream: loadparm.c:498-592 do_parameter() assigns the BOOL slot
 /// unconditionally, so the second `no` wins over the first `yes`.
 #[test]
 fn runtime_options_last_wins_reverse_lookup() {

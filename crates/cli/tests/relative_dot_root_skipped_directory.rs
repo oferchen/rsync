@@ -4,7 +4,7 @@
 //! Upstream arms `implied_dot_dir` for an operand whose transmitted name starts
 //! with a bare `./` and then injects a synthetic transfer-root entry with
 //! `send_file_name(f, flist, ".", NULL, (flags | FLAG_IMPLIED_DIR) &
-//! ~FLAG_CONTENT_DIR, ALL_FILTERS)` (`flist.c:2657-2659`). That call reaches
+//! ~FLAG_CONTENT_DIR, ALL_FILTERS)` (`flist.c:2929-2932`). That call reaches
 //! `make_file()`, whose directory branch is
 //!
 //! ```c
@@ -15,16 +15,16 @@
 //!         }
 //! ```
 //!
-//! (`flist.c:1561-1565`). `thisname` is the cleaned name handed in, so the text
+//! (`flist.c:1707-1710`). `thisname` is the cleaned name handed in, so the text
 //! is exactly `skipping directory .` - a bare `.`, unquoted, no trailing slash
 //! and no "(no recursion)" suffix. Returning NULL also keeps the `.` out of the
 //! file list entirely, so it must not be counted under `--stats`.
 //!
 //! `xfer_dirs` resolves to `recurse || -d`, falling back to `list_only` when
-//! neither was given (`options.c:2206-2212`); `--files-from` forces it on
-//! (`options.c:2199-2200`). The implied ancestors of the operand are emitted
+//! neither was given (`options.c:2323-2329`); `--files-from` forces it on
+//! (`options.c:2313-2318`). The implied ancestors of the operand are emitted
 //! either way, because `send_implied_dirs()` sets `copy_links = xfer_dirs = 1`
-//! for the duration of its loop (`flist.c:2207-2237`).
+//! for the duration of its loop (`flist.c:2488-2522`).
 //!
 //! Expectations below were captured from rsync 3.4.4 (protocol 32) run in the
 //! same layout: `rsync -Rv ./sub/f.txt dst/` prints `skipping directory .`,

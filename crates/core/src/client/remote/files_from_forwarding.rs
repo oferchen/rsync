@@ -7,7 +7,7 @@
 //! # Upstream Reference
 //!
 //! - `io.c:forward_filesfrom_data()` - reads from local fd, writes to socket
-//! - `main.c:1209-1216,1390-1393` - `start_filesfrom_forwarding(filesfrom_fd)`
+//! - `main.c:1226-1234,1428-1431` - `start_filesfrom_forwarding(filesfrom_fd)`
 
 use crate::client::config::{ClientConfig, FilesFromSource};
 use crate::client::error::{ClientError, invalid_argument_error};
@@ -25,7 +25,7 @@ pub(crate) fn read_local_files_from_for_forwarding(
     config: &ClientConfig,
 ) -> Result<Vec<u8>, ClientError> {
     let eol_nulls = config.from0();
-    // upstream: compat.c:799-806 - filesfrom_convert is set when
+    // upstream: compat.c:811-818 - filesfrom_convert is set when
     // protect_args && files_from && (am_sender ? ic_send : ic_recv) != -1.
     // For pull, this peer is the receiver writing to the wire; the converter
     // transcodes from local charset to the UTF-8 wire encoding.
@@ -54,7 +54,7 @@ pub(crate) fn read_local_files_from_for_forwarding(
             read_path_into(path, &mut wire_data, eol_nulls, iconv_converter.as_ref())?;
         }
         FilesFromSource::HybridLocalRemote { local_path, .. } => {
-            // upstream: options.c:2485-2510 - a localhost:path hostspec is a
+            // upstream: options.c:2620-2665 - a localhost:path hostspec is a
             // single local fd. This function only runs on PULL (gated by the
             // resolver's stage_local_bytes), where the receiver opens the file
             // locally and forwards its bytes to the remote sender. The remote

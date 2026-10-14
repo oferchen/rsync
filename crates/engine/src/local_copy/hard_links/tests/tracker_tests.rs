@@ -74,7 +74,7 @@ fn register_acl_cohort_leader_distinct_references_each_leader_once() {
 /// linked to the same reference inode would, without the cohort gate,
 /// invoke the DACL writer five times. The gate ensures count == 1.
 ///
-/// upstream: hlink.c::hard_link_check returns 1 for followers so the
+/// upstream: hlink.c:hard_link_check() returns 1 (skip) for followers, so the
 /// generator never calls `set_file_attrs()` -> `set_acl()` on an alias.
 #[test]
 fn cohort_gate_yields_one_acl_call_per_cohort() {

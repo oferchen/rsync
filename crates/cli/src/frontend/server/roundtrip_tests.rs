@@ -8,7 +8,7 @@
 //! corrupting the transfer.
 //!
 //! This has bitten repeatedly: the `--bwlimit=` / `--block-size` leaks these
-//! tests were added for, `-e` (#7153), and earlier #6569 / #6587. Asserting one
+//! tests were added for, and the split `-e` capability token. Asserting one
 //! flag at a time never catches the NEXT drift. Instead, this module builds the
 //! real server argv with [`RemoteInvocationBuilder`] for a representative matrix
 //! of client configs and both transfer roles, feeds it through the production
@@ -72,7 +72,7 @@ fn assert_no_positional_leak(config: &ClientConfig, role: RemoteRole, paths: &[&
 
 #[test]
 fn bwlimit_does_not_leak_and_is_captured() {
-    // upstream: options.c:2976-2977 - `--bwlimit=%d` (whole KiB), emitted
+    // upstream: options.c:2975-2979 - `--bwlimit=%d` (whole KiB), emitted
     // unconditionally (both roles). The parser must recognise the joined form
     // AND capture its value.
     let config = ClientConfig::builder()
@@ -100,7 +100,7 @@ fn bwlimit_does_not_leak_and_is_captured() {
 
 #[test]
 fn block_size_emits_short_b_and_does_not_leak() {
-    // upstream: options.c:2798 - `-B%u` short spelling. The old non-upstream
+    // upstream: options.c:2963-2967 - `-B%u` short spelling. The old non-upstream
     // long `--block-size=` form leaked because is_known only knows `-B<digits>`.
     let config = ClientConfig::builder()
         .block_size_override(Some(NonZeroU32::new(131072).unwrap()))
@@ -130,7 +130,7 @@ fn block_size_emits_short_b_and_does_not_leak() {
 
 #[test]
 fn temp_dir_and_backup_dir_joined_forms_do_not_leak() {
-    // upstream emits these SPLIT (options.c:2817-2818 / 2926-2927); oc's own
+    // upstream emits these SPLIT (options.c:2981-2985 / 3106-3109); oc's own
     // forwarder emits the JOINED `--flag=value`. Both must be recognised. These
     // are am_sender (PUSH) only, so exercise the Sender role.
     let config = ClientConfig::builder()
@@ -158,7 +158,7 @@ fn broad_flag_mix_never_leaks_positionals() {
     // A single config that lights up the value-bearing, leak-prone flags at once
     // (the boolean flags fold into the compact string and cannot become
     // positionals). `-e.<caps>` is embedded in the compact flag string of every
-    // invocation, so the #7153 `-e` class is covered here too.
+    // invocation, so the split `-e` class is covered here too.
     let config = ClientConfig::builder()
         .bandwidth_limit(Some(BandwidthLimit::from_bytes_per_second(
             NonZeroU64::new(8 * 1024 * 1024).unwrap(),
@@ -183,7 +183,7 @@ fn broad_flag_mix_never_leaks_positionals() {
 
 // VALUE round-trip: not just "the flag did not leak" but "the value the parser
 // captures is exactly the value the builder emitted". The presence guards above
-// (and #7160) prove the token reaches the server parser; these prove the VALUE
+// prove the token reaches the server parser; these prove the VALUE
 // survives the emit->parse chain so a value-mangling regression fails here.
 //
 // The comparison is always parsed-vs-EMITTED (extracted from the same argv),
@@ -231,7 +231,7 @@ fn bwlimit_value_round_trips_through_the_server_parser() {
 
 #[test]
 fn checksum_choice_value_round_trips_through_the_server_parser() {
-    // upstream: options.c:2826 safe_arg("--checksum-choice", ...) joins with `=`
+    // upstream: options.c:2991-2992 safe_arg("--checksum-choice", ...) joins with `=`
     // to `--checksum-choice=<algo>`, emitted only when the choice is non-Auto.
     let config = ClientConfig::builder()
         .checksum_choice(StrongChecksumChoice::parse("md5").unwrap())
@@ -251,7 +251,7 @@ fn checksum_choice_value_round_trips_through_the_server_parser() {
 
 #[test]
 fn iconv_value_round_trips_and_forwards_the_remote_charset_only() {
-    // upstream: options.c:2745-2750 - the client forwards the REMOTE charset (the
+    // upstream: options.c:2909-2917 - the client forwards the REMOTE charset (the
     // part after the comma) as `--iconv=<remote>`, not both halves. safe_arg
     // joins with `=`, so `--iconv=utf-8,latin1` forwards `latin1`. The parser
     // must capture exactly that forwarded value.
@@ -274,7 +274,7 @@ fn iconv_value_round_trips_and_forwards_the_remote_charset_only() {
 
 #[test]
 fn info_value_round_trips_for_a_role_surviving_category() {
-    // upstream: options.c:354 make_output_option() role-filters the words; `del`
+    // upstream: options.c:360 make_output_option() role-filters the words; `del`
     // is receiver-side (W_REC), so on a PUSH (peer is the receiver) it survives
     // and level-1 emits bare as `--info=del`. The parser captures the whole
     // comma-joined value as one token.
@@ -293,7 +293,7 @@ fn info_value_round_trips_for_a_role_surviving_category() {
 
 #[test]
 fn debug_value_round_trips_for_a_role_surviving_category() {
-    // upstream: options.c:354 - the `io` debug category survives on a PULL and
+    // upstream: options.c:360 - the `io` debug category survives on a PULL and
     // keeps its non-default level digit, emitting `--debug=io2`. The parser
     // captures the whole value as one token.
     let config = ClientConfig::builder().debug_flags(["io2"]).build();
