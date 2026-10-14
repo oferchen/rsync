@@ -115,8 +115,8 @@ pub struct ParsedArgs {
     pub quic: bool,
 
     /// `--quic-ca <PATH>` - verify the QUIC daemon certificate against this PEM
-    /// CA bundle instead of the system trust store (policy B). `None` uses the
-    /// system-roots default. Available only under the `quic` feature.
+    /// CA bundle, the only QUIC trust anchor. `None` refuses every QUIC dial.
+    /// Available only under the `quic` feature.
     #[cfg(feature = "quic")]
     pub quic_ca: Option<std::path::PathBuf>,
     /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the

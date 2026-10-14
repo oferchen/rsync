@@ -46,9 +46,9 @@ impl ClientConfigBuilder {
     /// Sets the `--quic-ca` private CA bundle used to verify the daemon's QUIC
     /// certificate.
     ///
-    /// `None` (the default) verifies against the platform trust store
-    /// (system-roots). A supplied PEM bundle replaces the platform store for
-    /// the QUIC handshake (policy B). Available only under the `quic` feature.
+    /// The bundle is the only QUIC trust anchor: `None` (the default) refuses
+    /// every QUIC dial, since there is no default trust. Available only under
+    /// the `quic` feature.
     #[cfg(feature = "quic")]
     #[must_use]
     #[doc(alias = "--quic-ca")]

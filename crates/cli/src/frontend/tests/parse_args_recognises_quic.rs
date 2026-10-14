@@ -40,8 +40,8 @@ fn parse_args_recognises_quic_ca_flag() {
 #[cfg(feature = "quic")]
 #[test]
 fn parse_args_quic_ca_defaults_none() {
-    // WHY: without `--quic-ca` the QUIC trust source stays the system-roots
-    // default (no private CA bundle).
+    // WHY: without `--quic-ca` no trust anchor is configured, so a later QUIC
+    // dial is refused rather than trusting any certificate.
     let parsed = parse_args([
         OsString::from(RSYNC),
         OsString::from("host::module"),

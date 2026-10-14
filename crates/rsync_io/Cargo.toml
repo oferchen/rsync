@@ -37,10 +37,7 @@ quinn-udp = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
-rustls-native-certs = { workspace = true, optional = true }
-sha2 = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
-tempfile = { workspace = true, optional = true }
 
 [features]
 default = ["ssh-config-parse"]
@@ -71,10 +68,6 @@ quic = [
     "dep:bytes",
     "dep:rustls",
     "dep:rcgen",
-    "dep:rustls-native-certs",
-    "dep:sha2",
-    "dep:base64",
-    "dep:tempfile",
 ]
 # Async SSH transport: opt-in tokio-process backing for `SshConnection`.
 # See `docs/design/async-ssh-transport.md` (#1593) for the staging plan.
@@ -129,6 +122,7 @@ platform = { path = "../platform" }
 # env-mutating tests on every target. Declare it as an all-target dev
 # dependency so those cross-platform tests compile on Windows too.
 [dev-dependencies]
+base64 = { workspace = true }
 test-support = { path = "../test-support" }
 platform = { path = "../platform" }
 proptest = { workspace = true }
