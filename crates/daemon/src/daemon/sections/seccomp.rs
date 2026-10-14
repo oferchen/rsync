@@ -282,6 +282,14 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_geteuid,
         libc::SYS_getgid,
         libc::SYS_getegid,
+        // The receiver's group gate lists the process groups to decide whether
+        // a non-root worker may set a file's group (upstream uidlist.c:195-239
+        // `is_in_group`). Denied, it reports every supplementary group as
+        // foreign and each such chown is skipped while the transfer exits 0.
+        // MEASURED on aarch64: UTS `daemon-groupmap-wild` over TCP. Read-only:
+        // it reports the caller's own credentials. x86_64 and aarch64 have only
+        // this number; `getgroups32` exists on 32-bit ABIs this filter skips.
+        libc::SYS_getgroups,
         libc::SYS_getrandom,
         libc::SYS_prctl,
         libc::SYS_seccomp,
