@@ -534,8 +534,12 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn child_stdio_are_sockets_with_upstream_blocking_modes() {
+        // The flags go through `$(...)` and are printed afterwards: dash applies
+        // a command's redirections in the shell itself before forking, so
+        // `grep ... >&2` would read the shell's fd 1 while it is stderr.
         let script = "for fd in 0 1; do [ -S /proc/self/fd/$fd ] && printf 'sock%s ' $fd; done; \
-                      grep -h '^flags' /proc/$$/fdinfo/0 /proc/$$/fdinfo/1 >&2";
+                      flags=$(grep -h '^flags' /proc/$$/fdinfo/0 /proc/$$/fdinfo/1); \
+                      printf '%s\\n' \"$flags\" >&2";
         for blocking in [false, true] {
             let mut command = sh_command(script);
             command.stderr(Stdio::piped());
