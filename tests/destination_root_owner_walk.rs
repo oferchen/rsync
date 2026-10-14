@@ -320,12 +320,14 @@ fn a_real_destination_directory_transfers_for_every_receiver() {
 /// closed (`ENOENT`, exit 23) instead of reaching the entered directory; that is
 /// the per-site resolver migration, not this anchor.
 ///
-/// `--bwlimit` stretches the first file so the swap is ordered after the
-/// receiver has started writing it; the poll proves the receiver is past its
-/// setup before anything moves.
+/// `--bwlimit` stretches both files. The swap waits for the first file to
+/// appear - a network receiver's temp file as soon as it starts writing, a
+/// local copy's `O_TMPFILE` only when it commits - which proves the receiver
+/// is past its setup, and the second file is still to be written after the
+/// swap whichever way the first one became visible.
 fn assert_swap_after_entry_is_contained(receiver: Receiver) {
     const BIG: usize = 1 << 20;
-    let (_temp, base) = fixture(&[("a_big", BIG), ("b_small", 64)]);
+    let (_temp, base) = fixture(&[("a_big", BIG), ("b_big", BIG)]);
     let sub = base.join("dest/sub");
     fs::create_dir(&sub).expect("mkdir dest/sub");
     let child = command(receiver, &base, false, &["--bwlimit=128"], &[])
@@ -351,15 +353,19 @@ fn assert_swap_after_entry_is_contained(receiver: Receiver) {
     );
     assert_eq!(
         entries(&entered),
-        ["a_big", "b_small"],
+        ["a_big", "b_big"],
         "{receiver:?}: {}",
         describe(&output)
     );
-    assert_eq!(
-        fs::read(entered.join("a_big")).expect("read a_big").len(),
-        BIG,
-        "{receiver:?}"
-    );
+    for name in ["a_big", "b_big"] {
+        assert_eq!(
+            fs::read(entered.join(name))
+                .expect("read landed file")
+                .len(),
+            BIG,
+            "{receiver:?}: {name}"
+        );
+    }
 }
 
 #[test]
