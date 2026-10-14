@@ -210,10 +210,12 @@ mod tests {
     #[test]
     fn star_matches_are_sorted_by_byte_value() {
         // The C locale orders upper case before lower case; a case-folding or
-        // directory-order result would make transfers nondeterministic.
-        let (_t, root) = tree(&["b.txt", "a.txt", "B.txt", "c.log"]);
+        // directory-order result would make transfers nondeterministic. The
+        // names differ by more than case so they stay distinct files on
+        // case-insensitive filesystems (NTFS, default APFS).
+        let (_t, root) = tree(&["b.txt", "a.txt", "C.txt", "c.log"]);
         let got = rel(&root, expand_pattern(&format!("{root}/*.txt")));
-        assert_eq!(got, ["B.txt", "a.txt", "b.txt"]);
+        assert_eq!(got, ["C.txt", "a.txt", "b.txt"]);
     }
 
     #[test]
