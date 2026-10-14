@@ -193,7 +193,7 @@ where
         // ...)` (`io.c:1502`), and this is the rsh/server path, where
         // `mod_name` is NULL. The peer here is whoever already got a shell,
         // so the daemon's anti-amplification bound does not apply.
-        match protocol::secluded_args::recv_secluded_args(&mut stdin, None, None) {
+        match protocol::secluded_args::recv_secluded_args(&mut stdin, None, None, None) {
             Ok(received_args) => {
                 // Discard the synthetic "rsync" arg0 from the wire and
                 // prepend the command-line tail so the server-options

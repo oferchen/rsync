@@ -424,11 +424,12 @@ fn handle_legacy_session(
 
     // TCP_QUICKACK is one-shot; re-arm before each handshake read so every
     // round's ACK stays immediate across the multi-line greeting exchange.
-    while let Some(line) = match read_trimmed_line(&mut DeadlineBufRead::new(
-        &mut reader,
-        deadline_socket.as_ref(),
-        &deadline,
-    )) {
+    // upstream: clientserver.c:1416,1427,1538 - every pre-module line is read
+    // into `char line[1024]`.
+    while let Some(line) = match read_bounded_line(
+        &mut DeadlineBufRead::new(&mut reader, deadline_socket.as_ref(), &deadline),
+        HANDSHAKE_LINE_BUFSIZ,
+    ) {
         Ok(line) => line,
         // upstream: io.c:154-161 - the deadline is consulted at the wait, and an
         // elapsed one DIAGNOSES then exits RERR_TIMEOUT. The read error itself
@@ -579,7 +580,13 @@ fn handle_legacy_session(
         let _ = socket.set_read_timeout(None);
     }
 
-    let request = request.unwrap_or_default();
+    // upstream: clientserver.c:1538-1539 - a failed `read_line_old()` (EOF, or
+    // a line that overflows the buffer) returns -1 before any reply, so a
+    // session that never produced a request line gets no listing.
+    let Some(request) = request else {
+        // FSM: -> Closing without a request line.
+        return Ok(end_session(conn_state, None));
+    };
 
     if request.is_empty() || request == "#list" {
         // upstream: clientserver.c:1420 - `if (!*line || strcmp(line,
