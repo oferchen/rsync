@@ -75,14 +75,14 @@ versions=(3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
 # Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
 # protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
 # binary is needed so follow-up tasks can wire push/pull cells against it.
-extra_build_versions=(2.6.9)
+extra_build_versions=(2.6.3 2.6.9)
 
 # Versions with no usable per-arch .deb in any pool we track, so the harness
 # builds them from the release tarball instead. 2.6.9 predates the per-arch
 # pool coverage; 3.4.4 and 3.5.0 are too recent for a distro to have packaged.
 # Both the primary URL builder and the generic fallback consult this list, so
 # the "source-only" fact is stated once.
-source_only_versions=(2.6.9 3.4.4 3.5.0 3.5.1)
+source_only_versions=(2.6.3 2.6.9 3.4.4 3.5.0 3.5.1)
 
 version_is_source_only() {
   local version=$1 candidate
