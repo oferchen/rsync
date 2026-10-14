@@ -500,7 +500,15 @@ jobs:
       - name: Run SSH integration tests
         if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
         continue-on-error: true
-        run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh)'
+        run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh) and not test(=ssh_push_throughput_regression_ssr1)'
+
+      # SSR-1 times oc-rsync against upstream's optimised binary, so it must
+      # time an optimised oc-rsync as well. A debug build alone sits near the
+      # 2x ceiling, which turns the check into runner noise.
+      - name: Run SSH throughput regression (release build)
+        if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
+        continue-on-error: true
+        run: cargo nextest run --locked --release -p bin --run-ignored ignored-only -E 'test(=ssh_push_throughput_regression_ssr1)'
 
       - name: Upload build artifacts
         if: needs.changes.outputs.docs_only != 'true'
