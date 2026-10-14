@@ -340,7 +340,7 @@ container-orchestration knob.
   and the ROB-11 status; the workload matrix is unchanged.
 - `docs/audits/rob-4-reorder-pressure-paths.md` - which transfer paths
   feed sequence-numbered work into the in-scope rings. Unchanged.
-- `docs/design/reorderbuffer-spill-to-tempfile.md` - `SpillableReorderBuffer`
+- `docs/design/reorderbuffer-spill-to-tempfile.md` (removed) - `SpillableReorderBuffer`
   contract.
 - `docs/design/rob-7-adaptive-reorder-ring.md` - adaptive policy spec the
   Section 5 ROB-7 recommendations build on.

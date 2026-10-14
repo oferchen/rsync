@@ -70,7 +70,7 @@ cargo llvm-cov nextest -p <crate> --all-features
 - Parallel applier stress tests (`parallel_apply_dg3_stress.rs`,
   `parallel_apply_concurrent.rs`).
 - Delete determinism property tests.
-- Spill/reorder buffer integration (`spill_env_e2e.rs`, `pipeline_reorder_integration.rs`).
+- Reorder buffer integration (`pipeline_reorder_integration.rs`).
 
 ### daemon
 

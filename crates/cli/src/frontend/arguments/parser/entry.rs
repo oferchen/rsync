@@ -25,7 +25,7 @@ use core::client::{
 };
 use engine::operand::operand_is_remote;
 
-use super::coerce::{parse_checksum_threads, parse_spill_threshold_bytes, parse_thread_count};
+use super::coerce::{parse_checksum_threads, parse_thread_count};
 use super::cow::{last_occurrence, parse_reflink_mode, resolve_cow_policy};
 use super::flags::{
     archive_aware_flag, leveled_flag_pair, tri_state_flag_negative_first,
@@ -687,12 +687,6 @@ where
     let rayon_threads = parse_thread_count(&mut matches, "rayon-threads")?;
     let tokio_threads = parse_thread_count(&mut matches, "tokio-threads")?;
     let checksum_threads = parse_checksum_threads(&mut matches)?;
-
-    let spill_dir = matches
-        .remove_one::<OsString>("spill-dir")
-        .map(PathBuf::from);
-    let spill_threshold_bytes = parse_spill_threshold_bytes(&mut matches)?;
-    let no_spill = matches.get_flag("no-spill");
 
     let modify_window = match matches.remove_one::<OsString>("modify-window") {
         Some(value) => {
@@ -1682,8 +1676,5 @@ where
         rayon_threads,
         tokio_threads,
         checksum_threads,
-        spill_dir,
-        spill_threshold_bytes,
-        no_spill,
     })
 }

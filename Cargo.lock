@@ -1336,7 +1336,6 @@ dependencies = [
  "tokio",
  "tracing",
  "xattr",
- "zstd",
 ]
 
 [[package]]

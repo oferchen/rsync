@@ -5009,7 +5009,6 @@ fn no_implied_dirs_gated_on_protocol_for_push_only() {
 
 mod oc_flag_forwarding {
     use std::num::{NonZeroU8, NonZeroUsize};
-    use std::path::PathBuf;
 
     use super::super::RemoteRole;
     use super::super::builder::RemoteInvocationBuilder;
@@ -5117,9 +5116,7 @@ mod oc_flag_forwarding {
             .rayon_threads(NonZeroUsize::new(8))
             .tokio_threads(NonZeroUsize::new(4))
             .sparse_detect(engine::SparseDetectStrategy::Map)
-            .tcp_fastopen(TcpFastOpenMode::On)
-            .spill_dir(Some(PathBuf::from("/tmp/spill")))
-            .spill_threshold_bytes(Some(1024));
+            .tcp_fastopen(TcpFastOpenMode::On);
         // `--quic-cc`/`--quic-window` are client-local QUIC transport tuning;
         // like the knobs above they must never alter the remote `--server`
         // argv.

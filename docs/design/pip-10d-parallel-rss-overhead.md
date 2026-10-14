@@ -1,5 +1,9 @@
 # PIP-10.d - RSS overhead measurement: parallel vs sequential receive-delta
 
+> Note: the reorder-buffer spill layer (`SpillPolicy`, `SpillableReorderBuffer`,
+> the `OC_RSYNC_SPILL_*` variables and the `--spill-*` flags) has been removed.
+> Spill references below are historical.
+
 Date: 2026-05-26
 Scope: measurement spec for peak RSS overhead of the parallel
 receive-delta path relative to the sequential path

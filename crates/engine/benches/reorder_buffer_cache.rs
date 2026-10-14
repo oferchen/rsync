@@ -71,7 +71,7 @@
 //!   throughput stays flat across patterns.** The ring buffer's slot
 //!   layout works at scale. No layout change is justified - the
 //!   existing `Box<[Option<T>]>` stays. Optimisation effort should move
-//!   to other hot spots in the consumer (e.g., spill).
+//!   to other hot spots in the consumer.
 //! - **Unfavorable (cache-hostile): cache-miss rate scales with payload
 //!   size, random shuffle is much slower than near-in-order, LLC misses
 //!   dominate insert/drain.** That justifies a layout change. The two

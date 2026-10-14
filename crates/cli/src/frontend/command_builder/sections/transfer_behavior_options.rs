@@ -485,51 +485,6 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
-                Arg::new("spill-dir")
-                    .long("spill-dir")
-                    .value_name("PATH")
-                    .help_heading("oc-rsync extensions")
-                    .help(
-                        "Override the reorder-buffer spill directory. Takes \
-                         precedence over OC_RSYNC_SPILL_DIR and SpillPolicy \
-                         defaults. Precedence: CLI > env > defaults.",
-                    )
-                    .num_args(1)
-                    .action(ArgAction::Set)
-                    .allow_hyphen_values(true)
-                    .value_parser(OsStringValueParser::new()),
-            )
-            .arg(
-                Arg::new("spill-threshold-bytes")
-                    .long("spill-threshold-bytes")
-                    .value_name("BYTES")
-                    .help_heading("oc-rsync extensions")
-                    .help(
-                        "Override the reorder-buffer spill byte threshold. \
-                         Accepts a positive integer with an optional \
-                         K/M/G/T/P/E suffix (base 1024). Takes precedence \
-                         over OC_RSYNC_SPILL_THRESHOLD_BYTES and SpillPolicy \
-                         defaults. Precedence: CLI > env > defaults.",
-                    )
-                    .num_args(1)
-                    .action(ArgAction::Set)
-                    .value_parser(OsStringValueParser::new()),
-            )
-            .arg(
-                Arg::new("no-spill")
-                    .long("no-spill")
-                    .help_heading("oc-rsync extensions")
-                    .help(
-                        "Disable disk-based spilling for the reorder buffer. \
-                         When set, the buffer returns an error instead of \
-                         writing excess items to a temporary file. Useful on \
-                         read-only filesystems or in containers without \
-                         writable tmpfs. Takes precedence over \
-                         OC_RSYNC_NO_SPILL. Precedence: CLI > env > defaults.",
-                    )
-                    .action(ArgAction::SetTrue),
-            )
-            .arg(
                 Arg::new("backup")
                     .long("backup")
                     .short('b')
