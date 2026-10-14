@@ -18,11 +18,11 @@
 //! thread promptly on every exit path, including panic unwinding of unrelated
 //! worker threads.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::actuator::{ActuatorHandle, BufferCeiling};
 use super::aggregate::StageAggregator;
@@ -130,6 +130,12 @@ struct Snapshot {
     rates: [AtomicU64; Constraint::COUNT],
     /// Latest committed drum designation, stored as a [`Constraint::index`].
     drum: AtomicU8,
+    /// Count of completed drum-identification windows. Observation only: it
+    /// lets a reader wait for the sense loop to make progress instead of
+    /// racing a wall clock.
+    windows: Mutex<u64>,
+    /// Signalled after every completed window.
+    window_done: Condvar,
 }
 
 impl Snapshot {
@@ -137,6 +143,8 @@ impl Snapshot {
         Self {
             rates: std::array::from_fn(|_| AtomicU64::new(RATE_UNSET)),
             drum: AtomicU8::new(Constraint::Unknown.index() as u8),
+            windows: Mutex::new(0),
+            window_done: Condvar::new(),
         }
     }
 
@@ -157,6 +165,29 @@ impl Snapshot {
 
     fn load_drum(&self) -> Constraint {
         Constraint::from_index(self.drum.load(Ordering::Relaxed) as usize)
+    }
+
+    fn complete_window(&self) {
+        *self.windows.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        self.window_done.notify_all();
+    }
+
+    fn windows(&self) -> u64 {
+        *self.windows.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn wait_for_window_after(&self, seen: u64, timeout: Duration) -> Option<u64> {
+        let deadline = Instant::now() + timeout;
+        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        while *windows <= seen {
+            let remaining = deadline.checked_duration_since(Instant::now())?;
+            windows = self
+                .window_done
+                .wait_timeout(windows, remaining)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        Some(*windows)
     }
 }
 
@@ -279,6 +310,7 @@ fn drain(bus: &TelemetryBus, snapshot: &Snapshot, aggregator: &mut StageAggregat
 fn identify_drum(snapshot: &Snapshot, aggregator: &StageAggregator, drum: &mut DrumIdentifier) {
     let designation = drum.observe(&aggregator.stage_signals());
     snapshot.store_drum(designation);
+    snapshot.complete_window();
 }
 
 /// Handle to a spawned governor: the only public surface after `spawn`.
@@ -381,6 +413,25 @@ impl GovernorHandle {
     #[must_use]
     pub fn drum(&self) -> Constraint {
         self.snapshot.load_drum()
+    }
+
+    /// Number of drum-identification windows the sense loop has completed.
+    ///
+    /// Always `0` when the governor is [`GovernorMode::Off`].
+    #[must_use]
+    pub fn windows_completed(&self) -> u64 {
+        self.snapshot.windows()
+    }
+
+    /// Blocks until more than `seen` windows have completed and returns the
+    /// new count, or `None` if `timeout` elapses first.
+    ///
+    /// Lets a caller wait on sense-loop progress rather than wall-clock time.
+    /// `timeout` is only a hang guard. An [`GovernorMode::Off`] governor never
+    /// completes a window, so this returns `None` after `timeout`.
+    #[must_use]
+    pub fn wait_for_window_after(&self, seen: u64, timeout: Duration) -> Option<u64> {
+        self.snapshot.wait_for_window_after(seen, timeout)
     }
 
     /// Total telemetry samples dropped due to bus overflow.

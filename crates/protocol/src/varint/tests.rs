@@ -2094,3 +2094,21 @@ fn varlong_matches_upstream_where_upstream_cannot_round_trip() {
     assert_eq!(decoded, 207_695_418_109_321_697);
     assert_eq!(cursor.position(), 8, "upstream consumes min_bytes + 6");
 }
+
+/// Fuzz reproducer (varint_roundtrip, fuzz_varint): -1 at min_bytes=1. Upstream
+/// io.c write_varlong() emits nine 0xFF bytes (cnt reaches 9, header
+/// `~(bit-1)` with bit=1), but read_varlong() decodes header 0xFF as 6 extra
+/// bytes and masks the top byte with `bit-1` = 3, so it returns
+/// 0x0003_FFFF_FFFF_FFFF after consuming 7 bytes. Negative varlongs are out of
+/// upstream's domain at this width; oc must reproduce the same bytes and value.
+#[test]
+fn varlong_minus_one_min_bytes_one_matches_upstream() {
+    let mut encoded = Vec::new();
+    write_varlong(&mut encoded, -1, 1).expect("encoding succeeds");
+    assert_eq!(encoded, [0xFF; 9]);
+
+    let mut cursor = Cursor::new(&encoded);
+    let decoded = read_varlong(&mut cursor, 1).expect("decoding succeeds");
+    assert_eq!(decoded, 1_125_899_906_842_623);
+    assert_eq!(cursor.position(), 7, "upstream consumes min_bytes + 6");
+}
