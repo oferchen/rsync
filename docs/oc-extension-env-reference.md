@@ -318,6 +318,23 @@ follow upstream: `--delete`, `--delete-during`, `--delete-delay` and
 `--delete-before` and `--delete-after` keep `i` withheld.
 Default: on (stabilized).
 
+### OC_RSYNC_QUIC_CC
+
+Selects the QUIC congestion controller: `bbr`, `cubic` or `newreno`. Requires
+the `quic` Cargo feature. An unrecognised value is a hard error, not a silent
+fallback. The client's `--quic-cc` takes precedence; the daemon's QUIC endpoint
+reads only this variable. Changes pacing only, never a wire byte. Default:
+`bbr`.
+
+### OC_RSYNC_QUIC_WINDOW
+
+Sizes the QUIC flow-control windows (per-stream receive, connection receive
+and send) in bytes, with an optional `K`, `M` or `G` suffix (1024-based).
+Requires the `quic` Cargo feature. An unparseable value, or one above the QUIC
+variable-length integer limit, is a hard error. The client's `--quic-window`
+takes precedence; the daemon's QUIC endpoint reads only this variable. Changes
+back-pressure only, never a wire byte. Default: 64 MiB.
+
 ## Negotiated oc-to-oc optimizations
 
 Unlike every tuning knob above, the variable in this section is **not**

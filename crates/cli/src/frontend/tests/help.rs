@@ -99,6 +99,8 @@ const OC_EXTENSION_FLAGS: &[&str] = &[
     "--lsm-status",
     "--quic",
     "--quic-ca",
+    "--quic-cert",
+    "--quic-key",
     "--quic-cc",
     "--quic-window",
     "--quic-cipher",
@@ -109,7 +111,7 @@ const OC_EXTENSION_FLAGS: &[&str] = &[
 /// reorganization only regroups lines, so this count (and the flag set below)
 /// must stay constant: a drop shrinks it, an accidental duplicate collapses the
 /// deduplicated set below it.
-const TOTAL_LONG_FLAG_LINES: usize = 200;
+const TOTAL_LONG_FLAG_LINES: usize = 202;
 
 /// Marker that opens the oc-rsync extensions section in the rendered help.
 const EXTENSIONS_MARKER: &str = "oc-rsync extensions (not present in upstream rsync):";

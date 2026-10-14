@@ -50,17 +50,3 @@ daemon-directives:oc_only:quicclientcafile
 daemon-directives:oc_only:quickeyfile
 daemon-directives:oc_only:quicport
 
-# cli-long-options: deliberate oc CLI extensions/aliases the help-text registry
-# (crates/cli/src/frontend/tests/help.rs OC_EXTENSION_FLAGS) does not carry,
-# because they are not primary long flags rendered in the help extensions
-# section - either aliases of an existing option or feature-hidden modifiers.
-#   quic / quic-ca - QUIC transport selector and CA-bundle override
-#     (feature = "quic"); hidden from help when the feature is absent, so they
-#     stay out of the exact-match help registry that its sibling --quic-cc /
-#     --quic-window belong to.
-#   quic-cert / quic-key - client certificate + key for QUIC mutual TLS
-#     (feature = "quic"); same feature-hidden group as --quic / --quic-ca.
-cli-long-options:oc_only:quic
-cli-long-options:oc_only:quic-ca
-cli-long-options:oc_only:quic-cert
-cli-long-options:oc_only:quic-key
