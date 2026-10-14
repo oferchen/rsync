@@ -135,6 +135,8 @@ cargo build --workspace --release
 | `daemon-seccomp` | workspace, `daemon` | no | seccomp allowlist for daemon workers. Once compiled in, it is on at runtime; opt out with `OC_RSYNC_NO_SECCOMP=1`. | opt-in |
 | `incremental-flist` | `transfer` | yes | Gates tests only. The incremental receiver is chosen at runtime from the negotiated flags (#7968). | stable |
 | `lazy-metadata` | `engine` | yes | Defers `stat()` until metadata is needed. | stable |
+| `mmap-free-basis` | workspace, `engine`, `fast_io` | no | Reads the basis without mmap, through io_uring where available or buffered I/O. | experimental |
+| `parallel-receive-delta` | workspace, `cli`, `core`, `transfer` | no | Reserved build gate for a parallel receive-delta pipeline; compiles no extra receiver code today. | experimental |
 | `multi-producer` | `engine` | no | Relaxes the single-producer invariant on `WorkQueueSender`. | experimental |
 | `thread-slab-pool` | `engine` | no | Per-thread slab in front of `BufferPool`. | experimental |
 | `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` writer. | experimental |
@@ -197,7 +199,7 @@ oc-rsync can carry the rsync protocol over QUIC (RFC 9000/9001, TLS 1.3 over UDP
 cargo build --release --features quic -p cli -p daemon
 ```
 
-QUIC always runs TLS 1.3 with the ALPN token `rsync`. The client verifies the daemon certificate against the CA bundle given by `--quic-ca`, which is required: the system trust store is not trusted, there is no default trust and no trust-on-first-use, so a client without `--quic-ca` refuses to connect. Mutual TLS is optional. Selecting QUIC is hard-fail: if the feature or listener is unavailable, the transfer errors out rather than falling back to TCP. The cipher defaults to AES-GCM with hardware AES and ChaCha20-Poly1305 without; `--quic-cipher aes|chacha20` overrides it.
+QUIC always runs TLS 1.3 with the ALPN token `rsync`. The client verifies the daemon certificate against the CA bundle given by `--quic-ca`, which is required: nothing is trusted by default, not even the system trust store, so a client without `--quic-ca` refuses to connect (exit 5). Mutual TLS is optional. Selecting QUIC is hard-fail: if the feature or listener is unavailable, the transfer errors out rather than falling back to TCP. The cipher defaults to AES-GCM with hardware AES and ChaCha20-Poly1305 without; `--quic-cipher aes|chacha20` overrides it.
 
 Create a self-signed daemon certificate (the SubjectAltName must match the host clients connect to). Clients pass this same certificate as `--quic-ca`; a certificate issued by an internal CA works the same way with the CA certificate as `--quic-ca`:
 
@@ -339,41 +341,29 @@ oc-rsync uses threads where upstream forks, while keeping the same protocol. I/O
 
 ## Testing and CI
 
-- **Upstream testsuite.** Legs, counts and manifests: [Upstream testsuite](#upstream-testsuite).
-- **Interop.** Push and pull against real upstream binaries: [Protocol and interop](#protocol-and-interop).
-- **Required checks.** The ten required contexts, and the command that re-derives them from the branch ruleset, are in [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md).
+Branch protection requires ten checks: `fmt + clippy`, `nextest (stable)`, `Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`, `interop / interop with upstream rsync`, and the four Linux [upstream testsuite](#upstream-testsuite) legs (`upstream-testsuite / upstream testsuite`, its `(root)` variant, and the same two under `upstream-testsuite-tcp /`). [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md) has the command that re-derives the list from the ruleset.
 
-### Developer checks
-
-Prerequisites: Rust 1.89.0 (pinned in `rust-toolchain.toml`) and [`cargo-nextest`](https://nexte.st/) (`cargo install cargo-nextest --locked`).
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
-cargo nextest run --workspace --all-features
-```
+Within `nextest (stable)`, the SSH throughput check compares a release build of oc-rsync against upstream; it runs in its own non-blocking step. Benchmarks run only when a release is tagged (see [Performance](#performance)). Interop coverage is described under [Protocol and interop](#protocol-and-interop).
 
 ---
 
 ## Security
 
-Every crate sets `#![deny(unsafe_code)]` at its root. Production `#[allow(unsafe_code)]` sites exist only in crates that wrap platform FFI or SIMD intrinsics: `fast_io`, `metadata`, `checksums`, `platform`, `engine`, `protocol` (one site) and `windows-gnu-eh`. The `oc-rsync` binary has one more: the `#[unsafe(no_mangle)]` static that sets jemalloc's decay options. Other crates allow unsafe only in tests.
+Of the 33 CVEs fixed upstream in rsync 3.5.0, 27 are fixed in oc-rsync, 1 is partially fixed and 5 do not apply. The partial one is CVE-2026-53796: every non-daemon receiver pins its destination for data, but metadata calls after a destination swap are still path-based. The 2024 and rsync 3.4.3 CVEs are fixed, mitigated or do not affect oc-rsync. rsync 3.5.1 names no CVE; of its nine security-relevant fixes, seven are mirrored and two do not apply. Unsafe code is confined to a few crates that wrap platform FFI and SIMD.
 
-Upstream CVE status, in short:
-
-- **2024 batch** (CVE-2024-12084 to CVE-2024-12088, CVE-2024-12747): not vulnerable or mitigated.
-- **rsync 3.4.3 batch** (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232): fixed or not vulnerable. Receiver filesystem calls go through `*at` syscalls anchored on a directory fd, with a Landlock layer for the daemon on Linux.
-- **rsync 3.5.0 batch** (33 CVEs): 27 fixed, 1 partially fixed, 5 not applicable, 0 open. The partial one is CVE-2026-53796, where every receiver now pins its destination for data but metadata calls after a swap are still path-based. CVE-2026-53799 is fixed at upstream parity: ACLs are applied through a pinned fd on Linux and by path on macOS and FreeBSD, as upstream 3.5.1 does. Each CVE has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
-- **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, seven are mirrored and two do not apply.
-
-See [`SECURITY.md`](./SECURITY.md) for the per-CVE detail, the open hardening gaps that have no CVE, and how to report a vulnerability. [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) maps each CVE to its upstream fix, its upstream test cells and the Rust tests that pin it.
+[`SECURITY.md`](./SECURITY.md) has the per-CVE evidence, the unsafe-code policy, fuzzing and how to report a vulnerability. [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) maps each CVE to its upstream fix, its upstream test cells and the Rust tests that pin it.
 
 ---
 
 ## Contributing
 
 1. Fork and create a feature branch.
-2. Run `cargo fmt --all` locally; CI runs `clippy` and `nextest`.
+2. Install Rust 1.89.0 (pinned in `rust-toolchain.toml`) and [`cargo-nextest`](https://nexte.st/), then run the checks CI runs:
+   ```bash
+   cargo fmt --all -- --check
+   cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+   cargo nextest run --workspace --all-features
+   ```
 3. Open a PR with a conventional-commit prefix describing behavioural changes and interop impact.
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full workflow and [`docs/contributing/ONBOARDING.md`](./docs/contributing/ONBOARDING.md) for a guided start.
