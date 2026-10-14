@@ -1,14 +1,16 @@
 use super::common::*;
 use super::*;
 
+/// upstream: options.c:780 - only `--skip-compress` sets the list; rsync
+/// reads no skip-compress environment variable, so even a value that would be
+/// an invalid specification must be ignored.
 #[test]
-fn skip_compress_env_variable_enables_list() {
+fn skip_compress_environment_variable_is_ignored() {
     let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new("gz"));
-
+    let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new("["));
     let tmp = test_support::create_tempdir();
-    let source = tmp.path().join("archive.gz");
-    let destination = tmp.path().join("dest.gz");
+    let source = tmp.path().join("file.txt");
+    let destination = tmp.path().join("dest.txt");
     std::fs::write(&source, b"payload").expect("write source");
 
     let (code, stdout, stderr) = run_with_args([
@@ -18,33 +20,10 @@ fn skip_compress_env_variable_enables_list() {
         destination.clone().into_os_string(),
     ]);
 
-    assert_eq!(code, 0);
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(stdout.is_empty());
     assert!(stderr.is_empty());
-    assert!(stdout.is_empty());
     assert_eq!(std::fs::read(destination).expect("read dest"), b"payload");
-}
-
-#[test]
-fn skip_compress_invalid_env_reports_error() {
-    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
-    let _guard = EnvGuard::set("RSYNC_SKIP_COMPRESS", OsStr::new("["));
-
-    let tmp = test_support::create_tempdir();
-    let source = tmp.path().join("file.txt");
-    let destination = tmp.path().join("dest.txt");
-    std::fs::write(&source, b"payload").expect("write source");
-
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        source.into_os_string(),
-        destination.into_os_string(),
-    ]);
-
-    assert_eq!(code, 1);
-    assert!(stdout.is_empty());
-    let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
-    assert!(rendered.contains("RSYNC_SKIP_COMPRESS"));
-    assert!(rendered.contains("invalid"));
 }
 
 #[test]
