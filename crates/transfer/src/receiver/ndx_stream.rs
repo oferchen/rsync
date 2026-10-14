@@ -16,7 +16,9 @@
 //! 5. `NDX_FLIST_EOF` - the sub-list stream ended; set `flist_eof` and continue
 //!    (`rsync.c:355-361`).
 //! 6. otherwise - `dir_ndx = NDX_FLIST_OFFSET - ndx`, receive that sub-list
-//!    segment and continue (`rsync.c:362-381`).
+//!    segment and continue (`rsync.c:362-381`). A sub-list arriving after the
+//!    sender's `NDX_DONE`s have freed every received flist is refused first
+//!    (`flist.c:3137-3148`); see [`FlistMarkerSink::all_flists_freed`].
 //!
 //! After the loop the attribute tail is decoded: `iflags` via `read_shortint`
 //! for protocol >= 29 (`rsync.c:384-385`), the basis-type byte on
@@ -189,6 +191,23 @@ pub(crate) trait FlistMarkerSink {
     /// no-lazy-file-list case, which tracks no such flag.
     fn set_flist_eof(&mut self, _mark: Self::FrameMark) {}
 
+    /// Records that the peer's `NDX_DONE` was consumed.
+    ///
+    /// On an INC_RECURSE receiver each one frees the oldest received flist
+    /// (`receiver.c:858-864`), which is what [`Self::all_flists_freed`]
+    /// counts. The default is the no-lazy-file-list case, which frees nothing.
+    fn on_ndx_done(&mut self) {}
+
+    /// Upstream `inc_recurse && !first_flist`: the sender's `NDX_DONE`s have
+    /// freed every received flist, so a further sub-list marker is a protocol
+    /// violation (`flist.c:3137-3148`).
+    ///
+    /// Defaults to `false`; only a receiver that negotiated INC_RECURSE tracks
+    /// the frees.
+    fn all_flists_freed(&self) -> bool {
+        false
+    }
+
     /// Receives one INC_RECURSE sub-list segment framed by the raw marker
     /// `raw_ndx` (`rsync.c:379` - `recv_file_list(f_in, ndx)`).
     ///
@@ -222,6 +241,7 @@ pub(crate) trait FlistMarkerSink {
 pub(crate) struct NoLazyFlist {
     role: StreamRole,
     last_file_ndx: i32,
+    all_flists_freed: bool,
 }
 
 impl NoLazyFlist {
@@ -231,7 +251,16 @@ impl NoLazyFlist {
         Self {
             role,
             last_file_ndx,
+            all_flists_freed: false,
         }
+    }
+
+    /// Carries the reader's [`FlistMarkerSink::all_flists_freed`] state, so a
+    /// sub-list marker after the final flist was freed gets upstream's
+    /// `flist.c:3138` refusal rather than the generic `rsync.c:344` one.
+    pub(crate) const fn with_all_flists_freed(mut self, freed: bool) -> Self {
+        self.all_flists_freed = freed;
+        self
     }
 }
 
@@ -263,6 +292,10 @@ impl FlistMarkerSink for NoLazyFlist {
 
     fn on_del_stats(&mut self, _stats: &DeleteStats) -> io::Result<()> {
         Ok(())
+    }
+
+    fn all_flists_freed(&self) -> bool {
+        self.all_flists_freed
     }
 }
 
@@ -349,6 +382,24 @@ pub(crate) fn non_regular_transfer_request(ndx: i32, role: StreamRole) -> io::Er
     ))
 }
 
+/// Builds the refusal for a sub-list marker that arrives after the sender's
+/// `NDX_DONE`s have freed every received flist.
+///
+/// Keeps upstream's wording and, like the other diagnostics here, is tagged as
+/// a protocol violation so the exit-code mapper yields `RERR_PROTOCOL` (2).
+///
+/// # Upstream Reference
+///
+/// - `flist.c:3137-3148` - `recv_file_list()` refuses `dir_ndx >= 0` while
+///   `first_flist` is NULL, before touching the stale `dir_flist`.
+pub(crate) fn subflist_after_final_flist_freed(role: StreamRole) -> io::Error {
+    protocol::protocol_violation(format!(
+        "rsync: refusing sub-flist after final flist was freed {}{}",
+        crate::role_trailer::error_location!(),
+        role.trailer()
+    ))
+}
+
 /// Reads and classifies exactly one NDX frame, running the marker side effects
 /// through `sink`.
 ///
@@ -381,6 +432,7 @@ where
 
     // upstream: rsync.c:336-337 - NDX_DONE returns before any attribute byte.
     if ndx == NDX_DONE {
+        sink.on_ndx_done();
         return Ok(NdxStep::Done);
     }
 
@@ -391,6 +443,13 @@ where
         let stats = DeleteStats::read_from(reader)?;
         sink.on_del_stats(&stats)?;
         return Ok(NdxStep::DelStats);
+    }
+
+    // upstream: flist.c:3138 recv_file_list() - `inc_recurse && dir_ndx >= 0`
+    // with `first_flist` already NULL. Checked ahead of the rsync.c:344 gate
+    // because a phase-boundary sink reports no lazy file list of its own.
+    if ndx <= NDX_FLIST_OFFSET && sink.all_flists_freed() {
+        return Err(subflist_after_final_flist_freed(sink.role()));
     }
 
     // upstream: rsync.c:344-354 - every remaining negative value is a file-list
@@ -601,6 +660,16 @@ impl FlistMarkerSink for ReceiverContext {
         protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::Receiver);
         self.flist_eof = true;
         self.flist_span_end(mark);
+    }
+
+    fn on_ndx_done(&mut self) {
+        self.note_sender_ndx_done();
+    }
+
+    fn all_flists_freed(&self) -> bool {
+        // upstream: receiver.c:858-864 frees one flist per sender NDX_DONE, so
+        // `first_flist` is NULL once the frees catch up with the lists received.
+        self.inc_recurse() && self.sender_ndx_dones.get() >= self.ndx_segments.len()
     }
 
     fn receive_segment<R: Read + ?Sized>(

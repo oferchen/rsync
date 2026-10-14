@@ -455,6 +455,17 @@ pub struct ReceiverContext {
     /// [`Self::read_expected_ndx_done`] instead of being read again. `Cell`
     /// for the same `&self` reason as `hardlink_follower_echoes`.
     pub(in crate::receiver) early_sender_ndx_dones: std::cell::Cell<usize>,
+    /// Sender `NDX_DONE`s consumed so far. Under INC_RECURSE each one frees
+    /// the oldest received flist, so once the count reaches
+    /// `ndx_segments.len()` every list is gone - upstream's `first_flist ==
+    /// NULL` - and a further sub-list marker is refused. `Cell` because the
+    /// phase-boundary reads hold `&self`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:858-864` - `flist_free(first_flist)` per `NDX_DONE`.
+    /// - `flist.c:3137-3148` - the refusal once `first_flist` is NULL.
+    pub(in crate::receiver) sender_ndx_dones: std::cell::Cell<usize>,
     /// Metadata-only itemize records a server-mode receiver must forward over
     /// the wire, as `(flist index, wire iflags)` in flist order.
     ///
@@ -752,6 +763,7 @@ impl ReceiverContext {
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             early_sender_ndx_dones: std::cell::Cell::new(0),
+            sender_ndx_dones: std::cell::Cell::new(0),
             server_no_transfer_itemize: RefCell::new(Vec::new()),
             deferred_dir_rows: RefCell::new(HashMap::new()),
             released_dir_heads: RefCell::new(HashMap::new()),

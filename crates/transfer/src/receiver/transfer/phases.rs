@@ -166,6 +166,12 @@ impl ReceiverContext {
             .set(self.early_sender_ndx_dones.get() + 1);
     }
 
+    /// Counts one consumed sender `NDX_DONE` toward
+    /// [`FlistMarkerSink::all_flists_freed`].
+    pub(in crate::receiver) fn note_sender_ndx_done(&self) {
+        self.sender_ndx_dones.set(self.sender_ndx_dones.get() + 1);
+    }
+
     /// Reads an NDX and validates it is NDX_DONE (-1).
     ///
     /// Routed through the shared marker-aware reader
@@ -186,10 +192,14 @@ impl ReceiverContext {
         }
         let mut sink = self.no_lazy_flist_sink();
         if self.drain_hardlink_follower_echoes(ndx_read_codec, reader, &mut sink)? {
+            self.note_sender_ndx_done();
             return Ok(());
         }
         match read_marker_aware_ndx(reader, ndx_read_codec, &mut sink)? {
-            NdxFrame::Done => Ok(()),
+            NdxFrame::Done => {
+                self.note_sender_ndx_done();
+                Ok(())
+            }
             // upstream: io.c read_ndx / rsync.c:982 - a wire index that is not
             // the expected NDX_DONE (-1) is "File-list index N not in ..." and
             // aborts with exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so
@@ -207,6 +217,7 @@ impl ReceiverContext {
     /// upstream's `(%d - %d)` span (`rsync.c:344-350`).
     fn no_lazy_flist_sink(&self) -> NoLazyFlist {
         NoLazyFlist::new(StreamRole::Receiver, FlistMarkerSink::last_file_ndx(self))
+            .with_all_flists_freed(FlistMarkerSink::all_flists_freed(self))
     }
 
     /// The 1-based phase `NDX_DONE` that `NDX_DEL_STATS` goes out ahead of, or
