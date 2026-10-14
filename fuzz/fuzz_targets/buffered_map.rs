@@ -113,9 +113,11 @@ fuzz_target!(|data: &[u8]| {
 /// file is a deterministic function of the fuzz input, the exact expected
 /// bytes are known, so a window that returns the wrong extent or copies the
 /// wrong region (the `load_window` / `copy_within` reuse path) is caught
-/// here rather than only when it panics. `map_ptr` guarantees
+/// here rather than only when it panics. A non-empty map guarantees
 /// `offset + len <= file_size` on the `Ok` path, so indexing `payload` is
-/// always in bounds.
+/// in bounds; a zero-length map returns empty at any offset, even past EOF
+/// (upstream: fileio.c map_ptr() returns before any bounds check when
+/// `len == 0`).
 fn check_window(map: &mut BufferedMap, payload: &[u8], offset: u64, len: usize) {
     if let Ok(slice) = MapStrategy::map_ptr(map, offset, len) {
         assert_eq!(
@@ -124,6 +126,9 @@ fn check_window(map: &mut BufferedMap, payload: &[u8], offset: u64, len: usize) 
             "map_ptr returned {} bytes for a {len}-byte request at offset {offset}",
             slice.len(),
         );
+        if len == 0 {
+            return;
+        }
         let start = offset as usize;
         let end = start + len;
         assert_eq!(

@@ -230,8 +230,12 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
 /// accumulates 1-based `num` values from deltas, `num += rel_pos`.
 ///
 /// Deviation from upstream: an unknown `num` is skipped silently; upstream
-/// exits with `RERR_PROTOCOL` ("could not find xattr", `xattrs.c:763-772`)
-/// and also rejects accumulation overflow (`xattrs.c:730-734`).
+/// exits with `RERR_PROTOCOL` ("could not find xattr", `xattrs.c:763-772`).
+///
+/// # Errors
+///
+/// Returns a protocol violation (`RERR_PROTOCOL`) when the accumulated `num`
+/// overflows `i32`, as upstream does (`xattrs.c:730-734`).
 pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::Result<Vec<usize>> {
     let mut indices = Vec::new();
     let mut prior_req = 0i32;
@@ -243,8 +247,11 @@ pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::
             break;
         }
 
-        // upstream: xattrs.c:735 num += rel_pos (1-based)
-        let num = prior_req + rel;
+        // upstream: xattrs.c:730-735 rejects signed overflow before
+        // `num += rel_pos` (1-based).
+        let num = prior_req.checked_add(rel).ok_or_else(|| {
+            crate::protocol_violation::protocol_violation("xattr rel_pos accumulation overflow")
+        })?;
         let idx = (num - 1) as usize;
         if idx < list.len() {
             list.mark_todo(idx);

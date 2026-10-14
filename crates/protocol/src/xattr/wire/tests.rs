@@ -1588,3 +1588,23 @@ fn recv_xattr_name_len_boundary_matches_upstream() {
         "name_len == MAX_WIRE_XATTR_NAMELEN + 1 must be refused as RERR_PROTOCOL"
     );
 }
+
+/// A peer whose relative request deltas overflow the accumulated 1-based
+/// `num` is a protocol violation, not a wrap or a panic. Upstream checks for
+/// signed overflow before `num += rel_pos` and exits RERR_PROTOCOL.
+/// upstream: xattrs.c:730-734 recv_xattr_request().
+#[test]
+fn xattr_request_accumulation_overflow_is_protocol_violation() {
+    let mut req = Vec::new();
+    write_varint(&mut req, i32::MAX).unwrap();
+    write_varint(&mut req, 1).unwrap();
+    write_varint(&mut req, 0).unwrap();
+    let mut list = XattrList::new();
+    let err = recv_xattr_request(&mut Cursor::new(req), &mut list)
+        .expect_err("overflowing rel_pos accumulation must be refused");
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "overflow must be tagged ProtocolViolation (RERR_PROTOCOL=2), got {err:?}"
+    );
+}
