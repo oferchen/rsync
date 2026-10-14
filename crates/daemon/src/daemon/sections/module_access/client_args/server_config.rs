@@ -58,6 +58,32 @@ fn apply_output_verbosity_limit(cfg: &mut ServerConfig, max_verbosity: i32) -> u
     level
 }
 
+/// Applies the `--info=` / `--debug=` words in the client's argv (the client
+/// forwards `--info=`; `--debug=` arrives only via `-M`) to this
+/// worker's output levels, then clamps them to the module's `max verbosity`.
+///
+/// upstream: clientserver.c:1160 parses the client argv with
+/// `parse_arguments()`, whose `OPT_INFO` / `OPT_DEBUG` arms feed
+/// `parse_output_words()` (options.c:1883-1891); as a server it tolerates
+/// words it does not know (options.c:484 `!am_server`). clientserver.c:1223
+/// then runs `limit_output_verbosity()`, which caps every level - explicit
+/// words included - at what the module's `max verbosity` allows.
+fn apply_forwarded_output_words(client_args: &[String], max_verbosity: i32) {
+    for arg in client_args {
+        if let Some(words) = arg.strip_prefix("--debug=") {
+            for word in words.split(',').filter(|w| !w.is_empty()) {
+                let _ = logging::apply_debug_flag(word);
+            }
+        } else if let Some(words) = arg.strip_prefix("--info=") {
+            for word in words.split(',').filter(|w| !w.is_empty()) {
+                let _ = logging::apply_info_flag(word);
+            }
+        }
+    }
+    if let Ok(level) = u8::try_from(max_verbosity) {
+        logging::limit_output_verbosity(level);
+    }
+}
 /// Applies module directives that force transfer-time behavior onto the
 /// per-session [`ServerConfig`], mirroring the daemon-only overrides upstream
 /// applies in `rsync_module()` after the client argv is parsed.
@@ -232,6 +258,10 @@ fn build_server_config(
                 &mut cfg,
                 module.max_verbosity,
             ));
+            apply_forwarded_output_words(client_args, module.max_verbosity);
+            // upstream: log.c:344-346 - a quiet server drops FINFO before
+            // framing it.
+            logging::set_quiet(cfg.flags.quiet);
 
             // Parse long-form arguments that upstream rsync sends via server_options()
             // (options.c:2778-3200). The compact flag string only covers single-char

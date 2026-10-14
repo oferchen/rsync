@@ -205,10 +205,12 @@ const fn peer_message_code(code: logging::LogCode) -> Option<protocol::MessageCo
         // upstream: log.c:331-333 - FLOG returns before the switch, so it is
         // never framed; it belongs to the daemon's log-file drain.
         logging::LogCode::Log => None,
-        // FINFO and FCLIENT are peer-facing upstream but withheld here: see
-        // `drain_events_for_peer` for why forwarding them needs the caller's
-        // quiet state and would put every debug trace on the wire.
-        logging::LogCode::Info | logging::LogCode::Client | logging::LogCode::None => None,
+        // upstream: log.c:344-366 - FINFO reaches send_msg() as MSG_INFO
+        // unless quiet; `drain_events_for_peer` applies the quiet gate.
+        logging::LogCode::Info => Some(protocol::MessageCode::Info),
+        // FCLIENT is not taken by `drain_events_for_peer`; FNONE is never
+        // sent (upstream: rsync.h:283).
+        logging::LogCode::Client | logging::LogCode::None => None,
     }
 }
 
@@ -218,8 +220,17 @@ const fn peer_message_code(code: logging::LogCode) -> Option<protocol::MessageCo
 /// receiver: the pairing that matters is that whatever
 /// [`logging::drain_events_for_peer`] hands back is exactly what
 /// [`peer_message_code`] can classify, and that is checkable here directly.
-fn drain_thread_local_peer_messages() -> Vec<(protocol::MessageCode, String)> {
-    logging::drain_events_for_peer()
+///
+/// `client_mode` (a pull) takes only the error and warning codes: the
+/// receiver's own `FINFO` output belongs to the client's summary renderer,
+/// not to a frame.
+fn drain_thread_local_peer_messages(client_mode: bool) -> Vec<(protocol::MessageCode, String)> {
+    let events = if client_mode {
+        logging::drain_error_events()
+    } else {
+        logging::drain_events_for_peer()
+    };
+    events
         .into_iter()
         .filter_map(|event| {
             let (code, message) = match event {
@@ -330,7 +341,9 @@ impl ReceiverContext {
         W: crate::writer::MsgInfoSender + ?Sized,
     {
         let mut messages = pipelined_receiver.drain_warnings();
-        messages.extend(drain_thread_local_peer_messages());
+        messages.extend(drain_thread_local_peer_messages(
+            self.config.connection.client_mode,
+        ));
         self.emit_pipeline_messages(writer, messages);
     }
 
@@ -1626,7 +1639,7 @@ mod peer_message_tests {
         let _ = drain_events();
         logging::warn_log!("receiver: could not anchor destination 'x'");
 
-        let messages = drain_thread_local_peer_messages();
+        let messages = drain_thread_local_peer_messages(false);
 
         assert_eq!(
             messages,
@@ -1657,7 +1670,7 @@ mod peer_message_tests {
         );
 
         assert!(
-            drain_thread_local_peer_messages().is_empty(),
+            drain_thread_local_peer_messages(false).is_empty(),
             "FLOG must not be framed for the client"
         );
         assert_eq!(

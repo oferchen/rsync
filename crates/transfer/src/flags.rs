@@ -121,6 +121,10 @@ pub struct ParsedServerFlags {
     /// generator.c:588). Collapsing to the `verbose` bool alone loses the
     /// level needed to surface `-ivv` unchanged rows.
     pub verbose_level: u8,
+    /// `--quiet` (`q` flag). The client packs it whenever `msgs2stderr` is
+    /// nonzero (upstream: options.c:2804-2805); a quiet server then drops
+    /// every FINFO line before framing it (upstream: log.c:344-346).
+    pub quiet: bool,
     /// Route `-v` name / info output to stderr instead of stdout
     /// (`--msgs2stderr`). Mirrors upstream's `msgs2stderr` FINFO routing;
     /// consumed by the in-order `-v` name emitter on a client pull.
@@ -620,6 +624,7 @@ impl ParsedServerFlags {
                 self.verbose = true;
                 self.verbose_level = self.verbose_level.saturating_add(1);
             }
+            b'q' => self.quiet = true,
             b'z' => self.compress = true,
             b'c' => self.checksum = true,
             b'H' => self.hard_links = true,
@@ -880,6 +885,14 @@ mod tests {
         assert!(!flags.links);
         assert!(!flags.verbose);
         assert_eq!(flags.verbose_level, 0);
+    }
+
+    /// upstream: options.c:2804-2805 - a quiet client packs `q`; the server
+    /// must see it to drop FINFO before framing (log.c:344-346).
+    #[test]
+    fn parses_quiet_from_packed_flags() {
+        assert!(ParsedServerFlags::parse("-vq").unwrap().quiet);
+        assert!(!ParsedServerFlags::parse("-v").unwrap().quiet);
     }
 
     #[test]
@@ -1225,13 +1238,13 @@ mod tests {
         assert!(!ParsedServerFlags::parse("-rlt").unwrap().cvs_exclude);
     }
 
-    /// The `s` (secluded-args) and `q` (quiet) letters are intentionally not
-    /// stored on this struct - `s` is handled by the CLI server's dedicated
-    /// secluded-args detection and `q` is cosmetic. Decoding them here must
-    /// stay a no-op: they must not accidentally set an unrelated flag, and the
-    /// surrounding real flags must still parse.
+    /// The `s` (secluded-args) letter is intentionally not stored on this
+    /// struct - the CLI server's dedicated secluded-args detection handles it.
+    /// `q` sets only `quiet` (log.c:344-346 drops FINFO on a quiet server).
+    /// Neither may set an unrelated flag, and the surrounding real flags must
+    /// still parse.
     #[test]
-    fn secluded_and_quiet_letters_are_inert_here() {
+    fn secluded_letter_is_inert_and_quiet_sets_only_quiet() {
         let flags = ParsedServerFlags::parse("-sqrlt").unwrap();
         assert!(flags.recursive);
         assert!(flags.links);
@@ -1244,6 +1257,7 @@ mod tests {
                 recursive: true,
                 links: true,
                 times: true,
+                quiet: true,
                 ..ParsedServerFlags::default()
             }
         );
@@ -1300,6 +1314,7 @@ mod delivery_classification {
             archive,
             verbose,
             verbose_level,
+            quiet,
             compress,
             checksum,
             hard_links,

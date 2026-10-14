@@ -675,6 +675,7 @@ impl GeneratorContext {
                         ndx_write_codec.inner_mut(),
                     )?;
                 }
+                self.flush_thread_local_diagnostics(&mut *writer)?;
                 flush_with_count(writer)?;
             }
 
@@ -1606,6 +1607,7 @@ impl GeneratorContext {
         // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the
         // "goodbye" that tells the client's generator to proceed with its own
         // goodbye handshake. Without it, the client hangs waiting for this marker.
+        self.flush_thread_local_diagnostics(&mut *writer)?;
         if let Err(e) = ndx_write_codec
             .write_ndx_done(&mut *writer)
             .and_then(|()| flush_with_count(&mut *writer))

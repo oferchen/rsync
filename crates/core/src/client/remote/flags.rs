@@ -47,9 +47,9 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
 
     // upstream: options.c:2804-2805 - `if (quiet && msgs2stderr) 'q'`. The
     // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
-    // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. The local-half
-    // ServerConfig parser ignores 'q' (transfer/flags.rs), so packing it here
-    // is inert for the in-process receiver and meaningful only on the wire.
+    // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. The server sets
+    // `ParsedServerFlags::quiet` from it and drops its FINFO lines before
+    // framing them (upstream: log.c:344-346).
     if config.quiet() && config.msgs2stderr() != Some(false) {
         flags.push('q');
     }

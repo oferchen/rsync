@@ -4600,13 +4600,13 @@ fn ssh_forwards_stats_on_push_only() {
     assert!(!args.iter().any(|a| a == "--stats"));
 }
 
-// WHY: explicitly-set --info / --debug levels must reach the peer so its
-// diagnostic output matches the user's request (upstream make_output_option,
-// options.c:3126-3130). `del` is receiver-side, so on a push it forwards as
-// `--info=del`; `send` is sender-side, so on a pull it forwards as
-// `--debug=send`.
+// WHY: explicitly-set --info levels must reach the peer so its diagnostic
+// output matches the user's request, while --debug never does:
+// server_options() calls make_output_option() for info_words only
+// (upstream: options.c:3126-3130). `del` is receiver-side, so on a push it
+// forwards as `--info=del`.
 #[test]
-fn ssh_forwards_info_and_debug_when_set() {
+fn ssh_forwards_info_but_never_debug() {
     let config = ClientConfig::builder()
         .info_flags([OsString::from("del1")])
         .debug_flags([OsString::from("send1")])
@@ -4619,10 +4619,14 @@ fn ssh_forwards_info_and_debug_when_set() {
     );
     let pull = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver)
         .build(std::ffi::OsStr::new("/remote/path"));
-    assert!(
-        pull.iter().any(|a| a == "--debug=send"),
-        "pull must forward sender-side --debug=send: {pull:?}"
-    );
+    for argv in [&push, &pull] {
+        assert!(
+            !argv
+                .iter()
+                .any(|a| a.to_string_lossy().starts_with("--debug")),
+            "--debug must never reach the peer: {argv:?}"
+        );
+    }
 
     // Nothing set: no --info / --debug argument at all.
     let off = ClientConfig::builder().build();

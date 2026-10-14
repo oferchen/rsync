@@ -252,32 +252,30 @@ function inspects each row's `priority` field to skip
 `-v`) and the `where` mask to restrict the option to roles that
 actually need the flag.
 
-oc-rsync has no equivalent of `make_output_option`. Remote
-invocations pass `--debug=FLAGS` through verbatim (whatever the user
-typed on the CLI), so:
+Upstream calls it from `server_options()` for `info_words` only
+(`options.c:3126-3130`): a client never sends `--debug=`. A server's
+debug levels come from the forwarded `-v` letters, or from an explicit
+`-M--debug=X`, which the server parses like a user `--debug` argument
+(`options.c:1888-1891`, unknown words tolerated under `am_server` at
+`options.c:484`).
 
-- Implied `-v` flags are not forwarded - matches upstream by accident
-  because the peer applies its own `-v` ladder.
-- User-set flags are not deduplicated; the peer receives the full
-  comma-separated list as typed.
-- Server-only flags (`W_SRV`-only entries) are not stripped before
-  forwarding; the peer receives flags it cannot act on.
+oc-rsync mirrors this: `core/src/client/remote/output_option.rs` builds the
+role-filtered `--info=` value only, and the server and daemon worker apply
+any `--debug=`/`--info=` words found in their argv.
 
 ## 7. `limit_output_verbosity` clamping
 
-Upstream `limit_output_verbosity` (`options.c:527-553`) is invoked
-during server-side option exchange (`options.c:2929` in
-`server_options`) to cap a peer's user-supplied level at the implicit
-`-v` ceiling. Without this clamp, a client could ask the server for
-`--debug=DELTASUM4` even when the server is running at `-v0`; the
+Upstream `limit_output_verbosity` (`options.c:546-572`) is invoked by
+the daemon after it parses the client argv (`clientserver.c:1223`) to
+cap every info/debug level at what the module's `max verbosity` rows
+allow. oc-rsync's daemon worker does the same per flag
+(`logging::limit_output_verbosity`). Without this clamp, a client could
+ask the server for `--debug=DELTASUM4` even when the server is running at `-v0`; the
 upstream behaviour silently lowers `DELTASUM` to 0 on the server
 side.
 
-oc-rsync has no equivalent clamp on the receiving end of wire
-negotiation. User-supplied levels are honoured verbatim regardless of
-peer verbosity. This is a parity gap (G4) but not a security or
-correctness issue - it only affects how verbose the server's
-diagnostic output becomes.
+Like upstream, only a daemon clamps: a remote-shell `--server` has no
+`max verbosity` and honours the levels it receives.
 
 ## 8. Tracing-target bridge
 

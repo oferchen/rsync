@@ -42,6 +42,24 @@ pub enum InfoFlag {
     /// Symlink safety checks.
     Symsafe,
 }
+impl InfoFlag {
+    /// Every flag, in declaration order.
+    pub const ALL: [InfoFlag; 13] = [
+        InfoFlag::Backup,
+        InfoFlag::Copy,
+        InfoFlag::Del,
+        InfoFlag::Flist,
+        InfoFlag::Misc,
+        InfoFlag::Mount,
+        InfoFlag::Name,
+        InfoFlag::Nonreg,
+        InfoFlag::Progress,
+        InfoFlag::Remove,
+        InfoFlag::Skip,
+        InfoFlag::Stats,
+        InfoFlag::Symsafe,
+    ];
+}
 
 /// Per-flag info verbosity levels.
 ///
