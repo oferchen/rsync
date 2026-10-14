@@ -20,6 +20,10 @@
 //! polices the tighter 1.5x ratio as an advisory signal; SSR-1 is the
 //! hard backstop and runs nightly via `--run-ignored=only`.
 //!
+//! The ratio is only meaningful between two optimised builds. Upstream
+//! is a release binary, so the test must be built with `--release`: a
+//! debug oc-rsync is about 2x slower on the 100 MB bucket by itself.
+//!
 //! # Related cells
 //!
 //! - SSR-2: russh-backed SSH push path (the fix).
@@ -56,8 +60,8 @@
 //!
 //! The 100 MB bucket dominates runtime: roughly 30 s for 3 runs of each
 //! binary on a typical CI runner. To keep the default nextest cycle
-//! fast the test is marked `#[ignore]`; CI's nightly cell opts in with
-//! `nextest run --run-ignored=only -E 'test(ssh_push_throughput_regression_ssr1)'`.
+//! fast the test is marked `#[ignore]`; CI's nextest job opts in with
+//! `nextest run --release -p bin --run-ignored ignored-only -E 'test(=ssh_push_throughput_regression_ssr1)'`.
 
 #![cfg(unix)]
 
