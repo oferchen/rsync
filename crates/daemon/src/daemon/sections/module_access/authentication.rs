@@ -274,11 +274,12 @@ fn perform_module_authentication(
         .tcp_stream()
         .and_then(|stream| stream.try_clone().ok());
     let deadline = HandshakeDeadline::armed(handshake_timeout(module.timeout));
-    let response_line = read_trimmed_line(&mut DeadlineBufRead::new(
-        reader,
-        deadline_socket.as_ref(),
-        &deadline,
-    ));
+    // upstream: authenticate.c:293,339 - the response is read into
+    // `char line[BIGPATHBUFLEN]`.
+    let response_line = read_bounded_line(
+        &mut DeadlineBufRead::new(reader, deadline_socket.as_ref(), &deadline),
+        protocol::secluded_args::BIGPATHBUFLEN,
+    );
 
     // upstream: clientserver.c:819 - `set_daemon_handshake_timeout(0)` disarms
     // before the post-xfer parent and pre-xfer/name-converter children are

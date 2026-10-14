@@ -90,22 +90,70 @@ pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<AtError> {
     )))
 }
 
-/// Reads one line from `reader`, stripping trailing `\r` and `\n`.
+/// upstream: `clientserver.c:1416` - `start_daemon()` reads the greeting and
+/// every request line before module selection into `char line[1024]`.
+pub(crate) const HANDSHAKE_LINE_BUFSIZ: usize = 1024;
+
+/// Reads one handshake line the way upstream `read_line_old(.., eof_ok = 0)`
+/// does, keeping at most `bufsiz - 1` bytes.
 ///
-/// Returns `Ok(None)` on EOF, or `Ok(Some(line))` with the stripped content.
-pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
-    let mut line = String::new();
-    let bytes = reader.read_line(&mut line)?;
-
-    if bytes == 0 {
-        return Ok(None);
+/// upstream: `io.c:2635-2656` - every `\r` is dropped and not counted
+/// (`io.c:2649`), a NUL fails the read (`io.c:2645`), EOF before the newline
+/// fails it (`io.c:2641`), and so does running out of room before one
+/// (`io.c:2655`). Every daemon caller treats a failure as the end of the
+/// session (`clientserver.c:203-206,1538-1539`; `authenticate.c:339-344`), so a
+/// peer that never sends a newline costs the daemon one buffer, not the length
+/// it chose to send.
+///
+/// Returns `Ok(None)` on any of those failures; otherwise the line without its
+/// newline and carriage returns.
+pub(crate) fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+    bufsiz: usize,
+) -> io::Result<Option<String>> {
+    let limit = bufsiz - 1;
+    let mut line = Vec::new();
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if available.is_empty() {
+            return Ok(None);
+        }
+        let mut consumed = 0;
+        let mut complete = None;
+        for &byte in available {
+            consumed += 1;
+            match byte {
+                b'\n' => complete = Some(true),
+                b'\0' => complete = Some(false),
+                b'\r' => continue,
+                _ => {
+                    line.push(byte);
+                    if line.len() == limit {
+                        complete = Some(false);
+                    }
+                }
+            }
+            if complete.is_some() {
+                break;
+            }
+        }
+        reader.consume(consumed);
+        match complete {
+            Some(true) => break,
+            Some(false) => return Ok(None),
+            None => {}
+        }
     }
-
-    while line.ends_with('\n') || line.ends_with('\r') {
-        line.pop();
-    }
-
-    Ok(Some(line))
+    String::from_utf8(line).map(Some).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        )
+    })
 }
 
 /// Returns the `@RSYNCD: capabilities` lines to advertise to the client.
