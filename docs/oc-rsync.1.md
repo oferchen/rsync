@@ -1096,9 +1096,6 @@ and are not intended for direct use:
 **5**
 :   Error starting client-server protocol.
 
-**6**
-:   Daemon unable to append to log-file.
-
 **10**
 :   Error in socket I/O.
 

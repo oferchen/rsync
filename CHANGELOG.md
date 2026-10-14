@@ -437,6 +437,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - The dead `--compress-level` help entry (#6778)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030)
 - The non-upstream per-directory filter alias (#6846)
+- Exit code 6 ("daemon unable to append to log-file"), which upstream does not define; a raw exit 6 now renders as upstream's "unexplained error (code 6)"
 
 ### Internal
 

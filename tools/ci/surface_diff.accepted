@@ -12,12 +12,9 @@ debug-words:oc_only:iouring
 debug-words:oc_only:sockopt
 
 # exit-codes: upstream's rerr_names[] (log.c:81) has no row for 0 because
-# log_exit() special-cases a zero code before consulting the table, and none
-# for 6 because errcode.h defines no RERR_* with value 6 - the "daemon unable
-# to append to log-file" description exists only in rsync.1.md:4671. oc
-# defines both so every documented exit code renders a description.
+# log_exit() special-cases a zero code before consulting the table. oc
+# defines it so a success code renders a description.
 exit-codes:oc_only:0:success
-exit-codes:oc_only:6:daemon unable to append to log-file
 
 # daemon-directives: upstream's parm_table carries `name` as the module
 # identity, populated from the `[module]` section header (loadparm.c

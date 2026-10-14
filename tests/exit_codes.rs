@@ -719,7 +719,6 @@ mod exit_code_enum_values {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
-            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,

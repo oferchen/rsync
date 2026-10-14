@@ -265,7 +265,6 @@ fn exit_code_table_text_matches_upstream_rerr_names() {
         (3, "errors selecting input/output files, dirs"),
         (4, "requested action not supported"),
         (5, "error starting client-server protocol"),
-        (6, "daemon unable to append to log-file"),
         (10, "error in socket IO"),
         (11, "error in file IO"),
         (12, "error in rsync protocol data stream"),
@@ -397,7 +396,6 @@ fn error_code_names_match_upstream_errcode_h() {
         (ExitCode::FileSelect, "RERR_FILESELECT"),
         (ExitCode::Unsupported, "RERR_UNSUPPORTED"),
         (ExitCode::StartClient, "RERR_STARTCLIENT"),
-        (ExitCode::LogFileAppend, "RERR_LOG_FAILURE"),
         (ExitCode::SocketIo, "RERR_SOCKETIO"),
         (ExitCode::FileIo, "RERR_FILEIO"),
         (ExitCode::StreamIo, "RERR_STREAMIO"),
@@ -435,7 +433,7 @@ fn error_code_names_match_upstream_errcode_h() {
 fn from_exit_code_covers_all_documented_upstream_codes() {
     // All exit codes documented in the upstream rsync man page
     let upstream_documented = [
-        1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 30, 35,
+        1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 30, 35,
     ];
 
     for code in upstream_documented {
