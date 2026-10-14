@@ -97,7 +97,9 @@ impl<'a> CopyContext<'a> {
     ///   operator's own destination argument and `fchdir`s to it, independent
     ///   of `--keep-dirlinks`. Trust here is ownership, not location - uid 0 or
     ///   our euid is the admin's own `/backup -> /mnt/disk` layout; any other
-    ///   uid raced the component and stays refused.
+    ///   uid raced the component and stays refused. `--insecure-links` takes
+    ///   upstream's plain `chdir()` arm (`util1.c:1393`), which follows any
+    ///   owner's symlink.
     /// - `--relative --no-implied-dirs`: `generator.c:2132-2133` tests the
     ///   parent with `do_stat_at()`, which FOLLOWS. A parent that already
     ///   resolves makes the whole `make_path()` arm dead, so the symlink is
@@ -115,7 +117,9 @@ impl<'a> CopyContext<'a> {
     /// both into follows.
     fn follows_existing_parent_symlink(&self, parent: &Path, existing: &fs::Metadata) -> bool {
         self.keep_dirlinks_enabled()
-            || (parent == self.destination_root() && Self::operator_owns_symlink(existing))
+            || (parent == self.destination_root()
+                && (Self::operator_owns_symlink(existing)
+                    || fast_io::confinement::session_optout_allowed()))
             || (self.relative_paths_enabled()
                 && !self.implied_dirs_enabled()
                 && self.symlink_stays_within_destination(parent))
