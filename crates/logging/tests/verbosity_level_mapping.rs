@@ -596,37 +596,46 @@ const UPSTREAM_INFO_VERBOSITY: [&str; 6] = [
     "",
 ];
 
+/// The only words oc adds to `debug_verbosity[]`, by row: the decision (row
+/// 3, `-vvv`) and detail (row 4, `-vvvv`) levels of the two oc-only kernel
+/// sandbox layers. Any other difference from upstream's rows is drift.
+const OC_DEBUG_VERBOSITY_ADDITIONS: [&str; 6] =
+    ["", "", "", "SECCOMP,LANDLOCK", "SECCOMP2,LANDLOCK2", ""];
+
 /// Replays upstream `set_output_verbosity()` (options.c:532-543): clamp the
 /// level to `MAX_VERBOSITY`, then apply every table row `0..=level` in order,
-/// each word overwriting the previous level of its flag.
-fn upstream_set_output_verbosity(level: usize) -> VerbosityConfig {
+/// each word overwriting the previous level of its flag. Each debug row is
+/// followed by its [`OC_DEBUG_VERBOSITY_ADDITIONS`] entry.
+fn expected_set_output_verbosity(level: usize) -> VerbosityConfig {
     let mut config = VerbosityConfig::default();
     let rows = level.min(UPSTREAM_DEBUG_VERBOSITY.len() - 1) + 1;
     let words = |row: &'static str| row.split(',').filter(|w| !w.is_empty());
-    for (info, debug) in UPSTREAM_INFO_VERBOSITY
+    for ((info, debug), oc) in UPSTREAM_INFO_VERBOSITY
         .into_iter()
         .zip(UPSTREAM_DEBUG_VERBOSITY)
+        .zip(OC_DEBUG_VERBOSITY_ADDITIONS)
         .take(rows)
     {
         for word in words(info) {
             config.apply_info_flag(word).expect("upstream info word");
         }
-        for word in words(debug) {
-            config.apply_debug_flag(word).expect("upstream debug word");
+        for word in words(debug).chain(words(oc)) {
+            config.apply_debug_flag(word).expect("debug word");
         }
     }
     config
 }
 
 /// Every `-v` count must yield exactly the info and debug levels upstream's
-/// tables produce: an extra category is output upstream never prints at that
-/// verbosity, a missing one is output oc silently drops. Comparing the full
-/// level structs also pins every flag the tables never name (IO, NSTR and the
-/// oc-only categories) at 0. Level 6 checks the `MAX_VERBOSITY` clamp.
+/// tables produce, plus only the named oc additions: an extra category is
+/// output upstream never prints at that verbosity, a missing one is output oc
+/// silently drops. Comparing the full level structs also pins every flag the
+/// tables never name (IO, NSTR and the other oc-only categories) at 0. Level
+/// 6 checks the `MAX_VERBOSITY` clamp.
 #[test]
 fn every_verbose_level_matches_upstream_verbosity_tables() {
     for level in 0..=6u8 {
-        let expected = upstream_set_output_verbosity(usize::from(level));
+        let expected = expected_set_output_verbosity(usize::from(level));
         let actual = VerbosityConfig::from_verbose_level(level);
         assert_eq!(
             format!("{:?}", actual.info),

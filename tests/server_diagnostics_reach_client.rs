@@ -264,3 +264,33 @@ fn daemon_sender_debug_reaches_client_and_daemon_log() {
     assert!(stdout.contains(PULL_MARKER), "client stdout:\n{stdout}");
     assert!(log.contains(PULL_MARKER), "daemon log:\n{log}");
 }
+
+/// Asserts that the daemon worker's decision line for one kernel sandbox
+/// `layer` (`--debug=seccomp` or `--debug=landlock` level 1, which `-vvv`
+/// reaches) arrives on the client of a push and of a pull when `max
+/// verbosity` admits row 3, and that `-vv` and the per-flag cap
+/// (options.c:546-572) at the default `max verbosity = 1` both withhold it.
+fn assert_daemon_sandbox_decision_reaches_client(layer: &str) {
+    let needle = format!("module 'm': {layer}: ");
+    let Some((push, _)) = daemon_push(3, &["-vvv"]) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert!(push.contains(&needle), "push at -vvv:\n{push}");
+    let (pull, _) = daemon_pull(3, &["-vvv"]).expect("loopback port");
+    assert!(pull.contains(&needle), "pull at -vvv:\n{pull}");
+    let (capped, _) = daemon_push(1, &["-vvv"]).expect("loopback port");
+    assert!(!capped.contains(&needle), "capped:\n{capped}");
+    let (below, _) = daemon_push(3, &["-vv"]).expect("loopback port");
+    assert!(!below.contains(&needle), "-vv:\n{below}");
+}
+
+#[test]
+fn daemon_seccomp_decision_reaches_client_at_vvv_within_the_cap() {
+    assert_daemon_sandbox_decision_reaches_client("seccomp");
+}
+
+#[test]
+fn daemon_landlock_decision_reaches_client_at_vvv_within_the_cap() {
+    assert_daemon_sandbox_decision_reaches_client("landlock");
+}
