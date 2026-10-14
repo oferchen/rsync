@@ -218,6 +218,10 @@ fn spawn_ssh_connection(
     // leaves it disabled.
     ssh.set_io_timeout(config.ssh_io_timeout());
 
+    // The socketpair wire honours --io-uring/--no-io-uring and --zero-copy.
+    ssh.set_io_uring_policy(config.io_uring_policy());
+    ssh.set_zero_copy_policy(config.zero_copy_policy());
+
     ssh.set_remote_command(invocation_args);
 
     ssh.spawn().map_err(|e| {

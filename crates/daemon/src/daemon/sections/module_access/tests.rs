@@ -1134,52 +1134,47 @@ mod module_access_tests {
         assert!(!config.write.delay_updates);
     }
 
-    // NSV: the daemon-sender opts its socket write side into io_uring SEND_ZC
-    // only when the client forwarded `--zero-copy`. The flag maps to
-    // `write.zero_copy_policy = Enabled`, which `setup_transfer_streams`
-    // consults to choose the zero-copy writer.
+    // Zero-copy is a local decision on each node: the daemon's policy comes
+    // from its own startup flag or OC_RSYNC_ZERO_COPY, so a client-supplied
+    // `--zero-copy` / `--no-zero-copy` must not steer the daemon's socket
+    // writer. The tokens are ignored like any other unknown long option.
     #[test]
-    fn apply_long_form_args_parses_zero_copy_enabled() {
-        let args = vec![
-            "--server".to_owned(),
-            "--sender".to_owned(),
-            "--zero-copy".to_owned(),
-            ".".to_owned(),
-        ];
-        let mut config = ServerConfig::default();
-        let unknown = apply_long_form_args(&args, &mut config);
-        assert!(unknown.is_none(), "--zero-copy must be a known daemon flag");
-        assert_eq!(
-            config.write.zero_copy_policy,
-            fast_io::ZeroCopyPolicy::Enabled
-        );
+    fn apply_long_form_args_ignores_a_client_zero_copy_flag() {
+        for flag in ["--zero-copy", "--no-zero-copy"] {
+            let args = vec![
+                "--server".to_owned(),
+                "--sender".to_owned(),
+                flag.to_owned(),
+                ".".to_owned(),
+            ];
+            let mut config = ServerConfig::default();
+            assert!(apply_long_form_args(&args, &mut config).is_none(), "{flag}");
+            assert_eq!(
+                config.write.zero_copy_policy,
+                fast_io::ZeroCopyPolicy::Auto,
+                "{flag} from the client must not set the daemon policy"
+            );
+        }
     }
 
+    // The module carries the daemon-wide policy resolved at startup; the
+    // session config must take it from there, or a daemon started with
+    // `--zero-copy` would still serve every pull on plain sends.
     #[test]
-    fn apply_long_form_args_parses_no_zero_copy_disabled() {
-        let args = vec![
-            "--server".to_owned(),
-            "--sender".to_owned(),
-            "--no-zero-copy".to_owned(),
-            ".".to_owned(),
-        ];
-        let mut config = ServerConfig::default();
-        let unknown = apply_long_form_args(&args, &mut config);
-        assert!(unknown.is_none());
-        assert_eq!(
-            config.write.zero_copy_policy,
-            fast_io::ZeroCopyPolicy::Disabled
-        );
-    }
-
-    // HARD default-path invariant at the daemon parse boundary: absent the
-    // flag, the policy stays `Auto`, so the daemon keeps its current writer.
-    #[test]
-    fn apply_long_form_args_zero_copy_defaults_to_auto() {
-        let args = vec!["--server".to_owned(), ".".to_owned()];
-        let mut config = ServerConfig::default();
-        let _ = apply_long_form_args(&args, &mut config);
-        assert_eq!(config.write.zero_copy_policy, fast_io::ZeroCopyPolicy::Auto);
+    fn module_zero_copy_policy_reaches_the_session_config() {
+        for policy in [
+            fast_io::ZeroCopyPolicy::Enabled,
+            fast_io::ZeroCopyPolicy::Disabled,
+            fast_io::ZeroCopyPolicy::Auto,
+        ] {
+            let module = ModuleDefinition {
+                zero_copy_policy: policy,
+                ..Default::default()
+            };
+            let mut cfg = ServerConfig::default();
+            apply_module_transfer_directives(&module, &mut cfg);
+            assert_eq!(cfg.write.zero_copy_policy, policy);
+        }
     }
 
     // Byte-identical wire-transcript gate: the SEND_ZC writer substitutes the
@@ -1228,6 +1223,143 @@ mod module_access_tests {
             enabled, auto,
             "SEND_ZC (--zero-copy) transcript must be byte-identical to the default path"
         );
+    }
+
+    /// Writes 1 MiB through `daemon_socket_writer` under `policy` over TCP
+    /// loopback, asserts the peer got the exact bytes, and returns the
+    /// SEND_ZC counters before and after.
+    #[cfg(unix)]
+    fn daemon_writer_loopback(
+        policy: fast_io::ZeroCopyPolicy,
+    ) -> (fast_io::SendZcStats, fast_io::SendZcStats) {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let payload: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let payload_owned = payload.clone();
+
+        let before = fast_io::send_zc_stats();
+        let sender = std::thread::spawn(move || {
+            let write_stream = TcpStream::connect(addr).expect("connect");
+            let mut writer = daemon_socket_writer(write_stream, policy);
+            writer.write_all(&payload_owned).expect("write payload");
+            writer.flush().expect("flush");
+        });
+        let (mut peer, _) = listener.accept().expect("accept");
+        let mut received = Vec::new();
+        peer.read_to_end(&mut received).expect("read to end");
+        sender.join().expect("sender thread");
+        let after = fast_io::send_zc_stats();
+
+        assert_eq!(received, payload, "transcript must equal the payload");
+        (before, after)
+    }
+
+    /// Prints whether this host can run SEND_ZC and returns `true` if so.
+    #[cfg(unix)]
+    fn send_zc_runnable(test: &str) -> bool {
+        let io_uring = fast_io::io_uring::is_io_uring_available();
+        let opcode = fast_io::io_uring::send_zc_supported();
+        eprintln!(
+            "[send_zc env] {test}: {}",
+            match (io_uring, opcode) {
+                (false, _) => "io_uring unavailable - SEND_ZC not exercised",
+                (true, false) =>
+                    "SEND_ZC opcode unsupported (kernel < 6.0) - SEND_ZC not exercised",
+                (true, true) => "ok - SEND_ZC can run",
+            }
+        );
+        io_uring && opcode
+    }
+
+    // SEND_ZC is compiled in by default but runtime opt-in: default-on measured
+    // +44% wall time on a 2 GiB daemon pull. Under the default daemon policy
+    // (`Auto`), the daemon-sender's writer
+    // must stay on the plain `TcpStream` path even where the kernel could run
+    // SEND_ZC, and leave every counter untouched.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_socket_writer_default_never_dispatches_send_zc() {
+        send_zc_runnable("daemon_socket_writer_default_never_dispatches_send_zc");
+        let (before, after) = daemon_writer_loopback(fast_io::ZeroCopyPolicy::default());
+        assert_eq!(
+            after, before,
+            "the default daemon writer must not touch SEND_ZC: {before:?} -> {after:?}"
+        );
+    }
+
+    // A daemon started with `--zero-copy` (or OC_RSYNC_ZERO_COPY=on) puts
+    // the daemon-sender's payload through `IORING_OP_SEND_ZC` wherever the
+    // kernel can run it. Where it cannot, the bytes still match and no SEND_ZC
+    // send is counted. Gated on the (default-on) feature that builds SEND_ZC.
+    #[cfg(all(unix, feature = "daemon-zero-copy"))]
+    #[test]
+    fn daemon_socket_writer_dispatches_send_zc_on_request() {
+        let runnable = send_zc_runnable("daemon_socket_writer_dispatches_send_zc_on_request");
+        let (before, after) = daemon_writer_loopback(fast_io::ZeroCopyPolicy::Enabled);
+        if runnable {
+            assert!(
+                after.sends > before.sends && after.bytes > before.bytes,
+                "--zero-copy did not reach SEND_ZC: {before:?} -> {after:?}"
+            );
+        } else {
+            assert_eq!(
+                after.sends, before.sends,
+                "SEND_ZC cannot run here, so none may be counted"
+            );
+        }
+    }
+
+    /// Resolves the policy a session would serve with: daemon startup
+    /// arguments -> module -> session config, the production chain.
+    #[cfg(unix)]
+    fn session_zero_copy_policy(daemon_args: &[&str]) -> fast_io::ZeroCopyPolicy {
+        use crate::test_env::{ENV_LOCK, EnvGuard};
+
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvGuard::remove(fast_io::ZERO_COPY_ENV);
+        let mut args: Vec<OsString> = daemon_args.iter().map(OsString::from).collect();
+        args.push(OsString::from("--module"));
+        args.push(OsString::from("data=/srv/data"));
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&options.modules()[0], &mut cfg);
+        cfg.write.zero_copy_policy
+    }
+
+    // End of the chain: a daemon started with `--zero-copy` hands its
+    // daemon-sender a writer that dispatches SEND_ZC, counted by
+    // `fast_io::send_zc_stats`. Where the kernel cannot run SEND_ZC the
+    // policy still resolves to Enabled and no send may be counted.
+    #[cfg(all(unix, feature = "daemon-zero-copy"))]
+    #[test]
+    fn daemon_started_with_zero_copy_dispatches_send_zc() {
+        let policy = session_zero_copy_policy(&["--zero-copy"]);
+        assert_eq!(policy, fast_io::ZeroCopyPolicy::Enabled);
+        let runnable = send_zc_runnable("daemon_started_with_zero_copy_dispatches_send_zc");
+        let (before, after) = daemon_writer_loopback(policy);
+        if runnable {
+            assert!(
+                after.sends > before.sends && after.bytes > before.bytes,
+                "daemon --zero-copy did not reach SEND_ZC: {before:?} -> {after:?}"
+            );
+        } else {
+            assert_eq!(after.sends, before.sends);
+        }
+    }
+
+    // A daemon started without the flag (and without OC_RSYNC_ZERO_COPY)
+    // must never dispatch SEND_ZC, whatever the kernel supports.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_started_without_zero_copy_never_dispatches_send_zc() {
+        let policy = session_zero_copy_policy(&[]);
+        assert_eq!(policy, fast_io::ZeroCopyPolicy::Auto);
+        send_zc_runnable("daemon_started_without_zero_copy_never_dispatches_send_zc");
+        let (before, after) = daemon_writer_loopback(policy);
+        assert_eq!(after, before, "default daemon touched SEND_ZC");
     }
 
     // UTS-15.g: the daemon arg parser must fail loud on a client-only batch

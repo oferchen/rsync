@@ -90,6 +90,10 @@ pub(super) fn build_ssh_connection(
     // watchdog. 0/unset leaves it disabled.
     ssh.set_io_timeout(config.ssh_io_timeout());
 
+    // The socketpair wire honours --io-uring/--no-io-uring and --zero-copy.
+    ssh.set_io_uring_policy(config.io_uring_policy());
+    ssh.set_zero_copy_policy(config.zero_copy_policy());
+
     ssh.set_remote_command(invocation_args);
 
     warn_double_compression_once(config.compress(), ssh.has_ssh_compression());

@@ -1,5 +1,11 @@
 # SSH stdio transport: socketpair(AF_UNIX, SOCK_STREAM) vs anonymous pipes
 
+> **Superseded 2026-10-13:** the wire now uses two socketpairs like upstream
+> `fd_pair()` (pipe.c:57 `piped_child()`, util1.c:84 `fd_pair()`), with
+> anonymous pipes kept only as a traced fallback when socketpair creation
+> fails. See `crates/rsync_io/src/ssh/wire.rs`. The recommendation below to
+> keep pipes no longer applies.
+
 Tracker: #1938 (formal audit). Branch: `docs/ssh-socketpair-1938`.
 No code changes - documentation only.
 

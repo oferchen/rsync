@@ -219,6 +219,13 @@ pub(crate) struct ModuleDefinition {
     /// is accepted but has no effect (no-op).
     /// Upstream: `loadparm.c` - `open noatime` parameter, default false.
     pub(crate) open_noatime: bool,
+    /// Daemon-wide zero-copy policy for this module's socket sends.
+    ///
+    /// oc-only, not an rsyncd.conf directive: it comes from the daemon's own
+    /// `--zero-copy` / `--no-zero-copy` flag or `OC_RSYNC_ZERO_COPY`, resolved
+    /// once at startup and stamped onto every module. Never taken from the
+    /// client, which keeps zero-copy a local decision on each node.
+    pub(crate) zero_copy_policy: fast_io::ZeroCopyPolicy,
     /// Whether reverse DNS lookups are enabled for this module (default: true).
     ///
     /// Inherits the global-section value when the module does not override it.

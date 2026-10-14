@@ -36,6 +36,9 @@ pub(crate) struct RuntimeOptions {
     log_file_from_config: bool,
     /// `--log-file-format`, overriding every module's `log format`.
     log_file_format: Option<String>,
+    /// Daemon-wide zero-copy policy: `--zero-copy` / `--no-zero-copy`, else
+    /// `OC_RSYNC_ZERO_COPY`, else off. Stamped onto every module.
+    zero_copy_policy: fast_io::ZeroCopyPolicy,
     /// Daemon-wide `timeout`, read as the GLOBAL value rather than a module
     /// default.
     ///
@@ -175,6 +178,7 @@ impl Default for RuntimeOptions {
             log_file: None,
             log_file_format: None,
             log_file_from_config: false,
+            zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
             daemon_timeout: None,
             global_refuse_options: None,
             global_secrets_file: None,

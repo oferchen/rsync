@@ -268,6 +268,72 @@ mod runtime_options_tests {
         assert_eq!(options.tcp_fastopen(), TcpFastOpenMode::Off);
     }
 
+    /// Parses `arguments` with `OC_RSYNC_ZERO_COPY` set to `env` (or removed)
+    /// and returns the zero-copy policy stamped on the single `--module`.
+    fn module_zero_copy_policy(arguments: &[&str], env: Option<&str>) -> fast_io::ZeroCopyPolicy {
+        use crate::test_env::{ENV_LOCK, EnvGuard};
+
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = match env {
+            Some(value) => EnvGuard::set(fast_io::ZERO_COPY_ENV, std::ffi::OsStr::new(value)),
+            None => EnvGuard::remove(fast_io::ZERO_COPY_ENV),
+        };
+        let mut args: Vec<OsString> = arguments.iter().map(OsString::from).collect();
+        args.push(OsString::from("--module"));
+        args.push(OsString::from("data=/srv/data"));
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.modules().len(), 1);
+        options.modules()[0].zero_copy_policy
+    }
+
+    // A daemon is a server: zero-copy stays off unless its operator opts in,
+    // whatever any client wants.
+    #[test]
+    fn daemon_zero_copy_defaults_off() {
+        assert_eq!(
+            module_zero_copy_policy(&[], None),
+            fast_io::ZeroCopyPolicy::Auto
+        );
+    }
+
+    #[test]
+    fn daemon_zero_copy_flag_sets_the_module_policy() {
+        assert_eq!(
+            module_zero_copy_policy(&["--zero-copy"], None),
+            fast_io::ZeroCopyPolicy::Enabled
+        );
+        assert_eq!(
+            module_zero_copy_policy(&["--no-zero-copy"], None),
+            fast_io::ZeroCopyPolicy::Disabled
+        );
+    }
+
+    #[test]
+    fn daemon_zero_copy_env_sets_the_module_policy() {
+        assert_eq!(
+            module_zero_copy_policy(&[], Some("on")),
+            fast_io::ZeroCopyPolicy::Enabled
+        );
+        assert_eq!(
+            module_zero_copy_policy(&[], Some("off")),
+            fast_io::ZeroCopyPolicy::Disabled
+        );
+    }
+
+    // The flag is the operator's decision for this daemon and must override an
+    // inherited environment value in both directions.
+    #[test]
+    fn daemon_zero_copy_flag_beats_env() {
+        assert_eq!(
+            module_zero_copy_policy(&["--no-zero-copy"], Some("on")),
+            fast_io::ZeroCopyPolicy::Disabled
+        );
+        assert_eq!(
+            module_zero_copy_policy(&["--zero-copy"], Some("off")),
+            fast_io::ZeroCopyPolicy::Enabled
+        );
+    }
+
     #[test]
     fn parse_tcp_fastopen_rejects_unknown_value() {
         let args = vec![OsString::from("--tcp-fastopen=maybe")];

@@ -247,6 +247,7 @@ impl SendZcPipeline {
                     "SEND_ZC reported zero bytes sent",
                 ));
             }
+            crate::send_zc_stats::record_send(result as usize);
             sent += result as usize;
         }
         Ok(())
@@ -329,6 +330,8 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use super::super::send_zc_test_env::{SendZcEnv, classify, report, report_setup_failure};
+
     /// Payload for the tests whose peer never reads. Sized to fit entirely in
     /// the socket buffers [`widen_socket_buffers`] asks for, so the transfer
     /// CQE cannot block waiting for a receiver that never reads.
@@ -349,8 +352,14 @@ mod tests {
     /// [`UNREAD_CHUNK`].
     const WIDE_SOCKET_BUFFER: libc::c_int = 1024 * 1024;
 
-    fn send_zc_unavailable() -> bool {
-        !super::super::config::is_io_uring_available() || !super::super::send_zc::is_supported()
+    /// Classifies the environment for `test` on stderr and returns `true`
+    /// when the real opcode cannot be exercised.
+    fn send_zc_unavailable(test: &str) -> bool {
+        let env = classify(
+            super::super::config::is_io_uring_available(),
+            super::super::send_zc::is_supported(),
+        );
+        report(test, env) != SendZcEnv::Ok
     }
 
     /// Requests oversized send and receive buffers on `fd` so a
@@ -399,18 +408,18 @@ mod tests {
     /// kernel chose to pin or copy the pages.
     #[test]
     fn send_staged_hands_the_kernel_a_buffer_the_caller_no_longer_holds() {
-        if send_zc_unavailable() {
-            println!("skipping: IORING_OP_SEND_ZC unavailable on this host");
+        const TEST: &str = "send_staged_hands_the_kernel_a_buffer_the_caller_no_longer_holds";
+        if send_zc_unavailable(TEST) {
             return;
         }
         let Some((client, peer)) = loopback_pair() else {
-            println!("skipping: cannot build a loopback pair");
+            eprintln!("[send_zc env] SKIP {TEST}: cannot build a loopback pair");
             return;
         };
         let mut pipeline = match SendZcPipeline::new(client.as_raw_fd(), UNREAD_CHUNK) {
             Ok(p) => p,
             Err(e) => {
-                println!("skipping: cannot build the SEND_ZC ring ({e})");
+                report_setup_failure(TEST, "build the SEND_ZC ring", &e);
                 return;
             }
         };
@@ -445,14 +454,14 @@ mod tests {
     /// both the byte stream and that the drain settles the accounting.
     #[test]
     fn pipeline_recycles_buffers_across_more_sends_than_slots() {
-        if send_zc_unavailable() {
-            println!("skipping: IORING_OP_SEND_ZC unavailable on this host");
+        const TEST: &str = "pipeline_recycles_buffers_across_more_sends_than_slots";
+        if send_zc_unavailable(TEST) {
             return;
         }
         let listener = match TcpListener::bind("127.0.0.1:0") {
             Ok(l) => l,
             Err(e) => {
-                println!("skipping: cannot bind loopback ({e})");
+                eprintln!("[send_zc env] SKIP {TEST}: cannot bind loopback ({e})");
                 return;
             }
         };
@@ -480,7 +489,7 @@ mod tests {
         let mut pipeline = match SendZcPipeline::new(client.as_raw_fd(), CHUNK) {
             Ok(p) => p,
             Err(e) => {
-                println!("skipping: cannot build the SEND_ZC ring ({e})");
+                report_setup_failure(TEST, "build the SEND_ZC ring", &e);
                 return;
             }
         };
@@ -520,18 +529,18 @@ mod tests {
     /// already under way.
     #[test]
     fn drop_drains_outstanding_notifications() {
-        if send_zc_unavailable() {
-            println!("skipping: IORING_OP_SEND_ZC unavailable on this host");
+        const TEST: &str = "drop_drains_outstanding_notifications";
+        if send_zc_unavailable(TEST) {
             return;
         }
         let Some((client, mut peer)) = loopback_pair() else {
-            println!("skipping: cannot build a loopback pair");
+            eprintln!("[send_zc env] SKIP {TEST}: cannot build a loopback pair");
             return;
         };
         let mut pipeline = match SendZcPipeline::new(client.as_raw_fd(), UNREAD_CHUNK) {
             Ok(p) => p,
             Err(e) => {
-                println!("skipping: cannot build the SEND_ZC ring ({e})");
+                report_setup_failure(TEST, "build the SEND_ZC ring", &e);
                 return;
             }
         };

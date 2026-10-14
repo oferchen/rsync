@@ -155,6 +155,16 @@ fn push_extension_options(text: &mut String) {
         "--tcp-fastopen=MODE",
         "enable TCP Fast Open (auto, on, off; default auto)",
     );
+    push_option(
+        text,
+        "--zero-copy",
+        "send module data via io_uring SEND_ZC (Linux; default off)",
+    );
+    push_option(
+        text,
+        "--no-zero-copy",
+        "disable I/O-level zero-copy for every transfer",
+    );
 
     if cfg!(windows) {
         push_option(

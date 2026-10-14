@@ -839,10 +839,7 @@ fn long_flags_defaults() {
         flags.io_uring_policy,
         fast_io::IoUringPolicy::Auto
     ));
-    assert!(matches!(
-        flags.zero_copy_policy,
-        fast_io::ZeroCopyPolicy::Auto
-    ));
+    assert!(flags.zero_copy_policy.is_none());
 }
 
 #[test]
@@ -954,33 +951,39 @@ fn long_flags_io_uring_disabled() {
 }
 
 #[test]
-fn long_flags_zero_copy_default_is_auto() {
+fn long_flags_zero_copy_default_is_unset() {
     let args: Vec<OsString> = vec![OsString::from("--server")];
     let flags = parse_server_long_flags(&args);
-    assert!(matches!(
-        flags.zero_copy_policy,
-        fast_io::ZeroCopyPolicy::Auto
-    ));
+    assert_eq!(flags.zero_copy_policy, None);
 }
 
+/// `--rsync-path='oc-rsync --zero-copy'` puts the flag BEFORE `--server`;
+/// the server must still take it as its own policy.
 #[test]
-fn long_flags_zero_copy_enabled() {
-    let args = vec![OsString::from("--server"), OsString::from("--zero-copy")];
+fn long_flags_zero_copy_enabled_from_rsync_path() {
+    let args = vec![
+        OsString::from("--zero-copy"),
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpre.LsfxCIvu"),
+        OsString::from("."),
+        OsString::from("src/"),
+    ];
     let flags = parse_server_long_flags(&args);
-    assert!(matches!(
+    assert_eq!(
         flags.zero_copy_policy,
-        fast_io::ZeroCopyPolicy::Enabled
-    ));
+        Some(fast_io::ZeroCopyPolicy::Enabled)
+    );
 }
 
 #[test]
 fn long_flags_zero_copy_disabled() {
     let args = vec![OsString::from("--server"), OsString::from("--no-zero-copy")];
     let flags = parse_server_long_flags(&args);
-    assert!(matches!(
+    assert_eq!(
         flags.zero_copy_policy,
-        fast_io::ZeroCopyPolicy::Disabled
-    ));
+        Some(fast_io::ZeroCopyPolicy::Disabled)
+    );
 }
 
 #[test]

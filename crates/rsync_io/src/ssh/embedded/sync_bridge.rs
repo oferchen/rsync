@@ -30,6 +30,11 @@
 //! - Each `read` consumes one chunk from the async stream into a caller
 //!   buffer; oversized chunks are buffered internally and drained on the next
 //!   read.
+//! - Inbound chunks cross the queue as the `bytes::Bytes` russh delivered, so
+//!   the bridge adds no allocation or copy beyond the one into the caller's
+//!   buffer. Outbound chunks come from a bounded `ChunkPool` whose buffers
+//!   return to the pool when russh drops them, so steady-state writes do not
+//!   allocate.
 //! - `write` always consumes the entire input slice via one `write_all` on
 //!   the underlying async writer; partial writes are never reported to
 //!   callers.
@@ -71,6 +76,7 @@ use std::pin::Pin;
 use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
 
+use bytes::{Buf, Bytes};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc as tokio_mpsc;
@@ -80,6 +86,94 @@ use tokio::sync::mpsc as tokio_mpsc;
 /// Matches the queue depth used by `super::connect::connect_and_exec` so
 /// the two paths behave identically under load.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 64;
+
+/// Largest buffer a [`ChunkPool`] keeps for reuse.
+///
+/// Covers a full multiplex frame (`MplexWriter` stages 32 KiB plus its 4-byte
+/// header) and the 32 KiB `SyncWriter` staging buffer. A larger write still
+/// goes out as one chunk, but its buffer is freed rather than retained, so
+/// one oversized write cannot pin memory for the rest of the session.
+pub(super) const MAX_RECYCLED_CHUNK: usize = 64 * 1024;
+
+/// Bounded free list of outbound chunk buffers.
+///
+/// Every chunk handed to russh is a `Bytes` that owns a pooled `Vec<u8>`.
+/// When russh drops the chunk (after copying it into its packet buffer), the
+/// `Vec` returns here instead of being freed, so a steady stream of writes
+/// reuses the same few allocations. The free list holds at most `capacity`
+/// idle buffers of at most `MAX_RECYCLED_CHUNK` bytes each; a buffer that
+/// would exceed either bound is freed, so the pool never grows without limit.
+pub(super) struct ChunkPool {
+    free: std_mpsc::Receiver<Vec<u8>>,
+    home: std_mpsc::SyncSender<Vec<u8>>,
+}
+
+impl ChunkPool {
+    /// Creates a pool that retains at most `capacity` idle buffers.
+    #[must_use]
+    pub(super) fn new(capacity: usize) -> Self {
+        let (home, free) = std_mpsc::sync_channel(capacity.max(1));
+        Self { free, home }
+    }
+
+    /// Takes an empty buffer from the pool, or a fresh one when none is idle.
+    #[must_use]
+    pub(super) fn take(&self) -> Vec<u8> {
+        self.free.try_recv().unwrap_or_default()
+    }
+
+    /// Wraps `buf` as a `Bytes` chunk that returns `buf` to this pool when
+    /// the last reference to the chunk is dropped.
+    #[must_use]
+    pub(super) fn wrap(&self, buf: Vec<u8>) -> Bytes {
+        Bytes::from_owner(Recycled {
+            buf,
+            home: self.home.clone(),
+        })
+    }
+
+    /// Copies `data` into a pooled buffer and returns it as a chunk.
+    #[must_use]
+    pub(super) fn chunk(&self, data: &[u8]) -> Bytes {
+        if data.len() > MAX_RECYCLED_CHUNK {
+            return Bytes::copy_from_slice(data);
+        }
+        let mut buf = self.take();
+        buf.extend_from_slice(data);
+        self.wrap(buf)
+    }
+}
+
+/// Owner of a pooled buffer while russh holds it as a `Bytes` chunk.
+struct Recycled {
+    buf: Vec<u8>,
+    home: std_mpsc::SyncSender<Vec<u8>>,
+}
+
+impl AsRef<[u8]> for Recycled {
+    fn as_ref(&self) -> &[u8] {
+        &self.buf
+    }
+}
+
+impl Drop for Recycled {
+    fn drop(&mut self) {
+        if self.buf.capacity() <= MAX_RECYCLED_CHUNK {
+            let mut buf = std::mem::take(&mut self.buf);
+            buf.clear();
+            // A full free list or a dropped pool frees the buffer instead.
+            let _ = self.home.try_send(buf);
+        }
+    }
+}
+
+/// Copies as much of `pending` as fits into `buf` and advances past it.
+pub(super) fn drain_into(pending: &mut Bytes, buf: &mut [u8]) -> usize {
+    let n = pending.len().min(buf.len());
+    buf[..n].copy_from_slice(&pending[..n]);
+    pending.advance(n);
+    n
+}
 
 /// Wraps an `AsyncRead + AsyncWrite` stream as a synchronous
 /// `Read + Write` source by driving an internal current-thread tokio
@@ -174,17 +268,17 @@ where
 /// buffered internally. A closed sender (channel EOF or pump exit) yields
 /// `Ok(0)` to signal `std::io::Read` EOF.
 pub struct SyncReader {
-    rx: std_mpsc::Receiver<Vec<u8>>,
-    buffered: Vec<u8>,
-    offset: usize,
+    rx: std_mpsc::Receiver<Bytes>,
+    /// Unread tail of the current chunk; empty when the next read must
+    /// receive a fresh chunk.
+    pending: Bytes,
 }
 
 impl SyncReader {
-    fn new(rx: std_mpsc::Receiver<Vec<u8>>) -> Self {
+    fn new(rx: std_mpsc::Receiver<Bytes>) -> Self {
         Self {
             rx,
-            buffered: Vec::new(),
-            offset: 0,
+            pending: Bytes::new(),
         }
     }
 
@@ -217,15 +311,9 @@ impl SyncReader {
     ///
     /// Returns `io::ErrorKind::TimedOut` when no data arrives within `budget`.
     pub fn read_with_timeout(&mut self, buf: &mut [u8], budget: Duration) -> io::Result<usize> {
-        if self.offset >= self.buffered.len() {
+        if self.pending.is_empty() {
             match self.rx.recv_timeout(budget) {
-                Ok(chunk) => {
-                    if chunk.is_empty() {
-                        return Ok(0);
-                    }
-                    self.buffered = chunk;
-                    self.offset = 0;
-                }
+                Ok(chunk) => self.pending = chunk,
                 Err(std_mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
                 Err(std_mpsc::RecvTimeoutError::Timeout) => {
                     return Err(io::Error::new(
@@ -235,41 +323,19 @@ impl SyncReader {
                 }
             }
         }
-        let available = &self.buffered[self.offset..];
-        let n = available.len().min(buf.len());
-        buf[..n].copy_from_slice(&available[..n]);
-        self.offset += n;
-        if self.offset >= self.buffered.len() {
-            self.buffered.clear();
-            self.offset = 0;
-        }
-        Ok(n)
+        Ok(drain_into(&mut self.pending, buf))
     }
 }
 
 impl io::Read for SyncReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if self.offset >= self.buffered.len() {
+        if self.pending.is_empty() {
             match self.rx.recv() {
-                Ok(chunk) => {
-                    if chunk.is_empty() {
-                        return Ok(0);
-                    }
-                    self.buffered = chunk;
-                    self.offset = 0;
-                }
+                Ok(chunk) => self.pending = chunk,
                 Err(_) => return Ok(0),
             }
         }
-        let remaining = &self.buffered[self.offset..];
-        let n = remaining.len().min(buf.len());
-        buf[..n].copy_from_slice(&remaining[..n]);
-        self.offset += n;
-        if self.offset >= self.buffered.len() {
-            self.buffered.clear();
-            self.offset = 0;
-        }
-        Ok(n)
+        Ok(drain_into(&mut self.pending, buf))
     }
 }
 
@@ -285,25 +351,29 @@ const SYNC_WRITER_BUF_SIZE: usize = 32 * 1024;
 /// Synchronous writer half returned by [`into_sync_halves`].
 ///
 /// Coalesces small writes into an internal staging buffer to reduce
-/// per-write heap allocations and channel sends. Data is flushed to the
-/// channel when the buffer fills or when `flush()` is called explicitly.
+/// per-write channel sends. Data is flushed to the channel when the buffer
+/// fills or when `flush()` is called explicitly. Staging buffers come from a
+/// bounded `ChunkPool`, so a flushed buffer is reused once russh drops it
+/// instead of being reallocated.
 /// Each channel message still uses `blocking_send` which honors
 /// backpressure: when the channel is full the calling thread blocks until
 /// the async side drains capacity. A closed receiver surfaces as
 /// [`io::ErrorKind::BrokenPipe`].
 pub struct SyncWriter {
-    tx: Option<tokio_mpsc::Sender<Vec<u8>>>,
-    /// Staging buffer for small writes. Avoids allocating a `Vec<u8>` per
-    /// `write()` call and amortizes the channel-send overhead across many
-    /// small writes (4-byte headers, varint NDX values, etc.).
+    tx: Option<tokio_mpsc::Sender<Bytes>>,
+    /// Staging buffer for small writes. Amortizes the channel-send overhead
+    /// across many small writes (4-byte headers, varint NDX values, etc.).
     buf: Vec<u8>,
+    pool: ChunkPool,
 }
 
 impl SyncWriter {
-    fn new(tx: tokio_mpsc::Sender<Vec<u8>>) -> Self {
+    fn new(tx: tokio_mpsc::Sender<Bytes>) -> Self {
+        let capacity = tx.max_capacity();
         Self {
             tx: Some(tx),
             buf: Vec::with_capacity(SYNC_WRITER_BUF_SIZE),
+            pool: ChunkPool::new(capacity),
         }
     }
 
@@ -316,7 +386,9 @@ impl SyncWriter {
             .tx
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "writer shut down"))?;
-        let chunk = std::mem::replace(&mut self.buf, Vec::with_capacity(SYNC_WRITER_BUF_SIZE));
+        let mut next = self.pool.take();
+        next.reserve(SYNC_WRITER_BUF_SIZE);
+        let chunk = self.pool.wrap(std::mem::replace(&mut self.buf, next));
         tx.blocking_send(chunk)
             .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
         Ok(())
@@ -336,7 +408,7 @@ impl io::Write for SyncWriter {
                 .tx
                 .as_ref()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "writer shut down"))?;
-            tx.blocking_send(buf.to_vec())
+            tx.blocking_send(self.pool.chunk(buf))
                 .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
             return Ok(buf.len());
         }
@@ -407,8 +479,8 @@ pub fn into_sync_halves_with_capacity(
     capacity: usize,
 ) -> (SyncReader, SyncWriter) {
     let cap = capacity.max(1);
-    let (data_tx, data_rx) = std_mpsc::sync_channel::<Vec<u8>>(cap);
-    let (write_tx, mut write_rx) = tokio_mpsc::channel::<Vec<u8>>(cap);
+    let (data_tx, data_rx) = std_mpsc::sync_channel::<Bytes>(cap);
+    let (write_tx, mut write_rx) = tokio_mpsc::channel::<Bytes>(cap);
 
     let mut writer = Box::pin(channel.make_writer());
 
@@ -419,7 +491,7 @@ pub fn into_sync_halves_with_capacity(
                 msg = channel.wait() => {
                     match msg {
                         Some(russh::ChannelMsg::Data { data }) => {
-                            if data_tx.send(data.to_vec()).is_err() {
+                            if data_tx.send(data).is_err() {
                                 break;
                             }
                         }
@@ -511,8 +583,8 @@ mod tests {
     /// `SyncReader` drains oversized chunks across multiple reads.
     #[test]
     fn sync_reader_drains_chunks_across_reads() {
-        let (tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(2);
-        tx.send(b"hello world".to_vec()).unwrap();
+        let (tx, rx) = std_mpsc::sync_channel::<Bytes>(2);
+        tx.send(Bytes::from_static(b"hello world")).unwrap();
         drop(tx);
 
         let mut reader = SyncReader::new(rx);
@@ -529,7 +601,7 @@ mod tests {
     /// `SyncReader` reports EOF when the upstream sender is dropped.
     #[test]
     fn sync_reader_closed_channel_is_eof() {
-        let (tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(1);
+        let (tx, rx) = std_mpsc::sync_channel::<Bytes>(1);
         drop(tx);
         let mut reader = SyncReader::new(rx);
         let mut buf = [0u8; 4];
@@ -542,7 +614,7 @@ mod tests {
     /// dies with the task, so `recv_timeout` observes `Disconnected`.
     #[test]
     fn read_with_timeout_dropped_runtime_is_eof() {
-        let (tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(1);
+        let (tx, rx) = std_mpsc::sync_channel::<Bytes>(1);
         // Simulate the pump task dropping its sender on runtime death.
         drop(tx);
         let mut reader = SyncReader::new(rx);
@@ -565,7 +637,7 @@ mod tests {
     fn read_with_timeout_wedged_runtime_times_out() {
         // Keep `tx` alive for the whole test so the receiver never observes
         // a disconnect - this is the simulated deadlock.
-        let (_tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(1);
+        let (_tx, rx) = std_mpsc::sync_channel::<Bytes>(1);
         let mut reader = SyncReader::new(rx);
         let mut buf = [0u8; 8];
 
@@ -591,8 +663,8 @@ mod tests {
     /// oversized chunks across calls, matching the infallible `read` path.
     #[test]
     fn read_with_timeout_drains_buffered_chunk() {
-        let (tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(2);
-        tx.send(b"hello world".to_vec()).unwrap();
+        let (tx, rx) = std_mpsc::sync_channel::<Bytes>(2);
+        tx.send(Bytes::from_static(b"hello world")).unwrap();
         drop(tx);
         let mut reader = SyncReader::new(rx);
 
@@ -615,7 +687,7 @@ mod tests {
     fn sync_writer_to_closed_channel_is_broken_pipe() {
         // Build the channel outside a runtime - blocking_send must not be
         // called from within one.
-        let (tx, rx) = tokio_mpsc::channel::<Vec<u8>>(1);
+        let (tx, rx) = tokio_mpsc::channel::<Bytes>(1);
         drop(rx);
         let mut writer = SyncWriter::new(tx);
         // Small write succeeds because it stays in the staging buffer.
@@ -635,11 +707,11 @@ mod tests {
             .build()
             .unwrap();
 
-        let (tx, mut rx) = tokio_mpsc::channel::<Vec<u8>>(1);
+        let (tx, mut rx) = tokio_mpsc::channel::<Bytes>(1);
 
         // Pre-fill the single slot so the next write blocks.
         rt.block_on(async {
-            tx.send(b"first".to_vec()).await.unwrap();
+            tx.send(Bytes::from_static(b"first")).await.unwrap();
         });
 
         let mut writer = SyncWriter::new(tx);
@@ -660,7 +732,7 @@ mod tests {
         signal_rx.recv().unwrap();
         std::thread::sleep(Duration::from_millis(50));
         let first = rt.block_on(rx.recv()).unwrap();
-        assert_eq!(first, b"first");
+        assert_eq!(&first[..], b"first");
 
         // Once a slot is free the large write should complete promptly.
         let second = rt.block_on(rx.recv()).unwrap();
@@ -673,11 +745,134 @@ mod tests {
     #[test]
     fn dropping_sync_writer_closes_channel() {
         let rt = Builder::new_current_thread().enable_all().build().unwrap();
-        let (tx, mut rx) = tokio_mpsc::channel::<Vec<u8>>(4);
+        let (tx, mut rx) = tokio_mpsc::channel::<Bytes>(4);
         let writer = SyncWriter::new(tx);
         drop(writer);
         let received = rt.block_on(rx.recv());
         assert!(received.is_none(), "sender drop should close the channel");
+    }
+
+    /// A chunk's buffer returns to the pool once russh drops the chunk, so
+    /// the next write reuses the same allocation instead of allocating. This
+    /// is the whole point of the pool: steady-state writes do not allocate.
+    #[test]
+    fn pool_reuses_buffer_after_chunk_is_dropped() {
+        let pool = ChunkPool::new(4);
+        let chunk = pool.chunk(b"first payload");
+        let first_ptr = chunk.as_ptr();
+        drop(chunk);
+
+        let reused = pool.chunk(b"second");
+        assert_eq!(reused.as_ptr(), first_ptr, "dropped buffer must be reused");
+        assert_eq!(
+            &reused[..],
+            b"second",
+            "a reused buffer carries no stale bytes"
+        );
+    }
+
+    /// A chunk still held by russh is never handed out again: the pool only
+    /// sees a buffer after its last reference is gone, so a later write
+    /// cannot overwrite bytes that have not been packetised yet.
+    #[test]
+    fn pool_never_reissues_a_live_chunk() {
+        let pool = ChunkPool::new(4);
+        let held = pool.chunk(b"in flight");
+        let held_ptr = held.as_ptr();
+        let other = pool.chunk(b"next write");
+
+        assert_ne!(other.as_ptr(), held_ptr);
+        assert_eq!(&held[..], b"in flight");
+    }
+
+    /// The free list keeps at most `capacity` idle buffers; extra returns are
+    /// freed. A burst of writes therefore cannot grow the pool without bound.
+    #[test]
+    fn pool_retains_at_most_capacity_idle_buffers() {
+        let pool = ChunkPool::new(2);
+        let chunks: Vec<Bytes> = (0..5).map(|_| pool.chunk(&[7u8; 128])).collect();
+        drop(chunks);
+
+        let retained = (0..5).filter(|_| pool.take().capacity() > 0).count();
+        assert_eq!(retained, 2, "only `capacity` buffers may stay idle");
+    }
+
+    /// Buffers above `MAX_RECYCLED_CHUNK` are freed on drop rather than
+    /// retained, so one oversized write cannot pin memory for the session.
+    #[test]
+    fn pool_frees_oversized_buffers() {
+        let pool = ChunkPool::new(4);
+        let big = pool.chunk(&vec![1u8; MAX_RECYCLED_CHUNK + 1]);
+        assert_eq!(big.len(), MAX_RECYCLED_CHUNK + 1);
+        drop(big);
+
+        let mut grown = pool.take();
+        grown.resize(MAX_RECYCLED_CHUNK + 1, 0);
+        drop(pool.wrap(grown));
+
+        assert_eq!(
+            pool.take().capacity(),
+            0,
+            "oversized buffers must not be pooled"
+        );
+    }
+
+    /// Chunks of varying sizes read back through small caller buffers arrive
+    /// whole and in order, and the closed queue then reads as EOF.
+    #[test]
+    fn sync_reader_preserves_order_across_chunks_and_partial_reads() {
+        let chunks: [&'static [u8]; 4] = [b"ab", b"cdefg", b"h", b"ijklmnop"];
+        let (tx, rx) = std_mpsc::sync_channel::<Bytes>(chunks.len());
+        for chunk in chunks {
+            tx.send(Bytes::from_static(chunk)).unwrap();
+        }
+        drop(tx);
+
+        let mut reader = SyncReader::new(rx);
+        let mut out = Vec::new();
+        let mut buf = [0u8; 3];
+        loop {
+            let n = reader.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(out, b"abcdefghijklmnop");
+        assert_eq!(reader.read(&mut buf).unwrap(), 0, "EOF must be sticky");
+    }
+
+    /// Flushed staging buffers cycle back through the pool: once the
+    /// consumer drops a chunk, a later flush ships that same allocation.
+    #[test]
+    fn sync_writer_recycles_flushed_staging_buffers() {
+        let (tx, mut rx) = tokio_mpsc::channel::<Bytes>(4);
+        let mut writer = SyncWriter::new(tx);
+
+        writer.write_all(b"one").unwrap();
+        writer.flush().unwrap();
+        let first = rx.blocking_recv().unwrap();
+        assert_eq!(&first[..], b"one");
+        let first_ptr = first.as_ptr();
+        drop(first);
+
+        // Observe the pool directly; an address match on a later chunk could
+        // also come from the allocator reusing the freed block.
+        let parked = writer.pool.take();
+        assert_eq!(
+            parked.as_ptr(),
+            first_ptr,
+            "flushed buffer must return to the pool"
+        );
+        assert!(
+            parked.is_empty(),
+            "a recycled buffer carries no stale bytes"
+        );
+        drop(writer.pool.wrap(parked));
+
+        writer.write_all(b"two").unwrap();
+        writer.flush().unwrap();
+        assert_eq!(&rx.blocking_recv().unwrap()[..], b"two");
     }
 
     // Wire-byte parity: SyncAsyncBridge (async-native) vs channel-pump
@@ -794,8 +989,8 @@ mod tests {
         // Build the channel-pump bridge manually (same wiring as
         // into_sync_halves, but over a duplex instead of a russh Channel).
         let cap = DEFAULT_CHANNEL_CAPACITY;
-        let (data_tx, data_rx) = std_mpsc::sync_channel::<Vec<u8>>(cap);
-        let (write_tx, mut write_rx) = tokio_mpsc::channel::<Vec<u8>>(cap);
+        let (data_tx, data_rx) = std_mpsc::sync_channel::<Bytes>(cap);
+        let (write_tx, mut write_rx) = tokio_mpsc::channel::<Bytes>(cap);
 
         let (mut async_reader, mut async_writer) = tokio::io::split(client);
 
@@ -807,7 +1002,7 @@ mod tests {
                     Ok(0) | Err(_) => break,
                     Ok(n) => n,
                 };
-                if data_tx.send(buf[..n].to_vec()).is_err() {
+                if data_tx.send(Bytes::copy_from_slice(&buf[..n])).is_err() {
                     break;
                 }
             }

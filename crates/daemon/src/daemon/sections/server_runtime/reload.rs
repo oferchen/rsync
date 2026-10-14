@@ -4,14 +4,16 @@
 /// so that subsequent connections use the new configuration. Existing
 /// connections retain the old config via their `Arc` clones.
 ///
-/// `log_file_format` is the daemon's `--log-file-format`: a command-line value
-/// the config file cannot carry, so it is re-applied to every reloaded module.
+/// `log_file_format` is the daemon's `--log-file-format` and `zero_copy_policy`
+/// its resolved zero-copy policy: startup values the config file cannot carry,
+/// so both are re-applied to every reloaded module.
 ///
 /// On failure (missing file, parse error), the error is logged and the daemon
 /// continues with the previous configuration - matching upstream rsync
 /// behaviour where a bad config reload is non-fatal.
 ///
 /// upstream: clientserver.c - `re_read_config()` called from SIGHUP handler.
+#[allow(clippy::too_many_arguments)]
 fn reload_daemon_config(
     config_path: Option<&Path>,
     dparams: &[String],
@@ -21,6 +23,7 @@ fn reload_daemon_config(
     log_sink: Option<&SharedLogSink>,
     notifier: &systemd::ServiceNotifier,
     log_file_format: Option<&str>,
+    zero_copy_policy: fast_io::ZeroCopyPolicy,
 ) {
     if let Some(log) = log_sink {
         let message =
@@ -56,10 +59,11 @@ fn reload_daemon_config(
     };
 
     let mut definitions = parsed.modules;
-    if let Some(format) = log_file_format {
-        for definition in &mut definitions {
+    for definition in &mut definitions {
+        if let Some(format) = log_file_format {
             definition.apply_log_file_format(format);
         }
+        definition.zero_copy_policy = zero_copy_policy;
     }
 
     let new_modules: Vec<ModuleRuntime> = match build_module_runtimes(

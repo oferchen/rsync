@@ -90,7 +90,7 @@ Tier 2 is a deliberate choice (no Win32 equivalent for `splice` / `vmsplice` / `
 | io_uring data path | Linux 5.6+ | Runtime-probed; falls back to standard buffered I/O. |
 | Provided buffer rings (PBUF_RING) | Linux 5.19+ | Runtime-probed; falls back to standard buffered I/O. |
 | Landlock LSM (`landlock` feature) | Linux 5.13+ | Best-effort ABI downgrade; no-op on older kernels. |
-| `IORING_OP_SEND_ZC` (`iouring-send-zc` feature) | Linux 6.0+ recommended | Opt-in; default builds use plain `IORING_OP_SEND`. |
+| `IORING_OP_SEND_ZC` (`iouring-send-zc` feature) | Linux 6.0+ | Compiled in by default; dispatched only under an explicit `--zero-copy`, runtime-probed. |
 | macOS `*at` chain | macOS 10.10+ | BSD `*at` family verified at parity with Linux (SEC-1.k). |
 | Windows IOCP | Windows 10 1809+ | NTFS handle-based APIs sidestep path TOCTOU structurally (SEC-1.l). |
 
@@ -100,7 +100,7 @@ Distro packagers: see `docs/packaging/landlock-feature-guidance.md` for the per-
 
 oc-rsync uses Linux io_uring for high-throughput I/O on supported kernels. The minimum supported kernel for the io_uring path is **Linux 5.6**; older kernels (including RHEL 8 / CentOS Stream 8 at 4.18) fall back to standard `read(2)` / `write(2)` automatically - no user action required.
 
-For the full performance tier (zero-copy `SEND_ZC`), Linux **6.0 or newer** is required AND the binary must be built with the `iouring-send-zc` cargo feature enabled. Default release builds advertise `--zero-copy` but downgrade to non-zero-copy `SEND` silently on older kernels or builds without the feature.
+For the full performance tier (zero-copy `SEND_ZC`), Linux **6.0 or newer** is required. Default release builds include the `iouring-send-zc` cargo feature, but dispatch `SEND_ZC` on daemon socket sends only when the client passes `--zero-copy` and the kernel advertises the opcode; the default path keeps plain socket writes. `--io-uring-status` reports whether the opcode is available.
 
 Full per-opcode kernel-floor matrix: see `docs/audit/iouring-opcode-kernel-floor.md`.
 

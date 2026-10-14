@@ -164,6 +164,20 @@ when both are set they agree, and neither can re-enable what the other
 disabled. Linux only (io_uring does not exist elsewhere); requires the
 default `io_uring` build feature for the variable to matter at all.
 
+### OC_RSYNC_ZERO_COPY
+
+A server's own zero-copy policy, read by `oc-rsync --daemon` at startup and
+by an `oc-rsync --server` process. Values (case-insensitive): `on` (policy
+*enabled*: a daemon-sender sends through io_uring `SEND_ZC` where the kernel
+supports it), `off` (policy *disabled*: no I/O-level zero-copy), `auto` (the
+default: plain socket sends). Unknown or empty values fall back to `auto`.
+An explicit `--zero-copy` / `--no-zero-copy` on the server's own command line
+(`oc-rsync --daemon --zero-copy`, or `--rsync-path='oc-rsync --zero-copy'`
+for an SSH server) wins over the variable. Zero-copy is a local decision on
+each node: a client never forwards its own `--zero-copy` to the peer, and
+the variable changes only the syscall path, never the wire bytes. A daemon
+reads it once at startup. Linux only for `SEND_ZC`.
+
 ### OC_RSYNC_MMAP_TO_SQPOLL_THRESHOLD_BYTES
 
 Size threshold, in bytes, above which basis-file reads prefer

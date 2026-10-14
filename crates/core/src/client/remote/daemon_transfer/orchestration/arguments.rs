@@ -2304,6 +2304,23 @@ mod oc_flag_forwarding_tests {
         );
     }
 
+    /// Zero-copy is a local decision on each node: neither `--zero-copy` nor
+    /// `--no-zero-copy` may change a single daemon argv token, the `-e.`
+    /// capability string included, in either direction.
+    #[test]
+    fn zero_copy_policy_never_reaches_daemon_argv() {
+        for is_sender in [true, false] {
+            let baseline = built_args(&ClientConfig::builder().build(), is_sender);
+            for policy in [
+                fast_io::ZeroCopyPolicy::Enabled,
+                fast_io::ZeroCopyPolicy::Disabled,
+            ] {
+                let config = ClientConfig::builder().zero_copy_policy(policy).build();
+                assert_eq!(built_args(&config, is_sender), baseline, "{policy:?}");
+            }
+        }
+    }
+
     #[test]
     fn oc_tuning_flags_never_reach_daemon_receiver_argv() {
         let baseline = built_args(&ClientConfig::builder().build(), false);

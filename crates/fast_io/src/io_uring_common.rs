@@ -179,8 +179,7 @@ impl IoUringConfig {
     /// Returns whether socket writers may attempt `IORING_OP_SEND_ZC`.
     ///
     /// Delegates to [`crate::send_zc_policy_permits`]: `Enabled` always,
-    /// `Auto` only in builds carrying the `iouring-send-zc` cargo feature,
-    /// `Disabled` never. The kernel-opcode probe is applied separately by
+    /// `Auto` and `Disabled` never. The kernel-opcode probe is applied separately by
     /// the writer, so a `true` here is permission, not availability.
     #[must_use]
     pub fn allow_send_zc(&self) -> bool {

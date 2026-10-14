@@ -1,5 +1,10 @@
 # SSH single bidirectional socketpair feasibility (#1687)
 
+> **Superseded 2026-10-13:** the wire now uses two socketpairs like upstream
+> `fd_pair()` (pipe.c:57 `piped_child()`, util1.c:84 `fd_pair()`), one per
+> direction. The single shared socketpair analysed here was not adopted; the
+> conclusion that pipes must be kept no longer applies.
+
 Tracker: #1687 (prototype SSH subprocess using socketpair for bidirectional
 I/O). No code changes - documentation only.
 
