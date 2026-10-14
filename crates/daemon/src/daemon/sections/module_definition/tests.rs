@@ -135,38 +135,26 @@ fn set_auth_users_stores_users() {
         AuthUser::new("alice".to_owned()),
         AuthUser::new("bob".to_owned()),
     ];
-    let result = builder.set_auth_users(users.clone(), &test_config_path(), 5);
-    assert!(result.is_ok());
+    builder.set_auth_users(users.clone());
     assert_eq!(builder.auth_users, Some(users));
 }
 
-/// An empty `auth users` list stays a hard error: authenticate.c:228
-/// auth_server() treats a non-empty list as "authentication required", so an
-/// empty one is a value mistake, not a duplication.
+/// An empty `auth users` list is stored as an explicit empty list - not
+/// rejected and not left unset - so it overrides an inherited default.
+///
+/// upstream: authenticate.c:302-303 - an empty list lets anyone in.
 #[test]
-fn set_auth_users_rejects_empty() {
+fn set_auth_users_stores_empty_as_explicit_no_restriction() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    let result = builder.set_auth_users(vec![], &test_config_path(), 5);
-    assert!(result.is_err());
+    builder.set_auth_users(vec![]);
+    assert_eq!(builder.auth_users, Some(vec![]));
 }
 
 #[test]
 fn set_auth_users_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder
-        .set_auth_users(
-            vec![AuthUser::new("alice".to_owned())],
-            &test_config_path(),
-            5,
-        )
-        .expect("first list accepted");
-    builder
-        .set_auth_users(
-            vec![AuthUser::new("bob".to_owned())],
-            &test_config_path(),
-            10,
-        )
-        .expect("repeat overwrites");
+    builder.set_auth_users(vec![AuthUser::new("alice".to_owned())]);
+    builder.set_auth_users(vec![AuthUser::new("bob".to_owned())]);
     assert_eq!(
         builder.auth_users,
         Some(vec![AuthUser::new("bob".to_owned())])
@@ -646,13 +634,7 @@ fn finish_allows_root_path_without_chroot() {
 fn finish_applies_default_secrets_for_auth_users() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
-    builder
-        .set_auth_users(
-            vec![AuthUser::new("alice".to_owned())],
-            &test_config_path(),
-            3,
-        )
-        .expect("auth users accepted");
+    builder.set_auth_users(vec![AuthUser::new("alice".to_owned())]);
     let default_secrets = PathBuf::from("/etc/secrets");
     let defaults = GlobalModuleDefaults::default();
     let result = builder.finish(
@@ -672,13 +654,7 @@ fn finish_applies_default_secrets_for_auth_users() {
 fn finish_accepts_auth_users_without_secrets() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
-    builder
-        .set_auth_users(
-            vec![AuthUser::new("alice".to_owned())],
-            &test_config_path(),
-            3,
-        )
-        .expect("auth users accepted");
+    builder.set_auth_users(vec![AuthUser::new("alice".to_owned())]);
     let defaults = GlobalModuleDefaults::default();
     // upstream: authenticate.c:143-146 - every login fails with "no secrets
     // file"; the module itself still loads.

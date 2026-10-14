@@ -31,9 +31,28 @@ pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let metadata = fs::metadata(path)?;
-    let mode = metadata.permissions().mode();
+    // upstream: rsync.h:1457 - MY_UID() is geteuid(), so a setuid daemon is
+    // judged by the identity it acts with, not the one that launched it.
+    check_secrets_metadata(
+        metadata.permissions().mode(),
+        metadata.uid(),
+        nix::unistd::geteuid().is_root(),
+        path,
+    )
+}
 
-    // upstream: authenticate.c:173 - reject if other-readable or other-writable
+/// Applies upstream's two strict-modes rules to an already-fetched mode and
+/// owner, so both rules are testable without running as root.
+///
+/// upstream: authenticate.c:172-177 check_secret() - `(st.st_mode & 06) != 0`
+/// is refused first; otherwise `MY_UID() == ROOT_UID && st.st_uid != ROOT_UID`.
+#[cfg(unix)]
+fn check_secrets_metadata(
+    mode: u32,
+    owner_uid: u32,
+    running_as_root: bool,
+    path: &Path,
+) -> io::Result<()> {
     if (mode & 0o006) != 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -44,9 +63,7 @@ pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
         ));
     }
 
-    // upstream: authenticate.c:176 - when running as root, secrets must be owned by root
-    let my_uid = nix::unistd::getuid();
-    if my_uid.is_root() && metadata.uid() != 0 {
+    if running_as_root && owner_uid != 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!(
@@ -152,6 +169,34 @@ mod tests {
         std::fs::write(&path, "user:pass\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(check_secrets_file_permissions(&path).is_ok());
+    }
+
+    /// upstream: authenticate.c:175-177 - a root daemon refuses a secrets file
+    /// that root does not own, however tight its mode.
+    #[cfg(unix)]
+    #[test]
+    fn root_refuses_a_secrets_file_root_does_not_own() {
+        let err = check_secrets_metadata(0o600, 1000, true, Path::new("secrets"))
+            .expect_err("non-root owner must be refused when running as root");
+        assert!(err.to_string().contains("must be owned by root"));
+        assert!(check_secrets_metadata(0o600, 0, true, Path::new("secrets")).is_ok());
+    }
+
+    /// The ownership rule applies only to a root daemon.
+    #[cfg(unix)]
+    #[test]
+    fn non_root_accepts_a_secrets_file_it_owns() {
+        assert!(check_secrets_metadata(0o600, 1000, false, Path::new("secrets")).is_ok());
+    }
+
+    /// upstream: authenticate.c:172 - the mode rule is checked first and does
+    /// not depend on who runs the daemon.
+    #[cfg(unix)]
+    #[test]
+    fn mode_rule_precedes_the_ownership_rule() {
+        let err = check_secrets_metadata(0o604, 1000, true, Path::new("secrets"))
+            .expect_err("other-readable must be refused");
+        assert!(err.to_string().contains("other-accessible"));
     }
 
     #[cfg(not(unix))]

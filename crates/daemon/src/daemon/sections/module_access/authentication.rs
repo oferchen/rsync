@@ -213,6 +213,7 @@ fn perform_module_authentication(
     messages: &LegacyMessageCache,
     protocol_version: Option<ProtocolVersion>,
     client_digests: AdvertisedDigests<'_>,
+    log_sink: Option<&SharedLogSink>,
 ) -> io::Result<AuthenticationStatus> {
     // upstream: authenticate.c:76 `gen_challenge` and :90 `generate_hash` both
     // call `sum_init(valid_auth_checksums.negotiated_nni, 0)`, so one negotiated
@@ -239,6 +240,12 @@ fn perform_module_authentication(
     }
 
     let challenge = ChallengeGenerator::generate(peer_ip, digest);
+    if !challenge.kernel_random
+        && let Some(log) = log_sink
+    {
+        log_raw_line(log, KERNEL_RNG_UNAVAILABLE_WARNING.as_bytes());
+    }
+    let challenge = challenge.text;
     {
         let stream = reader.get_mut();
         messages.write(
@@ -323,6 +330,15 @@ fn perform_module_authentication(
         }
     };
     let auth_user = auth_match.user;
+    // upstream: authenticate.c:411-417 - a matching `:deny` rule refuses with
+    // "denied by rule" before check_secret() runs, so the secret is never
+    // consulted for a denied user.
+    if auth_user.access_level == UserAccessLevel::Deny {
+        return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
+            user: username.to_owned(),
+            rule: AuthUserRule::DeniedByRule,
+        }));
+    }
 
     // upstream: authenticate.c:318 - check_secret() receives the group name only
     // when the client was authorized via a matching `@group` token in
@@ -342,15 +358,6 @@ fn perform_module_authentication(
         digest,
     )? {
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
-    }
-
-    // upstream: authenticate.c:334-335 - `opt_ch == 'd'` ("deny") reports
-    // "denied by rule" and auth_server() returns NULL (auth failure).
-    if auth_user.access_level == UserAccessLevel::Deny {
-        return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
-            user: username.to_owned(),
-            rule: AuthUserRule::DeniedByRule,
-        }));
     }
 
     // upstream: authenticate.c:340-343 - the `:ro` / `:rw` suffix travels back

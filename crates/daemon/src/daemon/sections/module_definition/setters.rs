@@ -136,30 +136,13 @@ impl ModuleDefinitionBuilder {
         self.comment = comment;
     }
 
-    /// Stores the `auth users` list, rejecting an empty one.
+    /// Stores the `auth users` list. An empty list is an explicit "no
+    /// restriction" that also overrides an inherited global list.
     ///
-    /// upstream: authenticate.c:228 auth_server() treats a non-empty
-    /// `lp_auth_users` as "authentication required", so an empty list is a
-    /// configuration mistake rather than a way to disable authentication.
-    fn set_auth_users(
-        &mut self,
-        users: Vec<AuthUser>,
-        config_path: &Path,
-        line: usize,
-    ) -> Result<(), DaemonError> {
-        if users.is_empty() {
-            return Err(config_parse_error(
-                config_path,
-                line,
-                format!(
-                    "'auth users' directive in module '{}' must list at least one user",
-                    self.name
-                ),
-            ));
-        }
-
+    /// upstream: authenticate.c:302-303 auth_server() - `if (!users || !*users)
+    /// return "";` lets anyone in.
+    fn set_auth_users(&mut self, users: Vec<AuthUser>) {
         self.auth_users = Some(users);
-        Ok(())
     }
 
     /// Stores the module's `auth digest` floor.

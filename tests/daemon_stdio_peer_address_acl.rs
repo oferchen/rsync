@@ -80,6 +80,11 @@ fn write_rsh_shim(dir: &Path) -> PathBuf {
 
 /// Lays out a daemon module whose `hosts allow` names exactly `allow`.
 fn setup(allow: &str) -> (tempfile::TempDir, PathBuf) {
+    setup_with_rule(&format!("hosts allow = {allow}"))
+}
+
+/// Lays out a daemon module guarded by the single access `rule`.
+fn setup_with_rule(rule: &str) -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path().to_path_buf();
     let module = root.join("mod");
@@ -92,7 +97,7 @@ fn setup(allow: &str) -> (tempfile::TempDir, PathBuf) {
              [m]\n\
              \x20   path = {}\n\
              \x20   read only = true\n\
-             \x20   hosts allow = {allow}\n",
+             \x20   {rule}\n",
             module.display()
         ),
     )
@@ -213,6 +218,41 @@ fn subnet_allow_does_not_admit_an_unknown_peer() {
     assert!(
         !transferred(&out, &root.join("dest")),
         "an unknown peer must not satisfy a subnet allow rule; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    drop(tmp);
+}
+
+/// The deny direction: `hosts deny` must see the peer `sshd` reported, or a
+/// deny rule naming an abusive client is silently bypassed.
+///
+/// upstream: clientname.c:66-77 feeds `allow_access()` (access.c) the address
+/// from `SSH_CONNECTION`.
+#[test]
+fn ssh_connection_peer_is_refused_by_a_matching_deny_rule() {
+    let (tmp, root) = setup_with_rule("hosts deny = 10.1.2.3");
+    let out = pull(&root, Some(("SSH_CONNECTION", "10.1.2.3 5555 10.0.0.1 22")));
+    assert!(
+        !transferred(&out, &root.join("dest")),
+        "`hosts deny = 10.1.2.3` must refuse SSH_CONNECTION peer 10.1.2.3; \
+         stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    drop(tmp);
+}
+
+/// Control for the deny case: the same peer is admitted when the deny rule
+/// names someone else, so the refusal above is the rule matching, not the
+/// fixture failing.
+#[test]
+fn ssh_connection_peer_passes_a_deny_rule_naming_another_host() {
+    let (tmp, root) = setup_with_rule("hosts deny = 10.9.9.9");
+    let out = pull(&root, Some(("SSH_CONNECTION", "10.1.2.3 5555 10.0.0.1 22")));
+    assert!(
+        transferred(&out, &root.join("dest")),
+        "a deny rule for another host must not refuse 10.1.2.3; stdout={} stderr={}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );

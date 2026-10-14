@@ -61,26 +61,168 @@ const REMOTE_SHELL_PEER_ENV: [&str; 4] =
 /// upstream: clientname.c:65 - `strlcpy(ipaddr_buf, "0.0.0.0", ...)`.
 pub(in crate::daemon) const REMOTE_SHELL_DEFAULT_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 
-/// Parses one environment value the way upstream does: truncate at the first
-/// space, then validate.
+/// Capacity of upstream's `ipaddr_buf`; `strlcpy` keeps at most one byte less.
+///
+/// upstream: clientname.c:37 - `static char ipaddr_buf[100]`.
+const IPADDR_BUF_LEN: usize = 100;
+
+/// Parses one environment value the way upstream does: copy it into the
+/// 100-byte buffer, truncate at the first space, then accept it only if
+/// `valid_ipaddr(buf, True)` does.
 ///
 /// `SSH_CONNECTION` is `"<client-ip> <client-port> <server-ip> <server-port>"`
 /// and `SSH_CLIENT` is `"<client-ip> <client-port> <server-port>"`, so the
 /// leading field is the peer address in both.
 ///
-/// A scope suffix (`fe80::1%eth0`) is accepted because upstream passes
-/// `allow_scope = True`; `IpAddr`'s parser rejects it, so the scope is stripped
-/// before parsing. The scope itself names a *local* interface and has no
-/// bearing on which peer this is, so dropping it loses nothing an ACL can use.
+/// Returns `None` when upstream would reject the value and fall through to the
+/// socket. An accepted value that `IpAddr` cannot represent (a leading-zero or
+/// signed IPv4 octet, which `strtol` reads but `getaddrinfo` may not) becomes
+/// [`REMOTE_SHELL_DEFAULT_ADDR`]: upstream keeps the raw string, and a string
+/// that does not parse as a numeric host matches no `hosts allow` address
+/// token. A scope suffix (`fe80::1%eth0`) is dropped before conversion - it
+/// names a local interface, not the peer.
 ///
 /// upstream: clientname.c:70-77 plus `valid_ipaddr(buf, True)`.
 fn parse_peer_env_value(value: &str) -> Option<IpAddr> {
-    let field = value.split(' ').next().unwrap_or(value);
-    if let Ok(addr) = field.parse::<IpAddr>() {
-        return Some(addr);
+    let bytes = value.as_bytes();
+    let copied = &bytes[..bytes.len().min(IPADDR_BUF_LEN - 1)];
+    let field = copied.split(|&b| b == b' ').next().unwrap_or(copied);
+    if !valid_ipaddr(field, true) {
+        return None;
     }
-    let (bare, _scope) = field.split_once('%')?;
-    bare.parse::<IpAddr>().ok()
+    let text = std::str::from_utf8(field).ok()?;
+    let bare = text.split_once('%').map_or(text, |(addr, _scope)| addr);
+    Some(bare.parse().unwrap_or(REMOTE_SHELL_DEFAULT_ADDR))
+}
+
+/// Byte-for-byte port of upstream's address validator, including its quirks:
+/// IPv4 octets are read with `strtol`, so leading zeros, a sign and leading
+/// whitespace count toward the 3-character limit; IPv6 groups take 1-4 hex
+/// digits, `::` may appear once, a trailing dotted quad is allowed only in the
+/// last 32 bits, and with `allow_scope` a `%` suffix of alphanumerics follows.
+///
+/// upstream: clientname.c:469-536 `valid_ipaddr()`.
+fn valid_ipaddr(s: &[u8], allow_scope: bool) -> bool {
+    let at = |i: usize| s.get(i).copied().unwrap_or(0);
+    let hex = |i: usize| at(i).is_ascii_hexdigit();
+    let mut i = 0;
+
+    if s.contains(&b':') {
+        let mut saw_double_colon = false;
+        if at(i) == b':' {
+            i += 1;
+            if at(i) != b':' {
+                return false;
+            }
+            saw_double_colon = true;
+            i += 1;
+        }
+        let mut ipv4_at_end = false;
+        for count in 0..8 {
+            if at(i) == 0 {
+                return saw_double_colon;
+            }
+            if allow_scope && at(i) == b'%' {
+                if saw_double_colon {
+                    break;
+                }
+                return false;
+            }
+            let rest = &s[i..];
+            if !rest.contains(&b':') && rest.contains(&b'.') {
+                if (!saw_double_colon && count != 6) || (saw_double_colon && count > 6) {
+                    return false;
+                }
+                ipv4_at_end = true;
+                break;
+            }
+            if !hex(i) {
+                return false;
+            }
+            i += 1;
+            if hex(i) {
+                i += 1;
+                if hex(i) {
+                    i += 1;
+                    if hex(i) {
+                        i += 1;
+                        if hex(i) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            if at(i) == b':' {
+                i += 1;
+                if at(i) == 0 {
+                    return false;
+                }
+                if at(i) == b':' {
+                    if saw_double_colon {
+                        return false;
+                    }
+                    saw_double_colon = true;
+                    i += 1;
+                }
+            }
+        }
+        if !ipv4_at_end {
+            if allow_scope && at(i) == b'%' {
+                i += 1;
+                while at(i).is_ascii_alphanumeric() {
+                    i += 1;
+                }
+            }
+            return at(i) == 0 && i > 0 && s[i - 1] != b'%';
+        }
+    }
+
+    for octet in 0..4 {
+        if octet > 0 {
+            if at(i) != b'.' {
+                return false;
+            }
+            i += 1;
+        }
+        let Some((value, end)) = strtol_decimal(s, i) else {
+            return false;
+        };
+        if !(0..=255).contains(&value) || end > i + 3 {
+            return false;
+        }
+        i = end;
+    }
+    at(i) == 0
+}
+
+/// `strtol(s + start, &end, 10)` restricted to what `valid_ipaddr` observes:
+/// skips C `isspace` bytes, takes an optional sign, then decimal digits.
+/// Returns `None` when no digit was consumed (`end <= s` upstream).
+fn strtol_decimal(s: &[u8], start: usize) -> Option<(i64, usize)> {
+    let mut i = start;
+    while matches!(s.get(i), Some(b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')) {
+        i += 1;
+    }
+    let negative = match s.get(i) {
+        Some(b'-') => {
+            i += 1;
+            true
+        }
+        Some(b'+') => {
+            i += 1;
+            false
+        }
+        _ => false,
+    };
+    let digits_start = i;
+    let mut value: i64 = 0;
+    while let Some(digit) = s.get(i).filter(|b| b.is_ascii_digit()) {
+        value = value
+            .saturating_mul(10)
+            .saturating_add(i64::from(digit - b'0'));
+        i += 1;
+    }
+    (i > digits_start).then_some((if negative { -value } else { value }, i))
 }
 
 /// Outcome of resolving a remote-shell peer address.
@@ -184,6 +326,8 @@ pub(in crate::daemon) fn inherited_socket_peer_addr() -> std::io::Result<SocketA
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env::EnvGuard;
+    use std::ffi::OsStr;
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     /// upstream: clientname.c:73-74 - `SSH_CONNECTION` carries four
@@ -218,6 +362,118 @@ mod tests {
     fn env_value_rejects_a_non_address() {
         assert_eq!(parse_peer_env_value("not-an-address 22"), None);
         assert_eq!(parse_peer_env_value(""), None);
+    }
+
+    /// upstream: `valid_ipaddr()` has no scope branch on the IPv4 path, so an
+    /// IPv4 value with a `%` suffix is invalid and upstream falls through to
+    /// the socket rather than trusting the variable.
+    #[test]
+    fn env_value_rejects_a_scope_on_an_ipv4_address() {
+        assert_eq!(parse_peer_env_value("192.0.2.7%eth0 22"), None);
+    }
+
+    /// upstream: clientname.c:521-522 - the scope must be non-empty and
+    /// alphanumeric (`!*s && s[-1] != '%'`).
+    #[test]
+    fn env_value_rejects_an_empty_or_non_alphanumeric_scope() {
+        assert_eq!(parse_peer_env_value("fe80::1%"), None);
+        assert_eq!(parse_peer_env_value("fe80::1%eth-0"), None);
+    }
+
+    /// upstream: clientname.c:476-483 - a scope is legal mid-address only after
+    /// a `::` was seen; a full 8-group address may still carry one at the end.
+    #[test]
+    fn env_value_scope_placement_follows_upstream() {
+        assert_eq!(parse_peer_env_value("1:2:3:4:5:6:7%eth0"), None);
+        assert_eq!(
+            parse_peer_env_value("1:2:3:4:5:6:7:8%eth0"),
+            Some(IpAddr::V6("1:2:3:4:5:6:7:8".parse::<Ipv6Addr>().unwrap()))
+        );
+    }
+
+    /// upstream reads IPv4 octets with `strtol`, so `010` and `+2` pass
+    /// `valid_ipaddr` and the daemon keeps the value instead of consulting the
+    /// socket. The string is not a numeric host `getaddrinfo` reads the way
+    /// `IpAddr` does, so it must match no address rule: the sentinel.
+    #[test]
+    fn env_value_accepts_strtol_octets_as_an_unmatchable_peer() {
+        assert_eq!(
+            parse_peer_env_value("010.1.2.3 22"),
+            Some(REMOTE_SHELL_DEFAULT_ADDR)
+        );
+        assert_eq!(
+            parse_peer_env_value("1.+2.3.4"),
+            Some(REMOTE_SHELL_DEFAULT_ADDR)
+        );
+        assert_eq!(parse_peer_env_value("1.2.3.1000"), None);
+        assert_eq!(parse_peer_env_value("1.2.3.256"), None);
+        assert_eq!(parse_peer_env_value("1.2.3"), None);
+        assert_eq!(parse_peer_env_value("1.2.3.4.5"), None);
+    }
+
+    /// upstream: clientname.c:71 - `strlcpy` into the 100-byte buffer drops
+    /// everything past byte 99, so an over-long scope is cut back to valid.
+    #[test]
+    fn env_value_is_truncated_to_upstreams_buffer() {
+        let mut value = String::from("fe80::1%");
+        value.push_str(&"a".repeat(IPADDR_BUF_LEN - 1 - value.len()));
+        value.push('-');
+        assert_eq!(
+            parse_peer_env_value(&value),
+            Some(IpAddr::V6("fe80::1".parse::<Ipv6Addr>().unwrap()))
+        );
+    }
+
+    /// upstream: clientname.c:478-485 - a dotted quad may only fill the last
+    /// 32 bits of an IPv6 address.
+    #[test]
+    fn env_value_ipv6_with_embedded_ipv4_follows_upstream() {
+        assert_eq!(
+            parse_peer_env_value("::ffff:192.0.2.1"),
+            Some(IpAddr::V6("::ffff:192.0.2.1".parse::<Ipv6Addr>().unwrap()))
+        );
+        assert_eq!(parse_peer_env_value("1:2:3:192.0.2.1"), None);
+    }
+
+    /// `SSH_CONNECTION`, as `sshd` sets it, names the peer. The full
+    /// environment chain is read, so this also proves the earlier variables in
+    /// upstream's order are absent rather than shadowing it.
+    ///
+    /// upstream: clientname.c:66-74.
+    #[test]
+    fn ssh_connection_names_the_remote_shell_peer() {
+        let _env_lock = crate::test_env::ENV_LOCK.lock().expect("lock environment");
+        let _remote_host = EnvGuard::remove("REMOTE_HOST");
+        let _ssh_client = EnvGuard::remove("SSH_CLIENT");
+        let _ssh2_client = EnvGuard::remove("SSH2_CLIENT");
+        let _ssh_connection =
+            EnvGuard::set("SSH_CONNECTION", OsStr::new("10.1.2.3 5555 10.0.0.1 22"));
+        assert_eq!(
+            remote_shell_peer_addr(),
+            RemoteShellPeer::Addr(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)))
+        );
+    }
+
+    /// upstream: clientname.c:65 - with no variable set the seed survives.
+    #[test]
+    fn no_peer_environment_yields_the_unspecified_seed() {
+        let _env_lock = crate::test_env::ENV_LOCK.lock().expect("lock environment");
+        let _guards = REMOTE_SHELL_PEER_ENV.map(EnvGuard::remove);
+        assert_eq!(
+            remote_shell_peer_addr(),
+            RemoteShellPeer::Addr(REMOTE_SHELL_DEFAULT_ADDR)
+        );
+    }
+
+    /// upstream: clientname.c:66 - the FIRST set variable wins even when it is
+    /// invalid; a later valid one is never consulted.
+    #[test]
+    fn an_invalid_first_variable_is_unusable_even_if_a_later_one_parses() {
+        let _env_lock = crate::test_env::ENV_LOCK.lock().expect("lock environment");
+        let _remote_host = EnvGuard::set("REMOTE_HOST", OsStr::new("not-an-address"));
+        let _ssh_connection =
+            EnvGuard::set("SSH_CONNECTION", OsStr::new("10.1.2.3 5555 10.0.0.1 22"));
+        assert_eq!(remote_shell_peer_addr(), RemoteShellPeer::Unusable);
     }
 
     /// The security-relevant default. `0.0.0.0` matches no realistic

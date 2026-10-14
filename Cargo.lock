@@ -1052,6 +1052,7 @@ dependencies = [
  "filetime",
  "filters",
  "fs2",
+ "getrandom 0.4.3",
  "libc",
  "logging",
  "logging-sink",

@@ -37,7 +37,7 @@ fn bench_auth_challenge_response(c: &mut Criterion) {
     });
 
     // Benchmark response computation for each digest algorithm
-    let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
+    let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5).text;
     let digests = [
         ("sha512", DaemonAuthDigest::Sha512),
         ("sha256", DaemonAuthDigest::Sha256),

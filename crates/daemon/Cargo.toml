@@ -89,6 +89,7 @@ logging-sink = { path = "../logging-sink" }
 # Pulled only by the `quic` feature for `QuicAcceptor` (the UDP/QUIC listener).
 rsync_io = { path = "../rsync_io", default-features = false, optional = true }
 fs2 = "0.4"
+getrandom = "0.4"
 socket2 = { workspace = true, features = ["all"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync", "rt", "rt-multi-thread", "time", "macros"] }
