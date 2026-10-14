@@ -3,12 +3,17 @@
 # extension) or `upstream_only` (a known gap we have chosen not to close).
 # Anything not listed here fails --check, so new drift is loud.
 
-# debug-words: accelerated-I/O fallback visibility categories. These ride the
-# unconditional-forward path - a server accepts unknown --debug words
-# (upstream options.c:484) - so they are wire-safe against upstream peers.
+# debug-words: oc-only debug categories - accelerated-I/O fallback visibility
+# (clone, iocp, iouring, sockopt) and the daemon's kernel sandbox layers
+# (landlock, seccomp). None of them is ever sent on the wire: a client never
+# forwards --debug (upstream options.c:3126-3130), so a server gets them only
+# from its own -v rows or from an explicit -M--debug, and a server ignores
+# unknown words (options.c:484). They are therefore safe against upstream peers.
 debug-words:oc_only:clone
 debug-words:oc_only:iocp
 debug-words:oc_only:iouring
+debug-words:oc_only:landlock
+debug-words:oc_only:seccomp
 debug-words:oc_only:sockopt
 
 # exit-codes: upstream's rerr_names[] (log.c:81) has no row for 0 because

@@ -39,13 +39,16 @@ pub(crate) struct DebugFlagSettings {
     pub(crate) clone: Option<u8>,
     pub(crate) sockopt: Option<u8>,
     pub(crate) iocp: Option<u8>,
+    // oc-specific kernel sandbox layers.
+    pub(crate) seccomp: Option<u8>,
+    pub(crate) landlock: Option<u8>,
     pub(crate) help_requested: bool,
 }
 
 impl DebugFlagSettings {
     /// Every flag slot as `(name, level)` in upstream `debug_words[]` order
-    /// (options.c:305-331), the four oc extensions last, set or not.
-    fn entries(&self) -> [(&'static str, Option<u8>); 28] {
+    /// (options.c:305-331), the six oc extensions last, set or not.
+    fn entries(&self) -> [(&'static str, Option<u8>); 30] {
         [
             ("acl", self.acl),
             ("backup", self.backup),
@@ -75,6 +78,8 @@ impl DebugFlagSettings {
             ("clone", self.clone),
             ("sockopt", self.sockopt),
             ("iocp", self.iocp),
+            ("seccomp", self.seccomp),
+            ("landlock", self.landlock),
         ]
     }
 
@@ -133,6 +138,8 @@ impl DebugFlagSettings {
         self.clone = Some(level);
         self.sockopt = Some(level);
         self.iocp = Some(level);
+        self.seccomp = Some(level);
+        self.landlock = Some(level);
     }
 
     #[cfg(test)]
@@ -200,6 +207,15 @@ impl DebugFlagSettings {
             "clone" => self.clone = Some(level),
             "sockopt" => self.sockopt = Some(level),
             "iocp" => self.iocp = Some(level),
+            "seccomp" => self.seccomp = Some(level),
+            "landlock" => self.landlock = Some(level),
+            // oc-only umbrella over both kernel sandbox layers. Tokens apply
+            // left to right (upstream: options.c:443-490), so a later
+            // `seccomp0` still overrides an earlier `sandbox2`.
+            "sandbox" => {
+                self.seccomp = Some(level);
+                self.landlock = Some(level);
+            }
             // The `am_server` branch mirrors upstream's
             // `if (len && !words[j].name && !am_server)` guard: a newer client
             // may forward debug words this build does not know, and the server
@@ -282,7 +298,9 @@ fn parse_debug_flags_inner(
 /// upstream's `make_output_option` over `debug_verbosity[]`
 /// (options.c:244-251) and emit names in `debug_words[]` order
 /// (options.c:305-331). Levels 0-1 are empty in `debug_verbosity[]`, so the
-/// summary block lists levels 2-5 only.
+/// summary block lists levels 2-5 only. Rows 3 and 4 end with the oc-only
+/// SECCOMP/LANDLOCK levels the live table adds there; a test pins every row
+/// to that table.
 pub(crate) const DEBUG_HELP_TEXT: &str = "\
 Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\
 \n\
@@ -317,12 +335,15 @@ HELP       Output this help message\n\
 \n\
 Options added at each level of verbosity:\n\
 2) BIND,CONNECT,CMD,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV\n\
-3) ACL,BACKUP,CONNECT2,DEL2,DELTASUM2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME\n\
-4) CMD2,DEL3,DELTASUM3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2\n\
+3) ACL,BACKUP,CONNECT2,DEL2,DELTASUM2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME,SECCOMP,LANDLOCK\n\
+4) CMD2,DEL3,DELTASUM3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2,SECCOMP2,LANDLOCK2\n\
 5) CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK\n\
 \n\
-oc-rsync extensions (accelerated-I/O fallback visibility):\n\
+oc-rsync extensions (accelerated-I/O fallback and sandbox visibility):\n\
 IOURING    Debug io_uring probe and dispatch-vs-fallback decisions\n\
 CLONE      Debug clonefile/reflink/copy_file_range CoW dispatch and fallback\n\
 SOCKOPT    Debug TCP/socket tuning apply-or-skip decisions\n\
-IOCP       Debug Windows IOCP dispatch and fallback\n";
+IOCP       Debug Windows IOCP dispatch and fallback\n\
+SECCOMP    Debug daemon seccomp worker-filter decisions (levels 1-2)\n\
+LANDLOCK   Debug Landlock ruleset decisions (levels 1-2)\n\
+SANDBOX    Set both SECCOMP and LANDLOCK (e.g. sandbox2)\n";

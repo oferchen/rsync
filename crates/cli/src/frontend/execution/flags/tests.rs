@@ -537,7 +537,7 @@ fn info_flag_all_keywords_accepted() {
     }
 }
 
-/// The `--debug` table is upstream's 24 words plus exactly four oc-only
+/// The `--debug` table is upstream's 24 words plus exactly six oc-only
 /// extensions, and that over-accept is a DELIBERATE, recorded decision.
 ///
 /// upstream: `debug_words[]` (options.c:305-331) holds exactly 24 entries,
@@ -548,18 +548,18 @@ fn info_flag_all_keywords_accepted() {
 /// `--debug=IOURING` is rc 0 here and rc 1 `Unknown --debug item: "IOURING"`
 /// on the real 3.5.0 binary.
 ///
-/// The four extras are accepted on purpose. They name accelerated-I/O
-/// dispatch-vs-fallback categories upstream has no equivalent of, each has a
-/// wired consumer, and `DEBUG_HELP_TEXT` advertises them under their own
+/// The six extras are accepted on purpose. Four name accelerated-I/O
+/// dispatch-vs-fallback categories and two the seccomp and Landlock sandbox
+/// layers; upstream has no equivalent of any, each has a wired consumer, and `DEBUG_HELP_TEXT` advertises them under their own
 /// `oc-rsync extensions` heading. This test exists so the divergence stays a
 /// decision rather than reading as drift: a 25th upstream word, a dropped
-/// upstream word, or a fifth oc extension each fail here and force the
+/// upstream word, or a seventh oc extension each fail here and force the
 /// question to be answered again rather than absorbed silently.
 ///
 /// `--info` deliberately has no counterpart to this: its table matches
 /// upstream's `info_words[]` exactly.
 #[test]
-fn the_debug_table_is_upstream_plus_exactly_four_named_oc_extensions() {
+fn the_debug_table_is_upstream_plus_exactly_six_named_oc_extensions() {
     // Upstream's debug_words[] in table order (options.c:306-330).
     const UPSTREAM: [&str; 24] = [
         "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
@@ -567,7 +567,7 @@ fn the_debug_table_is_upstream_plus_exactly_four_named_oc_extensions() {
         "recv", "send", "time",
     ];
     // Accepted by oc, refused by upstream. See DEBUG_HELP_TEXT's extensions block.
-    const OC_EXTENSIONS: [&str; 4] = ["iouring", "clone", "sockopt", "iocp"];
+    const OC_EXTENSIONS: [&str; 6] = ["iouring", "clone", "sockopt", "iocp", "seccomp", "landlock"];
 
     // `all1` routes through the live parse path to set every word the applying
     // table knows, so this enumerates the real accepted set rather than a copy.
@@ -586,7 +586,7 @@ fn the_debug_table_is_upstream_plus_exactly_four_named_oc_extensions() {
     assert_eq!(
         accepted, expected,
         "the --debug word set changed; if a word was added, decide whether it is an \
-         upstream word (mirror options.c:306-330) or a fifth oc extension (document it \
+         upstream word (mirror options.c:306-330) or a seventh oc extension (document it \
          in DEBUG_HELP_TEXT's extensions block) before updating this test"
     );
 
@@ -1183,7 +1183,8 @@ fn no_debug_word_accepts_a_negation_prefix() {
     for word in [
         "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
         "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
-        "recv", "send", "time", "iouring", "clone", "sockopt", "iocp",
+        "recv", "send", "time", "iouring", "clone", "sockopt", "iocp", "seccomp", "landlock",
+        "sandbox",
     ] {
         for token in [format!("no{word}"), format!("-{word}")] {
             let _ = parse_debug_flags(&[OsString::from(token.clone())]).expect_err(&format!(
@@ -1383,7 +1384,8 @@ fn the_server_side_decoder_still_ignores_an_unknown_item() {
 /// column 0; prose lines start with mixed case and the per-verbosity summary
 /// lines start with a digit, so neither survives the all-caps filter. The
 /// `ALL`/`NONE`/`HELP` keywords are grammar, not table words
-/// (options.c:469-472), and are excluded.
+/// (options.c:469-472), and are excluded, as is the oc-only `SANDBOX` alias,
+/// which sets two table words rather than being one.
 fn help_text_words(help: &str) -> Vec<String> {
     help.lines()
         .filter_map(|line| line.split_whitespace().next())
@@ -1393,7 +1395,7 @@ fn help_text_words(help: &str) -> Vec<String> {
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
         })
-        .filter(|word| !matches!(*word, "ALL" | "NONE" | "HELP"))
+        .filter(|word| !matches!(*word, "ALL" | "NONE" | "HELP" | "SANDBOX"))
         .map(str::to_ascii_lowercase)
         .collect()
 }
@@ -1417,8 +1419,52 @@ fn debug_help_text_names_exactly_the_live_accepted_words() {
          table in debug.rs is the owner - update the help text to match it"
     );
 
-    // Non-vacuity: the extraction really found the table rows.
-    assert_eq!(help_words.len(), 28);
+    // Non-vacuity: the extraction really found one row per table flag.
+    assert_eq!(help_words.len(), logging::DebugFlag::ALL.len());
+}
+
+// The `N) ...` summary rows of DEBUG_HELP_TEXT must be what upstream's
+// output_item_help() (options.c:515-528) renders over the live table: each
+// row lists, in words order, the flags whose level that `-v` count raises,
+// with the level appended when above 1. Every table level only ever rises,
+// so the difference between adjacent counts recovers each row exactly.
+#[test]
+fn debug_help_verbosity_rows_match_the_live_table() {
+    let mut settings = DebugFlagSettings::default();
+    settings.apply("all1").unwrap();
+    let names: Vec<&str> = settings
+        .iter_enabled_flags()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(names.len(), logging::DebugFlag::ALL.len());
+    for (flag, name) in logging::DebugFlag::ALL.iter().zip(&names) {
+        let mut probe = logging::VerbosityConfig::default();
+        probe.apply_debug_flag(name).unwrap();
+        assert_eq!(probe.debug.get(*flag), 1, "`{name}` must name {flag:?}");
+    }
+
+    let mut expected = Vec::new();
+    for level in 1..=logging::MAX_VERBOSITY {
+        let below = logging::VerbosityConfig::from_verbose_level(level - 1).debug;
+        let at = logging::VerbosityConfig::from_verbose_level(level).debug;
+        let row: Vec<String> = logging::DebugFlag::ALL
+            .iter()
+            .zip(&names)
+            .filter(|(flag, _)| at.get(**flag) != below.get(**flag))
+            .map(|(flag, name)| match at.get(*flag) {
+                1 => name.to_ascii_uppercase(),
+                n => format!("{}{n}", name.to_ascii_uppercase()),
+            })
+            .collect();
+        if !row.is_empty() {
+            expected.push(format!("{level}) {}", row.join(",")));
+        }
+    }
+    let rows: Vec<&str> = DEBUG_HELP_TEXT
+        .lines()
+        .filter(|line| line.as_bytes().first().is_some_and(u8::is_ascii_digit))
+        .collect();
+    assert_eq!(rows, expected);
 }
 
 // The hand-written INFO_HELP_TEXT must name exactly the words the live parser
@@ -1478,4 +1524,28 @@ fn the_server_side_debug_decoder_still_ignores_an_unknown_item() {
     let settings = parse_debug_flags_server(&[OsString::from("all3")])
         .expect("composite tokens resolve server-side");
     assert_eq!(settings.deltasum, Some(3));
+}
+
+/// `sandbox` is an oc-only parser alias for the two kernel sandbox words, not
+/// a table word: it sets exactly those two, tokens still apply left to right
+/// (options.c:443-490), so either order of alias and word overrides, and a
+/// misspelling is refused like any unknown word.
+#[test]
+fn sandbox_alias_sets_both_sandbox_words_left_to_right() {
+    let levels = |value: &str| {
+        let settings = parse_debug_flags(&[OsString::from(value)]).unwrap();
+        (settings.seccomp, settings.landlock)
+    };
+    assert_eq!(levels("sandbox"), (Some(1), Some(1)));
+    assert_eq!(levels("SANDBOX2"), (Some(2), Some(2)));
+    assert_eq!(levels("sandbox2,seccomp0"), (Some(0), Some(2)));
+    assert_eq!(levels("seccomp2,sandbox0"), (Some(0), Some(0)));
+    assert_eq!(levels("landlock2,sandbox1"), (Some(1), Some(1)));
+
+    let only = parse_debug_flags(&[OsString::from("sandbox2")]).unwrap();
+    let enabled: Vec<_> = only.iter_enabled_flags().collect();
+    assert_eq!(enabled, vec![("seccomp", 2), ("landlock", 2)]);
+
+    let _ =
+        parse_debug_flags(&[OsString::from("sandbx")]).expect_err("a misspelt alias is refused");
 }
