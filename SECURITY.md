@@ -172,7 +172,7 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | An alternate-destination leaf symlink is not followed as a basis | Fixed | `alt-dest-symlink-race` passes on every leg. |
 | Undefined shifts in the bundled zlib | Not applicable | oc-rsync does not build upstream's bundled zlib. |
 
-The remaining `fail` rows in the 3.5.1 manifests are listed, with cause and owner, by `awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u`.
+No 3.5.1 testsuite cell fails on any leg. A future `fail` row would be listed, with cause and owner, by `awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u`.
 
 ### Earlier audits
 

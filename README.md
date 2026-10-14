@@ -53,14 +53,14 @@ Outcomes, counted from each leg's committed manifest:
 |---|---:|---:|---:|
 | Linux, non-root, pipe | 274 | 0 | 86 |
 | Linux, root, pipe | 305 | 0 | 55 |
-| Linux, non-root, tcp | 128 | 1 | 32 |
-| Linux, root, tcp | 148 | 1 | 12 |
+| Linux, non-root, tcp | 129 | 0 | 32 |
+| Linux, root, tcp | 149 | 0 | 12 |
 | macOS, non-root, pipe | 248 | 0 | 112 |
 | macOS, root, pipe | 278 | 0 | 82 |
-| macOS, non-root, tcp | 125 | 1 | 35 |
-| macOS, root, tcp | 143 | 1 | 17 |
+| macOS, non-root, tcp | 126 | 0 | 35 |
+| macOS, root, tcp | 144 | 0 | 17 |
 
-Re-derive any cell, and list a release's failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
+Re-derive any cell, and list any failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
 
 ```sh
 awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' \
@@ -68,7 +68,7 @@ awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' 
 awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u
 ```
 
-**One 3.5.1 test** carries a `fail` row: `proto-subflist-freed`, on every tcp leg. The oc-rsync server receiver does not yet refuse a sub-list that arrives after the final file list was freed (upstream `flist.c`). No pipe leg has a failure, and none fails only on macOS. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
+**No 3.5.1 test fails on any leg.** The last one, `proto-subflist-freed`, passes since the server receiver refuses a sub-list that arrives after the final file list was freed, as upstream `flist.c` does (#8193). Every remaining non-pass row is a `skip` with a reason. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 

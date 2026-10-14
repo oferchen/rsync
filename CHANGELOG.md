@@ -417,6 +417,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 
 **Incremental recursion**
 - Skip `--existing`-missing directories without failing, drain hard-link echoes and itemize specials per sub-list, and keep directories when the sender reclaims a segment (#8107, #8129, #8166)
+- A server receiver refuses a sub-list sent after the final file list was freed, exiting 2 with upstream's message; every 3.5.1 testsuite leg now has zero failures (#8193)
 
 **Other**
 - A directory mtime within `--modify-window` is not re-stamped (#8109)
@@ -451,7 +452,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - CI: upstream 3.5.1 is the reference and interop runs a single-version matrix per job (#8184); only required jobs run on a master push, redundant workflows are gone, and benchmarks run on releases only (#8181, #8182); every fuzz target runs daily, and the two crashes it found are fixed (#8185); docs-only PRs run lightweight checks (#8145); apt mirror handling and criterion cells reworked (#8088, #8128, #8134, #8142)
 - Tests: an out-of-process daemon harness, an rsyncd.conf parser corpus, deterministic temp paths and ports, and pinned drain-time permit release (#8132, #8085, #8097, #8139, #8143, #8149, #8180, #8081)
 - Refactor: drop dead daemon file opens and name the motd file on error (#8127)
-- Documentation: comments and citations aligned with rsync 3.5.1 across all crates, a CVE and 3.5.1 testsuite coverage matrix, the daemon's QUIC process model, and README/SECURITY/CHANGELOG refreshes (#8187, #8191, #8170, #8131, #8105, #8121, #8144)
+- Documentation: comments and citations aligned with rsync 3.5.1 across all crates, a CVE and 3.5.1 testsuite coverage matrix, the daemon's QUIC process model, and README/SECURITY/CHANGELOG refreshes (#8187, #8191, #8170, #8131, #8105, #8121, #8144, #8192)
 - Dependency and action updates (#8174, #8175, #8176, #8177, #8178)
 
 ## [0.6.4] - 2026-07-18
