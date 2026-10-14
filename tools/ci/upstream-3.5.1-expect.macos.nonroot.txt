@@ -3,6 +3,7 @@
 # Source: release 3.5.1 (nonroot/pipe)
 # Outcome: 248 pass / 0 fail / 112 skip / 0 xfail
 # Baseline: GitHub Actions run 36161818650 (upstream-testsuite-3.5.1.yml bootstrap, oc-rsync 324f8c88b), macOS, LEGACY_ORACLES=off.
+# Confirmed: GitHub Actions run 38632985517 (oc-rsync c8a7da3a6), macOS; its emitted expect-result.macos.nonroot.pipe.txt matches every row below.
 # Every fail row names its cause and owner inline; flip it to `pass`
 # in the PR that fixes the cell (an unexpected pass fails the leg).
 00-hello pass

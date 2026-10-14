@@ -283,11 +283,11 @@ fn write_batch_push_still_transfers_and_records() {
 /// goodbye and aborts with `RERR_PROTOCOL` unless that read hits EOF, so only
 /// upstream can tell a well-formed trailer from a malformed one.
 ///
-/// Skips with a printed reason when no genuine 3.4.4 is installed; the interop
+/// Skips with a printed reason when no genuine 3.5.1 is installed; the interop
 /// cell (`tools/ci/run_interop.sh`) is the one that guarantees it.
 fn replay_with_upstream(batch: &Path, source: &Path, dest: &Path) {
     let Some(upstream) =
-        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
     else {
         return;
     };

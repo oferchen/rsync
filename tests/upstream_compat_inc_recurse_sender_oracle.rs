@@ -1,4 +1,4 @@
-//! INC-S1a: oc-rsync sender vs a real upstream 3.4.4 receiver under
+//! INC-S1a: oc-rsync sender vs a real upstream 3.5.1 receiver under
 //! INC_RECURSE.
 //!
 //! oc<->oc runs cannot detect a symmetric incremental-recursion bug: both
@@ -8,7 +8,7 @@
 //! the list, and upstream's receiver aborted with "ABORTING due to invalid
 //! path from sender", flist.c:2931, exit 4) lived exactly in this blind
 //! spot. This oracle pins the sender-facing half: oc pushes `-r` to a real
-//! upstream 3.4.4 receiver over both transports (remote-shell wrapper and
+//! upstream 3.5.1 receiver over both transports (remote-shell wrapper and
 //! daemon) and the upstream binary is the judge.
 //!
 //! # Proving INC_RECURSE actually negotiated
@@ -45,7 +45,7 @@
 //!
 //! Mirrors `crates/transfer/tests/upstream_compat_daemon_gzip_goodbye.rs`:
 //! skip silently unless `OC_RSYNC_UPSTREAM_COMPAT=1`; once enabled, a
-//! missing upstream 3.4.4 binary fails loudly. `require_upstream_rsync`
+//! missing upstream 3.5.1 binary fails loudly. `require_upstream_rsync`
 //! verifies the `--version` banner, so macOS `/usr/bin/rsync` (openrsync)
 //! can never be mistaken for upstream.
 
@@ -85,17 +85,17 @@ fn oc_rsync_bin() -> PathBuf {
     built
 }
 
-/// Resolve the upstream 3.4.4 receiver, honoring the sibling gating
+/// Resolve the upstream 3.5.1 receiver, honoring the sibling gating
 /// contract: `None` when the compat cell is not selected, loud panic when
 /// it is selected but the binary is absent.
 fn upstream_or_skip() -> Option<test_support::UpstreamRsync> {
     if !upstream_compat_enabled() {
         return None;
     }
-    Some(require_upstream_rsync(UpstreamVersion::V3_4_4).expect(
-        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.4.4 is not \
+    Some(require_upstream_rsync(UpstreamVersion::V3_5_1).expect(
+        "OC_RSYNC_UPSTREAM_COMPAT=1 selected this test but upstream rsync 3.5.1 is not \
          installed; build it with `bash tools/ci/run_interop.sh` or point \
-         OC_RSYNC_UPSTREAM_BIN_3_4_4 at it",
+         OC_RSYNC_UPSTREAM_BIN_3_5_1 at it",
     ))
 }
 
@@ -248,7 +248,7 @@ fn rsh_push_negotiates_inc_recurse_and_segments_flist() {
         ]
         .map(std::ffi::OsStr::new),
     );
-    assert_success(&output, "oc-rsync push via rsh wrapper to upstream 3.4.4");
+    assert_success(&output, "oc-rsync push via rsh wrapper to upstream 3.5.1");
 
     // Negotiation evidence, sender side: oc must advertise INC_RECURSE.
     // upstream: compat.c:162-181, options.c:3046 maybe_add_e_option().
@@ -322,7 +322,7 @@ fn rsh_push_no_inc_recursive_control_yields_single_segment() {
     );
     assert_success(
         &output,
-        "oc-rsync --no-inc-recursive push to upstream 3.4.4",
+        "oc-rsync --no-inc-recursive push to upstream 3.5.1",
     );
 
     let caps = server_capabilities(&argv_log);
@@ -444,7 +444,7 @@ fn daemon_push_negotiates_inc_recurse_and_segments_flist() {
         ]
         .map(std::ffi::OsStr::new),
     );
-    assert_success(&output, "oc-rsync push to upstream 3.4.4 daemon");
+    assert_success(&output, "oc-rsync push to upstream 3.5.1 daemon");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let segments = count_received_names(&stdout);

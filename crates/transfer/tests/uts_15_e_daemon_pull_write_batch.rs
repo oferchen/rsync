@@ -48,7 +48,7 @@
 //!    unreadable by upstream, because oc's own `--read-batch` stops as
 //!    soon as it has the file data. Only upstream's
 //!    `read_final_goodbye()` (`main.c:921-952`) validates the tail.
-//!    Skipped with a printed reason when no genuine 3.4.4 is installed.
+//!    Skipped with a printed reason when no genuine 3.5.1 is installed.
 //!
 //! # Platform gate
 //!
@@ -453,11 +453,11 @@ fn daemon_pull_write_batch_records_and_replays() {
 /// pull was unreadable by `rsync --read-batch` while every oc-side assertion
 /// above passed.
 ///
-/// Skips with a printed reason when no genuine 3.4.4 is installed - the
+/// Skips with a printed reason when no genuine 3.5.1 is installed - the
 /// interop cell (`tools/ci/run_interop.sh`) is the one that guarantees it.
 fn replay_with_upstream(source: &Path, batch_path: &Path, dest: &Path) {
     let Some(upstream) =
-        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
     else {
         return;
     };

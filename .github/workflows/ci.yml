@@ -502,13 +502,6 @@ jobs:
         continue-on-error: true
         run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh) and not test(=ssh_push_throughput_regression_ssr1)'
 
-      # SSR-1 times oc-rsync against upstream's optimised binary, so it must
-      # time an optimised oc-rsync as well. A debug build alone sits near the
-      # 2x ceiling, which turns the check into runner noise.
-      - name: Run SSH throughput regression (release build)
-        if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
-        continue-on-error: true
-        run: cargo nextest run --locked --release -p bin --run-ignored ignored-only -E 'test(=ssh_push_throughput_regression_ssr1)'
 
       - name: Upload build artifacts
         if: needs.changes.outputs.docs_only != 'true'
@@ -520,6 +513,59 @@ jobs:
             target/debug/xtask
           if-no-files-found: warn
           retention-days: 7
+
+  # ===========================================================================
+  # SSH throughput (SSR-1) - release-build timing, reported but not required
+  # ---------------------------------------------------------------------------
+  # SSR-1 times an oc-rsync SSH push against upstream's optimised binary, so it
+  # times an optimised oc-rsync too: a debug build alone sits near the 2x
+  # ceiling. A wall-clock ratio on a shared runner is noisy, so it runs in its
+  # own job beside `nextest (stable)` instead of inside that required check.
+  # It runs on every pull request and shows its real result, but it is not a
+  # required context, so a slow runner cannot block a merge.
+  # ===========================================================================
+  ssh-throughput:
+    name: SSH throughput (SSR-1, release)
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' && github.event_name != 'push' }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-stable-release-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ssh-throughput
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
+        with:
+          tool: cargo-nextest
+
+      # See lint job comment above re: continue-on-error on cold rust-cache.
+      - name: Regenerate Cargo.lock
+        run: cargo update --workspace --offline
+        continue-on-error: true
+
+      - name: Set up SSH loopback
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Run SSH throughput regression (release build)
+        run: cargo nextest run --locked --release -p bin --run-ignored ignored-only -E 'test(=ssh_push_throughput_regression_ssr1)'
 
   # ===========================================================================
   # Feature Flags - Test various feature combinations (reusable workflow)
