@@ -40,12 +40,14 @@ for detail.
 | CVE-2026-53803 | #7439, #7441, #7443, #8108 |
 | CVE-2026-70452 | #7314 |
 | CVE-2026-70453 | #7293, #7878 |
+| CVE-2026-70456 | #8186 |
+| CVE-2026-70458 | #8173 |
 | CVE-2026-70459 | #7625 |
 | CVE-2026-70462 | #7347 |
 | CVE-2026-70463 | #7345 |
 | CVE-2026-70464 | #7688, #7754, #8002 |
 
-CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: the network receiver half is still open (task 2755 and an unmerged xattr fix).
+CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: the network receiver now pins xattr writes beneath the destination root (#8167), but still applies ACLs by path.
 
 **Path confinement (CVE-2026-53795 family)**
 - Confine destination writes and source reads against symlink races through one shared per-component resolver (#7393, #7349)
@@ -128,6 +130,15 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Drop to the `--copy-as` user permanently (#7073)
 - Reject a `MSG_ERROR_EXIT` payload of 1-3 or 5+ bytes and a `MSG_NOOP` frame with a payload (#8057, #8056)
 - Cap a sender `sum_head` block length at `MAX_BLOCK_SIZE` (#8046)
+- Confine the receiver's symlink and special-file backups (#8137), and the daemon `--files-from` list open to the module (#8103)
+
+**Hostile-peer bounds**
+- Read daemon client arguments and pre-authentication lines into upstream's fixed buffers (CVE-2026-70456, #8186)
+- Bound received file lists by `--max-alloc`, exiting 22 as upstream `my_alloc()` does (#8171)
+- Refuse a negative hard-link reference and bound the live xattr count (CVE-2026-70458, #8173)
+- Step the zstd token decoder through a fixed output buffer (#8172)
+- Pin received xattr writes beneath the destination root (CVE-2026-53799, xattr half, #8167)
+- Mirror upstream's daemon auth challenge, peer address and auth rules (#8190)
 
 ### Added
 
@@ -154,6 +165,10 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Raise the soft file-descriptor limit at startup (#7324, #7323)
 - Warn on a missing or non-directory `--compare-dest` / `--copy-dest` / `--link-dest` (#7453, #7454)
 - Tuning environment variables `OC_RSYNC_DISK_COMMIT_CHANNEL_CAP`, `OC_RSYNC_PIPELINE_WINDOW` and `OC_RSYNC_PARALLEL_STAT_THRESHOLD` (#7032, #7053)
+- Internationalized host names are converted to IDNA A-labels, as rsync 3.5.1 does, behind the default-on `idn` feature (#8104, #8118, #8124)
+- A server or daemon receiver negotiates incremental recursion, so a push into oc-rsync uses it (#8169)
+- Per-directory deletion during an incremental-recursion walk (#8090)
+- Zero-copy socket writes (io_uring `SEND_ZC`) are built by default but stay off unless the local node asks: `--zero-copy` on a client, `oc-rsync --daemon --zero-copy`, or `OC_RSYNC_ZERO_COPY`. The setting is never forwarded to the peer (#8183)
 
 ### Changed
 
@@ -166,7 +181,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - rsync 3.5.1 joins the interop matrix, with an upstream-baseline oracle in the harness (#8033)
 - Release benchmarks compare against rsync 3.5.1, 3.5.0 and 3.4.4 on Linux and macOS, and report peak RSS for every mode (#7595, #8106)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
-- io_uring `Auto` can reach `SEND_ZC` in builds with `iouring-send-zc` (#7593)
+- io_uring `Auto` could reach `SEND_ZC` in builds with `iouring-send-zc` (#7593); since #8183, `SEND_ZC` runs only on an explicit zero-copy request
 - `--safe-links` is evaluated on the receiver only, as upstream does (#7763, #7777)
 - Module filter rules follow upstream parsing: `merge`, `dir-merge`, `!`, `-C`, short prefixes and provenance (#7729, #7732, #7747, #7757, #7795, #7804, #7807, #7813, #7826, #7833, #7850, #7862)
 - The SSH remote shell may prompt for a key passphrase; `-oBatchMode=yes` is no longer injected (#7145, #7167)
@@ -181,6 +196,12 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - The INC_RECURSE receiver is selected at runtime from the negotiated flags, and the sender sizes its lookahead window (#7965, #7968, #7539)
 - Follow rsync 3.5.1 option and startup rules: `--contimeout` needs a daemon connection and bounds a daemon-over-`--rsh` handshake, which now also accepts `rsync://` operands; the daemon enters inetd mode only for an `AF_INET`/`AF_INET6` stream on stdin (#8011)
 - The client no longer sends `@RSYNCD: OPTION` lines, and `--dparam` without `--daemon` is refused with upstream's message (#8002)
+- The spawned SSH child's stdin and stdout are `AF_UNIX` socketpairs, as upstream creates them, with a fallback to pipes; the embedded SSH bridge no longer copies each chunk (#8183)
+- The compression choice is forwarded the way rsync 3.5.1 does (#8114)
+- Option parsing follows popt: unknown long options in a server argv or via `-M` are refused, unknown client options are reported in popt's format, a leading `--` ends option parsing, and `--tmp-dir`, `--no-b` and `--no-fake-super` are rejected (#8126, #8133, #8130, #8154, #8113)
+- Dash-led host names and protocol-gated options are refused before the transfer starts, and the server names the unsupported protocol (#8148, #8119, #8125)
+- Daemon startup and configuration follow upstream: a command line with a daemon option is re-parsed, `--sockopts` is honoured, a listening daemon reads its own settings as the startup load does, `--module` keys use upstream parameter names, empty `lock file` and `syslog tag` values are stored, and daemon-mode option errors print like upstream (#8083, #8084, #8086, #8140, #8141, #8158)
+- Daemon logging follows upstream: timestrings, per-file `%b`, `%c` and `%C`, deletions, module-relative file names, server diagnostics, the contents of a directory cleared to make room, a peer `MSG_INFO`, a syslog fallback when the log file cannot be opened, and the reverse-DNS name in its original case (#8135, #8136, #8138, #8147, #8160, #8159, #8165, #8123, #8155)
 
 ### Performance
 
@@ -383,10 +404,32 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 
 **Windows**
 - Compare the read-only bit, open directories for `--fsync`, honour `--one-file-system` across volumes, and warn when metadata cannot be applied (#7163, #7164, #7210, #7054)
+**Output parity**
+- `--quiet` suppresses the client listing, itemize rows, stats, the daemon MOTD and the module listing (#8117, #8151); MOTD lines print once (#8161)
+- The incremental file-list banner prints only under INC_RECURSE, and late itemized deletions print after the transfer rows on a pull (#8116, #8122)
+- An rsh peer that dies mid-transfer, or a receiver EOF during the sender goodbye, prints upstream's whine with the byte count on its own line (#8150, #8163, #8164, #8115)
+- A failed final rename, a dangling `-L` symlink and a missing trailing-slash operand report as upstream does (#8157, #8111, #8153)
+
+**Deletion**
+- Recorded `--delete-delay` victims run after an I/O error, and the late delete pass runs after the sender's final `NDX_DONE` (#8092, #8093)
+- A server sender echoes `NDX_DEL_STATS` (#8112)
+- A populated directory is kept under `--delete-missing-args` without `--delete` (#8162)
+
+**Incremental recursion**
+- Skip `--existing`-missing directories without failing, drain hard-link echoes and itemize specials per sub-list, and keep directories when the sender reclaims a segment (#8107, #8129, #8166)
+
+**Other**
+- A directory mtime within `--modify-window` is not re-stamped (#8109)
+- A `--server` process exits with its I/O-error code (#8110)
+- A `--read-batch` newer than `--protocol` is refused (#8152)
+- `inplace_partial` stays negotiated on the sender (#8156)
+- `--existing` and `--ignore-existing` apply to non-regular entries (#8168)
+- `-z` is detected only in the server flag cluster, not inside an `-e` string (#8188)
 
 ### Removed
 
-- rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`)
+- rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`) (#8087)
+- The unused `flist` crate; the live file list is `protocol::flist` (#8189)
 - The dead `--compress-level` help entry (#6778)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030)
 - The non-upstream per-directory filter alias (#6846)
@@ -405,6 +448,11 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
 - Documentation: README, SECURITY and CHANGELOG refreshed against master, testsuite badges labelled per leg, the INC_RECURSE receiver plan, and a security review of the QUIC transport (#7960, #7963, #7998, #8018, #8020, #8031, #8049, #8066)
 - Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022, #8100, #8101)
+- CI: upstream 3.5.1 is the reference and interop runs a single-version matrix per job (#8184); only required jobs run on a master push, redundant workflows are gone, and benchmarks run on releases only (#8181, #8182); every fuzz target runs daily, and the two crashes it found are fixed (#8185); docs-only PRs run lightweight checks (#8145); apt mirror handling and criterion cells reworked (#8088, #8128, #8134, #8142)
+- Tests: an out-of-process daemon harness, an rsyncd.conf parser corpus, deterministic temp paths and ports, and pinned drain-time permit release (#8132, #8085, #8097, #8139, #8143, #8149, #8180, #8081)
+- Refactor: drop dead daemon file opens and name the motd file on error (#8127)
+- Documentation: comments and citations aligned with rsync 3.5.1 across all crates, a CVE and 3.5.1 testsuite coverage matrix, the daemon's QUIC process model, and README/SECURITY/CHANGELOG refreshes (#8187, #8191, #8170, #8131, #8105, #8121, #8144)
+- Dependency and action updates (#8174, #8175, #8176, #8177, #8178)
 
 ## [0.6.4] - 2026-07-18
 

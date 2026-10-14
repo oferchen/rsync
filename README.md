@@ -31,9 +31,10 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
 | **Compression** | zlib, zstd, lz4 with level control and negotiation |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Advertised when oc-rsync sends. An oc-rsync client that receives (a pull) does not advertise it by default, so pulls use a full up-front file list. `OC_RSYNC_PULL_INC_RECURSE=1` opts a pull in, except under `--delete-before` or `--delete-after`, which need the whole list as in upstream (#8062, #8091) |
+| **Incremental recursion** | Negotiated whenever oc-rsync sends, and when an oc-rsync server or daemon receives a push (#8169). An oc-rsync client that pulls does not advertise it by default, so pulls use a full up-front file list. `OC_RSYNC_PULL_INC_RECURSE=1` opts a pull in, except under `--delete-before` or `--delete-after`, which need the whole list as in upstream (#8062, #8091) |
 | **Batch** | `--write-batch` / `--read-batch` round trip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
+| **Host names** | Internationalized host names converted to IDNA A-labels, as upstream 3.5.1 does (#8104) |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
@@ -50,14 +51,14 @@ Outcomes, counted from each leg's committed manifest:
 
 | leg | pass | fail | skip |
 |---|---:|---:|---:|
-| Linux, non-root, pipe | 275 | 0 | 85 |
-| Linux, root, pipe | 306 | 0 | 54 |
-| Linux, non-root, tcp | 125 | 4 | 32 |
-| Linux, root, tcp | 145 | 4 | 12 |
-| macOS, non-root, pipe | 249 | 0 | 111 |
-| macOS, root, pipe | 279 | 0 | 81 |
-| macOS, non-root, tcp | 122 | 4 | 35 |
-| macOS, root, tcp | 140 | 4 | 17 |
+| Linux, non-root, pipe | 274 | 0 | 86 |
+| Linux, root, pipe | 305 | 0 | 55 |
+| Linux, non-root, tcp | 128 | 1 | 32 |
+| Linux, root, tcp | 148 | 1 | 12 |
+| macOS, non-root, pipe | 248 | 0 | 112 |
+| macOS, root, pipe | 278 | 0 | 82 |
+| macOS, non-root, tcp | 125 | 1 | 35 |
+| macOS, root, tcp | 143 | 1 | 17 |
 
 Re-derive any cell, and list a release's failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
 
@@ -67,7 +68,7 @@ awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' 
 awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u
 ```
 
-**Four distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. All four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion by default. None fails only on macOS, and no pipe leg has a failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
+**One 3.5.1 test** carries a `fail` row: `proto-subflist-freed`, on every tcp leg. The oc-rsync server receiver does not yet refuse a sub-list that arrives after the final file list was freed (upstream `flist.c`). No pipe leg has a failure, and none fails only on macOS. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 
@@ -119,6 +120,7 @@ cargo build --workspace --release
 | `xattr` | workspace, `cli`, `core`, `transfer`, `daemon`, `metadata` | yes | Extended attributes (`-X`); NTFS ADS on Windows. | stable |
 | `acl` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `metadata` | yes | ACLs (`-A`) via `exacl`; NTFS ACLs via `windows-rs`. | stable |
 | `iconv` | workspace, `cli`, `core`, `transfer`, `daemon`, `protocol` | yes | Filename charset conversion (`--iconv`). | stable |
+| `idn` | workspace, `core` | yes | IDNA A-label conversion of host names (upstream `SUPPORT_IDN`). Without it, hosts are used as typed and `--version` reports `no IDN`. | stable |
 | `parallel` | workspace, `cli`, `engine`, `checksums` | yes | Rayon-based parallel file and checksum work. | stable |
 | `io_uring` | workspace, `transfer`, `fast_io` | yes | Linux 5.6+ batched I/O with runtime fallback. | stable |
 | `iocp` | workspace, `transfer`, `fast_io` | yes | Windows I/O Completion Ports. | stable |
@@ -129,7 +131,7 @@ cargo build --workspace --release
 | `openssl-vendored` | workspace, `checksums` | no | As `openssl`, statically linked. | stable |
 | `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` for the daemon. | stable |
 | `quic` | workspace, `cli`, `core`, `daemon` | no | QUIC transport (see [QUIC transport](#quic-transport)). | opt-in |
-| `iouring-send-zc` | workspace, `fast_io` | no | io_uring `SEND_ZC` dispatch (Linux 6.0+). | opt-in |
+| `iouring-send-zc` | workspace, `fast_io` | yes | io_uring `SEND_ZC` socket writes (Linux 6.0+). Built in, but used only when the local node asks for zero-copy (see [Performance tuning](#performance-tuning)). | stable |
 | `daemon-seccomp` | workspace, `daemon` | no | seccomp allowlist for daemon workers. Once compiled in, it is on at runtime; opt out with `OC_RSYNC_NO_SECCOMP=1`. | opt-in |
 | `incremental-flist` | `transfer` | yes | Gates tests only. The incremental receiver is chosen at runtime from the negotiated flags (#7968). | stable |
 | `lazy-metadata` | `engine` | yes | Defers `stat()` until metadata is needed. | stable |
@@ -180,7 +182,7 @@ For all options: `oc-rsync --help`.
 
 ### SSH transports
 
-- `host:path` and `user@host:path` spawn the system `ssh`, like upstream. `-e`/`--rsh` and `RSYNC_RSH` choose another remote shell. This path needs no cargo feature.
+- `host:path` and `user@host:path` spawn the system `ssh`, like upstream. `-e`/`--rsh` and `RSYNC_RSH` choose another remote shell. As in upstream, the child's stdin and stdout are `AF_UNIX` socketpairs, with a fallback to pipes if the kernel refuses one (#8183). This path needs no cargo feature.
 - `ssh://[user@]host[:port]/path` is an oc-rsync extension. It uses an embedded client built on [`russh`](https://crates.io/crates/russh) and spawns no subprocess. It needs the `embedded-ssh` feature (on by default). Without the feature an `ssh://` operand fails with a diagnostic. Combining `ssh://` with `-e`/`--rsh` or `RSYNC_RSH` is rejected.
 
 The embedded client supports key-based (RSA, ED25519, ECDSA) and password authentication, and `SSH_AUTH_SOCK` agents. It reads `~/.ssh/config` and `/etc/ssh/ssh_config` with an in-house parser (`ssh-config-parse` feature, on by default): `Host` and `Match` blocks, `Include`, first-obtained-wins precedence, `ProxyCommand` / `ProxyJump`, and the host-key and authentication families. A differential harness checks it against `ssh -G` in CI.
@@ -242,7 +244,7 @@ oc-rsync -a --quic --quic-cipher chacha20 quic://host/module/ dest/
 
 ### Linux io_uring
 
-oc-rsync uses io_uring when the kernel and probed opcodes allow it, and otherwise falls back to standard `read(2)`/`write(2)`. The kernel floor is Linux 5.6 (`MIN_KERNEL_VERSION` in [`crates/fast_io/src/io_uring/config.rs`](./crates/fast_io/src/io_uring/config.rs)). Provided buffer rings need 5.19+. `SEND_ZC` needs Linux 6.0+ and the `iouring-send-zc` cargo feature, which is not in the default set. The per-opcode kernel table is in [`docs/audit/iouring-opcode-kernel-floor.md`](./docs/audit/iouring-opcode-kernel-floor.md).
+oc-rsync uses io_uring when the kernel and probed opcodes allow it, and otherwise falls back to standard `read(2)`/`write(2)`. The kernel floor is Linux 5.6 (`MIN_KERNEL_VERSION` in [`crates/fast_io/src/io_uring/config.rs`](./crates/fast_io/src/io_uring/config.rs)). Provided buffer rings need 5.19+. `SEND_ZC` needs Linux 6.0+; the `iouring-send-zc` feature is in the default set, but `SEND_ZC` runs only when zero-copy is requested. The per-opcode kernel table is in [`docs/audit/iouring-opcode-kernel-floor.md`](./docs/audit/iouring-opcode-kernel-floor.md).
 
 Three policies: *auto* (default; probe and fall back), `--io-uring` (require it), `--no-io-uring` (never use it). `--version` shows the active backend.
 
@@ -260,7 +262,7 @@ oc-rsync -avz -e 'ssh -C' user@host:/src/ /dst/
 
 oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (with `ssh-config-parse`) when a `Compression yes` directive applies from `ssh_config`. It does not disable either layer.
 
-**`--zero-copy` and `SEND_ZC`.** `--zero-copy` may use `sendfile`, `splice`, `copy_file_range` and io_uring `SEND_ZC` on Linux. `SEND_ZC` dispatch needs the `iouring-send-zc` feature (Linux 6.0+). See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md).
+**`--zero-copy` and `SEND_ZC`.** Zero-copy socket writes (io_uring `SEND_ZC`, Linux 6.0+) are off by default. On a loopback benchmark they made a 2 GiB daemon pull slower, so they stay opt-in. The choice is local to each node and is never forwarded to the peer (#8183). A client opts in with `--zero-copy`. A server opts in with `oc-rsync --daemon --zero-copy`, with `--rsync-path='oc-rsync --zero-copy'`, or with `OC_RSYNC_ZERO_COPY=on|off|auto`. The flag wins over the variable, and the variable over the default. See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md).
 
 **Parallel delta work.** Delta work is single-threaded per file by default. Opt in with `--parallel-delta-scan` and `--checksum-threads=N`.
 
@@ -364,7 +366,7 @@ Upstream CVE status, in short:
 
 - **2024 batch** (CVE-2024-12084 to CVE-2024-12088, CVE-2024-12747): not vulnerable or mitigated.
 - **rsync 3.4.3 batch** (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232): fixed or not vulnerable. Receiver filesystem calls go through `*at` syscalls anchored on a directory fd, with a Landlock layer for the daemon on Linux.
-- **rsync 3.5.0 batch** (33 CVEs): 27 fixed, 1 partially fixed, 5 not applicable, 0 open. The partial one is CVE-2026-53799: the network receiver still applies ACLs and xattrs by path. Each CVE has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
+- **rsync 3.5.0 batch** (33 CVEs): 27 fixed, 1 partially fixed, 5 not applicable, 0 open. The partial one is CVE-2026-53799: the network receiver now writes xattrs through a pinned leaf (#8167), but still applies ACLs by path. Each CVE has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
 - **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, seven are mirrored and two do not apply.
 
 See [`SECURITY.md`](./SECURITY.md) for the per-CVE detail, the open hardening gaps that have no CVE, and how to report a vulnerability. [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) maps each CVE to its upstream fix, its upstream test cells and the Rust tests that pin it.

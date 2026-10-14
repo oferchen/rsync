@@ -36,7 +36,7 @@ Safe Rust rules out out-of-bounds access, use-after-free, reads of uninitialised
 ### Unsafe code policy
 
 Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions in production code:
-- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers. Some of these crates carry `#[allow(unsafe_code)]` in test code only, for example to set environment variables. `test-support` is itself a test-only crate.
+- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers. Some of these crates carry `#[allow(unsafe_code)]` in test code only, for example to set environment variables. `test-support` is itself a test-only crate.
 
 Crates with `#![deny(unsafe_code)]` and targeted `#[allow(unsafe_code)]` for documented FFI/SIMD boundaries:
 - `metadata` - Ownership, identity, xattr, timestamp and Windows ACL FFI (for example `getpwuid_r`/`getgrnam_r`, `setuid`/`setgid` for `--copy-as`, `setattrlist`, NTFS DACLs)
@@ -53,7 +53,7 @@ The `oc-rsync` binary (`src/bin/oc-rsync.rs`) also denies unsafe code, with one 
 
 ## Upstream CVE Status
 
-The reference version is upstream rsync 3.5.1. Its release notes name no CVE ids; its fixes are tracked in the 3.5.1 table below. Each CVE row carries one of four statuses:
+The reference version is upstream rsync 3.5.1. Its release notes name no CVE ids; its fixes are tracked in the 3.5.1 table below. Each CVE row carries one of five statuses:
 
 - **Fixed**: the code closes it, and a named test or PR shows it.
 - **Partially fixed**: some affected paths are closed and shown by a test or PR, but at least one path is still exposed.
@@ -118,7 +118,7 @@ grep -cE '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md      # 3.5.0 rows: 33
 | CVE-2026-53796 | MEDIUM | A non-daemon receiver's `chdir()` into a relative destination was not confined. | Fixed | An untrusted destination symlink is refused with upstream's diagnostic (PR #8071). `symlink-race-dest`, `symlink-race-relative-dest` and `chdir-symlink-race` pass on every leg that runs them. |
 | CVE-2026-53797 | MEDIUM | A non-daemon sender opened file content by path, following a raced parent symlink. | Fixed | Explicit source roots are held by dev/ino and content opens run beneath the held root; a replaced root is refused with `ELOOP` (PR #8120). An rsh-server-sender e2e swaps a listed directory mid-scan and is refused with exit 23, and `relative-source-ancestor`, `symlink-race-source` and `chdir-symlink-race` pass on every leg that runs them. |
 | CVE-2026-53798 | MEDIUM | The daemon name converter mapped an unknown name to uid/gid 0. | Fixed | oc-rsync reads a converter answer strictly, as upstream's `namecvt_call()` does (clientserver.c:1340-1354): an empty or non-numeric answer is an unknown name, and the receiver keeps the sender's id (uidlist.c:273-276). Id 0 is never resolved by name, matching `recv_add_id()`'s `*name && id` guard (PR #8108). A root e2e test (`tests/daemon_name_converter_unknown_answer.rs`) pushes a `nobody`-owned file through converters that answer empty, `notanumber` and `4242`, and gets the sender's ids, the sender's ids and 4242:4242, the same as the upstream 3.5.1 control; making the parse read those answers as 0 fails both refusal cells. The upstream `daemon-namecvt-empty-response` cell reads a `--fake-super` xattr, which oc-rsync does not implement, so it passes without exercising the mapping. |
-| CVE-2026-53799 | MEDIUM | ACL and xattr application followed a symlink race. | Partially fixed | The local-copy xattr sync passes its confinement root, so a flipped parent cannot redirect the write (`crates/engine/src/local_copy/metadata_sync.rs`). The network receiver writes xattrs through a leaf pinned beneath the destination root and skips them when the pin is refused (`rsync.c:582-597`). ACLs are still applied by path (`crates/metadata/src/acl_exacl/apply.rs`); the Linux fd-based arm (`lib/acl.c:110-145`) is task 2755. `acl-symlink-race` and `copy-xattrs-symlink-race` pass on the Linux legs, but they run through the daemon, where Landlock confines the receiver, and they skip on macOS. |
+| CVE-2026-53799 | MEDIUM | ACL and xattr application followed a symlink race. | Partially fixed | The local-copy xattr sync passes its confinement root, so a flipped parent cannot redirect the write (`crates/engine/src/local_copy/metadata_sync.rs`). The network receiver writes xattrs through a leaf pinned beneath the destination root and skips them when the pin is refused (`rsync.c:582-597`). ACLs are still applied by path (`crates/metadata/src/acl_exacl/apply.rs`); upstream's Linux fd-based arm (`lib/acl.c:110-145`) is not ported yet (PR #8167 fixed the xattr half). `acl-symlink-race` and `copy-xattrs-symlink-race` pass on the Linux legs, but they run through the daemon, where Landlock confines the receiver, and they skip on macOS. |
 | CVE-2026-53800 | MEDIUM | `--remove-source-files` unlink followed a parent-symlink race. | Fixed | `sender-remove-source-secure` and `sender-remove-source-relative-anchor` pass on every leg that runs them. |
 | CVE-2026-53801 | MEDIUM | Directory-scan enumeration escaped the transfer root or module. | Fixed | `sender-scan-dir-escape` and `daemon-scan-dir-escape` pass on every leg that runs them. |
 | CVE-2026-53802 | HIGH | Symlinked operator input files: merge files, per-directory merges and `.cvsignore`. | Fixed | Merge and `--*clude-from` files open through the ownership walk (PRs #7421-#7426). `filter-merge-symlink` passes on every leg that runs it. |
@@ -127,9 +127,9 @@ grep -cE '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md      # 3.5.0 rows: 33
 | CVE-2026-70453 | HIGH | Quadratic CPU in `hash_search()` from a long equal-weak-checksum chain. | Fixed | The chain walk is bounded (PR #7293). `hashsearch-chain` passes on every leg that runs it. |
 | CVE-2026-70454 | MEDIUM | `rsync-ssl` made unauthenticated TLS connections. | Not applicable | oc-rsync ships no `rsync-ssl`. |
 | CVE-2026-70455 | HIGH | A daemon client could request any Zstandard worker count. | Fixed | `daemon-zstd-thread-exhaustion` and `daemon-refuse-compress-threads-alias` pass on every leg that runs them. |
-| CVE-2026-70456 | HIGH | Heap write one past the end in `read_args()` at exactly `maxargs`. | Not applicable | The `daemon` crate denies unsafe code, so an out-of-bounds write cannot happen. The argument count is still bounded at upstream's `MAX_DAEMON_ARGS` (`read_client_arguments_refuses_past_the_daemon_ceiling`, `run_daemon_logs_an_oversized_client_argv`), and `daemon-argv-limit` passes on every leg that runs it. The length of a single argument is not bounded yet (task 2751). |
+| CVE-2026-70456 | HIGH | Heap write one past the end in `read_args()` at exactly `maxargs`. | Not applicable | The `daemon` crate denies unsafe code, so an out-of-bounds write cannot happen. The argument count is still bounded at upstream's `MAX_DAEMON_ARGS` (`read_client_arguments_refuses_past_the_daemon_ceiling`, `run_daemon_logs_an_oversized_client_argv`), and `daemon-argv-limit` passes on every leg that runs it. Each argument and each pre-authentication line is read into upstream's fixed buffer size, so a single long argument cannot grow memory either (PR #8186). |
 | CVE-2026-70457 | MEDIUM | Attacker-chosen-offset write in `parse_size_arg()` error formatting. | Fixed | `daemon-size-arg-overflow` passes on every leg. |
-| CVE-2026-70458 | HIGH | Out-of-bounds write from `FLAG_HLINKED` accepted without `-H`. | Not applicable | The file list is decoded in safe Rust (`protocol`, `transfer`), so an out-of-bounds write cannot happen. The gnum that follows the flag is read and range-checked for a follower entry (`hard-link reference out of range`), but a negative gnum on a leader entry is accepted where upstream exits 2 (task 2753). `proto-hlink-flag-oob` needs an ASan build and skips on every leg. |
+| CVE-2026-70458 | HIGH | Out-of-bounds write from `FLAG_HLINKED` accepted without `-H`. | Not applicable | The file list is decoded in safe Rust (`protocol`, `transfer`), so an out-of-bounds write cannot happen. The gnum that follows the flag is range-checked, and a negative reference is refused with exit 2 as upstream does (PR #8173). `proto-hlink-flag-oob` needs an ASan build and skips on every leg. |
 | CVE-2026-70459 | MEDIUM | Wild-pointer read from a crafted first incremental file list. | Fixed | A non-directory transfer root is refused with upstream's `rejecting non-directory transfer-root entry` diagnostic (`read_entry_rejects_non_directory_transfer_root` in `crates/protocol/src/flist/read/tests.rs`), and an empty directory list yields no parent index. `proto-parent-ndx-empty-dirflist` passes on every leg that runs it. |
 | CVE-2026-70460 | HIGH | A peer `--partial-dir` or `--backup-dir` resolved by pathname escaped the module. | Fixed | `operator-path-partial-dir-daemon`, `operator-path-backup-dir-daemon`, their `-exclude-daemon` variants and the three `operator-path-traversal-*-daemon` cells pass on every leg. |
 | CVE-2026-70461 | HIGH | One-byte heap write in `add_implied_include()` from a trailing backslash. | Not applicable | The `filters` crate denies unsafe code, so an out-of-bounds write cannot happen. Whether the rule is handled like upstream is unverified: `exclude-implied-trailing-backslash` skips on every leg. |
@@ -143,14 +143,14 @@ Count the statuses:
 grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uniq -c
 ```
 
-**Open hardening gaps without a CVE.** The coverage matrix in [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) found these next to the rows above. Each is tracked and none is claimed fixed:
+**Hardening gaps without a CVE.** The coverage matrix in [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) found these next to the rows above. All four are now fixed:
 
-| Gap | Upstream behaviour | Tracked as |
+| Gap | Upstream behaviour | Fixed in |
 |---|---|---|
-| A single daemon argument or pre-module line has no byte cap | truncated at `BIGPATHBUFLEN` (io.c) | task 2751 |
-| `--max-alloc` bounds only xattr allocations; peer-driven file-list growth is unbounded | `my_alloc()` exits 22 (util2.c) | task 2752 |
-| A negative hard-link gnum is accepted; the xattr count is unbounded on the live path | exits 2 (flist.c, xattrs.c) | task 2753 |
-| The zstd token decoder inflates a whole packet into one buffer | fixed `out_buffer_size` per step (token.c) | GAP 1507 |
+| A single daemon argument or pre-module line had no byte cap | read into a fixed `line[1024]` or `BIGPATHBUFLEN` buffer (clientserver.c, io.c) | PR #8186 |
+| `--max-alloc` bounded only xattr allocations; peer-driven file-list growth was unbounded | `my_alloc()` exits 22 (util2.c) | PR #8171 |
+| A negative hard-link gnum was accepted; the xattr count was unbounded on the live path | exits 2 (flist.c, xattrs.c) | PR #8173 |
+| The zstd token decoder inflated a whole packet into one buffer | fixed `out_buffer_size` per step (token.c) | PR #8172 |
 
 **New options in 3.5.0.** `--confine-root=DIR`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`, and the `auth digest`, `insecure links` and `proxy protocol hosts` daemon directives are implemented (PRs #7396, #7299, #7350, #7484, #7648). Like upstream, `--confine-root` and `--drop-D` are not forwarded to the remote side.
 
@@ -241,7 +241,7 @@ The repo ships 26 cargo-fuzz targets covering security-critical parsing, SIMD pa
 - `differential_multiplex` - multiplex frame differential fuzzing
 - `differential_flist` - flist wire format differential fuzzing
 
-See `fuzz/README.md` for detailed fuzzing instructions.
+[`fuzz-coverage-report.yml`](./.github/workflows/fuzz-coverage-report.yml) ("Fuzz Daily Sweep") runs every target once a day (PR #8185). See `fuzz/README.md` for detailed fuzzing instructions.
 
 ## Hardening Notes
 
