@@ -210,6 +210,16 @@ oc-rsync mirrors the table literally in
 upstream's `if (level > MAX_VERBOSITY) level = MAX_VERBOSITY;` clamp
 (`options.c:517-518`).
 
+oc-rsync adds two oc-only words to the same table, for the daemon's
+kernel sandbox layers: `SECCOMP` and `LANDLOCK` at level 1 in row 3
+(`-vvv`, the decision line beside RECV) and at level 2 in row 4
+(`-vvvv`, the allowlist detail). Upstream has no equivalent, so these are
+the only rows that differ; `tests/verbosity_level_mapping.rs` pins the
+table to upstream's rows plus exactly this named set. `sandbox` is a
+parser alias that sets both words (`sandbox2`); it is not in the table,
+and tokens still apply left to right, so `sandbox2,seccomp0` leaves only
+Landlock at level 2.
+
 User-supplied `--debug=FLAG` overrides happen after the ladder is
 applied because the CLI driver invokes `parse_debug_flags` and then
 mutates the verbosity config last; this is equivalent to upstream's
@@ -234,8 +244,12 @@ the preface (`Use OPT or OPT1 ... OPT0 silences.`), the 24-row
 `ALL`/`NONE`/`HELP` rows quoting the sentinel's `--debug` help
 (`options.c:489-495`), and the per-verbosity summary block for the four
 populated levels (2-5; `debug_verbosity[]` slots 0 and 1 are empty in
-upstream, so those lines are intentionally omitted). Parity status:
-**byte-equivalent to upstream 3.4.1 (C3)**.
+upstream, so those lines are intentionally omitted). The oc-only
+extension words follow under their own heading, and summary rows 3 and 4
+end with the SECCOMP/LANDLOCK levels of section 4, so those two lines
+differ from upstream; a test renders every summary row from the live
+table and compares it with the constant. Every other line is
+byte-equivalent to upstream.
 
 The internal `no<flag>` / `-<flag>` parser extension is deliberately
 not advertised in the help text; the parser still accepts these tokens

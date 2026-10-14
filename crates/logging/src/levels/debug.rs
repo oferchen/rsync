@@ -72,10 +72,16 @@ pub enum DebugFlag {
     Sockopt,
     /// Windows IOCP dispatch and fallback (oc-specific).
     Iocp,
+    /// seccomp worker-filter decisions: engaged, skipped, unavailable or
+    /// failed, and at level 2 the allowlist detail (oc-specific).
+    Seccomp,
+    /// Landlock ruleset decisions: enforcement status, and at level 2 the
+    /// confined roots and allowlisted paths (oc-specific).
+    Landlock,
 }
 impl DebugFlag {
     /// Every flag, in declaration order.
-    pub const ALL: [DebugFlag; 28] = [
+    pub const ALL: [DebugFlag; 30] = [
         DebugFlag::Acl,
         DebugFlag::Backup,
         DebugFlag::Bind,
@@ -104,6 +110,8 @@ impl DebugFlag {
         DebugFlag::Clone,
         DebugFlag::Sockopt,
         DebugFlag::Iocp,
+        DebugFlag::Seccomp,
+        DebugFlag::Landlock,
     ];
 }
 
@@ -173,6 +181,10 @@ pub struct DebugLevels {
     pub sockopt: u8,
     /// Windows IOCP dispatch level (oc-specific).
     pub iocp: u8,
+    /// seccomp worker-filter decision level (oc-specific).
+    pub seccomp: u8,
+    /// Landlock ruleset decision level (oc-specific).
+    pub landlock: u8,
 }
 
 impl DebugLevels {
@@ -208,6 +220,8 @@ impl DebugLevels {
             DebugFlag::Clone => self.clone,
             DebugFlag::Sockopt => self.sockopt,
             DebugFlag::Iocp => self.iocp,
+            DebugFlag::Seccomp => self.seccomp,
+            DebugFlag::Landlock => self.landlock,
         }
     }
 
@@ -242,6 +256,8 @@ impl DebugLevels {
             DebugFlag::Clone => self.clone = level,
             DebugFlag::Sockopt => self.sockopt = level,
             DebugFlag::Iocp => self.iocp = level,
+            DebugFlag::Seccomp => self.seccomp = level,
+            DebugFlag::Landlock => self.landlock = level,
         }
     }
 
@@ -275,6 +291,8 @@ impl DebugLevels {
         self.clone = level;
         self.sockopt = level;
         self.iocp = level;
+        self.seccomp = level;
+        self.landlock = level;
     }
 }
 
@@ -336,6 +354,8 @@ mod tests {
                 DebugFlag::Clone,
                 DebugFlag::Sockopt,
                 DebugFlag::Iocp,
+                DebugFlag::Seccomp,
+                DebugFlag::Landlock,
             ] {
                 assert_eq!(levels.get(flag), 0);
                 levels.set(flag, 3);
@@ -346,6 +366,8 @@ mod tests {
             assert_eq!(levels.get(DebugFlag::Clone), 5);
             assert_eq!(levels.get(DebugFlag::Sockopt), 5);
             assert_eq!(levels.get(DebugFlag::Iocp), 5);
+            assert_eq!(levels.get(DebugFlag::Seccomp), 5);
+            assert_eq!(levels.get(DebugFlag::Landlock), 5);
         }
     }
 
@@ -412,6 +434,8 @@ mod tests {
                 clone: 26,
                 sockopt: 27,
                 iocp: 28,
+                seccomp: 29,
+                landlock: 30,
             };
 
             assert_eq!(levels.get(DebugFlag::Acl), 1);
@@ -442,6 +466,8 @@ mod tests {
             assert_eq!(levels.get(DebugFlag::Clone), 26);
             assert_eq!(levels.get(DebugFlag::Sockopt), 27);
             assert_eq!(levels.get(DebugFlag::Iocp), 28);
+            assert_eq!(levels.get(DebugFlag::Seccomp), 29);
+            assert_eq!(levels.get(DebugFlag::Landlock), 30);
         }
 
         #[test]

@@ -48,6 +48,11 @@ const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
             (Recv, 1),
             (Send, 1),
             (Time, 1),
+            // oc-only: each sandbox layer's decision line joins where RECV
+            // does, so the `-vvv` that showed the receiver's Landlock lines
+            // under RECV still shows them.
+            (Seccomp, 1),
+            (Landlock, 1),
         ],
         &[
             (Cmd, 2),
@@ -59,6 +64,9 @@ const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
             (Own, 2),
             (Proto, 1),
             (Time, 2),
+            // oc-only: the sandbox layers' detail lines.
+            (Seccomp, 2),
+            (Landlock, 2),
         ],
         &[
             (Chdir, 1),
@@ -214,6 +222,13 @@ impl VerbosityConfig {
         // strncasecmp, so `--debug=NAME` is case-insensitive (users and the
         // testsuite pass upper-case tokens like `--debug=FUZZY`).
         let name = name.to_ascii_lowercase();
+        // oc-only umbrella: `sandbox` is a parser alias that sets both kernel
+        // sandbox layers, not a category with storage of its own.
+        if name == "sandbox" {
+            self.debug.set(DebugFlag::Seccomp, level);
+            self.debug.set(DebugFlag::Landlock, level);
+            return Ok(());
+        }
         let flag = match name.as_str() {
             "acl" => DebugFlag::Acl,
             "backup" => DebugFlag::Backup,
@@ -244,6 +259,9 @@ impl VerbosityConfig {
             "clone" => DebugFlag::Clone,
             "sockopt" => DebugFlag::Sockopt,
             "iocp" => DebugFlag::Iocp,
+            // oc-specific kernel sandbox layers.
+            "seccomp" => DebugFlag::Seccomp,
+            "landlock" => DebugFlag::Landlock,
             _ => return Err(format!("unknown debug flag: {name}")),
         };
 
@@ -369,11 +387,52 @@ mod tests {
         config.apply_debug_flag("clone2").unwrap();
         config.apply_debug_flag("SOCKOPT").unwrap();
         config.apply_debug_flag("iocp").unwrap();
+        config.apply_debug_flag("seccomp2").unwrap();
+        config.apply_debug_flag("landlock").unwrap();
 
         assert_eq!(config.debug.iouring, 1);
         assert_eq!(config.debug.clone, 2);
         assert_eq!(config.debug.sockopt, 1);
         assert_eq!(config.debug.iocp, 1);
+        assert_eq!(config.debug.seccomp, 2);
+        assert_eq!(config.debug.landlock, 1);
+    }
+
+    /// The `sandbox` alias reaches the daemon and `-M--debug=` path too: it
+    /// sets only the two sandbox flags, and a later token overrides it.
+    #[test]
+    fn sandbox_alias_sets_both_layers_and_later_tokens_override() {
+        let mut only = VerbosityConfig::default();
+        only.apply_debug_flag("sandbox2").unwrap();
+        for flag in DebugFlag::ALL {
+            let want = u8::from(matches!(flag, DebugFlag::Seccomp | DebugFlag::Landlock)) * 2;
+            assert_eq!(only.debug.get(flag), want, "{flag:?}");
+        }
+
+        only.apply_debug_flag("seccomp0").unwrap();
+        assert_eq!((only.debug.seccomp, only.debug.landlock), (0, 2));
+        only.apply_debug_flag("SANDBOX").unwrap();
+        assert_eq!((only.debug.seccomp, only.debug.landlock), (1, 1));
+        assert!(only.apply_debug_flag("sandbx").is_err());
+    }
+
+    /// A sandbox layer's decision line joins at `-vvv` (row 3) and its
+    /// detail at `-vvvv` (row 4); `-vv` keeps it silent.
+    fn assert_rises_at_vvv_and_vvvv(flag: DebugFlag) {
+        for (verbose, want) in [(0, 0), (2, 0), (3, 1), (4, 2), (5, 2)] {
+            let config = VerbosityConfig::from_verbose_level(verbose);
+            assert_eq!(config.debug.get(flag), want, "{flag:?} at -v x{verbose}");
+        }
+    }
+
+    #[test]
+    fn seccomp_rises_at_vvv_and_vvvv() {
+        assert_rises_at_vvv_and_vvvv(DebugFlag::Seccomp);
+    }
+
+    #[test]
+    fn landlock_rises_at_vvv_and_vvvv() {
+        assert_rises_at_vvv_and_vvvv(DebugFlag::Landlock);
     }
 
     #[test]

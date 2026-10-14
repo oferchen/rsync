@@ -705,10 +705,14 @@ fn engage_landlock_sandbox(
             let message = rsync_info!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }
+        trace_landlock(
+            ctx.request,
+            &format!("skipped (operator opt-out via {var})"),
+        );
         return Ok(true);
     }
-
     if let Some(reason) = landlock_skip_reason(module) {
+        trace_landlock(ctx.request, &format!("skipped ({reason})"));
         if let Some(log) = ctx.log_sink {
             let text = format!("module '{}': landlock=skipped reason={reason}", ctx.request);
             let message = rsync_info!(text).with_role(Role::Daemon);
@@ -727,6 +731,10 @@ fn engage_landlock_sandbox(
     let root = match landlock_root(module, privilege_outcome) {
         LandlockRoot::Confine(path) => path,
         LandlockRoot::SubsumedByChroot => {
+            trace_landlock(
+                ctx.request,
+                "skipped (the kernel chroot root is the module root)",
+            );
             if let Some(log) = ctx.log_sink {
                 let text = format!(
                     "module '{}': landlock=skipped reason=chroot root is the module root (the kernel chroot already confines this module; see clientserver.c:1093)",
@@ -740,6 +748,7 @@ fn engage_landlock_sandbox(
     };
 
     if !is_supported() {
+        trace_landlock(ctx.request, "unavailable on this kernel or build");
         if let Some(log) = ctx.log_sink {
             let text = format!(
                 "module '{}': landlock unavailable on this kernel; SEC-1 *at* helpers remain the sole defense",
@@ -769,6 +778,16 @@ fn engage_landlock_sandbox(
 
     match restrict_to_module_paths(&roots) {
         LandlockOutcome::Enforced(status) => {
+            let label = match status {
+                EnforcementStatus::FullyEnforced => "fully enforced",
+                EnforcementStatus::PartiallyEnforced => "partially enforced",
+                EnforcementStatus::NotEnforced => "NOT enforced",
+            };
+            trace_landlock(
+                ctx.request,
+                &format!("{label} over {} root(s)", roots.len()),
+            );
+            trace_landlock_allowlist(ctx.request, &roots);
             if let Some(log) = ctx.log_sink {
                 let message = match status {
                     // Full confinement: routine, log at info.
@@ -812,6 +831,7 @@ fn engage_landlock_sandbox(
             Ok(true)
         }
         LandlockOutcome::Unavailable => {
+            trace_landlock(ctx.request, "unavailable after a positive probe");
             // Race: probe said supported, restrict_self() said no. Log and
             // continue - SEC-1 *at* helpers still mitigate the attack.
             if let Some(log) = ctx.log_sink {
@@ -825,6 +845,10 @@ fn engage_landlock_sandbox(
             Ok(true)
         }
         LandlockOutcome::Error(err) => {
+            trace_landlock(
+                ctx.request,
+                &format!("setup failed for root {}: {err}", root.display()),
+            );
             // The kernel said yes to landlock but no to our ruleset; this
             // is a regression worth surfacing. Log a warning and continue
             // rather than killing the connection - the SEC-1 *at* chain
@@ -887,6 +911,10 @@ fn engage_seccomp_sandbox(
     // exit handlers, and the parent shell). Skip - Landlock + SEC-1 *at*
     // remain the defense for remote-shell daemon mode.
     if ctx.reader.get_ref().is_stdio() {
+        trace_seccomp(
+            ctx.request,
+            "skipped (stdio session: the filter would restrict the entire process)",
+        );
         if let Some(log) = ctx.log_sink {
             let text = format!(
                 "module '{}': seccomp BPF skipped (stdio session - filter would restrict entire process)",
@@ -904,6 +932,10 @@ fn engage_seccomp_sandbox(
     // operator turned it off" - two facts an operator reading the log needs
     // to tell apart.
     if let Some(var) = SandboxLayer::Seccomp.operator_optout_var() {
+        trace_seccomp(
+            ctx.request,
+            &format!("skipped (operator opt-out via {var})"),
+        );
         if let Some(log) = ctx.log_sink {
             let text = SandboxLayer::Seccomp.optout_log_text(ctx.request, var);
             let message = rsync_info!(text).with_role(Role::Daemon);
@@ -917,6 +949,7 @@ fn engage_seccomp_sandbox(
     // does not harden the module - it makes the operator's configured hook
     // fail with EPERM. Same predicate, same decision as Landlock.
     if let Some(reason) = exec_hook_skip_reason(module) {
+        trace_seccomp(ctx.request, &format!("skipped ({reason})"));
         if let Some(log) = ctx.log_sink {
             let text = format!("module '{}': seccomp=skipped reason={reason}", ctx.request);
             let message = rsync_info!(text).with_role(Role::Daemon);
@@ -928,6 +961,8 @@ fn engage_seccomp_sandbox(
     match apply_worker_seccomp_filter() {
         #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
         SeccompOutcome::Installed => {
+            trace_seccomp(ctx.request, "engaged");
+            trace_seccomp_allowlist(ctx.request);
             if let Some(log) = ctx.log_sink {
                 let text = format!(
                     "module '{}': seccomp BPF filter engaged (EPERM on unlisted syscalls)",
@@ -938,6 +973,7 @@ fn engage_seccomp_sandbox(
             }
         }
         SeccompOutcome::Unavailable => {
+            trace_seccomp(ctx.request, "unavailable in this build");
             // No-op build (non-Linux, daemon-seccomp feature off,
             // unsupported arch, or operator opt-out via env var).
             if let Some(log) = ctx.log_sink {
@@ -951,6 +987,7 @@ fn engage_seccomp_sandbox(
         }
         #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
         SeccompOutcome::Error(err) => {
+            trace_seccomp(ctx.request, &format!("setup failed: {err}"));
             if let Some(log) = ctx.log_sink {
                 let text = format!(
                     "module '{}': seccomp BPF setup failed: {err}; relying on Landlock + SEC-1 *at* defense",
@@ -962,4 +999,152 @@ fn engage_seccomp_sandbox(
         }
     }
     Ok(())
+}
+
+/// Traces a Landlock decision for `module` at `Landlock` 1, which `-vvv` and
+/// `--debug=landlock` reach. The daemon-log line beside each call is kept.
+fn trace_landlock(module: &str, decision: &str) {
+    logging::debug_log!(Landlock, 1, "module '{module}': landlock: {decision}");
+}
+
+/// Traces every path the module's Landlock ruleset admits, at `Landlock` 2.
+fn trace_landlock_allowlist(module: &str, roots: &[&Path]) {
+    if logging::debug_gte(logging::DebugFlag::Landlock, 2) {
+        let rendered: Vec<String> = roots.iter().map(|p| p.display().to_string()).collect();
+        logging::debug_log!(
+            Landlock,
+            2,
+            "module '{module}': landlock: allowlist: {}",
+            rendered.join(", ")
+        );
+    }
+}
+
+/// Traces a seccomp decision for `module` at `Seccomp` 1, which `-vvv` and
+/// `--debug=seccomp` reach. The daemon-log line beside each call is kept.
+fn trace_seccomp(module: &str, decision: &str) {
+    logging::debug_log!(Seccomp, 1, "module '{module}': seccomp: {decision}");
+}
+
+/// Traces the engaged filter's shape at `Seccomp` 2: the allowlist size and
+/// the action every other syscall gets.
+#[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
+fn trace_seccomp_allowlist(module: &str) {
+    if logging::debug_gte(logging::DebugFlag::Seccomp, 2) {
+        logging::debug_log!(
+            Seccomp,
+            2,
+            "module '{module}': seccomp: {} syscalls allowed; any other fails with EPERM",
+            worker_seccomp_allowlist().len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod sandbox_trace_tests {
+    use super::{trace_landlock, trace_landlock_allowlist, trace_seccomp};
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+    use std::path::Path;
+
+    fn lines(flag: DebugFlag, at: u8, events: &[DiagnosticEvent]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: f,
+                    level,
+                    message,
+                    ..
+                } if *f == flag && *level == at => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn run(config: VerbosityConfig, token: Option<&str>, emit: impl Fn()) -> Vec<DiagnosticEvent> {
+        init(config);
+        if let Some(token) = token {
+            logging::apply_debug_flag(token).expect("debug token parses");
+        }
+        drain_events();
+        emit();
+        drain_events()
+    }
+
+    fn landlock_emit() {
+        trace_landlock("m", "fully enforced over 1 root(s)");
+        trace_landlock_allowlist("m", &[Path::new("/srv/m")]);
+    }
+
+    /// Level 0 is silent; `-vvv` and `--debug=landlock` show the decision but
+    /// not the allowlist; `-vvvv` and `landlock2` add it; `seccomp` alone
+    /// enables nothing here.
+    #[test]
+    fn landlock_trace_levels() {
+        let silent = run(VerbosityConfig::from_verbose_level(2), None, landlock_emit);
+        assert!(silent.is_empty(), "{silent:?}");
+        for events in [
+            run(VerbosityConfig::from_verbose_level(3), None, landlock_emit),
+            run(VerbosityConfig::default(), Some("landlock"), landlock_emit),
+        ] {
+            assert_eq!(
+                lines(DebugFlag::Landlock, 1, &events),
+                ["module 'm': landlock: fully enforced over 1 root(s)"],
+                "{events:?}"
+            );
+            assert!(
+                lines(DebugFlag::Landlock, 2, &events).is_empty(),
+                "{events:?}"
+            );
+        }
+        for events in [
+            run(VerbosityConfig::from_verbose_level(4), None, landlock_emit),
+            run(VerbosityConfig::default(), Some("landlock2"), landlock_emit),
+        ] {
+            assert_eq!(
+                lines(DebugFlag::Landlock, 2, &events),
+                ["module 'm': landlock: allowlist: /srv/m"],
+                "{events:?}"
+            );
+        }
+        let other = run(VerbosityConfig::default(), Some("seccomp2"), landlock_emit);
+        assert!(other.is_empty(), "{other:?}");
+    }
+
+    /// Same contract for seccomp; `landlock` alone enables nothing here.
+    #[test]
+    fn seccomp_trace_levels() {
+        let emit = || trace_seccomp("m", "engaged");
+        let silent = run(VerbosityConfig::from_verbose_level(2), None, emit);
+        assert!(silent.is_empty(), "{silent:?}");
+        for events in [
+            run(VerbosityConfig::from_verbose_level(3), None, emit),
+            run(VerbosityConfig::default(), Some("seccomp"), emit),
+            run(VerbosityConfig::default(), Some("sandbox"), emit),
+        ] {
+            assert_eq!(
+                lines(DebugFlag::Seccomp, 1, &events),
+                ["module 'm': seccomp: engaged"],
+                "{events:?}"
+            );
+        }
+        let other = run(VerbosityConfig::default(), Some("landlock2"), emit);
+        assert!(other.is_empty(), "{other:?}");
+    }
+
+    /// The allowlist detail is level 2 only.
+    #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
+    #[test]
+    fn seccomp_allowlist_detail_is_level_two() {
+        let emit = || super::trace_seccomp_allowlist("m");
+        let at_three = run(VerbosityConfig::from_verbose_level(3), None, emit);
+        assert!(at_three.is_empty(), "{at_three:?}");
+        let at_four = run(VerbosityConfig::from_verbose_level(4), None, emit);
+        let detail = lines(DebugFlag::Seccomp, 2, &at_four);
+        assert_eq!(detail.len(), 1, "{at_four:?}");
+        assert!(
+            detail[0].ends_with("syscalls allowed; any other fails with EPERM"),
+            "{detail:?}"
+        );
+    }
 }
