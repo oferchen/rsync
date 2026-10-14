@@ -1501,19 +1501,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flist"
-version = "0.6.4"
-dependencies = [
- "fast_io",
- "logging",
- "rayon",
- "serde",
- "tempfile",
- "test-support",
- "thiserror",
-]
-
-[[package]]
 name = "float-cmp"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
