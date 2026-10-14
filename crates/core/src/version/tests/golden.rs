@@ -115,16 +115,106 @@ fn version_info_sections_match_upstream_layout() {
     assert_eq!(info_sections(&rendered), GOLDEN_INFO_SECTIONS);
 }
 
-/// The JSON report (`-VV`) carries the same tokens; `ACL-at` becomes the
-/// `ACL_at` key exactly as upstream's usage.c:192-193 rewrite produces it.
+/// The `"capabilities"` and `"optimizations"` objects of a JSON report.
+fn json_info_sections(json: &str) -> &str {
+    let start = json
+        .find(",\n  \"capabilities\"")
+        .expect("JSON report has a capabilities object");
+    let end = json
+        .find(",\n  \"checksum_list\"")
+        .expect("JSON report has a checksum_list after the info objects");
+    &json[start..end]
+}
+
+/// upstream: usage.c:189-238 - the JSON (`-VV`) objects are packed by the
+/// same 75-byte line buffer as the text report, `ACL-at` becomes `ACL_at`,
+/// and each object closes with `  }`.
+#[cfg(all(
+    target_os = "linux",
+    target_pointer_width = "64",
+    feature = "acl",
+    feature = "xattr",
+    feature = "iconv",
+    feature = "idn"
+))]
+const GOLDEN_JSON_INFO_SECTIONS: &str = ",
+  \"capabilities\": {
+    \"file_bits\": 64, \"inum_bits\": 64, \"timestamp_bits\": 64,
+    \"long_int_bits\": 64, \"socketpairs\": true, \"symlinks\": true,
+    \"symtimes\": true, \"hardlinks\": true, \"hardlink_specials\": true,
+    \"hardlink_symlinks\": true, \"IPv6\": true, \"atimes\": true,
+    \"batchfiles\": true, \"inplace\": true, \"append\": true, \"ACLs\": true,
+    \"ACL_at\": true, \"xattrs\": true, \"secluded_args\": \"optional\",
+    \"iconv\": true, \"prealloc\": true, \"stop_at\": true, \"crtimes\": false,
+    \"IDN\": true
+  },
+  \"optimizations\": {
+    \"SIMD_roll\": true, \"asm_roll\": false, \"openssl_crypto\": true,
+    \"asm_MD5\": false, \"jemalloc\": true, \"copy_file_range\": true,
+    \"io_uring\": true, \"parallel\": true, \"mmap\": true
+  }";
+
+#[cfg(all(
+    unix,
+    not(target_os = "linux"),
+    target_pointer_width = "64",
+    feature = "acl",
+    feature = "xattr",
+    feature = "iconv",
+    feature = "idn"
+))]
+const GOLDEN_JSON_INFO_SECTIONS: &str = ",
+  \"capabilities\": {
+    \"file_bits\": 64, \"inum_bits\": 64, \"timestamp_bits\": 64,
+    \"long_int_bits\": 64, \"socketpairs\": true, \"symlinks\": true,
+    \"symtimes\": true, \"hardlinks\": true, \"hardlink_specials\": true,
+    \"hardlink_symlinks\": true, \"IPv6\": true, \"atimes\": true,
+    \"batchfiles\": true, \"inplace\": true, \"append\": true, \"ACLs\": true,
+    \"xattrs\": true, \"secluded_args\": \"optional\", \"iconv\": true,
+    \"prealloc\": true, \"stop_at\": true, \"crtimes\": false, \"IDN\": true
+  },
+  \"optimizations\": {
+    \"SIMD_roll\": true, \"asm_roll\": false, \"openssl_crypto\": true,
+    \"asm_MD5\": false, \"jemalloc\": true, \"copy_file_range\": true,
+    \"io_uring\": true, \"parallel\": true, \"mmap\": true
+  }";
+
+#[cfg(all(
+    unix,
+    target_pointer_width = "64",
+    feature = "acl",
+    feature = "xattr",
+    feature = "iconv",
+    feature = "idn"
+))]
+#[test]
+fn version_json_sections_match_upstream_layout() {
+    let json = VersionInfoReport::new(golden_config()).machine_readable();
+    assert_eq!(json_info_sections(&json), GOLDEN_JSON_INFO_SECTIONS);
+}
+
+/// Without a pinned ACL apply path the JSON value is false, not just the text token.
 #[cfg(all(target_os = "linux", feature = "acl"))]
 #[test]
-fn version_json_reports_acl_at_on_linux() {
-    let json = VersionInfoReport::new(golden_config()).machine_readable();
-    assert!(json.contains("\"ACLs\": true,\n    \"ACL_at\": true,\n    \"xattrs\""));
+fn version_json_reports_acl_at_false_when_unpinned() {
     let unpinned = golden_config().to_builder().supports_acl_at(false).build();
     let json = VersionInfoReport::new(unpinned).machine_readable();
     assert!(json.contains("\"ACL_at\": false,"));
+}
+
+/// upstream: usage.c:336-339 - a blank line, then the warranty notice on
+/// three lines with two spaces after each full stop and "Licence". Rendered
+/// under upstream's program name it is byte-identical to the 3.5.1 binary.
+#[test]
+fn footer_matches_upstream_layout() {
+    let rendered = VersionInfoReport::new(golden_config())
+        .with_program_name("rsync")
+        .human_readable();
+    assert!(rendered.ends_with(
+        "\n\nrsync comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\n\
+         are welcome to redistribute it under certain conditions.  See the GNU\n\
+         General Public Licence for details.\n"
+    ));
 }
 
 /// Without ACL support upstream's `SUPPORT_ACL_FD` is undefined, so the token
