@@ -69,7 +69,7 @@ fn run_range(ctx: &mut ReceiverContext, dest: &Path, range: std::ops::Range<usiz
     ctx.ensure_relative_parents_in_range(range.clone(), dest, None);
     ctx.create_symlinks_in_range(range.clone(), dest, None, &mut w)
         .unwrap();
-    ctx.create_specials_in_range(range.clone(), dest, None, &mut w)
+    ctx.create_specials_in_range(range.clone(), dest, None, None, None, &mut w)
         .unwrap();
     ctx.process_missing_args_sentinels_in_range(range.clone(), dest, None, &mut w)
         .unwrap();
@@ -82,7 +82,7 @@ fn run_whole(ctx: &mut ReceiverContext, dest: &Path) {
     let mut w = TestDeletionWriter;
     ctx.ensure_relative_parents(dest, None);
     ctx.create_symlinks(dest, None, &mut w).unwrap();
-    ctx.create_specials(dest, None, &mut w).unwrap();
+    ctx.create_specials(dest, None, None, None, &mut w).unwrap();
     ctx.process_missing_args_sentinels(dest, None, &mut w)
         .unwrap();
     ctx.create_hardlinks(dest, None, &mut w).unwrap();
@@ -128,11 +128,11 @@ fn special_in_range_touches_only_its_segment() {
     );
     let mut w = TestDeletionWriter;
 
-    ctx.create_specials_in_range(0..1, dest, None, &mut w)
+    ctx.create_specials_in_range(0..1, dest, None, None, None, &mut w)
         .unwrap();
     assert!(dest.join("pipe").symlink_metadata().is_err());
 
-    ctx.create_specials_in_range(1..2, dest, None, &mut w)
+    ctx.create_specials_in_range(1..2, dest, None, None, None, &mut w)
         .unwrap();
     assert!(
         std::fs::symlink_metadata(dest.join("pipe"))

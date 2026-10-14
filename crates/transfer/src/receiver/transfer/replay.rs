@@ -118,7 +118,13 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_symlinks(&dest_dir, writer)?;
         #[cfg(unix)]
-        self.create_specials(&dest_dir, sandbox.as_deref(), writer)?;
+        self.create_specials(
+            &dest_dir,
+            acl_cache.as_deref(),
+            acl_id_map.as_deref(),
+            sandbox.as_deref(),
+            writer,
+        )?;
         #[cfg(not(unix))]
         self.create_specials(&dest_dir, writer)?;
         self.process_missing_args_sentinels(

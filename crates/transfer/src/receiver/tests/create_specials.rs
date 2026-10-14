@@ -75,7 +75,7 @@ fn receiver_creates_fifo_from_flist_entry() {
     ctx.file_list = vec![FileEntry::new_fifo("pipe".into(), 0o640)].into();
 
     let mut writer = CapturingMsgInfoWriter;
-    ctx.create_specials(dest, None, &mut writer)
+    ctx.create_specials(dest, None, None, None, &mut writer)
         .expect("create_specials must succeed on a writable tempdir");
 
     let meta = std::fs::symlink_metadata(dest.join("pipe"))
@@ -117,7 +117,7 @@ fn receiver_creates_char_device_from_flist_entry() {
     ctx.file_list = vec![FileEntry::new_char_device("nulllike".into(), 0o600, 1, 3)].into();
 
     let mut writer = CapturingMsgInfoWriter;
-    ctx.create_specials(dest, None, &mut writer)
+    ctx.create_specials(dest, None, None, None, &mut writer)
         .expect("create_specials must succeed");
 
     let meta = std::fs::symlink_metadata(dest.join("nulllike"))
@@ -158,7 +158,7 @@ fn receiver_backs_up_existing_entry_before_creating_special() {
     ctx.file_list = vec![FileEntry::new_fifo("pipe".into(), 0o640)].into();
 
     let mut writer = CapturingMsgInfoWriter;
-    ctx.create_specials(dest, None, &mut writer)
+    ctx.create_specials(dest, None, None, None, &mut writer)
         .expect("create_specials must succeed");
 
     // The prior content is preserved under the default `~` suffix.
@@ -193,7 +193,7 @@ fn receiver_skips_fifo_without_specials_flag() {
     ctx.file_list = vec![FileEntry::new_fifo("pipe".into(), 0o640)].into();
 
     let mut writer = CapturingMsgInfoWriter;
-    ctx.create_specials(dest, None, &mut writer)
+    ctx.create_specials(dest, None, None, None, &mut writer)
         .expect("create_specials must succeed");
 
     assert!(
@@ -233,7 +233,7 @@ fn receiver_links_hardlinked_fifo_follower_instead_of_creating_it() {
     ctx.file_list = vec![leader, follower].into();
 
     let mut writer = CapturingMsgInfoWriter;
-    ctx.create_specials(dest, None, &mut writer)
+    ctx.create_specials(dest, None, None, None, &mut writer)
         .expect("create_specials must succeed");
 
     assert!(
@@ -257,5 +257,60 @@ fn receiver_links_hardlinked_fifo_follower_instead_of_creating_it() {
         ino("fifo"),
         ino("fifo-hl"),
         "the follower links to the leader"
+    );
+}
+
+/// A FIFOs ACL must land, the same as any other non-symlink entrys. The
+/// daemon receiver confines the apply beneath its module root, so the FIFO is
+/// pinned through an `O_NONBLOCK` fd; without the apply in the special-file
+/// pass the node was created with its mode and no ACL at all.
+///
+/// upstream: rsync.c:563-571,800 set_file_attrs() -> set_acl(), and
+/// acls.c:1315-1321 for the held-fd arm.
+#[cfg(all(target_os = "linux", feature = "acl"))]
+#[test]
+fn receiver_applies_the_acl_to_a_fifo_entry() {
+    use protocol::acl::{AclCache, IdAccess, RsyncAcl};
+    const MARKER_UID: u32 = 54_321;
+    const ACCESS_XATTR: &str = "system.posix_acl_access";
+    let has_access_acl = |path: &std::path::Path| {
+        rustix::fs::lgetxattr(path, ACCESS_XATTR, &mut [0u8; 256][..]).is_ok()
+    };
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+    let mut acl = RsyncAcl::from_mode(0o640);
+    acl.names.push(IdAccess::user(MARKER_UID, 0x04));
+    let mut cache = AclCache::new();
+    let ndx = cache.store_access(acl);
+
+    // Anti-vacuity: a filesystem that drops ACLs would pass the assertion
+    // below for an apply that never ran.
+    let probe = dest.join("probe");
+    std::fs::write(&probe, b"p").expect("write probe");
+    let stored =
+        metadata::apply_acls_from_cache(&probe, &cache, ndx, None, true, Some(0o640), None, None)
+            .is_ok()
+            && has_access_acl(&probe);
+    std::fs::remove_file(&probe).expect("remove probe");
+    if !stored {
+        eprintln!("skipping: the temp filesystem does not store POSIX ACLs");
+        return;
+    }
+
+    let mut config = special_receiver_config();
+    config.flags.acls = true;
+    let handshake = test_handshake();
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut fifo = FileEntry::new_fifo("pipe".into(), 0o640);
+    fifo.set_acl_ndx(ndx);
+    ctx.file_list = vec![fifo].into();
+    let mut writer = CapturingMsgInfoWriter;
+    ctx.create_specials(&dest, Some(&cache), None, None, &mut writer)
+        .expect("create_specials must succeed");
+
+    assert!(
+        has_access_acl(&dest.join("pipe")),
+        "the FIFO must carry its named-user ACL entry",
     );
 }
