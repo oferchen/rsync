@@ -49,7 +49,11 @@ const RECEIVERS: [Receiver; 3] = [Receiver::Local, Receiver::Push, Receiver::Pul
 /// would fall through to a stale binary.
 fn binary() -> PathBuf {
     let built = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
-    assert!(built.is_file(), "oc-rsync binary missing at {}", built.display());
+    assert!(
+        built.is_file(),
+        "oc-rsync binary missing at {}",
+        built.display()
+    );
     built
 }
 
@@ -114,20 +118,26 @@ fn command(
                 .arg(rsh_shim(base))
                 .arg(format!("--rsync-path={rsync_path}"));
             if matches!(receiver, Receiver::Push) {
-                cmd.arg(src).arg(format!("localhost:{}", base.join("dest/sub/").display()));
+                cmd.arg(src)
+                    .arg(format!("localhost:{}", base.join("dest/sub/").display()));
             } else {
                 cmd.arg(format!("localhost:{src}")).arg(dest);
             }
         }
     }
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     cmd
 }
 
 fn wait(mut child: std::process::Child) -> Output {
     let deadline = Instant::now() + RUN_TIMEOUT;
     while child.try_wait().expect("poll child").is_none() {
-        assert!(Instant::now() < deadline, "oc-rsync did not exit within {RUN_TIMEOUT:?}");
+        assert!(
+            Instant::now() < deadline,
+            "oc-rsync did not exit within {RUN_TIMEOUT:?}"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
     child.wait_with_output().expect("collect output")
@@ -196,7 +206,12 @@ fn assert_refused(receiver: Receiver, relative: bool) {
         return skip(&case);
     }
     let output = run(&mut command(receiver, &base, relative, &[], &[]));
-    assert_eq!(output.status.code(), Some(3), "{case}: {}", describe(&output));
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "{case}: {}",
+        describe(&output)
+    );
     // The walk prints its diagnostic in the receiving process. A `--server`
     // receiver's diagnostics are not yet relayed to the client (upstream sends
     // them as MSG_ERROR, log.c:357), so a push shows only the fatal error the
@@ -256,9 +271,24 @@ fn a_root_owned_destination_symlink_is_followed_by_every_receiver() {
 /// (d) `--insecure-links` on the receiving side restores the plain follow.
 #[test]
 fn insecure_links_follows_an_untrusted_destination_symlink() {
-    assert_followed(Receiver::Local, Some(UNTRUSTED_UID), &["--insecure-links"], &[]);
-    assert_followed(Receiver::Pull, Some(UNTRUSTED_UID), &["--insecure-links"], &[]);
-    assert_followed(Receiver::Push, Some(UNTRUSTED_UID), &[], &["--insecure-links"]);
+    assert_followed(
+        Receiver::Local,
+        Some(UNTRUSTED_UID),
+        &["--insecure-links"],
+        &[],
+    );
+    assert_followed(
+        Receiver::Pull,
+        Some(UNTRUSTED_UID),
+        &["--insecure-links"],
+        &[],
+    );
+    assert_followed(
+        Receiver::Push,
+        Some(UNTRUSTED_UID),
+        &[],
+        &["--insecure-links"],
+    );
 }
 
 /// (e) A real destination directory transfers, absolute and relative.
@@ -269,7 +299,11 @@ fn a_real_destination_directory_transfers_for_every_receiver() {
             let (_temp, base) = fixture(&[("f0", 64)]);
             fs::create_dir(base.join("dest/sub")).expect("mkdir dest/sub");
             let output = run(&mut command(receiver, &base, relative, &[], &[]));
-            assert!(output.status.success(), "{receiver:?}: {}", describe(&output));
+            assert!(
+                output.status.success(),
+                "{receiver:?}: {}",
+                describe(&output)
+            );
             assert_eq!(entries(&base.join("dest/sub")), ["f0"], "{receiver:?}");
         }
     }
@@ -315,7 +349,12 @@ fn assert_swap_after_entry_is_contained(receiver: Receiver) {
         entries(&base.join("outside")),
         describe(&output)
     );
-    assert_eq!(entries(&entered), ["a_big", "b_small"], "{receiver:?}: {}", describe(&output));
+    assert_eq!(
+        entries(&entered),
+        ["a_big", "b_small"],
+        "{receiver:?}: {}",
+        describe(&output)
+    );
     assert_eq!(
         fs::read(entered.join("a_big")).expect("read a_big").len(),
         BIG,
