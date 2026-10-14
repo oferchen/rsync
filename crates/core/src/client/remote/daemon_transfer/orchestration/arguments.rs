@@ -17,7 +17,7 @@ use crate::client::config::{
 use crate::client::error::{ClientError, socket_error};
 use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
 use crate::client::remote::flags;
-use crate::client::remote::output_option::{OutputWordKind, make_output_option};
+use crate::client::remote::output_option::make_output_option;
 
 /// Sends daemon-mode arguments to the server.
 ///
@@ -583,16 +583,10 @@ pub(super) fn build_full_daemon_args(
     }
 
     // upstream: options.c:3126-3130 server_options() - make_output_option()
-    // forwards the explicitly-set --info / --debug levels so the daemon peer's
-    // diagnostic output matches the client's request. `we_are_sender` (a push)
-    // selects the receiving half of the role `where` filter.
-    if let Some(arg) = make_output_option(OutputWordKind::Info, config.info_flags(), we_are_sender)
-    {
-        args.push(arg);
-    }
-    if let Some(arg) =
-        make_output_option(OutputWordKind::Debug, config.debug_flags(), we_are_sender)
-    {
+    // forwards the explicitly-set --info levels only; --debug is never sent.
+    // `we_are_sender` (a push) selects the receiving half of the role `where`
+    // filter.
+    if let Some(arg) = make_output_option(config.info_flags(), we_are_sender) {
         args.push(arg);
     }
 
@@ -1541,13 +1535,13 @@ mod server_option_fidelity_tests {
             .collect()
     }
 
-    // WHY: explicitly-set --info / --debug levels must reach the daemon peer so
-    // its diagnostic output matches the client's request (upstream
-    // make_output_option, options.c:3128). `del` is receiver-side, so it
-    // forwards on a push (`is_sender = false`, the daemon is the receiver);
-    // `send` is sender-side, so it forwards on a pull (`is_sender = true`).
+    // WHY: explicitly-set --info levels must reach the daemon peer so its
+    // diagnostic output matches the client's request, while --debug never
+    // does: server_options() calls make_output_option() for info_words only
+    // (upstream: options.c:3126-3130). `del` is receiver-side, so it forwards
+    // on a push (`is_sender = false`, the daemon is the receiver).
     #[test]
-    fn daemon_forwards_info_and_debug_when_set() {
+    fn daemon_forwards_info_but_never_debug() {
         use std::ffi::OsString;
         let config = ClientConfig::builder()
             .info_flags([OsString::from("del1")])
@@ -1561,10 +1555,12 @@ mod server_option_fidelity_tests {
         );
 
         let pull = args(&config, true);
-        assert!(
-            pull.iter().any(|a| a == "--debug=send"),
-            "pull must forward sender-side --debug=send: {pull:?}"
-        );
+        for argv in [&push, &pull] {
+            assert!(
+                !argv.iter().any(|a| a.starts_with("--debug")),
+                "--debug must never reach the daemon: {argv:?}"
+            );
+        }
 
         // Nothing set: no --info / --debug argument at all.
         let off = ClientConfig::builder().build();

@@ -348,36 +348,62 @@ pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
 /// A server does not print these itself: upstream's `rwrite()` hands them to
 /// `send_msg()` and returns (upstream: log.c:357-366), so the message travels
 /// as a `MSG_*` frame and the client renders it. Without this drain the events
-/// stay in the buffer and die with the thread, which is why a daemon receiver
-/// could degrade to unconfined path syscalls without the operator ever seeing
-/// the warning that says so.
+/// stay in the buffer and die with the thread.
 ///
-/// Takes exactly the codes upstream frames *unconditionally*:
+/// Takes every code upstream's stream switch lets through to that block:
 ///
-/// - `FERROR_XFER`, `FERROR`, `FWARNING` - reach the stream switch and set
-///   `f` (upstream: log.c:336-342), so the `am_server` block always runs.
-/// - `FERROR_SOCKET` and `FERROR_UTF8` normalise to `FERROR` first
-///   (upstream: log.c:303-308), so they belong to the same class.
+/// - `FERROR_XFER`, `FERROR`, `FWARNING` (upstream: log.c:336-342).
+/// - `FERROR_SOCKET` and `FERROR_UTF8`, which normalise to `FERROR` first
+///   (upstream: log.c:303-308).
+/// - `FINFO`, unless `--quiet` is in effect: its arm returns early under
+///   `quiet` (upstream: log.c:344-346), before the `send_msg()`. Every
+///   `--info` and `--debug` line is an `FINFO` upstream (`rprintf(FINFO, ...)`),
+///   and [`emit_debug`] tags debug traces with [`LogCode::Info`] for that
+///   reason, so a server's debug output reaches the client the same way.
 ///
-/// `FINFO` is deliberately excluded even though upstream does frame it. Its
-/// arm returns early under `quiet` (upstream: log.c:344-345), so forwarding it
-/// correctly needs the caller's quiet state, and `LogCode::Info` is also what
-/// [`emit_debug`] tags every debug trace with - draining it here would put the
-/// server's whole `--debug` output on the wire as a side effect of fixing a
-/// warning. `FLOG` is excluded because upstream returns before the switch
-/// (upstream: log.c:331-334); it belongs to [`drain_events_coded`].
+/// Under `--quiet` the `FINFO` events are discarded rather than left queued:
+/// upstream drops them at the same point, and a leftover would surface later
+/// through another drain. `FLOG` is excluded because upstream returns before
+/// the switch (upstream: log.c:331-334); it belongs to [`drain_events_coded`].
 /// upstream: log.c:357-366 rwrite() `if (am_server ...) send_msg(msg, ...)`
 pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
-    drain_events_where(|code| {
-        matches!(
-            code,
-            LogCode::ErrorXfer
-                | LogCode::Error
-                | LogCode::Warning
-                | LogCode::ErrorSocket
-                | LogCode::ErrorUtf8
-        )
-    })
+    let quiet = finfo_suppressed();
+    let mut events = drain_events_where(|code| is_error_class(code) || code == LogCode::Info);
+    if quiet {
+        events.retain(|event| event_code(event) != LogCode::Info);
+    }
+    events
+}
+
+/// Drain only the error and warning events, leaving `FINFO` and the rest.
+///
+/// The receiver uses this when it is the client (a pull): those codes go to
+/// its own stderr as they arise (upstream: log.c:336-342 picks stderr), while
+/// its `FINFO` output stays queued for the client's summary renderer.
+pub fn drain_error_events() -> Vec<DiagnosticEvent> {
+    drain_events_where(is_error_class)
+}
+
+/// The codes upstream's `rwrite()` sends to stderr (upstream: log.c:303-308,
+/// 336-342).
+fn is_error_class(code: LogCode) -> bool {
+    matches!(
+        code,
+        LogCode::ErrorXfer
+            | LogCode::Error
+            | LogCode::Warning
+            | LogCode::ErrorSocket
+            | LogCode::ErrorUtf8
+    )
+}
+
+/// The [`LogCode`] an event was emitted under.
+fn event_code(event: &DiagnosticEvent) -> LogCode {
+    match event {
+        DiagnosticEvent::Info { code, .. }
+        | DiagnosticEvent::Debug { code, .. }
+        | DiagnosticEvent::Bytes { code, .. } => *code,
+    }
 }
 
 /// Drain the events a daemon must write to its log file, leaving the rest.
@@ -409,6 +435,18 @@ pub fn apply_info_flag(token: &str) -> Result<(), String> {
     VERBOSITY.with(|v| v.borrow_mut().apply_info_flag(token))
 }
 
+/// Clamps the current thread's info and debug levels to what `level` `-v`
+/// flags would set, so explicitly requested levels cannot exceed the cap.
+/// A `level` above [`MAX_VERBOSITY`](crate::MAX_VERBOSITY) applies no limit.
+///
+/// upstream: options.c:546-572 limit_output_verbosity()
+pub fn limit_output_verbosity(level: u8) {
+    if level > crate::MAX_VERBOSITY {
+        return;
+    }
+    let limit = VerbosityConfig::from_verbose_level(level);
+    VERBOSITY.with(|v| v.borrow_mut().limit_to(&limit));
+}
 /// Apply a debug flag token to the current thread's configuration.
 ///
 /// Parses tokens like `"recv2"` or `"flist"` and updates the corresponding
@@ -789,5 +827,90 @@ mod tests {
         let config2 = VerbosityConfig::default();
         init(config2);
         assert!(!info_gte(InfoFlag::Copy, 1));
+    }
+
+    /// upstream: log.c:344-366 - a server frames FINFO (every --info/--debug
+    /// line) to the peer, so the peer drain takes it along with the error
+    /// class, in emission order.
+    #[test]
+    fn peer_drain_takes_finfo_and_errors_in_order() {
+        init(VerbosityConfig::default());
+        set_quiet(false);
+        let _ = drain_events();
+        emit_debug(DebugFlag::Recv, 1, "debug line".to_owned());
+        emit_warning("warn line".to_owned());
+        emit_info_coded(InfoFlag::Misc, 0, LogCode::Log, "log only".to_owned());
+        let texts: Vec<String> = drain_events_for_peer()
+            .into_iter()
+            .map(|event| match event {
+                DiagnosticEvent::Info { message, .. } | DiagnosticEvent::Debug { message, .. } => {
+                    message
+                }
+                DiagnosticEvent::Bytes { message, .. } => {
+                    String::from_utf8_lossy(&message).into_owned()
+                }
+            })
+            .collect();
+        assert_eq!(texts, ["debug line", "warn line"]);
+        assert_eq!(
+            drain_events_coded(LogCode::Log).len(),
+            1,
+            "FLOG stays for the log drain"
+        );
+    }
+
+    /// upstream: log.c:344-346 - `case FINFO: if (quiet) return;` runs before
+    /// the send, so a quiet server frames no FINFO, yet still frames errors.
+    #[test]
+    fn quiet_peer_drain_discards_finfo_but_keeps_errors() {
+        init(VerbosityConfig::default());
+        let _ = drain_events();
+        set_quiet(true);
+        emit_debug(DebugFlag::Recv, 1, "debug line".to_owned());
+        emit_warning("warn line".to_owned());
+        let events = drain_events_for_peer();
+        set_quiet(false);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(
+            drain_events().is_empty(),
+            "suppressed FINFO must not linger"
+        );
+    }
+
+    /// A client receiver keeps its FINFO for its own renderer and drains
+    /// only the error class.
+    #[test]
+    fn error_drain_leaves_finfo_queued() {
+        init(VerbosityConfig::default());
+        let _ = drain_events();
+        emit_debug(DebugFlag::Recv, 1, "debug line".to_owned());
+        emit_warning("warn line".to_owned());
+        assert_eq!(drain_error_events().len(), 1);
+        assert_eq!(drain_events().len(), 1, "the debug line is still queued");
+    }
+
+    /// upstream: options.c:546-572 - explicit levels above the cap's rows are
+    /// lowered per flag; levels already below stay; a level above
+    /// MAX_VERBOSITY applies no limit (options.c:551-552).
+    #[test]
+    fn limit_output_verbosity_caps_each_flag() {
+        init(VerbosityConfig::from_verbose_level(1));
+        apply_debug_flag("flist2").unwrap();
+        apply_debug_flag("recv3").unwrap();
+        limit_output_verbosity(3);
+        assert!(debug_gte(DebugFlag::Flist, 2), "row 3 holds FLIST2");
+        assert!(debug_gte(DebugFlag::Recv, 1) && !debug_gte(DebugFlag::Recv, 2));
+        limit_output_verbosity(1);
+        assert!(!debug_gte(DebugFlag::Flist, 1) && !debug_gte(DebugFlag::Recv, 1));
+        assert!(
+            info_gte(InfoFlag::Name, 1),
+            "row 1 info survives a cap of 1"
+        );
+
+        init(VerbosityConfig::default());
+        apply_debug_flag("flist4").unwrap();
+        limit_output_verbosity(crate::MAX_VERBOSITY + 1);
+        assert!(debug_gte(DebugFlag::Flist, 4));
+        init(VerbosityConfig::default());
     }
 }

@@ -73,6 +73,39 @@ pub enum DebugFlag {
     /// Windows IOCP dispatch and fallback (oc-specific).
     Iocp,
 }
+impl DebugFlag {
+    /// Every flag, in declaration order.
+    pub const ALL: [DebugFlag; 28] = [
+        DebugFlag::Acl,
+        DebugFlag::Backup,
+        DebugFlag::Bind,
+        DebugFlag::Chdir,
+        DebugFlag::Connect,
+        DebugFlag::Cmd,
+        DebugFlag::Del,
+        DebugFlag::Deltasum,
+        DebugFlag::Dup,
+        DebugFlag::Exit,
+        DebugFlag::Filter,
+        DebugFlag::Flist,
+        DebugFlag::Fuzzy,
+        DebugFlag::Genr,
+        DebugFlag::Hash,
+        DebugFlag::Hlink,
+        DebugFlag::Iconv,
+        DebugFlag::Io,
+        DebugFlag::Nstr,
+        DebugFlag::Own,
+        DebugFlag::Proto,
+        DebugFlag::Recv,
+        DebugFlag::Send,
+        DebugFlag::Time,
+        DebugFlag::Iouring,
+        DebugFlag::Clone,
+        DebugFlag::Sockopt,
+        DebugFlag::Iocp,
+    ];
+}
 
 /// Per-flag debug verbosity levels.
 ///

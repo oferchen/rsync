@@ -292,19 +292,19 @@ fn info_value_round_trips_for_a_role_surviving_category() {
 }
 
 #[test]
-fn debug_value_round_trips_for_a_role_surviving_category() {
-    // upstream: options.c:360 - the `io` debug category survives on a PULL and
-    // keeps its non-default level digit, emitting `--debug=io2`. The parser
-    // captures the whole value as one token.
+fn debug_value_is_never_forwarded_but_a_remote_option_debug_parses() {
+    // upstream: options.c:3126-3130 - server_options() builds `--info=` only;
+    // `--debug=` reaches a server solely through `-M--debug=X`, which the
+    // server parses like a user `--debug` arg (options.c:1888-1891).
     let config = ClientConfig::builder().debug_flags(["io2"]).build();
 
     let built = server_argv(&config, RemoteRole::Receiver, &["/remote/path"]);
-    let emitted = emitted_joined_value(&built, "--debug=");
-    assert_eq!(emitted, "io2", "io2 keeps its level digit on pull");
-    let long = parse_server_long_flags(&built[1..]);
-    assert_eq!(
-        long.debug,
-        vec![OsString::from(&emitted)],
-        "parsed --debug must equal the emitted value: {built:?}"
+    assert!(
+        !built
+            .iter()
+            .any(|arg| arg.to_string_lossy().starts_with("--debug")),
+        "the client must not forward --debug: {built:?}"
     );
+    let long = parse_server_long_flags(&[OsString::from("--debug=io2")]);
+    assert_eq!(long.debug, vec![OsString::from("io2")]);
 }
