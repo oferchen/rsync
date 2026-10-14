@@ -193,6 +193,7 @@ mod tests {
     use crate::config::ServerConfig;
     use crate::handshake::HandshakeResult;
     use crate::receiver::ReceiverContext;
+    use crate::receiver::ndx_stream::NdxStep;
     use crate::role::ServerRole;
 
     const PROTOCOL: u8 = 32;
@@ -850,6 +851,115 @@ mod tests {
                 "no entries may be appended when the header is rejected"
             );
         }
+    }
+
+    /// A sub-list marker after the sender's `NDX_DONE` has freed the only flist
+    /// is refused, whichever reader meets it.
+    ///
+    /// WHY: upstream `flist.c:3137-3148` refuses a sub-flist once the
+    /// `NDX_DONE` chain has freed every flist, because `dir_flist` then points
+    /// into a destroyed pool and accepting it was a use-after-free. oc keeps no
+    /// such pool but must refuse with the same text and `RERR_PROTOCOL`; the
+    /// upstream `proto-subflist-freed` cell greps the daemon log for it. The
+    /// marker can reach the lazy fetch (the receiver sink) or a phase-boundary
+    /// read (the list-less sink, which would otherwise report "Invalid file
+    /// index" and never name the cause).
+    #[test]
+    fn sublist_after_final_flist_freed_is_refused() {
+        let mut ndx_codec = create_ndx_codec(PROTOCOL);
+        let mut wire = Vec::new();
+        ndx_codec.write_ndx_done(&mut wire).unwrap();
+        wire.extend(encode_segment_with_dir_ndx(0, &[("d/a.txt", 1)]));
+        let assert_refused = |err: std::io::Error, ctx: &ReceiverContext| {
+            assert!(
+                err.get_ref()
+                    .and_then(|e| e.downcast_ref::<protocol::ProtocolViolation>())
+                    .is_some(),
+                "refusal must map to RERR_PROTOCOL, got {err:?}"
+            );
+            assert!(
+                err.to_string()
+                    .contains("refusing sub-flist after final flist was freed"),
+                "unexpected message: {err}"
+            );
+            assert_eq!(ctx.file_list().len(), 0, "nothing may be appended");
+        };
+
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active(["d"]);
+        let mut reader = Cursor::new(wire.clone());
+        let mut codec = create_ndx_codec(PROTOCOL);
+        assert_eq!(
+            ctx.read_next_frame(&mut reader, &mut codec).unwrap(),
+            NdxStep::Done
+        );
+        let err = ctx
+            .read_next_frame(&mut reader, &mut codec)
+            .expect_err("lazy fetch must refuse the sub-list");
+        assert_refused(err, &ctx);
+
+        // The live daemon path: the walk's fetch consumes the NDX_DONE as the
+        // end of the list, and the finalize handshake meets the marker.
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active(["d"]);
+        let mut reader = Cursor::new(wire);
+        let mut codec = create_ndx_codec(PROTOCOL);
+        assert!(!ctx.ensure_flat_idx(0, &mut reader, &mut codec).unwrap());
+        let err = ctx
+            .read_expected_ndx_done(&mut codec, &mut reader, "segment completion")
+            .expect_err("phase-boundary read must refuse the sub-list");
+        assert_refused(err, &ctx);
+    }
+
+    /// A sub-list that arrives while an earlier flist is still live is
+    /// accepted: one `NDX_DONE` frees only the oldest of two lists.
+    ///
+    /// WHY: upstream frees exactly one flist per `NDX_DONE`
+    /// (`receiver.c:858-864`) and refuses only once `first_flist` is NULL. A
+    /// guard that fired on any `NDX_DONE` would break every multi-segment
+    /// INC_RECURSE transfer, where the sender's echo of a mid-walk release
+    /// routinely precedes the next sub-list.
+    #[test]
+    fn sublist_while_an_earlier_flist_is_live_is_accepted() {
+        let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
+        let mut writer = FileListWriter::new(protocol);
+        let mut ndx_codec = create_ndx_codec(PROTOCOL);
+        let mut wire = Vec::new();
+        let file = |name: &str| FileEntry::new_file(PathBuf::from(name), 1, 0o100644);
+        append_segment(
+            &mut wire,
+            &mut writer,
+            &mut ndx_codec,
+            0,
+            &[file("d0/a.txt")],
+        );
+        ndx_codec.write_ndx_done(&mut wire).unwrap();
+        append_segment(
+            &mut wire,
+            &mut writer,
+            &mut ndx_codec,
+            1,
+            &[file("d1/b.txt")],
+        );
+        ndx_codec.write_ndx(&mut wire, NDX_FLIST_EOF).unwrap();
+
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active(["d0", "d1"]);
+        let mut reader = Cursor::new(wire);
+        let mut codec = create_ndx_codec(PROTOCOL);
+        let steps: Vec<NdxStep> = (0..4)
+            .map(|_| ctx.read_next_frame(&mut reader, &mut codec).unwrap())
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                NdxStep::Segment(0),
+                NdxStep::Done,
+                NdxStep::Segment(1),
+                NdxStep::FlistEof
+            ]
+        );
+        assert_eq!(ctx.file_list().len(), 2);
     }
 
     /// A second sub-list for a directory already served is a malicious duplicate.
