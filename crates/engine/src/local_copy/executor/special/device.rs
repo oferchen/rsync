@@ -263,6 +263,7 @@ pub(crate) fn copy_device(
                 source,
                 destination,
                 true,
+                Some(context.destination_root()),
             )?;
             context.record_hard_link(metadata, destination);
 
@@ -405,6 +406,7 @@ pub(crate) fn copy_device(
                 source,
                 destination,
                 true,
+                Some(context.destination_root()),
             )?;
 
             context.record_hard_link(metadata, destination);
@@ -509,6 +511,7 @@ pub(crate) fn copy_device(
             source,
             destination,
             true,
+            Some(context.destination_root()),
         )?;
 
         // Under fake-super, capture the would-be device's mode/uid/gid/rdev

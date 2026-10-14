@@ -73,6 +73,7 @@ pub fn apply_acls_from_cache(
     _follow_symlinks: bool,
     _mode: Option<u32>,
     _id_map: Option<&AclIdMapper>,
+    _confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     warn_acl_unsupported();
     Ok(())
@@ -156,7 +157,7 @@ mod tests {
     fn apply_acls_from_cache_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None, None);
+        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None, None, None);
         assert!(result.is_ok());
     }
 
@@ -164,7 +165,7 @@ mod tests {
     fn apply_acls_from_cache_with_default_ndx_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644), None);
+        let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644), None, None);
         assert!(result.is_ok());
     }
 

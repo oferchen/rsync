@@ -246,6 +246,25 @@ pub enum DestLeafKind {
     Directory,
 }
 
+/// What [`pin_dest_leaf_confined`] holds for the destination leaf.
+#[derive(Debug)]
+pub enum DestLeaf {
+    /// The leaf itself, opened `O_NOFOLLOW`: a regular file, directory or
+    /// FIFO.
+    Held(File),
+    /// A device or socket leaf, which is never opened: opening a device can
+    /// have side effects and a socket cannot be opened at all. The confined
+    /// parent directory and the leaf name are returned instead, so a
+    /// metadata write can still address the leaf without re-walking its
+    /// parents.
+    Parent {
+        /// The confined parent directory.
+        dir: File,
+        /// The leaf's name within `dir`.
+        leaf: std::ffi::OsString,
+    },
+}
+
 /// Pins the destination leaf `root`/`relative` with a confined,
 /// `O_NOFOLLOW` open so metadata writes can be driven off the returned fd
 /// instead of re-resolving the path.
@@ -278,8 +297,13 @@ pub enum DestLeafKind {
 /// - `ENOENT` when the leaf does not exist beneath `root`.
 /// - Any other I/O error from the underlying syscalls, forwarded verbatim.
 ///
+/// A device or socket leaf yields [`DestLeaf::Parent`] rather than an open,
+/// matching upstream, which pins only regular files, directories and FIFOs.
+///
 /// # Upstream Reference
 ///
+/// - `rsync-3.5.1/rsync.c:555-571` the held-fd pin, gated on
+///   `S_ISREG || S_ISDIR || S_ISFIFO`
 /// - `rsync-3.5.1/rsync.c:573-599` `set_file_attrs()`'s secure re-pin, and
 ///   the `xattr_refuse` fallback when the re-pin also fails
 /// - `rsync-3.5.1/xattrs.c:386-390` `fsetxattr` vs `lsetxattr` on `fd >= 0`
@@ -287,7 +311,7 @@ pub fn pin_dest_leaf_confined(
     root: &Path,
     relative: &Path,
     kind: DestLeafKind,
-) -> io::Result<File> {
+) -> io::Result<DestLeaf> {
     validate_relative(relative)?;
     imp::pin_dest_leaf_confined(root, relative, kind)
 }
@@ -443,7 +467,7 @@ mod imp {
         root: &Path,
         relative: &Path,
         kind: DestLeafKind,
-    ) -> io::Result<File> {
+    ) -> io::Result<DestLeaf> {
         // Deliberately the shared walk on every platform, with no `openat2`
         // fast path: `openat2_confined` is shaped around the source open's
         // read-a-regular-file semantics, and a second entry point into it
@@ -452,6 +476,28 @@ mod imp {
         // this is a once-per-file metadata pin, not the data path.
         let (_, dir, leaf) = split_leaf(relative)?;
         let parent = resolve_parent(root, dir)?;
+        // upstream: rsync.c:563-564 - only a regular file, directory or FIFO
+        // is opened. The type is read through the confined parent, so a flip
+        // after the walk cannot change which arm is taken.
+        let stat = rustix::fs::statat(
+            parent.root_dirfd(),
+            leaf,
+            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+        )
+        .map_err(io::Error::from)?;
+        let file_type = rustix::fs::FileType::from_raw_mode(stat.st_mode);
+        if matches!(
+            file_type,
+            rustix::fs::FileType::CharacterDevice
+                | rustix::fs::FileType::BlockDevice
+                | rustix::fs::FileType::Socket
+        ) {
+            let dir = File::from(parent.root_dirfd().try_clone_to_owned()?);
+            return Ok(DestLeaf::Parent {
+                dir,
+                leaf: leaf.to_os_string(),
+            });
+        }
         // upstream: rsync.c:596 - O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|
         // O_CLOEXEC, plus O_DIRECTORY for a directory leaf. O_NONBLOCK is
         // load-bearing: without it, pinning a FIFO blocks until a writer
@@ -462,7 +508,7 @@ mod imp {
         if kind == DestLeafKind::Directory {
             flags |= libc::O_DIRECTORY;
         }
-        openat(parent.root_dirfd(), leaf, flags, 0)
+        openat(parent.root_dirfd(), leaf, flags, 0).map(DestLeaf::Held)
     }
 
     pub(super) fn read_link_confined(
@@ -792,7 +838,7 @@ mod imp {
         _root: &Path,
         _relative: &Path,
         _kind: DestLeafKind,
-    ) -> io::Result<File> {
+    ) -> io::Result<DestLeaf> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "confined destination leaf pin is Unix-only (it exists for fd-based xattr/ACL writes)",
@@ -1292,8 +1338,12 @@ mod tests {
         std::fs::write(root.join("real/data"), b"payload").expect("write");
         symlink("real", root.join("sub")).expect("plant in-tree parent");
 
-        let file = pin_dest_leaf_confined(&root, Path::new("sub/data"), DestLeafKind::NonDirectory)
-            .expect("an in-tree relative parent symlink must still resolve");
+        let pinned =
+            pin_dest_leaf_confined(&root, Path::new("sub/data"), DestLeafKind::NonDirectory)
+                .expect("an in-tree relative parent symlink must still resolve");
+        let DestLeaf::Held(file) = pinned else {
+            panic!("a regular leaf must be held, got {pinned:?}");
+        };
         assert_eq!(read_to_string(file), "payload");
     }
 
@@ -1343,8 +1393,38 @@ mod tests {
         let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
         assert_eq!(rc, 0, "mkfifo: {}", io::Error::last_os_error());
 
-        pin_dest_leaf_confined(&root, Path::new("pipe"), DestLeafKind::NonDirectory)
+        let pinned = pin_dest_leaf_confined(&root, Path::new("pipe"), DestLeafKind::NonDirectory)
             .expect("a FIFO leaf must pin without waiting for a writer");
+        assert!(
+            matches!(pinned, DestLeaf::Held(_)),
+            "a FIFO is held like upstream's S_ISFIFO pin, got {pinned:?}"
+        );
+    }
+
+    /// A socket cannot be opened and a device must not be: upstream pins
+    /// neither (rsync.c:563-564). The pin hands back the confined parent and
+    /// the leaf name instead of attempting an open.
+    #[test]
+    fn a_socket_leaf_yields_its_parent_instead_of_an_open() {
+        let (_tmp, root, _outside) = dest_tree();
+        std::fs::create_dir(root.join("dir")).expect("mkdir dir");
+        let _listener =
+            std::os::unix::net::UnixListener::bind(root.join("dir/sock")).expect("bind socket");
+        let pinned =
+            pin_dest_leaf_confined(&root, Path::new("dir/sock"), DestLeafKind::NonDirectory)
+                .expect("a socket leaf must not be refused");
+        let DestLeaf::Parent { dir, leaf } = pinned else {
+            panic!("a socket must not be opened, got {pinned:?}");
+        };
+        assert_eq!(leaf, std::ffi::OsStr::new("sock"));
+        let held = dir.metadata().expect("stat parent");
+        let expected = std::fs::metadata(root.join("dir")).expect("stat dir");
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(
+            (held.dev(), held.ino()),
+            (expected.dev(), expected.ino()),
+            "the returned dirfd must be the leaf's in-tree parent"
+        );
     }
 
     /// Front-door validation is shared with the source open, so a `..` never

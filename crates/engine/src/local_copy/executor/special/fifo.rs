@@ -270,6 +270,7 @@ pub(crate) fn copy_fifo(
             source,
             destination,
             true,
+            Some(context.destination_root()),
         )?;
         context.record_hard_link(metadata, destination);
 
@@ -411,6 +412,7 @@ pub(crate) fn copy_fifo(
                 source,
                 destination,
                 true,
+                Some(context.destination_root()),
             )?;
 
             context.record_hard_link(metadata, destination);
@@ -532,6 +534,7 @@ pub(crate) fn copy_fifo(
         source,
         destination,
         true,
+        Some(context.destination_root()),
     )?;
 
     // Under fake-super, capture the would-be FIFO/socket's mode/uid/gid in

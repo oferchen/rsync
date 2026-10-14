@@ -150,6 +150,7 @@ pub(super) fn record_metadata_only_skip(
         source,
         destination,
         true,
+        Some(context.destination_root()),
     )?;
 
     context.record_hard_link(metadata, destination);

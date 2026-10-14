@@ -797,8 +797,17 @@ fn cross_device_copy_tier_backup_acl_cell(
     .into_iter()
     .collect();
     let ndx = cache.store_access(planted);
-    apply_acls_from_cache(&existing, &cache, ndx, None, true, Some(DEST_MODE), None)
-        .expect("plant pre-image ACL");
+    apply_acls_from_cache(
+        &existing,
+        &cache,
+        ndx,
+        None,
+        true,
+        Some(DEST_MODE),
+        None,
+        None,
+    )
+    .expect("plant pre-image ACL");
 
     // Anti-vacuity: on a filesystem that silently swallowed the ACL there is
     // nothing for the copy tier to carry, and the comparison below would match

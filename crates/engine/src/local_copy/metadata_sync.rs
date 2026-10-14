@@ -25,7 +25,7 @@ use ::filters::XattrSide;
 use ::metadata::XattrSyncFilters;
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
-use ::metadata::{sync_acls, sync_acls_via_fake_super};
+use ::metadata::{sync_acls_confined, sync_acls_via_fake_super};
 
 #[cfg(all(unix, feature = "xattr"))]
 use ::metadata::sync_xattrs;
@@ -206,13 +206,17 @@ pub(crate) fn sync_acls_if_requested(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
+    confine_root: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     if preserve_acls && !mode.is_dry_run() {
         if fake_super {
             sync_acls_via_fake_super(source, destination, follow_symlinks)
                 .map_err(map_metadata_error)?;
         } else {
-            sync_acls(source, destination, follow_symlinks).map_err(map_metadata_error)?;
+            // upstream: rsync.c:555-599,800 - the receiver half of a local copy
+            // applies the ACL through the confined leaf pin.
+            sync_acls_confined(source, destination, follow_symlinks, confine_root)
+                .map_err(map_metadata_error)?;
         }
     }
     Ok(())

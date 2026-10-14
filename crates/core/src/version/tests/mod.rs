@@ -7,6 +7,7 @@ mod compiled_features;
 mod compiled_features_display;
 mod compiled_features_iter;
 mod compiled_features_static;
+mod golden;
 mod metadata;
 mod report;
 mod secluded_args;

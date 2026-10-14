@@ -613,6 +613,10 @@ impl<'a> DestinationXattrs<'a> {
     fn write(&self, name: &[u8], value: &[u8]) -> Result<(), MetadataError> {
         match &self.sink {
             DestPin::Path => write_attribute(self.path, name, value, self.follow_symlinks),
+            // upstream: rsync.c:563-571 - a device or socket holds no fd, and
+            // set_xattr() falls back to the path.
+            #[cfg(unix)]
+            DestPin::Parent { .. } => write_attribute(self.path, name, value, self.follow_symlinks),
             #[cfg(unix)]
             DestPin::Pinned(file) => crate::xattr_unix::write_attribute_at(file, name, value)
                 .map_err(|error| map_xattr_error("write extended attribute", self.path, error)),
@@ -626,6 +630,8 @@ impl<'a> DestinationXattrs<'a> {
     fn remove(&self, name: &[u8]) -> Result<(), MetadataError> {
         match &self.sink {
             DestPin::Path => remove_attribute(self.path, name, self.follow_symlinks),
+            #[cfg(unix)]
+            DestPin::Parent { .. } => remove_attribute(self.path, name, self.follow_symlinks),
             #[cfg(unix)]
             DestPin::Pinned(file) => crate::xattr_unix::remove_attribute_at(file, name)
                 .map_err(|error| map_xattr_error("remove extended attribute", self.path, error)),

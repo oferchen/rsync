@@ -208,21 +208,22 @@ fn receiver_working_directory(dest: &Path) -> PathBuf {
 /// (with upstream's actionable diagnostic) instead of being followed out of
 /// the tree. `--insecure-links` restores the plain `chdir`.
 ///
+/// The walked descriptor is then pinned as the destination root, so every
+/// later open of the root lands in the directory the walk accepted, as
+/// upstream's `fchdir()` does, even if the path is swapped afterwards.
+///
 /// upstream: `rsync-3.5.1/util1.c:1363-1392` (absolute) and `:1456-1467`
 /// (relative, resolved as `curr_dir/dir`) - `open_no_attacker_symlinks_dirfd()`
 /// for a non-daemon receiver; `rsync-3.5.1/main.c:778-781` reports
 /// `change_dir#1` and exits `RERR_FILESELECT` when it fails.
 #[cfg(unix)]
 fn resolve_destination_like_change_dir(dest: &Path) -> Result<(), ClientError> {
-    if fast_io::confinement::session_optout_allowed() {
+    fast_io::confinement::clear_destination_root();
+    if fast_io::confinement::session_optout_allowed() || !dest.is_dir() {
         return Ok(());
     }
-    let absolute = std::env::current_dir()
-        .map(|cwd| cwd.join(dest))
-        .unwrap_or_else(|_| dest.to_path_buf());
-    let trimmed: PathBuf = absolute.components().collect();
-    fast_io::operator_open_dir(&trimmed)
-        .map(drop)
+    fast_io::operator_open_destination(dest)
+        .and_then(|anchor| fast_io::confinement::pin_destination_root(dest, anchor))
         .map_err(|error| super::error::destination_access_error(dest, error))
 }
 
@@ -518,9 +519,7 @@ fn run_client_internal(
         }
     }
     #[cfg(unix)]
-    if plan.destination().is_dir() {
-        resolve_destination_like_change_dir(plan.destination())?;
-    }
+    resolve_destination_like_change_dir(plan.destination())?;
 
     // upstream: main.c:1259 / main.c:1442 call `check_alt_basis_dirs()` once the
     // destination is known, so a stale `--link-dest` is reported rather than

@@ -661,6 +661,7 @@ impl ReceiverContext {
                     acl_cache_clone.as_ref(),
                     acl_id_map_clone.as_ref(),
                     true, // directories always follow symlinks
+                    Some(dest_root.as_path()),
                 ) {
                     return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                 }
@@ -1159,8 +1160,14 @@ impl ReceiverContext {
             }
         }
 
-        if let Err(e) = apply_acls_from_receiver_cache(dir_path, entry, acl_cache, acl_id_map, true)
-            && self.config.flags.verbose
+        if let Err(e) = apply_acls_from_receiver_cache(
+            dir_path,
+            entry,
+            acl_cache,
+            acl_id_map,
+            true,
+            Some(dest_dir),
+        ) && self.config.flags.verbose
             && self.config.connection.client_mode
         {
             info_log!(

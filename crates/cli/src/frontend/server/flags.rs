@@ -172,6 +172,12 @@ pub(super) struct ServerLongFlags {
     /// popt entry), :2391-2408 (validation), syscall.c:163
     /// `confinement_root()` - `am_daemon ? module_dir : confine_root`.
     pub(super) confine_root: Option<String>,
+    /// `--insecure-links`, which upstream never forwards: an operator gives it
+    /// to a remote-shell server through `--rsync-path`.
+    ///
+    /// upstream: options.c:697-698 (the popt entries), :3077-3080 (not
+    /// forwarded by `server_options()`).
+    pub(super) insecure_links: bool,
     pub(super) from0: bool,
     pub(super) inplace: bool,
     /// Append data onto shorter destination files (upstream: `--append`).
@@ -568,6 +574,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         stop_after: None,
         files_from: None,
         confine_root: None,
+        insecure_links: false,
         from0: false,
         inplace: false,
         append: false,
@@ -800,6 +807,8 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // long flag; the receiving side's generator consumes it
             // (generator.c:1951).
             "--safe-links" => flags.safe_links = true,
+            "--insecure-links" => flags.insecure_links = true,
+            "--no-insecure-links" => flags.insecure_links = false,
             // upstream: options.c:3032-3033 - --stats forwarded by server_options()
             // when do_stats was set. In oc the flag also drives NDX_DEL_STATS in the
             // goodbye phase; upstream keys that on delete_mode (generator.c:2868).
@@ -1127,6 +1136,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--remove-sent-files"
             | "--copy-unsafe-links"
             | "--safe-links"
+            | "--insecure-links"
+            | "--no-insecure-links"
             | "--stats"
             | "--ignore-existing"
             | "--existing"

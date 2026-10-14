@@ -27,13 +27,19 @@ use std::path::Path;
 #[cfg(unix)]
 use logging::info_log;
 #[cfg(unix)]
-use metadata::{MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts};
+use metadata::{
+    AclIdMapper, MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts,
+};
+#[cfg(unix)]
+use protocol::acl::AclCache;
 #[cfg(unix)]
 use protocol::flist::{FileEntry, FileType};
 
 #[cfg(unix)]
 use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
+#[cfg(unix)]
+use crate::receiver::apply_acls_from_receiver_cache;
 #[cfg(unix)]
 use crate::receiver::directory::obstacle::MakeWayFor;
 
@@ -59,12 +65,18 @@ impl ReceiverContext {
     pub(in crate::receiver) fn create_specials<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
+        #[cfg(unix)] acl_cache: Option<&AclCache>,
+        #[cfg(unix)] acl_id_map: Option<&AclIdMapper>,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) -> std::io::Result<()> {
         self.create_specials_in_range(
             0..self.file_list.len(),
             dest_dir,
+            #[cfg(unix)]
+            acl_cache,
+            #[cfg(unix)]
+            acl_id_map,
             #[cfg(unix)]
             sandbox,
             writer,
@@ -82,6 +94,8 @@ impl ReceiverContext {
         &self,
         range: std::ops::Range<usize>,
         dest_dir: &Path,
+        acl_cache: Option<&AclCache>,
+        acl_id_map: Option<&AclIdMapper>,
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) -> std::io::Result<()> {
@@ -351,6 +365,20 @@ impl ReceiverContext {
             // upstream: rsync.c:set_file_attrs() - a failed chown/utimes/chmod
             // is rsyserr(FERROR_XFER), so the run ends RERR_PARTIAL (23).
             if let Err(error) = apply_metadata_from_file_entry(&node_path, entry, &options) {
+                let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
+            }
+            // upstream: rsync.c:800 set_file_attrs() -> set_acl() for every
+            // non-symlink entry, devices and specials included; a FIFO is
+            // pinned with O_NONBLOCK and a device or socket is addressed
+            // through its parent (rsync.c:563-571, acls.c:1315-1321).
+            if let Err(error) = apply_acls_from_receiver_cache(
+                &node_path,
+                entry,
+                acl_cache,
+                acl_id_map,
+                true,
+                Some(dest_dir),
+            ) {
                 let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
             }
 

@@ -367,10 +367,23 @@ where
     // instead (`install_daemon_session`), matching upstream's
     // `am_daemon ? module_dir : confine_root`.
     //
-    // The server has no `--insecure-links`: leaving the opt-out off is
-    // upstream's default (`options.c:134`) and keeps the confinement engaged.
+    // `--insecure-links` reaches a server only through the operator's own
+    // `--rsync-path`; absent, the opt-out stays off, upstream's default
+    // (`options.c:134`).
+    //
+    // upstream: options.c:2400-2405 - the opt-out short-circuits the walk that
+    // enforces `--confine-root`, so the pair is refused rather than silently
+    // meaning no confinement.
+    if long_flags.insecure_links && config.connection.confine_root.is_some() {
+        write_server_error(
+            stderr,
+            program_brand,
+            "--insecure-links cannot be combined with --confine-root",
+        );
+        return 1;
+    }
     fast_io::confinement::install_local_session(
-        fast_io::confinement::LocalInsecureLinks::from_local_flag(false),
+        fast_io::confinement::LocalInsecureLinks::from_local_flag(long_flags.insecure_links),
         config.connection.confine_root.clone(),
     );
     config.file_selection.from0 = long_flags.from0;

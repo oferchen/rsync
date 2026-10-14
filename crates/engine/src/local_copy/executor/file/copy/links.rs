@@ -276,6 +276,7 @@ pub(super) fn process_links(
                 source,
                 destination,
                 true,
+                Some(context.destination_root()),
             )?;
         }
         return Ok(LinkOutcome {
@@ -319,6 +320,7 @@ pub(super) fn process_links(
                 source,
                 destination,
                 true,
+                Some(context.destination_root()),
             )?;
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_regular_file_matched();
@@ -812,6 +814,7 @@ pub(super) fn process_links(
                             source,
                             destination,
                             true,
+                            Some(context.destination_root()),
                         )?;
                     }
                     // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)

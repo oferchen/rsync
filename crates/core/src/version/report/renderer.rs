@@ -234,14 +234,21 @@ impl VersionInfoReport {
         writeln!(writer, "io_uring: {detail}")
     }
 
-    /// Internal helper for the GPL footer. Single fmt call, no allocations.
+    /// Writes the warranty notice with this binary's program name.
+    ///
+    /// upstream: usage.c:337-339 - three lines, two spaces after each full
+    /// stop, and the "Licence" spelling.
     fn write_gpl_footer<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         let program_name = self.metadata.program_name();
-
         writeln!(
             writer,
-            "{program_name} comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details."
-        )
+            "{program_name} comes with ABSOLUTELY NO WARRANTY.  This is free software, and you"
+        )?;
+        writeln!(
+            writer,
+            "are welcome to redistribute it under certain conditions.  See the GNU"
+        )?;
+        writeln!(writer, "General Public Licence for details.")
     }
 
     /// Returns the rendered report as an owned string.
@@ -310,44 +317,27 @@ impl VersionInfoReport {
 
     /// Writes JSON capability/optimization sections mirroring upstream's
     /// `print_info_flags(FNONE)`.
-    /// upstream: usage.c:38-239 `print_info_flags()` with as_json=true
+    ///
+    /// upstream: usage.c:222-238 - each section opens on its own line with
+    /// its first letter lowered, the previous one closes with `  }`, and the
+    /// entries are packed by the same line buffer as the text report.
     fn write_json_info_sections<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
-        let items = self.info_items();
         let mut in_section = false;
-
-        for (idx, item) in items.iter().enumerate() {
-            match item {
-                InfoItem::Section(name) => {
-                    // Close previous section if open.
-                    if in_section {
-                        write!(writer, "\n  }}")?;
-                    }
-                    // Lowercase first char, keep the rest as-is.
-                    // upstream: usage.c:229 - toLower(str+1) for first char
-                    let mut chars = name.chars();
-                    if let Some(first) = chars.next() {
-                        write!(
-                            writer,
-                            ",\n  \"{}{}\"",
-                            first.to_lowercase(),
-                            &name[first.len_utf8()..]
-                        )?;
-                    }
-                    write!(writer, ": {{")?;
-                    in_section = true;
-                }
-                InfoItem::Entry(text) => {
-                    let is_last_in_section =
-                        matches!(items.get(idx + 1), None | Some(InfoItem::Section(_)));
-
-                    write_json_entry(writer, text, !is_last_in_section)?;
-                }
+        self.write_wrapped_info(writer, json_entry, |writer, name| {
+            if in_section {
+                writer.write_str("  }")?;
             }
-        }
-
-        // Close final section.
+            in_section = true;
+            let mut chars = name.chars();
+            let first = chars.next().map(|c| c.to_ascii_lowercase());
+            write!(writer, ",\n  \"")?;
+            if let Some(first) = first {
+                writer.write_char(first)?;
+            }
+            writeln!(writer, "{}\": {{", chars.as_str())
+        })?;
         if in_section {
-            write!(writer, "\n  }}")?;
+            writer.write_str("  }")?;
         }
         Ok(())
     }
@@ -380,9 +370,33 @@ impl VersionInfoReport {
     }
 
     fn write_info_sections<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        self.write_wrapped_info(writer, text_entry, |writer, name| {
+            writeln!(writer, "{name}:")
+        })
+    }
+
+    /// Packs the info items into indented lines the way upstream does.
+    ///
+    /// Each formatted entry is appended to a 75-byte line buffer, which is
+    /// flushed with a three-space indent when the next entry would not fit,
+    /// before every section header and at the end. Both the text and the JSON
+    /// report go through this one loop, as they do upstream.
+    ///
+    /// upstream: usage.c:189-235 - print_info_flags() line_buf loop
+    fn write_wrapped_info<W, F, H>(
+        &self,
+        writer: &mut W,
+        format_entry: F,
+        mut write_section: H,
+    ) -> fmt::Result
+    where
+        W: FmtWrite,
+        F: Fn(&str, bool) -> String,
+        H: FnMut(&mut W, &str) -> fmt::Result,
+    {
+        const LINE_BUF_LEN: usize = 75;
         let mut buffer = String::new();
         let mut items = self.info_items().into_iter().peekable();
-
         while let Some(item) = items.next() {
             match item {
                 InfoItem::Section(name) => {
@@ -390,31 +404,22 @@ impl VersionInfoReport {
                         writeln!(writer, "   {buffer}")?;
                         buffer.clear();
                     }
-                    writeln!(writer, "{name}:")?;
+                    write_section(writer, name)?;
                 }
                 InfoItem::Entry(text) => {
                     let needs_comma = matches!(items.peek(), Some(InfoItem::Entry(_)));
-                    let mut formatted = String::with_capacity(text.len() + 3);
-                    formatted.push(' ');
-                    formatted.push_str(text.as_ref());
-                    if needs_comma {
-                        formatted.push(',');
-                    }
-
-                    if !buffer.is_empty() && buffer.len() + formatted.len() >= 75 {
+                    let formatted = format_entry(&text, needs_comma);
+                    if !buffer.is_empty() && buffer.len() + formatted.len() >= LINE_BUF_LEN {
                         writeln!(writer, "   {buffer}")?;
                         buffer.clear();
                     }
-
                     buffer.push_str(&formatted);
                 }
             }
         }
-
         if !buffer.is_empty() {
             writeln!(writer, "   {buffer}")?;
         }
-
         Ok(())
     }
 
@@ -469,6 +474,11 @@ impl VersionInfoReport {
         items.push(capability_entry("inplace", config.supports_inplace));
         items.push(capability_entry("append", config.supports_append));
         items.push(capability_entry("ACLs", config.supports_acls));
+        // upstream: usage.c:110-125 - only a SUPPORT_ACL_FD build (Linux with
+        // POSIX ACLs) prints this token, as `ACL-at` or `no ACL-at`.
+        if cfg!(target_os = "linux") && config.supports_acls {
+            items.push(capability_entry("ACL-at", config.supports_acl_at));
+        }
         items.push(capability_entry("xattrs", config.supports_xattrs));
         items.push(InfoItem::Entry(Cow::Borrowed(
             config.secluded_args_mode.label(),
@@ -518,6 +528,9 @@ pub(crate) fn default_checksum_algorithms() -> Vec<Cow<'static, str>> {
         Cow::Borrowed("md5"),
         Cow::Borrowed("md4"),
         Cow::Borrowed("sha1"),
+        // upstream: compat.c:477-478 - get_default_nno_list() with a dup
+        // markup keeps the num-0 "none" entry, so both lists end with it.
+        Cow::Borrowed("none"),
     ]
 }
 
@@ -536,6 +549,7 @@ pub(crate) fn default_compress_algorithms() -> Vec<Cow<'static, str>> {
 
     algorithms.push(Cow::Borrowed("zlibx"));
     algorithms.push(Cow::Borrowed("zlib"));
+    algorithms.push(Cow::Borrowed("none"));
     algorithms
 }
 
@@ -628,6 +642,15 @@ fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
     }
 }
 
+/// Formats a text-report entry: a leading space, plus a comma when another
+/// entry of the same section follows.
+///
+/// upstream: usage.c:212-213 - `" %s%s"` with `need_comma`
+fn text_entry(text: &str, needs_comma: bool) -> String {
+    let comma = if needs_comma { "," } else { "" };
+    format!(" {text}{comma}")
+}
+
 /// Converts a human-readable info entry into its JSON key-value representation.
 ///
 /// Mirrors upstream `print_info_flags` JSON branch (usage.c:195-211):
@@ -637,24 +660,16 @@ fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
 /// - `"optional secluded-args"` -> `"secluded_args": "optional"`
 ///
 /// upstream: usage.c:195-211 - JSON entry formatting in `print_info_flags()`
-fn write_json_entry<W: FmtWrite>(writer: &mut W, text: &str, needs_comma: bool) -> fmt::Result {
+fn json_entry(text: &str, needs_comma: bool) -> String {
     let comma = if needs_comma { "," } else { "" };
-
     if let Some(space_pos) = text.find(' ') {
         let prefix = &text[..space_pos];
         let suffix = &text[space_pos + 1..];
-
         if prefix == "no" {
-            // "no crtimes" -> "crtimes": false
             let key = json_key(suffix);
-            write!(writer, "\n    \"{key}\": false{comma}")
+            format!(" \"{key}\": false{comma}")
         } else if prefix.starts_with(|c: char| c.is_ascii_digit()) {
-            // "64-bit files" -> "file_bits": 64
-            let val = if let Some(dash) = prefix.find('-') {
-                &prefix[..dash]
-            } else {
-                prefix
-            };
+            let val = prefix.find('-').map_or(prefix, |dash| &prefix[..dash]);
             // Item is the word after space; drop trailing 's' and append "_bits"
             let mut key = String::from(suffix);
             if key.ends_with('s') {
@@ -662,16 +677,14 @@ fn write_json_entry<W: FmtWrite>(writer: &mut W, text: &str, needs_comma: bool) 
             }
             key.push_str("_bits");
             let key = json_key(&key);
-            write!(writer, "\n    \"{key}\": {val}{comma}")
+            format!(" \"{key}\": {val}{comma}")
         } else {
-            // "optional secluded-args" -> "secluded_args": "optional"
             let key = json_key(suffix);
-            write!(writer, "\n    \"{key}\": \"{prefix}\"{comma}")
+            format!(" \"{key}\": \"{prefix}\"{comma}")
         }
     } else {
-        // Simple boolean: "crtimes" -> "crtimes": true
         let key = json_key(text);
-        write!(writer, "\n    \"{key}\": true{comma}")
+        format!(" \"{key}\": true{comma}")
     }
 }
 
@@ -880,7 +893,7 @@ mod tests {
         let report = VersionInfoReport::default();
         let output = report.human_readable();
         assert!(output.contains("ABSOLUTELY NO WARRANTY"));
-        assert!(output.contains("GNU General Public License"));
+        assert!(output.contains("General Public Licence for details."));
     }
 
     #[test]
@@ -896,21 +909,9 @@ mod tests {
     }
 
     #[test]
-    fn default_checksum_algorithms_excludes_none() {
-        let algorithms = default_checksum_algorithms();
-        assert!(!algorithms.iter().any(|a| a == "none"));
-    }
-
-    #[test]
     fn default_compress_algorithms_includes_zlib() {
         let algorithms = default_compress_algorithms();
         assert!(algorithms.iter().any(|a| a == "zlib"));
-    }
-
-    #[test]
-    fn default_compress_algorithms_excludes_none() {
-        let algorithms = default_compress_algorithms();
-        assert!(!algorithms.iter().any(|a| a == "none"));
     }
 
     #[test]

@@ -107,8 +107,15 @@ pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
 ///
 /// upstream: `syscall.c:102-107` `open_anchor_dirfd()` - `dup(module_dirfd)`
 /// under exactly this condition, plain `openat(AT_FDCWD, ...)` otherwise.
+///
+/// The receiver's pinned destination
+/// ([`pin_destination_root`](crate::confinement::pin_destination_root)) is
+/// answered the same way: upstream reaches it as the cwd it `fchdir`ed into,
+/// never by re-resolving the path.
 pub fn open_trusted_dir(path: &Path) -> io::Result<OwnedFd> {
-    if let Some(pinned) = crate::confinement::pinned_root_fd_for(path) {
+    if let Some(pinned) = crate::confinement::pinned_root_fd_for(path)
+        .or_else(|| crate::confinement::pinned_destination_root_for(path))
+    {
         use std::os::fd::AsFd;
         return pinned.as_fd().try_clone_to_owned();
     }

@@ -1307,6 +1307,32 @@ pub fn operator_open_dir(path: &Path) -> io::Result<OwnedFd> {
     )
 }
 
+/// Open the destination a non-daemon receiver enters, through the ownership
+/// walk.
+///
+/// A relative destination is resolved against the current directory, as
+/// upstream resolves it against `curr_dir`, and trailing separators are
+/// stripped first: `name/` always follows a final symlink, so the walk has to
+/// see the bare name to judge it. The walk never consults a pinned
+/// destination - this is what produces the pin.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/util1.c:1363-1393` `change_dir()` - the absolute arm, which
+///   strips trailing slashes before `open_no_attacker_symlinks_dirfd()`.
+/// - `rsync-3.5.1/util1.c:1450-1466` - the relative arm, which walks
+///   `curr_dir`.
+///
+/// # Errors
+///
+/// See [`operator_open_dir`].
+pub fn operator_open_destination(dest: &Path) -> io::Result<OwnedFd> {
+    let absolute = std::env::current_dir()
+        .map(|cwd| cwd.join(dest))
+        .unwrap_or_else(|_| dest.to_path_buf());
+    let trimmed: std::path::PathBuf = absolute.components().collect();
+    operator_open_dir(&trimmed)
+}
 /// Open an operator-supplied path read-only through the ownership walk.
 ///
 /// The read-side counterpart for the operator paths rsync only consumes -

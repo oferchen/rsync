@@ -89,7 +89,7 @@ fn create_non_regular(ctx: &ReceiverContext, dest: &Path) -> Vec<String> {
     .expect("create_directories");
     ctx.create_symlinks(dest, None, &mut writer)
         .expect("create_symlinks");
-    ctx.create_specials(dest, None, &mut writer)
+    ctx.create_specials(dest, None, None, None, &mut writer)
         .expect("create_specials");
     let mut lines = writer.lines;
     lines.sort();

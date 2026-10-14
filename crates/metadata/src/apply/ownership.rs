@@ -255,29 +255,63 @@ fn post_chown_bookkeeping(
 /// The effective-gid check uses `nix` (libc `getegid`) so the identity matches
 /// upstream's libc-based checks; this fallback is never reached under fakeroot,
 /// where `gate_preserved_group` short-circuits on the faked-root euid.
+///
+/// A failing `getgroups` falls back to the effective gid alone, as upstream
+/// does (`ngroups = 0`, uidlist.c:202-203), but is reported once on stderr: a
+/// denied call (for example by a seccomp allowlist) would otherwise turn every
+/// supplementary-group chown into a silent skip.
 #[cfg(unix)]
-#[allow(unsafe_code)]
 pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
     if crate::identity::effective_gid() == gid.as_raw() {
         return true;
     }
-    let target = gid.as_raw();
+    match supplementary_groups() {
+        Ok(groups) => groups.contains(&gid.as_raw()),
+        Err(err) => {
+            warn_getgroups_failed(&err);
+            false
+        }
+    }
+}
+
+/// Returns the supplementary group list through the two-call `getgroups`
+/// protocol: a size probe, then a fill. upstream: uidlist.c:202-206.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn supplementary_groups() -> io::Result<Vec<libc::gid_t>> {
     // SAFETY: the first call passes a NULL buffer with size 0 to learn the
     // supplementary-group count; the second fills an exactly-sized buffer.
     // Both are standard POSIX `getgroups` invocations with no aliasing.
     // (`nix::unistd::getgroups` is unavailable on Apple targets, so the libc
     // symbol is used directly for cross-platform support.)
     let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
-    if count <= 0 {
-        return false;
+    if count < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if count == 0 {
+        return Ok(Vec::new());
     }
     let mut groups = vec![0 as libc::gid_t; count as usize];
     // SAFETY: `groups` is sized to `count`, matching the value just returned.
     let filled = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
     if filled < 0 {
-        return false;
+        return Err(io::Error::last_os_error());
     }
-    groups[..filled as usize].contains(&target)
+    groups.truncate(filled as usize);
+    Ok(groups)
+}
+
+/// Reports a `getgroups` failure once per process, so the fallback does not
+/// repeat the line for every file.
+#[cfg(unix)]
+fn warn_getgroups_failed(err: &io::Error) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| eprintln!("{}", getgroups_failed_message(err)));
+}
+
+#[cfg(unix)]
+fn getgroups_failed_message(err: &io::Error) -> String {
+    format!("getgroups failed: {err}; group membership limited to the effective gid")
 }
 
 /// Gates a resolved owner UID against process privilege, whether it came from
@@ -1260,6 +1294,28 @@ mod post_chown_tests {
             impossible_id_message("gid", Path::new("/tmp/x")),
             "gid 4294967295 (-1) is impossible to set on \"/tmp/x\""
         );
+    }
+    #[test]
+    fn supplementary_groups_reports_the_kernel_group_list() {
+        // The membership gate must see exactly the kernel's list: a short or
+        // empty read would skip every supplementary-group chown.
+        let mut ours = supplementary_groups().expect("getgroups must succeed");
+        let mut kernel: Vec<u32> = rustix::process::getgroups()
+            .expect("rustix getgroups")
+            .into_iter()
+            .map(|gid| gid.as_raw())
+            .collect();
+        ours.sort_unstable();
+        kernel.sort_unstable();
+        assert_eq!(ours, kernel);
+    }
+    #[test]
+    fn getgroups_failure_message_names_the_error_and_the_fallback() {
+        let err = io::Error::from_raw_os_error(libc::EPERM);
+        let message = getgroups_failed_message(&err);
+        assert!(message.starts_with("getgroups failed: "), "{message}");
+        assert!(message.contains(&err.to_string()), "{message}");
+        assert!(message.ends_with("group membership limited to the effective gid"));
     }
 
     #[test]

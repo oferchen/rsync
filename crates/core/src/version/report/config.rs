@@ -41,6 +41,9 @@ pub struct VersionInfoConfig {
     pub supports_append: bool,
     /// Whether POSIX ACL propagation is implemented.
     pub supports_acls: bool,
+    /// Whether received ACLs are applied race-safely through a pinned parent
+    /// directory fd (upstream's `ACL-at`).
+    pub supports_acl_at: bool,
     /// Whether extended attribute propagation is implemented.
     pub supports_xattrs: bool,
     /// How secluded-argument support is advertised.
@@ -94,6 +97,7 @@ impl VersionInfoConfig {
             supports_inplace: true,
             supports_append: true,
             supports_acls: cfg!(feature = "acl"),
+            supports_acl_at: ::metadata::ACL_APPLY_IS_FD_PINNED,
             supports_xattrs: cfg!(feature = "xattr"),
             secluded_args_mode: SecludedArgsMode::Optional,
             supports_iconv: cfg!(feature = "iconv"),
@@ -194,6 +198,7 @@ pub struct VersionInfoConfigBuilder {
     supports_inplace: bool,
     supports_append: bool,
     supports_acls: bool,
+    supports_acl_at: bool,
     supports_xattrs: bool,
     secluded_args_mode: SecludedArgsMode,
     supports_iconv: bool,
@@ -230,6 +235,7 @@ impl VersionInfoConfigBuilder {
             supports_inplace: config.supports_inplace,
             supports_append: config.supports_append,
             supports_acls: config.supports_acls,
+            supports_acl_at: config.supports_acl_at,
             supports_xattrs: config.supports_xattrs,
             secluded_args_mode: config.secluded_args_mode,
             supports_iconv: config.supports_iconv,
@@ -265,6 +271,7 @@ impl VersionInfoConfigBuilder {
             supports_inplace: config.supports_inplace,
             supports_append: config.supports_append,
             supports_acls: config.supports_acls,
+            supports_acl_at: config.supports_acl_at,
             supports_xattrs: config.supports_xattrs,
             secluded_args_mode: config.secluded_args_mode,
             supports_iconv: config.supports_iconv,
@@ -314,6 +321,11 @@ impl VersionInfoConfigBuilder {
     pub const fn supports_acls(mut self, enabled: bool) -> Self {
         self.supports_acls = enabled && cfg!(feature = "acl");
         self
+    }
+
+    builder_setter! {
+        /// Enables or disables race-safe (dirfd-pinned) ACL application.
+        supports_acl_at: bool,
     }
 
     /// Enables or disables extended attribute propagation, clamped to the
@@ -391,6 +403,7 @@ impl VersionInfoConfigBuilder {
             supports_inplace: self.supports_inplace,
             supports_append: self.supports_append,
             supports_acls: self.supports_acls,
+            supports_acl_at: self.supports_acl_at,
             supports_xattrs: self.supports_xattrs,
             secluded_args_mode: self.secluded_args_mode,
             supports_iconv: self.supports_iconv,

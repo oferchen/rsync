@@ -1008,9 +1008,14 @@ fn apply_altdest_metadata(
     if let Err(e) = apply_metadata_with_cached_stat(dest_path, entry, metadata_opts, cached_meta) {
         metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
     }
-    if let Err(e) =
-        apply_acls_from_receiver_cache(dest_path, entry, acl_cache, acl_id_map, !entry.is_symlink())
-    {
+    if let Err(e) = apply_acls_from_receiver_cache(
+        dest_path,
+        entry,
+        acl_cache,
+        acl_id_map,
+        !entry.is_symlink(),
+        None,
+    ) {
         metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
     }
 }

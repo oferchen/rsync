@@ -41,6 +41,16 @@ use super::special::restore_special_mode_bits;
 /// * `id_map` - Optional cross-host id remapper for named ACL entries. When
 ///   present, each named user/group id is remapped through the received id-list
 ///   and `--usermap`/`--groupmap`, matching upstream `match_acl_ids()`.
+/// * `confine_root` - The destination tree `destination` must stay beneath.
+///   On Linux the ACL is then written through a confined `O_NOFOLLOW` fd
+///   pinning the leaf, so a parent or leaf raced into a symlink cannot redirect
+///   it; a pin refused on a slashed path skips the ACL. `None` keeps the
+///   path-based apply of a receiver that is not hardened.
+///
+/// Deviation from upstream: none in behaviour, but the race window stays open
+/// off Linux. On macOS and FreeBSD the ACL is applied by path even with a
+/// `confine_root`, exactly as upstream does there: its race-safe arm is
+/// `SUPPORT_ACL_FD`, which `configure.ac:1512-1514` defines only on Linux.
 ///
 /// # Errors
 ///
@@ -61,10 +71,28 @@ pub fn apply_acls_from_cache(
     follow_symlinks: bool,
     mode: Option<u32>,
     id_map: Option<&AclIdMapper>,
+    confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     if !follow_symlinks {
         return Ok(());
     }
+
+    // upstream: rsync.c:582-597,800 + acls.c:1302 - a confined receiver drives
+    // the ACL off the held leaf fd, never the re-resolved path.
+    #[cfg(target_os = "linux")]
+    if let Some(root) = confine_root {
+        return super::pinned::apply_acls_pinned(
+            destination,
+            root,
+            cache,
+            access_ndx,
+            default_ndx,
+            mode,
+            id_map,
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = confine_root;
 
     if let Some(acl) = cache.get_access(access_ndx) {
         // upstream: acls.c:change_sacl_perms() - reconstruct base entries from mode
