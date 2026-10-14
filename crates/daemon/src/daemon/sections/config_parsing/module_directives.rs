@@ -76,6 +76,9 @@ fn apply_module_directive(
             let patterns = parse_host_list(value);
             builder.set_hosts_deny(patterns);
         }
+        // upstream: authenticate.c:302-303 - an empty `auth users` lets anyone
+        // in; as a P_LOCAL value it also clears an inherited global list.
+        "authusers" if value.is_empty() => builder.set_auth_users(Vec::new()),
         "authusers" => {
             let users = parse_auth_user_list(value).map_err(|error| {
                 config_parse_error(
@@ -84,7 +87,7 @@ fn apply_module_directive(
                     format!("invalid 'auth users' directive: {error}"),
                 )
             })?;
-            builder.set_auth_users(users, path, line_number)?;
+            builder.set_auth_users(users);
         }
         "authdigest" => {
             builder.set_auth_digest(value);

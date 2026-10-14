@@ -570,6 +570,7 @@ fn handle_authentication(
         ctx.messages,
         protocol_version,
         ctx.client_digests,
+        ctx.log_sink,
     )? {
         AuthenticationStatus::DigestUnsupported => {
             // upstream: compat.c:875 - `exit_cleanup(RERR_UNSUPPORTED)` right

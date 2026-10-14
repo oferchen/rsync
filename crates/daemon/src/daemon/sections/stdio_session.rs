@@ -111,10 +111,12 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: clientserver.c:1300-1301 - for rsh-daemon, am_daemon is set
-    // to -1 as a flag distinguishing it from a network daemon. We use a
-    // loopback address as the synthetic peer for log messages and access checks.
-    let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    let peer_addr = remote_shell_session_peer()?;
+    let peer_host = if reverse_lookup {
+        resolve_peer_hostname(peer_addr.ip())
+    } else {
+        None
+    };
 
     let outcome = handle_legacy_session(
         stream,
@@ -124,7 +126,7 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
             motd_lines: &motd_lines,
             daemon_limit: bandwidth_limit,
             log_sink,
-            peer_host: Some("localhost".to_owned()),
+            peer_host,
             reverse_lookup,
             daemon_timeout,
         },

@@ -123,17 +123,6 @@ impl ModuleDefinitionBuilder {
             filters::collapse_dot_dot_dirs(&current_dir.join(path))
         };
 
-        if self.auth_users.as_ref().is_some_and(Vec::is_empty) {
-            return Err(config_parse_error(
-                config_path,
-                self.declaration_line,
-                format!(
-                    "'auth users' directive in module '{}' must list at least one user",
-                    self.name
-                ),
-            ));
-        }
-
         // upstream: daemon-parm.h:262 - `auth users` is P_LOCAL. A module with
         // no explicit list inherits the global-section default, so a global
         // `auth users` forces authentication on every module that lacks its own

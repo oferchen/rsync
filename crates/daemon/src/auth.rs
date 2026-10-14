@@ -30,10 +30,11 @@
 //!
 //! - **File permissions**: Must be readable only by owner (mode 0600 on Unix)
 //! - **Password storage**: Plain text (matching upstream rsync behavior)
-//! - **Challenge generation**: Peer address + timestamp + PID, hashed with the
-//!   negotiated digest - upstream's `gen_challenge()` (authenticate.c:62-81)
-//!   verbatim. It is deliberately not a CSPRNG: matching upstream matters more
-//!   than the unobservable difference.
+//! - **Challenge generation**: 32 bytes from the kernel CSPRNG followed by the
+//!   legacy peer address + timestamp + PID block, hashed with the negotiated
+//!   digest - upstream's `gen_challenge()` (authenticate.c:88-119). If the RNG is
+//!   unavailable the legacy block alone is hashed and the daemon logs upstream's
+//!   warning, so a failure degrades to (never below) the pre-3.5 behaviour.
 //!
 //! # Supported Hash Algorithms
 //!
@@ -72,7 +73,7 @@
 //!
 //! // Generate challenge
 //! let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-//! let challenge = ChallengeGenerator::generate(peer_ip, digest);
+//! let challenge = ChallengeGenerator::generate(peer_ip, digest).text;
 //!
 //! // Client sends: "alice <response>"
 //! let client_response = "alice dGVzdHJlc3BvbnNl"; // Base64-encoded hash
@@ -138,39 +139,58 @@ use std::collections::HashMap;
 use std::io;
 use std::net::IpAddr;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Daemon log line written when the kernel RNG cannot seed a challenge.
+///
+/// upstream: authenticate.c:113-114 - `rprintf(FWARNING, ...)`, which a daemon
+/// routes to its log file.
+pub const KERNEL_RNG_UNAVAILABLE_WARNING: &str =
+    "gen_challenge: /dev/urandom unavailable, falling back to time-based challenge";
+
+/// A daemon authentication challenge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Challenge {
+    /// Base64 text sent after `@RSYNCD: AUTHREQD `.
+    pub text: String,
+    /// `false` when the kernel RNG failed and only the legacy time-based input
+    /// was hashed; the caller then logs [`KERNEL_RNG_UNAVAILABLE_WARNING`].
+    pub kernel_random: bool,
+}
 
 /// Generates authentication challenges for daemon mode.
-///
-/// Challenges are created by hashing a combination of:
-/// - Client IP address
-/// - Current timestamp (seconds and microseconds)
-/// - Process ID
-///
-/// This ensures challenges are unique across sessions and resistant to prediction.
 ///
 /// This is the single challenge implementation; the daemon's authentication
 /// handler calls it directly rather than keeping a private copy.
 pub struct ChallengeGenerator;
 
 impl ChallengeGenerator {
-    /// Generates a unique authentication challenge for the given peer.
+    /// Generates an unpredictable authentication challenge for the given peer.
     ///
-    /// The challenge is a base64-encoded hash of:
-    /// - Peer IP address (up to 16 bytes)
+    /// The digest input is 32 bytes from the kernel CSPRNG followed by a
+    /// 32-byte legacy block:
+    /// - Peer IP address text (up to 16 bytes)
     /// - Unix timestamp seconds (4 bytes)
     /// - Timestamp microseconds (4 bytes)
     /// - Process ID (4 bytes)
     ///
+    /// The legacy block alone is roughly 35 bits of entropy, which lets a
+    /// network observer enumerate the preimage offline; the random prefix gives
+    /// the digest full entropy. When the RNG fails, only the legacy block is
+    /// hashed and [`Challenge::kernel_random`] is `false`.
+    ///
     /// `digest` is the algorithm fixed by [`negotiate_server_daemon_digest`]; the
     /// same one must verify the response.
     ///
-    /// upstream: authenticate.c:62-81 `gen_challenge()` - a 32-byte zeroed
-    /// buffer holding `strlcpy(input, addr, 17)`, `SIVAL(input, 16, tv_sec)`,
-    /// `SIVAL(input, 20, tv_usec)` and `SIVAL(input, 24, getpid())`, hashed with
-    /// `valid_auth_checksums.negotiated_nni`. This is deliberately not a CSPRNG:
-    /// `SIVAL` is little-endian by definition, so `to_le_bytes` reproduces
-    /// upstream's bytes exactly.
+    /// upstream: authenticate.c:88-119 `gen_challenge()` - `sum_update(rnd, 32)`
+    /// when `get_random_bytes()` succeeds, then `sum_update(input, 32)` over the
+    /// zeroed buffer holding `strlcpy(input, addr, 17)`, `SIVAL(input, 16,
+    /// tv_sec)`, `SIVAL(input, 20, tv_usec)` and `SIVAL(input, 24, getpid())`,
+    /// hashed with `valid_auth_checksums.negotiated_nni`. `SIVAL` is
+    /// little-endian by definition, so `to_le_bytes` reproduces upstream's bytes.
+    /// Upstream reads `/dev/urandom` directly (authenticate.c:71-85); the
+    /// `getrandom` crate reaches the same kernel CSPRNG on every platform,
+    /// including Windows, which has no `/dev/urandom`.
     ///
     /// # Examples
     ///
@@ -183,32 +203,50 @@ impl ChallengeGenerator {
     /// let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
     ///
     /// // Challenge is base64-encoded hash (22 characters without padding)
-    /// assert_eq!(challenge.len(), 22);
+    /// assert_eq!(challenge.text.len(), 22);
     /// ```
     #[must_use]
-    pub fn generate(peer_ip: IpAddr, digest: DaemonAuthDigest) -> String {
-        let mut input = [0u8; 32];
+    pub fn generate(peer_ip: IpAddr, digest: DaemonAuthDigest) -> Challenge {
+        let since_epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        Self::generate_from(
+            peer_ip,
+            digest,
+            since_epoch,
+            std::process::id(),
+            getrandom::fill,
+        )
+    }
 
-        // First 16 bytes: IP address
+    fn generate_from(
+        peer_ip: IpAddr,
+        digest: DaemonAuthDigest,
+        since_epoch: Duration,
+        pid: u32,
+        fill_random: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+    ) -> Challenge {
+        let mut input = [0u8; 32];
         let address_text = peer_ip.to_string();
         let address_bytes = address_text.as_bytes();
         let copy_len = address_bytes.len().min(16);
         input[..copy_len].copy_from_slice(&address_bytes[..copy_len]);
-
-        // Next 8 bytes: timestamp
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let seconds = (timestamp.as_secs() & u64::from(u32::MAX)) as u32;
-        let micros = timestamp.subsec_micros();
+        let seconds = (since_epoch.as_secs() & u64::from(u32::MAX)) as u32;
         input[16..20].copy_from_slice(&seconds.to_le_bytes());
-        input[20..24].copy_from_slice(&micros.to_le_bytes());
-
-        // Last 4 bytes: process ID
-        let pid = std::process::id();
+        input[20..24].copy_from_slice(&since_epoch.subsec_micros().to_le_bytes());
         input[24..28].copy_from_slice(&pid.to_le_bytes());
 
-        digest.base64_digest(&[&input])
+        let mut random = [0u8; 32];
+        let kernel_random = fill_random(&mut random).is_ok();
+        let text = if kernel_random {
+            digest.base64_digest(&[&random, &input])
+        } else {
+            digest.base64_digest(&[&input])
+        };
+        Challenge {
+            text,
+            kernel_random,
+        }
     }
 }
 
@@ -315,42 +353,21 @@ impl SecretsFile {
         self.entries.get(username).map(|s| s.as_str())
     }
 
-    /// Checks that the secrets file has correct permissions.
+    /// Checks the secrets file against upstream's strict-modes rules.
     ///
-    /// On Unix: File must not be accessible to others (no group requirement,
-    /// so mode 0640 is allowed). On Windows: No checks performed.
+    /// On Unix the file must not be accessible to others (mode 0640 is
+    /// allowed), and a daemon running as root refuses a file that root does
+    /// not own. On other platforms no check is performed, as upstream.
+    ///
+    /// upstream: authenticate.c:172-177 check_secret(). Delegates to
+    /// `platform::secrets::check_secrets_file_permissions`, the same rule the
+    /// daemon's authentication path applies.
     ///
     /// # Errors
     ///
-    /// Returns an error if the file is other-readable or other-writable on Unix.
-    #[cfg(unix)]
+    /// Returns an error if the file cannot be inspected or breaks either rule.
     pub fn check_permissions(path: &Path) -> io::Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-
-        let metadata = std::fs::metadata(path)?;
-        let permissions = metadata.permissions();
-        let mode = permissions.mode();
-
-        // upstream: authenticate.c:120 check_secret() rejects only when OTHER
-        // has access ((st.st_mode & 06) != 0); group-readable (0640) is allowed.
-        if (mode & 0o6) != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!(
-                    "secrets file '{}' must not be other-accessible (mode {:o})",
-                    path.display(),
-                    mode & 0o777
-                ),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// No-op permission check on Windows (matching upstream rsync).
-    #[cfg(not(unix))]
-    pub fn check_permissions(_path: &Path) -> io::Result<()> {
-        Ok(())
+        platform::secrets::check_secrets_file_permissions(path)
     }
 
     /// Returns the number of username/password entries.
@@ -394,10 +411,29 @@ mod tests {
         );
     }
 
+    /// upstream: authenticate.c:175-177 - a root daemon refuses a secrets file
+    /// root does not own. Only observable when the test itself runs as root;
+    /// the rule is unit-tested without root in `platform::secrets`.
+    #[cfg(unix)]
+    #[test]
+    fn check_permissions_refuses_a_non_root_owned_file_when_root() {
+        use std::os::unix::fs::PermissionsExt;
+        if platform::privilege::effective_uid() != 0 {
+            return;
+        }
+        let file = tempfile::NamedTempFile::new().expect("temp secrets file");
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600))
+            .expect("chmod secrets");
+        std::os::unix::fs::chown(file.path(), Some(65534), None).expect("chown to nobody");
+        let err = SecretsFile::check_permissions(file.path())
+            .expect_err("root must refuse a secrets file it does not own");
+        assert!(err.to_string().contains("must be owned by root"));
+    }
+
     #[test]
     fn challenge_generator_produces_valid_base64() {
         let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
+        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5).text;
 
         // MD5 hash is 16 bytes, base64 without padding is 22 characters
         assert_eq!(challenge.len(), 22);
@@ -413,7 +449,7 @@ mod tests {
     #[test]
     fn challenge_generator_produces_valid_base64_legacy_protocol() {
         let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md4);
+        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md4).text;
 
         // MD4 hash is also 16 bytes, base64 without padding is 22 characters
         assert_eq!(challenge.len(), 22);
@@ -425,23 +461,84 @@ mod tests {
         );
     }
 
+    const FIXED_PEER: &str = "10.0.0.1";
+    const FIXED_TIME: Duration = Duration::from_micros(1_700_000_000_123_456);
+    const FIXED_PID: u32 = 4242;
+
+    /// The legacy block upstream builds, spelled out byte by byte so a layout
+    /// change in `generate_from` cannot hide behind a shared helper.
+    fn expected_legacy_input() -> [u8; 32] {
+        let mut input = [0u8; 32];
+        input[..8].copy_from_slice(b"10.0.0.1");
+        input[16..20].copy_from_slice(&1_700_000_000u32.to_le_bytes());
+        input[20..24].copy_from_slice(&123_456u32.to_le_bytes());
+        input[24..28].copy_from_slice(&FIXED_PID.to_le_bytes());
+        input
+    }
+
+    fn fixed_challenge(
+        fill_random: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+    ) -> Challenge {
+        ChallengeGenerator::generate_from(
+            FIXED_PEER.parse().unwrap(),
+            DaemonAuthDigest::Md5,
+            FIXED_TIME,
+            FIXED_PID,
+            fill_random,
+        )
+    }
+
+    /// The security property: an observer who knows the peer address, the
+    /// clock and the daemon pid still cannot predict the challenge, because
+    /// kernel randomness enters the digest.
+    ///
+    /// upstream: authenticate.c:110-111 - the 32 random bytes are hashed in.
     #[test]
-    fn challenge_generator_produces_unique_values() {
-        let peer_ip: IpAddr = "10.0.0.1".parse().unwrap();
-        let challenge1 = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
+    fn challenges_from_identical_legacy_inputs_differ() {
+        let first = fixed_challenge(getrandom::fill);
+        let second = fixed_challenge(getrandom::fill);
+        assert!(first.kernel_random && second.kernel_random);
+        assert_ne!(
+            first.text, second.text,
+            "challenge is predictable from address, time and pid alone"
+        );
+    }
 
-        // Retry until the microsecond timestamp changes (bounded)
-        let mut challenge2 = challenge1.clone();
-        for i in 0..200 {
-            challenge2 = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
-            if challenge2 != challenge1 {
-                break;
-            }
-            assert!(i < 199, "challenge did not change after 200 retries");
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+    /// The random bytes are hashed BEFORE the legacy block, as upstream does,
+    /// and the legacy block keeps upstream's exact layout.
+    #[test]
+    fn kernel_bytes_are_hashed_before_the_legacy_input() {
+        let challenge = fixed_challenge(|buf| {
+            buf.fill(0x5a);
+            Ok(())
+        });
+        let expected =
+            DaemonAuthDigest::Md5.base64_digest(&[&[0x5a; 32], &expected_legacy_input()]);
+        assert!(challenge.kernel_random);
+        assert_eq!(challenge.text, expected);
+    }
 
-        assert_ne!(challenge1, challenge2);
+    /// upstream: authenticate.c:112-115 - when the RNG fails, upstream warns and
+    /// hashes the legacy block alone instead of refusing the connection.
+    #[test]
+    fn rng_failure_falls_back_to_the_legacy_input_alone() {
+        let challenge = fixed_challenge(|_| Err(getrandom::Error::UNSUPPORTED));
+        assert!(
+            !challenge.kernel_random,
+            "fallback must be reported for the warning"
+        );
+        assert_eq!(
+            challenge.text,
+            DaemonAuthDigest::Md5.base64_digest(&[&expected_legacy_input()])
+        );
+    }
+
+    #[test]
+    fn rng_unavailable_warning_matches_upstream_text() {
+        assert_eq!(
+            KERNEL_RNG_UNAVAILABLE_WARNING,
+            "gen_challenge: /dev/urandom unavailable, falling back to time-based challenge"
+        );
     }
 
     #[test]
@@ -558,7 +655,7 @@ mod tests {
         let password = b"daemon_secret";
 
         for &digest in SUPPORTED_DAEMON_DIGESTS {
-            let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), digest);
+            let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), digest).text;
             assert_eq!(challenge.len(), digest.base64_len());
 
             let response = compute_auth_response(password, &challenge, digest);
@@ -579,7 +676,7 @@ mod tests {
     fn verify_client_response_ignores_a_non_negotiated_digest() {
         let password = b"secret";
         let challenge =
-            ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), DaemonAuthDigest::Md5);
+            ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), DaemonAuthDigest::Md5).text;
 
         let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
         assert!(!verify_client_response(

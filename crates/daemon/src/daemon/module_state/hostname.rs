@@ -105,17 +105,15 @@ impl<'a> PeerHost<'a> {
 /// host patterns, or DNS resolution fails. Results are cached in `cache` to avoid
 /// repeated DNS lookups for the same peer.
 ///
-/// The module's `forward lookup` parameter (default true) controls whether the
-/// reverse-DNS name is forward-confirmed: when on, its A/AAAA records must
-/// include `peer_ip`, otherwise the peer is treated as having no resolved
-/// hostname (fail-closed), so a spoofed PTR cannot satisfy a hostname
-/// allow-rule.
+/// The reverse-DNS name is always forward-confirmed (see
+/// [`resolve_peer_hostname`]); the module's `forward lookup` parameter does not
+/// affect this step. It only governs forward resolution of hostname tokens in
+/// the module's `hosts allow`/`hosts deny` lists.
 ///
 /// upstream: clientserver.c - reverse DNS is performed when `hosts allow` or
 /// `hosts deny` patterns contain hostnames. The `reverse lookup` parameter
-/// controls whether reverse DNS is attempted at all; the `forward lookup`
-/// parameter (access.c:60 `allow_forward_dns`, default True) forward-confirms
-/// the result.
+/// controls whether reverse DNS is attempted at all; `forward lookup`
+/// (access.c:60 `allow_forward_dns`) gates only the config-token lookup.
 pub(crate) fn module_peer_hostname<'a>(
     module: &ModuleDefinition,
     cache: &'a mut Option<Option<String>>,
@@ -127,7 +125,7 @@ pub(crate) fn module_peer_hostname<'a>(
     }
 
     if cache.is_none() {
-        *cache = Some(resolve_peer_hostname(peer_ip, module.forward_lookup));
+        *cache = Some(resolve_peer_hostname(peer_ip));
     }
 
     cache.as_ref().and_then(|value| value.as_deref())
@@ -140,23 +138,18 @@ pub(crate) fn module_peer_hostname<'a>(
 /// never folds it). `hosts allow`/`hosts deny` stay case-insensitive because
 /// the matcher folds the host, as upstream's `iwildmatch` does (access.c:57).
 ///
-/// When `forward_lookup` is true (the upstream default), the PTR-derived name is
-/// forward-confirmed before being returned: the name's A/AAAA records must
-/// include `peer_ip`. A name that does not forward-resolve back to the peer -
-/// a spoofed or stale PTR record - yields `None`, so hostname allow-rules
-/// fail closed and a forged PTR cannot satisfy a `hosts allow = <name>` rule.
-/// This mirrors upstream `clientname.c:check_name`, which replaces an
-/// unconfirmed name with the "UNKNOWN" placeholder.
+/// The PTR-derived name is forward-confirmed before being returned: the name's
+/// A/AAAA records must include `peer_ip`. A name that does not forward-resolve
+/// back to the peer - a spoofed or stale PTR record - yields `None`, so
+/// hostname allow-rules fail closed and a forged PTR cannot satisfy a
+/// `hosts allow = <name>` rule.
 ///
-/// upstream: clientname.c:416 `check_name` forward-confirms the reverse-DNS
-/// name against the peer address; access.c:60 gates forward DNS on the
-/// `forward lookup` daemon parameter (default True, daemon-parm.h:197).
-pub(in crate::daemon) fn resolve_peer_hostname(
-    peer_ip: IpAddr,
-    forward_lookup: bool,
-) -> Option<String> {
+/// upstream: clientname.c:147-153 `client_name()` calls `check_name()`
+/// (clientname.c:425) unconditionally, which replaces an unconfirmed name with
+/// the "UNKNOWN" placeholder. No daemon parameter disables it.
+pub(in crate::daemon) fn resolve_peer_hostname(peer_ip: IpAddr) -> Option<String> {
     let name = reverse_lookup_name(peer_ip)?;
-    if forward_lookup && !forward_confirms(&name, peer_ip) {
+    if !forward_confirms(&name, peer_ip) {
         return None;
     }
     Some(name)

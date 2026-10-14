@@ -62,7 +62,7 @@ use protocol::{
 };
 
 use crate::{
-    auth::ChallengeGenerator,
+    auth::{ChallengeGenerator, KERNEL_RNG_UNAVAILABLE_WARNING},
     config::DaemonConfig,
     connection::{ConnectionState, InvalidTransition},
     daemon_stream::DaemonStream,
@@ -450,40 +450,12 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: clientname.c:63-78 - a daemon behind a remote shell
-    // (`am_daemon < 0`) has no socket to interrogate, so the peer address comes
-    // from the environment, seeded with `0.0.0.0`.
-    //
-    // The seed is the security-relevant part. This site previously fabricated
-    // `127.0.0.1` and cited upstream for it; upstream does no such thing, and
-    // the synthetic loopback matched `hosts allow = 127.0.0.1` - the canonical
-    // "local only" rule - admitting every client. `0.0.0.0` matches no
-    // realistic allow token, so an unconfigured remote-shell daemon denies.
-    let peer_addr = match peer_address::remote_shell_peer_addr() {
-        peer_address::RemoteShellPeer::Addr(ip) => SocketAddr::new(ip, 0),
-        // upstream: clientname.c:76-81 - a set-but-unparsable variable falls
-        // through to `client_sockaddr()`, which on a remote shell's pipe fails
-        // `getpeername` and exits `RERR_SOCKETIO`. Refuse rather than silently
-        // fall back to a default the operator did not configure.
-        peer_address::RemoteShellPeer::Unusable => {
-            let code = ExitCode::SocketIo;
-            return Err(DaemonError::with_code(
-                code,
-                rsync_error!(
-                    code.as_i32(),
-                    "unable to determine the peer address: a peer-address environment \
-                     variable is set but holds no usable IP address"
-                )
-                .with_role(Role::Daemon),
-            ));
-        }
-    };
+    let peer_addr = remote_shell_session_peer()?;
 
-    // Resolve hostname for the synthetic peer (will resolve localhost).
     // upstream: clientname.c `client_name` forward-confirms unconditionally;
     // per-module `forward lookup` governs the access-control match.
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip(), true)
+        resolve_peer_hostname(peer_addr.ip())
     } else {
         None
     };
@@ -511,6 +483,33 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     );
 
     single_session_exit(outcome, "stdio daemon session failed")
+}
+
+/// Resolves the peer of a daemon started behind a remote shell.
+///
+/// upstream: clientname.c:63-81 `client_addr()` with `am_daemon < 0` - a
+/// remote-shell daemon takes the peer from the environment, seeded with
+/// `0.0.0.0`. The seed is the security-relevant part: a fabricated `127.0.0.1`
+/// matched `hosts allow = 127.0.0.1`, the canonical "local only" rule, and
+/// admitted every client; `0.0.0.0` matches no realistic allow token.
+///
+/// A set-but-invalid variable falls through to `client_sockaddr()` on fd 0.
+/// Behind a remote shell that is usually a pipe, so `getpeername` fails and
+/// upstream exits `RERR_SOCKETIO` (clientname.c:323-327); a socket stdin
+/// yields its real peer.
+fn remote_shell_session_peer() -> Result<SocketAddr, DaemonError> {
+    match peer_address::remote_shell_peer_addr() {
+        peer_address::RemoteShellPeer::Addr(ip) => Ok(SocketAddr::new(ip, 0)),
+        peer_address::RemoteShellPeer::Unusable => peer_address::inherited_socket_peer_addr()
+            .map_err(|error| {
+                let code = ExitCode::SocketIo;
+                DaemonError::with_code(
+                    code,
+                    rsync_error!(code.as_i32(), format!("getpeername on fd0 failed: {error}"))
+                        .with_role(Role::Daemon),
+                )
+            }),
+    }
 }
 
 /// Runs the daemon orchestration using the hybrid tokio listener.

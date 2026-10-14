@@ -3405,6 +3405,48 @@ mod config_parsing_tests {
         );
     }
 
+    /// upstream: authenticate.c:302-303 - `if (!users || !*users) return "";`
+    /// An empty `auth users` loads and leaves the module open; it is not a
+    /// configuration error.
+    #[test]
+    fn parse_empty_module_auth_users_means_no_restriction() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let config = format!("[mod]\npath = {}\nauth users =\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("empty auth users must load");
+        assert!(!result.modules[0].requires_authentication());
+    }
+
+    /// `auth users` is P_LOCAL (daemon-parm.h:262), so a module's empty value
+    /// replaces the inherited global list rather than falling back to it.
+    #[test]
+    fn parse_empty_module_auth_users_overrides_the_global_list() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let config = format!(
+            "auth users = alice\n[mod]\npath = {}\nauth users =\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].requires_authentication());
+    }
+
+    /// A global empty `auth users` loads and imposes nothing.
+    #[test]
+    fn parse_empty_global_auth_users_means_no_restriction() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let config = format!("auth users =\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("empty global must load");
+        assert!(!result.modules[0].requires_authentication());
+    }
+
     /// A global `auth users` is a P_LOCAL default (daemon-parm.h:262): every
     /// module that omits its own `auth users` must inherit it and therefore
     /// require authentication (authenticate.c:228 auth_server reads
