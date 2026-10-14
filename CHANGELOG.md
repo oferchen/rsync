@@ -145,7 +145,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - The daemon accepts `--log-file-format`, as upstream does (#8047)
 - `OC_RSYNC_PULL_INC_RECURSE=1` lets a pulling client advertise incremental recursion, except under `--delete-before` or `--delete-after` as in upstream; off by default (#8062, #8091)
-- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195)
+- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR, CUBIC or NewReno congestion control (`--quic-cc`), `--quic-window` and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195). Further performance-oriented QUIC ALPN protocols are planned.
 - Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
 - `StrictHostKeyChecking accept-new` works as documented (#7783)
 - `--out-format` on SSH and daemon transfers (#6917, #6918, #6919, #6921, #6923)
@@ -449,7 +449,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
 - `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders, rustdoc links, SAFETY comments and direct FFI dependencies (#7767, #7770, #7776, #7932, #7940)
 - Refactors with no behaviour change (#7715, #7716, #7762, #7787, #7790, #7794, #7798, #7954, #7955, #7962, #7978, #7980, #8044, #8127)
-- Documentation: upstream citations retargeted at 3.5.0 and then 3.5.1 with a stricter citation gate, a CVE and testsuite coverage matrix, the INC_RECURSE receiver plan, the QUIC security review and process model, and README/SECURITY/CHANGELOG refreshes (#7286, #7308, #7315, #7318, #7994, #8187, #8191, #8170, #8131, #8066, #7960, #7963, #7998, #8018, #8020, #8031, #8049, #8105, #8121, #8144, #8192, #8194, #8196)
+- Documentation: upstream citations retargeted at 3.5.0 and then 3.5.1 with a stricter citation gate, a CVE and testsuite coverage matrix, the INC_RECURSE receiver plan, the QUIC security review and process model, and README/SECURITY/CHANGELOG refreshes (#7286, #7308, #7315, #7318, #7994, #8187, #8191, #8170, #8131, #8066, #7960, #7963, #7998, #8018, #8020, #8031, #8049, #8105, #8121, #8144, #8192, #8194, #8196, #8204)
 - Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022, #8100, #8101, #8174, #8175, #8176, #8177, #8178, #8200)
 
 ## [0.6.4] - 2026-07-18

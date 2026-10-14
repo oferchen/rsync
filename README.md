@@ -193,55 +193,20 @@ Some SSH features (for example certificate-based auth) may be missing; please op
 
 ### QUIC transport
 
-oc-rsync can carry the rsync protocol over QUIC (RFC 9000/9001, TLS 1.3 over UDP) instead of a plain `rsync://` TCP socket. Upstream rsync has no QUIC transport. It is behind the `quic` cargo feature and is **off by default**; release builds do not carry it.
+oc-rsync can carry the rsync daemon protocol over QUIC (RFC 9000/9001, TLS 1.3 over UDP) instead of a plain `rsync://` TCP connection. It is an oc-rsync extension: upstream rsync has no QUIC transport, so both ends must be oc-rsync. It is behind the `quic` cargo feature, **off by default**, and not included in the release artifacts:
 
 ```sh
-cargo build --release --features quic -p cli -p daemon
+cargo build --release --locked --features quic --bin oc-rsync
 ```
 
-QUIC always runs TLS 1.3 with the ALPN token `rsync`. The client verifies the daemon certificate against the CA bundle given by `--quic-ca`, which is required: nothing is trusted by default, not even the system trust store, so a client without `--quic-ca` refuses to connect (exit 5). Mutual TLS is optional. Selecting QUIC is hard-fail: if the feature or listener is unavailable, the transfer errors out rather than falling back to TCP. The cipher defaults to AES-GCM with hardware AES and ChaCha20-Poly1305 without; `--quic-cipher aes|chacha20` overrides it.
-
-Create a self-signed daemon certificate (the SubjectAltName must match the host clients connect to). Clients pass this same certificate as `--quic-ca`; a certificate issued by an internal CA works the same way with the CA certificate as `--quic-ca`:
+The daemon presents the certificate and key named by the global `quic cert file` and `quic key file` directives, on the TCP `port` number over UDP unless `quic port` is set. The client verifies that certificate against the CA bundle given by `--quic-ca`, which is required: nothing is trusted by default, and a client without it refuses to connect (exit 5). A failed QUIC connection never falls back to TCP. Mutual TLS (`quic client ca file`, `--quic-cert`, `--quic-key`) is optional.
 
 ```sh
-openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout quic-key.pem -out quic-cert.pem -days 365 \
-  -subj "/CN=rsync.example.com" \
-  -addext "subjectAltName=DNS:rsync.example.com"
+oc-rsync -a --quic-ca ca.pem quic://host/module/ dest/
+oc-rsync -a --quic --quic-ca ca.pem host::module/ dest/
 ```
 
-For mutual TLS, also create a client CA and sign a client certificate:
-
-```sh
-openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-  -keyout ca-key.pem -out ca-cert.pem -subj "/CN=oc-rsync client CA"
-openssl req -newkey rsa:2048 -nodes \
-  -keyout client-key.pem -out client.csr -subj "/CN=alice"
-openssl x509 -req -in client.csr -CA ca-cert.pem -CAkey ca-key.pem \
-  -CAcreateserial -out client-cert.pem -days 365
-```
-
-Daemon configuration (`oc-rsyncd.conf`, global section):
-
-```ini
-quic cert file = /etc/oc-rsync/quic-cert.pem
-quic key file  = /etc/oc-rsync/quic-key.pem
-# quic port defaults to the module `port` (873):
-# quic port = 1873
-# For mutual TLS:
-quic client ca file = /etc/oc-rsync/ca-cert.pem
-```
-
-Client usage:
-
-```sh
-oc-rsync -a --quic-ca quic-cert.pem quic://host/module/ dest/
-oc-rsync -a --quic --quic-ca quic-cert.pem host::module/ dest/
-oc-rsync -a --quic --quic-ca quic-cert.pem --quic-cert client-cert.pem --quic-key client-key.pem host::module/ dest/
-oc-rsync -a --quic-ca quic-cert.pem --quic-cipher chacha20 quic://host/module/ dest/
-```
-
-`--quic-cc` selects the congestion controller and `--quic-window` the flow-control window. Full guide: [`docs/quic-transport.md`](./docs/quic-transport.md).
+The daemon listener is Unix-only, and QUIC currently measures 4.5 to 6 times slower than TCP over loopback. [`docs/quic-transport.md`](./docs/quic-transport.md) has a tested walkthrough (certificates, daemon setup, pull and push), the full option reference, troubleshooting and known limitations.
 
 ### Linux io_uring
 
