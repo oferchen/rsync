@@ -13,7 +13,7 @@ pub(crate) enum FilterDirective {
     Clear,
     /// An empty rule string that contributes no rule.
     ///
-    /// upstream: exclude.c:1107 parse_rule_tok returns NULL for an empty rule
+    /// upstream: exclude.c:1256-1257 parse_rule_tok returns NULL for an empty rule
     /// (`if (!*s) return NULL`), so parse_filter_str adds nothing and exits 0.
     /// A blank `--filter`/`--exclude`/`--include` value is therefore a no-op,
     /// not a syntax error.
@@ -21,7 +21,7 @@ pub(crate) enum FilterDirective {
     /// The `-C` cvs-convenience rule: expands to the global CVS default
     /// excludes (built-in list + `$HOME/.cvsignore` + `$CVSIGNORE`).
     ///
-    /// upstream: exclude.c:1441-1443 get_cvs_excludes() on a non-merge
+    /// upstream: exclude.c:1595-1597 get_cvs_excludes() on a non-merge
     /// FILTRULE_CVS_IGNORE rule.
     CvsDefaults,
 }
@@ -70,7 +70,11 @@ impl MergeDirective {
 
 /// Merges a nested directive's options onto the enclosing `base` options. Each
 /// field takes the nested value when it differs from the default, otherwise it
-/// inherits from `base`, mirroring upstream's per-directory option inheritance.
+/// inherits from `base`.
+///
+/// Deviation from upstream: `parse_rule_tok()` (exclude.c:1262) inherits only the
+/// `FILTRULES_FROM_CONTAINER` bits plus the sides from the enclosing template;
+/// this inherits every option field.
 pub(crate) fn merge_directive_options(
     base: &DirMergeOptions,
     directive: &MergeDirective,

@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 /// boundary, not a formatting preference: the second path's name is itself
 /// peer-controlled text.
 ///
-/// upstream: exclude.c:60 TEXT_FROM_FILE + exclude.c:1750-1760
+/// upstream: exclude.c:67-69 TEXT_FROM_FILE + exclude.c:1738-1754
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MergeFileOrigin {
     /// Named by an argument - `-F`, or a `--filter=': NAME'` rule. Upstream's
@@ -170,7 +170,7 @@ pub(crate) fn dir_merge_file_present(
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1324-1332 parse_rule_tok`:
+/// `exclude.c:1478-1481 parse_rule_tok`:
 ///
 /// ```c
 /// if (delete_excluded
@@ -247,7 +247,7 @@ pub(crate) fn apply_dir_merge_rule_defaults(
 /// Propagates a parent dir-merge's SIDE flags onto a nested `dir-merge`
 /// directive that specified none of its own.
 ///
-/// upstream: exclude.c:1293-1303 - a nested per-dir merge inherits the
+/// upstream: exclude.c:1447-1456 - a nested per-dir merge inherits the
 /// enclosing template's FILTRULES_SIDES when it carries no side modifier of its
 /// own. Without this, a `:s .filt` whose body declares `dir-merge .filt2` would
 /// load `.filt2` as both-sides, wrongly protecting a sender-side-hidden file
@@ -269,7 +269,7 @@ fn inherit_dir_merge_side(nested: DirMergeOptions, parent: &DirMergeOptions) -> 
 /// Nested per-directory merge declaration encountered while loading another
 /// filter file.
 ///
-/// upstream: exclude.c:1419-1428 - a `dir-merge` directive inside a merge file
+/// upstream: exclude.c:1332-1339 - a `dir-merge` directive inside a merge file
 /// registers a new per-directory merge rule whose filename gets looked up in
 /// every subdirectory subsequently entered. The rule is NOT expanded against
 /// the enclosing file's directory.
@@ -337,7 +337,7 @@ impl DirMergeEntries {
         // exactly once. `self.rules` is that enclosing list: it holds the rules
         // of the merge file this directive was read out of. Pushing it here,
         // ahead of the nested registration, keeps upstream's order (the exclude
-        // precedes the merge rule's own add_rule at :1590) and - crucially -
+        // precedes the merge rule's own add_rule at :1593) and - crucially -
         // makes the exclude exist whether or not a file by that name is ever
         // found in any directory. Deferring it to the load of that file, as oc
         // did, meant a `:e` naming an absent file excluded nothing.
@@ -383,7 +383,7 @@ impl DirMergeEntries {
 /// infinitely. On success the visited entry is popped before returning.
 ///
 /// `delete_excluded` propagates upstream's per-token implicit SENDER_SIDE
-/// flag (`exclude.c:1324-1332 parse_rule_tok`) onto every rule produced from
+/// flag (`exclude.c:1478-1481 parse_rule_tok`) onto every rule produced from
 /// this merge file when neither side modifier was specified on the dir-merge
 /// directive itself. This ensures the receiver's delete-pass treats expanded
 /// per-token rules the same way `add_rule()` flags them when the user passed
@@ -429,7 +429,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     // component may be attacker-controlled. Refuse a symlink owned by neither
     // uid 0 nor our euid, exactly as upstream does for the same open.
     //
-    // upstream: exclude.c:1464 parse_filter_file() -> syscall.c:675
+    // upstream: exclude.c:1683 parse_filter_file() -> syscall.c:675
     // open_no_attacker_symlinks(); trust rule at syscall.c:499.
     let file = match open_merge_file(path) {
         Ok(file) => file,
@@ -444,7 +444,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     };
     let mut entries = DirMergeEntries::default();
 
-    // upstream: exclude.c:1212 - unrecognised filter rules exit with
+    // upstream: exclude.c:133-137 filter_rule_err() - unrecognised filter rules exit with
     // RERR_SYNTAX (1), not RERR_PARTIAL (23).
     let map_error = |error: FilterParseError| LocalCopyError::filter_syntax(error.to_string());
 
@@ -556,10 +556,10 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         pattern,
                         options: merge_options,
                     })) => {
-                        // upstream: exclude.c:1419-1428 - register the merge
+                        // upstream: exclude.c:1332-1339 - register the merge
                         // filename for lookup in each subdirectory; do NOT
                         // load anything from the enclosing file's directory.
-                        // upstream: exclude.c:1293-1303 - a nested dir-merge
+                        // upstream: exclude.c:1447-1456 - a nested dir-merge
                         // inherits the enclosing per-dir merge's SIDE flags
                         // (FILTRULES_SIDES) when it specifies none of its own,
                         // so `:s`/`.s` per-dir merges keep sender-side semantics
@@ -678,10 +678,10 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         pattern,
                         options: merge_options,
                     })) => {
-                        // upstream: exclude.c:1419-1428 - register the merge
+                        // upstream: exclude.c:1332-1339 - register the merge
                         // filename for lookup in each subdirectory; do NOT
                         // load anything from the enclosing file's directory.
-                        // upstream: exclude.c:1293-1303 - a nested dir-merge
+                        // upstream: exclude.c:1447-1456 - a nested dir-merge
                         // inherits the enclosing per-dir merge's SIDE flags
                         // (FILTRULES_SIDES) when it specifies none of its own,
                         // so `:s`/`.s` per-dir merges keep sender-side semantics
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn inherit_dir_merge_side_propagates_parent_sender_flag() {
-        // upstream: exclude.c:1293-1303 - a `:s` per-dir merge whose body declares
+        // upstream: exclude.c:1447-1456 - a `:s` per-dir merge whose body declares
         // a bare `dir-merge .filt2` must load `.filt2` with the parent's
         // sender-side semantics, otherwise the delete pass would treat a
         // sender-hidden file as both-sides-protected and refuse to delete it.
@@ -1048,7 +1048,7 @@ mod tests {
     }
 
     /// The full truth table of upstream's `rule_src_where` split
-    /// (exclude.c:1750-1760), which is the decision this type owns.
+    /// (exclude.c:1738-1754), which is the decision this type owns.
     ///
     /// It is a table rather than one case because each arm is separately
     /// load-bearing: the `Argument` rows are what tell the operator which file

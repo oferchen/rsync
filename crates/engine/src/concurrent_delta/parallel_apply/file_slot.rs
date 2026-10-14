@@ -1,11 +1,10 @@
 //! Per-file destination writer plus its reorder buffer.
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the module
-//! decomposition. Holds [`FileSlot`] (the per-file writer + reorder ring
+//! Holds [`FileSlot`] (the per-file writer + reorder ring
 //! that re-establishes submission order after the out-of-order rayon
 //! verify step) and [`IngestError`], which distinguishes per-file
 //! reorder-ring saturation from generic writer I/O so the applier can
-//! update its ROB-3 telemetry without parsing error strings.
+//! update its reorder-saturation telemetry without parsing error strings.
 
 use std::io::{self, Write};
 
@@ -15,8 +14,8 @@ use super::DeltaChunk;
 /// Error outcomes for [`FileSlot::ingest`].
 ///
 /// Distinguishes the per-file reorder-ring saturation case from generic
-/// writer I/O failures so [`ParallelDeltaApplier`] can update its ROB-3
-/// telemetry without parsing error strings. Both variants convert into a
+/// writer I/O failures so [`ParallelDeltaApplier`] can update its
+/// reorder-saturation telemetry without parsing error strings. Both variants convert into a
 /// plain [`io::Error`] for the existing `io::Result`-shaped public API.
 ///
 /// [`ParallelDeltaApplier`]: super::ParallelDeltaApplier
@@ -75,7 +74,7 @@ impl FileSlot {
     ///
     /// Returns [`IngestError::ReorderSaturated`] when the per-file ring is
     /// full; the applier's [`ParallelDeltaApplier::note_reorder_saturation`]
-    /// reads this to update the ROB-3 telemetry counter and emit the
+    /// reads this to update the saturation telemetry counter and emit the
     /// one-shot warning before mapping back to [`io::Error`] for the caller.
     ///
     /// [`ParallelDeltaApplier::note_reorder_saturation`]: super::ParallelDeltaApplier::note_reorder_saturation

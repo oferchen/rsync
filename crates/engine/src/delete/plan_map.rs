@@ -24,8 +24,8 @@
 //!
 //! The bench-driven selection between [`std::sync::Mutex`] +
 //! [`HashMap`](std::collections::HashMap), [`dashmap::DashMap`], and a
-//! sharded [`HashMap`](std::collections::HashMap) is tracked as task
-//! DDP-B4. Swap the inner type without changing the public surface of
+//! sharded [`HashMap`](std::collections::HashMap) is still open. Swap the
+//! inner type without changing the public surface of
 //! this module.
 
 use std::collections::HashMap;
@@ -42,7 +42,7 @@ use super::plan::DeletePlan;
 /// extras and the single emitter that consumes them.
 #[derive(Debug, Default)]
 pub struct DeletePlanMap {
-    // NOTE(DDP-B4): single global Mutex is the simplest correct backing
+    // Single global Mutex is the simplest correct backing
     // store. Bench against `dashmap::DashMap` and a sharded variant
     // before promoting either into the engine crate.
     inner: Mutex<HashMap<PathBuf, DeletePlan>>,

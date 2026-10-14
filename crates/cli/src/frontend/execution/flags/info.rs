@@ -10,11 +10,13 @@ use super::output_words::{self, OutputWord, TokenFlow};
 
 /// Per-flag descriptor for an `--info=` token.
 ///
-/// upstream: options.c `output_struct` (rsync-3.4.1:259-266). `max_level` is
-/// the per-flag ceiling used when `--info=all<N>` fans out across every flag
-/// (it caps each flag at its highest meaningful level, mirroring upstream's
-/// runtime `INFO_GTE(...)` checks). The `-v` verbosity grouping lives in the
-/// single `logging::VerbosityConfig::from_verbose_level` table.
+/// upstream: options.c:275-282 `output_struct`. `max_level` is the per-flag
+/// ceiling used when `--info=all<N>` fans out across every flag (it caps each
+/// flag at its highest meaningful level). The `-v` verbosity grouping lives in
+/// the single `logging::VerbosityConfig::from_verbose_level` table.
+///
+/// Deviation from upstream: `output_struct` has no per-flag ceiling; `all<N>`
+/// sets every flag to `N`, capped only at `MAX_OUT_LEVEL` 4 (options.c:261, 463-464).
 #[derive(Clone, Copy)]
 pub(crate) struct InfoFlagSpec {
     pub(crate) name: &'static str,
@@ -166,7 +168,7 @@ impl InfoFlagSettings {
     /// `stats` is intentionally omitted: oc conflates `--stats` and
     /// `--info=stats` into a single stats level and forwards it via the
     /// standalone `--stats` flag (upstream `if (do_stats) --stats`,
-    /// options.c:2866), so re-emitting `--info=stats` here would double-send.
+    /// options.c:3032-3033), so re-emitting `--info=stats` here would double-send.
     /// The remote builders apply upstream's role `where` filter to this list.
     pub(crate) fn iter_enabled_flags(&self) -> Vec<(&'static str, u8)> {
         let mut out: Vec<(&'static str, u8)> = Vec::new();
@@ -175,7 +177,7 @@ impl InfoFlagSettings {
                 out.push((name, level));
             }
         };
-        // upstream: options.c:280-294 info_words[] order.
+        // upstream: options.c:286-301 info_words[] order.
         push("backup", self.backup);
         push("copy", self.copy);
         push("del", self.del);
@@ -259,7 +261,7 @@ impl InfoFlagSettings {
 /// upstream: options.c:484-488 -
 /// `rprintf(FERROR, "Unknown %s item: \"%.*s\"\n", words[j].help, len, str);`
 /// followed by `exit_cleanup(RERR_SYNTAX)`. `words[j]` is the table's NULL
-/// sentinel, whose `help` field is the literal `"--info"` (options.c:301), and
+/// sentinel, whose `help` field is the literal `"--info"` (options.c:300), and
 /// `len` is the token length with the level suffix already stripped. The text
 /// goes to `FERROR` (stderr) and the exit code is `RERR_SYNTAX` = 1
 /// (errcode.h:25).
@@ -275,7 +277,7 @@ pub(crate) fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, 
 /// Parses `--info` flag values in server mode, silently ignoring unknown tokens.
 ///
 /// Upstream rsync's `parse_output_words()` checks `!am_server` before raising
-/// `Unknown --info item` (`options.c:465`). The server side accepts whatever
+/// `Unknown --info item` (`options.c:484-486`). The server side accepts whatever
 /// the (possibly newer) client forwards so the connection survives across
 /// version skew. The client-side parser still rejects unknown tokens via
 /// [`parse_info_flags`] so typos surface at the source.
@@ -308,14 +310,14 @@ fn parse_info_flags_inner(
 
 /// Body of `--info=help`, reproduced byte-for-byte from upstream.
 ///
-/// upstream: options.c output_item_help (rsync-3.4.1:474-510). The text is
+/// upstream: options.c:493-529 output_item_help(). The text is
 /// reproduced byte-for-byte from upstream's runtime output so `--info=help`
 /// matches `rsync --info=help`. The format string is `"%-10s %s\n"`: each
 /// name is left-padded to 10 columns, followed by a single space and the
 /// help text. ALL/NONE descriptions inline the sentinel's `--info` help
-/// (options.c:489-495). The per-verbosity summary block is rendered by
-/// upstream's `make_output_option` over `info_verbosity[]` (options.c:239-
-/// 243) and emits one line per non-empty level in `info_words[]` order.
+/// (options.c:508-514). The per-verbosity summary block is rendered by
+/// upstream's `make_output_option` over `info_verbosity[]` (options.c:255-259)
+/// and emits one line per non-empty level in `info_words[]` order.
 pub(crate) const INFO_HELP_TEXT: &str = "\
 Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\
 \n\

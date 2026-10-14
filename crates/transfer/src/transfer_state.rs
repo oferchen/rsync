@@ -43,14 +43,14 @@ pub enum TransferPhase {
     /// Binary or legacy ASCII protocol version exchange.
     ///
     /// Both sides advertise supported versions and negotiate a common one.
-    /// (upstream: `compat.c:602-604`)
+    /// (upstream: `compat.c:606-607`)
     Handshake,
 
     /// Filter and exclude list exchange.
     ///
     /// Client-mode or server-mode writes/reads the filter rule list over
     /// the wire. Multiplex I/O is activated before this phase.
-    /// (upstream: `exclude.c:recv_filter_list()`, `main.c:1294`)
+    /// (upstream: `exclude.c:recv_filter_list()`, `main.c:1224,1332`)
     FilterExchange,
 
     /// File list build, transmission, or reception.

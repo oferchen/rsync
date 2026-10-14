@@ -3,11 +3,14 @@
 //! Resolves the final [`fast_io::CowPolicy`] from the binary `--cow`/`--no-cow`
 //! flags and the optional tri-state `--reflink` value, honouring upstream
 //! rsync's left-to-right "last flag wins" precedence.
+//!
+//! Deviation from upstream: `--reflink`, `--cow` and `--no-cow` are oc-only
+//! options; upstream rsync 3.5.1 has no copy-on-write control.
 
 /// Parses a `--reflink=<MODE>` value into a [`fast_io::CowPolicy`].
 ///
-/// Accepted values mirror the upstream-style tri-state convention used by
-/// `git`, `cp(1)`, and other reflink-aware tools:
+/// Accepted values follow the tri-state convention of `cp(1)` and other
+/// reflink-aware tools:
 ///
 /// - `auto` -> [`fast_io::CowPolicy::Auto`]
 /// - `always` -> [`fast_io::CowPolicy::Required`]

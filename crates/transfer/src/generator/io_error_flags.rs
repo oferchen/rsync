@@ -46,7 +46,7 @@ pub use protocol::{IOERR_DEL_LIMIT, IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANIS
 ///
 /// # Upstream Reference
 ///
-/// - `cleanup.c:210-218` - the three sequential assignments. Note the rule
+/// - `cleanup.c:213-218` - the three sequential assignments. Note the rule
 ///   lives here and NOT in `log.c:log_exit()`, which does no io_error mapping.
 #[must_use]
 pub const fn to_exit_code(io_error: i32) -> i32 {
@@ -70,7 +70,7 @@ mod tests {
     /// The full truth table. Written out rather than derived so a future edit
     /// to the precedence has to change these numbers deliberately.
     ///
-    /// upstream: `cleanup.c:210-218`.
+    /// upstream: `cleanup.c:213-218`.
     #[test]
     fn every_flag_combination_matches_upstream_precedence() {
         for (bits, expected) in [
@@ -91,7 +91,7 @@ mod tests {
     /// and report 25, hiding the fact that data was actually missed. CI scripts
     /// branch on 23 to detect a partial transfer.
     ///
-    /// upstream: `cleanup.c:216-217` - the GENERAL assignment runs last and
+    /// upstream: `cleanup.c:217-218` - the GENERAL assignment runs last and
     /// overwrites the DEL_LIMIT one.
     #[test]
     fn general_error_outranks_delete_limit() {
@@ -100,7 +100,7 @@ mod tests {
 
     /// Sibling of the above: VANISHED also outranks DEL_LIMIT.
     ///
-    /// upstream: `cleanup.c:214-215`.
+    /// upstream: `cleanup.c:215-216`.
     #[test]
     fn vanished_outranks_delete_limit() {
         assert_eq!(to_exit_code(IOERR_DEL_LIMIT | IOERR_VANISHED), 24);

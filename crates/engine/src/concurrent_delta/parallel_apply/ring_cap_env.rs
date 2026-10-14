@@ -1,18 +1,18 @@
-//! Operator override for the per-file reorder-ring capacity (ROB-11, #3678).
+//! Operator override for the per-file reorder-ring capacity.
 //!
 //! [`super::ParallelDeltaApplier`] sizes each per-file
 //! `super::ReorderBuffer` with the hard default
 //! [`super::ParallelDeltaApplier::DEFAULT_PER_FILE_REORDER_CAPACITY`] (64).
-//! The ROB series (#3667) covers the case where adaptive sizing or a
-//! workload-tuned cap would avoid normal-operation spill activations. Until
-//! the adaptive path lands by default, operators need an escape hatch: a
+//! Adaptive sizing or a workload-tuned cap can avoid normal-operation spill
+//! activations. Until an adaptive path is the default, operators need an
+//! escape hatch: a
 //! single env var that pins the per-file ring capacity, bypassing the hard
 //! 64 default and any future heuristic.
 //!
 //! This module mirrors the [`super::shard_sizing`] pattern: read the
 //! `OC_RSYNC_REORDER_RING_CAP` env var once via a [`OnceLock`], parse it as
 //! a positive `usize`, and expose the result through
-//! [`resolve_ring_capacity`]. Mirrors the STN series convention
+//! [`resolve_ring_capacity`]. Mirrors the spill env-knob convention
 //! (`OC_RSYNC_SPILL_DIR` / `OC_RSYNC_SPILL_THRESHOLD_BYTES` /
 //! `OC_RSYNC_SPILL_COMPRESSION`):
 //!

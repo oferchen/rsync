@@ -5,11 +5,11 @@ use thiserror::Error;
 /// Controls how byte counters are rendered for user-facing output.
 ///
 /// Upstream `rsync` tracks `human_readable` as an integer with four distinct
-/// levels (`options.c:111` defaults it to `1`; `-h`/`--human-readable`
-/// increment it at `options.c:1579`; `--no-human-readable`/`--no-h` reset it to
-/// `0` at `options.c:617`). Each level changes both the digit grouping and the
+/// levels (`options.c:116` defaults it to `1`; `-h`/`--human-readable`
+/// increment it at `options.c:1686`; `--no-human-readable`/`--no-h` reset it to
+/// `0` at `options.c:627`). Each level changes both the digit grouping and the
 /// `--list-only` size-column width in `lib/compat.c:do_big_num` and
-/// `generator.c:1159`:
+/// `generator.c:1322`:
 ///
 /// | Level | Variant | Rendering | Size width |
 /// |-------|---------|-----------|------------|
@@ -28,8 +28,8 @@ pub enum HumanReadableMode {
     /// Level 0 (`--no-human-readable`/`--no-h`): raw decimal digits with no
     /// thousands separators, rendered in an 11-wide `--list-only` size column.
     ///
-    /// upstream: `options.c:617` sets `human_readable = 0`; `lib/compat.c:231`
-    /// skips separator insertion when `human_flag == 0`; `generator.c:1159`
+    /// upstream: `options.c:627` sets `human_readable = 0`; `lib/compat.c:231`
+    /// skips separator insertion when `human_flag == 0`; `generator.c:1322`
     /// selects `size_width = 11` when `human_readable` is falsy.
     Raw,
     /// Level 1 (default): thousands-separated decimal digits (`1,234,567`) in a
@@ -103,7 +103,7 @@ impl HumanReadableMode {
 
     /// The `--list-only` size-column width for this level.
     ///
-    /// Mirrors `generator.c:1159`: `size_width = human_readable ? 14 : 11`, so
+    /// Mirrors `generator.c:1322`: `size_width = human_readable ? 14 : 11`, so
     /// only level 0 ([`Self::Raw`]) uses the 11-wide field.
     #[must_use]
     pub const fn size_width(self) -> usize {
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn size_width_only_raw_is_eleven() {
-        // upstream: generator.c:1159 - size_width = human_readable ? 14 : 11.
+        // upstream: generator.c:1322 - size_width = human_readable ? 14 : 11.
         assert_eq!(HumanReadableMode::Raw.size_width(), 11);
         assert_eq!(HumanReadableMode::Grouped.size_width(), 14);
         assert_eq!(HumanReadableMode::DecimalUnits.size_width(), 14);

@@ -1,6 +1,6 @@
 //! Merging deferred diagnostics back into the rendered event stream.
 //!
-//! upstream: log.c:272-373 `rwrite()` writes each message the instant it is
+//! upstream: log.c:269-429 `rwrite()` writes each message the instant it is
 //! produced, so upstream never needs an ordering key - the output order *is*
 //! the production order. oc buffers the per-file event stream and renders it
 //! post-hoc, which splits one output order into two buffers. This module puts
@@ -31,7 +31,7 @@ pub(crate) struct PendingDiagnostics {
     /// The escape style this renderer applies to each held message before
     /// writing it, mirroring `render_diagnostic_events`. The messages are
     /// carried as raw bytes and escaped once, here, at the write boundary
-    /// (upstream: log.c:425 `rwrite()` -> log.c:250 `filtered_fwrite`), so a
+    /// (upstream: log.c:425 `rwrite()` -> log.c:242 `filtered_fwrite()`), so a
     /// filename operand's control or non-UTF-8 bytes are octal-escaped rather
     /// than written raw to the terminal.
     style: EscapeStyle,

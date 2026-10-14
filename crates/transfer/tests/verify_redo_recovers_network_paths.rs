@@ -1,15 +1,15 @@
 //! A forced phase-2 whole-file verification failure must RECOVER on every
 //! network transport that can reach it - daemon pull, daemon push and
-//! remote-shell pull - matching upstream rsync 3.4.4.
+//! remote-shell pull - matching upstream rsync.
 //!
 //! # Background
 //!
 //! When a transferred file fails its whole-file checksum, the receiver queues
 //! the file for a phase-2 redo: it re-requests the file with a full-length
 //! strong checksum, the sender re-sends it, and the receiver re-verifies
-//! (`receiver.c:1109-1112` `send_msg_int(MSG_REDO, ndx)` ->
-//! `generator.c:2175-2216` `check_for_finished_files()` redo ->
-//! `sender.c:326-342` full-content resend).
+//! (`receiver.c:1372-1376` `send_msg_int(MSG_REDO, ndx)` ->
+//! `generator.c:2647-2689` `check_for_finished_files()` redo ->
+//! `sender.c:send_files()` full-content resend).
 //!
 //! # The upstream oracle
 //!
@@ -27,12 +27,12 @@
 //!
 //! # What forces the failure deterministically
 //!
-//! `--append-verify` (append_mode 2, `receiver.c:374-388`) checksums the FULL
+//! `--append-verify` (append_mode 2, `receiver.c:524-543`) checksums the FULL
 //! reconstructed file - the retained destination prefix plus the appended tail -
 //! against the sender's whole-file checksum over the authoritative source. A
 //! destination pre-seeded with a WRONG (and shorter) prefix therefore fails the
 //! whole-file verify with certainty, and no colliding-block construction is
-//! needed. The redo pass negates append_mode (`receiver.c:777-789`) and re-sends
+//! needed. The redo pass negates append_mode (`receiver.c:948-956`) and re-sends
 //! the file in full, so the destination ends byte-for-byte equal to the source.
 //!
 //! Plain `--append` (append_mode 1) checksums only the appended tail on both
@@ -50,7 +50,7 @@
 //!
 //! 2. The receiver queued the `failed verification` warning and pushed it to the
 //!    peer as an `MSG_INFO` frame unconditionally, including in CLIENT mode.
-//!    Upstream `log.c:330-346` frames a diagnostic only when `am_server`; a
+//!    Upstream `log.c:357-372` frames a diagnostic only when `am_server`; a
 //!    client writes it to its own stderr. Framing it from a client receiver put
 //!    the text in front of a `--server --sender` whose stdout IS the wire: the
 //!    peer rendered the payload raw into the multiplexed stream, the client's
@@ -128,7 +128,7 @@ const CLIENT_DEADLINE: Duration = Duration::from_secs(60);
 ///
 /// The name is the *file list* name, not the destination path: upstream's
 /// receiver has already `change_dir()`ed into the destination root
-/// (`main.c:828`), so `f_name(file, ..)` renders relative. Pinning the whole
+/// (`main.c:778`), so `f_name(file, ..)` renders relative. Pinning the whole
 /// line - not a suffix - is what keeps an absolute path from creeping back in.
 const UPSTREAM_WARNING: &str =
     "WARNING: payload.bin failed verification -- update retained (will try again).";
@@ -138,7 +138,7 @@ const UPSTREAM_WARNING: &str =
 const WARNING_MARKER: &str = "failed verification";
 
 /// `-v` is required on every cell: upstream gates the phase-1 `FWARNING` behind
-/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (`receiver.c:1088`), so a plain
+/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (`receiver.c:1351`), so a plain
 /// `-a` run recovers silently and the warning assertions would have nothing to
 /// match. The silence itself is pinned by
 /// [`daemon_pull_default_verbosity_recovers_silently`].
@@ -340,8 +340,8 @@ fn assert_recovered(cell: &str, outcome: &RunOutcome, dest_file: &Path, payload:
     );
 
     // Upstream routes the phase-1 `FWARNING` to stderr on every cell: written
-    // directly on a pull (log.c:313-315, `am_server == 0`) and rendered from the
-    // remote receiver's `MSG_WARNING` frame on a push (log.c:330-346). A silent
+    // directly on a pull (log.c:341-343, `am_server == 0`) and rendered from the
+    // remote receiver's `MSG_WARNING` frame on a push (log.c:357-372). A silent
     // recovery means the diagnostic was framed to the wrong peer or dropped.
     assert!(
         outcome.stderr.contains(UPSTREAM_WARNING),
@@ -362,7 +362,7 @@ fn assert_recovered(cell: &str, outcome: &RunOutcome, dest_file: &Path, payload:
 
     // The redo must actually have run. Upstream counts the phase-1 append and
     // the phase-2 resend as two transfers of the one file
-    // (`receiver.c:800 stats.num_transferred_files++` per pass), so a `1` here
+    // (`receiver.c:975 stats.xferred_files++` per pass), so a `1` here
     // means the fixture stopped forcing a verification failure and every other
     // assertion above passed vacuously.
     assert!(
@@ -439,8 +439,8 @@ fn daemon_pull_forced_verification_failure_recovers_via_redo() {
 /// stream - or a wire - that upstream leaves untouched at this verbosity. The
 /// redo itself is unconditional, so the recovery assertions still have to hold.
 ///
-/// upstream: receiver.c:1088 - `INFO_GTE(NAME, 1) || stdout_format_has_i` gates
-/// the `rprintf`; receiver.c:1109-1112 queues the redo outside that `if`.
+/// upstream: receiver.c:1351 - `INFO_GTE(NAME, 1) || stdout_format_has_i` gates
+/// the `rprintf`; receiver.c:1372-1376 queues the redo outside that `if`.
 #[test]
 fn daemon_pull_default_verbosity_recovers_silently() {
     let oc_bin = test_support::oc_rsync_bin();
@@ -649,8 +649,8 @@ fn seed_nested_fixture(source_root: &Path, dest_root: &Path) -> Vec<u8> {
 /// destination path - even when the destination OPERAND is absolute.
 ///
 /// Upstream's receiver has already `change_dir()`ed into the destination root
-/// (`main.c:828`) by the time it formats this line, so `fname` at
-/// `receiver.c:1105` is the file-list name however the operand was written.
+/// (`main.c:778`) by the time it formats this line, so `fname` at
+/// `receiver.c:1369` is the file-list name however the operand was written.
 /// oc joins a destination root to reach the file on disk, so the absolute path
 /// is the value most readily to hand - which is exactly why it needs pinning.
 ///
@@ -659,7 +659,7 @@ fn seed_nested_fixture(source_root: &Path, dest_root: &Path) -> Vec<u8> {
 /// that dropped the directory prefix would still pass every flat-name cell in
 /// this file.
 ///
-/// upstream: receiver.c:1105 - `local_name ? f_name(file, NULL) : fname`.
+/// upstream: receiver.c:1369 - `local_name ? f_name(file, NULL) : fname`.
 #[test]
 fn rsh_pull_verification_warning_carries_the_nested_flist_name() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
@@ -729,14 +729,14 @@ fn rsh_pull_verification_warning_carries_the_nested_flist_name() {
 
 /// The emission gate reads the resolved output FORMAT, not an `-i` boolean.
 ///
-/// `options.c:2354-2367` feeds one variable, `stdout_format_has_i`, from two
+/// `options.c:2496-2508` feeds one variable, `stdout_format_has_i`, from two
 /// sources: an explicit `--out-format`/`--log-format` carrying `%i`, and `-i`,
 /// which REWRITES `stdout_format` to `"%i %n%L"`. So a bare `--out-format` with
 /// `%i` and no `-i` and no `-v` still enables this warning. A gate implemented
 /// as "did the user pass -i" is silent here, which is the divergence this cell
 /// exists to catch - it is the one input that separates the two spellings.
 ///
-/// upstream: receiver.c:1088 - `msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
+/// upstream: receiver.c:1351 - `msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
 /// || stdout_format_has_i`.
 #[test]
 fn verification_warning_gate_reads_the_output_format_not_a_dash_i_flag() {
@@ -800,16 +800,16 @@ fn verification_warning_gate_reads_the_output_format_not_a_dash_i_flag() {
 /// whole file as literal data.
 ///
 /// Upstream re-enters the ordinary `recv_generator()` for a redo index
-/// (`generator.c:2200`). That re-stats the destination - which still holds the
-/// phase-1 update, because `--append` implies `--inplace` (`options.c:2420`) and
-/// `receiver.c:1045` finishes the transfer in place even when `recv_ok == 0` -
-/// and re-sends a block signature built from it (`generator.c:1967`). Only
-/// `csum_length` (`:2178`) and the sign of `append_mode` (`:2186`) differ from
+/// (`generator.c:2668`). That re-stats the destination - which still holds the
+/// phase-1 update, because `--append` implies `--inplace` (`options.c:2561`) and
+/// `receiver.c:1302` finishes the transfer in place even when `recv_ok == 0` -
+/// and re-sends a block signature built from it (`generator.c:2405`). Only
+/// `csum_length` (`:2650`) and the sign of `append_mode` (`:2659`) differ from
 /// phase 1; the latter is what stops the redo tripping the append short-circuit
-/// at `generator.c:1842`, where the destination now equals `F_LENGTH`.
+/// at `generator.c:2261`, where the destination now equals `F_LENGTH`.
 ///
 /// Before the fix the receiver requested every redo index with a null sum head,
-/// so the sender fell into `match.c:403-409`'s literal branch and re-sent all
+/// so the sender fell into `match.c:444-450`'s literal branch and re-sent all
 /// 204,800 bytes: literal 307,200 / matched 0. The bytes still landed correctly,
 /// which is why every other cell in this file passes either way - the cost is
 /// invisible unless the delta split is asserted.
@@ -937,7 +937,7 @@ fn daemon_pull_redo_redeltas_against_the_retained_basis() {
     );
 
     // Upper bound: the zero prefix must NOT be counted as matched (upstream's
-    // append pass never calls matched() for the retained prefix - match.c:389-390
+    // append pass never calls matched() for the retained prefix - match.c:430-431
     // sets `last_match = s->flength` and zeroes `s->count`). The only byte range
     // matchable beyond the whole blocks is the basis's trailing short block.
     assert!(

@@ -8,10 +8,13 @@ use std::sync::OnceLock;
 /// Configuration describing which capabilities the current build exposes.
 ///
 /// The structure mirrors the feature toggles used by upstream
-/// `print_rsync_version()` when it prints the capabilities and optimisation
-/// sections. Higher layers populate the fields based on actual runtime support
-/// so [`VersionInfoReport`](super::VersionInfoReport) can render an accurate
+/// `print_info_flags()` (usage.c:38-239) when it prints the capabilities and
+/// optimisation sections. Higher layers populate the fields based on actual runtime
+/// support so [`VersionInfoReport`](super::VersionInfoReport) can render an accurate
 /// report.
+///
+/// Deviation from upstream: the allocator, `copy_file_range`, `io_uring`, parallel
+/// and mmap fields render oc-only Optimizations tokens that 3.5.1 does not print.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VersionInfoConfig {
     /// Whether socketpair-based transports are available.
@@ -48,7 +51,7 @@ pub struct VersionInfoConfig {
     pub supports_prealloc: bool,
     /// Whether `--stop-at` style cut-offs are supported.
     pub supports_stop_at: bool,
-    /// Whether change-time preservation is implemented.
+    /// Whether creation-time (`--crtimes`) preservation is implemented.
     pub supports_crtimes: bool,
     /// Whether internationalized domain name hosts are converted to A-labels.
     pub supports_idn: bool,

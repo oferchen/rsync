@@ -16,8 +16,7 @@ use super::{ConnectionLimiter, ConnectionLockGuard, MaxConnections, ModuleDefini
 /// table through - the standalone accept loop, the async listener, the
 /// `--server` stdio session and the inetd session - so a module's
 /// `lock file` / `max connections` pair is honoured identically on all of
-/// them. Opening the daemon-wide lock file separately at each entry point is
-/// what let two of them silently pass `None` and disable the cap entirely.
+/// them.
 ///
 /// The limiter is returned alongside the runtimes because callers that rebuild
 /// their module table on SIGHUP need to hand the same daemon-wide handle to
@@ -45,7 +44,7 @@ pub(in crate::daemon) fn build_module_runtimes_with_lock_file(
 /// file). Distinct override paths are opened once and shared via the cache so
 /// two modules naming the same file coordinate through one handle.
 ///
-/// upstream: clientserver.c:746 calls `claim_connection(lp_lock_file(i),
+/// upstream: clientserver.c:791 calls `claim_connection(lp_lock_file(i),
 /// lp_max_connections(i))`. The lock file is a P_LOCAL parameter, so each module
 /// claims its slot in the file named by its own (inherited or overridden) value.
 pub(in crate::daemon) fn build_module_runtimes(
@@ -76,8 +75,9 @@ pub(in crate::daemon) fn build_module_runtimes(
 
 /// Live state for a module, pairing its static definition with runtime connection tracking.
 ///
-/// upstream: clientserver.c - upstream rsync maintains a global connection count
-/// per module via `lp_lock_file()`. Our `AtomicU32` tracks in-process counts
+/// upstream: connection.c:26-49 `claim_connection()` keeps no counter; the slot
+/// locks in `lp_lock_file()` are its only state. Deviation from upstream: the
+/// `AtomicU32` additionally bounds connections served within this process,
 /// while the optional `ConnectionLimiter` coordinates across daemon processes.
 pub(crate) struct ModuleRuntime {
     pub(crate) definition: ModuleDefinition,
@@ -142,13 +142,13 @@ impl ModuleRuntime {
     /// Attempts to acquire a connection slot, honouring the module's
     /// `max connections` setting.
     ///
-    /// The step order mirrors upstream: connection.c:claim_connection:26-46
+    /// The step order mirrors upstream: connection.c:26-49 `claim_connection()`
     /// returns success for a zero limit *before* the lock file is opened, opens
     /// the lock file for every other value (so an unopenable file reports the
     /// open failure rather than the cap), and only then scans
     /// `[0, max_connections)`. A negative limit runs no iterations, so it
-    /// consumes no slot and falls through to the refusal after the descriptor
-    /// is closed - the drop of `lock_guard` on the error path below.
+    /// consumes no slot: `ConnectionLimiter::acquire` refuses it after closing
+    /// the descriptor, and without a limiter the `None` arm below refuses it.
     pub(in crate::daemon) fn try_acquire_connection(
         &self,
     ) -> Result<ModuleConnectionGuard<'_>, ModuleConnectionError> {

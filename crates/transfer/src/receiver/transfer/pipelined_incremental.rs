@@ -29,8 +29,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1432` - itemize new directory
-    /// - `generator.c:2260` - itemize existing directory (metadata only)
+    /// - `generator.c:1869-1872` - itemize a new directory, or an existing one
+    ///   whose metadata changed
     pub fn run_pipelined_incremental<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
@@ -41,13 +41,13 @@ impl ReceiverContext {
         let _t = PhaseTimer::new("receiver-transfer-incremental");
         // Buffer itemize rows and flush them once in flist-index order before
         // finalization, so a directory row immediately precedes its children
-        // (upstream's single flist-index-order walk, generator.c:2329-2344)
+        // (upstream's single flist-index-order walk, generator.c:2803-2818)
         // rather than oc's two-phase "all dirs, then all files" emission.
         // Mirrors run_pipelined; the async incremental path is out of scope.
         self.defer_itemize = true;
         // Interleave plain `-v` (name-only, no `-i`) client-mode file names with
         // --progress in flist order, matching upstream log_before_transfer
-        // (receiver.c:1024-1028). Set identically to run_pipelined: the flags
+        // (receiver.c:1263-1267). Set identically to run_pipelined: the flags
         // are read by the shared run_pipeline_loop_decoupled, so leaving them
         // unset here left the default feature set (this driver) rendering names
         // as an end-of-run block while the shipped binary interleaved them.
@@ -60,16 +60,16 @@ impl ReceiverContext {
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
-        // upstream: main.c:1401-1410 - a client handed an empty list skips
+        // upstream: main.c:1438-1446 - a client handed an empty list skips
         // do_recv() entirely and reports the io_error the end marker carried.
         // Checked before the sub-list fetch below because upstream's own
         // `if (inc_recurse && file_total == 1) recv_additional_file_list()`
-        // (main.c:1398-1399) cannot fire with a file_total of 0 either.
+        // (main.c:1436-1437) cannot fire with a file_total of 0 either.
         if self.is_empty_client_flist(file_count) {
             return self.finish_empty_client_flist(reader, writer);
         }
 
-        // RS-3b: when INC_RECURSE is negotiated and the terminating
+        // When INC_RECURSE is negotiated and the terminating
         // NDX_FLIST_EOF has not yet arrived (a genuine multi-segment sub-list
         // stream), consume it lazily one segment at a time instead of draining
         // it up front. The eager drain below deadlocks against the sender's
@@ -106,7 +106,7 @@ impl ReceiverContext {
         // reader, so this is a pure in-memory bound scan that leaves `file_list`
         // untouched and reads not one wire byte, byte-identical to the
         // `ensure_all_segments_loaded` drain it replaces.
-        // upstream: generator.c:2299-2368 fetches sub-lists on demand.
+        // upstream: generator.c:2770-2841 fetches sub-lists on demand.
         let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
         let mut flat_idx = 0usize;
         while self.ensure_flat_idx(flat_idx, reader, &mut flist_ndx_codec)? {
@@ -119,7 +119,7 @@ impl ReceiverContext {
             io_error: self.flist_reader_io_error() | self.flist_io_error,
             ..Default::default()
         };
-        // upstream: receiver.c:669-670 DEBUG_GTE(RECV, 1)
+        // upstream: receiver.c:685-686 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
@@ -128,7 +128,7 @@ impl ReceiverContext {
         // Decide the plain-`-v` directory NAME lines from the PRE-transfer
         // state, before the walk below applies metadata or a child mkdir bumps a
         // parent's mtime. Upstream names a directory only when set_file_attrs()
-        // changed it (generator.c:1503-1505); a directory absent pre-transfer is
+        // changed it (generator.c:1895-1897); a directory absent pre-transfer is
         // treated as newly created and named. The walk itself no longer names
         // them, so an unchanged re-sync is silent here exactly as in
         // run_pipelined - it previously named every directory unconditionally.
@@ -144,7 +144,7 @@ impl ReceiverContext {
         // A dry run reports its directories from the shared `plan_dry_run_in_range` pass
         // below, exactly like `run_pipelined`. Running this walk too would
         // record every directory row and created-dir tally twice; it creates
-        // nothing under `skip_dest_writes()` anyway (#6947). `--list-only` does
+        // nothing under `skip_dest_writes()` anyway. `--list-only` does
         // not set `dry_run`, so its walk is untouched.
         let walk_dirs = !self.config.flags.dry_run;
         for (flist_idx, file_entry) in self.file_list.iter_indexed() {
@@ -164,13 +164,13 @@ impl ReceiverContext {
                     Some((is_new, iflags_raw)) => {
                         if is_new {
                             stats.directories_created += 1;
-                            // upstream: receiver.c:752-754 - a new directory
+                            // upstream: receiver.c:925-930 - a new directory
                             // (ITEM_IS_NEW) bumps stats.created_dirs. Counts the
                             // pre-flight-mkdir'd transfer root too, so the
                             // "Number of created files" dir sub-count matches.
                             self.record_created(file_entry.mode());
                         }
-                        // upstream: generator.c:1480-1483 - itemize each dir with
+                        // upstream: generator.c:1869-1872 - itemize each dir with
                         // the flags computed against its pre-apply stat. A new dir
                         // carries ITEM_LOCAL_CHANGE|ITEM_IS_NEW; an existing dir
                         // carries the attribute-diff flags (so a differing root
@@ -214,7 +214,7 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_specials(&setup.dest_dir, writer)?;
 
-        // upstream: generator.c:1360-1366 - missing_args == 2 && file->mode == 0
+        // upstream: generator.c:1749-1755 - missing_args == 2 && file->mode == 0
         // deletes the destination path and skips any creation for the sentinel.
         self.process_missing_args_sentinels(
             &setup.dest_dir,
@@ -225,7 +225,7 @@ impl ReceiverContext {
 
         // Mirror `run_pipelined`: when `--delete` is in effect, sweep the
         // destination for extraneous entries and capture per-type counters.
-        // upstream: generator.c:2280-2281 - --delete-before / --delete-during
+        // upstream: generator.c:2753-2754 - --delete-before / --delete-during
         // sweep before the per-file loop. --delete-after / --delete-delay defer
         // the sweep until after the transfer (see the late call below) so the
         // destination `.rsync-filter` merge files transferred by this run are
@@ -255,7 +255,7 @@ impl ReceiverContext {
         );
 
         // Both assigned by every arm of the mode match below.
-        // upstream: receiver.c:800 total_transferred_size, summed with files_transferred.
+        // upstream: receiver.c:976 total_transferred_size, summed with files_transferred.
         let mut files_transferred: usize;
         let mut transferred_file_size: u64;
         let mut bytes_received: u64 = 0;
@@ -310,7 +310,7 @@ impl ReceiverContext {
                 let delayed;
                 // upstream: io.c::write_ndx / read_ndx keep a single
                 // connection-wide prev_positive/prev_negative. The phase-2 redo
-                // re-requests files (generator.c:2178-2216) through that SAME
+                // re-requests files (generator.c:2667-2705) through that SAME
                 // state, so one codec pair is threaded through both the phase-1
                 // and the redo pass. Fresh per-pass codecs would reset the diff
                 // base and desync the daemon-sender's NDX decode on the redo.
@@ -345,11 +345,11 @@ impl ReceiverContext {
                 if !redo_indices.is_empty() {
                     setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-                    // upstream: generator.c:2200 - the phase-2 redo re-enters the
+                    // upstream: generator.c:2672 - the phase-2 redo re-enters the
                     // ordinary recv_generator() for the redo index, so the retry
-                    // is a full re-request: ITEM_TRANSFER (generator.c:1940), a
+                    // is a full re-request: ITEM_TRANSFER (generator.c:2378), a
                     // re-stat of the destination, and a fresh block signature
-                    // built from it (generator.c:1967).
+                    // built from it (generator.c:2405).
                     let redo_files: Vec<(usize, PathBuf, u32)> = redo_indices
                         .iter()
                         .filter_map(|&idx| {
@@ -413,7 +413,7 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: receiver.c:710-711 then :551-552 - handle_delayed_updates()
+        // upstream: receiver.c:874-875 - handle_delayed_updates()
         // renames each delay-updates leader to its final path in phase 2, and
         // only then are followers hard-linked to it. See
         // finalize_delayed_updates_and_hardlinks for the ordering rationale.
@@ -449,9 +449,9 @@ impl ReceiverContext {
             !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0;
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
-        // upstream: main.c:816-818 - the pre-flight mkdir of the destination
+        // upstream: main.c:829-831 - the pre-flight mkdir of the destination
         // root sets FLAG_DIR_CREATED on flist[0], so the generator itemizes it
-        // with ITEM_IS_NEW and receiver.c:752-754 counts created_dirs for it.
+        // with ITEM_IS_NEW and receiver.c:925-930 counts created_dirs for it.
         // oc creates the root out-of-band (ensure_dest_root_exists), so the root
         // entry is seen as "existing" in the dir loop above and not counted
         // there; count it here so the created-dir total includes the synthesized
@@ -462,7 +462,7 @@ impl ReceiverContext {
         // Fold the per-type created tally accumulated across the directory,
         // symlink, special, and file-transfer passes into the returned stats so
         // the client reconstructs the "Number of created files" breakdown.
-        // upstream: receiver.c:749-762 - stats.created_* accumulated locally.
+        // upstream: receiver.c:925-938 - stats.created_* accumulated locally.
         stats.created_stats = self.created_stats.get();
 
         // Flush any trailing buffered `-v` directory names (those with no
@@ -495,23 +495,23 @@ impl ReceiverContext {
         // both into the same `stats.deleted_*` globals (delete.c:241-256).
         stats.delete_stats = self.effective_del_stats();
 
-        // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
-        // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that
+        // upstream: io.c:1740-1745 - io_error |= val on MSG_IO_ERROR from the sender.
+        // The sender emits MSG_IO_ERROR (sender.c:812-813) for source files that
         // vanished or could not be opened during its send loop. Fold those bits
         // into the exit-code io_error so the receiver reports 24/23; MSG_NO_SEND
         // alone only skips the file and carries no exit-code bits.
         stats.io_error |= reader.take_io_error();
 
-        // upstream: log.c:310-311 - every MSG_ERROR_XFER read off the wire sets
+        // upstream: log.c:337-338 - every MSG_ERROR_XFER read off the wire sets
         // got_xfer_error, the only report an ENOENT source argument produces
-        // (flist.c:2671 withholds IOERR_GENERAL for it).
+        // (flist.c:2940-2943 withholds IOERR_GENERAL for it).
         stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
 
         Ok(stats)
     }
 
     /// True when the pipelined-incremental driver should consume the INC_RECURSE
-    /// sub-list stream LAZILY, one segment at a time (RS-3b), instead of draining
+    /// sub-list stream LAZILY, one segment at a time, instead of draining
     /// it up front.
     ///
     /// Both must hold:
@@ -561,14 +561,14 @@ impl ReceiverContext {
             .map_or(self.file_list.len(), |next| next.0)
     }
 
-    /// Lazy per-segment consumption of an INC_RECURSE sub-list stream (RS-3b).
+    /// Lazy per-segment consumption of an INC_RECURSE sub-list stream.
     ///
     /// Dispatched from [`run_pipelined_incremental`](Self::run_pipelined_incremental)
     /// only when [`should_stream_incremental`](Self::should_stream_incremental)
     /// holds. For each segment in turn it creates that segment's directories,
     /// builds and transfers its candidate files, then - once the segment is
     /// fully drained - emits a per-segment `NDX_DONE` to free the sender's
-    /// window (upstream R13/R17: `generator.c:2219-2239`). The RS-3a marker-aware
+    /// window (upstream R13/R17: `generator.c:2219-2239`). The marker-aware
     /// reply read absorbs any later segment that interleaves with the transfer
     /// replies, so the sender may stay ahead by its lookahead window without
     /// desyncing this driver.
@@ -602,7 +602,7 @@ impl ReceiverContext {
             io_error: self.flist_reader_io_error() | self.flist_io_error,
             ..Default::default()
         };
-        // upstream: receiver.c:669-670 DEBUG_GTE(RECV, 1)
+        // upstream: receiver.c:685-686 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
@@ -647,7 +647,7 @@ impl ReceiverContext {
         let mode = self.select_mode();
         // Same gate as the batch driver: a dry run (and --only-write-batch,
         // which implies it) reports directories from its plan pass, so walking
-        // them here too would record every directory row twice (#6947).
+        // them here too would record every directory row twice.
         let walk_dirs = !self.config.flags.dry_run;
         loop {
             // Make sure segment `segment_idx` exists (pull the next frame while
@@ -664,7 +664,7 @@ impl ReceiverContext {
             let seg_start = self.ndx_segments[segment_idx].0;
             let seg_end = self.segment_end(segment_idx);
 
-            // upstream: generator.c:2780-2798 - delete in this sub-list's parent
+            // upstream: generator.c:2780-2801 - delete in this sub-list's parent
             // before walking it, empty sub-lists included (every destination
             // entry of an empty source directory is extraneous). The io_error
             // guard inside must see every file-list trailer and MSG_IO_ERROR
@@ -767,7 +767,7 @@ impl ReceiverContext {
             }
 
             // The per-entry passes upstream's recv_generator() runs inline
-            // (missing args generator.c:1749-1755, symlinks :1948-2002,
+            // (missing args generator.c:2216-2222, symlinks :1948-2002,
             // devices and specials :2031-2060), over this segment only so its
             // entries can be released once the sender frees the list. They run
             // before the segment's transfer requests, as in the batch driver: a
@@ -779,7 +779,7 @@ impl ReceiverContext {
             // Build and transfer this segment's candidate files. The threaded
             // codec pair keeps the request-stream NDX diff-state connection-wide
             // across every segment. A segment that interleaves during these
-            // replies is absorbed by the RS-3a marker-aware reply read.
+            // replies is absorbed by the marker-aware reply read.
             let files_to_transfer = self.build_files_to_transfer_in_range(
                 range.clone(),
                 writer,
@@ -884,7 +884,7 @@ impl ReceiverContext {
         }
 
         // Non-interleave `-v` directory names: emitted as an end-of-run block
-        // exactly as the batch driver does (upstream generator.c:1503-1505). On
+        // exactly as the batch driver does (upstream generator.c:1895-1897). On
         // the streaming path (Transfer mode, client pull) interleave_names is
         // set, so these were already released alongside their children above and
         // trailing ones flush via flush_names_all; this block covers the
@@ -1030,8 +1030,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2219-2239` - `check_for_finished_files` frees `first_flist`
-    ///   and writes `NDX_DONE`; `sender.c:249-264` echoes it.
+    /// - `generator.c:2691-2712` - `check_for_finished_files` frees `first_flist`
+    ///   and writes `NDX_DONE`; `sender.c:534-549` echoes it.
     fn release_completed_segment_if_older<Rd: Read, W: Write + ?Sized>(
         &mut self,
         cur_segment_idx: usize,
@@ -1049,8 +1049,8 @@ impl ReceiverContext {
             return Ok(());
         }
         // R17: upstream check_for_finished_files stops freeing at the first
-        // flist whose files still await the phase-2 redo (generator.c:2239:
-        // `if (first_flist->to_redo) ... break`). RS-3b defers the redo pass
+        // flist whose files still await the phase-2 redo (generator.c:2712:
+        // `if (first_flist->to_redo) ... break`). The streaming driver defers the redo pass
         // until after the whole walk, so the oldest un-released segment's flist
         // must stay resident on the sender until that redo re-requests it by
         // NDX; freeing it here would strand the re-request. Pin it - and, since
@@ -1070,13 +1070,13 @@ impl ReceiverContext {
 
         // Emit one NDX_DONE (frees the sender's oldest flist) and flush so the
         // sender sees it promptly and refills its window (the pump; upstream
-        // maybe_flush_socket at generator.c:2231 gates on backlog < MIN/2, and an
+        // maybe_flush_socket at generator.c:2703 gates on backlog < MIN/2, and an
         // unconditional flush here is a safe superset).
         ndx_write_codec.write_ndx_done(&mut *writer)?;
         writer.flush()?;
 
         // Drain the sender's echo, absorbing any sub-list segments it queued
-        // ahead of the echo (RS-3a marker-aware read, receiver as the sink).
+        // ahead of the echo (marker-aware read, receiver as the sink).
         match read_marker_aware_ndx(reader, ndx_read_codec, self)? {
             NdxFrame::Done => {}
             NdxFrame::File(ndx) => {
@@ -1111,7 +1111,7 @@ impl ReceiverContext {
     ///   a follower once its leader is done, while the generator walks the
     ///   follower's sub-list.
     /// - `sender.c:584-602` - the sender echoes every non-transfer item.
-    /// - `receiver.c:918-931` - `recv_files()` consumes each echo inline.
+    /// - `receiver.c:1163-1176` - `recv_files()` consumes each echo inline.
     fn itemize_segment_hardlink_followers<R: Read, W: Write + ?Sized>(
         &mut self,
         range: std::ops::Range<usize>,
@@ -1239,12 +1239,12 @@ mod itemize_order_tests {
     /// its children), not batch every directory ahead of every file.
     ///
     /// Upstream itemizes in a single flist-index-order walk: `generate_files`
-    /// (generator.c:2329-2344) calls `recv_generator` per `cur_flist->sorted[i]`
-    /// in index order, and `recv_generator` (generator.c:1480-1483) itemizes
+    /// (generator.c:2803-2818) calls `recv_generator` per `cur_flist->sorted[i]`
+    /// in index order, and `recv_generator` (generator.c:1884-1887) itemizes
     /// each directory at its own flist position. For the flist `a/ a/f1 b/ b/f2`
     /// upstream prints `.d a/`, `>f a/f1`, `.d b/`, `>f b/f2`.
     ///
-    /// `run_pipelined` was wired to defer itemize in #6560; this asserts the sync
+    /// `run_pipelined` was wired to defer itemize; this asserts the sync
     /// incremental driver's own record sites - the per-directory
     /// `create_directory_incremental` loop plus `build_files_to_transfer` - do the
     /// same. It fails if the batch emission returns: reverting the dir loop to an
@@ -1354,9 +1354,9 @@ mod itemize_order_tests {
     /// row and the created-directory tally are still produced.
     ///
     /// WHY all three assertions: upstream suppresses only the syscall, never the
-    /// reporting. `syscall.c:1149-1155 do_mkdir()` is `if (dry_run) return 0;`
-    /// and `rsync.c:498-499 set_file_attrs()` returns early, while
-    /// `generator.c:1480-1483 itemize()` and the receiver's `created_dirs`
+    /// reporting. `syscall.c:2185 do_mkdir()` is `if (dry_run) return 0;`
+    /// and `rsync.c:524-525 set_file_attrs()` returns early, while
+    /// `generator.c:1869-1872 itemize()` and the receiver's `created_dirs`
     /// counter (`receiver.c:748-753`) run unconditionally. Asserting only the
     /// absent directory would let a future early-return silence output upstream
     /// prints, trading one fidelity bug for another; asserting only the row
@@ -1448,7 +1448,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// RS-3b invariant: the TOTAL per-segment `NDX_DONE`s crossing the wire equal
+    /// Invariant: the total per-segment `NDX_DONE`s crossing the wire equal
     /// the segment count, whether emitted mid-walk (streaming) or in the finalize
     /// burst (batch) - so moving the emission never double-emits or drops one.
     ///
@@ -1495,7 +1495,7 @@ mod itemize_order_tests {
             let mut ctx = ReceiverContext::new_for_test(&hs, config);
 
             // `num_segments` segments of `per` entries each; the +1 NDX gap
-            // between segments mirrors upstream flist.c:3209.
+            // between segments mirrors upstream flist.c:3511.
             let per = 3usize;
             ctx.file_list = (0..num_segments * per)
                 .map(|i| FileEntry::new_file(format!("f{i}").into(), 1, 0o100644))
@@ -1568,7 +1568,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// IRP-07: a segment the sender is told to free is dropped from the local
+    /// A segment the sender is told to free is dropped from the local
     /// list too, so resident file-list memory tracks the lookahead window, not
     /// the tree size - while its directories survive for the end-of-walk
     /// touch-up (upstream keeps them in `dir_flist`, generator.c:2700-2711).
@@ -1669,10 +1669,10 @@ mod itemize_order_tests {
         assert_eq!(pinned.segments_released_mid_walk, SEGMENTS - 1);
     }
 
-    /// RS-3b R17 redo-pin: a segment whose flat range holds a file awaiting the
+    /// Redo pin: a segment whose flat range holds a file awaiting the
     /// phase-2 redo must NOT emit its per-segment `NDX_DONE` mid-walk. Upstream
     /// `check_for_finished_files` stops freeing at the first flist with a
-    /// `to_redo` file (generator.c:2239), keeping it - and, because releases are
+    /// `to_redo` file (generator.c:2695), keeping it - and, because releases are
     /// strictly in order, every newer flist - resident on the sender for the
     /// deferred redo re-request. The control run (no redo) frees all three older
     /// segments; the redo run frees only the one before the pin. The pin is what

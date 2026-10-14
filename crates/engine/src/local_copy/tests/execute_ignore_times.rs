@@ -250,7 +250,7 @@ fn ignore_times_with_checksum_handles_multiple_files() {
 
 #[test]
 fn ignore_times_with_size_only_skips_same_size() {
-    // Upstream: generator.c:unchanged_file() checks size_only before
+    // Upstream: generator.c:quick_check_ok() checks size_only before
     // ignore_times. When both are set and sizes match, size_only wins.
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
@@ -291,7 +291,7 @@ fn ignore_times_with_size_only_skips_same_size() {
 
 #[test]
 fn size_only_wins_over_ignore_times_with_same_content() {
-    // Upstream: generator.c:unchanged_file() checks size_only before
+    // Upstream: generator.c:quick_check_ok() checks size_only before
     // ignore_times. When both are set and sizes match, size_only wins.
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");

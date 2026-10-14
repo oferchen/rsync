@@ -1,4 +1,4 @@
-//! Single-producer vs multi-producer `WorkQueue` overhead benchmark (#1572).
+//! Single-producer vs multi-producer `WorkQueue` overhead benchmark.
 //!
 //! Quantifies the cost difference between the default single-producer (SP)
 //! [`WorkQueueSender`] path and the optional multi-producer (MP) path that is
@@ -11,7 +11,7 @@
 //! # What the result informs
 //!
 //! Per the audit at `docs/audits/workqueue-sender-multi-producer-audit.md`
-//! (PR #4173), every live production producer site is correctly
+//!, every live production producer site is correctly
 //! single-producer today and the audit recommends keeping the `multi-producer`
 //! feature gated. This bench produces the quantitative evidence behind that
 //! recommendation:
@@ -104,7 +104,7 @@ use engine::concurrent_delta::DeltaWork;
 use engine::concurrent_delta::work_queue;
 
 /// Total work items moved per iteration. Matches the 100K figure called out
-/// in task #1572 and the `parallel_dispatch_overhead` baseline (#4206) so
+/// in task #1572 and the `parallel_dispatch_overhead` baseline so
 /// numbers are directly comparable across benches.
 const TOTAL_ITEMS: usize = 100_000;
 

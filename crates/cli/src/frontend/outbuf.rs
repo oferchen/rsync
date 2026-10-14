@@ -26,6 +26,8 @@ pub(crate) enum OutbufMode {
 /// leading character of the provided string (case-insensitive) and mapping
 /// `N`/`U` to no buffering, `L` to line buffering, and `B`/`F` to block
 /// buffering. Any other leading character results in an error diagnostic.
+///
+/// upstream: options.c:2156-2179 `if (outbuf_mode && !am_server)`.
 pub(crate) fn parse_outbuf_mode(value: &OsStr) -> Result<OutbufMode, Message> {
     if value.is_empty() {
         return Err(invalid_outbuf_message());

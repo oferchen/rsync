@@ -7,7 +7,7 @@
 /// Records a global-section directive value, overwriting whatever an earlier
 /// occurrence of the same directive stored.
 ///
-/// upstream: loadparm.c:379-470 do_parameter() - the parameter pointer is
+/// upstream: loadparm.c:498-590 do_parameter() - the parameter pointer is
 /// resolved from parm_table and assigned unconditionally, with no seen-set and
 /// no duplicate check, so a directive repeated in one config file keeps its
 /// last value. Routing every global slot through this one helper keeps that
@@ -85,7 +85,8 @@ fn apply_global_directive(
             // start over it. Propagating the error here instead killed the
             // daemon during config parse, before `listen()`, which is what
             // the 3.5.0 `daemon-config-symlink` cell observes as
-            // `rsyncd exited before listening`.
+            // `rsyncd exited before listening`. Deviation from upstream: oc
+            // reads the motd once at config load, not per connection.
             let contents =
                 crate::daemon::operator_file::read_to_string(&motd_path).unwrap_or_default();
 
@@ -118,7 +119,7 @@ fn apply_global_directive(
             state.module_defaults.reverse_lookup = Some(parsed);
         }
         "secretsfile" if value.is_empty() => state.global_secrets_file = None,
-        // upstream: authenticate.c:143-160 check_secret() opens the value as
+        // upstream: authenticate.c:138-166 check_secret() opens the value as
         // given when a client authenticates, so a missing or unusable file
         // fails only that authentication, never the config load.
         "secretsfile" => {
@@ -147,7 +148,7 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        // upstream: connection.c claim_connection() opens `lp_lock_file(i)` as
+        // upstream: connection.c:26 claim_connection() opens `lp_lock_file(i)` as
         // given, so a relative value resolves against the daemon's cwd. An empty
         // value is stored as "" (loadparm.c string_set) and replaces the
         // DEFAULT_LOCK_FILE default, so a limited module then fails to open it.
@@ -233,8 +234,9 @@ fn apply_global_directive(
 
             store_global_directive(&mut state.quic_port, parsed, canonical, line_number);
         }
-        // upstream: loadparm.c - use chroot is valid in the global section as a
-        // default that applies to all modules which do not override it explicitly.
+        // upstream: daemon-parm.txt:71 - `use chroot` is a P_LOCAL BOOL3, so a
+        // global-section value is the default for every module that does not
+        // override it.
         "usechroot" => {
             let Some(parsed) = apply_bool3_directive(value, "use chroot", path, line_number) else {
                 return Ok(());
@@ -242,8 +244,8 @@ fn apply_global_directive(
 
             store_global_directive(&mut state.global_use_chroot, parsed, canonical, line_number);
         }
-        // upstream: loadparm.c - syslog facility sets the syslog facility
-        // for daemon log messages (e.g., "daemon", "local0"-"local7").
+        // upstream: daemon-parm.txt:54 - `syslog facility` ENUM sets the syslog
+        // facility for daemon log messages (e.g., "daemon", "local0"-"local7").
         "syslogfacility" => {
             // upstream: loadparm.c:575-586 `case P_ENUM` - a facility name is
             // stored as that facility, otherwise `atoi(value) > 0` stores the
@@ -253,17 +255,17 @@ fn apply_global_directive(
                 None if parse_atoi(value) > 0 => parse_atoi(value).to_string(),
                 None => return Ok(()),
             };
-            // upstream: loadparm.c - `syslog facility` is P_LOCAL, so a
+            // upstream: daemon-parm.txt:54 - `syslog facility` is P_LOCAL, so a
             // global-section value becomes the default every later module
             // inherits (init_section copies Vars.l). state.syslog_facility is
             // the daemon-wide value read as `lp_syslog_facility(-1)`.
             state.module_defaults.syslog_facility = Some(facility.clone());
             store_global_directive(&mut state.syslog_facility, facility, canonical, line_number);
         }
-        // upstream: loadparm.c - syslog tag sets the syslog ident prefix. An
+        // upstream: daemon-parm.txt:44 - `syslog tag` sets the syslog ident prefix. An
         // empty value is stored as "" and replaces the "rsyncd" default.
         "syslogtag" => {
-            // upstream: loadparm.c - `syslog tag` is P_LOCAL; the
+            // upstream: daemon-parm.txt:44 - `syslog tag` is P_LOCAL; the
             // global-section value seeds every module's inherited default.
             state.module_defaults.syslog_tag = Some(value.to_owned());
             store_global_directive(
@@ -273,7 +275,7 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        // upstream: loadparm.c - `address` sets the bind address for
+        // upstream: daemon-parm.txt:3 - `address` sets the bind address for
         // the daemon listener.
         "address" if value.is_empty() => state.bind_address = None,
         "address" => {
@@ -285,9 +287,9 @@ fn apply_global_directive(
         }
         // upstream: daemon-parm.txt `Locals:` `uid` is P_LOCAL. A value in the
         // global section is the default `lp_uid(module_id)` every module
-        // inherits (clientserver.c:781); it is NOT a process-wide daemon drop.
+        // inherits (clientserver.c:833); it is NOT a process-wide daemon drop.
         // Conflating it with the P_GLOBAL `daemon uid` made a root daemon drop
-        // every uid-less module to `nobody` (clientserver.c:781 `am_root ?
+        // every uid-less module to `nobody` (clientserver.c:833 `am_root ?
         // NOBODY_USER`) even when the operator set a global `uid = 0`.
         "uid" if value.is_empty() => state.module_defaults.uid = None,
         "uid" => {
@@ -296,15 +298,16 @@ fn apply_global_directive(
         }
         // upstream: daemon-parm.txt `Locals:` `gid` is P_LOCAL - the global
         // value is the default `lp_gid(module_id)` every module inherits
-        // (clientserver.c:790), distinct from the P_GLOBAL `daemon gid` drop.
+        // (clientserver.c:844), distinct from the P_GLOBAL `daemon gid` drop.
         "gid" if value.is_empty() => state.module_defaults.gid = None,
         "gid" => {
             state.module_defaults.gid =
                 Some(parse_gid_setting(value).map_err(|_| rejected_gid_token(value)));
         }
         // upstream: daemon-parm.txt `Globals:` `daemon_uid`/`daemon_gid` are
-        // P_GLOBAL. `daemon uid` sets the process-wide uid the listener drops
-        // to once, before the accept loop (clientserver.c:1376 `lp_daemon_uid`).
+        // P_GLOBAL. `daemon uid` sets the process-wide uid, applied per
+        // connection by `start_daemon()` (clientserver.c:1509 `lp_daemon_uid`).
+        // Deviation from upstream: oc drops to it once, before the accept loop.
         "daemonuid" if value.is_empty() => state.daemon_uid = None,
         "daemonuid" => {
             store_global_directive(
@@ -314,8 +317,8 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        // upstream: clientserver.c:1500 `lp_daemon_gid` - `daemon gid` sets the
-        // process-wide gid the listener drops to before the accept loop.
+        // upstream: clientserver.c:1496 `lp_daemon_gid` - `daemon gid` sets the
+        // process-wide gid; oc's listener drops to it before the accept loop.
         "daemongid" if value.is_empty() => state.daemon_gid = None,
         "daemongid" => {
             store_global_directive(
@@ -325,21 +328,21 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
+        // upstream: daemon-parm.txt:12 - listen_backlog INTEGER, default 5.
         // Controls the backlog argument passed to listen(2).
         "listenbacklog" => {
             let parsed = parse_atoi(value).max(0) as u32;
 
             store_global_directive(&mut state.listen_backlog, parsed, canonical, line_number);
         }
-        // upstream: daemon-parm.txt - port INTEGER, P_GLOBAL, default 0.
+        // upstream: daemon-parm.txt:13 - `rsync_port|port` INTEGER, P_GLOBAL, default 0.
         // Controls the TCP port the daemon listens on.
         "port" => {
             let parsed = parse_atoi(value).clamp(0, i32::from(u16::MAX)) as u16;
 
             store_global_directive(&mut state.rsync_port, parsed, canonical, line_number);
         }
-        // upstream: daemon-parm.txt - socket options STRING.
+        // upstream: daemon-parm.txt:10 - socket options STRING.
         // Comma-separated TCP/IP socket options for the listener.
         "socketoptions" if value.is_empty() => state.socket_options = None,
         "socketoptions" => {
@@ -392,7 +395,7 @@ fn apply_global_directive(
         //
         // Last-wins here too: `do_parameter()` resolves the same parameter
         // pointer whether the section is global or a module and assigns it
-        // through `string_set()` (loadparm.c:379-470), so a repeated global
+        // through `string_set()` (loadparm.c:498-590), so a repeated global
         // `exclude` REPLACES the default rather than extending it. These three
         // are the only `Vec`-shaped fields on `GlobalModuleDefaults`; every
         // other field is an `Option`, which is last-wins by construction.
@@ -402,7 +405,7 @@ fn apply_global_directive(
             }
         }
         // upstream: daemon-parm.txt `Locals:` `include` is P_STRING/P_LOCAL
-        // (loadparm.c registers it via daemon-parm.h), NOT file inclusion -
+        // (daemon-parm.txt:31, generated into loadparm.c), NOT file inclusion -
         // upstream reserves `&include` for pulling in another file (params.c).
         // A bare global `include` therefore seeds every module's include-filter
         // default, mirroring `exclude` above.
@@ -432,7 +435,7 @@ fn apply_global_directive(
             }
         }
         // `log file` feeds TWO consumers, because upstream reads it through two
-        // different lenses. It is `P_LOCAL` (daemon-parm.h:289), so the global
+        // different lenses. It is `P_LOCAL` (daemon-parm.txt:35), so the global
         // value is the default every module inherits - that is the
         // `module_defaults` half. But `FN_LOCAL_STRING(lp_log_file, log_file)`
         // also resolves to the global value at `module_id < 0`, and
@@ -623,10 +626,10 @@ fn apply_global_directive(
                 state.module_defaults.charset = Some(value.to_owned());
             }
         }
-        // upstream: daemon-parm.h:262 - `auth users` is P_LOCAL, so a value in
+        // upstream: daemon-parm.txt:20 - `auth users` is P_LOCAL, so a value in
         // the global section is the default every module inherits unless it sets
         // its own list (loadparm.c init_section/copy_section). Modules that omit
-        // `auth users` must then still authenticate (authenticate.c:228
+        // `auth users` must then still authenticate (authenticate.c:288
         // auth_server reads lp_auth_users), so store the list as the default.
         // upstream: authenticate.c:302-303 - an empty list means no restriction.
         "authusers" if value.is_empty() => state.module_defaults.auth_users = Some(Vec::new()),
@@ -640,7 +643,7 @@ fn apply_global_directive(
             })?;
             state.module_defaults.auth_users = Some(users);
         }
-        // upstream: daemon-parm.h:273 - `auth digest` is P_LOCAL, so a global
+        // upstream: daemon-parm.txt:19 - `auth digest` is P_LOCAL, so a global
         // value becomes the floor every module inherits unless it sets its own.
         "authdigest" => {
             state.module_defaults.auth_digest = normalize_auth_digest(value);
@@ -648,7 +651,7 @@ fn apply_global_directive(
         // upstream: `path` is P_LOCAL, so a global value is the path every
         // later module copies unless it sets its own (loadparm.c:394-398).
         "path" => state.module_defaults.path = Some(PathBuf::from(strip_trailing_slashes(value))),
-        // upstream: loadparm.c:add_a_section - a global `name` is copied into
+        // upstream: loadparm.c:439 add_a_section() - a global `name` is copied into
         // each new section and then overwritten by the section's own name.
         "name" => {}
         // Every other name is not a daemon parameter; the parser reported

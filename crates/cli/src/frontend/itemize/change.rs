@@ -169,7 +169,7 @@ impl ItemizeChange {
     ///
     /// # Upstream Reference
     ///
-    /// `log.c:730-734` - `ITEM_MISSING_DATA` fills attribute positions with `?`.
+    /// `log.c:768-772` - `ITEM_MISSING_DATA` fills attribute positions with `?`.
     #[must_use]
     pub const fn with_missing_data(mut self, missing: bool) -> Self {
         self.missing_data = missing;

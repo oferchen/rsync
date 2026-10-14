@@ -164,12 +164,12 @@ fn single_char_wildcard_exclude_does_not_block_top_level_deletion() {
     assert_eq!(stats.files, 1);
 }
 
-/// #295 DATA-LOSS regression: an implied (non-content) subdirectory under
+/// Data-loss regression: an implied (non-content) subdirectory under
 /// `--files-from` / `--relative` must NOT be scanned for deletion, so a stale
 /// destination file inside it survives - exactly as upstream preserves it.
 ///
 /// Upstream only calls `generator.c:delete_in_dir()` for a file-list directory
-/// that carries `FLAG_CONTENT_DIR` (generator.c:376, 1534, 2317). An implied
+/// that carries `FLAG_CONTENT_DIR` (generator.c:382, 1534, 2317). An implied
 /// parent dir created to hold a `--files-from` entry has that flag cleared
 /// (`flist.c:2174 flags & ~FLAG_CONTENT_DIR`), so it is never a delete-scan
 /// target and its extraneous contents are left in place. Registering every
@@ -267,7 +267,7 @@ fn receiver_set_and_get_filter_chain() {
 /// client-side rule.
 ///
 /// upstream: `exclude.c:parse_filter_str()` parses argv rules into the single
-/// `filter_list` that `flist.c:3385 is_excluded()` consults during prune.
+/// `filter_list` that `flist.c:3666 is_excluded()` consults during prune.
 #[test]
 fn client_pull_populates_filter_chain_from_cli_rules() {
     use protocol::filters::{FilterRuleWireFormat, RuleType};

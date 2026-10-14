@@ -1,9 +1,5 @@
-//! Integration test that exercises the SEC-1.e [`fast_io::DirSandbox`]
-//! carrier in the depth-first descent shape the receiver pipeline uses.
-//!
-//! This PR (SEC-1.e) only wires the carrier through to the receiver and
-//! does not migrate any syscalls; the existing path-based code paths
-//! remain the active code. The test therefore:
+//! Integration test that exercises the [`fast_io::DirSandbox`] carrier in
+//! the depth-first descent shape the receiver pipeline uses. The test:
 //!
 //! 1. builds a realistic destination tree (root + nested subdirs +
 //!    files + symlink + a secondary-operand root),
@@ -13,14 +9,15 @@
 //!    `current_dirfd` always tracks the depth-first cursor,
 //! 4. registers the operand root via `secondary` and confirms the
 //!    `Arc<OwnedFd>` is shared across lookups,
-//! 5. confirms the carrier refuses to descend through a symlink (the
-//!    SEC-1 confinement invariant) without disturbing the stack.
+//! 5. confirms the carrier refuses to descend through an absolute symlink
+//!    target without disturbing the stack, and (on Linux) follows a
+//!    relative in-tree one.
 //!
 //! No behaviour change in the receiver is asserted here - that is
 //! covered by the existing receiver integration tests in
 //! `crates/transfer/tests/` and by the parallel-receive-delta and
 //! incremental-flist test suites the workspace CI already runs. This
-//! test exists to prove the carrier shape SEC-1.f-j will consume is
+//! test exists to prove the carrier shape the receiver consumes is
 //! correct end-to-end against a real filesystem layout.
 
 #![cfg(unix)]

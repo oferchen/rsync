@@ -54,13 +54,13 @@ pub const MAX_FILECNT_LOOKAHEAD: usize = 10000;
 ///
 /// - `flist.c:2636` - `send_extra_file_list()` sends one directory's entries
 ///   as a sub-list
-/// - `flist.c:3209` - `ndx_start = prev->ndx_start + prev->used + 1`
+/// - `flist.c:3511` - `ndx_start = prev->ndx_start + prev->used + 1`
 #[derive(Debug)]
 pub(crate) struct PendingSegment {
     /// Wire `dir_ndx` of the owning directory in the receiver's `dir_flist`.
     ///
     /// Written to the wire as `NDX_FLIST_OFFSET - parent_dir_ndx`
-    /// (flist.c:2388) to identify which directory this sub-list belongs to.
+    /// (flist.c:2664) to identify which directory this sub-list belongs to.
     pub(crate) parent_dir_ndx: i32,
     /// Flat `GeneratorContext::file_list` index of the owning directory entry.
     ///
@@ -169,7 +169,7 @@ impl SegmentScheduler {
     ///
     /// Because the backlog is updated here, driving this in a `while let` loop
     /// re-evaluates upstream's condition on every iteration exactly as
-    /// `flist.c:2375` does, and the loop stops as soon as enough entries are
+    /// `flist.c:2651` does, and the loop stops as soon as enough entries are
     /// queued ahead.
     pub(crate) fn next_to_send(&mut self) -> Option<&PendingSegment> {
         if self.lookahead_total >= MIN_FILECNT_LOOKAHEAD {
@@ -184,7 +184,7 @@ impl SegmentScheduler {
     ///
     /// Upstream reaches the same effect through its poll loop rather than a
     /// second call site: `perform_io()` drops the poll timeout to zero while
-    /// the backlog is under the ceiling (`io.c:854-861`), and when that poll
+    /// the backlog is under the ceiling (`io.c:872-879`), and when that poll
     /// finds no input ready it calls `send_extra_file_list(sock_f_out, -1)`
     /// (`io.c:873`), whose `at_least` resolves to `backlog + 1` - exactly one
     /// more sub-list per idle turn. oc has no poll loop to hang that off, so
@@ -283,7 +283,7 @@ impl SegmentScheduler {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2774-2785` - INC_RECURSE sub-list and NDX_FLIST_EOF dispatch
+/// - `flist.c:2636-2722` - INC_RECURSE sub-list and NDX_FLIST_EOF dispatch
 /// - `flist.c:send_file_entry()` - static variables cached via `flist_writer_cache`
 #[derive(Debug)]
 pub(crate) struct IncrementalState {
@@ -310,7 +310,7 @@ pub(crate) struct IncrementalState {
     /// Wire-NDX to flat-index map, plus the reclaim cursor.
     ///
     /// With INC_RECURSE the sender emits segmented file lists with `+1` gaps
-    /// between them (`flist.c:3209`); this resolves the NDX values the receiver
+    /// between them (`flist.c:3511`); this resolves the NDX values the receiver
     /// sends back. Without INC_RECURSE it holds a single segment and every
     /// lookup is the identity.
     pub(crate) ndx_map: NdxMap,
@@ -321,7 +321,7 @@ pub(crate) struct IncrementalState {
     pub(crate) dir_flist_growth: protocol::flist::FlistGrowth,
 }
 
-/// On-demand INC_RECURSE sub-list producer state (LF-2c).
+/// On-demand INC_RECURSE sub-list producer state.
 ///
 /// Holds the directory tree seeded from the initial (top-level) segment plus
 /// the per-node bookkeeping the producer needs to scan each directory when the

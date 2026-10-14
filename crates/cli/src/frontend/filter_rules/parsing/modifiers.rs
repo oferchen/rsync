@@ -16,7 +16,7 @@ pub(super) struct RuleModifierState {
 }
 
 fn unsupported_modifier(line: RuleLine<'_>, modifier: char) -> Message {
-    // The rule text crosses `rule_text` (exclude.c:88-123) and the offending
+    // The rule text crosses `rule_text` (exclude.c:103-124) and the offending
     // character crosses `rule_detail` (exclude.c:126-131): a character of a
     // hidden line is still a byte of that line.
     rsync_error!(
@@ -32,7 +32,7 @@ fn unsupported_modifier(line: RuleLine<'_>, modifier: char) -> Message {
 
 /// Parses the modifier characters that may trail a rule prefix or keyword.
 ///
-/// upstream: exclude.c:1214-1287 parse_rule_tok - the modifier loop switches on
+/// upstream: exclude.c:1365-1443 parse_rule_tok - the modifier loop switches on
 /// the literal byte, so modifiers are strictly case-sensitive. An uppercase or
 /// otherwise unknown character reaches the `default:` arm and raises
 /// "invalid modifier" (RERR_SYNTAX). We mirror that by matching the char
@@ -41,8 +41,8 @@ fn unsupported_modifier(line: RuleLine<'_>, modifier: char) -> Message {
 /// `prefix_specifies_side` is set for the `H`/`S`/`P`/`R` (hide/show/protect/
 /// risk) rules, whose prefix already binds the rule to a side. Upstream then
 /// rejects the `s`/`r` modifiers as invalid on those rules
-/// (exclude.c:1269-1277); `p` (perishable) carries no such guard and stays
-/// valid everywhere (exclude.c:1265-1267).
+/// (exclude.c:1423-1432); `p` (perishable) carries no such guard and stays
+/// valid everywhere (exclude.c:1420-1422).
 pub(super) fn parse_rule_modifiers(
     modifiers: &str,
     line: RuleLine<'_>,
@@ -58,7 +58,7 @@ pub(super) fn parse_rule_modifiers(
                 state.anchor_root = true;
             }
             's' => {
-                // upstream: exclude.c:1275-1276 - `s` is invalid once the prefix
+                // upstream: exclude.c:1428-1430 - `s` is invalid once the prefix
                 // has already fixed the rule's side.
                 if prefix_specifies_side {
                     return Err(unsupported_modifier(line, modifier));
@@ -69,7 +69,7 @@ pub(super) fn parse_rule_modifiers(
                 }
             }
             'r' => {
-                // upstream: exclude.c:1270-1271 - `r` is invalid once the prefix
+                // upstream: exclude.c:1423-1425 - `r` is invalid once the prefix
                 // has already fixed the rule's side.
                 if prefix_specifies_side {
                     return Err(unsupported_modifier(line, modifier));
@@ -80,7 +80,7 @@ pub(super) fn parse_rule_modifiers(
                 }
             }
             '!' => {
-                // upstream: exclude.c - '!' modifier inverts the match result
+                // upstream: exclude.c:1395-1401 - '!' modifier inverts the match result
                 // (FILTRULE_NEGATE). Not valid on merge-file rules.
                 state.negate = true;
             }
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn parse_rule_modifiers_case_sensitive_rejects_upper() {
-        // upstream: exclude.c:1214-1287 - modifiers are matched by literal byte,
+        // upstream: exclude.c:1365-1443 - modifiers are matched by literal byte,
         // so the uppercase `S`/`R` reach the `default:` arm and are rejected as
         // invalid modifiers (RERR_SYNTAX). Their lowercase forms remain valid.
         assert!(parse_rule_modifiers("S", arg("+"), true, true, false).is_err());
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn parse_rule_modifiers_side_prefix_rejects_s_and_r() {
-        // upstream: exclude.c:1269-1277 - when the prefix already fixes the side
+        // upstream: exclude.c:1423-1432 - when the prefix already fixes the side
         // (hide/show/protect/risk), the `s`/`r` modifiers are invalid.
         assert!(parse_rule_modifiers("s", arg("protect"), false, false, true).is_err());
         assert!(parse_rule_modifiers("r", arg("show"), false, false, true).is_err());
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn parse_rule_modifiers_side_prefix_allows_perishable() {
-        // upstream: exclude.c:1265-1267 - `p` (perishable) is valid on every
+        // upstream: exclude.c:1420-1422 - `p` (perishable) is valid on every
         // rule kind, including the side-bound hide/show/protect/risk rules.
         let result = parse_rule_modifiers("p", arg("protect"), true, false, true).expect("parse");
         assert!(result.perishable);

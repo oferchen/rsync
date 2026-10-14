@@ -4,7 +4,7 @@
 //! hardlink, implied-parent and missing-args passes once per segment and then
 //! reclaim that segment's heap, instead of one whole-list pass at the end.
 //! Upstream has no end-of-run pass at all: `recv_generator()` creates each
-//! node inline (generator.c:1948-2002 symlinks, :2031 specials, :1749-1755
+//! node inline (generator.c:1948-2025 symlinks, :2091 specials, :1749-1755
 //! missing-args sentinels) and resolves a hardlink follower through the
 //! `prior_hlinks` gnum table (hlink.c:281-291) after `flist_free()` dropped
 //! the leader's segment.

@@ -563,7 +563,7 @@ fn metrics_drain_batch_histogram_accumulates() {
     consumer.join().unwrap();
 }
 
-// ---- SpillableReorderBuffer wiring tests (task #1884) ----
+// ---- SpillableReorderBuffer wiring tests ----
 
 /// Blocks until the consumer's live telemetry reports that the reorder
 /// buffer has spilled. Callers withhold the head-of-line item until this

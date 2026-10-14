@@ -21,11 +21,11 @@ pub struct ServerReader<R: Read> {
     /// Client-receiver I/O-timeout adoption state, applied to the
     /// `MultiplexReader` on multiplex activation. Held here because the reader
     /// starts in Plain mode. `(current --timeout secs, live-socket re-apply)`.
-    /// upstream: io.c:1577-1587 read_a_msg() case MSG_IO_TIMEOUT.
+    /// upstream: io.c:1750-1769 read_a_msg() case MSG_IO_TIMEOUT.
     pending_io_timeout_adoption: Option<(Option<u32>, crate::handshake::IoTimeoutReapply)>,
     /// Client-sender `MSG_DELETED` render state, applied to the
     /// `MultiplexReader` on multiplex activation. `Some` only on a push where
-    /// the remote receiver performs `--delete`. upstream: log.c:870-874.
+    /// the remote receiver performs `--delete`. upstream: log.c:917-922.
     pending_deleted_render: Option<super::DeletedRender>,
     /// Sender acceptance of `MSG_BLOCK_STATS`, applied to the
     /// `MultiplexReader` on multiplex activation. upstream: io.c:1721-1732.
@@ -75,7 +75,7 @@ impl<R: Read> ServerReader<R> {
     /// the client-sender path of a push, where the remote receiver performs
     /// `--delete`; every other reader leaves it unset and drops the frames.
     ///
-    /// upstream: log.c:870-874 `log_delete()` renders on the non-server side.
+    /// upstream: log.c:917-922 `log_delete()` renders on the non-server side.
     pub(crate) fn enable_deleted_render(&mut self, render: super::DeletedRender) {
         self.pending_deleted_render = Some(render);
     }
@@ -85,7 +85,7 @@ impl<R: Read> ServerReader<R> {
     /// Called only by a sender after protocol 33 is negotiated; every other
     /// reader treats the frame as a fatal invalid message.
     ///
-    /// upstream: io.c:1722 - valid only for `am_generator || am_sender` at
+    /// upstream: io.c:1724 - valid only for `am_generator || am_sender` at
     /// `protocol_version >= 33`.
     pub(crate) fn accept_block_stats(&mut self) {
         match &mut self.inner {
@@ -130,7 +130,7 @@ impl<R: Read> ServerReader<R> {
     /// socket. Applied to the `MultiplexReader` on `activate_multiplex`. Only
     /// the client receiver of a daemon transfer calls this.
     ///
-    /// upstream: io.c:1577-1587 read_a_msg() case MSG_IO_TIMEOUT.
+    /// upstream: io.c:1750-1769 read_a_msg() case MSG_IO_TIMEOUT.
     pub fn enable_io_timeout_adoption(
         &mut self,
         current: Option<u32>,
@@ -295,7 +295,7 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1568-1575`: receiver accumulates `io_error |= val` and forwards
+    /// - `io.c:1740-1748`: receiver accumulates `io_error |= val` and forwards
     ///   via `send_msg_int(MSG_IO_ERROR, val)` when `am_receiver`.
     pub fn take_io_error(&mut self) -> i32 {
         match &mut self.inner {
@@ -314,8 +314,8 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `log.c:311`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
-    /// - `main.c:1648-1649`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// - `log.c:338`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
+    /// - `main.c:1710-1711`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
     pub fn xfer_error_count(&mut self) -> u32 {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.xfer_error_count(),
@@ -335,9 +335,9 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1561-1566`: `MSG_REDO` dispatches to `got_flist_entry_status(FES_REDO, val)`
+    /// - `io.c:1733-1739`: `MSG_REDO` dispatches to `got_flist_entry_status(FES_REDO, val)`
     ///   on the generator side, pushing the NDX to `redo_list`.
-    /// - `receiver.c:1109-1113`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
+    /// - `receiver.c:1375`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
     pub fn take_redo_indices(&mut self) -> Vec<i32> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_redo_indices(),
@@ -357,7 +357,7 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1649-1663`: `MSG_SUCCESS` received; `!am_generator` calls
+    /// - `io.c:1831-1846`: `MSG_SUCCESS` received; `!am_generator` calls
     ///   `successful_send(val)`.
     /// - `sender.c:396`: `successful_send()` performs the deferred unlink.
     pub fn take_success_indices(&mut self) -> Vec<i32> {
@@ -380,11 +380,11 @@ impl<R: Read> ServerReader<R> {
     /// reader is returned as-is. Compression is only activated after the
     /// file list, so a compressed reader here is a caller error.
     ///
-    /// upstream: 3.5.1 flist.c:2792-2798 send_file_list() switches the input
+    /// upstream: 3.5.1 flist.c:2795-2797 send_file_list() switches the input
     /// to `MPLX_TO_BUFFERED` for `protocol_version < 31` and re-enables
     /// multiplexing at flist.c:3013-3014; 3.0.9 reads the names with a raw
-    /// `read(fd, &ch, 1)` in io.c:797 read_line(), past the multiplexed input
-    /// that main.c:978 start_server() enabled.
+    /// `safe_read(fd, &ch, 1)` in io.c:1433 read_line(), past the multiplexed input
+    /// that main.c:1329 start_server() enabled.
     pub fn unframed(&mut self) -> UnframedReader<'_, R> {
         UnframedReader { inner: self }
     }

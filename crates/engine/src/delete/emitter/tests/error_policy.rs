@@ -1,8 +1,7 @@
-//! DDP-C3 error-classification and continue-on-error tests for the
-//! delete emitter.
+//! Error-classification and continue-on-error tests for the delete emitter.
 //!
-//! Mirrors upstream `delete.c:178-207` continue-on-error semantics and
-//! `cleanup_and_exit` exit-code mapping.
+//! Mirrors upstream `delete.c:141-164` continue-on-error semantics and the
+//! `cleanup.c:_exit_cleanup()` exit-code mapping.
 
 use std::io;
 use std::path::PathBuf;
@@ -21,8 +20,8 @@ fn non_empty_dir_recurses_via_nested_plan() {
     // entries. The parent plan deletes `d/sub` as a Dir; the
     // emitter's first rmdir attempt yields ENOTEMPTY, so the
     // emitter must drain the nested plan (in plan order) and retry
-    // rmdir, mirroring upstream `delete_dir_contents` +
-    // `delete_item` retry (`delete.c:48-122`, `:161-163`).
+    // rmdir, mirroring upstream `delete_dir_contents` (`delete.c:86-183`)
+    // followed by the `rmdir` in `delete_item` (`delete.c:222-226`).
     let fs = ScriptedDeleteFs::new().fail("d/sub", io::ErrorKind::DirectoryNotEmpty);
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("sub", DeleteEntryKind::Dir)]));
@@ -68,7 +67,7 @@ fn non_empty_dir_recurses_via_nested_plan() {
 fn non_empty_dir_after_peel_reports_notice_without_error() {
     // The directory `d/sub` still holds filtered/perishable content after
     // its nested plan drains, so the retried `rmdir` reports ENOTEMPTY a
-    // second time. Upstream (delete.c:117-119 / :197-199) prints
+    // second time. Upstream (delete.c:178-180 / :260-262) prints
     // "cannot delete non-empty directory: <dir>" via FINFO and treats the
     // outcome as DR_NOT_EMPTY: the user must learn the directory survived,
     // but the run neither counts it as deleted nor records an I/O error, so
@@ -196,7 +195,7 @@ fn nonfatal_error_in_middle_keeps_draining_and_sets_io_error() {
 #[test]
 fn eperm_is_nonfatal_and_continues() {
     // EPERM on a destination entry is NOT fatal: upstream
-    // (delete.c:86-210) logs FERROR_XFER, sets io_error |= IOERR_GENERAL,
+    // (delete.c:259-270) logs FERROR_XFER, sets io_error |= IOERR_GENERAL,
     // and keeps deleting the remaining siblings. The drain must therefore
     // process `third`, record IOERR_GENERAL, and finish without surfacing
     // an aborting error.

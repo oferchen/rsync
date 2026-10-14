@@ -1,6 +1,6 @@
 #[test]
 fn runtime_options_parse_bwlimit_argument() {
-    // upstream: options.c:862 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
+    // upstream: options.c:876 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
     // - the daemon --bwlimit is a bare KiB integer (no size suffix, no :BURST).
     // 8192 KiB = 8 MiB/s.
     let options = RuntimeOptions::parse(&[OsString::from("--bwlimit"), OsString::from("8192")])

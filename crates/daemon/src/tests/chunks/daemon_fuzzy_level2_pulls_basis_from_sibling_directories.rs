@@ -20,7 +20,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:find_fuzzy_basis()` - searches sibling dirs at fuzzy level 2
+/// - `generator.c:find_fuzzy()` - searches sibling dirs at fuzzy level 2
 /// - `options.c` - `fuzzy_basis` incremented per `--fuzzy` flag
 #[cfg(unix)]
 #[test]
@@ -145,7 +145,7 @@ fn fuzzy2_generate_content(size: usize, seed: u8) -> Vec<u8> {
 /// Backdates a file's modification time by one day to ensure the quick-check
 /// algorithm does not skip the transfer due to matching mtime + size.
 ///
-/// upstream: receiver.c - quick_check_ok() compares size and mtime
+/// upstream: generator.c - quick_check_ok() compares size and mtime
 #[cfg(unix)]
 fn fuzzy2_backdate_file(path: &Path) {
     use std::time::{Duration, SystemTime};

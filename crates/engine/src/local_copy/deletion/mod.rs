@@ -1,12 +1,15 @@
 //! Deletion decision logic for rsync --delete variants.
 //!
 //! Determines which destination entries are extraneous (not present in the
-//! source) and whether they should be deleted, respecting:
+//! source) and whether they should be deleted. `should_delete_entry` checks:
 //!
-//! - `--delete-excluded`: Also delete files matching exclude patterns
-//! - `--max-delete=NUM`: Don't delete more than NUM files
-//! - `--force`: Force deletion of non-empty directories
-//! - Filter rules and exclusion patterns
+//! - whether deletion is enabled,
+//! - the `--max-delete=NUM` limit,
+//! - membership in the source entry list,
+//! - a caller-supplied filter predicate.
+//!
+//! `DeletionContext` also carries the `--delete-excluded`, `--force` and
+//! `--dry-run` settings; acting on them is left to the caller.
 //!
 //! Deletion timing (`--delete-before`, `--delete-during`, `--delete-after`,
 //! `--delete-delay`) is represented by the `DeleteTiming` enum and handled

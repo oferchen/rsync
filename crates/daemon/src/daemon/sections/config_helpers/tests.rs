@@ -121,7 +121,7 @@ mod config_helpers_tests {
 
     #[test]
     fn parse_boolean_directive_rejects_on_off() {
-        // upstream: loadparm.c:365-370 set_boolean() accepts only
+        // upstream: loadparm.c:484-487 set_boolean() accepts only
         // yes/true/1 and no/false/0 - it never recognizes on/off. Accepting
         // them would let a config parse a value upstream rsync rejects.
         assert_eq!(parse_boolean_directive("on"), None);
@@ -139,7 +139,7 @@ mod config_helpers_tests {
 
     #[test]
     fn classify_boolean_directive_bool3_unset_is_valid() {
-        // upstream: loadparm.c:369 - a P_BOOL3 directive (use chroot, numeric
+        // upstream: loadparm.c:488 - a P_BOOL3 directive (use chroot, numeric
         // ids, munge symlinks, open noatime) treats `unset`/`-1` as a valid
         // tri-state, distinct from a badly formed value.
         assert!(matches!(
@@ -164,7 +164,7 @@ mod config_helpers_tests {
 
     #[test]
     fn apply_boolean_directive_malformed_keeps_default() {
-        // upstream: loadparm.c:418-423 do_parameter() ignores set_boolean()'s
+        // upstream: loadparm.c:537-543 do_parameter() ignores set_boolean()'s
         // failure, so a badly formed boolean warns and retains the default
         // rather than aborting. Here that surfaces as `None` (no value to set).
         let path = std::path::Path::new("rsyncd.conf");
@@ -186,7 +186,7 @@ mod config_helpers_tests {
 
     #[test]
     fn parse_atoi_matches_c_leniency() {
-        // upstream: loadparm.c:431-433 stores atoi(parmvalue) for P_INTEGER
+        // upstream: loadparm.c:550-552 stores atoi(parmvalue) for P_INTEGER
         // directives, so a trailing non-digit suffix is tolerated.
         assert_eq!(parse_atoi("5x"), 5);
         assert_eq!(parse_atoi("30 seconds"), 30);
@@ -226,7 +226,7 @@ mod config_helpers_tests {
         assert_eq!(parse_numeric_identifier("-1"), None);
     }
 
-    /// WHY: upstream clientserver.c:793-819 - a module `gid` is a
+    /// WHY: upstream clientserver.c:844-871 - a module `gid` is a
     /// whitespace/comma-separated list. Every entry must reach `setgroups`, so
     /// the parser must preserve order and count rather than collapse to one gid.
     #[test]
@@ -243,7 +243,7 @@ mod config_helpers_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:795-801 - a leading `*` requests all of the
+    /// WHY: upstream clientserver.c:846-858 - a leading `*` requests all of the
     /// target user's groups (`want_all_groups`), and may be followed by extra
     /// explicit gids.
     #[test]
@@ -258,7 +258,7 @@ mod config_helpers_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:794 - `The "*" gid must be the first item in
+    /// WHY: upstream clientserver.c:846 - `The "*" gid must be the first item in
     /// the list.` A `*` appearing later is a configuration error.
     #[test]
     fn parse_gid_setting_rejects_non_leading_star() {
@@ -354,7 +354,7 @@ mod config_helpers_tests {
 
     #[test]
     fn parse_max_connections_directive_zero() {
-        // upstream: connection.c:claim_connection:27 returns success for a zero
+        // upstream: connection.c:30 claim_connection() returns success for a zero
         // limit before the lock file is opened, so zero means unlimited.
         assert_eq!(
             parse_max_connections_directive("0"),
@@ -364,7 +364,7 @@ mod config_helpers_tests {
 
     #[test]
     fn parse_max_connections_directive_positive() {
-        // upstream: connection.c:33 scans `[0, max_connections)`, so a positive
+        // upstream: connection.c:39 scans `[0, max_connections)`, so a positive
         // value is a slot count.
         assert_eq!(
             parse_max_connections_directive("10"),
@@ -386,7 +386,7 @@ mod config_helpers_tests {
     #[test]
     fn parse_max_connections_directive_negative_disables_module() {
         // upstream: a negative limit never satisfies `i < max_connections`
-        // (connection.c:33), so the slot scan is empty and every connection is
+        // (connection.c:39), so the slot scan is empty and every connection is
         // refused - rsyncd.conf.5: "A negative value disables the module".
         // Clamping the sign away would silently serve the module unlimited.
         assert_eq!(
@@ -477,7 +477,7 @@ mod config_helpers_tests {
     // WHY: operators centrally manage trusted hosts via netgroups. A `@name`
     // token must parse into the dedicated netgroup variant (upstream
     // access.c:44-45) rather than a literal hostname, and the name must be
-    // lowercased to match upstream's `strlower(list2)` (access.c:262).
+    // lowercased to match upstream's `strlower(list2)` (access.c:268).
     #[test]
     fn host_pattern_parse_netgroup_token() {
         let pattern = HostPattern::parse("@Trusted").unwrap();

@@ -190,7 +190,7 @@ fn debug_flag_apply_io() {
     assert_eq!(settings.io, Some(1));
 }
 
-/// upstream: options.c:444-445 - levels beyond MAX_OUT_LEVEL (4) are clamped,
+/// upstream: options.c:463-464 - levels beyond MAX_OUT_LEVEL (4) are clamped,
 /// not rejected. `--debug=IO5` becomes IO level 4 in upstream.
 #[test]
 fn debug_flag_apply_io_level_clamped_to_max() {
@@ -542,7 +542,7 @@ fn info_flag_all_keywords_accepted() {
 ///
 /// upstream: `debug_words[]` (options.c:305-331) holds exactly 24 entries,
 /// `ACL` through `TIME`, terminated by the NULL sentinel at options.c:331.
-/// Anything the table does not name exits `RERR_SYNTAX` at options.c:483-487,
+/// Anything the table does not name exits `RERR_SYNTAX` at options.c:484-488,
 /// and oc mirrors that refusal exactly (`debug_flag_apply_invalid`). So every
 /// word oc accepts that upstream does not is a measured divergence:
 /// `--debug=IOURING` is rc 0 here and rc 1 `Unknown --debug item: "IOURING"`
@@ -618,7 +618,7 @@ fn debug_flag_all_keywords_accepted() {
     }
 }
 
-/// upstream: options.c:444-445 - all debug levels are clamped to MAX_OUT_LEVEL (4),
+/// upstream: options.c:463-464 - all debug levels are clamped to MAX_OUT_LEVEL (4),
 /// never rejected. Verify that levels at and beyond the documented per-flag maxima
 /// are accepted and clamped.
 #[test]
@@ -682,7 +682,7 @@ fn debug_flag_level_clamping() {
     assert_eq!(settings.time, Some(4));
 }
 
-/// upstream: options.c:452-453 - "all" with a numeric suffix sets every flag to
+/// upstream: options.c:459,470-471 - "all" with a numeric suffix sets every flag to
 /// min(suffix, MAX_OUT_LEVEL). e.g. `all4` sets all to 4, `all9` clamps to 4.
 #[test]
 fn debug_flag_all_with_level() {
@@ -773,7 +773,7 @@ fn info_help_text_lists_all_keywords() {
     }
 }
 
-// upstream: options.c output_item_help (rsync-3.4.1:489-495) renders the
+// upstream: options.c:508-514 output_item_help() renders the
 // ALL/NONE pseudo-flags in uppercase using the same `"%-10s %s\n"` table
 // row as the per-flag entries. The descriptive text inlines lowercase
 // `all4` / `all0` examples; keep both shapes covered.
@@ -786,7 +786,7 @@ fn info_help_text_mentions_all_and_none() {
     assert!(INFO_HELP_TEXT.contains("(same as all0)"));
 }
 
-// upstream: options.c output_item_help (rsync-3.4.1:499-509) prints the
+// upstream: options.c:518-527 output_item_help() prints the
 // per-verbosity summary block. info has three populated rows.
 #[test]
 fn info_help_text_lists_verbosity_summary() {
@@ -796,7 +796,7 @@ fn info_help_text_lists_verbosity_summary() {
     assert!(INFO_HELP_TEXT.contains("2) BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP"));
 }
 
-// upstream: options.c output_item_help (rsync-3.4.1:483) prints the
+// upstream: options.c:502 output_item_help() prints the
 // "OPT or OPT1 ... OPT0 silences" preface verbatim.
 #[test]
 fn info_help_text_includes_opt_preface() {
@@ -806,7 +806,7 @@ fn info_help_text_includes_opt_preface() {
 }
 
 // `no<flag>` / `-<flag>` are an internal-only extension not present in
-// upstream rsync 3.4.1 (`options.c parse_output_words`); they must not be
+// upstream rsync 3.5.1 (`options.c parse_output_words`); they must not be
 // advertised in `--info=help` so users do not rely on a non-portable form.
 #[test]
 fn info_help_text_does_not_advertise_no_or_dash_prefix() {
@@ -842,7 +842,7 @@ fn debug_help_text_lists_all_keywords() {
     }
 }
 
-// upstream: options.c output_item_help (rsync-3.4.1:489-495) renders the
+// upstream: options.c:508-514 output_item_help() renders the
 // ALL/NONE pseudo-flags in uppercase and inlines lowercase `all4` / `all0`
 // example tokens in the descriptive text.
 #[test]
@@ -854,9 +854,9 @@ fn debug_help_text_mentions_all_and_none() {
     assert!(DEBUG_HELP_TEXT.contains("(same as all0)"));
 }
 
-// upstream: options.c output_item_help (rsync-3.4.1:499-509) prints the
+// upstream: options.c:518-527 output_item_help() prints the
 // per-verbosity summary block. debug_verbosity has levels 0 and 1 empty,
-// so the summary lists levels 2-5 only (options.c:228-235).
+// so the summary lists levels 2-5 only (options.c:244-251).
 #[test]
 fn debug_help_text_lists_verbosity_summary() {
     assert!(DEBUG_HELP_TEXT.contains("Options added at each level of verbosity:"));
@@ -870,7 +870,7 @@ fn debug_help_text_lists_verbosity_summary() {
     assert!(DEBUG_HELP_TEXT.contains("5) CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK"));
 }
 
-// upstream: options.c output_item_help (rsync-3.4.1:483) prints the
+// upstream: options.c:502 output_item_help() prints the
 // "OPT or OPT1 ... OPT0 silences" preface verbatim.
 #[test]
 fn debug_help_text_includes_opt_preface() {
@@ -1346,9 +1346,7 @@ fn an_unknown_item_before_help_still_errors() {
 }
 
 // upstream: options.c:484-488 - the diagnostic is `Unknown <opt> item: "<tok>"`
-// on FERROR (stderr) and the exit is `RERR_SYNTAX` = 1 (errcode.h:25). oc used
-// to invent `invalid --debug flag '<tok>': use --debug=help for supported
-// flags`.
+// on FERROR (stderr) and the exit is `RERR_SYNTAX` = 1 (errcode.h:25).
 #[test]
 fn the_unknown_item_diagnostic_matches_upstream_wording() {
     let err = parse_debug_flags(&[OsString::from("bogus")]).expect_err("bogus is not a word");

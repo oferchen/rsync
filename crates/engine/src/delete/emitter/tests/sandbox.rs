@@ -1,8 +1,8 @@
-//! SEC-1.q sandbox-anchored dispatch tests for the delete emitter.
+//! Sandbox-anchored dispatch tests for the delete emitter.
 //!
 //! Each test exercises a real on-disk layout under a [`tempfile::TempDir`]
 //! so the dirfd-anchored `*_at` trait methods route through the live
-//! `unlinkat(2)` / SEC-1.s `recursive_unlinkat_via_sandbox_or_fallback`
+//! `unlinkat(2)` / `recursive_unlinkat_via_sandbox_or_fallback`
 //! helpers from `fast_io::dir_sandbox::at_syscalls`.
 
 use std::os::unix::fs::symlink;
@@ -105,7 +105,7 @@ fn remove_dir_all_at_peels_nested_tree_without_following_symlinks() {
     symlink(&outside_target, tree.join("level-1/escape-link")).expect("symlink");
 
     // No nested plan for "d/tree"; ENOTEMPTY fallback routes through
-    // remove_dir_all_at -> SEC-1.s recursive helper.
+    // remove_dir_all_at -> recursive helper.
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("tree", DeleteEntryKind::Dir)]));
     let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
@@ -127,7 +127,7 @@ fn remove_dir_all_at_peels_nested_tree_without_following_symlinks() {
 fn sandbox_off_falls_back_to_path_based_methods() {
     // No sandbox attached: dispatch must use the path-based methods so
     // every existing caller stays on the legacy fallback. This is the
-    // baseline contract for SEC-1.q's "additive" trait extension.
+    // baseline contract for the "additive" `*_at` trait extension.
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path().join("d");
     std::fs::create_dir(&dir).expect("mkdir d");

@@ -143,10 +143,10 @@ pub(crate) fn prefetch_checksums(
 
 /// Computes the checksum of a single file.
 ///
-/// upstream: checksum.c:402 `file_checksum()` reads the file through
-/// `map_file()` / `map_ptr()` (fileio.c:255-359), which is a `read()`-based
+/// upstream: checksum.c:419 `file_checksum()` reads the file through
+/// `map_file()` / `map_ptr()` (fileio.c:316-417), which is a `read()`-based
 /// sliding window, NOT `mmap(2)`. Upstream deliberately avoids `mmap` here:
-/// the fileio.c:256-259 comment notes that another process truncating the
+/// the fileio.c:316-319 comment notes that another process truncating the
 /// file mid-transfer would raise SIGBUS and kill the process. We mirror that
 /// by streaming through a read window ([`hash_file_contents`]) rather than
 /// mapping the file, so a concurrent truncation degrades gracefully (the read
@@ -214,7 +214,7 @@ fn hash_file_contents<R: Read>(
             hasher.finalize().as_ref().to_vec()
         }
         SignatureAlgorithm::Md4Seeded { seed } => {
-            // upstream: checksum.c:377-380 - append checksum_seed as 4 LE bytes
+            // upstream: checksum.c:394-395 - append checksum_seed as 4 LE bytes
             // after the file data when seed != 0. A zero seed degenerates to
             // unseeded MD4 (preserved here for symmetry with `Md4`).
             let mut hasher = Md4::new();
@@ -564,7 +564,7 @@ mod tests {
         assert!(!result.checksums_match());
     }
 
-    /// Ground-truth parity for the SIGBUS-safe read-window path (issue #192).
+    /// Ground-truth parity for the SIGBUS-safe read-window path.
     ///
     /// The whole-file checksum path streams the file through a bounded read
     /// window (upstream fileio.c:255-359 `map_file`/`map_ptr`), NOT `mmap(2)`.

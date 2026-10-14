@@ -12,7 +12,7 @@
 //! 2. For each sub-list (received in depth-first order): dirs in that sub-list
 //!
 //! Our `parent_dir_ndx` values in `PendingSegment` must match these indices
-//! exactly, or the receiver's dirname validation at `flist.c:2927-2934` will
+//! exactly, or the receiver's dirname validation at `flist.c:3170-3177` will
 //! reject entries with "ABORTING due to invalid path from sender".
 //!
 //! # Upstream Reference
@@ -42,7 +42,7 @@ impl GeneratorContext {
     /// An entry whose parent directory is missing from the list cannot be
     /// segmented; it is reported as a transfer error rather than emitted
     /// silently, because the resulting initial-list row carries a non-empty
-    /// dirname and a conformant receiver aborts on it (`flist.c:2922-2937`).
+    /// dirname and a conformant receiver aborts on it (`flist.c:3491-3506`).
     pub(in crate::generator) fn partition_file_list_for_inc_recurse(&mut self) {
         if !self.inc_recurse() || self.file_list.is_empty() {
             return;
@@ -69,7 +69,7 @@ impl GeneratorContext {
 
         let classification = Self::classify_file_list_entries(self.file_list.as_slice());
         for name in &classification.orphans {
-            // upstream: flist.c:2931 - the receiver's wording for the same
+            // upstream: flist.c:3228 - the receiver's wording for the same
             // condition. Reported here, on the side that can name the offending
             // source, and as FERROR_XFER so the run cannot exit 0 with a file
             // list the peer will reject.
@@ -115,7 +115,7 @@ impl GeneratorContext {
             let is_top_level = parent.is_empty() || parent == ".";
 
             if is_top_level {
-                // upstream: flist.c:2398-2404 send_extra_file_list() - a
+                // upstream: flist.c:2638-2644 send_extra_file_list() - a
                 // FLAG_DUPLICATE sibling dir is batched into the surviving dir's
                 // sub-list and its FLAG_CONTENT_DIR is cleared so it is never
                 // scanned again. It still occupies a `dir_flist` index on both
@@ -246,7 +246,7 @@ impl GeneratorContext {
         let mut node_to_wire: Vec<i32> = vec![-1; num_dirs];
         // Flat file_list index of each directory node, so a sub-list's gap NDX
         // itemize resolves to its owning directory's own path/type char.
-        // upstream: sender.c:272-275 - `dir_flist->files[cur_flist->parent_ndx]`.
+        // upstream: sender.c:552-558 - `dir_flist->files[cur_flist->parent_ndx]`.
         let mut node_to_flat: Vec<usize> = vec![usize::MAX; num_dirs];
         let mut wire_dir_ndx: i32 = 0;
 
@@ -345,7 +345,7 @@ impl GeneratorContext {
     /// restricted to this directory - the byte-neutrality invariant the lazy
     /// producer must preserve. A single physical directory yields unique child
     /// names, so no dedup pass is needed here; duplicate-directory batching
-    /// (FLAG_DUPLICATE) belongs to the producer loop (LF-2c).
+    /// (FLAG_DUPLICATE) belongs to the producer loop.
     ///
     /// # Upstream Reference
     ///
@@ -399,7 +399,7 @@ impl GeneratorContext {
     }
 
     /// Seeds the lazy producer from the already-built initial (top-level)
-    /// segment - the LF-2c counterpart of the eager reorder's phase 1.
+    /// segment - the lazy-producer counterpart of the eager reorder's phase 1.
     ///
     /// `file_list` at this point holds exactly the initial segment (the top
     /// level was scanned one level only). Each top-level directory becomes a
@@ -458,7 +458,7 @@ impl GeneratorContext {
         });
     }
 
-    /// Produces the next INC_RECURSE sub-list on demand - the LF-2c counterpart
+    /// Produces the next INC_RECURSE sub-list on demand - the lazy-producer counterpart
     /// of the eager reorder's phase 2, one directory per call.
     ///
     /// Pops the directory the depth-first cursor is on, scans it into one

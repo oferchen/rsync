@@ -3,20 +3,29 @@
 /// Thin wrapper around `platform::signal::SignalFlags` that provides
 /// `pub(crate)` visibility within the daemon crate.
 ///
-/// upstream: main.c - signal handler setup for SIGPIPE, SIGHUP, SIGTERM,
-/// SIGUSR1, SIGUSR2.
+/// upstream: main.c:1846-1930 - signal handler setup for SIGUSR1, SIGUSR2,
+/// SIGINT, SIGHUP, SIGTERM and SIGPIPE.
 pub(crate) struct SignalFlags {
     /// Reload configuration (SIGHUP on Unix).
+    ///
+    /// Deviation from upstream: main.c:1920 routes SIGHUP to `sig_int()`,
+    /// which terminates; upstream instead re-reads `rsyncd.conf` for every
+    /// connection.
     pub(crate) reload_config: Arc<AtomicBool>,
     /// Stop accepting connections and drain workers (SIGTERM/SIGINT on Unix,
     /// CTRL_C/CTRL_CLOSE on Windows).
     pub(crate) shutdown: Arc<AtomicBool>,
     /// Finish current transfers then exit with code 19 (`RERR_SIGNAL1`).
     /// Unlike `shutdown`, allows in-progress transfers to complete.
-    /// upstream: main.c - SIGUSR1 sets `got_xfer_error = 1`.
+    ///
+    /// Deviation from upstream: main.c:1684-1688 `sigusr1_handler()` calls
+    /// `exit_cleanup(RERR_SIGNAL1)` at once, without waiting for transfers.
     pub(crate) graceful_exit: Arc<AtomicBool>,
     /// Log a progress summary of active connections (SIGUSR2 on Unix).
     /// Consumed (reset to `false`) after each dump.
+    ///
+    /// Deviation from upstream: main.c:1695-1698 `sigusr2_handler()` tells a
+    /// receiver child to wrap up; it is not a daemon progress dump.
     pub(crate) progress_dump: Arc<AtomicBool>,
 }
 
@@ -48,7 +57,7 @@ impl From<platform::signal::SignalFlags> for SignalFlags {
 ///
 /// Delegates to `platform::signal::register_signal_handlers()`.
 ///
-/// upstream: main.c - SIGACT() calls for SIGPIPE, SIGHUP, SIGTERM, SIGUSR1, SIGUSR2.
+/// upstream: main.c:1846-1930 - the `SIGACTMASK()` / `SIGACTION()` calls.
 pub(crate) fn register_signal_handlers() -> io::Result<SignalFlags> {
     platform::signal::register_signal_handlers().map(SignalFlags::from)
 }

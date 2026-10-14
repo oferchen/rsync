@@ -66,9 +66,9 @@ fn run_daemon_accepts_valid_credentials() {
         .strip_prefix("@RSYNCD: AUTHREQD ")
         .expect("challenge prefix");
 
-    // The greeting above offers sha512 first, and upstream's server takes the
-    // first client-offered name it supports rather than the strongest
-    // (compat.c:354 - `if (best == 1 || am_server) break;`), so the exchange is
+    // The greeting above offers sha512 first, and the server takes the first
+    // client-offered name it supports rather than the strongest (the 3.4.x
+    // rule `if (best == 1 || am_server) break;`), so the exchange is
     // SHA-512. Verified against rsync 3.4.4: the same greeting yields an
     // 86-character challenge and an MD5 response is refused.
     assert_eq!(

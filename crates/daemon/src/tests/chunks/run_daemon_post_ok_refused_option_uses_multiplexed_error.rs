@@ -1,6 +1,6 @@
 /// Regression test for the post-`@RSYNCD: OK` refused-options wire shape.
 ///
-/// upstream: clientserver.c:1160-1200 - once the daemon has acknowledged
+/// upstream: clientserver.c:1159-1251 - once the daemon has acknowledged
 /// the module, the multiplex framing on the client side starts
 /// immediately after `setup_protocol()` completes. Refused options
 /// detected by `parse_arguments()` flow through `rwrite(FERROR, ...)`,
@@ -107,7 +107,7 @@ fn run_daemon_post_ok_refused_option_uses_multiplexed_error() {
         compat_flags > 0,
         "daemon must advertise at least one compat flag, got {compat_flags}",
     );
-    // upstream: compat.c:535-565 - leaving CF_VARINT_FLIST_FLAGS unset is
+    // upstream: compat.c:740-756 - leaving CF_VARINT_FLIST_FLAGS unset is
     // load-bearing on the abort path so the client does not try to read
     // negotiated vstrings that we never write.
     let compat_bits = compat_flags as u32;

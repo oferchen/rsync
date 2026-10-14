@@ -7,7 +7,7 @@
 //!
 //! The `Stdio` variant supports the `--server --daemon` remote-shell daemon
 //! mode where stdin/stdout are used instead of a TCP socket.
-//! upstream: main.c:1894-1895 - `if (am_server && am_daemon)
+//! upstream: main.c:1971-1975 - under `am_server`, `if (am_daemon)
 //! return start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 
 use std::io::{self, Read, Write};
@@ -22,8 +22,9 @@ use std::time::Duration;
 /// `--server --daemon` remote-shell daemon mode where the daemon protocol
 /// runs over an existing connection's stdin/stdout rather than a TCP socket.
 ///
-/// upstream: clientserver.c - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`
-/// serves the daemon protocol over the inherited file descriptors.
+/// upstream: main.c:1975 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`
+/// (clientserver.c:1414) serves the daemon protocol over the inherited file
+/// descriptors.
 pub struct StdioPair {
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
@@ -55,7 +56,7 @@ pub enum DaemonStream {
     ///
     /// Used when the daemon is invoked via `--server --daemon` over an
     /// existing connection (e.g., SSH). Reads from stdin, writes to stdout.
-    /// upstream: main.c - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
+    /// upstream: main.c:1975 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
     Stdio(StdioPair),
 
     /// QUIC connection relayed by the QUIC front process (oc extension,

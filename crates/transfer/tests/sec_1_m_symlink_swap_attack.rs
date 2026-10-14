@@ -37,8 +37,7 @@
 //!
 //! 3. **`scenario_3`** - tight race-window stress. The attacker is
 //!    synchronised with the receiver via `crossbeam-channel`
-//!    handshakes (deterministic, not sleep-based, per the
-//!    `project_concurrent_dispatch_test_flake` learning) and repeats
+//!    handshakes (deterministic, not sleep-based) and repeats
 //!    the swap N times in a tight loop while the receiver issues the
 //!    sandbox-anchored stat/unlink pair on every iteration. The
 //!    invariant - sensitive tree untouched, sandbox tree the only
@@ -52,11 +51,6 @@
 //! filesystem state the way the receiver shapes it and calls the same
 //! helpers the receiver calls; that is the integration boundary the
 //! SEC-1.f and SEC-1.g cutovers actually defend.
-//!
-//! Dependency note: this test file consumes the SEC-1.g API surface
-//! (`fast_io::UnlinkFlags`, `fast_io::unlink_via_sandbox_or_fallback`).
-//! It will not compile until #4671 merges; CI failures before then are
-//! expected.
 
 #![cfg(unix)]
 
@@ -83,8 +77,7 @@ fn nested_anchor_live() -> bool {
 /// Two-phase channel handshake. The receiver fires `proceed_tx` when
 /// it is about to issue the syscall; the attacker fires `done_tx`
 /// once its swap has been applied. Using bounded channels keeps the
-/// rendezvous deterministic - no sleeps, no wall-clock guesses, per
-/// the `project_concurrent_dispatch_test_flake` learning that
+/// rendezvous deterministic - no sleeps, no wall-clock guesses;
 /// scheduler hiccups on Windows / macOS CI runners turn sleep-based
 /// races into flakes.
 struct RaceChannels {

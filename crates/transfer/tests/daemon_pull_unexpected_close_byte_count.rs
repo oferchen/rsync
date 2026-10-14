@@ -2,7 +2,8 @@
 //! as upstream in "connection unexpectedly closed (N bytes received so far)".
 //!
 //! upstream: io.c:938 adds to `stats.total_read` only inside `perform_io()`,
-//! which runs once `io_start_buffering_in()` is active (main.c:1307-1308).
+//! which runs once `client_run()` starts multiplexed or buffered input
+//! (main.c:1378-1381).
 //! `setup_protocol()` reads the compat flags and checksum seed before that,
 //! through `safe_read()`, so those bytes are never counted. oc used to count
 //! them, and reported 5 bytes more than upstream for every cut.

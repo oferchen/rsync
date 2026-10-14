@@ -1,7 +1,7 @@
 //! `File list size` raw-span accounting on the receiving side.
 //!
 //! Upstream measures `stats.flist_size` as the delta of the raw wire read
-//! counter across every `recv_file_list()` span (`flist.c:2855` snapshots
+//! counter across every `recv_file_list()` span (`flist.c:3334` snapshots
 //! `stats.total_read`, `flist.c:3032` accumulates the delta). The figure is
 //! never sent over the wire - each role prints its own local number
 //! (`main.c:445`) - so a pulling client that never measures the span prints
@@ -50,7 +50,7 @@ fn encode(protocol: ProtocolVersion, entries: &[FileEntry]) -> Vec<u8> {
 /// The measured span must equal the raw bytes the list occupied on the wire.
 ///
 /// WHY: upstream's `File list size` is the raw-counter delta across
-/// `recv_file_list()` (flist.c:2855/3032), so the pulling client's printed
+/// `recv_file_list()` (flist.c:3334), so the pulling client's printed
 /// value equals the wire bytes consumed for the list. Before the fix the
 /// receiver never measured the span and every remote pull printed
 /// `File list size: 0` while upstream printed the real size.

@@ -1,6 +1,7 @@
 /// RAII guard that writes a PID file on creation and removes it on drop.
 ///
-/// upstream: clientserver.c:1582 `create_pid_file()` writes the daemon PID after binding.
+/// upstream: clientserver.c:1582 `create_pid_file()` writes the daemon PID.
+/// Upstream calls it before binding; `serve_connections` calls this after.
 struct PidFileGuard {
     path: PathBuf,
 }
@@ -15,9 +16,9 @@ impl PidFileGuard {
 
         let mut file = open_pid_file(&path).map_err(|error| pid_file_error(&path, error))?;
 
-        // upstream: clientserver.c:1628 creates the file 0664 under the
-        // daemon's umask; oc pins 0644. Applied to the open descriptor, never
-        // re-resolved through the path.
+        // Deviation from upstream: clientserver.c:1628 creates the file 0664
+        // under the daemon's umask; oc pins 0644. Applied to the open
+        // descriptor, never re-resolved through the path.
         #[cfg(unix)]
         file.set_permissions(fs::Permissions::from_mode(0o644))
             .map_err(|error| pid_file_error(&path, error))?;

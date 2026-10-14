@@ -9,7 +9,7 @@
 //! send; exit 12 would mislead them into thinking the stream merely broke.
 //!
 //! The refusal messages asserted here are the exact literals the decoders
-//! attach (flist.c:1101-1105, xattrs.c:826/839-842), so a drift in either the
+//! attach (flist.c:1102-1106, xattrs.c:826/839-842), so a drift in either the
 //! text or the tag is caught.
 
 use std::io;
@@ -24,13 +24,13 @@ const RERR_STREAMIO: i32 = 12;
 #[test]
 fn tagged_wire_refusals_exit_rerr_protocol() {
     for msg in [
-        // upstream: flist.c:1101-1105 - negative hard-link reference.
+        // upstream: flist.c:1102-1106 - negative hard-link reference.
         "hard-link reference out of range: -5 (0)",
         // upstream: xattrs.c:826 - count outside [0, MAX_WIRE_XATTR_COUNT].
         "wire value xattr count out of range: 65537 not in [0,65536]",
         // upstream: xattrs.c:839-842 - a datum past the per-value ceiling.
         "xattr datum_len exceeds per-value limit",
-        // upstream: xattrs.c:849-850 - the summed per-file ceiling.
+        // upstream: xattrs.c:848-850 - the summed per-file ceiling.
         "xattr list exceeds per-file limit",
     ] {
         let err = protocol::protocol_violation(msg);

@@ -177,6 +177,8 @@ extern "C" fn handle_sighup(_signum: libc::c_int) {
 /// Signal handler for SIGPIPE.
 ///
 /// Treats broken pipe as immediate graceful shutdown (connection lost).
+///
+/// Deviation from upstream: upstream ignores SIGPIPE (main.c:1926-1928).
 extern "C" fn handle_sigpipe(_signum: libc::c_int) {
     super::request_shutdown(ShutdownReason::PipeBroken);
 }

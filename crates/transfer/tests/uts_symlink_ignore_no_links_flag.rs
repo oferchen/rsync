@@ -1,4 +1,4 @@
-//! Port of the upstream rsync 3.4.4 testsuite `symlink-ignore.test`.
+//! Port of the upstream rsync 3.5.1 testsuite `symlink-ignore_test.py`.
 //!
 //! Upstream source of truth:
 //!   `testsuite/symlink-ignore_test.py`
@@ -24,7 +24,7 @@ use std::path::Path;
 
 use test_support::{OcRsyncCliRunner, create_tempdir, require_binaries};
 
-/// Build the same symlink fixture `rsync.fns`'s `build_symlinks` creates: a
+/// Build the same symlink fixture `rsyncfns.py`'s `build_symlinks` creates: a
 /// real regular file `referent` plus three symlinks that must all be ignored.
 fn build_symlinks(from: &Path) {
     fs::create_dir_all(from).expect("create from dir");

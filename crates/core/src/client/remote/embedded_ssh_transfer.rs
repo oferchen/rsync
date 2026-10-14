@@ -79,7 +79,7 @@ pub fn run_embedded_ssh_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    // upstream: main.c:1483-1484 - a remote source with a single operand sets
+    // upstream: main.c:1483-1485 - a remote source with a single operand sets
     // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
@@ -161,7 +161,7 @@ fn run_embedded_pull(
         )?;
     server_config.stop_at = config.stop_at();
 
-    // upstream: main.c:1390-1393 - pull with a local --files-from forwards the
+    // upstream: main.c:1428-1431 - pull with a local --files-from forwards the
     // file's bytes back to the remote sender via the protocol stream.
     if config
         .files_from()
@@ -175,7 +175,7 @@ fn run_embedded_pull(
         server_config.connection.files_from_data = Some(data);
     }
 
-    // upstream: main.c:1543,1567 / io.c:445,482 / flist.c:1251 - record each
+    // upstream: main.c:1581,1605 / io.c:512,549 / flist.c:1368 - record each
     // requested source path (or each local --files-from entry) as an implied
     // include so the receiver rejects any unrequested name (CVE-2022-29154).
     server_config.connection.implied_source_args = implied_source_args_for_pull(
@@ -392,14 +392,14 @@ fn run_transfer_over_embedded_ssh(
     // Mirror the subprocess-ssh transport (`ssh_transfer::drive`) so the embedded
     // russh client surfaces the same client-visible rows. On a push the local
     // side is the sender (Generator) and prints each file's `-v`/`-i`/out-format
-    // line itself (upstream: sender.c:450-462 log_item(FCLIENT)); on a pull the
+    // line itself (upstream: sender.c:640,775 log_item(FCLIENT)); on a pull the
     // receiver prints its own default `-v`/`-i` output but, under a custom
     // `--out-format`, buffers metadata events the CLI renders. Without this sink
     // the russh transport dropped every itemize/out-format row.
     let wants_client_output = match server_config.role {
         ServerRole::Generator => {
             // upstream logs names whenever NAME >= 1 sets `stdout_format`
-            // (options.c:2521-2523), which `-P` does without `-v`.
+            // (options.c:2522-2525), which `-P` does without `-v`.
             server_config.flags.info_flags.itemize
                 || logging::info_gte(logging::InfoFlag::Name, 1)
                 || render_out_format_locally
@@ -544,20 +544,20 @@ fn build_server_config_for_receiver(
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
-    // upstream: options.c:2921-2944 - the alt-dest args (--compare-dest,
+    // upstream: options.c:3091-3124 - the alt-dest args (--compare-dest,
     // --copy-dest, --link-dest) live inside the `if (am_sender)` server_options
     // block, so on a pull they are never sent over the wire to the remote
     // sender; the local client IS the receiver and applies them itself in
-    // try_dests_reg() (generator.c:954). Carry them onto the local receiver
+    // try_dests_reg() (generator.c:1073). Carry them onto the local receiver
     // config here so the receiver hard-links / copies / skips unchanged files
     // against the reference dirs. Without this the russh pull transferred every
     // file whole, while the daemon pull hard-linked.
     server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: backup.c:make_backup() runs on the receiver, invoked from
     // generator.c/receiver.c. `make_backups` rides in the compact flag string as
-    // 'b' (options.c:2657-2658), so flags.backup is already set here; but
+    // 'b' (options.c:2806-2807), so flags.backup is already set here; but
     // --backup-dir / --suffix are long-form values finalized in the local popt
-    // parse (options.c:2294-2307) and never delivered onto the receiver config.
+    // parse (options.c:2447-2489) and never delivered onto the receiver config.
     // On a pull the local client IS the receiver, so carry backup_dir/backup_suffix
     // here - otherwise effective_backup_suffix() falls back to "~" and the backup
     // lands beside the file instead of in --backup-dir (local/daemon pulls kept
@@ -566,18 +566,18 @@ fn build_server_config_for_receiver(
     server_config.backup_suffix = config
         .backup_suffix()
         .map(|s| s.to_string_lossy().into_owned());
-    // upstream: --chmod is parsed into `chmod_modes` (options.c:1768) and is
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1875) and is
     // never placed in server_options, so it is never forwarded to the remote
     // sender. On a pull the local client IS the receiver and applies the
-    // modifiers itself as it reads each incoming flist entry (flist.c:1130-1131
+    // modifiers itself as it reads each incoming flist entry (flist.c:1221-1222
     // recv_file_entry() -> tweak_mode()). Carry them onto the local receiver
     // config here; without this the russh (ssh://) pull left every regular file
     // at its source mode while local copies applied --chmod correctly.
     server_config.chmod = config.chmod().cloned();
-    // upstream: options.c:3006-3007 - `--mkpath` is forwarded to the remote only
+    // upstream: options.c:3177-3178 - `--mkpath` is forwarded to the remote only
     // inside the `if (am_sender)` server_options block, so on a pull it never
     // rides the wire; the local client IS the receiver and creates the dest-arg
-    // path chain itself in get_local_name() (main.c:749 make_path under mkpath).
+    // path chain itself in get_local_name() (main.c:759 make_path under mkpath).
     // Carry it onto the local receiver config here. Without this the russh
     // (ssh://) pull to a missing deep destination failed with "failed to create
     // destination root ... No such file or directory" while local copies honored
@@ -596,96 +596,96 @@ fn build_server_config_for_receiver(
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
     // flag must be carried onto the local receiver config here.
     server_config.flags.prune_empty_dirs = config.prune_empty_dirs();
-    // upstream generator.c:1368-1383 never creates a directory absent at the
+    // upstream generator.c:1757 never creates a directory absent at the
     // destination under --existing (ignore_non_existing); on a pull the local
     // client IS the receiver and --existing is a long-form-only flag absent from
     // the compact letter string, so carry it onto the local receiver config here.
     server_config.file_selection.existing_only = config.existing_only();
-    // upstream generator.c:1395 skips any file already present at the destination
+    // upstream generator.c:1784 skips any file already present at the destination
     // under --ignore-existing (`if (ignore_existing > 0 && statret == 0)` early
-    // goto cleanup). options.c:2921-2929 forwards --ignore-existing to the remote
+    // goto cleanup). options.c:3099-3100 forwards --ignore-existing to the remote
     // only inside the `if (am_sender)` server_options block, so on a pull it is
     // never sent over the wire; the local client IS the receiver and applies it
     // itself. Carry it onto the local receiver config here, mirroring
     // existing_only above. Without this the ssh:// pull re-transferred and
     // overwrote existing destination files instead of skipping them.
     server_config.file_selection.ignore_existing = config.ignore_existing();
-    // upstream: options.c:2917-2919 forwards --temp-dir to the remote only inside
+    // upstream: options.c:3106-3109 forwards --temp-dir to the remote only inside
     // the `if (am_sender)` server_options block, so on a pull it is never sent
     // over the wire; the local client IS the receiver and stages the temp file
-    // itself (receiver.c:782 open_tmpfile() honours tmpdir). Carry it onto the
+    // itself (receiver.c:413 open_tmpfile() honours tmpdir). Carry it onto the
     // local receiver config here - without this the ssh:// pull staged the temp
     // file in the destination directory, ignoring --temp-dir.
     server_config.temp_dir = config.temp_directory().map(std::path::Path::to_path_buf);
     // upstream rsync.c:719 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR`,
-    // and generator.c:2271 gates need_retouch_dir_times on !omit_dir_times.
-    // options.c:2655-2656 packs the compact 'O' into server_options only when
+    // and generator.c:2744 gates need_retouch_dir_times on !omit_dir_times.
+    // options.c:2822-2823 packs the compact 'O' into server_options only when
     // am_sender, so on a pull -O never rides the wire; the local client IS the
     // receiver and must apply it itself. Carry it onto the local receiver config
     // here - without this the ssh:// pull set directory mtimes from the source.
     server_config.flags.omit_dir_times = config.omit_dir_times();
-    // upstream: options.c:2203 / generator.c:1249 - a single source operand with
+    // upstream: options.c:2320-2321 / generator.c:1642 - a single source operand with
     // no destination implies list-only. On a pull the local client IS the
     // receiver and `list_only` is a long-form-only concern absent from the
     // compact letter string, so carry it onto the local receiver config here.
     // Mirrors the subprocess-ssh and daemon receiver builders; without it the
     // single-operand ssh:// pull renders the flist AND writes files.
     server_config.flags.list_only = config.list_only();
-    // upstream: options.c:777 / receiver.c:672,1045-1066 - --delay-updates is a
+    // upstream: options.c:791 / receiver.c:836,1302-1335 - --delay-updates is a
     // plain receiver-side option (no am_sender gate) that stages updates into
-    // the partial dir and renames them in the phase-2 sweep. options.c:2896-2902
+    // the partial dir and renames them in the phase-2 sweep. options.c:3062-3068
     // forwards it to the remote only on a push; on a pull the local client IS the
     // receiver and the flag never rides the wire, so carry it here. Mirrors the
     // subprocess-ssh and daemon receiver builders; without it the ssh:// pull
     // updates files in place, defeating --delay-updates.
     server_config.write.delay_updates = config.delay_updates();
-    // upstream: options.c:2922-2923 - `if (am_sender) { if (usermap) ... }`
+    // upstream: options.c:3093-3094 - `if (am_sender) { if (usermap) ... }`
     // forwards --usermap to the remote only on a push. On a pull the local
     // client IS the receiver and applies the uid name-map itself as it reads
     // the incoming id list (receiver/file_list/id_lists.rs). Carry it onto the
     // local receiver config here; without this the ssh:// pull silently ignored
     // --usermap while local and daemon pulls remapped ownership.
     server_config.user_mapping = config.user_mapping().cloned();
-    // upstream: options.c:2925-2926 - `if (am_sender) { if (groupmap) ... }`
+    // upstream: options.c:3096-3097 - `if (am_sender) { if (groupmap) ... }`
     // is the gid counterpart of --usermap above; same pull rationale.
     server_config.group_mapping = config.group_mapping().cloned();
-    // upstream: options.c:2940-2941 - `if (am_sender && do_fsync) --fsync`.
+    // upstream: options.c:3111-3112 - `if (am_sender && do_fsync) --fsync`.
     // --fsync is applied by the receiver, which fsync()s each committed file
     // (syscall.c do_fsync), so on a pull the local client IS the receiver and
     // must carry the flag; it rides the wire only on a push. The daemon pull
     // already sets this in apply_common_daemon_config; both ssh builders dropped
     // it, so the ssh:// pull never fsync'd its writes.
     server_config.write.fsync = config.fsync();
-    // upstream: options.c:2989-2990 - `if (write_devices && am_sender)
+    // upstream: options.c:3160-3161 - `if (write_devices && am_sender)
     // --write-devices`. --write-devices makes the receiver write file content
     // in-place into an existing device node (receiver.c: write_devices &&
     // IS_DEVICE), so on a pull the local client IS the receiver and must carry
     // it; it rides the wire only on a push.
     server_config.write.write_devices = config.write_devices();
-    // upstream: options.c:2650-2652 - `if (am_sender) { if (keep_dirlinks)
+    // upstream: options.c:2817-2819 - `if (am_sender) { if (keep_dirlinks)
     // argstr[x++] = 'K'; }`. -K makes the receiver follow a symlink-to-dir at
     // the destination instead of clobbering it (receiver/directory/creation.rs),
     // so on a pull the local client IS the receiver and must carry the flag; the
     // compact 'K' letter is emitted only when the local side is the sender.
     server_config.flags.keep_dirlinks = config.keep_dirlinks();
-    // upstream: options.c:2659-2665 - `if (am_sender) { if (fuzzy_basis) {
+    // upstream: options.c:2826-2830 - `if (am_sender) { if (fuzzy_basis) {
     // argstr[x++] = 'y'; ... } }`. -y/--fuzzy lets the receiver pick a similar
     // basis file for the delta, so on a pull the local client IS the receiver
     // and must carry the fuzzy level; the compact 'y' letter is emitted only
     // when the local side is the sender.
     server_config.flags.fuzzy_level = config.fuzzy_level();
-    // upstream: options.c:2657-2658 - `if (am_sender) { ... if (omit_link_times)
+    // upstream: options.c:2824-2825 - `if (am_sender) { ... if (omit_link_times)
     // argstr[x++] = 'J'; }`. -J/--omit-link-times skips a received symlink's
-    // mtime (rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_link_times &&
+    // mtime (rsync.c:720 adds ATTRS_SKIP_MTIME for `omit_link_times &&
     // S_ISLNK`), so on a pull the local client IS the receiver and must carry
     // the flag; the compact 'J' letter is emitted only when the local side is
     // the sender. Without this the embedded-ssh pull set symlink mtimes from the
     // source while the local copy executor honoured -J.
     server_config.flags.omit_link_times = config.omit_link_times();
-    // upstream: options.c:2702-2703 - `else if (preserve_executability &&
+    // upstream: options.c:2868-2869 - `else if (preserve_executability &&
     // am_sender) argstr[x++] = 'E';`. -E/--executability copies the source
     // executability bits when perms are not otherwise preserved
-    // (rsync.c:457-465), so on a pull the local client IS the receiver and must
+    // (rsync.c:472), so on a pull the local client IS the receiver and must
     // carry the flag; the compact 'E' letter is emitted only when the local
     // side is the sender. Without this the embedded-ssh pull left files at their
     // existing mode while the local copy executor honoured -E.
@@ -723,10 +723,10 @@ fn build_server_config_for_generator(
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
-    // upstream: io.c:852-880 / main.c:1081 - on a push the local client IS the
+    // upstream: io.c:952-980 / main.c:1096 - on a push the local client IS the
     // sender, so it paces its own outbound socket writes. Carry the parsed
     // `--bwlimit` rate onto the in-process generator config; the remote
-    // receiver ignores its forwarded copy (main.c:1081).
+    // receiver ignores its forwarded copy (main.c:1096).
     server_config.connection.bwlimit = config
         .bandwidth_limit()
         .map(|limit| limit.into_components());
@@ -745,16 +745,16 @@ fn build_server_config_for_generator(
     // Local-only sender optimization; never emitted onto the wire, so it is
     // carried directly onto the in-process generator's ParsedServerFlags.
     server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
-    // upstream: --chmod is parsed into `chmod_modes` (options.c:1768) and is
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1875) and is
     // never placed in server_options, so it is never forwarded to the remote
     // receiver. On a push the local client IS the sender and applies the
-    // modifiers itself as it builds each outgoing flist entry (flist.c:1805-1806
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1966-1967
     // send_file_name() -> tweak_mode()). Carry them onto the local generator
     // config here; without this the ssh push left every file at its source mode
     // while local copies and pulls applied --chmod correctly.
     server_config.chmod = config.chmod().cloned();
 
-    // upstream: options.c:2485-2510 / main.c:1340-1346 - the local sender
+    // upstream: options.c:2620-2665 / main.c:1383-1384 - the local sender
     // resolves a single files-from fd: a local file (Stdin/LocalFile, or a
     // localhost:path hostspec opened locally) or the wire fd when the list is
     // hosted on the remote receiver (RemoteFile reads `--files-from=-`).
@@ -780,9 +780,9 @@ mod tests {
     /// The embedded (russh) pull receiver must carry the alt-dest reference
     /// directories onto its ServerConfig, exactly like the subprocess ssh and
     /// daemon receiver builders. On a pull the args are never forwarded to the
-    /// remote sender (upstream options.c:2921-2944 gates them on am_sender), so
+    /// remote sender (upstream options.c:3091-3124 gates them on am_sender), so
     /// the local receiver applies them itself in try_dests_reg()
-    /// (generator.c:954). Regression guard for the `ssh://` pull that hard-linked
+    /// (generator.c:1073). Regression guard for the `ssh://` pull that hard-linked
     /// nothing because reference_directories was empty.
     #[test]
     fn embedded_receiver_config_propagates_reference_directories() {
@@ -816,7 +816,7 @@ mod tests {
     /// The embedded (russh) pull receiver must carry --backup-dir / --suffix onto
     /// its ServerConfig. `make_backups` rides in the compact 'b' letter so
     /// flags.backup is set, but the backup directory and suffix are long-form
-    /// values (upstream options.c:2294-2307) the local receiver applies itself in
+    /// values (upstream options.c:2447-2489) the local receiver applies itself in
     /// backup.c:make_backup(). Regression guard for the `ssh://` pull that wrote a
     /// "~" backup beside the file instead of into --backup-dir.
     #[test]
@@ -848,8 +848,8 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry --ignore-existing onto its
-    /// ServerConfig. Upstream generator.c:1395 skips existing dest files, and
-    /// options.c:2921-2929 forwards the flag to the remote only when am_sender, so
+    /// ServerConfig. Upstream generator.c:1784 skips existing dest files, and
+    /// options.c:3099-3100 forwards the flag to the remote only when am_sender, so
     /// on a pull it never rides the wire. Regression guard for the `ssh://` pull
     /// that overwrote an existing destination file instead of skipping it.
     #[test]
@@ -873,9 +873,9 @@ mod tests {
 
     /// The embedded (russh) pull receiver must carry `--chmod` onto its
     /// ServerConfig. `--chmod` is never forwarded to the remote sender (upstream
-    /// options.c:1768 parses it into `chmod_modes`, absent from server_options),
+    /// options.c:1875 parses it into `chmod_modes`, absent from server_options),
     /// so on a pull the local client IS the receiver and applies it itself
-    /// (flist.c:1130-1131). Regression guard for the `ssh://` pull that left every
+    /// (flist.c:1221-1222). Regression guard for the `ssh://` pull that left every
     /// regular file at its source mode instead of applying `--chmod`.
     #[test]
     fn embedded_receiver_config_propagates_chmod() {
@@ -957,7 +957,7 @@ mod tests {
 
     /// The embedded (russh) pull receiver must carry `list_only` onto its
     /// ServerConfig for parity with the subprocess-ssh and daemon receiver
-    /// builders. Upstream options.c:2203 / generator.c:1249 - a single source
+    /// builders. Upstream options.c:2320-2321 / generator.c:1642 - a single source
     /// operand with no destination implies list-only; it is a long-form-only
     /// concern the local receiver applies itself. Regression guard for the
     /// `ssh://` single-operand pull that rendered the flist AND wrote files.
@@ -972,7 +972,7 @@ mod tests {
 
     /// The embedded (russh) pull receiver must carry `--delay-updates` onto its
     /// ServerConfig for parity with the subprocess-ssh and daemon receiver
-    /// builders. Upstream options.c:777 / receiver.c:672 - a plain receiver-side
+    /// builders. Upstream options.c:791 / receiver.c:836 - a plain receiver-side
     /// option that stages updates and renames them in the phase-2 sweep; on a
     /// pull it never rides the wire. Regression guard for the `ssh://` pull that
     /// updated files in place, defeating --delay-updates.
@@ -986,7 +986,7 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry --usermap onto its
-    /// ServerConfig. Upstream options.c:2922-2923 forwards --usermap to the
+    /// ServerConfig. Upstream options.c:3093-3094 forwards --usermap to the
     /// remote only when am_sender, so on a pull the local receiver applies the
     /// uid name-map itself (receiver/file_list/id_lists.rs).
     #[cfg(unix)]
@@ -1002,7 +1002,7 @@ mod tests {
         assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
     }
 
-    /// The gid counterpart of --usermap (upstream options.c:2925-2926).
+    /// The gid counterpart of --usermap (upstream options.c:3096-3097).
     #[cfg(unix)]
     #[test]
     fn embedded_receiver_config_propagates_groupmap() {
@@ -1017,7 +1017,7 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry --fsync onto its
-    /// ServerConfig. Upstream options.c:2940-2941 forwards it to the remote only
+    /// ServerConfig. Upstream options.c:3111-3112 forwards it to the remote only
     /// when am_sender, so on a pull the local receiver fsync()s its writes.
     #[test]
     fn embedded_receiver_config_propagates_fsync() {
@@ -1029,7 +1029,7 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry --write-devices onto its
-    /// ServerConfig. Upstream options.c:2989-2990 forwards it to the remote only
+    /// ServerConfig. Upstream options.c:3160-3161 forwards it to the remote only
     /// when am_sender.
     #[test]
     fn embedded_receiver_config_propagates_write_devices() {
@@ -1041,7 +1041,7 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry -K onto its ServerConfig.
-    /// Upstream options.c:2650-2652 packs the compact 'K' only when am_sender.
+    /// Upstream options.c:2817-2819 packs the compact 'K' only when am_sender.
     #[test]
     fn embedded_receiver_config_propagates_keep_dirlinks() {
         let config = ClientConfig::builder().keep_dirlinks(true).build();
@@ -1052,7 +1052,7 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry the fuzzy level onto its
-    /// ServerConfig. Upstream options.c:2659-2665 packs the compact 'y' only
+    /// ServerConfig. Upstream options.c:2826-2830 packs the compact 'y' only
     /// when am_sender.
     #[test]
     fn embedded_receiver_config_propagates_fuzzy_level() {
@@ -1064,8 +1064,8 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry --temp-dir onto its
-    /// ServerConfig. Upstream receiver.c:782 open_tmpfile() honours tmpdir, and
-    /// options.c:2917-2919 forwards the flag to the remote only when am_sender,
+    /// ServerConfig. Upstream receiver.c:413 open_tmpfile() honours tmpdir, and
+    /// options.c:3106-3109 forwards the flag to the remote only when am_sender,
     /// so on a pull it never rides the wire. Regression guard for the `ssh://`
     /// pull that staged temps in the destination directory.
     #[test]
@@ -1093,8 +1093,8 @@ mod tests {
     }
 
     /// The embedded (russh) pull receiver must carry --omit-dir-times onto its
-    /// ServerConfig. Upstream rsync.c:583 skips a directory's mtime and
-    /// generator.c:2271 gates the retouch pass; options.c:2655-2656 packs the
+    /// ServerConfig. Upstream rsync.c:719 skips a directory's mtime and
+    /// generator.c:2744 gates the retouch pass; options.c:2822-2823 packs the
     /// compact 'O' only when am_sender, so on a pull it never rides the wire.
     /// Regression guard for the `ssh://` pull that set directory mtimes from the
     /// source.
@@ -1118,7 +1118,7 @@ mod tests {
     }
 
     /// On an embedded-ssh pull the local client IS the receiver and applies
-    /// --omit-link-times itself (upstream rsync.c:583). options.c:2657-2658
+    /// --omit-link-times itself (upstream rsync.c:720). options.c:2824-2825
     /// packs the compact 'J' only when am_sender, so on a pull it must be
     /// carried onto the receiver config.
     #[test]
@@ -1141,7 +1141,7 @@ mod tests {
     }
 
     /// On an embedded-ssh pull the local client IS the receiver and applies -E
-    /// itself (upstream rsync.c:457-465). options.c:2702-2703 packs the compact
+    /// itself (upstream rsync.c:472). options.c:2868-2869 packs the compact
     /// 'E' only when am_sender, so on a pull it must be carried onto the
     /// receiver config.
     #[test]
@@ -1165,8 +1165,8 @@ mod tests {
 
     /// The embedded (russh) pull receiver must carry `--mkpath` onto its
     /// ServerConfig. `--mkpath` is never forwarded to the remote sender (upstream
-    /// options.c:3006-3007 gates it on am_sender), so on a pull the local client
-    /// IS the receiver and creates the dest-arg path chain itself (main.c:749).
+    /// options.c:3177-3178 gates it on am_sender), so on a pull the local client
+    /// IS the receiver and creates the dest-arg path chain itself (main.c:759).
     /// Regression guard for the `ssh://` pull that failed against a missing deep
     /// destination while local copies honored `--mkpath`.
     #[test]
@@ -1209,7 +1209,7 @@ mod tests {
 
     /// On an `ssh://` (russh) push the local client IS the sender and applies
     /// `--chmod` itself as it builds each outgoing flist entry (upstream
-    /// flist.c:1805-1806 send_file_name() -> tweak_mode()). `--chmod` is never
+    /// flist.c:1966-1967 send_file_name() -> tweak_mode()). `--chmod` is never
     /// forwarded to the remote receiver, so the generator config must carry the
     /// parsed modifiers. Regression guard for the embedded-ssh push that left
     /// every file at its source mode while local copies and pulls applied it.

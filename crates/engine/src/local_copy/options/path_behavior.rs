@@ -89,7 +89,7 @@ impl LocalCopyOptions {
     /// feature for rsyncd and can also be forced via `--munge-links` on the
     /// client side.
     ///
-    /// # upstream: `clientserver.c:munge_symlink()`
+    /// upstream: `clientserver.c:1070-1072` sets `munge_symlinks` per module.
     #[must_use]
     #[doc(alias = "--munge-links")]
     pub const fn munge_links(mut self, enabled: bool) -> Self {

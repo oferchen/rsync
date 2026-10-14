@@ -23,9 +23,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2010-2024` `send_file1()` - strict `ic_send` name conversion,
+//! - `flist.c:2010-2024` `send_file_name()` - strict `ic_send` name conversion,
 //!   `io_error |= IOERR_GENERAL`, and `return NULL` on failure.
-//! - `main.c:1412` - `exit_cleanup(RERR_PARTIAL)` after `io_error`.
+//! - `cleanup.c:217-218` - `IOERR_GENERAL` in `io_error` maps the exit code to
+//!   `RERR_PARTIAL`.
 #![cfg(feature = "iconv")]
 
 use std::fs;
@@ -35,7 +36,7 @@ use protocol::iconv::FilenameConverter;
 use tempfile::tempdir;
 
 /// A single top-level file operand whose name (`あ.txt`) cannot be transcoded
-/// UTF-8 -> ISO-8859-1 is skipped, exactly as upstream `send_file1()` drops it:
+/// UTF-8 -> ISO-8859-1 is skipped, exactly as upstream `send_file_name()` drops it:
 /// the local copy finishes with exit 23 (`RERR_PARTIAL`) and no destination
 /// file is created.
 ///

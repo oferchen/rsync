@@ -47,7 +47,7 @@ pub(super) enum ReorderMode {
 impl ReorderMode {
     /// Maps a [`ConcurrentDeltaConfig`] to the matching reorder backend.
     pub(super) fn from_config(reorder_capacity: usize, mut cfg: ConcurrentDeltaConfig) -> Self {
-        // STN-8/9/10: layer OC_RSYNC_SPILL_* env overrides on top of the
+        // Layer OC_RSYNC_SPILL_* env overrides on top of the
         // caller-supplied policy so operators can tune the spill backend
         // without recompiling. Absent vars leave fields unchanged.
         spill::apply_env_overrides(&mut cfg.spill_policy);

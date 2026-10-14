@@ -293,7 +293,7 @@ fn daemon_push_incremental_update_lifecycle() {
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:start_daemon_client()` - client-side daemon connection
+/// - `clientserver.c:start_socket_client()` - client-side daemon connection
 /// - `receiver.c` - file reception and commit
 #[cfg(unix)]
 #[test]

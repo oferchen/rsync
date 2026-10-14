@@ -128,7 +128,7 @@ impl ClientProgressUpdate {
     /// summary rather than a per-file tick.
     ///
     /// Mirrors upstream's `end_progress(0)` call at `NDX_DONE`
-    /// (receiver.c:690-692), which prints one final
+    /// (receiver.c:852-857), which prints one final
     /// `(xfr#N, to-chk=0/total)` line under `--info=progress2` even when the
     /// transfer moved no file data (a lone special/symlink, or a no-change
     /// run). It fires only in overall/progress2 rendering; per-file progress
@@ -149,8 +149,8 @@ pub trait ClientProgressObserver {
     /// `created_destination_root` carries the destination root when the copy
     /// creates it. upstream prints its session header at these points, ahead of
     /// every per-entry line: the sender's file-list banner at the top of
-    /// `send_file_list()` (flist.c:2521-2524) and the receiver's
-    /// `created directory %s` in `get_local_name()` (main.c:807-808).
+    /// `send_file_list()` (flist.c:2760-2764) and the receiver's
+    /// `created directory %s` in `get_local_name()` (main.c:828-829).
     fn on_start(&mut self, created_destination_root: Option<&Path>) {
         let _ = created_destination_root;
     }
@@ -274,7 +274,7 @@ pub(crate) struct ClientProgressForwarder<'a> {
     destination_root: Arc<Path>,
     destination_root_created: bool,
     // A dry run checks every entry but moves no data, so no entry opens a
-    // progress block. upstream: sender.c:638-642 - under `!do_xfers` the
+    // progress block. upstream: sender.c:639-643 - under `!do_xfers` the
     // sender logs the item, counts it, and skips the transfer.
     dry_run: bool,
     // The preview's record of each file that will transfer, so a file whose
@@ -365,7 +365,7 @@ impl<'a> ClientProgressForwarder<'a> {
     /// Emits the progress2 end-of-transfer summary line when no regular-file
     /// transfer produced one.
     ///
-    /// upstream: receiver.c:690-692 - at `NDX_DONE` the receiver calls
+    /// upstream: receiver.c:852-857 - at `NDX_DONE` the receiver calls
     /// `end_progress(0)` under `--info=progress2`, printing one
     /// `<bytes> <pct>% <rate> <time> (xfr#<n>, to-chk=0/<total>)` line even
     /// when the transfer moved no file data (a lone special/symlink, or a
@@ -430,7 +430,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         // directories and symlinks too, even though they print nothing.
         self.checked = self.checked.saturating_add(1);
 
-        // upstream: receiver.c:747-798 - only ITEM_TRANSFER (regular file data)
+        // upstream: receiver.c:918-976 - only ITEM_TRANSFER (regular file data)
         // entries print a per-file block and bump `xfr#`. Directories, symlinks,
         // devices, FIFOs and hard links are walked (counted above) but return
         // here. An up-to-date match is likewise silent under `--progress`/`-P`

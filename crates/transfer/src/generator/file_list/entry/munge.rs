@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 /// Strips the `/rsyncd-munged/` prefix from a symlink target when munging is active.
 ///
-/// Mirrors upstream `flist.c:455-459`: when the daemon module has
+/// Mirrors upstream `flist.c:499-503`: when the daemon module has
 /// `munge symlinks = yes`, the sender restores the original target before it
 /// is encoded onto the wire so the receiver can reapply the prefix on its
 /// side. The receiver-side write path uses the matching

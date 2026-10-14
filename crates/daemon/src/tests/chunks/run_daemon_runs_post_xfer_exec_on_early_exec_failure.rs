@@ -4,8 +4,8 @@
 /// regardless of outcome, so an early-exec abort (child returns `-1`, which
 /// `_exit()` truncates to 255) fires the hook with `RSYNC_EXIT_STATUS=255`.
 ///
-/// upstream: clientserver.c:908-933 - post-xfer exec runs after the child
-/// exits for any reason; clientserver.c:945-949 - early exec runs after the
+/// upstream: clientserver.c:964-993 - post-xfer exec runs after the child
+/// exits for any reason; clientserver.c:994-1009 - early exec runs after the
 /// post-xfer-exec fork point, and its failure returns `-1` from the module
 /// child. Regression guard for the daemon skipping the hook on this
 /// early-return abort path.

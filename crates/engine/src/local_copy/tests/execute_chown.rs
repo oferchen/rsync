@@ -401,7 +401,7 @@ fn execute_applies_group_override_to_multiple_files() {
     assert_eq!(summary.files_copied(), 2);
 }
 
-// GAP M8: upstream's `change_uid = am_root && ...` gate (rsync.c:526) applies
+// Upstream's `change_uid = am_root && ...` gate (rsync.c:655) applies
 // identically to `-o`/`-a` preserve and to an explicit `--chown`/`--usermap`
 // override - there is no "explicit overrides fail loud" path in upstream. A
 // non-root process must silently skip a uid chown it cannot perform and
@@ -444,7 +444,7 @@ fn execute_owner_override_without_privileges_is_skipped_not_fatal() {
     );
 }
 
-// GAP M8: upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284) applies
+// Upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284) applies
 // identically whether the target gid came from `-g`/`-a` preserve or an
 // explicit `--chown`/`--groupmap` override - a non-root process that is not a
 // member of the target group must skip the chgrp rather than fail.

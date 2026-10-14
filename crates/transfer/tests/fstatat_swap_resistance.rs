@@ -14,10 +14,11 @@
 //! 2. When the entry is a regular file, both the sandbox-anchored and
 //!    path-based stats agree on `dev` / `ino`.
 //! 3. When the relative path has multiple components, the helper anchors
-//!    its parent under `openat2(RESOLVE_BENEATH)` where the kernel
-//!    supports it (Linux 5.6+) and degrades to
-//!    `std::fs::symlink_metadata` otherwise; either way the reported
-//!    dev/ino match the real entry.
+//!    its parent beneath the sandbox root wherever anchoring is available
+//!    (`openat2(RESOLVE_BENEATH)` on Linux 5.6+, the per-component walk
+//!    elsewhere) and degrades to `std::fs::symlink_metadata` only on a
+//!    Linux kernel without openat2; either way the reported dev/ino match
+//!    the real entry.
 
 #![cfg(unix)]
 
@@ -88,7 +89,7 @@ fn multi_component_path_anchors_or_falls_back_lstat() {
     // A multi-component relative path resolves its parent beneath the
     // sandbox anchor wherever anchoring is available - via
     // openat2(RESOLVE_BENEATH) on Linux, via the portable per-component
-    // walk (upstream `ds_descend`, syscall.c:3032-3106) elsewhere - and
+    // walk (upstream `ds_descend`, syscall.c:3032-3103) elsewhere - and
     // degrades to the path-based fallback only on a Linux kernel without
     // openat2. Gate on fast_io's own predicate rather than re-deriving it
     // from openat2_supported(): anchoring off Linux does not follow from

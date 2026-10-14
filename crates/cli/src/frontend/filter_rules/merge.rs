@@ -111,8 +111,8 @@ pub(crate) fn apply_merge_directive(
         )
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
-    // upstream: exclude.c:1393-1402 resolves FILTRULE_CLEAR_LIST via
-    // pop_filter_list (exclude.c:574-590), which truncates only the local
+    // upstream: exclude.c:1542-1551 resolves FILTRULE_CLEAR_LIST via
+    // pop_filter_list (exclude.c:671-687), which truncates only the local
     // section of the per-merge-file rule list. Mirror that by parsing the
     // merge file into a scope-local buffer so a '!' inside the file cannot
     // wipe parent-scope rules already in `destination`.
@@ -128,7 +128,7 @@ pub(crate) fn apply_merge_directive(
         let contents = if is_stdin {
             read_merge_from_standard_input()?
         } else {
-            // upstream: exclude.c:1715 - the include/exclude wording of a
+            // upstream: exclude.c:1711,1716 - the include/exclude wording of a
             // failed open follows FILTRULE_INCLUDE, which a `+` modifier on the
             // merge rule (`.+ FILE`, `merge,+ FILE`) sets.
             read_merge_file(
@@ -268,7 +268,7 @@ fn parse_merge_contents(
 
         if let Some(kind) = options.enforced_kind() {
             // upstream: FILTRULE_NO_PREFIXES takes the whole line as the pattern
-            // verbatim (exclude.c:1122-1124,1313), so no whitespace is trimmed.
+            // verbatim (exclude.c:1273-1275,1465), so no whitespace is trimmed.
             let mut rule = match kind {
                 DirMergeEnforcedKind::Include => FilterRuleSpec::include(line.to_owned()),
                 DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(line.to_owned()),
@@ -373,7 +373,7 @@ pub(crate) fn process_merge_directive(
         Ok(FilterDirective::Clear) => destination.clear(),
         // A blank line inside a merge file contributes no rule.
         Ok(FilterDirective::Noop) => {}
-        // upstream: exclude.c:1441-1443 a non-merge FILTRULE_CVS_IGNORE rule
+        // upstream: exclude.c:1595-1597 a non-merge FILTRULE_CVS_IGNORE rule
         // (`-C`) inside a merge file expands to the global CVS defaults at this
         // position in the chain.
         Ok(FilterDirective::CvsDefaults) => {
@@ -389,13 +389,13 @@ pub(crate) fn process_merge_directive(
         }
         Err(error) => {
             // upstream reports a syntax failure ONCE, from `filter_rule_err`
-            // (exclude.c:132-138), which renders the rule through `rule_text`
+            // (exclude.c:133-137), which renders the rule through `rule_text`
             // and exits RERR_SYNTAX. There is no enclosing wrapper, and adding
             // one here re-echoed both the rule text the funnel had just replaced
             // and the merge file's name - which for a nested merge is a path the
             // peer chose. That is precisely the failure mode upstream's own
             // comment names: "a message added later cannot reintroduce the leak
-            // by forgetting to check" (exclude.c:96-99). The inner error already
+            // by forgetting to check" (exclude.c:97-98). The inner error already
             // names the rule's provenance, so it is propagated unchanged.
             return Err(error);
         }

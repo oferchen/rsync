@@ -1,5 +1,5 @@
 //! Regression test for daemon connection lifecycle through the wired
-//! ConnectionState FSM (FSW-8).
+//! ConnectionState FSM.
 //!
 //! Each test spawns a real daemon on an ephemeral port, drives a TCP
 //! client through a specific protocol path, and verifies that the daemon
@@ -12,8 +12,9 @@
 //!
 //! - **list**: Greeting -> ModuleSelect -> Closing (via `#list`)
 //! - **unknown module**: Greeting -> ModuleSelect -> Closing (via @ERROR)
-//! - **early exit**: Greeting -> Closing (client sends @RSYNCD: EXIT)
-//! - **immediate disconnect**: Greeting -> Closing (TCP RST)
+//! - **early exit**: Greeting -> ModuleSelect -> Closing (client sends
+//!   @RSYNCD: EXIT after its version)
+//! - **immediate disconnect**: Greeting -> Closing (client closes)
 //! - **multiple sequential connections**: each traverses the full lifecycle
 //!   independently, proving no leaked state between sessions
 
@@ -156,7 +157,7 @@ fn lifecycle_list_modules() {
 ///
 /// The daemon receives the version (Greeting -> ModuleSelect), then the
 /// client requests a non-existent module. The daemon sends @ERROR and
-/// closes with no @RSYNCD: EXIT (upstream clientserver.c:381-385: the client
+/// closes with no @RSYNCD: EXIT (upstream clientserver.c:424-430: the client
 /// treats @ERROR as fatal), transitioning ModuleSelect -> Closing.
 #[test]
 fn lifecycle_unknown_module() {
@@ -206,7 +207,7 @@ fn lifecycle_unknown_module() {
     assert!(result.is_ok(), "daemon should exit cleanly: {result:?}");
 }
 
-/// Greeting -> Closing via client @RSYNCD: EXIT.
+/// Greeting -> ModuleSelect -> Closing via client @RSYNCD: EXIT.
 ///
 /// The client sends @RSYNCD: EXIT immediately after the version exchange.
 /// The daemon transitions Greeting -> ModuleSelect (on version), then
@@ -300,7 +301,7 @@ fn lifecycle_multiple_sequential_connections() {
             if line.starts_with("@ERROR") {
                 saw_error = true;
             }
-            // upstream clientserver.c:381-385: the client treats @ERROR as fatal
+            // upstream clientserver.c:424-430: the client treats @ERROR as fatal
             // and returns, so the daemon sends no @RSYNCD: EXIT after a refusal.
             assert_ne!(
                 line.trim(),
@@ -380,7 +381,7 @@ fn lifecycle_max_connections_sequential_no_leak() {
             if line.starts_with("@ERROR") {
                 saw_error = true;
             }
-            // upstream clientserver.c:381-385: the client treats @ERROR as fatal
+            // upstream clientserver.c:424-430: the client treats @ERROR as fatal
             // and returns, so the daemon sends no @RSYNCD: EXIT after a refusal.
             assert_ne!(
                 line.trim(),
@@ -411,7 +412,7 @@ fn lifecycle_max_connections_sequential_no_leak() {
 /// upstream reads the version line exactly once, in `exchange_protocols()`,
 /// and the very next `read_line_old()` is the request whatever it contains
 /// (clientserver.c:1534-1538). A repeated banner is therefore a module name
-/// and draws `@ERROR: Unknown module` (:1563-1567), not a second version
+/// and draws `@ERROR: Unknown module` (:1567-1571), not a second version
 /// exchange.
 ///
 /// This is the only lifecycle edge a peer can aim at the FSM: taking

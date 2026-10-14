@@ -71,7 +71,7 @@ fn test_delete_during_and_after_conflict() {
 
 #[test]
 fn test_delete_during_and_delay_are_same_when_term() {
-    // upstream: options.c:724-725,2219 - `--delete-during` and `--delete-delay`
+    // upstream: options.c:738-739,2336 - `--delete-during` and `--delete-delay`
     // both write the single `delete_during` counter, so combining them is not a
     // conflict (`!!delete_during` counts once).
     let result = parse_args([

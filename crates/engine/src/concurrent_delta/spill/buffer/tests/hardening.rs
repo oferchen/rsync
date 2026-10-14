@@ -167,7 +167,7 @@ fn temp_dir_vanish_after_prior_spills_returns_error() {
 
 #[test]
 fn prior_spills_lost_surfaces_typed_variant_on_dir_wipe() {
-    // SPL-37: a wipe of the spill directory after items are already on
+    // A wipe of the spill directory after items are already on
     // disk must surface PriorSpillsLost with the configured dir and a
     // non-zero count of unrecoverable chunks. Forces enough inserts to
     // trip the byte threshold so spill_excess writes real records, then

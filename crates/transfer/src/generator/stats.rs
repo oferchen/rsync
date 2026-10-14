@@ -24,11 +24,11 @@ use protocol::stats::{CreatedStats, DeleteStats};
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:646-663` - `send_file_entry()` bumps `stats.num_dirs` /
+/// - `flist.c:730-746` - `send_file_entry()` bumps `stats.num_dirs` /
 ///   `num_symlinks` / `num_devices` / `num_specials` per entry.
-/// - `flist.c:915-916` - `stats.total_size += F_LENGTH(file)` guarded by
+/// - `flist.c:998-999` - `stats.total_size += F_LENGTH(file)` guarded by
 ///   `S_ISREG(mode) || S_ISLNK(mode)`.
-/// - `main.c:387-411` - `output_itemized_counts()` derives `reg` as the total
+/// - `main.c:391-415` - `output_itemized_counts()` derives `reg` as the total
 ///   minus the four typed categories.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct FlistSendStats {
@@ -52,8 +52,8 @@ impl FlistSendStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:646-663` - per-type tally.
-    /// - `flist.c:915-916` - `total_size` for regular files and symlinks only.
+    /// - `flist.c:730-746` - per-type tally.
+    /// - `flist.c:998-999` - `total_size` for regular files and symlinks only.
     pub(crate) fn record(&mut self, entry: &FileEntry) {
         if entry.is_dir() {
             self.num_dirs += 1;
@@ -90,7 +90,7 @@ pub(crate) struct TransferLoopResult {
     pub(crate) files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).
     ///
-    /// Mirrors `sender.c:344` `stats.total_transferred_size += F_LENGTH(file)`,
+    /// Mirrors `sender.c:635` `stats.total_transferred_size += F_LENGTH(file)`,
     /// accumulated at the same point as `files_transferred`.
     pub(crate) transferred_file_size: u64,
     /// Total bytes sent during transfer.
@@ -117,8 +117,8 @@ pub(crate) struct TransferLoopResult {
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:356-384` - `handle_stats()` sends/receives these statistics
-/// - `sender.c:463` - `total_written` accumulated during `send_files()`
+/// - `main.c:329-389` - `handle_stats()` sends/receives these statistics
+/// - `io.c:977` - `total_written` accumulated during `send_files()`
 #[derive(Debug, Clone, Default)]
 pub struct GeneratorStats {
     /// Number of files in the sent file list.
@@ -129,7 +129,7 @@ pub struct GeneratorStats {
     /// pushing client can reconstruct the `--stats` "Number of files"
     /// breakdown (`reg: R, dir: D, link: L, dev: V, special: S`), where `reg`
     /// is the remainder. Mirrors upstream `send_file_entry()`
-    /// (flist.c:646-663); the receiver-side equivalent lives on `TransferStats`.
+    /// (flist.c:730-746); the receiver-side equivalent lives on `TransferStats`.
     pub num_dirs: u64,
     /// Symbolic links in the sent file list (upstream `stats.num_symlinks`).
     pub num_symlinks: u64,
@@ -142,7 +142,7 @@ pub struct GeneratorStats {
     pub files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).
     ///
-    /// On a push the local sender computes this itself (`sender.c:344`); upstream
+    /// On a push the local sender computes this itself (`sender.c:635`); upstream
     /// never sends it over the wire in `handle_stats()`, so the pushing client
     /// reports it straight from this locally accumulated total.
     pub transferred_file_size: u64,
@@ -165,7 +165,7 @@ pub struct GeneratorStats {
     /// File list transfer time in milliseconds (upstream: `stats.flist_xfertime`).
     pub flist_xfertime_ms: u64,
     /// Elapsed time from `send_file_list` entry to the first byte written to
-    /// the wire. Diagnostic counter for sender-side INC_RECURSE (#2089).
+    /// the wire. Diagnostic counter for sender-side INC_RECURSE.
     ///
     /// `None` when `send_file_list` was never invoked or no bytes were written.
     ///
@@ -191,19 +191,19 @@ pub struct GeneratorStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1356-1363`: `log_exit()` maps `io_error` to `RERR_VANISHED` (24).
+    /// - `cleanup.c:215-216`: `_exit_cleanup()` maps `io_error` to `RERR_VANISHED` (24).
     pub io_error: i32,
     /// Upstream's `got_xfer_error`: a per-file transfer error was reported by
     /// this sender or by the peer via `MSG_ERROR_XFER`.
     ///
     /// Unlike `io_error` this carries no wire meaning; it only forces a zero
     /// exit code up to `RERR_PARTIAL` (23). A missing source argument is the
-    /// case that needs it, because `flist.c:2671` deliberately withholds
+    /// case that needs it, because `flist.c:2940-2944` deliberately withholds
     /// `IOERR_GENERAL` for `ENOENT`.
     ///
     /// # Upstream Reference
     ///
-    /// - `log.c:310-311`: `case FERROR_XFER: got_xfer_error = 1;`
+    /// - `log.c:337-338`: `case FERROR_XFER: got_xfer_error = 1;`
     /// - `cleanup.c:217-218`: `io_error & IOERR_GENERAL || got_xfer_error` -> 23
     pub got_xfer_error: bool,
 }
@@ -222,8 +222,7 @@ pub struct GeneratorStats {
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:228-235` - tolerant error handling for dry-run
-/// - `main.c:906-937` - `read_final_goodbye()` with early close tolerance
+/// - `main.c:921-952` - `read_final_goodbye()` with early close tolerance
 pub(crate) fn is_early_close_error(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
@@ -242,7 +241,7 @@ mod tests {
 
     /// `FlistSendStats::record` classifies each sent entry into the per-type
     /// tally and adds `F_LENGTH` to `total_size` for regular files and symlinks
-    /// only, mirroring upstream `send_file_entry()` (flist.c:646-663, 915-916).
+    /// only, mirroring upstream `send_file_entry()` (flist.c:730-746, 998-999).
     /// A directory and a FIFO must not inflate `total_size`, and a symlink's
     /// target length must be counted (the sender flist stores the target length
     /// as the entry size).

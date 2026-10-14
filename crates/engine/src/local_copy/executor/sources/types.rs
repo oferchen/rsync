@@ -11,8 +11,11 @@ use super::super::non_empty_path;
 /// Tracks whether the destination path exists and what kind of entry it is.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DestinationState {
+    /// The destination path exists.
     pub(super) exists: bool,
+    /// The destination itself (not a symlink target) is a directory.
     pub(super) is_dir: bool,
+    /// The destination is a symlink that resolves to a directory.
     pub(super) symlink_to_dir: bool,
 }
 

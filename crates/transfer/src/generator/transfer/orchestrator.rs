@@ -7,8 +7,8 @@
 //! # Upstream Reference
 //!
 //! - `sender.c:send_files()` - Main transfer loop
-//! - `flist.c:2463` - `send_file_list()` builds and sends file list
-//! - `main.c:906-937` - `read_final_goodbye()` protocol finalization
+//! - `flist.c:2739` - `send_file_list()` builds and sends file list
+//! - `main.c:921-952` - `read_final_goodbye()` protocol finalization
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -138,8 +138,8 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `sender.c:send_files()` - Main transfer loop
-    /// - `flist.c:2463` - `send_file_list()` builds and sends file list
-    /// - `main.c:906-937` - `read_final_goodbye()` protocol finalization
+    /// - `flist.c:2739` - `send_file_list()` builds and sends file list
+    /// - `main.c:921-952` - `read_final_goodbye()` protocol finalization
     pub fn run<R: Read, W: Write>(
         &mut self,
         mut reader: super::super::super::reader::ServerReader<R>,
@@ -209,7 +209,7 @@ impl GeneratorContext {
 
         let reader = &mut reader;
 
-        // upstream: flist.c:2463 - send_file_list()
+        // upstream: flist.c:2739 - send_file_list()
         let file_count = {
             let _t = PhaseTimer::new("file-list-build-send");
             let build = if files_from_entries.is_empty() {
@@ -239,7 +239,7 @@ impl GeneratorContext {
             flist_banner.finish(FlistSide::Sender, file_count, out)
         })?;
 
-        // upstream: acls.c:592-595 - named ACL-entry ids join the shared id-list
+        // upstream: acls.c:820-826 - named ACL-entry ids join the shared id-list
         // so the receiver remaps them like file owners. Runs after the file list
         // is sent (ACL cache complete) and before the id-list is transmitted.
         self.collect_acl_id_mappings()?;
@@ -257,7 +257,7 @@ impl GeneratorContext {
             .advance_to(TransferPhase::DeltaTransfer)
             .map_err(crate::fsm_error)?;
 
-        // upstream: main.c:981-987 do_server_sender() -
+        // upstream: main.c:994-1000 do_server_sender() -
         //   flist = send_file_list(f_out, argc, argv);
         //   if (!flist || flist->used == 0) { io_end_buffering_in(0); exit_cleanup(0); }
         //
@@ -297,7 +297,7 @@ impl GeneratorContext {
         }
 
         // INC_RECURSE sub-lists are sent lazily inside the loop via
-        // SegmentScheduler, matching upstream sender.c:230,264 cadence.
+        // SegmentScheduler, matching upstream sender.c:516,550 cadence.
         let transfer_result = {
             let _t = PhaseTimer::new("generator-transfer-loop");
             self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
@@ -308,16 +308,16 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Finalization)
             .map_err(crate::fsm_error)?;
 
-        // upstream: main.c:991-993 - do_server_sender() calls io_flush then handle_stats
+        // upstream: main.c:1004-1006 - do_server_sender() calls io_flush then handle_stats
         // before read_final_goodbye. Server-sender writes transfer stats to the wire;
         // client-sender handle_stats(-1) puts nothing on the wire but, under
         // --write-batch, writes the same five values straight to batch_fd
         // (main.c:374-383). Both land BEFORE read_final_goodbye tees the goodbye
         // NDX_DONE, which is the order --read-batch parses them back in.
         //
-        // upstream: main.c:992 io_flush(FULL_FLUSH) then main.c:330-331
+        // upstream: main.c:1005 io_flush(FULL_FLUSH) then main.c:334-335
         // handle_stats() caches stats.total_read/total_written (the raw descriptor
-        // counters, io.c:838/877) BEFORE the stats trailer and read_final_goodbye.
+        // counters, io.c:938/877) BEFORE the stats trailer and read_final_goodbye.
         // Flush buffered transfer output to the transport counter, then snapshot
         // both raw wire totals here so the trailing stats + goodbye bytes stay
         // excluded, exactly as upstream's cache-then-write ordering does. Absent
@@ -361,13 +361,13 @@ impl GeneratorContext {
         // returns would never happen because the read would deadlock on
         // the unterminated deflate block.
         //
-        // upstream: `main.c:992-996 do_server_sender()` brackets
+        // upstream: `main.c:1005-1009 do_server_sender()` brackets
         // `read_final_goodbye()` with `io_flush(FULL_FLUSH)`. Upstream's
         // goodbye NDX_DONE rides through `write_buf()` (`io.c:2293`) which
         // bypasses the deflate stream entirely. Our writer-graph routes
         // it through `CompressedWriter`, so we additionally need to drive
         // `CompressedWriter::finish()` here (matching
-        // `token.c:367 send_deflated_token()`'s end-of-transfer
+        // `token.c:370 send_deflated_token()`'s end-of-transfer
         // `deflateEnd()` contract). `finalize_compression` downgrades the
         // writer back to multiplex mode so any trailing diagnostic frame
         // still rides out before FIN.
@@ -432,7 +432,7 @@ impl GeneratorContext {
         let flist_xfertime =
             calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
 
-        // INC_RECURSE diagnostic I4 (#2199): emit cumulative NDX conversion
+        // INC_RECURSE diagnostics: emit cumulative NDX conversion
         // call count and partition_point comparison depth. Aggregated across
         // all generator transfers in this process so operators can see how
         // hot the wire/flat conversion path is relative to file counts.
@@ -452,7 +452,7 @@ impl GeneratorContext {
             "generator ndx_convert totals"
         );
 
-        // INC_RECURSE diagnostic I3 (#2198): emit cumulative writer.flush()
+        // INC_RECURSE diagnostics: emit cumulative writer.flush()
         // call count from the generator transfer hot path. Aggregated across
         // all generator transfers in this process so operators can see how
         // often the sender forces a flush relative to file counts.
@@ -470,7 +470,7 @@ impl GeneratorContext {
             "generator writer.flush totals"
         );
 
-        // INC_RECURSE diagnostic I5 (#2200): emit cumulative
+        // INC_RECURSE diagnostics: emit cumulative
         // prepare_pending_acl call count and elapsed wall time. Aggregated
         // across all generator transfers in this process so operators can
         // see how often per-entry ACL prep fires per segment and what share
@@ -491,7 +491,7 @@ impl GeneratorContext {
             "generator prepare_pending_acl totals"
         );
 
-        // INC_RECURSE diagnostic I2 (#2197): emit cumulative
+        // INC_RECURSE diagnostics: emit cumulative
         // encode_and_send_segment dispatch count and elapsed wall time.
         // Aggregated across all generator transfers in this process so
         // operators can see how often per-directory sub-lists are flushed to
@@ -517,7 +517,7 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
 
-        // upstream: log.c:310-311 - each MSG_ERROR_XFER the peer sends sets
+        // upstream: log.c:337-338 - each MSG_ERROR_XFER the peer sends sets
         // got_xfer_error on receipt; cleanup.c:217-218 then reports
         // RERR_PARTIAL. The receiver emits MSG_ERROR_XFER when it cannot open a
         // file's output (e.g. mkstemp() denied by a read-only destination dir)
@@ -528,7 +528,7 @@ impl GeneratorContext {
             self.got_xfer_error = true;
         }
 
-        // upstream: handle_stats() reports stats.total_size (main.c:351
+        // upstream: handle_stats() reports stats.total_size (main.c:355
         // write_varlong30(f, stats.total_size, 3)), accumulated in
         // send_file_entry() as `F_LENGTH(file)` for regular files and symlinks
         // only (flist.c:915-916). Read the value tallied at send time - summing

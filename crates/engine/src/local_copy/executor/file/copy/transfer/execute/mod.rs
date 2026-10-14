@@ -75,7 +75,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // When `Some`, the copy reconstructs the file from a `--copy-dest` basis.
     // The transfer itemizes as a local change (`c`) compared against the basis
     // rather than a network transfer (`>`).
-    // upstream: generator.c:1039 - itemize(..., ITEM_LOCAL_CHANGE, ...).
+    // upstream: generator.c:1178 try_dests_reg() -
+    // itemize(..., ITEM_LOCAL_CHANGE, ...).
     reference_basis: Option<PathBuf>,
 ) -> Result<TransferOutcome, LocalCopyError> {
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
@@ -106,7 +107,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         preserve_acls,
     } = flags;
 
-    // upstream: flist.c:1644-1649 - stream a `--copy-devices` device as a
+    // upstream: flist.c:1790-1796 - stream a `--copy-devices` device as a
     // regular file of its readable byte length instead of the zero stat size.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
     let file_size = device_as_file_size.unwrap_or(metadata.len());
@@ -207,7 +208,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let mut delta_basis_override: Option<PathBuf> =
         fuzzy_basis.as_ref().map(|(path, _)| path.clone());
     if let Some(existing) = existing_metadata {
-        // upstream: generator.c:1862,1898 - under --inplace, --backup COPIES the
+        // upstream: generator.c:2281,2328 - under --inplace, --backup COPIES the
         // pre-image aside (preserving the destination inode for the in-place
         // rewrite) rather than renaming the destination away. Only a regular-file
         // inplace update qualifies; every other entry keeps the rename path.
@@ -227,7 +228,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             // When a rename moved the basis file, delta transfer must read
             // matched blocks from the backup location. The delta signature is
             // only built for regular files, so this condition is sufficient.
-            // upstream: receiver.c:888-892 (FNAMECMP_BACKUP).
+            // upstream: receiver.c:1022-1024 (FNAMECMP_BACKUP).
             if delta_signature.is_some()
                 && context.options().backup_enabled()
                 && !context.mode().is_dry_run()
@@ -247,7 +248,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // socket, or a device without `--copy-devices`) is materialised as an empty
     // placeholder. A `--copy-devices` device (`device_as_file_size.is_some()`)
     // instead falls through to the generic read/write loop below, which streams
-    // its `file_size` bytes just like a regular file (upstream sender.c:411-419).
+    // its `file_size` bytes just like a regular file (upstream sender.c:738-745).
     if !file_type.is_file() && device_as_file_size.is_none() {
         // A placeholder write carries no appended tail and no whole-file
         // checksum, so it can never fail verification.
@@ -373,7 +374,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // bytes.
     //
     // `--copy-devices` is the one case that must keep the recorded value: a
-    // device is streamed as `file_size` bytes (upstream sender.c:411-419) while
+    // device is streamed as `file_size` bytes (upstream sender.c:738-745) while
     // its own `st_size` is 0, so fstat here would bound the copy to nothing.
     let transfer_size = match device_as_file_size {
         Some(size) => size,
@@ -413,7 +414,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // `verify_failed` is upstream's `recv_ok == 0` for this file, decided before
     // the append rather than after it because the local executor can compare the
     // two prefixes directly. The append still runs: upstream retains the result
-    // and re-deltas it in phase 2 (receiver.c:1045, generator.c:2175-2217).
+    // and re-deltas it in phase 2 (receiver.c:1352-1357, generator.c:2646-2690).
     let mut verify_failed = false;
     let append_offset = match append_mode {
         AppendMode::Append {
@@ -517,7 +518,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         destination,
     );
 
-    // IUD-5 opt-in: route eligible whole-file writes through the io_uring
+    // Opt-in (`iouring-data-writes`): route eligible whole-file writes through the io_uring
     // registered-buffer path.
     #[cfg(all(target_os = "linux", feature = "iouring-data-writes"))]
     if iouring::eligible(
@@ -817,8 +818,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
 
-    // upstream: generator.c:1039 - a `--copy-dest` reconstruction itemizes the
-    // attribute columns against the alternate basis (`sxp->st`), not the
+    // upstream: generator.c:1178 try_dests_reg() - a `--copy-dest` reconstruction
+    // itemizes the attribute columns against the alternate basis (`sxp->st`), not the
     // (absent) prior destination, and never sets ITEM_IS_NEW. Comparing source
     // against the basis with `destination_previously_existed = true` keeps the
     // size/time/perm slots blank when the source already matched the basis.
@@ -917,7 +918,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         preserve_acls,
     )?;
 
-    // upstream: receiver.c:1031 - `recv_ok = receive_data(...)` compares the
+    // upstream: receiver.c:1283 - `recv_ok = receive_data(...)` compares the
     // sender's whole-file checksum against the receiver's. The local executor
     // reduces that comparison to the pre-append prefix comparison recorded in
     // `verify_failed` (see `determine_append_mode`), because both sides sum the
@@ -937,7 +938,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
 /// `--debug=FUZZY` selection line and returns the candidate's path and
 /// metadata so the caller can build a delta signature against it.
 ///
-/// upstream: generator.c:1767-1795 - `find_fuzzy()` selects the basis and the
+/// upstream: generator.c:836 - `find_fuzzy()` selects the basis and the
 /// generator announces `"fuzzy basis selected for %s: %s"` at
 /// `DEBUG_GTE(FUZZY, 1)` before using it as `fnamecmp`.
 fn find_fuzzy_basis(

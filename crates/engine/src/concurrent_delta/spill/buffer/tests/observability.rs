@@ -1,7 +1,7 @@
-//! In-flight window and metrics forwarding (ROB-1) on the
+//! In-flight window and metrics forwarding on the
 //! [`SpillableReorderBuffer`] facade.
 //!
-//! These tests pin that the ROB-1 observability accessors (`in_flight_window`,
+//! These tests pin that the observability accessors (`in_flight_window`,
 //! `metrics`) forwarded from the inner ring track occupancy without altering
 //! delivery behaviour, and that the high-water mark is monotonic.
 

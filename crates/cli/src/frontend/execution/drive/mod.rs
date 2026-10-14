@@ -1,3 +1,5 @@
+//! Builds the client configuration from parsed options and runs the transfer.
+
 mod config;
 mod filters;
 mod messages;

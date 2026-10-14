@@ -20,9 +20,10 @@
 //! user-space buffers when the half-close fires would show up as a short
 //! read on the receive side.
 //!
-//! upstream: `cleanup.c::handle_cleanup()` brackets the sender's final
-//! `io_flush(FULL_FLUSH)` with the process exit so every queued byte hits
-//! the wire before the kernel queues FIN.
+//! upstream: `cleanup.c:_exit_cleanup()` does a final `io_flush(FULL_FLUSH)`
+//! on a clean exit (`cleanup.c:194-195`) before `close_all()`
+//! (`cleanup.c:265`) shuts the socket, so every queued byte hits the wire
+//! before the kernel queues FIN.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

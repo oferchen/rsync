@@ -37,9 +37,9 @@
 //!
 //! # Upstream References
 //!
-//! - `exclude.c:1331-1338` - `case ':'` sets `FILTRULE_PERDIR_MERGE` and falls
+//! - `exclude.c:1332-1339` - `case ':'` sets `FILTRULE_PERDIR_MERGE` and falls
 //!   through to `case '.'` for `FILTRULE_MERGE_FILE`
-//! - `exclude.c:1310-1311` - the `dir-merge` keyword maps onto `:`
+//! - `exclude.c:1294-1295` - the `dir-merge` keyword maps onto `:`
 //! - `exclude.c:349-391` - `add_rule` registers the rule in `mergelist_parents`
 //! - `exclude.c:858-1000` - `push_local_filters` / `change_local_filter_dir`
 //! - `clientserver.c:934` - `filter =` parses into `daemon_filter_list`

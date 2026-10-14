@@ -1,4 +1,4 @@
-//! Long-running BGID lifecycle stress test (#2297).
+//! Long-running BGID lifecycle stress test.
 //!
 //! Simulates 100,000 sequential mock daemon sessions, each acquiring a
 //! buffer-group id from [`fast_io::BgidAllocator`] and immediately returning
@@ -17,9 +17,7 @@
 //!
 //! The loop runs unconditionally. 100,000 acquire/release cycles cost ~17 ms
 //! measured (no kernel registration, no I/O), so there is no test-budget
-//! reason to make the assertion opt-in. It previously sat behind
-//! `OC_RSYNC_BGID_STRESS=1`, which no workflow ever set - the leak assertion
-//! therefore never ran in CI while the test still reported a pass.
+//! reason to make the assertion opt-in.
 
 #![cfg(target_os = "linux")]
 

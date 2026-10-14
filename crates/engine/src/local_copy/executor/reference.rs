@@ -64,7 +64,7 @@ pub(crate) fn resolve_reference_candidate(
 /// skipped through an attacker's symlink.
 ///
 /// Local copy has no daemon arm. Upstream selects the plain `link_stat()`
-/// fall-through on `am_daemon` (generator.c:1010), whose confinement comes from
+/// fall-through on `am_daemon` (generator.c:1064), whose confinement comes from
 /// the module resolver instead; a local copy is never a daemon worker, so the
 /// ownership walk is the only reachable arm here.
 ///
@@ -196,7 +196,7 @@ pub(crate) fn reference_attrs_unchanged(
         return false;
     }
 
-    // upstream: generator.c:494 perms_differ - Unix compares the full permission
+    // upstream: generator.c:482 perms_differ - Unix compares the full permission
     // bits; on platforms without POSIX modes (Windows) the only preserved
     // permission is the read-only attribute, matching how oc applies and
     // quick-checks permissions there.
@@ -214,7 +214,7 @@ pub(crate) fn reference_attrs_unchanged(
         if options.group() && source_meta.gid() != basis_meta.gid() {
             return false;
         }
-        // upstream: generator.c:501 - xattrs_differ() demotes to match_level 2,
+        // upstream: generator.c:509 - xattrs_differ() demotes to match_level 2,
         // forcing the copy + set_file_attrs that reapplies the source xattrs.
         // Owner, group, and xattrs have no meaningful equivalent on non-Unix
         // platforms, where oc preserves none of them.
@@ -248,14 +248,14 @@ fn reference_permissions_match(source_meta: &fs::Metadata, basis_meta: &fs::Meta
 /// Searches configured reference directories for a file matching the source and
 /// returns the action for the BEST candidate.
 ///
-/// upstream: generator.c:954-1054 `try_dests_reg()` scans every `basis_dir[]`,
+/// upstream: generator.c:1073-1198 `try_dests_reg()` scans every `basis_dir[]`,
 /// tracking the highest match_level (2 = data matches `quick_check_ok`, 3 = data
 /// and attributes both match `unchanged_attrs`), breaking early only on an exact
 /// (level-3) match, then acts on the best candidate. A first-match scan wrongly
 /// picks an earlier data-only basis over a later exact one, forcing an
 /// unnecessary copy/transfer and (for `--link-dest`) reapplying attrs onto a
 /// shared basis inode. The winning level then drives the action
-/// (generator.c:1007-1066):
+/// (generator.c:1104-1198):
 ///
 /// - `--compare-dest`: level 3 is up-to-date (skip, no write); level 2 copies the
 ///   basis in and reapplies attrs (`copy_altdest_file`).
@@ -335,7 +335,7 @@ pub(crate) fn find_reference_action(
         {
             best = Some((reference.kind(), candidate, level));
         }
-        // upstream: generator.c:979 - an exact match ends the scan immediately.
+        // upstream: generator.c:1099 - an exact match ends the scan immediately.
         if level == 3 {
             break;
         }
@@ -372,7 +372,7 @@ pub(crate) fn find_reference_action(
 /// pointing at `target`. A copy-dest match reconstructs the link from the basis
 /// and itemizes it as a local change (`cL`) instead of a new entry.
 ///
-/// upstream: generator.c:1094 quick_check_ok(FT_SYMLINK) compares link targets.
+/// upstream: generator.c:1235 quick_check_ok(FT_SYMLINK) compares link targets.
 pub(crate) fn find_copy_dest_symlink(
     context: &CopyContext<'_>,
     destination: &Path,
@@ -390,7 +390,7 @@ pub(crate) fn find_copy_dest_symlink(
 /// receiver neither recreates it nor reports a transfer; it itemizes `.L`
 /// against the basis.
 ///
-/// upstream: generator.c:1140 - COMPARE_DEST forces `chg = 0` for non-directory
+/// upstream: generator.c:1299 - COMPARE_DEST forces `chg = 0` for non-directory
 /// matches, so the update char stays `.`.
 pub(crate) fn find_compare_dest_symlink(
     context: &CopyContext<'_>,
@@ -452,10 +452,10 @@ fn find_reference_symlink(
 /// directories are never hard-linked, so all three kinds behave identically
 /// here.
 ///
-/// upstream: generator.c:1117-1148 try_dests_non() - a match itemizes with
+/// upstream: generator.c:1258-1303 try_dests_non() - a match itemizes with
 /// ITEM_LOCAL_CHANGE and never sets ITEM_IS_NEW (the LINK_DEST hard-link branch
-/// is skipped for directories at line 1126, and COMPARE_DEST forces
-/// ITEM_LOCAL_CHANGE for directories at line 1140).
+/// is skipped for directories at line 1268, and COMPARE_DEST forces
+/// ITEM_LOCAL_CHANGE for directories at lines 1299-1300).
 pub(crate) fn find_copy_dest_basis(
     context: &CopyContext<'_>,
     destination: &Path,

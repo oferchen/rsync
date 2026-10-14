@@ -7,7 +7,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:rwrite()` - formats the `at <file>(<line>)` suffix
+/// - `log.c:log_exit()` (log.c:956-960) - formats the `at <file>(<line>)` suffix
 ///
 /// # Examples
 ///

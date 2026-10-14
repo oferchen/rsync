@@ -129,8 +129,8 @@ fn last_occurrence(matches: &clap::ArgMatches, id: &str) -> Option<usize> {
 /// the negative so clap's left-to-right resolution already reflects the winner:
 /// a later `--no-foo` clears the count, and a later `-ff` clears the negation.
 /// This mirrors upstream rsync's popt processing where `--foo` does `level++`
-/// and `--no-foo` resets `level = 0` (e.g. options.c:1591 `++preserve_atimes`,
-/// options.c:1883 `preserve_xattrs++`). The level is capped at 2 because that is
+/// and `--no-foo` resets `level = 0` (e.g. options.c:1698 `++preserve_atimes`,
+/// options.c:1990 `preserve_xattrs++`). The level is capped at 2 because that is
 /// the highest doubled letter upstream `server_options()` emits.
 ///
 /// Returns `None` when neither flag is present, so callers can distinguish

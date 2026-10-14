@@ -11,7 +11,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c` - `delete_in_dir()` removes extraneous entries
+/// - `generator.c` - `delete_in_dir()` removes extraneous entries
 /// - `options.c` - `--delete` handling and mode selection
 #[cfg(unix)]
 #[test]

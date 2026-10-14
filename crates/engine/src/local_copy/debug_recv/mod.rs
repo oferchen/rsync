@@ -1,9 +1,12 @@
 //! DEBUG_RECV tracing for receiver operations.
 //!
-//! Provides structured tracing for file receive/delta-apply operations
-//! matching upstream rsync's `receiver.c` / `generator.c` debug output format.
+//! Provides structured tracing for file receive/delta-apply operations, the
+//! counterpart of upstream's `DEBUG_GTE(RECV, ...)` output in `receiver.c`.
 //! All tracing is conditionally compiled behind the `tracing` feature flag and
 //! produces no-op inline functions when disabled.
+//!
+//! Deviation from upstream: events are structured `tracing` records, not
+//! upstream's `rprintf(FINFO, ...)` text lines.
 
 #![allow(dead_code)]
 
@@ -17,7 +20,7 @@ pub use trace_functions::{
 };
 pub use tracer::RecvTracer;
 
-/// Target name for tracing events, matching rsync's debug category.
+/// Target name for tracing events, named after upstream's `RECV` debug category.
 const RECV_TARGET: &str = "rsync::recv";
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ use crate::local_copy::create_symlink;
 /// rewritten in place rather than replaced, so the pre-image must be COPIED
 /// aside instead of renamed.
 ///
-/// upstream: generator.c:2279-2300 and generator.c:2327-2350 - the in-place
+/// upstream: generator.c:2281-2302 and generator.c:2328-2357 - the in-place
 /// backup BYPASSES `make_backup()`, so the generator raises
 /// `operator_path_resolve` around `get_backup_name()` and the `copy_file()` /
 /// `do_open_at()` that follow, clearing it again on every exit path. Without
@@ -38,7 +38,7 @@ use crate::local_copy::create_symlink;
 /// design, and a non-chrooted daemon's own `--backup-dir` entries are
 /// trusted-owned by construction, so ownership alone would let a backup entry
 /// pointing outside the module carry an in-module file's contents out of it
-/// (syscall.c:232-291 `abspath_outside_confinement()`). A session with no
+/// (syscall.c:245-291 `abspath_outside_confinement()`). A session with no
 /// confinement root - every plain local client - is unaffected: there is
 /// nothing to be outside of.
 ///
@@ -134,24 +134,24 @@ pub fn compute_backup_path(
 }
 
 /// Creates the intermediate directories leading to a backup path, mirroring
-/// upstream's `copy_valid_path` (backup.c:61-154).
+/// upstream's `copy_valid_path` (backup.c:88-190).
 ///
 /// For each path element that does not yet exist, a directory is created and -
 /// when `--backup-dir` is in use - the corresponding destination directory's
 /// mode/owner/mtime is copied onto it, exactly as upstream does after each
 /// `do_mkdir_at` via `x_stat` + `make_file` + `set_file_attrs`
-/// (backup.c:101-142). Pre-existing directories are left untouched, matching
-/// upstream's `EEXIST`/`validate_backup_dir` skip (backup.c:102-105).
+/// (backup.c:125-178). Pre-existing directories are left untouched, matching
+/// upstream's `EEXIST`/`validate_backup_dir` skip (backup.c:128-132).
 ///
 /// A path element that exists but is not a directory is cleared before the
-/// directory is created, mirroring `validate_backup_dir` (backup.c:48-53),
+/// directory is created, mirroring `validate_backup_dir` (backup.c:75-79),
 /// where a non-directory triggers `delete_item(...DEL_FOR_BACKUP|DEL_RECURSE)`
 /// so the element can be recreated as a directory.
 ///
 /// When `--backup-dir` is not set the backup lands alongside the destination
 /// and every element already exists, so no directory is created and no
 /// attribute copy is performed (upstream only runs `copy_valid_path` when
-/// `backup_dir` is set - backup.c:159).
+/// `backup_dir` is set - backup.c:195).
 pub(crate) fn create_backup_parents(
     destination_root: &Path,
     backup_dir: Option<&Path>,
@@ -164,8 +164,8 @@ pub(crate) fn create_backup_parents(
     }
 
     // Without --backup-dir the backup lands alongside the destination and its
-    // parent already exists; upstream runs no copy_valid_path here (backup.c:159
-    // vs :179), so a plain create_dir_all suffices with no attribute copy.
+    // parent already exists; upstream runs no copy_valid_path here (backup.c:195
+    // vs :218), so a plain create_dir_all suffices with no attribute copy.
     let Some(backup_dir) = backup_dir else {
         return fs::create_dir_all(parent)
             .map_err(|error| LocalCopyError::io("create backup directory", parent, error));
@@ -175,7 +175,7 @@ pub(crate) fn create_backup_parents(
     // has no receiver sandbox to anchor against, so each element is created
     // through the ownership walk bound to the session's confinement root -
     // upstream's `do_mkdir_at()` under `make_backup()`'s `operator_path_resolve`
-    // (backup.c:128, backup.c:437-449). `ACCESSPERMS` is upstream's mode and
+    // (backup.c:128, backup.c:445-447). `ACCESSPERMS` is upstream's mode and
     // 0o777 is what `create_dir_all` passed before, so the umask still decides
     // the bits.
     create_backup_dir_parents(
@@ -192,9 +192,9 @@ pub(crate) fn create_backup_parents(
 /// Creates one element of a local `--backup-dir` chain through the ownership
 /// walk, bound to the session's confinement root.
 ///
-/// upstream: `backup.c:128` `do_mkdir_at(backup_dir_buf, ACCESSPERMS)` and
-/// `backup.c:206` `make_path()`, both inside the `operator_path_resolve = 1`
-/// window `make_backup()` raises around the whole backup (backup.c:437-449).
+/// upstream: `make_backup()` raises `operator_path_resolve` around the whole
+/// backup (backup.c:445-447). Both `make_path()` (backup.c:206) and
+/// `do_mkdir_at(backup_dir_buf, ACCESSPERMS)` (backup.c:128) run inside it.
 #[cfg(unix)]
 fn create_backup_dir_confined(path: &Path) -> io::Result<()> {
     fast_io::operator_create_dir_all_confined(path, 0o777)
@@ -226,21 +226,21 @@ pub struct BackupDirCache {
 /// freshly-created subdirectory's attributes from the corresponding
 /// destination directory and clearing any non-directory obstruction.
 ///
-/// Mirrors upstream `copy_valid_path` (backup.c:61-154) plus
-/// `validate_backup_dir` (backup.c:48-53): the backup root is ensured first
-/// (backup.c:165 `make_path`), then only the relative portion *below* the root
-/// is validated element-by-element (backup.c:67 walks
+/// Mirrors upstream `copy_valid_path` (backup.c:88-190) plus
+/// `validate_backup_dir` (backup.c:65-82): the backup root is ensured first
+/// (backup.c:206 `make_path`), then only the relative portion *below* the root
+/// is validated element-by-element (backup.c:94 walks
 /// `rel = backup_dir_buf + backup_dir_len`, never re-validating the path above
-/// `backup_dir`). Pre-existing directories are skipped (backup.c:102-105
+/// `backup_dir`). Pre-existing directories are skipped (backup.c:128-132
 /// `EEXIST`/`validate_backup_dir`); a non-directory obstruction (including a
 /// symlink) is removed so the element can be recreated as a directory
-/// (backup.c:48-53 `delete_item(...DEL_FOR_BACKUP|DEL_RECURSE)`); and each new
+/// (backup.c:75-79 `delete_item(...DEL_FOR_BACKUP|DEL_RECURSE)`); and each new
 /// directory inherits the corresponding destination directory's attributes
-/// (backup.c:115-138 `x_stat` + `make_file` + `set_file_attrs`).
+/// (backup.c:142-175 `x_stat` + `make_file` + `set_file_attrs`).
 ///
 /// Directory creation is delegated to `mkdir` so the network receiver commit
 /// path can anchor the leaf `mkdir` through its destination sandbox dirfd
-/// (SEC-1.j) while the local path uses a plain `create_dir_all`. `mkdir` must
+/// while the local path uses a plain `create_dir_all`. `mkdir` must
 /// be idempotent for an already-existing directory, matching upstream's
 /// `EEXIST` skip. Shared by the local-copy executor and the network receiver
 /// so a `--backup-dir` subtree gets identical attribute inheritance and
@@ -269,7 +269,7 @@ where
         .validated
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    // upstream: backup.c:196-208 get_backup_name() - make_path(backup_dir_buf, 0)
+    // upstream: backup.c:195-210 get_backup_name() - make_path(backup_dir_buf, 0)
     // ensures the backup directory root once, behind a static flag.
     if validated.is_none() {
         mkdir(&backup_root)?;
@@ -325,10 +325,10 @@ where
 {
     match backup_dir_element_metadata(current) {
         Ok(meta) if meta.is_dir() => return Ok(()),
-        // upstream: backup.c:48-53 - a non-directory (including a symlink) in
+        // upstream: backup.c:75-79 - a non-directory (including a symlink) in
         // the way is removed so it can be recreated as a directory. A
         // non-directory is never a recursive tree, so a plain unlink mirrors
-        // `delete_item` for this case (backup.c:50); the unlink drops a
+        // `delete_item` for this case (backup.c:77); the unlink drops a
         // symlink without following it, matching the `lstat`-based check.
         Ok(_) => remove_backup_dir_obstruction(current)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -380,15 +380,15 @@ fn remove_backup_dir_obstruction(path: &Path) -> io::Result<()> {
 }
 
 /// Copies a freshly-created backup subdirectory's attributes from the
-/// corresponding destination directory, mirroring backup.c:115-138.
+/// corresponding destination directory, mirroring backup.c:142-175.
 ///
 /// The backup subdirectory at `<backup_root>/<rel>` inherits from the
 /// destination directory at `<destination_root>/<rel>`, matching upstream's
 /// `x_stat(rel, ...)` where `rel` is the relative path under the transfer's
-/// destination cwd (backup.c:67,117).
+/// destination cwd (backup.c:94,144).
 ///
 /// Best-effort: upstream logs and continues when the source stat or attribute
-/// application fails (backup.c:117-118, 121-122), so a missing or unreadable
+/// application fails (backup.c:144-145, 148-149), so a missing or unreadable
 /// destination directory simply leaves the backup subdirectory with default
 /// permissions rather than aborting the transfer.
 fn apply_backup_dir_attrs(
@@ -497,7 +497,7 @@ pub(crate) fn copy_entry_to_backup(
 /// beneath-walk rather than the ownership one.
 ///
 /// upstream: `backup.c:377` `do_symlink_at(sl, buf)` inside `make_backup()`'s
-/// `operator_path_resolve = 1` window (backup.c:437-449); `syscall.c:919`
+/// `operator_path_resolve = 1` window (backup.c:445-447); `syscall.c:919`
 /// `do_symlink_at()` resolves the parent with `owner_walk_parent()` and creates
 /// the leaf with `symlinkat`.
 #[cfg(unix)]
@@ -534,7 +534,7 @@ fn create_backup_symlink(target: &Path, source: &Path, backup_path: &Path) -> io
 /// outside the module being served.
 /// upstream: backup.c:358 - `(am_root && preserve_devices && IS_DEVICE(mode))
 /// || (preserve_specials && IS_SPECIAL(mode))` gates `do_mknod_at`. am_root is
-/// non-zero for real root, --super, and --fake-super (options.c:90).
+/// non-zero for real root, --super, and --fake-super (options.c:95).
 #[cfg(unix)]
 fn copy_special_to_backup(
     source: &Path,
@@ -623,7 +623,7 @@ mod tests {
     }
 
     /// upstream `robust_unlink`s an existing backup before writing the new one
-    /// (`generator.c:1901`); the `O_TRUNC` create has to reach the same end
+    /// (`generator.c:2340`); the `O_TRUNC` create has to reach the same end
     /// state, or a shorter pre-image would leave the previous backup's tail
     /// appended to it.
     #[test]

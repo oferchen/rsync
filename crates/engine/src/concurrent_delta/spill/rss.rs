@@ -14,9 +14,9 @@
 //!   file is plain text and the page size is read through the safe `rustix`
 //!   shim already used elsewhere in the workspace - failing that, the
 //!   well-known 4096 fallback applies.
-//! - **macOS**: stubbed at `Ok(0)` so the knob is a no-op until a follow-up
+//! - **macOS**: returns `Ok(0)`, so the knob is a no-op until a follow-up
 //!   wires `mach_task_basic_info`. The byte-budget path continues to work
-//!   exactly as it does today. See `#2340` follow-up scope.
+//!   unchanged.
 //! - **Other Unix / Windows**: returns
 //!   [`std::io::ErrorKind::Unsupported`]; the
 //!   buffer treats the error as "RSS unavailable" and falls back to the
@@ -164,7 +164,7 @@ mod platform {
     /// crate unchanged we ship a no-op stub that reports zero RSS; the
     /// reorder buffer interprets that as "below any threshold" so the
     /// `memory_pressure_bytes` knob is effectively disabled on macOS until
-    /// a follow-up tracked separately under issue #2340 wires the real
+    /// a follow-up wires the real
     /// probe via `mach_task_basic_info` (or a safe wrapper crate).
     pub fn current_rss_bytes() -> io::Result<u64> {
         Ok(0)

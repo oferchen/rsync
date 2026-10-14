@@ -146,7 +146,7 @@ pub struct LocalCopyOptions {
     pub(super) compression_level_override: Option<CompressionLevel>,
     pub(super) compression_level: CompressionLevel,
     /// Worker count for `ZSTD_c_nbWorkers`, only meaningful for zstd.
-    /// upstream: `token.c:701`, `options.c:89`.
+    /// upstream: `token.c:752`, `options.c:93`.
     pub(super) compression_threads: Option<NonZeroU8>,
     pub(super) adaptive_compress: bool,
     pub(super) skip_compress: SkipCompressList,
@@ -183,7 +183,7 @@ pub struct LocalCopyOptions {
     /// rsync's behaviour when `--iconv` is absent or `--no-iconv` is set.
     /// `Some(converter)` means file-list emit, file-list ingest, and filter
     /// matching call sites should transcode names through this converter
-    /// when those producers are wired (tracked under #1912, #1913, #1914).
+    /// when those producers are wired.
     ///
     /// This field is the local-copy mirror of
     /// `transfer::config::ConnectionConfig::iconv`, populated for SSH and
@@ -221,7 +221,7 @@ pub struct LocalCopyOptions {
     /// dry-run mode but lists every enumerated entry - including symlinks,
     /// devices, FIFOs, and sockets - instead of skipping non-regular files.
     ///
-    /// upstream: generator.c:1155 `list_file_entry()` lists every flist entry
+    /// upstream: generator.c:1318 `list_file_entry()` lists every flist entry
     /// regardless of `--links`/`--devices`/`--specials` because list-only mode
     /// never runs the generator's non-regular skip path (main.c:721
     /// `get_local_name()` returns NULL for `list_only`).

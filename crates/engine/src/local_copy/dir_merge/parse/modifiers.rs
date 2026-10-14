@@ -106,8 +106,7 @@ pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (
         // upstream: exclude.c:1370 switches on the RAW byte, so the modifier
         // alphabet is case-sensitive. `C` (:1402) is the CVS modifier and `c` is
         // not a modifier at all - folding case here made `:c f` parse as a CVS
-        // dir-merge where upstream exits 1. Same defect PR #7361 fixed on the
-        // rule side; the merge side never received it.
+        // dir-merge where upstream exits 1.
         //
         // upstream: exclude.c:1438 - `x` is unguarded and legal on every prefix,
         // so it must be consumed here or it terminates the scan and the
@@ -381,8 +380,8 @@ mod tests {
         #[test]
         fn no_separator_means_all_modifiers_and_no_pattern() {
             // The convention this crate previously used was the exact INVERSE of the
-            // CLI sibling's (cli/.../parsing/helpers.rs), which PR #7361 already
-            // fixed. Upstream never reaches a "pattern" at all here: with no
+            // CLI sibling's (cli/.../parsing/helpers.rs). Upstream never reaches a
+            // "pattern" at all here: with no
             // separator the loop runs to end-of-input over modifier bytes, so `-foo`
             // fails on `f` instead of excluding a file named `foo`.
             let (mods, rest) = split_short_rule_modifiers("pattern");

@@ -19,12 +19,12 @@ pub const CHUNK_SIZE: usize = 32 * 1024;
 
 /// Scan window for sparse zero-run detection during file writes.
 ///
-/// Upstream `write_file()` feeds `write_sparse()` in pieces of at most this
-/// size (`fileio.c:160`, `int len1 = MIN(len, SPARSE_WRITE_SIZE)`), so only
-/// leading/trailing zeros of each 1 KB window are turned into holes. Matching
-/// this window is required for oc's punched holes to line up with upstream:
-/// a larger window writes sub-window interior zero runs as literal data,
-/// leaving them allocated where upstream would deallocate them.
+/// Before 3.5.1, upstream `write_file()` fed `write_sparse()` in pieces of at
+/// most this size, so only leading/trailing zeros of each 1 KB window became
+/// holes. 3.5.1 `write_sparse()` (`fileio.c:130-189`) instead scans the whole
+/// span and defers interior zero runs of at least this size as holes.
+/// Deviation from upstream: oc keeps the 1 KB windowed scan (see
+/// `delta_apply::sparse`), so hole placement can differ at window edges.
 ///
 /// Matches upstream `SPARSE_WRITE_SIZE` (1024) in `rsync.h`.
 pub const SPARSE_WRITE_SIZE: usize = 1024;

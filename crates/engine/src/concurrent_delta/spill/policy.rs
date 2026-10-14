@@ -22,10 +22,8 @@
 //! reload-from-disk delivery. Tests below pin the defaults so downstream
 //! crates can rely on the contract.
 //!
-//! Extracted as the first split off the monolithic `spill.rs`; see the
-//! `spill.rs` decomposition plan (`docs/audits/spill-rs-decomposition-plan.md`,
-//! task SPL-1 #2323) for the broader submodule layout and the
-//! `SpillPolicy` introduction tracked by #2336.
+//! See `docs/audits/spill-rs-decomposition-plan.md` for the submodule
+//! layout and the `SpillPolicy` introduction.
 
 use std::path::{Path, PathBuf};
 

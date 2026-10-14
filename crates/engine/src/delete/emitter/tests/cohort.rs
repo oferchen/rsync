@@ -1,7 +1,7 @@
-//! DDP-D2 hardlink-aware delete tests via the `CohortIndex` snapshot.
+//! Hardlink-aware delete tests via the `CohortIndex` snapshot.
 //!
 //! Per `docs/design/hardlink-delete-audit.md` Option A and upstream
-//! `delete.c:130-225`, the emitter still unlinks every destination
+//! `delete.c:191-288`, the emitter still unlinks every destination
 //! path even when the cohort retains other refs (the kernel
 //! reconciles ref counts). The snapshot powers cohort-aware itemize
 //! bookkeeping via `cohort_records`, not the unlink decision itself.
@@ -70,7 +70,7 @@ fn emitter_with_cohort_index_records_cohort_per_dispatch() {
     emitter.emit_all().expect("drain succeeds");
 
     // The kernel-policy invariant: every dest path was unlinked
-    // (matches upstream `delete.c:130-225`).
+    // (matches upstream `delete.c:191-288`).
     let events = emitter.fs().events();
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].path, PathBuf::from("d/leader"));

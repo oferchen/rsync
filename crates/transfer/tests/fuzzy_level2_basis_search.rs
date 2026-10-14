@@ -8,8 +8,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1580` - `find_fuzzy_basis()` searches fuzzy_dirlist entries
-//! - `options.c:2129` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
+//! - `generator.c:836` - `find_fuzzy()` searches fuzzy_dirlist entries
+//! - `options.c:2208-2209` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
 
 use std::num::NonZeroU8;
 use std::path::Path;
@@ -389,7 +389,7 @@ fn whole_file_bypasses_fuzzy_search() {
 /// `"fuzzy basis selected for ..."` line whenever the receiver basis search
 /// selects a fuzzy candidate.
 ///
-/// upstream: generator.c:1775-1778 - `DEBUG_GTE(FUZZY, 1)` branch in
+/// upstream: generator.c:2202-2205 - `DEBUG_GTE(FUZZY, 1)` branch in
 /// `recv_generator()`.
 #[test]
 fn fuzzy_basis_selection_emits_debug_fuzzy_line() {

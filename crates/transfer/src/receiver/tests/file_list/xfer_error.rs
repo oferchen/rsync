@@ -18,7 +18,7 @@
 //! The `io_error` word the receiver reads off the wire therefore stays clear,
 //! and the file list arrives empty. The `FERROR_XFER` the sender framed is the
 //! sole evidence of the failure: `read_a_msg` hands `MSG_ERROR_XFER` to
-//! `rwrite` (`io.c:1686`), which sets `got_xfer_error` (`log.c:310-311`), and
+//! `rwrite` (`io.c:1882`), which sets `got_xfer_error` (`log.c:337-338`), and
 //! `cleanup.c:217-218` lifts the zero exit to `RERR_PARTIAL`.
 //!
 //! These tests pin that chain at the receiver seam: identical wire streams that
@@ -71,7 +71,7 @@ fn empty_flist_run(with_error_xfer: bool) -> (bool, i32) {
     (stats.got_xfer_error, stats.io_error)
 }
 
-/// upstream: `io.c:1686` -> `log.c:310-311`. Receipt of the frame, not any
+/// upstream: `io.c:1882` -> `log.c:337-338`. Receipt of the frame, not any
 /// `io_error` bit, is what must make the run report a partial transfer.
 #[test]
 fn error_xfer_frame_on_an_empty_flist_sets_got_xfer_error() {

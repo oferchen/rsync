@@ -4,13 +4,13 @@
 //! Every receiver pass addresses entries by their absolute flat index (the
 //! position in the concatenation of every received segment). Under
 //! INC_RECURSE upstream frees each finished sub-list (`flist_free(first_flist)`,
-//! generator.c:2711) so resident file-list memory stays bounded by the
+//! generator.c:2712) so resident file-list memory stays bounded by the
 //! lookahead window rather than the tree size. [`FileListWindow`] keeps the
 //! absolute indexing and lets the streaming receiver release a finished prefix.
 //!
 //! An index below [`FileListWindow::live_start`] is released: [`get`] returns
 //! `None` and direct indexing panics, the local analog of upstream's
-//! `flist_for_ndx()` failing on a freed list (rsync.c:311-316).
+//! `flist_for_ndx()` failing on a freed list (rsync.c:969-983).
 //!
 //! Released entries are dropped in place at once (their heap is freed) but the
 //! backing storage is compacted only once the released prefix is at least as
@@ -141,7 +141,7 @@ impl FileListWindow {
 
     /// Releases every live entry below absolute index `end`.
     ///
-    /// upstream: flist.c `flist_free()` via generator.c:2711 - a finished
+    /// upstream: flist.c `flist_free()` via generator.c:2712 - a finished
     /// sub-list is freed once the generator has moved past it.
     pub(in crate::receiver) fn release_before(&mut self, end: usize) {
         let end = end.min(self.len());
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn a_released_index_is_absent_like_a_freed_flist() {
-        // upstream: rsync.c:311-316 flist_for_ndx() finds no list for a freed
+        // upstream: rsync.c:969-983 flist_for_ndx() finds no list for a freed
         // index; the window reports None rather than a stale entry.
         let mut w = window(6);
         w.release_before(3);

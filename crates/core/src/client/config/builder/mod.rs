@@ -36,7 +36,7 @@ impl fmt::Display for ConfigConflict {
                 "a remote shell (from --rsh/-e or the RSYNC_RSH environment variable) cannot be combined with an ssh:// URL operand (ssh:// uses the built-in SSH client); unset RSYNC_RSH or drop --rsh, or use a host:path source for the external ssh"
             );
         }
-        // upstream: options.c:1983 - the secluded/old-args conflict has a
+        // upstream: options.c:2094-2098 - the secluded/old-args conflict has a
         // dedicated phrasing (and operand order) distinct from the generic
         // "--X cannot be used with --Y" template used for other conflicts.
         if matches!((self.option1, self.option2), ("old-args", "secluded-args")) {
@@ -337,15 +337,15 @@ impl ClientConfigBuilder {
     /// Applies the option implications upstream resolves after argument
     /// parsing, before its conflict table runs.
     ///
-    /// upstream: options.c:2419 - `if (append_mode) { ...; inplace = 1; }`.
+    /// upstream: options.c:2551-2563 - `if (append_mode) { ...; inplace = 1; }`.
     /// From here on `inplace` is the only flag any consumer reads: the
-    /// receiver's write target (`receiver.c:984`), its closing truncate
-    /// (`receiver.c:512`), the pre-write backup copy (`generator.c:1862,1898`),
-    /// the basis switch to that backup (`receiver.c:888`), the
-    /// retained-vs-discarded branch (`receiver.c:1045`), the `keptstr` wording
-    /// (`receiver.c:1090`), the sender's `updating_basis_file`
-    /// (`sender.c:338`) and the protocol < 29 basis-dir refusal
-    /// (`compat.c:688`). Idempotent, so `validate` and `build` may both call it.
+    /// receiver's write target (`receiver.c:1212`), its closing truncate
+    /// (`receiver.c:668`), the pre-write backup copy (`generator.c:2281,2328`),
+    /// the basis switch to that backup (`receiver.c:1157`), the
+    /// retained-vs-discarded branch (`receiver.c:1353`), the `keptstr` wording
+    /// (`receiver.c:1358`), the sender's `updating_basis_file`
+    /// (`sender.c:629-630`) and the protocol < 29 basis-dir refusal
+    /// (`compat.c:699`). Idempotent, so `validate` and `build` may both call it.
     fn apply_implied_options(&mut self) {
         if self.append {
             self.inplace = true;
@@ -356,13 +356,13 @@ impl ClientConfigBuilder {
     /// combinations.
     ///
     /// Mirrors upstream `options.c` in both content and order: the `--append`
-    /// implication lands first (`options.c:2419`), so the `inplace` conflict
+    /// implication lands first (`options.c:2563`), so the `inplace` conflict
     /// table below fires for `--append` without naming the flag twice.
     ///
     /// - `--append` conflicts with `--whole-file`
-    ///   (upstream: options.c:2410 `if (append_mode) { if (whole_file > 0) ... }`)
+    ///   (upstream: options.c:2551-2552 `if (append_mode) { if (whole_file > 0) ... }`)
     /// - `--inplace` conflicts with `--partial-dir` and `--delay-updates`
-    ///   (upstream: options.c:2433-2441), reported against the option the user
+    ///   (upstream: options.c:2575-2582), reported against the option the user
     ///   typed - upstream's `append_mode ? "append" : "inplace"` ternary
     /// - `--rsh`/`-e` conflicts with an `ssh://` URL operand (oc-specific: the
     ///   URL scheme selects the built-in SSH client, which ignores `--rsh`)
@@ -396,11 +396,11 @@ impl ClientConfigBuilder {
             });
         }
 
-        // upstream: options.c:1980-1983 - --old-args conflicts with --protect-args.
-        // Any active level (>= 1) triggers the conflict, matching upstream's
-        // `else if (old_style_args)` truthiness test.
         self.apply_implied_options();
 
+        // upstream: options.c:2094-2098 - --old-args conflicts with --secluded-args.
+        // Any active level (>= 1) triggers the conflict, matching upstream's
+        // `else if (old_style_args)` truthiness test.
         if self.old_args.unwrap_or(0) >= 1 && self.protect_args == Some(true) {
             return Err(ConfigConflict {
                 option1: "old-args",
@@ -408,7 +408,7 @@ impl ClientConfigBuilder {
             });
         }
 
-        // upstream: options.c:2409 - --append cannot be used with --whole-file.
+        // upstream: options.c:2551-2556 - --append cannot be used with --whole-file.
         // Only an explicit `--whole-file` (Some(true)) conflicts; the default
         // (None) and `--no-whole-file` (Some(false)) are accepted.
         if self.append && self.whole_file == Some(true) {
@@ -428,11 +428,11 @@ impl ClientConfigBuilder {
                 });
             }
 
-            // upstream: options.c:2433-2441 - `--inplace`/`--append` cannot be
+            // upstream: options.c:2575-2582 - `--inplace`/`--append` cannot be
             // used with `--partial-dir`. Upstream rejects this pair
             // unconditionally, before any capability negotiation. The
-            // `CF_INPLACE_PARTIAL_DIR` capability (compat.c:777-778,
-            // receiver.c:926) only enables the receiver's internal one_inplace
+            // `CF_INPLACE_PARTIAL_DIR` capability (compat.c:789-790,
+            // receiver.c:1153) only enables the receiver's internal one_inplace
             // optimization for a basis file found in the partial directory; it
             // never relaxes this user-facing option conflict.
             if self.partial_dir.is_some() {
@@ -451,24 +451,24 @@ impl ClientConfigBuilder {
     /// config:
     ///
     /// - `--checksum-choice=none` promotes `whole_file` to `Some(true)`.
-    ///   Mirrors upstream `checksum.c:197-198`, which assigns
+    ///   Mirrors upstream `checksum.c:215-216`, which assigns
     ///   `whole_file = 1` whenever the negotiated transfer checksum is
     ///   `CSUM_NONE`. The delta pipeline cannot run without a transfer
     ///   checksum, so whole-file transfer is the only valid mode.
     /// - `--append` promotes `inplace` to `true`. Mirrors upstream
-    ///   `options.c:2419`, which sets `inplace = 1` for any `append_mode`.
+    ///   `options.c:2563`, which sets `inplace = 1` for any `append_mode`.
     #[must_use]
     pub fn build(mut self) -> ClientConfig {
-        // upstream: checksum.c:197-198 parse_checksum_choice() forces
+        // upstream: checksum.c:215-216 parse_checksum_choice() forces
         // `whole_file = 1` unconditionally when `xfer_sum_nni->num == CSUM_NONE`.
         if self.checksum_choice.transfer_is_none() {
             self.whole_file = Some(true);
         }
         self.apply_implied_options();
-        // upstream: options.c:2345-2348 - inject `P *<suffix>` so files saved
+        // upstream: options.c:2487-2490 - inject `P *<suffix>` so files saved
         // as backups beside the destination are protected from the delete pass.
         self.push_backup_protect_filter();
-        // upstream: compat.c:791-797 - append the implicit `--partial-dir`
+        // upstream: compat.c:803-808 - append the implicit `--partial-dir`
         // exclude at the tail of the filter list, after every CLI rule.
         self.push_implicit_partial_dir_filter();
         ClientConfig {
@@ -569,8 +569,8 @@ impl ClientConfigBuilder {
             mkpath: self.mkpath,
             prune_empty_dirs: self.prune_empty_dirs,
             qsort: self.qsort,
-            // ISI.h: sender-side INC_RECURSE is default-on, matching
-            // upstream rsync 3.4.x. CLI `--no-inc-recursive` still overrides
+            // Sender-side INC_RECURSE is default-on, matching upstream's
+            // `allow_inc_recurse = 1`. CLI `--no-inc-recursive` still overrides
             // to `false`.
             inc_recursive_send: self.inc_recursive_send.unwrap_or(true),
             verbosity: self.verbosity,

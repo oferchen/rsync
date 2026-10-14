@@ -62,9 +62,9 @@ fn set_path_stores_value() {
 }
 
 /// Repeating a directive inside one module section is not an error: upstream
-/// loadparm.c:379-470 do_parameter() resolves the parameter pointer and assigns
+/// loadparm.c:498 do_parameter() resolves the parameter pointer and assigns
 /// unconditionally, so the last assignment is the one the module serves. The
-/// real rsync 3.4.4 daemon starts and serves `path = b` for `path = a` followed
+/// real rsync 3.5.1 daemon starts and serves `path = b` for `path = a` followed
 /// by `path = b`; rejecting the config would refuse a daemon upstream runs.
 #[test]
 fn set_path_last_assignment_wins() {
@@ -170,8 +170,8 @@ fn set_refuse_options_stores_options() {
     assert_eq!(builder.refuse_options, Some(options));
 }
 
-/// An empty `refuse options` list stays a hard error - it would refuse nothing,
-/// which is a value mistake rather than a repeated directive.
+/// A parsed-empty `refuse options` list is a hard error at the setter. An empty
+/// directive value is handled by the caller and never reaches it.
 #[test]
 fn set_refuse_options_rejects_empty() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
@@ -329,7 +329,7 @@ fn set_max_connections_stores_value() {
 
 #[test]
 fn set_max_connections_allows_unlimited() {
-    // upstream: connection.c:claim_connection:27 - `max connections = 0` is a
+    // upstream: connection.c:30 claim_connection() - `max connections = 0` is a
     // valid setting meaning unlimited, distinct from the directive being unset.
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
     builder.set_max_connections(MaxConnections::Unlimited);
@@ -338,7 +338,7 @@ fn set_max_connections_allows_unlimited() {
 
 #[test]
 fn set_max_connections_allows_disabled() {
-    // upstream: rsyncd.conf.5 - "A negative value disables the module". The
+    // upstream: rsyncd.conf.5.md:432 - "A negative value disables the module". The
     // builder must retain the sign so the refusal echoes it verbatim.
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
     builder.set_max_connections(MaxConnections::Disabled(-1));
@@ -549,7 +549,7 @@ fn finish_succeeds_with_minimal_config() {
 #[test]
 fn finish_keeps_a_missing_path_empty() {
     // upstream: a section with no path loads; rsync_module() refuses it with
-    // `@ERROR: no path setting.` when selected (clientserver.c:877-881).
+    // `@ERROR: no path setting.` when selected (clientserver.c:877-881 rsync_module()).
     let builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     let defaults = GlobalModuleDefaults::default();
     let def = builder
@@ -561,7 +561,7 @@ fn finish_keeps_a_missing_path_empty() {
 /// A relative path under `use chroot` is RESOLVED against the current
 /// directory, not refused. upstream: `normalize_path` (util1.c:1504-1511)
 /// makes a non-`/` path absolute by joining it onto `curr_dir`, and
-/// `rsync_module()` routes the chroot arm through it (clientserver.c:898-916).
+/// `rsync_module()` routes the chroot arm through it (clientserver.c:897-914).
 #[test]
 fn finish_resolves_a_relative_path_with_chroot() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
@@ -578,7 +578,7 @@ fn finish_resolves_a_relative_path_with_chroot() {
 }
 
 /// The no-chroot arm takes the SAME rule: upstream normalizes both arms
-/// identically (clientserver.c:916-918), so resolution is not gated on
+/// identically (clientserver.c:915-918), so resolution is not gated on
 /// `use chroot`. Keeping both arms asserted is what stops the two from
 /// drifting apart again.
 #[test]
@@ -596,7 +596,7 @@ fn finish_resolves_a_relative_path_without_chroot() {
     assert_eq!(def.path, expected);
 }
 
-/// Root path `/` is a legitimate module root: upstream loadparm.c P_PATH
+/// Root path `/` is a legitimate module root: upstream loadparm.c:562-568 P_PATH
 /// preserves the bare slash (its trailing-slash strip only fires when
 /// `len > 1`), and clientserver.c chroot's into it as a no-op when
 /// `use chroot = yes`. The `is_absolute()` gate must pass for `/` so the
@@ -656,7 +656,7 @@ fn finish_accepts_auth_users_without_secrets() {
     builder.set_path(PathBuf::from("/data"));
     builder.set_auth_users(vec![AuthUser::new("alice".to_owned())]);
     let defaults = GlobalModuleDefaults::default();
-    // upstream: authenticate.c:143-146 - every login fails with "no secrets
+    // upstream: authenticate.c:155-157 check_secret() - every login fails with "no secrets
     // file"; the module itself still loads.
     let def = builder
         .finish(&test_config_path(), None, None, None, None, &defaults)

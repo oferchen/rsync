@@ -34,7 +34,7 @@ impl RuntimeOptions {
     /// Records `--log-file`, overriding any value the config file's global
     /// `log file` already supplied.
     ///
-    /// upstream: log.c:215 - `if (am_daemon && !logfile_name) logfile_name =
+    /// upstream: log.c:216-217 - `if (am_daemon && !logfile_name) logfile_name =
     /// lp_log_file(module_id)`. The command-line name is set first and the
     /// config value only fills a still-empty slot, so the CLI wins regardless
     /// of the order `--log-file` and `--config` appear in. A second `--log-file`

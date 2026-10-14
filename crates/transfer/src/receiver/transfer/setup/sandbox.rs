@@ -120,7 +120,7 @@ pub(super) fn open_sandbox_for_dest(
 ///   comment at `syscall.c:3336-3340` records why ("Absolute basedir:
 ///   operator-trusted").
 /// - `syscall.c:3032` - `ds_descend()` walks the untrusted remainder, and
-///   `syscall.c:3102` splices a *relative* in-tree symlink target back
+///   `syscall.c:3094-3105` splices a *relative* in-tree symlink target back
 ///   into the walk rather than refusing it.
 /// - `main.c:778` - the daemon reaches the same state by `change_dir()`
 ///   onto the module root before serving.
@@ -342,7 +342,7 @@ mod symlink_race_tests {
     /// symlink. The escape is loud but it is not refused. Closing that needs
     /// the per-component resolver (`ds_descend`, `syscall.c:3032-3106`),
     /// which follows a relative in-tree target and refuses an absolute or
-    /// escaping one - tracked by task 604. This test pins both arms so the
+    /// escaping one. This test pins both arms so the
     /// gap cannot widen unnoticed and so the Linux contract cannot regress.
     #[test]
     fn anchored_mode_refuses_a_peer_tail_that_escapes_the_module() {
@@ -385,10 +385,10 @@ mod symlink_race_tests {
     /// The other half of the same policy: a symlinked *subdirectory* inside
     /// the module is ordinary content and must transfer. upstream:
     /// `ds_descend()` splices a relative in-tree target back into the walk
-    /// (`syscall.c:3102`) rather than refusing it.
+    /// (`syscall.c:3094-3105`) rather than refusing it.
     ///
     /// ⚠ KNOWN GAP, not intended behaviour, same cause as the escape test
-    /// above and the same owner (task 604). Without `openat2` the walk
+    /// above and the same owner. Without `openat2` the walk
     /// refuses the symlinked component, so the daemon receiver loses its
     /// anchored dirfd and continues unconfined. Unlike the escape case this
     /// costs confinement rather than granting an escape, but it is the same
@@ -522,7 +522,7 @@ mod insecure_links_optout_tests {
     /// `daemon-symlink-escape-matrix` asserts against a live rsync 3.2.7.
     ///
     /// ⚠ Keyed on the walk's resolver: without `openat2` the `O_NOFOLLOW` walk
-    /// reports `ENOTDIR` and already degrades to `Ok(None)` (task 604), so the
+    /// reports `ENOTDIR` and already degrades to `Ok(None)`, so the
     /// escape arm cannot discriminate there. The pair above does, on every
     /// platform, which is why it is not conditioned.
     #[test]

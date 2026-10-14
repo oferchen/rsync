@@ -5,7 +5,7 @@
 //!
 //! # Upstream Reference
 //!
-//! `log.c` - itemize output character mapping.
+//! `log.c:log_formatted()` - the `%i` escape (log.c:738-756) maps these characters.
 
 /// Update type indicator (position 0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

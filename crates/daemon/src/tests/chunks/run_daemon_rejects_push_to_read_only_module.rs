@@ -65,7 +65,7 @@ fn run_daemon_rejects_push_to_read_only_module() {
         .expect("send client args");
     stream.flush().expect("flush client args");
 
-    // #227: the read-only push rejection fires after `@RSYNCD: OK`, so the
+    // The read-only push rejection fires after `@RSYNCD: OK`, so the
     // client has already switched to multiplexed input. The daemon must first
     // finish the post-OK protocol setup (compat-flags varint + 4-byte checksum
     // seed) and then deliver the error inside a `MSG_ERROR_XFER` frame, exactly

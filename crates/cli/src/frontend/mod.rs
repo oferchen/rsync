@@ -1,34 +1,19 @@
 //! # Overview
 //!
-//! `cli` implements the thin command-line front-end for the Rust `rsync`
-//! workspace. The crate is intentionally small: it recognises the subset of
-//! command-line switches that are currently supported (`--help`/`-h`,
-//! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
-//! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
-//! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
-//! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
-//! `--append`/`--append-verify`, `--remote-option`, `--connect-program`, and
-//! `--sparse`) and delegates transfer operations to
-//! [`core::client::run_client`]. Daemon invocations are forwarded to
-//! [`daemon::run`], while `--server` sessions surface a branded diagnostic until
-//! the native server implementation is fully wired. Higher layers will
-//! eventually extend the parser to cover the full upstream surface (remote
-//! modules, incremental recursion, filters, etc.), but providing these entry
-//! points today allows downstream tooling to depend on a stable binary path
-//! (`oc-rsync`, or `rsync` via symlink) while development continues.
+//! `cli` implements the command-line front-end of the `oc-rsync` binary. It
+//! parses the full upstream option surface with a `clap` command definition and
+//! dispatches each invocation to the matching mode: `--server --daemon`
+//! (daemon over a remote shell), `--server`, `--daemon` (or a daemon-named
+//! program alias), and otherwise a client transfer through
+//! [`core::client::run_client`].
 //!
 //! # Design
 //!
 //! The crate exposes [`run`] as the primary entry point. The function accepts an
 //! iterator of arguments together with handles for standard output and error,
-//! mirroring the approach used by upstream rsync. Internally a
-//! [`clap`](https://docs.rs/clap/) command definition performs a light-weight
-//! parse that recognises `--help`, `--version`, `--dry-run`, `--delete`,
-//! `--delete-excluded`, `--compare-dest`, `--copy-dest`, `--link-dest`,
-//! `--filter`, `--files-from`, `--from0`, and `--bwlimit` flags while treating all other
-//! tokens as transfer arguments. When a transfer is requested, the function
-//! delegates to [`core::client::run_client`], which currently implements a
-//! deterministic local copy pipeline with optional bandwidth pacing.
+//! mirroring the approach used by upstream rsync's `main()`. Mode detection runs
+//! on the raw argv before the client parser, so server and daemon invocations
+//! never pass through the client option table.
 //!
 //! # Invariants
 //!
@@ -36,18 +21,16 @@
 //! - Version output is delegated to [`core::version::VersionInfoReport`]
 //!   so the CLI remains byte-identical with the canonical banner used by other
 //!   workspace components.
-//! - Help output is rendered by a dedicated helper using a static snapshot that
-//!   documents the currently supported subset. The helper substitutes the
-//!   invoked program name so wrappers like `oc-rsync` display branded banners
-//!   while the full upstream-compatible renderer is implemented.
-//! - Transfer attempts are forwarded to [`core::client::run_client`] so
-//!   diagnostics and success cases remain centralised while higher-fidelity
-//!   engines are developed.
+//! - Help output substitutes the invoked program name so wrappers like
+//!   `oc-rsync` display branded banners.
+//! - Client transfers are forwarded to [`core::client::run_client`] so
+//!   diagnostics and exit codes stay centralised in the core crate.
 //!
 //! # Errors
 //!
-//! The parser returns a diagnostic message with exit code `1` when argument
-//! processing fails. Transfer attempts surface their exit codes from
+//! The parser returns a diagnostic message with exit code `1` (`RERR_SYNTAX`)
+//! when argument processing fails; an unusable `--checksum-choice` name exits
+//! `4` (`RERR_UNSUPPORTED`). Transfer attempts surface their exit codes from
 //! [`core::client::run_client`], preserving the structured diagnostics
 //! emitted by the core crate.
 //!
@@ -83,7 +66,7 @@ use std::io::{self, Write};
 pub mod arguments;
 mod command_builder;
 // The escaper lives in `logging-sink` so the log-file sink can apply it
-// without depending on the CLI: upstream escapes inside `log.c:126 logit()`,
+// without depending on the CLI: upstream escapes inside `log.c:125 logit()`,
 // the single writer to `logfile_fp`, which is what makes it unbypassable.
 pub(crate) use logging_sink::escape;
 mod execution;
@@ -282,7 +265,7 @@ where
     let daemon_alias_requested = daemon_invoked_via_program_name(&args, brand);
 
     // Check for --server --daemon (remote-shell daemon mode) BEFORE plain
-    // --server. upstream: main.c:1870-1871 dispatches start_daemon() when both
+    // --server. upstream: main.c:1971-1975 dispatches start_daemon() when both
     // am_server and am_daemon are set, before the normal server path.
     if server::server_daemon_mode_requested(&args) {
         return server::run_server_daemon_mode(&args, stderr);
@@ -321,7 +304,7 @@ where
     let raw_token_count = args.len();
     let exit_code = match parse_args(args) {
         Ok(parsed) => {
-            // upstream: options.c:2011 - `human_readable > 1 && argc == 2 &&
+            // upstream: options.c:2125 - `human_readable > 1 && argc == 2 &&
             // !am_server` preserves the historic meaning of a lone `-h` as
             // `--help`. When the only command-line token increments the
             // human-readable counter (`-h`, `-hh`, `-avh`, `--human-readable`),
@@ -464,8 +447,9 @@ fn clap_error_detail(error: &clap::Error) -> String {
 /// Maps a `clap` argument-parse failure to an rsync exit code.
 ///
 /// Most usage errors map to `RERR_SYNTAX` (1). An unusable `--checksum-choice`
-/// name is the exception: upstream `checksum.c:139 parse_checksum_choice()`
-/// exits with `RERR_UNSUPPORTED` (4, errcode.h:28). `--checksum-choice` is
+/// name is the exception: upstream `checksum.c:parse_csum_name()` (line 156-157,
+/// reached from `parse_checksum_choice()`) exits with `RERR_UNSUPPORTED` (4,
+/// errcode.h:28). `--checksum-choice` is
 /// validated inside the `clap` value flow (unlike `--compress-choice`, which is
 /// validated later in the pipeline where the message code survives), so its
 /// intended exit code is reconstructed here from the diagnostic text we emit.
@@ -496,8 +480,8 @@ const SIGNAL_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// second (abort) interrupt it finalises the partial registry directly and
 /// exits with the rsync signal code, because no unwinding is going to happen.
 ///
-/// upstream: `rsync.c:684 sig_int()` only records the signal and lets the
-/// normal I/O path shut the transfer down (`io.c:768 got_kill_signal` ->
+/// upstream: `rsync.c:843 sig_int()` only records the signal and lets the
+/// normal I/O path shut the transfer down (`io.c:849 got_kill_signal` ->
 /// `handle_kill_signal` -> `cleanup.c:_exit_cleanup(RERR_SIGNAL)`).
 fn install_client_signal_handling() {
     use std::sync::atomic::{AtomicBool, Ordering};

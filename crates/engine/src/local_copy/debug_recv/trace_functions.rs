@@ -2,7 +2,7 @@
 //!
 //! Each function has a tracing-enabled variant that emits structured events
 //! and a no-op variant compiled when the `tracing` feature is disabled.
-//! Matches upstream rsync's `receiver.c` / `generator.c` debug output format.
+//! Event messages are oc's own; they do not reproduce upstream's text.
 
 use std::time::Duration;
 
@@ -11,7 +11,8 @@ use super::RECV_TARGET;
 
 /// Traces the start of a file receive operation.
 ///
-/// Corresponds to the entry point of upstream `recv_files()`.
+/// Counterpart of upstream's per-file `recv_files(%s)` line in
+/// `receiver.c:recv_files()`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_recv_file_start(name: &str, file_size: u64, index: usize) {
@@ -49,7 +50,7 @@ pub fn trace_recv_file_end(_name: &str, _bytes_received: u64, _elapsed: Duration
 
 /// Traces basis file selection during receive.
 ///
-/// Corresponds to basis file selection in upstream `generator.c`.
+/// Basis selection happens in upstream `receiver.c:recv_files()` (`fnamecmp`).
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_basis_file_selected(name: &str, basis_path: &str, basis_size: u64) {
@@ -69,7 +70,7 @@ pub fn trace_basis_file_selected(_name: &str, _basis_path: &str, _basis_size: u6
 
 /// Traces the start of delta application for a file.
 ///
-/// Corresponds to delta application in upstream `receiver.c`.
+/// Delta application is upstream `receiver.c:receive_data()`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delta_apply_start(name: &str, basis_size: u64, delta_size: u64) {

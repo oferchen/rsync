@@ -2,13 +2,15 @@
 //!
 //! Converts the wall-clock `SystemTime` deadline from `ServerConfig::stop_at`
 //! into a monotonic `Instant` that can be cheaply compared without syscalls.
-//! The check is performed at file boundaries (between files, never mid-file)
-//! to match upstream rsync's graceful stop behavior.
+//! The check is performed at file boundaries (between files, never mid-file).
+//!
+//! Deviation from upstream: upstream checks `stop_at_utime` on every
+//! `perform_io()` pass, which can stop mid-file; oc checks only between files.
 //!
 //! # Upstream Reference
 //!
-//! - `main.c`: `stop_at_utime` global checked in transfer loop
-//! - `io.c`: deadline checked during I/O operations
+//! - `options.c:155` - `stop_at_utime` global, set from the options at `options.c:2002-2018`
+//! - `io.c:943-945 perform_io()` - "stopping at requested limit" and `RERR_TIMEOUT`
 
 use std::io;
 use std::time::{Instant, SystemTime};
@@ -47,9 +49,8 @@ impl TransferDeadline {
 
     /// Returns an I/O error indicating the deadline was reached.
     ///
-    /// The error uses `TimedOut` kind with a descriptive message matching
-    /// upstream rsync's `--stop-at` behavior. Exit code 30 (RERR_TIMEOUT)
-    /// is mapped by the caller.
+    /// The error uses `TimedOut` kind with upstream's message (`io.c:944`).
+    /// Exit code 30 (`RERR_TIMEOUT`) is mapped by the caller.
     pub fn as_io_error() -> io::Error {
         io::Error::new(io::ErrorKind::TimedOut, "stopping at requested limit")
     }

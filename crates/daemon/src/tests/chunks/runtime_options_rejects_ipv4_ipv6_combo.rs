@@ -1,6 +1,6 @@
 #[test]
 fn runtime_options_rejects_ipv4_ipv6_combo() {
-    // UTS-DD-daemon-exit10: `--ipv4 --ipv6` together is now the explicit
+    // `--ipv4 --ipv6` together is the explicit
     // dual-stack opt-in (mirroring upstream rsync's `default_af_hint = 0`
     // semantic in `socket.c::open_socket_in`) rather than a CLI conflict.
     // The flag pair must succeed and surface as `dual_stack = true`

@@ -69,7 +69,7 @@ impl ClientEventKind {
     /// up-to-date (quick-check match) entry is still counted here but stays
     /// silent under `--progress`/`-P`.
     ///
-    /// upstream: progress.c rprint_progress
+    /// upstream: progress.c:69-135 rprint_progress()
     pub const fn is_progress(&self) -> bool {
         matches!(
             self,
@@ -90,7 +90,7 @@ impl ClientEventKind {
     ///
     /// Upstream only counts `ITEM_TRANSFER` entries (regular file data) into
     /// `stats.xferred_files` and only those emit a progress block
-    /// (receiver.c:798 `stats.xferred_files++` sits *after* the
+    /// (receiver.c:975 `stats.xferred_files++` sits *after* the
     /// `!(iflags & ITEM_TRANSFER)` early-continue that handles directories,
     /// symlinks, devices and specials). So a symlink, device, FIFO, hard link
     /// or directory is walked (counted in the `to-chk` denominator via
@@ -145,8 +145,8 @@ pub struct ClientEvent {
     /// A local copy already routes its leader through the metadata `symlink_target`
     /// slot keyed on [`ClientEventKind::HardLink`] (engine `plan/metadata.rs`); a
     /// remote pull has no engine record, so the receiver's already-computed xname
-    /// (upstream `hlink.c:232-234`) rides here instead. `None` on every path that
-    /// is not a remote-pull hard-link follower.
+    /// (upstream `hlink.c:244-248 maybe_hard_link()`) rides here instead. `None`
+    /// on every path that is not a remote-pull hard-link follower.
     hardlink_leader: Option<PathBuf>,
 }
 
@@ -197,7 +197,7 @@ impl ClientEvent {
         let created = match &action {
             // Honour the explicit `was_created` bit for every action whose
             // record represents an entry that may either be newly created
-            // OR re-pointed/updated in place. upstream: log.c:736-738 -
+            // OR re-pointed/updated in place. upstream: log.c:768-769 -
             // `(iflags & ITEM_IS_NEW)` flips slots 2-10 to `+`; that bit is
             // only set by the generator when the destination did not exist
             // (`statret < 0`). The renderer mirrors that gate via
@@ -213,10 +213,10 @@ impl ClientEvent {
             // mkdirs set `.with_creation(true)`, while a directory reconstructed
             // from a `--copy-dest` basis records a change set without creation so
             // its row stays `cd` + blank instead of `cd+++++++++`.
-            // upstream: generator.c:1480-1482 - the copy-dest match itemizes with
+            // upstream: generator.c:1297-1302 - the copy-dest match itemizes with
             // ITEM_LOCAL_CHANGE, never ITEM_IS_NEW.
             | LocalCopyAction::DirectoryCreated => was_created,
-            // upstream: generator.c:1039 itemizes the copy-dest reconstruction
+            // upstream: generator.c:1178 itemizes the copy-dest reconstruction
             // with statret == 0 (the basis was stat'd successfully), so
             // ITEM_IS_NEW is never set and attribute slots are never `+`.
             LocalCopyAction::ReferenceCopied
@@ -293,7 +293,7 @@ impl ClientEvent {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1249` - `list_file_entry()` per-entry render
+    /// - `generator.c:1318` - `list_file_entry()` per-entry render
     #[must_use]
     pub fn from_list_only_entry(relative_path: PathBuf, metadata: ClientEntryMetadata) -> Self {
         let kind = match metadata.kind() {
@@ -379,7 +379,7 @@ impl ClientEvent {
 
     /// Returns the hard-link group leader's transfer-relative name for a
     /// remote-pull hard-link follower, which `%L` renders as ` => <leader>`
-    /// (upstream `log.c:643-646`). `None` for every other event, including a
+    /// (upstream `log.c:675-678`). `None` for every other event, including a
     /// local-copy hard link, whose leader travels through the metadata
     /// `symlink_target` slot instead.
     #[must_use]
@@ -443,7 +443,7 @@ impl ClientEvent {
 
     /// Returns whether the event describes a hardlink whose destination
     /// already shared the source group leader's inode (upstream:
-    /// hlink.c:218-224).
+    /// hlink.c:229-240).
     #[must_use]
     pub const fn is_hardlink_uptodate(&self) -> bool {
         self.hardlink_uptodate
@@ -473,8 +473,8 @@ impl ClientEvent {
     /// do not advance `xfr#` - matching upstream's silent second run. They
     /// surface only with `-vv`/`-i`.
     ///
-    /// upstream: hlink.c:218-224, generator.c:1010-1022/1145-1147,
-    /// rsync.c:672-676 - the generator records these as "is uptodate" without
+    /// upstream: hlink.c:229-240, generator.c:1153-1154/1304-1306,
+    /// rsync.c:824-828 - the generator records these as "is uptodate" without
     /// opening a receiver progress block.
     #[must_use]
     pub fn is_uptodate(&self) -> bool {
@@ -500,7 +500,7 @@ impl ClientEvent {
     /// Returns whether this entry opens a per-file progress block.
     ///
     /// Only a regular-file transfer that actually moves data does; every other
-    /// entry is checked without printing progress. upstream: receiver.c:782 -
+    /// entry is checked without printing progress. upstream: receiver.c:918-940 -
     /// `recv_files()` prints the progress block for each `ITEM_TRANSFER` file.
     #[must_use]
     pub fn opens_progress_block(&self) -> bool {
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn client_event_kind_is_progress_returns_true_for_directory_created() {
-        // upstream: stats.num_files counts directories (flist.c:2801), so they
+        // upstream: stats.num_files counts directories (flist.c:3076), so they
         // belong in the `to-chk` denominator even though they never transfer.
         assert!(ClientEventKind::DirectoryCreated.is_progress());
     }
@@ -709,7 +709,7 @@ mod tests {
     fn client_event_kind_is_transfer_only_for_regular_data() {
         assert!(ClientEventKind::DataCopied.is_transfer());
         assert!(ClientEventKind::ReferenceCopied.is_transfer());
-        // upstream: receiver.c:798 `stats.xferred_files++` sits after the
+        // upstream: receiver.c:975 `stats.xferred_files++` sits after the
         // `!(iflags & ITEM_TRANSFER)` continue, so symlinks, directories,
         // devices, FIFOs and hard links are walked but never advance `xfr#`
         // nor print a per-file progress block.

@@ -1277,8 +1277,7 @@ mod metrics_tests {
 
         // A far-ahead out-of-order arrival stretches the window to its
         // offset+1 even though only two slots are occupied - distinguishing
-        // the window from buffered_count (the spill-pressure signal ROB-2
-        // gates on).
+        // the window from buffered_count (the spill-pressure signal).
         buf.insert(3, "d").unwrap();
         assert_eq!(buf.in_flight_window(), 4);
         assert_eq!(buf.buffered_count(), 2);

@@ -2,7 +2,7 @@
 //!
 //! Parses `rsync://host/` URLs and `host::` double-colon syntax into a
 //! [`ModuleListRequest`] that can be executed against a daemon. The parsing
-//! logic mirrors upstream `main.c:check_for_hostspec()`.
+//! logic mirrors upstream `options.c:check_for_hostspec()`.
 
 use std::ffi::{OsStr, OsString};
 use std::net::SocketAddr;
@@ -547,7 +547,7 @@ mod transport_tests {
     #[test]
     fn with_transport_upgrades_double_colon_to_quic() {
         // WHY: the `--quic` modifier upgrades an ordinary `host::` target to
-        // QUIC without changing its syntax (QUIC-8c).
+        // QUIC without changing its syntax.
         let request = ModuleListRequest::from_operands(&operands("host::"))
             .expect("parse")
             .expect("daemon target")

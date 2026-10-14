@@ -28,7 +28,7 @@ fn render_full_checksum(
         .to_owned()
 }
 
-// upstream: log.c:687-690 + util2.c:93 `sum_as_hex` - `%C` reports the
+// upstream: log.c:717-731 + util2.c:93 `sum_as_hex` - `%C` reports the
 // negotiated checksum with that algorithm's digest length and byte order, NOT
 // a hardcoded forward MD5. The expected hex strings below are the canonical
 // digests of `"checksum payload"` produced by independent tools (`md5`,
@@ -90,7 +90,7 @@ fn out_format_renders_full_checksum_per_negotiated_algorithm() {
     );
 }
 
-// upstream: log.c:687-690 - without `--checksum`, `%C` is only populated for a
+// upstream: log.c:717-731 - without `--checksum`, `%C` is only populated for a
 // transferred file (`ITEM_TRANSFER`). An untransferred regular file (a
 // quick-check `MetadataReused` skip) renders the space-padded field, not a sum.
 #[test]
@@ -199,7 +199,7 @@ fn out_format_renders_checksum_bytes_for_data_copy_events() {
         .find(|event| matches!(event.kind(), ClientEventKind::DataCopied))
         .expect("data copy event present");
 
-    // upstream log.c:672-684 - on a transferred file `%c` reports the
+    // upstream log.c:704-716 - on a transferred file `%c` reports the
     // checksum-direction bytes, i.e. the 16-byte sum_head, NOT the file-data
     // bytes. `%b` reports the file data. Verified against rsync 3.4.4: a local
     // copy prints `%c`=16 for any transferred file regardless of size.

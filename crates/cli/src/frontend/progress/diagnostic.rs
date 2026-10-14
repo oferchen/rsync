@@ -86,14 +86,14 @@ pub fn msgs_to_stderr() -> bool {
 
 /// The client-side destination `rwrite()` picks for a given log code.
 ///
-/// upstream: log.c:251-328 `rwrite()`. The four outcomes are the stdout
-/// default (`FILE *f = ... : stdout`, log.c:254), the stderr override for the
-/// error and warning codes (log.c:309-316), the silent return taken by an
-/// FLOG message with no log destination (log.c:306-307), and the fatal
-/// "Bad logcode" default arm (log.c:325-327).
+/// upstream: log.c:269-429 `rwrite()`. The four outcomes are the stdout
+/// default (`FILE *f = ... : stdout`, log.c:272), the stderr override for the
+/// error and warning codes (log.c:337-343), the silent return taken by an
+/// FLOG message with no log destination (log.c:333-334), and the fatal
+/// "Bad logcode" default arm (log.c:352-354).
 /// The context every client-side stream decision is taken in.
 ///
-/// upstream: log.c:251 `rwrite()` is the sole chooser of a stream. The decision
+/// upstream: log.c:269 `rwrite()` is the sole chooser of a stream. The decision
 /// lives in `logging::message_stream` so that this renderer and every other
 /// diagnostic emitter share one implementation of the rule; a second copy here
 /// is what made #352 and #357 two separate bugs instead of one. This helper
@@ -104,11 +104,11 @@ fn stream_context(msgs2stderr: bool) -> logging::StreamContext {
         // without writing when quiet is set. Folding `--quiet` into
         // `verbose = 0` at parse time silences only the verbosity-gated
         // events; a notice upstream prints at DEFAULT verbosity - `skipping
-        // directory %s` (flist.c:1563), `skipping non-regular file "%s"` under
+        // directory %s` (flist.c:1709), `skipping non-regular file "%s"` under
         // `INFO_GTE(NONREG, 1)` - still reaches this renderer and has to be
         // suppressed here, where upstream suppresses it.
         quiet: logging::finfo_suppressed(),
-        // `Never` and `Default` select the same stream (log.c:253 keys on
+        // `Never` and `Default` select the same stream (log.c:272 keys on
         // `== 1`), so a caller that only knows the boolean loses nothing here.
         // The tri-state is available for callers that have it.
         msgs2stderr: if msgs2stderr {
@@ -178,7 +178,7 @@ pub fn partition_by_summary_stream(
 /// Error and warning codes go to stderr, info codes to stdout, and FLOG
 /// events are dropped, mirroring `rwrite()`. When `msgs2stderr` is true the
 /// stdout default becomes stderr, which upstream does by initialising `f` to
-/// stderr before the code switch (upstream: log.c:254).
+/// stderr before the code switch (upstream: log.c:272).
 ///
 /// # Arguments
 ///
@@ -190,7 +190,7 @@ pub fn partition_by_summary_stream(
 /// # Errors
 ///
 /// Returns an I/O error if writing to either stream fails, or if an event
-/// carries a code `rwrite()` rejects (upstream: log.c:325-327 exits
+/// carries a code `rwrite()` rejects (upstream: log.c:352-354 exits
 /// `RERR_MESSAGEIO`).
 pub fn render_diagnostic_events<O: Write, E: Write>(
     events: &[DiagnosticEvent],
@@ -224,7 +224,7 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
             }
             Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => {}
             Err(_) => {
-                // upstream: log.c:325-327 reports the bad code on stderr and
+                // upstream: log.c:352-354 reports the bad code on stderr and
                 // exits RERR_MESSAGEIO. A renderer cannot exit, so it reports
                 // and hands the failure back to its caller.
                 writeln!(err, "Bad logcode in rwrite(): {}", code.as_u8())?;
@@ -314,7 +314,7 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
-    /// upstream: log.c:309-316 - FWARNING (and every error code) overrides the
+    /// upstream: log.c:337-343 - FWARNING (and every error code) overrides the
     /// stdout default with `f = stderr`. stdout and stderr are distinct
     /// observables: a warning on stdout corrupts `--out-format` output for a
     /// caller that redirects the two streams separately.
@@ -372,8 +372,8 @@ mod tests {
         );
     }
 
-    /// upstream: log.c:281-286 simplify FERROR_SOCKET and FERROR_UTF8 to
-    /// FERROR before the switch, and log.c:310-313 routes FERROR_XFER and
+    /// upstream: log.c:303-308 simplify FERROR_SOCKET and FERROR_UTF8 to
+    /// FERROR before the switch, and log.c:337-343 routes FERROR_XFER and
     /// FERROR alongside FWARNING to stderr.
     #[test]
     fn test_every_error_code_renders_to_stderr() {
@@ -404,7 +404,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:288-289 rewrites FCLIENT to FINFO, so it keeps the
+    /// upstream: log.c:310-311 rewrites FCLIENT to FINFO, so it keeps the
     /// stdout default rather than falling into the "Bad logcode" arm.
     #[test]
     fn test_client_coded_event_renders_to_stdout() {
@@ -424,7 +424,7 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
-    /// upstream: log.c:325-327 reports an unaccepted code on stderr and exits
+    /// upstream: log.c:352-354 reports an unaccepted code on stderr and exits
     /// RERR_MESSAGEIO. The renderer reports and fails instead of quietly
     /// printing the message to stdout.
     #[test]
@@ -518,7 +518,7 @@ mod tests {
     }
 
     /// `--msgs-to-stderr` moves the stdout-bound codes only; a warning was
-    /// already on stderr and stays there (upstream: log.c:254 initialises `f`
+    /// already on stderr and stays there (upstream: log.c:272 initialises `f`
     /// to stderr, and the switch's `f = stderr` is then a no-op).
     #[test]
     fn test_msgs2stderr_does_not_move_warnings_to_stdout() {

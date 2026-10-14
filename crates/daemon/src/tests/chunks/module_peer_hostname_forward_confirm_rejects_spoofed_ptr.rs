@@ -4,7 +4,7 @@
 /// name is forward-confirmed against the peer address; an unconfirmed name is
 /// treated as no hostname, so the allow-rule fails closed.
 ///
-/// upstream: clientname.c:416 `check_name` - a name whose forward lookup does
+/// upstream: clientname.c:425 `check_name` - a name whose forward lookup does
 /// not match the peer address is replaced with "UNKNOWN"; access.c:60
 /// `allow_forward_dns` gates this on the `forward lookup` parameter.
 #[test]

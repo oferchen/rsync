@@ -187,7 +187,7 @@ impl<'a> CopyContext<'a> {
 ///
 /// The per-entry deletion decision is a pure function of the candidate path,
 /// its file kind, and the directory's frozen filter chain - upstream evaluates
-/// it serially in `delete.c:delete_in_dir()`, but the decision itself carries
+/// it serially in `generator.c:delete_in_dir()`, but the decision itself carries
 /// no order dependence. This snapshot lets the local-copy `--delete` DECIDE
 /// phase compute that pure function across rayon worker threads while leaving
 /// the live `Rc<RefCell<...>>` filter stacks untouched on the owning thread.

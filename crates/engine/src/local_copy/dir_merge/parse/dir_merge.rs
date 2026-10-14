@@ -109,7 +109,7 @@ pub(super) fn parse_dir_merge_directive(
             '/' => {
                 options = options.anchor_root(true);
             }
-            // upstream: exclude.c:1419-1421 - `p` is unguarded, and
+            // upstream: exclude.c:1420-1422 - `p` is unguarded, and
             // FILTRULE_PERISHABLE is in FILTRULES_FROM_CONTAINER (exclude.c:1229)
             // so it propagates to the rules read out of the merged file.
             'p' => {
@@ -364,7 +364,7 @@ mod tests {
         }
     }
 
-    /// upstream: exclude.c:1419-1421 - `p` sets FILTRULE_PERISHABLE, which is in
+    /// upstream: exclude.c:1420-1422 - `p` sets FILTRULE_PERISHABLE, which is in
     /// FILTRULES_FROM_CONTAINER (exclude.c:1229) and so reaches the merged rules.
     #[test]
     fn parse_dir_merge_p_modifier_marks_rules_perishable() {

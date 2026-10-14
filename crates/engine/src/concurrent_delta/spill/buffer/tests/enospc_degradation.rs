@@ -1,8 +1,8 @@
-//! SPL-33.c assertion suite: drive the spill path through the SPL-33.b
+//! ENOSPC assertion suite: drive the spill path through the
 //! [`MockEnoSpcWriter`] harness and prove it degrades gracefully under every
-//! ENOSPC scenario the SPL-33.a design enumerates.
+//! ENOSPC scenario the design enumerates.
 //!
-//! Each tier mirrors a row in the SPL-33.a scenario matrix
+//! Each tier mirrors a row in the scenario matrix
 //! (`docs/design/spl-33a-enospc-injection-mechanism.md`):
 //!
 //! - Tier 1: spill of 1 MiB hits ENOSPC at byte 500 KiB - typed error,
@@ -30,7 +30,7 @@ use super::super::super::{SpillError, SpillableReorderBuffer};
 use super::FailingCodec;
 use super::fault::{ENOSPC_KIND, FaultEvent, FaultPlan, MockEnoSpcWriter};
 
-/// Sentinel size used by the 1 MiB Tier 1 scenarios; matches the SPL-33.a
+/// Sentinel size used by the 1 MiB Tier 1 scenarios; matches the
 /// design's example boundary (spill of 1 MB, ENOSPC at 500 KB).
 const ONE_MIB: usize = 1024 * 1024;
 const HALF_MIB: u64 = (ONE_MIB / 2) as u64;
@@ -114,7 +114,7 @@ fn tier1_one_mib_spill_hits_enospc_at_500k_no_panic_no_data_loss() {
 
 #[test]
 fn tier1_spillable_buffer_surfaces_storage_full_during_spill() {
-    // Wire the SPL-33.b ENOSPC contract through the production spill path:
+    // Wire the ENOSPC contract through the production spill path:
     // a `FailingCodec` whose `encode` returns `StorageFull` is the
     // equivalent injection point at the encoder boundary. The buffer must
     // surface `SpillError::Io(StorageFull)` without panicking.
@@ -428,7 +428,7 @@ proptest! {
     /// must surface ENOSPC and the surfaced kind must always be
     /// [`ErrorKind::StorageFull`]. This proves the harness mapping is
     /// invariant under the fault timing chosen by the test author - the
-    /// SPL-33.a contract that `SpillError::is_out_of_space()` is true
+    /// contract that `SpillError::is_out_of_space()` is true
     /// exactly when the kernel reports `StorageFull`.
     #[test]
     fn property_enospc_threshold_always_surfaces_storage_full(

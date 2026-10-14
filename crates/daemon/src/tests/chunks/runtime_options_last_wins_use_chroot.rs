@@ -1,8 +1,8 @@
 /// A `use chroot` directive repeated inside one module section keeps its last
 /// value instead of failing the load.
 ///
-/// upstream: loadparm.c:379-470 do_parameter() has no duplicate check, so
-/// rsync 3.4.4 starts and serves the module with `use chroot = no`.
+/// upstream: loadparm.c:498-592 do_parameter() has no duplicate check, so
+/// rsync 3.5.1 starts and serves the module with `use chroot = no`.
 #[test]
 fn runtime_options_last_wins_use_chroot() {
     let mut file = NamedTempFile::new().expect("config file");

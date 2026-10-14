@@ -5,8 +5,8 @@
 //! lives in `core`. The handlers themselves are async-signal-safe and only
 //! mutate atomic flags.
 //!
-//! This module provides Unix signal handling that matches upstream rsync's behavior
-//! for SIGINT, SIGTERM, SIGHUP, and SIGPIPE. It supports:
+//! This module provides Unix signal handling for SIGINT, SIGTERM, SIGHUP, and
+//! SIGPIPE. It supports:
 //!
 //! - **Graceful shutdown**: First signal allows current file to complete
 //! - **Forced termination**: Second signal causes immediate exit
@@ -22,12 +22,18 @@
 //! - **SIGHUP**: Same as SIGTERM
 //! - **SIGPIPE**: Treated as connection loss, causes immediate graceful shutdown
 //!
+//! Deviation from upstream: upstream ignores SIGPIPE and relies on write errors
+//! (main.c:1926-1928), and its `sig_int()` (rsync.c:843-875) exits on the first
+//! signal unless it is a server or receiver deferring through `got_kill_signal`.
+//! oc uses a graceful-then-abort two-stage scheme instead.
+//!
 //! # Upstream Reference
 //!
-//! This implementation mirrors the signal handling in upstream rsync's:
-//! - `main.c` - Signal handler installation
-//! - `cleanup.c` - Cleanup and temp file removal
-//! - `rsync.h` - Exit code definitions
+//! Upstream counterparts in rsync 3.5.1:
+//! - `main.c:1919-1928` - Signal handler installation
+//! - `rsync.c:843-875` `sig_int()` - Interrupt handling
+//! - `cleanup.c` `_exit_cleanup()` - Cleanup and temp file removal
+//! - `errcode.h` - Exit code definitions
 //!
 //! # Examples
 //!

@@ -92,7 +92,7 @@ fn walk(list: &[FileEntry]) -> ((u64, u64, u64, u64), u64) {
 /// Releasing completed INC_RECURSE segments must not change `--stats`.
 ///
 /// WHY: the receiver frees finished sub-list segments mid-transfer (upstream
-/// `flist_free()`, receiver.c:699), zeroing their entries. A figure derived by
+/// `flist_free()`, receiver.c:978), zeroing their entries. A figure derived by
 /// walking the list at the end would then count every freed entry as nothing
 /// and print a smaller "Number of files" breakdown and "Total file size" than
 /// upstream, whose counters were bumped as the entries arrived.

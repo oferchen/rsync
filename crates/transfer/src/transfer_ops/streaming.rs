@@ -135,7 +135,7 @@ pub fn process_file_response_streaming<R: Read>(
         super::HeaderOutcome::PhaseEnd => return Ok(ResponseProgress::PhaseEnd),
     };
 
-    // upstream: receiver.c:927-928 - updating_basis_or_equiv is set when the
+    // upstream: receiver.c:1156-1157 - updating_basis_or_equiv is set when the
     // basis file IS the destination being updated in place (fnamecmp == fname).
     // We take the provably-safe subset: --inplace with the basis path equal to
     // the output path. Matched blocks whose basis offset equals the output
@@ -145,7 +145,7 @@ pub fn process_file_response_streaming<R: Read>(
     let is_inplace = header.use_inplace;
     let data_read_start = header.data_read_start;
 
-    // upstream: xattrs.c:744-755 - apply abbreviated values from sender to xattr list
+    // upstream: xattrs.c:765-781 - apply abbreviated values from sender to xattr list
     let xattr_list = if !header.xattr_values.is_empty() {
         let mut list = xattr_list.unwrap_or_default();
         crate::receiver::apply_xattr_abbreviation_values(&mut list, &header.xattr_values);
@@ -157,7 +157,7 @@ pub fn process_file_response_streaming<R: Read>(
     // Move the checksum verifier to the disk thread so hashing overlaps with
     // I/O and the network thread can focus solely on reading the wire.
     let algo = checksum_verifier.algorithm();
-    // upstream: checksum.c:600-611 sum_init() prepends the seed only for the
+    // upstream: checksum.c:624-628 sum_init() prepends the seed only for the
     // legacy MD4 variants (proto < 30). The replacement verifier must match the
     // protocol-gated seeding of the next file.
     let disk_verifier = std::mem::replace(
@@ -173,11 +173,12 @@ pub fn process_file_response_streaming<R: Read>(
         file_entry_index,
         checksum_verifier: Some(disk_verifier),
         is_device_target,
-        // upstream: receiver.c:926 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+        // upstream: receiver.c:1153-1155 - one_inplace = inplace_partial &&
+        // fnamecmp_type == FNAMECMP_PARTIAL_DIR
         is_inplace: header.use_inplace,
         append_offset: header.append_offset,
         xattr_list,
-        // upstream: xattrs.c:944 rsync_xal_set(fname, ..., fnamecmp, ...) - the
+        // upstream: xattrs.c:1175 rsync_xal_set(fname, ..., fnamecmp, ...) - the
         // abbreviated-value resolution re-reads the basis actually used, which
         // for a --fuzzy / --link-dest / --compare-dest / --partial-dir transfer
         // is not the primary destination. Carry that basis so an entry the
@@ -194,7 +195,7 @@ pub fn process_file_response_streaming<R: Read>(
         let map = MapFile::open(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
         })?;
-        // upstream: receiver.c:514-517 - `receive_data()` names the basis it
+        // upstream: receiver.c:515-517 - `receive_data()` names the basis it
         // mapped, and its size, before consuming the first token. Upstream's
         // `fname_r` is the flist-relative name (it chdir'd into the destination
         // root), so print that spelling rather than the absolute path. The size
@@ -215,7 +216,7 @@ pub fn process_file_response_streaming<R: Read>(
     let mut total_bytes: u64 = 0;
     let describe_file = || ctx.full_fname(receiver);
 
-    // upstream: token.c:863-866 - reset per-file token state. For zstd the
+    // upstream: token.c:866-868 - reset per-file token state. For zstd the
     // decompression context is preserved (single continuous stream across all
     // files); for zlib it reinitializes the inflate context (per-file streams).
     token_reader.reset();
@@ -235,7 +236,7 @@ pub fn process_file_response_streaming<R: Read>(
 
             if matches!(next_delta, DeltaToken::End) {
                 total_bytes = len as u64;
-                // upstream: receiver.c:568-571 - the coalesced single-literal
+                // upstream: receiver.c:563-569 - the coalesced single-literal
                 // file is still one literal token arriving at offset 0.
                 matching::trace_deltasum::trace_data_recv(len, 0);
                 let checksum_len = checksum_verifier.digest_len();
@@ -270,7 +271,7 @@ pub fn process_file_response_streaming<R: Read>(
 
             // Not a single-chunk file - send Begin + first Chunk,
             // then continue the regular loop starting with the peeked token.
-            // upstream: receiver.c:568-571 - this first literal lands at 0.
+            // upstream: receiver.c:563-569 - this first literal lands at 0.
             matching::trace_deltasum::trace_data_recv(len, 0);
             file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")

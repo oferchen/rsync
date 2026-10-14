@@ -20,8 +20,7 @@
 //!    must hard-link every locally-inherited entry to the link-dest tree.
 //!
 //! oc-rsync ships INC_RECURSE on both the sender and the receiver under
-//! ISI.h (sender default flipped back on under PR #5085 after the V61D-1
-//! regression was triaged) and IFX-7 (hardlink wire encoding parity). The
+//! ISI.h (sender default) and IFX-7 (hardlink wire encoding parity). The
 //! runtests.py harness exercises the upstream `hardlinks_test.py` script
 //! through `continue-on-error: true` CI plumbing - a per-test regression on
 //! that path does not block a PR. The UTS-NEXTEST-EDGE family lifts the
@@ -58,8 +57,7 @@
 //!   file list sort that the INC_RECURSE path relies on (see also
 //!   `crates/daemon/src/tests/chunks/daemon_hardlinks_relative_receive.rs`).
 //! - `flist.c` - `XMIT_HLINK_FIRST` flag wire encoding.
-//! - `generator.c` / `receiver.c` - receiver-side `hard_link_one()` /
-//!   `hard_link_cluster()`.
+//! - `hlink.c` - receiver-side `hard_link_one()` / `finish_hard_link()`.
 
 #![cfg(unix)]
 

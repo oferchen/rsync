@@ -14,8 +14,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:1627-1692` recv_generator - `FT_DEVICE` (when
-//!   `preserve_devices`) and `FT_SPECIAL` (when `preserve_specials`) call
+//! - `generator.c:2031-2107` `recv_generator()` - `FT_DEVICE` (when `am_root`
+//!   and `preserve_devices`) and `FT_SPECIAL` (when `preserve_specials`) call
 //!   `atomic_create` -> `do_mknod_at` to create the node from the flist entry.
 //! - `syscall.c:do_mknod()` - the underlying `mknod(2)` (or fake-super
 //!   placeholder) that materialises the node.
@@ -53,8 +53,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1627` - `if (preserve_devices && IS_DEVICE(file->mode))`
-    /// - `generator.c:1675` - `atomic_create(file, fname, NULL, ...)`
+    /// - `generator.c:2031-2033` - `!drop_devices && ((am_root && preserve_devices &&
+    ///   ftype == FT_DEVICE) || (preserve_specials && ftype == FT_SPECIAL))`
+    /// - `generator.c:2091` - `atomic_create(file, fname, NULL, NULL, rdev, ...)`
     pub(in crate::receiver) fn create_specials<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
@@ -72,7 +73,7 @@ impl ReceiverContext {
 
     /// [`create_specials`](Self::create_specials) restricted to the flat-index
     /// range `[range.start, range.end)`. Upstream creates each node inline as
-    /// `recv_generator()` reaches it (generator.c:2031-2060), so per-segment
+    /// `recv_generator()` reaches it (generator.c:2031-2107), so per-segment
     /// calls that tile the list match one whole-list call.
     #[cfg(unix)]
     pub(in crate::receiver) fn create_specials_in_range<
@@ -162,12 +163,12 @@ impl ReceiverContext {
             let node_path = dest_dir.join(relative_path);
 
             // Ensure parent directory exists for --relative paths.
-            // upstream: generator.c:1329-1338 make_path() for relative_paths
+            // upstream: generator.c:1716-1726 make_path() for relative_paths
             if let Some(parent) = node_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
 
-            // upstream: generator.c:1651-1670 - an existing node of the same
+            // upstream: generator.c:2048-2063 - an existing node of the same
             // type (and, for devices, the same rdev) is treated as up-to-date;
             // only its metadata is refreshed.
             let up_to_date = existing_special_matches(&node_path, entry, is_device);
@@ -176,14 +177,14 @@ impl ReceiverContext {
             // truly absent destination is ITEM_IS_NEW and bumps
             // stats.created_devices / stats.created_specials; a same-type
             // up-to-date node or a replaced wrong-type obstacle is not a
-            // creation (upstream generator.c:1651-1670, `statret < 0`). Probed
+            // creation (upstream generator.c:2039 `dest_existed`). Probed
             // before the obstacle unlink below so a replacement is not
             // misclassified as new.
             let mut dest_existed = up_to_date;
 
             if !up_to_date {
                 dest_existed = fs::symlink_metadata(&node_path).is_ok();
-                // upstream: generator.c:1679 - `else if (basis_dir[0] != NULL)`
+                // upstream: generator.c:2064 - `else if (basis_dir[0] != NULL)`
                 // is reached only when the destination is absent (`statret !=
                 // 0`). An identical node in a `--compare-dest` basis leaves the
                 // destination absent; a `--link-dest` basis is hard-linked. A
@@ -230,7 +231,7 @@ impl ReceiverContext {
                 // unlink anything else. The refusal is reported inside, so a
                 // blocked entry no longer exits 0 in silence.
                 //
-                // upstream: generator.c:2041-2047 - the noun in the refusal
+                // upstream: generator.c:2040-2047 - the noun in the refusal
                 // comes from the NEW entry's type, DEL_FOR_DEVICE for a device
                 // and DEL_FOR_SPECIAL for a FIFO or socket.
                 let make_way_for = if is_device {
@@ -255,7 +256,7 @@ impl ReceiverContext {
                 // A socket the platform cannot create race-safely is SKIPPED
                 // with a warning rather than materialised through an
                 // unconfined path-based bind; the inode is only a placeholder.
-                // upstream: generator.c:2506-2521 - the S_ISSOCK EOPNOTSUPP arm
+                // upstream: generator.c:2508-2519 - the S_ISSOCK EOPNOTSUPP arm
                 if entry.file_type() == FileType::Socket
                     && metadata::socket_creation_unsupported(relative_path)
                 {
@@ -271,7 +272,7 @@ impl ReceiverContext {
                     continue;
                 }
 
-                // upstream: generator.c:1675 atomic_create -> do_mknod_at.
+                // upstream: generator.c:2091 atomic_create -> do_mknod_at.
                 // FIFO and device nodes are materialised through the confined
                 // parent dirfd so a raced parent-component symlink swap cannot
                 // redirect the new node outside the transfer root
@@ -335,7 +336,7 @@ impl ReceiverContext {
                 }
             }
 
-            // upstream: generator.c:1672 set_file_attrs(fname, file, ...) runs
+            // upstream: generator.c:2053/2092 set_file_attrs(fname, file, ...) runs
             // for both the freshly-created and up-to-date branches so the node
             // carries the sender-supplied perms/owner/times.
             let options = MetadataOptions::new()
@@ -354,20 +355,21 @@ impl ReceiverContext {
             }
 
             if up_to_date {
-                // upstream: generator.c:1145 - "%s is uptodate" at INFO_GTE(NAME, 2)
+                // upstream: rsync.c:823-828 set_file_attrs() - "%s is uptodate" at
+                // INFO_GTE(NAME, 2)
                 let iflags = ItemFlags::from_raw(0);
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                 self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                 info_log!(Name, 2, "{} is uptodate", relative_path.display());
             } else {
-                // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW when the
+                // upstream: generator.c:584 itemize() sets ITEM_IS_NEW when the
                 // receiver newly materialises the node via do_mknod().
                 let iflags =
                     ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                 self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                 if !dest_existed {
-                    // upstream: receiver.c:759-762 - a newly created device
+                    // upstream: receiver.c:925-938 - a newly created device
                     // (created_devices) or FIFO/socket (created_specials),
                     // classified by mode.
                     self.record_created(entry.mode());
@@ -377,11 +379,14 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// Skip-with-warning on non-Unix platforms. Native (non-Cygwin) Windows has
+    /// Skip-with-warning on non-Unix platforms.
+    ///
+    /// Deviation from upstream: native (non-Cygwin) Windows has
     /// no `mknod`, `mkfifo`, or `AF_UNIX` bind, so a device, FIFO, or socket
+
     /// entry in the file list cannot be materialised. Rather than silently
     /// dropping the entry or aborting the whole transfer, emit one warning per
-    /// skipped entry and leave the destination untouched, per the WIND-2
+    /// skipped entry and leave the destination untouched, per the
     /// contract in `docs/user/windows-support-matrix.md`.
     #[cfg(not(unix))]
     pub(in crate::receiver) fn create_specials_in_range<
@@ -421,7 +426,7 @@ impl ReceiverContext {
 /// entry: same node type, and for devices the same rdev. Any read failure
 /// (including a missing path) reports `false` so the caller (re)creates it.
 ///
-/// upstream: generator.c:1651-1670 - the receiver's quick-check leaves a
+/// upstream: generator.c:2048-2063 - the receiver's quick-check leaves a
 /// matching special/device node in place instead of recreating it.
 #[cfg(unix)]
 fn existing_special_matches(path: &Path, entry: &FileEntry, is_device: bool) -> bool {

@@ -78,7 +78,7 @@ pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
 pub(crate) fn format_human_bytes(bytes: u64, base: f64) -> String {
     // upstream: lib/compat.c:do_big_num - values below the multiplier are
     // printed without a unit suffix; otherwise K/M/G/T/P with two fractional
-    // digits. `base` is 1000 for `-h` and 1024 for `-hh` (compat.c:183).
+    // digits. `base` is 1000 for `-h` and 1024 for `-hh` (lib/compat.c:183).
     let bytes_f64 = bytes as f64;
     if bytes_f64 < base {
         return bytes.to_string();
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn format_list_size_pads_to_14() {
-        // upstream: generator.c:1159 size_width = 14 (human_readable defaults to 1).
+        // upstream: generator.c:1322 size_width = 14 (human_readable defaults to 1).
         let result = format_list_size(123, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert!(result.trim_start().starts_with("123"));
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn format_list_size_raw_is_width_11_no_commas() {
-        // upstream: generator.c:1159 size_width = 11 for level 0; the value is
+        // upstream: generator.c:1322 size_width = 11 for level 0; the value is
         // right-justified raw digits, matching `-rw-r--r--     1234567 ...`.
         let result = format_list_size(1_234_567, HumanReadableMode::Raw);
         assert_eq!(result, "    1234567");
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn format_list_size_default_is_width_14_with_commas() {
-        // upstream: generator.c:1159 size_width = 14 for level 1.
+        // upstream: generator.c:1322 size_width = 14 for level 1.
         let result = format_list_size(1_234_567, HumanReadableMode::Grouped);
         assert_eq!(result, "     1,234,567");
         assert_eq!(result.len(), 14);

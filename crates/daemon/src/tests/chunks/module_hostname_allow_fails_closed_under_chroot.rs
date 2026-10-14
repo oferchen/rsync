@@ -16,7 +16,7 @@
 /// (Scenario A, deny direction, closed by the explicit guard in
 /// `permits()`).
 ///
-/// upstream: clientserver.c - `allow_access()` evaluates `hosts allow`
+/// upstream: access.c:281 `allow_access()` evaluates `hosts allow`
 /// before `hosts deny`; an empty allow match refuses the connection.
 /// upstream: clientserver.c (3.4.3 commit c38f20c5) "clientserver: fix
 /// hostname ACL bypass when using daemon chroot" - reverse DNS is

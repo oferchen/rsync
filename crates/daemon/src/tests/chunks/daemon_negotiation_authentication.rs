@@ -177,8 +177,8 @@ fn daemon_negotiation_auth_denies_wrong_password() {
         .expect("challenge prefix");
 
     // Compute digest with WRONG password. The greeting offers sha512 first and
-    // upstream's server takes the first client-offered name it supports
-    // (compat.c:354 - `if (best == 1 || am_server) break;`), so the correctly
+    // the server takes the first client-offered name it supports (the 3.4.x
+    // rule `if (best == 1 || am_server) break;`), so the correctly
     // negotiated digest over the wrong password isolates the password check as
     // the reason for the refusal.
     let digest = core::auth::compute_daemon_auth_response(
@@ -193,7 +193,7 @@ fn daemon_negotiation_auth_denies_wrong_password() {
         .expect("send wrong credentials");
     stream.flush().expect("flush");
 
-    // upstream: clientserver.c:764 - auth failure sends
+    // upstream: clientserver.c:812 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("response");
@@ -274,8 +274,8 @@ fn daemon_negotiation_auth_denies_unknown_user() {
         .expect("challenge prefix");
 
     // Compute a correctly negotiated digest (sha512 leads the offered list;
-    // upstream's server takes the first client-offered name it supports,
-    // compat.c:354) for an unknown user, so the username lookup is the reason
+    // the server takes the first client-offered name it supports, the 3.4.x
+    // negotiation rule) for an unknown user, so the username lookup is the reason
     // for the refusal.
     let digest =
         core::auth::compute_daemon_auth_response(b"password", challenge, DaemonAuthDigest::Sha512);
@@ -286,7 +286,7 @@ fn daemon_negotiation_auth_denies_unknown_user() {
         .expect("send unknown user");
     stream.flush().expect("flush");
 
-    // upstream: clientserver.c:764 - auth failure sends
+    // upstream: clientserver.c:812 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("response");
@@ -432,7 +432,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
     stream.write_all(b"\n").expect("send empty credentials");
     stream.flush().expect("flush");
 
-    // upstream: clientserver.c:764 - auth failure sends
+    // upstream: clientserver.c:812 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("response");
@@ -517,8 +517,8 @@ fn daemon_negotiation_auth_successful_sends_ok() {
         .expect("challenge prefix");
 
     // Compute the correct digest. The greeting offers sha512 first and
-    // upstream's server takes the first client-offered name it supports
-    // (compat.c:354 - `if (best == 1 || am_server) break;`), so the exchange
+    // the server takes the first client-offered name it supports (the 3.4.x
+    // rule `if (best == 1 || am_server) break;`), so the exchange
     // is SHA-512. Verified against rsync 3.4.4: the same greeting and a
     // sha512 response over `secretpass` + challenge yields `@RSYNCD: OK`,
     // while an MD5 response is refused with `@ERROR: auth failed`.

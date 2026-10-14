@@ -59,7 +59,7 @@ fn push_into_module_with_temp_dir(temp_dir: &str, create: bool) -> (Result<(), S
 /// written absolute or relative.
 ///
 /// upstream: options.c:2415-2416 re-roots an absolute `tmpdir` at the module
-/// (`sanitize_path(NULL, tmpdir, NULL, 0, SP_DEFAULT)`), and main.c:1059
+/// (`sanitize_path(NULL, tmpdir, NULL, 0, SP_DEFAULT)`), and main.c:1059-1061
 /// do_recv() resolves a relative one from the destination it has chdir'd
 /// into. rsync 3.5.1 serves both configs below with exit 0.
 #[cfg(unix)]
@@ -75,7 +75,7 @@ fn daemon_module_temp_dir_resolves_inside_the_module() {
 /// A module `temp dir` that does not exist ends the push with upstream's
 /// message and `RERR_SYNTAX`.
 ///
-/// upstream: main.c:1066-1069 - `The temp-dir does not exist: %s` and
+/// upstream: main.c:1067-1069 - `The temp-dir does not exist: %s` and
 /// `exit_cleanup(RERR_SYNTAX)`.
 #[cfg(unix)]
 #[test]

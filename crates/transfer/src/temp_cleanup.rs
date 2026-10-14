@@ -99,12 +99,11 @@ pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> i
 }
 
 /// Like [`cleanup_stale_temp_files`] but routes the per-entry unlink through
-/// the SEC-1.r `DirSandbox` carrier when present.
+/// the `DirSandbox` carrier when present.
 ///
-/// The orphan scan itself stays on the path-based `fs::read_dir` (audit row
-/// #20 carrier-acceptable residual: there is no `fdopendir`-equivalent in
-/// `std` and the scan is informational, not state-changing). The per-entry
-/// `unlinkat(dirfd, leaf, 0)` (audit row #21) is anchored on the sandbox
+/// The orphan scan itself stays on the path-based `fs::read_dir` (there is no
+/// `fdopendir`-equivalent in `std` and the scan is informational, not
+/// state-changing). The per-entry `unlinkat(dirfd, leaf, 0)` is anchored on the sandbox
 /// dirfd when `sandbox` and `dest_dir` reduce to a single-component leaf, so
 /// a symlink swap on the temp parent between scan and unlink cannot
 /// redirect the remove to an attacker-chosen inode.
@@ -178,7 +177,7 @@ pub fn cleanup_stale_temp_files_sandboxed(
     Ok(removed)
 }
 
-/// Unlinks one orphan temp-file entry, routing through the SEC-1.r sandbox
+/// Unlinks one orphan temp-file entry, routing through the sandbox
 /// carrier when present and falling back to `std::fs::remove_file` otherwise.
 fn remove_temp_entry(
     path: &Path,

@@ -263,7 +263,7 @@ include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_pull.rs");
 include!("tests/chunks/daemon_files_from_push.rs");
 // Daemon files-from stdin pull test
 include!("tests/chunks/daemon_files_from_stdin_pull.rs");
-// Daemon module filter rule merging with client-side filters (#1887)
+// Daemon module filter rule merging with client-side filters
 include!("tests/chunks/daemon_filter_merge_with_client_filters.rs");
 // Daemon `filter = merge FILE` and the `!` clear form
 include!("tests/chunks/daemon_filter_merge_and_clear.rs");
@@ -277,7 +277,7 @@ include!("tests/chunks/daemon_munge_symlinks_rejects_preexisting_munged_dir.rs")
 include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon relative receive end-to-end test
 include!("tests/chunks/daemon_relative_receive.rs");
-// Daemon sub-path pull resolution (UTS-3)
+// Daemon sub-path pull resolution
 include!("tests/chunks/daemon_pull_subpath.rs");
 // Daemon combined hardlinks + relative receive end-to-end test
 include!("tests/chunks/daemon_hardlinks_relative_receive.rs");
@@ -443,15 +443,15 @@ include!("tests/chunks/daemon_inc_recurse_push.rs");
 include!("tests/chunks/daemon_checksum_push.rs");
 // Daemon compress push end-to-end test
 include!("tests/chunks/daemon_compress_push.rs");
-// Daemon compress pull goodbye-drain regression (UTS-v3 Cluster A)
+// Daemon compress pull goodbye-drain regression
 include!("tests/chunks/daemon_compress_pull_drains_peer_goodbye.rs");
 // Default daemon pull with SEND_ZC compiled in stays byte-identical
 include!("tests/chunks/daemon_pull_default_send_zc_byte_identical.rs");
 // Daemon delete push end-to-end test
 include!("tests/chunks/daemon_delete_push.rs");
-// Daemon delete push NDX_DEL_STATS regression (URV-6 upload-direction gap)
+// Daemon delete push NDX_DEL_STATS regression (upload direction)
 include!("tests/chunks/daemon_delete_push_emits_stats.rs");
-// Daemon delete pull NDX_DEL_STATS regression (URV-6 pull-direction)
+// Daemon delete pull NDX_DEL_STATS regression (pull direction)
 include!("tests/chunks/daemon_delete_pull_emits_stats.rs");
 // Daemon inplace push end-to-end test
 include!("tests/chunks/daemon_inplace_push.rs");

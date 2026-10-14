@@ -4,18 +4,18 @@ use super::*;
 /// Verifies that `rsync src/ dst/` without `-r`, `-d`, `-a`, or `--files-from`
 /// skips the directory and writes nothing, matching upstream rsync 3.4.4.
 ///
-/// Upstream's `recurse` defaults to `0` (options.c:1276) and `xfer_dirs` falls
-/// back to `0` when neither `-r` nor `-d` is supplied (options.c:2209-2212).
-/// In `flist.c:2692`, a directory operand with `!xfer_dirs` triggers
+/// Upstream's `recurse` defaults to 0 (options.c:117) and `xfer_dirs` falls
+/// back to `0` when neither `-r` nor `-d` is supplied (options.c:2328-2329).
+/// In `flist.c:2963-2964`, a directory operand with `!xfer_dirs` triggers
 /// `rprintf(FINFO, "skipping directory %s\n", fbuf)` and is omitted from the
 /// flist, so the destination tree remains empty.
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:112` - `int recurse = 0;` default
-/// - `options.c:2209-2212` - `xfer_dirs = 0` when recurse is off and the user
+/// - `options.c:117` - `int recurse = 0;` default
+/// - `options.c:2328-2329` - `xfer_dirs = 0` when recurse is off and the user
 ///   did not request `-d`
-/// - `flist.c:2691` - `S_ISDIR(st.st_mode) && !xfer_dirs` skips the directory
+/// - `flist.c:2963` - `S_ISDIR(st.st_mode) && !xfer_dirs` skips the directory
 #[test]
 fn trailing_slash_source_without_recursion_skips_directory() {
     let tmp = test_support::create_tempdir();
@@ -52,7 +52,7 @@ fn trailing_slash_source_without_recursion_skips_directory() {
 /// the source directory entirely.
 ///
 /// Same upstream semantics as the trailing-slash variant: the directory operand
-/// hits the `!xfer_dirs` guard in `flist.c:2691` and is omitted from the flist.
+/// hits the `!xfer_dirs` guard in `flist.c:2963` and is omitted from the flist.
 #[test]
 fn non_trailing_slash_source_without_recursion_skips_directory() {
     let tmp = test_support::create_tempdir();

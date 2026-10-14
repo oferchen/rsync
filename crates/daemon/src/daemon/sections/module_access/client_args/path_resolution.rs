@@ -6,8 +6,8 @@
 /// separator and strips the leading module-name component from each so the
 /// receiver can resolve them relative to the on-disk module path.
 ///
-/// Mirrors upstream `read_args()` (io.c:1313) and `glob_expand_module()`
-/// (util1.c:807): everything before a standalone `.` in the wire arg list is
+/// Mirrors upstream `read_args()` (io.c:1480) and `glob_expand_module()`
+/// (util1.c:884): everything before a standalone `.` in the wire arg list is
 /// options/flags; everything after is the client's positional paths. Each
 /// positional begins with the module name (e.g. `upload/realdir/` when the
 /// module is `upload`), which is the prefix `glob_expand_module()` strips
@@ -27,7 +27,7 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
             }
             continue;
         }
-        // upstream: util1.c:816-817 - `if (strncmp(arg, base, base_len) == 0)
+        // upstream: util1.c:893-894 - `if (strncmp(arg, base, base_len) == 0)
         // arg += base_len;` - strips the bare module name. The remainder may
         // be empty (then represents the module root), start with `/`
         // (subpath), or be the rest of a longer arg sharing the prefix.
@@ -55,8 +55,9 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// documented contract is to "ALWAYS collapse `..` elements (except for those at
 /// the start of the string up to `depth` deep)". The daemon reaches it via
 /// `options.c:2414` `sanitize_path(NULL, argv[i], "", 0, SP_KEEP_DOT_DIRS)`,
-/// gated on `sanitize_paths`, which `clientserver.c:1068` sets for every daemon
-/// connection. **The depth there is 0**, so `util1.c:1280`'s
+/// gated on `sanitize_paths`, which `clientserver.c:1067-1068` sets whenever the
+/// module root is not the chroot root (`module_dirlen != 0`). **The depth there
+/// is 0**, so `util1.c:1283`'s
 /// `if (depth <= 0 || sanp != start)` arm always wins: a `..` either backs up
 /// over one already-emitted component or, with nothing to back up over, is
 /// discarded. There is no arm that refuses.
@@ -64,7 +65,7 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// That is why collapsing is safe rather than permissive: the output is closed
 /// under the module root by construction. `a/../b` becomes `b`, and `../etc`
 /// becomes `etc` - both still resolve beneath the module directory. Upstream
-/// serves both; refusing them rejects requests that 3.4.4 and 3.5.0 both accept.
+/// serves both; refusing them rejects requests upstream accepts.
 ///
 /// Joins with a literal `/` on every host, matching upstream's `pathjoin()`
 /// rather than `PathBuf::join`, which would emit `\` on Windows for a path that
@@ -72,11 +73,11 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 ///
 /// ⚠ A dropped `.` or `..` component leaves the separator that PRECEDED it in
 /// place. Upstream does not walk components and rejoin them; it copies each one
-/// "through next slash" (`util1.c:1298`), so the slash is already in the output
+/// "through next slash" (`util1.c:1298-1299`), so the slash is already in the output
 /// buffer by the time the next component is examined and discarded. That is why
 /// `sub/.` sanitizes to `sub/` and not to `sub`: the surviving trailing slash is
-/// upstream's DOTDIR marker, which `flist.c:2829-2834` turns into `DOTDIR_NAME`
-/// and `flist.c:2936` then reads as the `name_type != NORMAL_NAME` disjunct of
+/// upstream's DOTDIR marker, which `flist.c:2824-2834` turns into `DOTDIR_NAME`
+/// and `flist.c:2937` then reads as the `name_type != NORMAL_NAME` disjunct of
 /// `link_stat()`'s follow decision. Rejoining the kept components discards that
 /// slash, so `rsync://host/mod/sym-to-dir/.` was `lstat`ed and shipped as a
 /// symlink where upstream follows it and ships the directory's CONTENTS.
@@ -96,7 +97,7 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 ///
 /// `relative_paths` is the ONE thing that decides whether a `.` component
 /// survives. Upstream keeps that decision in a single expression,
-/// `util1.c:1240`:
+/// `util1.c:1238`:
 ///
 /// ```c
 /// int drop_dot_dirs = !relative_paths || !(flags & SP_KEEP_DOT_DIRS);
@@ -126,7 +127,7 @@ fn collapse_module_relative(tail: &str, relative_paths: bool) -> String {
     // LOCAL path that may legitimately be Windows-style. `sanitize_path`
     // inspects only the ASCII `/` and `.` bytes, so it upholds that policy.
     //
-    // upstream: `util1.c:1240` `drop_dot_dirs = !relative_paths || !(flags &
+    // upstream: `util1.c:1238` `drop_dot_dirs = !relative_paths || !(flags &
     // SP_KEEP_DOT_DIRS)`. The daemon's `options.c:2414` call always passes
     // `SP_KEEP_DOT_DIRS`, so the surviving condition is `!relative_paths`.
     let collapsed = if relative_paths {
@@ -146,7 +147,7 @@ fn collapse_module_relative(tail: &str, relative_paths: bool) -> String {
 ///
 /// Mirrors the post-`change_dir(module_chdir)` behaviour upstream relies on:
 /// after upstream's `glob_expand_module()` strips the module name, the
-/// receiver's `get_local_name()` (main.c:710) interprets the remaining path
+/// receiver's `get_local_name()` (main.c:714) interprets the remaining path
 /// as relative to the module root on disk. Because oc-rsync does not chdir
 /// per connection, we resolve that join explicitly.
 ///
@@ -163,9 +164,9 @@ fn resolve_receiver_dest(
     relative_paths: bool,
 ) -> std::path::PathBuf {
     let positionals = extract_module_relative_paths(client_args, module_name);
-    // upstream: main.c:1440-1441 - `local_name = get_local_name(flist, argv[0])`
-    // uses the FIRST remaining positional (after the `.` placeholder has been
-    // consumed by `do_server_recv` at lines 1174-1177). For a receiver that
+    // upstream: main.c:1247-1248 - `do_server_recv()` calls
+    // `get_local_name(flist, argv[0])` on the FIRST remaining positional (after
+    // the `.` placeholder has been consumed at lines 1209-1212). For a receiver that
     // translates to the last wire positional - the destination.
     let Some(last) = positionals.last() else {
         return module_path.to_path_buf();
@@ -175,7 +176,7 @@ fn resolve_receiver_dest(
         return module_path.to_path_buf();
     }
     // A leading separator is stripped first for the same reason upstream's
-    // `sanitize_path` consumes one before walking (`util1.c:1244` `p++`): an
+    // `sanitize_path` consumes one before walking (`util1.c:1247` `p++`): an
     // absolute client path is interpreted against the module root, not the
     // host root. Collapsing then folds away every `.` and `..`, so the joined
     // destination is under `module_path` by construction on any host.
@@ -183,7 +184,7 @@ fn resolve_receiver_dest(
     if collapsed.is_empty() {
         return module_path.to_path_buf();
     }
-    // Preserve a trailing `/`. upstream main.c:754 `get_local_name()` computes
+    // Preserve a trailing `/`. upstream main.c:755 `get_local_name()` computes
     // `trailing_slash = cp && !cp[1]` from the dest arg and takes the
     // make-a-directory branch on `file_total > 1 || trailing_slash`: it mkdirs
     // the dest, chdirs into it and returns a NULL local_name, so a single
@@ -208,7 +209,7 @@ fn resolve_receiver_dest(
 /// Mirrors upstream's `glob_expand_module()` + `chdir(module_chdir)` ordering:
 /// once the module name has been stripped, upstream's daemon-mode sender sees
 /// argv positionals as paths relative to the module root, and the sender's
-/// per-arg `dir/fn` split (flist.c:2578-2589) chops the last `/` so the wire
+/// per-arg `dir/fn` split (flist.c:2850-2861) chops the last `/` so the wire
 /// emits `fn` as the file-list name. We don't chdir, so each positional is
 /// resolved by joining the stripped tail with `module_path`. The trailing
 /// slash (if any) is preserved so the sender's existing dotdir branch can
@@ -229,8 +230,8 @@ fn resolve_receiver_dest(
 /// statement about where the returned path RESOLVES: a symlink is resolved by
 /// the kernel at syscall time and no string operation can see it. Upstream
 /// does not rely on the collapse alone either; it also enters the module with
-/// `change_dir(module_chdir, CD_NORMAL)` (clientserver.c:992) and scans
-/// through the confined `secure_opendir()` (flist.c:2256-2295).
+/// `change_dir(module_chdir, CD_NORMAL)` (clientserver.c:1059) and scans
+/// through the confined `secure_opendir()` (flist.c:2257-2320).
 ///
 /// Resolved containment for these operands is therefore owned by the sender,
 /// not by this function: the content open goes through the confined source
@@ -277,10 +278,10 @@ fn resolve_sender_sources(
         }
         // `trimmed` already carries the trailing slash whenever upstream's
         // sanitize would leave one, so the sender can detect a dotdir-style
-        // source (upstream flist.c:2829-2834 appends `.` and sets DOTDIR_NAME
+        // source (upstream flist.c:2824-2834 appends `.` and sets DOTDIR_NAME
         // for any `fbuf[len-1] == '/'`). That covers the shapes the RAW tail
         // does not end with: `sym-to-dir/.` and `sym-to-dir/x/..` both sanitize
-        // to `sym-to-dir/`, and without the marker flist.c:2936's
+        // to `sym-to-dir/`, and without the marker flist.c:2937's
         // `copy_dirlinks || name_type != NORMAL_NAME` follow decision fails
         // over, so a symlinked directory ships as a symlink instead of its
         // contents. Upstream rsync joins module-relative paths with a literal
@@ -309,7 +310,7 @@ fn resolve_sender_sources(
 /// instead of the post-strip-prefix `.` and `one` that would otherwise
 /// trip the receiver's "rejecting unrequested file-list name" check.
 ///
-/// upstream: `flist.c:2111-2121` - `fbuf[len-1] == '/'` enters the
+/// upstream: `flist.c:2824-2834` - `fbuf[len - 1] == '/'` enters the
 /// `DOTDIR_NAME` branch, which is how the daemon distinguishes
 /// "transfer module contents" from "transfer a named sub-path".
 fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {
@@ -322,7 +323,7 @@ fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {
 /// `/` on every host. `PathBuf::join` cannot express that contract: it inserts
 /// the PLATFORM separator at the boundary (`\` on Windows) and normalises a
 /// trailing separator away. The trailing `/` is load-bearing here - it is the
-/// DOTDIR marker `flist.c:2111-2121` tests with `fbuf[len-1] == '/'` - and a
+/// DOTDIR marker `flist.c:2824-2834` tests with `fbuf[len-1] == '/'` - and a
 /// `\` is part of the NAME on Unix, never a separator.
 ///
 /// An empty `tail` yields the module root with exactly one trailing separator,
@@ -485,7 +486,7 @@ fn glob_match_segment(pattern: &str, name: &str) -> bool {
 /// `--compare-dest`) to the served module through upstream's own
 /// `sanitize_path()`.
 ///
-/// upstream: `main.c:1251-1254` - a daemon receiver passes every `basis_dir[]`
+/// upstream: `main.c:1250-1255` - a daemon receiver passes every `basis_dir[]`
 /// through `sanitize_path(NULL, dir, NULL, curr_dir_depth, SP_DEFAULT)` before
 /// `check_alt_basis_dirs()` runs. That call **rewrites**; it never rejects. A
 /// `--link-dest=../sibling` sent against the module root becomes `sibling`,
@@ -499,7 +500,7 @@ fn glob_match_segment(pattern: &str, name: &str) -> bool {
 /// `module_dir` is upstream's `module_dir`: the module's REAL path, never the
 /// `.` a transfer entered before its privilege drop is served under. It is
 /// the rootdir `sanitize_path()` puts in place of a leading `/`
-/// (`util1.c:1242-1249`), so `/etc` addresses `<module>/etc`.
+/// (`util1.c:1242-1248`), so `/etc` addresses `<module>/etc`.
 ///
 /// A relative value stays relative upstream and resolves against `curr_dir`,
 /// the destination. The daemon does not chdir into the destination, so the
@@ -615,7 +616,7 @@ fn sanitize_partial_dir(
     resolve_base: &std::path::Path,
     module_dir: &std::path::Path,
 ) -> std::path::PathBuf {
-    // upstream: util1.c:50 + :1391 - `curr_dir_depth` is the destination's
+    // upstream: util1.c:50 + :1486 - `curr_dir_depth` is the destination's
     // depth below the module root, "only set for a sanitizing daemon", counted
     // by `count_dir_elements()`. oc has no chdir, so the destination is passed
     // explicitly and its component count is the same number.
@@ -670,9 +671,9 @@ fn sanitize_files_from(
 /// attack shape: the basis becomes a read-disclosure primitive through the
 /// delta-rolling checksums.
 ///
-/// upstream: `receiver.c` `secure_relative_open()` refuses this at
-/// basis-lookup time rather than at argument-parse time. oc drops the basis
-/// here so the request never reaches the receiver; the receiver then
+/// upstream: `receiver.c:secure_basis_open()`, built on
+/// `syscall.c:secure_relative_open()`, refuses this at basis-lookup time
+/// rather than at argument-parse time. oc drops the basis here so the request never reaches the receiver; the receiver then
 /// re-transfers, which is the same observable outcome as upstream refusing the
 /// open.
 ///

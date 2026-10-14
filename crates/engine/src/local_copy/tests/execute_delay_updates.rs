@@ -553,12 +553,12 @@ fn delay_updates_dry_run_does_not_modify_existing() {
 /// directory is precisely the kind of entry it would remove - and removing it
 /// discards the pending updates without any error surfacing.
 ///
-/// Upstream never lets the two collide. `generator.c:2409-2419` parks the
+/// Upstream never lets the two collide. `generator.c:2881-2894` parks the
 /// generator on the receiver's phase-2 `MSG_DONE` - the acknowledgement that
 /// `handle_delayed_updates()` has renamed everything and dropped each staging
 /// directory - before running `do_delayed_deletions()` / `do_delete_pass()` at
-/// `generator.c:2425-2428`; and the delete-during sweep reaches a directory
-/// (`generator.c:1532-1535`) before any file inside it has been received, so
+/// `generator.c:2898-2901`; and the delete-during sweep reaches a directory
+/// (`generator.c:1924-1927`) before any file inside it has been received, so
 /// no staging directory exists yet to be mistaken for extraneous.
 ///
 /// What that guarantees observably - and what this pins, for every
@@ -2253,7 +2253,7 @@ fn delay_updates_staging_dirs_cleaned_in_subdirectories() {
 /// end of the transfer bumps the parent directory's mtime that
 /// `apply_final_directory_metadata` already set to the source value. Upstream
 /// re-applies directory mtimes only after the delayed-update phase completes
-/// (generator.c:2449-2451 `touch_up_dirs()` after `handle_delayed_updates()`),
+/// (generator.c:2923-2925 `touch_up_dirs()` after `handle_delayed_updates()`),
 /// so without the final touch-up pass the destination directory would carry the
 /// deferred-commit wall-clock time instead of the source directory's mtime.
 #[test]
@@ -2446,7 +2446,7 @@ fn delay_updates_writes_through_a_pre_existing_partial_dir() {
 
 #[test]
 fn delay_updates_removes_a_relative_partial_dir_after_the_rename() {
-    // upstream: receiver.c:734 handle_partial_dir(partialptr, PDIR_DELETE)
+    // upstream: receiver.c:732 handle_partial_dir(partialptr, PDIR_DELETE)
     // rmdir's a now-empty RELATIVE partial dir once the delayed rename lands.
     let temp = create_tempdir();
     let source_root = temp.path().join("source");

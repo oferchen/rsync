@@ -30,7 +30,7 @@ fn parse_client_info_returns_empty_when_not_found() {
 
 #[test]
 fn parse_client_info_from_compact_server_flag_string() {
-    // upstream: options.c:2738 - maybe_add_e_option appends -e.LsfxCIvu
+    // upstream: options.c:3202-3233 - maybe_add_e_option appends -e.LsfxCIvu
     // to the compact flag string. parse_client_info must extract it.
     let args = vec!["-logDtprze.iLsfxCIvu".to_owned()];
     let info = parse_client_info(&args);
@@ -174,7 +174,7 @@ fn client_honors_negotiated_inc_recurse_regardless_of_local_allow() {
     // Regression for the INC_RECURSE-on-pull framing desync: on a daemon/SSH
     // pull the client (is_server=false) reads the server's negotiated compat
     // flags. The server only sets CF_INC_RECURSE when the client advertised the
-    // `i` capability (upstream compat.c:713, gated by set_allow_inc_recurse), so
+    // `i` capability (upstream compat.c:724, gated by set_allow_inc_recurse), so
     // a received CF_INC_RECURSE means this side opted in and MUST drain the
     // per-directory sub-lists framed by NDX_FLIST_OFFSET.
     //
@@ -182,7 +182,7 @@ fn client_honors_negotiated_inc_recurse_regardless_of_local_allow() {
     // `allow_inc_recurse` was false, so the receiver skipped the sub-list stream
     // and later read the `0xFF` NDX_FLIST_OFFSET marker as a varint entry-flags
     // byte, tripping `overflow in read_varint`. Upstream never masks the bit:
-    // compat.c:745-746 sets `inc_recurse = compat_flags & CF_INC_RECURSE`
+    // compat.c:757 sets `inc_recurse = compat_flags & CF_INC_RECURSE`
     // unconditionally on the read side. This test pins that the client honours a
     // negotiated CF_INC_RECURSE even when the local `allow_inc_recurse` gate is
     // false.
@@ -300,11 +300,11 @@ fn build_compat_flags_enables_symlink_times_when_client_advertises_l() {
 
 #[test]
 fn build_compat_flags_sets_symlink_times_from_own_capability_when_client_missing_l() {
-    // upstream: compat.c:713 sets CF_SYMLINK_TIMES from the server's OWN
+    // upstream: compat.c:725-727 sets CF_SYMLINK_TIMES from the server's OWN
     // compile-time capability (`#ifdef CAN_SET_SYMLINK_TIMES`), NOT from the
     // client's 'L'. A peer that omits 'L' (e.g. a non-unix sender pushing to a
     // Unix server) must still get symlink-time preservation. The client-sender
-    // reads this advertised flag as `receiver_symlink_times` (compat.c:756-761).
+    // reads this advertised flag as `receiver_symlink_times` (compat.c:766-770).
     let flags = build_compat_flags_from_client_info("fxCIvu", true);
     #[cfg(unix)]
     assert!(
@@ -1357,7 +1357,7 @@ fn build_capability_string_without_inc_recurse() {
 #[cfg(feature = "iconv")]
 #[test]
 fn build_capability_string_includes_symlink_iconv_when_iconv_compiled_in() {
-    // upstream: compat.c:716-718 - CF_SYMLINK_ICONV is gated on
+    // upstream: compat.c:728-730 - CF_SYMLINK_ICONV is gated on
     // `#ifdef ICONV_OPTION`. With the iconv feature enabled we must
     // advertise 's' so the peer runs `sender_symlink_iconv` against our
     // file-list reader's transcoding hook.
@@ -1368,7 +1368,7 @@ fn build_capability_string_includes_symlink_iconv_when_iconv_compiled_in() {
 #[cfg(not(feature = "iconv"))]
 #[test]
 fn build_capability_string_omits_symlink_iconv_when_iconv_disabled() {
-    // upstream: compat.c:716-718 - without ICONV_OPTION the build neither
+    // upstream: compat.c:728-730 - without ICONV_OPTION the build neither
     // sets nor accepts CF_SYMLINK_ICONV, so the capability string must
     // not contain 's' either.
     let s = build_capability_string(false);
@@ -1634,7 +1634,7 @@ fn setup_protocol_delegates_to_default_negotiator() {
 /// the server advertises xattr awareness. Clients use this flag to detect
 /// that the remote peer supports xattrs.
 ///
-/// upstream: compat.c:722 - server sets CF_AVOID_XATTR_OPTIM when compiled
+/// upstream: compat.c:733-734 - server sets CF_AVOID_XATTR_OPTIM when compiled
 /// with SUPPORT_XATTRS
 #[test]
 fn server_advertises_xattr_support_via_avoid_xattr_optim_flag() {
@@ -1649,7 +1649,7 @@ fn server_advertises_xattr_support_via_avoid_xattr_optim_flag() {
 /// does not advertise xattr support. A client requesting --xattrs should
 /// detect this and gracefully disable xattr preservation.
 ///
-/// upstream: compat.c:722 - CF_AVOID_XATTR_OPTIM only set when client
+/// upstream: compat.c:733-734 - CF_AVOID_XATTR_OPTIM only set when client
 /// advertises 'x' and server has SUPPORT_XATTRS
 #[test]
 fn server_omits_xattr_flag_when_client_lacks_x_capability() {
@@ -1706,7 +1706,7 @@ fn no_degradation_when_client_does_not_request_acls_or_xattrs() {
 /// Protocol version < 30 must reject --acls for non-local transfers.
 /// This is enforced at the protocol restriction layer.
 ///
-/// upstream: compat.c:655-661 - ACLs require protocol 30+
+/// upstream: compat.c:667-673 - ACLs require protocol 30+
 #[test]
 fn protocol_restriction_rejects_acls_below_protocol_30() {
     let flags = ProtocolRestrictionFlags {
@@ -1725,7 +1725,7 @@ fn protocol_restriction_rejects_acls_below_protocol_30() {
 /// Protocol version < 30 must reject --xattrs for non-local transfers.
 /// This is enforced at the protocol restriction layer.
 ///
-/// upstream: compat.c:662-668 - xattrs require protocol 30+
+/// upstream: compat.c:674-680 - xattrs require protocol 30+
 #[test]
 fn protocol_restriction_rejects_xattrs_below_protocol_30() {
     let flags = ProtocolRestrictionFlags {
@@ -1743,7 +1743,7 @@ fn protocol_restriction_rejects_xattrs_below_protocol_30() {
 
 /// Protocol 30+ allows both ACLs and xattrs without error.
 ///
-/// upstream: compat.c:652-668 - restrictions only apply below version 30
+/// upstream: compat.c:664-682 - restrictions only apply below version 30
 #[test]
 fn protocol_30_allows_acls_and_xattrs() {
     let flags = ProtocolRestrictionFlags {
@@ -1762,7 +1762,7 @@ fn protocol_30_allows_acls_and_xattrs() {
 /// for ACLs and xattrs. This mirrors upstream which only checks these
 /// restrictions for remote connections.
 ///
-/// upstream: compat.c:667,662 - `&& !local_server` guards
+/// upstream: compat.c:667,674 - `&& !local_server` guards
 #[test]
 fn local_server_allows_acls_and_xattrs_below_protocol_30() {
     let flags = ProtocolRestrictionFlags {
@@ -1810,7 +1810,7 @@ fn server_parses_client_acl_and_xattr_flags() {
 /// (CF_AVOID_XATTR_OPTIM), since our build always compiles with xattr wire
 /// protocol support. This is how remote peers detect xattr awareness.
 ///
-/// upstream: options.c:3031-3078 - maybe_add_e_option() builds -e.xxx
+/// upstream: options.c:3202-3245 - maybe_add_e_option() builds -e.xxx
 #[test]
 fn capability_string_always_includes_xattr_marker() {
     use super::build_capability_string;
@@ -1844,7 +1844,7 @@ fn capability_string_does_not_contain_acl_xattr_transfer_flags() {
 
 #[test]
 fn compress_choice_override_skips_vstring_and_uses_algorithm() {
-    // upstream: compat.c:543 - when compress_choice is set, compression
+    // upstream: compat.c:547 - when compress_choice is set, compression
     // vstring exchange is skipped and the algorithm is used directly.
     let protocol = ProtocolVersion::try_from(31).unwrap();
     let mut stdin = &b""[..];
@@ -1923,7 +1923,7 @@ fn compress_choice_none_allows_normal_negotiation() {
 
 #[test]
 fn compress_choice_zlib_override_on_legacy_protocol() {
-    // upstream: compat.c:194-195 - legacy protocols always use zlib unless
+    // upstream: compat.c:195-196 - legacy protocols always use zlib unless
     // the user explicitly chose an algorithm.
     let protocol = ProtocolVersion::try_from(29).unwrap();
     let mut stdin = &b""[..];
@@ -1964,7 +1964,7 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
 
 #[test]
 fn checksum_choice_override_threads_into_negotiation() {
-    // upstream: compat.c:819 parse_checksum_choice(1) - an explicit
+    // upstream: compat.c:830 parse_checksum_choice(1) - an explicit
     // --checksum-choice=ALGO forces the transfer checksum, skipping the
     // vstring exchange. The setup layer must forward ProtocolSetupConfig's
     // checksum_choice into NegotiationConfig::checksum_override.
@@ -2098,7 +2098,7 @@ fn with_compress_choice_none_clears_override() {
     );
 }
 
-// upstream: compat.c:751-753 - create-times (crtimes_ndx) ride the extended
+// upstream: compat.c:762-765 - create-times (crtimes_ndx) ride the extended
 // varint file-list flags. When the negotiated peer never advertised
 // CF_VARINT_FLIST_FLAGS (rsync older than 3.2.0) it cannot parse that flist
 // field, so upstream aborts with RERR_PROTOCOL instead of desyncing the
@@ -2114,7 +2114,7 @@ fn crtimes_without_varint_flist_flags_aborts_protocol() {
     let err = require_crtimes_capability(true, peer_flags)
         .expect_err("crtimes without VARINT_FLIST_FLAGS must abort");
 
-    // Byte-exact upstream text (compat.c:752), sans the trailing newline the
+    // Byte-exact upstream text (compat.c:763), sans the trailing newline the
     // caller adds when rendering the diagnostic line.
     assert_eq!(
         err.to_string(),

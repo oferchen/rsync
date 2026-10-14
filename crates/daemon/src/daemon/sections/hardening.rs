@@ -10,8 +10,8 @@ const LSM_LIST_PATH: &str = "/sys/kernel/security/lsm";
 
 /// Applies the Linux-only startup defense-in-depth hardenings.
 ///
-/// Runs two surgical changes once at daemon main-entry, before the listener
-/// is bound or any privileged hook is exec'd:
+/// Deviation from upstream: rsync applies neither step. Both run once at
+/// daemon startup, before the listener is bound or any hook is exec'd:
 ///
 /// 1. Sets `PR_SET_NO_NEW_PRIVS` so any later `execve()` (notably the
 ///    pre/post-xfer-exec hook helpers) cannot acquire elevated privileges
@@ -19,8 +19,8 @@ const LSM_LIST_PATH: &str = "/sys/kernel/security/lsm";
 ///    engagement on kernels that gate the LSM behind the no-new-privs bit.
 /// 2. Reads `/sys/kernel/security/lsm` and emits the active LSM list to
 ///    the daemon log so operators can confirm at a glance which kernel
-///    security modules cover the process - in particular whether Landlock
-///    is loaded alongside SEC-1 *at* helpers.
+///    security modules cover the process, in particular whether Landlock
+///    is loaded.
 ///
 /// Both steps are best-effort observability and short-circuit to a no-op
 /// on non-Linux targets. Failures inside either step never propagate: the
@@ -75,9 +75,9 @@ fn apply_no_new_privs(_log_sink: Option<&SharedLogSink>) {}
 /// confirms which kernel-side defenses (Landlock, AppArmor, SELinux, Yama,
 /// lockdown) cover the daemon process.
 ///
-/// A missing file or read error is logged at debug level - LSM detection
-/// is purely observability, so the absence of securityfs (common in
-/// minimal containers) must not block daemon startup.
+/// A missing file or read error is logged at info level as a skipped
+/// detection: LSM detection is purely observability, so the absence of
+/// securityfs (common in minimal containers) must not block daemon startup.
 ///
 /// On non-Linux targets this is a no-op.
 #[cfg(target_os = "linux")]
@@ -91,10 +91,10 @@ fn log_active_lsms(_log_sink: Option<&SharedLogSink>) {}
 
 /// Reads the LSM list from `path` and logs it, factored for testing.
 ///
-/// Trims whitespace and emits an info diagnostic on success. On error
-/// (file missing, unreadable, or empty after trim) emits a debug
-/// diagnostic so the operator can confirm the read was attempted without
-/// promoting expected absences (rootless containers) to warning noise.
+/// Trims whitespace and logs the list at info level, or `<empty>` when
+/// nothing remains after the trim. A missing or unreadable file is also
+/// logged at info level as a skipped detection, so expected absences
+/// (rootless containers) never become warning noise.
 #[cfg(target_os = "linux")]
 fn read_and_log_lsms_from(path: &Path, log_sink: Option<&SharedLogSink>) {
     match fs::read_to_string(path) {

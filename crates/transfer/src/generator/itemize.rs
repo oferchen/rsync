@@ -8,7 +8,7 @@
 //! # Upstream Reference
 //!
 //! - `log.c:695-746` - `%i` expansion in `log_formatted()`
-//! - `rsync.h:214-236` - `ITEM_*` flag definitions
+//! - `rsync.h:244-266` - `ITEM_*` flag definitions
 
 use std::path::PathBuf;
 
@@ -61,8 +61,8 @@ pub(crate) fn build_itemize_row<'a>(
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:708-710` - symlink: `T` when `!preserve_mtimes || !receiver_symlink_times || TIMEFAIL`
-/// - `log.c:716-717` - non-symlink: `T` when `!preserve_mtimes`
+/// - `log.c:746-748` - symlink: `T` when `!preserve_mtimes || !receiver_symlink_times || TIMEFAIL`
+/// - `log.c:755-756` - non-symlink: `T` when `!preserve_mtimes`
 #[derive(Debug, Clone, Copy)]
 pub struct ItemizeContext {
     /// Whether `--times` is active (`preserve_mtimes` in upstream).
@@ -99,8 +99,8 @@ impl Default for ItemizeContext {
 /// # Upstream Reference
 ///
 /// - `log.c:695-746` - itemize string construction in `log_formatted()`
-/// - `log.c:708-710` - symlink time: `T` when `!preserve_mtimes || !receiver_symlink_times || TIMEFAIL`
-/// - `log.c:716-717` - non-symlink time: `T` when `!preserve_mtimes`
+/// - `log.c:746-748` - symlink time: `T` when `!preserve_mtimes || !receiver_symlink_times || TIMEFAIL`
+/// - `log.c:755-756` - non-symlink time: `T` when `!preserve_mtimes`
 pub(crate) fn format_iflags(
     iflags: &ItemFlags,
     entry: &FileEntry,
@@ -123,16 +123,16 @@ pub(crate) fn format_iflags(
 /// `ITEM_XNAME_FOLLOWS` (the hard-link leader from `hlink.c:232-234`), or `None`
 /// otherwise. When present and non-empty it renders the `%L` ` => <xname>`
 /// suffix; upstream's `%L` gates purely on `hlink && *hlink` and takes priority
-/// over the symlink ` -> target` form (`log.c:643-655`).
+/// over the symlink ` -> target` form (`log.c:675-689`).
 ///
 /// Uses a single `String` buffer to avoid intermediate allocations from
 /// `format_iflags`, path display, and symlink target formatting.
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2363-2365` - `stdout_format = "%i %n%L"` for `-i`
-/// - `log.c:627-636` - `%n` expansion (filename with trailing `/` for dirs)
-/// - `log.c:643-655` - `%L` expansion: ` => hlink` when the xname is non-empty,
+/// - `options.c:2506` - `stdout_format = "%i %n%L"` for `-i`
+/// - `log.c:665-674` - `%n` expansion (filename with trailing `/` for dirs)
+/// - `log.c:675-689` - `%L` expansion: ` => hlink` when the xname is non-empty,
 ///   else ` -> target` for symlinks
 /// - `hlink.c:232-234` - hard-link follower emits `ITEM_XNAME_FOLLOWS` with the
 ///   leader name as the xname
@@ -162,9 +162,9 @@ pub(crate) fn format_itemize_line(
 ///
 /// # Upstream Reference
 ///
-/// - `log.c:627-636` - `%n` expansion (path, trailing `/` for directories).
-/// - `log.c:643-655` - `%L` expansion (` => hlink` wins over ` -> target`).
-/// - `options.c:2381` - `stdout_format = "%n%L"` for plain `-v` (no `-i`).
+/// - `log.c:665-674` - `%n` expansion (path, trailing `/` for directories).
+/// - `log.c:675-689` - `%L` expansion (` => hlink` wins over ` -> target`).
+/// - `options.c:2523` - `stdout_format = "%n%L"` for plain `-v` (no `-i`).
 pub(crate) fn format_name_line(
     entry: &FileEntry,
     xname: Option<&[u8]>,
@@ -174,16 +174,16 @@ pub(crate) fn format_name_line(
 
     let mut buf = String::with_capacity(40);
 
-    // upstream: log.c:627-636 - %n expansion
+    // upstream: log.c:665-674 - %n expansion
     let path = entry.path();
     let _ = write!(buf, "{}", path.display());
 
-    // upstream: log.c:633-634 - append '/' for directories
+    // upstream: log.c:665-674 - append '/' for directories
     if entry.is_dir() {
         buf.push('/');
     }
 
-    // upstream: log.c:643-655 - %L expansion. The ` => <xname>` form wins
+    // upstream: log.c:675-689 - %L expansion. The ` => <xname>` form wins
     // whenever the item carries a non-empty alternate-basis name (the hard-link
     // leader), mirroring the `if (hlink && *hlink)` branch that precedes the
     // symlink case. Only when no xname trails does `%L` fall through to the
@@ -215,7 +215,7 @@ fn write_iflags_into(
 ) {
     let raw = iflags.raw();
 
-    // upstream: log.c:696-698 - deleted items
+    // upstream: log.c:735 - deleted items
     if raw & ItemFlags::ITEM_DELETED != 0 {
         buf.push_str("*deleting  ");
         return;
@@ -399,7 +399,7 @@ mod tests {
     /// # Upstream Reference
     ///
     /// - `rsync.c:383-384` - synthesises `ITEM_TRANSFER | ITEM_MISSING_DATA`
-    /// - `log.c:736-737` - `ITEM_MISSING_DATA` fills columns 2..10 with `?`
+    /// - `log.c:768-769` - `ITEM_MISSING_DATA` fills columns 2..10 with `?`
     #[test]
     fn format_protocol_28_missing_data_is_unknown() {
         let iflags = ItemFlags::read(&mut std::io::Cursor::new(&[][..]), 28).unwrap();
@@ -420,7 +420,7 @@ mod tests {
     ///
     /// # Upstream Reference
     ///
-    /// - `log.c:735-737` - `ch = iflags & ITEM_IS_NEW ? '+' : '?'`
+    /// - `log.c:767-769` - `ch = iflags & ITEM_IS_NEW ? '+' : '?'`
     #[test]
     fn format_is_new_outranks_missing_data() {
         let iflags = ItemFlags::from_raw(
@@ -571,7 +571,7 @@ mod tests {
     /// append the `%L` ` => <leader>` suffix so oc's own client renders
     /// `hf+++++++++ follower => leader`, not a bare `hf+++++++++ follower`.
     ///
-    /// upstream: log.c:643-646 - `%L` renders ` => hlink` for a non-empty xname.
+    /// upstream: log.c:675-678 - `%L` renders ` => hlink` for a non-empty xname.
     #[test]
     fn format_itemize_line_hardlink_follower_appends_leader() {
         let iflags = ItemFlags::from_raw(
@@ -584,8 +584,8 @@ mod tests {
 
     /// The `%L` ` => ` suffix must not appear when the xname is empty - upstream's
     /// alt-dest hard-link/copy-dest paths (e.g. `hlink.c:219-221`,
-    /// `generator.c:1011-1013`) set `ITEM_XNAME_FOLLOWS` with an empty string, and
-    /// `%L` gates on `hlink && *hlink` (log.c:644).
+    /// `generator.c:1143-1145`) set `ITEM_XNAME_FOLLOWS` with an empty string, and
+    /// `%L` gates on `hlink && *hlink` (log.c:676).
     #[test]
     fn format_itemize_line_empty_xname_renders_no_suffix() {
         let iflags = ItemFlags::from_raw(
@@ -596,13 +596,13 @@ mod tests {
         assert_eq!(line, "hf+++++++++ follower\n");
     }
 
-    /// HL-1 (#78): an UP-TO-DATE hardlink follower (destination already links to
+    /// An UP-TO-DATE hardlink follower (destination already links to
     /// its leader) itemizes with `ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS` and an
-    /// EMPTY xname - exactly what upstream `hlink.c:218-222` passes. Column 0 must
-    /// render `h` (LOCAL_CHANGE + XNAME_FOLLOWS, `log.c:707-708`); with
+    /// EMPTY xname - exactly what upstream `hlink.c:232-236` passes. Column 0 must
+    /// render `h` (LOCAL_CHANGE + XNAME_FOLLOWS, `log.c:739-740`); with
     /// `ITEM_IS_NEW` absent and no report flags, the all-dot attribute columns
     /// collapse to blanks (`log.c:741-750`), and the empty xname suppresses the
-    /// ` => leader` suffix (`log.c:644`). This pins the flags the already-linked
+    /// ` => leader` suffix (`log.c:676`). This pins the flags the already-linked
     /// branch now passes instead of a bare `0`, which rendered a spurious `.`.
     #[test]
     fn format_itemize_line_up_to_date_hardlink_follower_renders_h() {
@@ -628,7 +628,7 @@ mod tests {
         );
     }
 
-    /// upstream: log.c:716-717 - non-symlink with preserve_mtimes shows lowercase 't'
+    /// upstream: log.c:755-756 - non-symlink with preserve_mtimes shows lowercase 't'
     #[test]
     fn file_time_with_preserve_mtimes_shows_lowercase_t() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(result, ">f..t......");
     }
 
-    /// upstream: log.c:716-717 - non-symlink without preserve_mtimes shows uppercase 'T'
+    /// upstream: log.c:755-756 - non-symlink without preserve_mtimes shows uppercase 'T'
     #[test]
     fn file_time_without_preserve_mtimes_shows_uppercase_t() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
@@ -646,7 +646,7 @@ mod tests {
         assert_eq!(result, ">f..T......");
     }
 
-    /// upstream: log.c:708-710 - symlink with preserve_mtimes and receiver_symlink_times
+    /// upstream: log.c:746-748 - symlink with preserve_mtimes and receiver_symlink_times
     /// shows lowercase 't'
     #[test]
     fn symlink_time_with_full_support_shows_lowercase_t() {
@@ -656,7 +656,7 @@ mod tests {
         assert_eq!(result, ">L..t......");
     }
 
-    /// upstream: log.c:709 - symlink without preserve_mtimes shows uppercase 'T'
+    /// upstream: log.c:747 - symlink without preserve_mtimes shows uppercase 'T'
     #[test]
     fn symlink_time_without_preserve_mtimes_shows_uppercase_t() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(result, ">L..T......");
     }
 
-    /// upstream: log.c:709 - symlink without receiver_symlink_times shows uppercase 'T'
+    /// upstream: log.c:747 - symlink without receiver_symlink_times shows uppercase 'T'
     #[test]
     fn symlink_time_without_receiver_symlink_times_shows_uppercase_t() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_REPORT_TIME);
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(result, ">L..T......");
     }
 
-    /// upstream: log.c:710 - symlink with ITEM_REPORT_TIMEFAIL (bit 2) shows uppercase 'T'
+    /// upstream: log.c:748 - symlink with ITEM_REPORT_TIMEFAIL (bit 2) shows uppercase 'T'
     /// even when preserve_mtimes and receiver_symlink_times are both true
     #[test]
     fn symlink_timefail_shows_uppercase_t() {
@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(result, ">f.st......");
     }
 
-    /// upstream: log.c:716-717 - directory without preserve_mtimes shows uppercase 'T'
+    /// upstream: log.c:755-756 - directory without preserve_mtimes shows uppercase 'T'
     #[test]
     fn directory_time_without_preserve_mtimes_shows_uppercase_t() {
         let iflags =
@@ -733,7 +733,7 @@ mod tests {
     /// trailing `/` for a directory, and a ` -> target` arrow for a symlink -
     /// matching what upstream's `log_item(FCLIENT)` prints on a push.
     ///
-    /// upstream: log.c:627-636 (%n, dir slash), log.c:643-655 (%L arrow).
+    /// upstream: log.c:665-674 (%n, dir slash), log.c:675-689 (%L arrow).
     #[test]
     fn name_line_renders_dir_slash_and_symlink_arrow() {
         let none = ItemFlags::from_raw(0);

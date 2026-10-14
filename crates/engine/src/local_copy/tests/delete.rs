@@ -600,7 +600,7 @@ fn delete_after_works_with_dry_run() {
 /// transfers that same directory's surviving/new children, matching upstream's
 /// per-directory ordering.
 ///
-/// upstream: generator.c:1532-1537 - for a non-INC_RECURSE `delete_during` run
+/// upstream: generator.c:1919-1927 - for a non-INC_RECURSE `delete_during` run
 /// the generator calls `delete_in_dir()` while itemizing the directory entry
 /// itself, so the `*deleting` rows for a directory precede the transfer rows
 /// for its children. Verified byte-for-byte against rsync 3.4.4:
@@ -671,7 +671,7 @@ fn delete_during_deletes_directory_before_transferring_its_children() {
 
 #[test]
 fn delete_before_keeps_in_source_file() {
-    // upstream: generator.c:286-358 delete_in_dir() / do_delete_pass() - a
+    // upstream: generator.c:285-400 delete_in_dir() / do_delete_pass() - a
     // destination entry is deleted only when flist_find_ignore_dirness() fails
     // to find it in the source file list. --delete-before shares that keep
     // decision with --delete-during/-after, so a file that exists in the
@@ -729,10 +729,10 @@ fn delete_before_keeps_in_source_file() {
 
 #[test]
 fn delete_during_itemizes_deletion_before_directory_row() {
-    // upstream: generator.c:1480-1535 - the generator itemizes a directory's
-    // extraneous `*deleting` rows before that directory's own `.d` itemize
-    // row. Assert the EntryDeleted record precedes the containing directory's
-    // MetadataReused row so `-ii` output matches upstream ordering.
+    // Assert the EntryDeleted record precedes the containing directory's
+    // MetadataReused row. Upstream 3.5.1 recv_generator() itemizes the
+    // directory (generator.c:1869-1871) before delete_in_dir() sweeps it
+    // (generator.c:1924-1927).
     let ctx = test_helpers::setup_copy_test();
     let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");

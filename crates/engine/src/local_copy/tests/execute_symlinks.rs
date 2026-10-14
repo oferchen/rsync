@@ -1495,7 +1495,7 @@ fn execute_symlink_tree_stats_match_upstream() {
         .execute_with_options(LocalCopyExecution::Apply, options.clone())
         .expect("copy succeeds");
 
-    // upstream flist.c:916/1468 - `stats.total_size` sums the F_LENGTH of
+    // upstream flist.c:998-999/1613-1614 - `stats.total_size` sums the F_LENGTH of
     // regular files AND symlinks; a symlink's F_LENGTH is its lstat st_size,
     // i.e. the target byte length (5). Without it the total is 50, not the
     // upstream 55, and both `--stats` "Total file size" and "total size is N"
@@ -1506,7 +1506,7 @@ fn execute_symlink_tree_stats_match_upstream() {
         "3 regular files (50 bytes) + symlink target length (5 bytes)"
     );
 
-    // upstream receiver.c:747-762 - a fresh recursive copy creates the
+    // upstream receiver.c:925-932 - a fresh recursive copy creates the
     // destination root plus `sub`; both entries set ITEM_IS_NEW, so
     // `Number of created files` reports dir:2, link:1.
     assert_eq!(
@@ -1780,7 +1780,7 @@ fn execute_symlink_over_directory_obstacle_without_perms_takes_the_dest_mode_red
 
 /// Non-vacuity companion: the SAME regular-file obstacle under `-rlp` was
 /// correct before the pre-transfer plumbing and must stay so - with `-p`,
-/// `dest_mode()` never runs (generator.c:1936 gates on `!preserve_perms`), so
+/// `dest_mode()` never runs (generator.c:1937 gates on `!preserve_perms`), so
 /// the obstacle's stat must not leak into the landed mode.
 #[cfg(target_os = "macos")]
 #[test]

@@ -1,4 +1,4 @@
-//! CF-P0a / CF-P0b: the path-based [`RealDeleteFs`] methods escape the tree
+//! The path-based [`RealDeleteFs`] methods escape the tree
 //! when no confinement root has been installed.
 //!
 //! [`RealDeleteFs`]'s six path-based methods (`fs.rs` `unlink_file` /
@@ -16,8 +16,8 @@
 //! destroyed lives OUTSIDE the deletion tree. They are deliberately NOT
 //! flipped to a refusal: the routing alone does not close the local
 //! path, and a test asserting otherwise would be describing a session
-//! install that has not happened. Installing one on the local path is
-//! task 1009's decision, not this module's.
+//! install that has not happened. Installing one on the local path is a
+//! separate policy decision, not this module's.
 //!
 //! [`the_delete_routing_refuses_only_once_a_session_root_is_installed`]
 //! is the other half of the pair - the same fixture with a root
@@ -320,7 +320,7 @@ fn mkfifo(path: &Path) {
 ///
 /// This is the PRECONDITION, stated rather than hidden: the routing is a
 /// prerequisite that stays inert until a session is installed. Installing one
-/// is task 1009's job, deliberately NOT done here - a production delete path
+/// is deliberately NOT done here - a production delete path
 /// that installed its own session would be a policy decision, not a routing
 /// one.
 #[test]

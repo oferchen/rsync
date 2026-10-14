@@ -5,7 +5,7 @@
 //! `crates/engine/src/delete/plan_map.rs::DeletePlanMap` currently wraps a
 //! single `Mutex<HashMap<PathBuf, DeletePlan>>`. The choice is explicitly
 //! noted as a first cut (task DDP-A3, #2253) pending bench-driven evidence.
-//! This file is the DDP-B4 (#2258) evidence: it pits the production layout
+//! This file is the DDP-B4 evidence: it pits the production layout
 //! against two alternatives the team has flagged as candidates.
 //!
 //! # Cross-references

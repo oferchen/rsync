@@ -56,7 +56,7 @@ fn daemon_negotiation_error_host_allow_blocks_unlisted() {
         "Expected access denied when hosts allow does not include loopback, got: {line}"
     );
 
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
     // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
     // the refusal; the socket just closes (next read is EOF).
     line.clear();

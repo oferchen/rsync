@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn parse_max_delete_argument_negative_clamps_to_zero() {
-        // upstream: options.c:2191-2194 - a negative `--max-delete` is clamped to
+        // upstream: options.c:2308-2311 - a negative `--max-delete` is clamped to
         // a 0 cap ("no deletions") and parsing continues; it is not an error.
         assert_eq!(parse_max_delete_argument(&os("-10")).unwrap(), 0);
         assert_eq!(parse_max_delete_argument(&os("-1")).unwrap(), 0);
@@ -171,7 +171,7 @@ mod tests {
     fn parse_modify_window_argument_negative() {
         // upstream: options.c parses `--modify-window` as a signed int; a
         // negative value (`-1`) is valid and requests nanosecond-exact
-        // comparison (util1.c:1577), so it must NOT be rejected.
+        // comparison (util1.c:1748), so it must NOT be rejected.
         assert_eq!(parse_modify_window_argument(&os("-1")).unwrap(), -1);
         assert_eq!(parse_modify_window_argument(&os("-2")).unwrap(), -2);
     }

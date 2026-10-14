@@ -3,7 +3,7 @@
 impl<'a> CopyContext<'a> {
     /// Searches `--link-dest` directories for the BEST file matching the source.
     ///
-    /// upstream: generator.c:954-983 `try_dests_reg()` scans every basis dir and
+    /// upstream: generator.c:1073-1102 `try_dests_reg()` scans every basis dir and
     /// tracks the highest match_level (2 = data matches `quick_check_ok`, 3 = data
     /// and attributes both match `unchanged_attrs`), breaking early only on an
     /// exact (level-3) match. Returning the first data-only candidate instead
@@ -97,7 +97,7 @@ impl<'a> CopyContext<'a> {
             {
                 best = Some((candidate, level));
             }
-            // upstream: generator.c:979 - an exact match ends the scan.
+            // upstream: generator.c:1098 - an exact match ends the scan.
             if level == 3 {
                 break;
             }
@@ -113,7 +113,7 @@ impl<'a> CopyContext<'a> {
     /// with a matching target, so the receiver can hard-link the symlink into
     /// place (`hL`) instead of recreating it.
     ///
-    /// upstream: generator.c:1117-1134 try_dests_non() - LINK_DEST hard-links a
+    /// upstream: generator.c:1258-1293 try_dests_non() - LINK_DEST hard-links a
     /// matching symlink from the basis when CAN_HARDLINK_SYMLINK is supported.
     pub(super) fn link_dest_symlink_target(
         &self,
@@ -156,11 +156,11 @@ impl<'a> CopyContext<'a> {
     /// exactly matches the source node, returning its path so the receiver can
     /// hard-link it into place (`hD`/`hS` + blank) instead of recreating it.
     ///
-    /// Mirrors upstream `generator.c:1064-1152` try_dests_non(): a `LINK_DEST`
+    /// Mirrors upstream `generator.c:1205-1316` try_dests_non(): a `LINK_DEST`
     /// basis entry of the same file-type bucket (`FT_DEVICE`/`FT_SPECIAL`) whose
     /// device number (devices) or `_S_IFMT` (specials) matches
-    /// (`generator.c:664-678` quick_check_ok) AND whose preserved attributes are
-    /// unchanged (`generator.c:468-507` unchanged_attrs) reaches match_level 3
+    /// (`generator.c:630-684` quick_check_ok) AND whose preserved attributes are
+    /// unchanged (`generator.c:474-515` unchanged_attrs) reaches match_level 3
     /// and is hard-linked, itemizing as an exact match. `CAN_HARDLINK_SPECIAL`
     /// is defined on Linux, so devices and specials participate.
     #[cfg(unix)]
@@ -195,8 +195,8 @@ impl<'a> CopyContext<'a> {
 
             let cand_type = candidate_metadata.file_type();
 
-            // upstream: generator.c:1076 - the basis must share the source's
-            // file-type bucket, and generator.c:657-671 quick_check_ok compares
+            // upstream: generator.c:1229 - the basis must share the source's
+            // file-type bucket, and generator.c:630-684 quick_check_ok compares
             // st_rdev (devices) or _S_IFMT (specials, i.e. fifo vs socket).
             if source_is_device {
                 if !(cand_type.is_block_device() || cand_type.is_char_device()) {
@@ -211,7 +211,7 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
-            // upstream: generator.c:468-507 unchanged_attrs - preserved mtime,
+            // upstream: generator.c:474-515 unchanged_attrs - preserved mtime,
             // perms and ownership must match for the match_level-3 hard-link.
             if metadata_options.times()
                 && !mtimes_within_window(metadata, &candidate_metadata, modify_window)

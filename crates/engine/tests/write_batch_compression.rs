@@ -4,14 +4,14 @@
 //!
 //! - `batch.c:59-76 flag_ptr[]` - `&do_compression` sits at stream-flag bit 8
 //!   (protocol >= 29), right after `&xfer_dirs`.
-//! - `batch.c:96-113 write_stream_flags()` - the bitmap of active flags is the
+//! - `batch.c:97-114 write_stream_flags()` - the bitmap of active flags is the
 //!   first `write_int()` in the batch file, so `-a` alone yields 0x9f and
 //!   `-az` yields 0x19f.
 //! - `io.c:read_buf()` - `write_batch_monitor_in` tees the wire bytes to
 //!   `batch_fd` before decompression, so a batch recorded under `-z` carries
 //!   `token.c:send_deflated_token()` framing rather than
 //!   `token.c:simple_send_token()`'s plain 4-byte length prefixes.
-//! - `batch.c:120-161 check_batch_flags()` - the reader reconciles the recorded
+//! - `batch.c:121-162 check_batch_flags()` - the reader reconciles the recorded
 //!   bitmap against the replay invocation, so both shapes must stay readable.
 
 use std::fs;
@@ -137,7 +137,7 @@ fn replay(root: &Path, batch_path: &Path, name: &str) -> PathBuf {
 }
 
 /// upstream: `batch.c:59-76` puts `&do_compression` at bit 8 and
-/// `batch.c:96-113 write_stream_flags()` sets a bit for every active flag, so a
+/// `batch.c:97-114 write_stream_flags()` sets a bit for every active flag, so a
 /// batch captured under `-z` must advertise bit 8 while one captured without it
 /// must leave the bit clear. Without the bit, `--read-batch` would decode
 /// deflated tokens with `simple_recv_token()` and reconstruct garbage.
@@ -186,7 +186,7 @@ fn compressed_batch_body_is_actually_deflated() {
     );
 }
 
-/// upstream: `batch.c:120-161 check_batch_flags()` reconciles bit 8 on read and
+/// upstream: `batch.c:121-162 check_batch_flags()` reconciles bit 8 on read and
 /// `token.c:recv_deflated_token()` decodes the body, so a compressed batch must
 /// reproduce the source tree byte-for-byte.
 #[test]
@@ -214,7 +214,7 @@ fn compressed_batch_round_trips_through_the_reader() {
     );
 }
 
-/// upstream: `batch.c:96-113` writes a zero bit for an inactive flag, and
+/// upstream: `batch.c:97-114` writes a zero bit for an inactive flag, and
 /// `token.c:simple_recv_token()` stays the reader's plain path. This guards the
 /// backward-compatible shape: batches written before bit 8 was ever set (and
 /// every batch written without `-z`) must keep replaying unchanged.

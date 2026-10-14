@@ -77,12 +77,12 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    // upstream: options.c:2305-2306 - --backup-dir without --suffix defaults the
+    // upstream: options.c:2447-2448 - --backup-dir without --suffix defaults the
     // suffix to "" (empty). This test pins the empty-suffix layout explicitly via
     // `--suffix ''` so the assertion exercises the upstream rule directly without
     // depending on the implicit default. See also
     // `crates/engine/src/local_copy/tests/backups.rs::backup_dir_with_inplace_no_whole_file_copies_matched_blocks`
-    // (PR #5916) which mirrors the same upstream rule on the engine builder.
+    // which mirrors the same upstream rule on the engine builder.
     let backup_path = dest_dir.join("backups/source/nested/file.txt");
     assert_eq!(
         std::fs::read(&backup_path).expect("read backup"),
@@ -113,7 +113,7 @@ fn backup_suffix_flag_overrides_default_suffix() {
     );
     filetime::set_file_mtime(dest_root.join("file.txt"), one_hour_ago).expect("backdate dest");
 
-    // upstream: options.c:2305-2316 - `--suffix` sets the suffix string but does
+    // upstream: options.c:808,2447-2449 - `--suffix` sets the suffix string but does
     // NOT enable backups on its own; `--backup` must be given explicitly.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),

@@ -3,7 +3,7 @@
 //!
 //! # Why this exists
 //!
-//! BR-3i.c (PR #4640) replaced the length-only verify stub with a real
+//! BR-3i.c replaced the length-only verify stub with a real
 //! `strategy.compute(&chunk.data)` comparison against the producer's
 //! `expected_strong` digest. That means the per-chunk verify path now has
 //! real CPU cost - and the rayon fan-out across workers is what amortises
@@ -49,10 +49,6 @@
 //!
 //! # Cross-references
 //!
-//! - PR #4640 - BR-3i.c real `verify_chunk` (prerequisite shipped).
-//! - PR #4616 - BR-3i.b strategy plumbing.
-//! - PR #4634 - BR-3j.c DashMap migration (this harness re-uses the
-//!   same shape for BR-3j.f follow-up measurements).
 //! - `crates/engine/src/concurrent_delta/parallel_apply.rs` - implementation
 //!   under measurement.
 //!

@@ -48,7 +48,7 @@
 //!
 //! - `rsync-3.5.1/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 //!   1` around the entire backup.
-//! - `rsync-3.5.1/backup.c:226-247` `link_or_rename()` - `do_link_at` first,
+//! - `rsync-3.5.1/backup.c:226-260` `link_or_rename()` - `do_link_at` first,
 //!   `do_rename_at` on failure. Both tiers are inside the region above.
 //! - `rsync-3.5.1/syscall.c:727-735` `owner_walk_parent()` - the resolved-leaf
 //!   `abspath_outside_confinement()` check the region arms.

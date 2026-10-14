@@ -303,8 +303,8 @@ fn spill_warned_false_when_no_spill() {
 
 #[test]
 fn spill_activations_counter_increments_on_each_spill() {
-    // ROB-2: spill_activations is the per-call counter that adaptive ring
-    // sizing (ROB-7) reads. It must rise once per successful spill_excess
+    // Spill_activations is the per-call counter that adaptive ring
+    // sizing reads. It must rise once per successful spill_excess
     // call regardless of the on-disk record count produced by that call.
 
     // PerItem granularity so the test does not need to reason about the
@@ -350,7 +350,7 @@ fn spill_activations_counter_increments_on_each_spill() {
 
 #[test]
 fn spill_warning_fires_once_per_transfer() {
-    // ROB-3: the one-shot warning must fire exactly once per buffer lifetime
+    // The one-shot warning must fire exactly once per buffer lifetime
     // even when many activations occur. We exercise the `spill_warned()`
     // accessor because it is the established convention in this module for
     // verifying warning behaviour (no `tracing-subscriber` dev-dep is wired).

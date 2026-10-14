@@ -71,8 +71,7 @@ impl<'a> MessageSegments<'a> {
     ///
     /// The iterator traverses the same slices that [`Self::as_slices`] exposes, preserving their
     /// original ordering so call sites can stream the message into custom sinks without allocating
-    /// intermediate buffers. This mirrors upstream rsync's behaviour where formatted messages are
-    /// emitted sequentially. The iterator borrows the segments, meaning the caller must keep the
+    /// intermediate buffers. The iterator borrows the segments, meaning the caller must keep the
     /// [`MessageSegments`] instance alive for the duration of the iteration.
     ///
     /// # Examples

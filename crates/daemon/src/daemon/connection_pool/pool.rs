@@ -1,7 +1,4 @@
-//! Thread-safe connection pool with per-IP rate limiting.
-//!
-//! Uses `DashMap` for lock-free concurrent access, allowing multiple threads
-//! to query and update connection state without blocking.
+//! `ConnectionPool`: registered daemon connections plus per-IP counters.
 
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
@@ -100,7 +97,7 @@ impl ConnectionPool {
         id
     }
 
-    /// Unregisters a connection from the pool.
+    /// Unregisters a connection and folds its byte counters into its IP stats.
     ///
     /// Returns the connection info if it existed.
     pub fn unregister(&self, id: &ConnectionId) -> Option<ConnectionInfo> {
@@ -132,7 +129,10 @@ impl ConnectionPool {
             .count()
     }
 
-    /// Returns the number of active connections from a specific IP address.
+    /// Returns the number of registered connections from `ip`.
+    ///
+    /// Counts every connection not yet unregistered, regardless of
+    /// `set_active`.
     #[must_use]
     pub fn connections_from_ip(&self, ip: &IpAddr) -> u32 {
         self.ip_stats
@@ -141,7 +141,8 @@ impl ConnectionPool {
             .unwrap_or(0)
     }
 
-    /// Checks if a new connection from the given IP would exceed the limit.
+    /// Checks if a new connection from `ip` would exceed `limit` registered
+    /// connections.
     #[must_use]
     pub fn would_exceed_ip_limit(&self, ip: &IpAddr, limit: NonZeroU32) -> bool {
         self.connections_from_ip(ip) >= limit.get()
@@ -278,7 +279,7 @@ impl ConnectionPool {
         count
     }
 
-    /// Cleans up stale IP statistics for addresses with no active connections.
+    /// Removes IP statistics for addresses with no registered connections.
     ///
     /// Returns the number of IP entries removed.
     pub fn prune_stale_ip_stats(&self) -> usize {
@@ -296,7 +297,7 @@ impl ConnectionPool {
         count
     }
 
-    /// Returns the number of unique IP addresses with active connections.
+    /// Returns the number of unique IP addresses with registered connections.
     #[must_use]
     pub fn unique_ip_count(&self) -> usize {
         self.ip_stats

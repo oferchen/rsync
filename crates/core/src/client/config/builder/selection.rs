@@ -16,7 +16,7 @@ impl ClientConfigBuilder {
         /// effective one, so the wire forwards that alias instead of the
         /// canonical `--remove-source-files`.
         ///
-        /// upstream: options.c:2992-2995.
+        /// upstream: options.c:3163-3166.
         remove_sent_files: bool,
         /// Enables or disables size-only change detection.
         size_only: bool,
@@ -54,7 +54,7 @@ impl ClientConfigBuilder {
         /// Enables or disables pruning of empty directories after filters apply.
         prune_empty_dirs: bool,
         /// Requests `-C` / `--cvs-exclude`; forwarded to the peer as the compact
-        /// `C` letter (upstream options.c:2719).
+        /// `C` letter (upstream options.c:2885-2886).
         cvs_exclude: bool,
     }
 
@@ -75,8 +75,8 @@ impl ClientConfigBuilder {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2456-2499` - files_from parsing
-    /// - `options.c:2954-2966` - server_options() forwarding
+    /// - `options.c:2616-2670` - files_from parsing
+    /// - `options.c:3143-3155` - server_options() forwarding
     #[must_use]
     pub fn files_from(mut self, source: super::FilesFromSource) -> Self {
         self.files_from = source;

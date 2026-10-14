@@ -1,27 +1,27 @@
 //! One marker-aware NDX reader shared by every role, mirroring upstream
-//! `read_ndx_and_attrs()` (`rsync.c:322-431`).
+//! `read_ndx_and_attrs()` (`rsync.c:323-448`).
 //!
 //! Upstream funnels every NDX read on a live transfer stream through a single
 //! function whose loop classifies the value before any attribute byte is
 //! touched. The branch order is load-bearing:
 //!
-//! 1. `ndx >= 0` - a real per-file index; leave the loop (`rsync.c:332-333`).
+//! 1. `ndx >= 0` - a real per-file index; leave the loop (`rsync.c:334-335`).
 //! 2. `NDX_DONE` - return immediately, reading **no** attributes
-//!    (`rsync.c:334-335`).
+//!    (`rsync.c:336-337`).
 //! 3. `NDX_DEL_STATS` - drain the five deletion varints and continue
-//!    (`rsync.c:336-342`). This sits *before* the `inc_recurse` gate, so a peer
+//!    (`rsync.c:338-343`). This sits *before* the `inc_recurse` gate, so a peer
 //!    that never negotiated INC_RECURSE still drains them.
 //! 4. `!inc_recurse || am_sender` - any other negative value is a protocol
-//!    violation (`rsync.c:343-352`).
+//!    violation (`rsync.c:344-354`).
 //! 5. `NDX_FLIST_EOF` - the sub-list stream ended; set `flist_eof` and continue
-//!    (`rsync.c:353-359`).
+//!    (`rsync.c:355-361`).
 //! 6. otherwise - `dir_ndx = NDX_FLIST_OFFSET - ndx`, receive that sub-list
-//!    segment and continue (`rsync.c:360-380`).
+//!    segment and continue (`rsync.c:362-381`).
 //!
 //! After the loop the attribute tail is decoded: `iflags` via `read_shortint`
-//! for protocol >= 29 (`rsync.c:383-384`), the basis-type byte on
-//! `ITEM_BASIS_TYPE_FOLLOWS` (`rsync.c:403-405`) and the xname vstring on
-//! `ITEM_XNAME_FOLLOWS` (`rsync.c:407-417`). That tail lives in
+//! for protocol >= 29 (`rsync.c:384-385`), the basis-type byte on
+//! `ITEM_BASIS_TYPE_FOLLOWS` (`rsync.c:404-405`) and the xname vstring on
+//! `ITEM_XNAME_FOLLOWS` (`rsync.c:408-410`). That tail lives in
 //! [`SenderAttrs::read_attrs_after_ndx`].
 //!
 //! # Why a sink trait
@@ -35,32 +35,32 @@
 //! # Deliberate omissions
 //!
 //! - **Nothing is written on the `NDX_FLIST_EOF` branch.** Upstream's
-//!   `write_int(f_out, NDX_FLIST_EOF)` (`rsync.c:358`) never reaches a socket:
-//!   the sender is rejected by the `rsync.c:343` gate before it can get there,
+//!   `write_int(f_out, NDX_FLIST_EOF)` (`rsync.c:359`) never reaches a socket:
+//!   the sender is rejected by the `rsync.c:344` gate before it can get there,
 //!   and the receiver child runs with `sock_f_out = -1; f_out = error_pipe[1]`
-//!   (`main.c:1076-1080`), so the marker goes down the error pipe to its own
+//!   (`main.c:1093-1094`), so the marker goes down the error pipe to its own
 //!   generator. oc runs the generator and the receiver in one process over one
 //!   `file_list`, so there is no peer to forward to.
-//! - **No `start_flist_forward()` / `stop_flist_forward()`** (`io.c:1509-1515`).
+//! - **No `start_flist_forward()` / `stop_flist_forward()`** (`io.c:1669-1678`).
 //!   That teeing exists only because upstream's generator and receiver are
 //!   separate processes that each parse their own copy of the sub-list bytes.
-//! - **The `dir_ndx` range check** (`rsync.c:361-369`) is not duplicated here;
+//! - **The `dir_ndx` range check** (`rsync.c:363-371`) is not duplicated here;
 //!   [`ReceiverContext::receive_one_extra_segment`] already performs it
-//!   (mirroring `flist.c:2862-2866`) before appending anything.
+//!   (mirroring `flist.c:3149-3150`) before appending anything.
 //! - **The protocol-29 keep-alive reply** (`rsync.c:389-390`, `if (am_sender)
 //!   maybe_send_keepalive(...)`) is not emitted from here. The tolerance half
 //!   *is* implemented: [`read_ndx_and_attrs`] consumes the frame and re-enters
 //!   its loop. The frame is not dead code: rsync 3.0.9 emits the raw form at
-//!   exactly protocol 29 (`io.c:971-986` - `write_int(sock_f_out,
+//!   exactly protocol 29 (3.0.9 `io.c:971-986` - `write_int(sock_f_out,
 //!   cur_flist->used)` followed by `write_shortint(sock_f_out, ITEM_IS_NEW)`),
-//!   and 3.5.0 replaced emission with an unconditional empty `MSG_DATA`
-//!   (`io.c:1632-1638`), so the cutoff is rsync 3.1.0 and the reader branch
+//!   and current upstream sends an empty `MSG_DATA` instead
+//!   (3.5.1 `io.c:1658-1659`), so the cutoff is rsync 3.1.0 and the reader branch
 //!   exists solely for peers <= 3.0.x. oc negotiates down to protocol 28, so
 //!   the frame is reachable. Every sink routed here reads as the receiving
 //!   side, which upstream answers with silence; the `am_sender` reply lives at
 //!   the sender's open-coded request loop
 //!   (`generator/transfer/transfer_loop.rs`), which owns a writer.
-//! - **The xname `sanitize_path()` pass** (`rsync.c:408-429`) stays with its
+//! - **The xname `sanitize_path()` pass** (`rsync.c:426-429`) stays with its
 //!   current owner, [`SenderAttrs::read_attrs_after_ndx`]'s basis-xname
 //!   sanitizer. The non-regular-file guard (`rsync.c:436-444`) is **not** an
 //!   omission: it lives in [`read_ndx_and_attrs`] via
@@ -88,7 +88,7 @@ pub(crate) enum StreamRole {
 }
 
 impl StreamRole {
-    /// Upstream's `am_sender` term in the `rsync.c:343` gate.
+    /// Upstream's `am_sender` term in the `rsync.c:344` gate.
     const fn am_sender(self) -> bool {
         matches!(self, Self::Sender)
     }
@@ -112,15 +112,15 @@ pub(crate) trait FlistMarkerSink {
     ///
     /// The receiver uses it to snapshot the raw read counter so a sub-list
     /// header or the EOF marker is billed to `flist_size`, exactly as upstream
-    /// brackets `recv_file_list()` with `stats.total_read` (`flist.c:2855`,
-    /// `flist.c:3032`).
+    /// brackets `recv_file_list()` with `stats.total_read` (`flist.c:3130`,
+    /// `flist.c:3334`).
     type FrameMark: Copy;
 
     /// Which side is reading (upstream `am_sender` / `who_am_i()`).
     fn role(&self) -> StreamRole;
 
     /// The highest valid file index, for the `(%d - %d)` span upstream prints
-    /// on rejection (`rsync.c:344-350`).
+    /// on rejection (`rsync.c:345-352`).
     fn last_file_ndx(&self) -> i32;
 
     /// Whether `ndx` names a *live* entry - upstream's `F_IS_ACTIVE(file)`
@@ -166,14 +166,14 @@ pub(crate) trait FlistMarkerSink {
 
     /// Consumes the deletion counters of an `NDX_DEL_STATS` frame.
     ///
-    /// upstream: `rsync.c:338-341` - `read_del_stats(f_in)`, plus
+    /// upstream: `rsync.c:339-341` - `read_del_stats(f_in)`, plus
     /// `write_del_stats(f_out)` when `am_sender && am_server`. oc's server
     /// sender emits its counters from its own goodbye sequence rather than from
     /// inside this loop, so the echo is the implementor's business.
     fn on_del_stats(&mut self, stats: &DeleteStats) -> io::Result<()>;
 
     /// Upstream `inc_recurse`: whether this reader may grow its file list from
-    /// the stream at all (`rsync.c:343`).
+    /// the stream at all (`rsync.c:344`).
     ///
     /// Defaults to `false`, which makes every sub-list marker a protocol
     /// violation - the correct answer for a call site outside the lazy
@@ -182,18 +182,18 @@ pub(crate) trait FlistMarkerSink {
         false
     }
 
-    /// Records that the sub-list stream has ended (`rsync.c:354`).
+    /// Records that the sub-list stream has ended (`rsync.c:356`).
     ///
     /// Unreachable unless [`Self::inc_recurse`] is true and the role is the
-    /// receiver, because the `rsync.c:343` gate runs first; the default is the
+    /// receiver, because the `rsync.c:344` gate runs first; the default is the
     /// no-lazy-file-list case, which tracks no such flag.
     fn set_flist_eof(&mut self, _mark: Self::FrameMark) {}
 
     /// Receives one INC_RECURSE sub-list segment framed by the raw marker
-    /// `raw_ndx` (`rsync.c:375` - `recv_file_list(f_in, ndx)`).
+    /// `raw_ndx` (`rsync.c:379` - `recv_file_list(f_in, ndx)`).
     ///
     /// Unreachable unless [`Self::inc_recurse`] is true and the role is the
-    /// receiver; the default restates the `rsync.c:343` rejection so no call
+    /// receiver; the default restates the `rsync.c:344` rejection so no call
     /// site can silently grow a list it does not own.
     fn receive_segment<R: Read + ?Sized>(
         &mut self,
@@ -212,8 +212,8 @@ pub(crate) trait FlistMarkerSink {
 /// A sink for call sites that must never grow a file list.
 ///
 /// Upstream reaches `read_ndx_and_attrs()` from places where `inc_recurse` is
-/// off or `am_sender` is set (`main.c:916` `read_final_goodbye()` on the sender
-/// being the clearest); there every marker trips the `rsync.c:343` gate. This
+/// off or `am_sender` is set (`main.c:921` `read_final_goodbye()` on the sender
+/// being the clearest); there every marker trips the `rsync.c:344` gate. This
 /// is that peer expressed as a value.
 ///
 /// Deletion counters are read off the wire (upstream drains them before the
@@ -266,22 +266,22 @@ impl FlistMarkerSink for NoLazyFlist {
     }
 }
 
-/// One iteration of upstream's `read_loop` (`rsync.c:329-381`).
+/// One iteration of upstream's `read_loop` (`rsync.c:330-382`).
 ///
 /// Every variant names the branch that produced it so a reordering of
 /// [`read_ndx_step`] is observable in tests, not just a behaviour change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NdxStep {
-    /// `ndx >= 0`: a per-file index; the loop ends here (`rsync.c:332-333`).
+    /// `ndx >= 0`: a per-file index; the loop ends here (`rsync.c:334-335`).
     File(i32),
     /// `NDX_DONE`: phase complete, no attribute tail follows
-    /// (`rsync.c:334-335`).
+    /// (`rsync.c:336-337`).
     Done,
-    /// `NDX_DEL_STATS`: five deletion varints were drained (`rsync.c:336-342`).
+    /// `NDX_DEL_STATS`: five deletion varints were drained (`rsync.c:338-343`).
     DelStats,
-    /// `NDX_FLIST_EOF`: the sub-list stream ended (`rsync.c:353-359`).
+    /// `NDX_FLIST_EOF`: the sub-list stream ended (`rsync.c:355-361`).
     FlistEof,
-    /// A sub-list segment for `dir_ndx` was received (`rsync.c:360-380`).
+    /// A sub-list segment for `dir_ndx` was received (`rsync.c:362-381`).
     Segment(i32),
 }
 
@@ -294,13 +294,13 @@ pub(crate) enum NdxFrame {
     Done,
 }
 
-/// Builds upstream's `rsync.c:346-349` rejection.
+/// Builds upstream's `rsync.c:350-352` rejection.
 ///
 /// Keeps upstream's wording - `Invalid file index: %d (%d - %d)` - and appends
 /// oc's source location plus the `[role=VERSION]` trailer that stands in for
 /// `who_am_i()`. Tagged as a protocol violation so the exit-code mapper yields
 /// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at
-/// `rsync.c:351`.
+/// `rsync.c:353`.
 pub(crate) fn invalid_file_index(ndx: i32, last: i32, role: StreamRole) -> io::Error {
     protocol::protocol_violation(format!(
         "Invalid file index: {ndx} ({NDX_DONE} - {last}) {}{}",
@@ -360,7 +360,7 @@ pub(crate) fn non_regular_transfer_request(ndx: i32, role: StreamRole) -> io::Er
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:329-381` - `read_loop`
+/// - `rsync.c:330-382` - `read_loop`
 pub(crate) fn read_ndx_step<R, C, S>(
     reader: &mut R,
     ndx_codec: &mut C,
@@ -374,17 +374,17 @@ where
     let mark = sink.begin_frame();
     let ndx = ndx_codec.read_ndx(reader)?;
 
-    // upstream: rsync.c:332-333 - a real file index leaves the loop.
+    // upstream: rsync.c:334-335 - a real file index leaves the loop.
     if ndx >= 0 {
         return Ok(NdxStep::File(ndx));
     }
 
-    // upstream: rsync.c:334-335 - NDX_DONE returns before any attribute byte.
+    // upstream: rsync.c:336-337 - NDX_DONE returns before any attribute byte.
     if ndx == NDX_DONE {
         return Ok(NdxStep::Done);
     }
 
-    // upstream: rsync.c:336-342 - drained ahead of the inc_recurse gate below,
+    // upstream: rsync.c:338-343 - drained ahead of the inc_recurse gate below,
     // so a peer without INC_RECURSE still consumes the counters instead of
     // desyncing on them.
     if ndx == NDX_DEL_STATS {
@@ -393,22 +393,22 @@ where
         return Ok(NdxStep::DelStats);
     }
 
-    // upstream: rsync.c:343-352 - every remaining negative value is a file-list
+    // upstream: rsync.c:344-354 - every remaining negative value is a file-list
     // marker, which only a receiver inside the INC_RECURSE window may consume.
     if !sink.inc_recurse() || sink.role().am_sender() {
         return Err(invalid_file_index(ndx, sink.last_file_ndx(), sink.role()));
     }
 
-    // upstream: rsync.c:353-359 - flist_eof = 1. See the module docs for why
+    // upstream: rsync.c:355-361 - flist_eof = 1. See the module docs for why
     // nothing is written back here.
     if ndx == NDX_FLIST_EOF {
         sink.set_flist_eof(mark);
         return Ok(NdxStep::FlistEof);
     }
 
-    // upstream: rsync.c:360-380 - dir_ndx = NDX_FLIST_OFFSET - ndx, then
+    // upstream: rsync.c:362-381 - dir_ndx = NDX_FLIST_OFFSET - ndx, then
     // recv_file_list(f_in, ndx). The range check against dir_flist->used
-    // (rsync.c:361-369) lives in the sink's segment receiver.
+    // (rsync.c:363-371) lives in the sink's segment receiver.
     sink.receive_segment(reader, ndx, mark)?;
     Ok(NdxStep::Segment(NDX_FLIST_OFFSET - ndx))
 }
@@ -419,12 +419,12 @@ where
 /// oc's phase-boundary and goodbye reads accept only `NDX_DONE`; a per-file
 /// index there is a protocol violation the caller reports without ever needing
 /// its attributes. Because no `iflags` is decoded, the protocol-29 keep-alive
-/// re-entry (`rsync.c:386-391`, predicated on `iflags == ITEM_IS_NEW`) cannot
+/// re-entry (`rsync.c:387-392`, predicated on `iflags == ITEM_IS_NEW`) cannot
 /// apply to this entry point - that seam belongs to [`read_ndx_and_attrs`].
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:329-381` - `read_loop`
+/// - `rsync.c:330-382` - `read_loop`
 pub(crate) fn read_marker_aware_ndx<R, C, S>(
     reader: &mut R,
     ndx_codec: &mut C,
@@ -449,17 +449,17 @@ where
 ///
 /// `None` is `NDX_DONE`. Returning the attributes only alongside a per-file
 /// index is what makes it impossible to consume the two phantom `iflags` bytes
-/// that upstream never sends after `NDX_DONE` (`rsync.c:334-335`).
+/// that upstream never sends after `NDX_DONE` (`rsync.c:336-337`).
 ///
 /// The attribute read sits **inside** the loop on purpose. Upstream's
 /// `read_loop` has a second entry point *after* `iflags` is decoded: the
-/// protocol-29 keep-alive branch (`rsync.c:386-391`) `goto`s back into it, and
+/// protocol-29 keep-alive branch (`rsync.c:387-392`) `goto`s back into it, and
 /// the `continue` below is that re-entry.
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:322-431` - `read_ndx_and_attrs()`
-/// - `rsync.c:328` - the `read_loop:` label this `loop` stands for
+/// - `rsync.c:323-448` - `read_ndx_and_attrs()`
+/// - `rsync.c:330` - the `read_loop:` label this `loop` stands for
 pub(crate) fn read_ndx_and_attrs<R, C, S>(
     reader: &mut R,
     ndx_codec: &mut C,
@@ -475,14 +475,14 @@ where
     let protocol_version = ndx_codec.protocol_version();
 
     loop {
-        // upstream: rsync.c:329-381 - the marker loop.
+        // upstream: rsync.c:330-382 - the marker loop.
         let ndx = match read_ndx_step(reader, ndx_codec, sink)? {
             NdxStep::File(ndx) => ndx,
             NdxStep::Done => return Ok(None),
             NdxStep::DelStats | NdxStep::FlistEof | NdxStep::Segment(_) => continue,
         };
 
-        // upstream: rsync.c:383-417 - iflags, then the optional basis-type byte
+        // upstream: rsync.c:384-433 - iflags, then the optional basis-type byte
         // and xname vstring.
         let attrs = SenderAttrs::read_attrs_after_ndx(
             reader,
@@ -491,7 +491,7 @@ where
             want_xattr_optim,
         )?;
 
-        // upstream: rsync.c:386-391 - the protocol-29 keep-alive frame:
+        // upstream: rsync.c:387-392 - the protocol-29 keep-alive frame:
         //   if (protocol_version < 30 && ndx == cur_flist->used && iflags == ITEM_IS_NEW)
         //       goto read_loop;
         // A <=3.0.x peer running --timeout writes `NDX == cur_flist->used`
@@ -532,7 +532,7 @@ where
 /// straight to [`ReceiverContext::receive_one_extra_segment`] rather than
 /// reimplementing segment reception.
 impl FlistMarkerSink for ReceiverContext {
-    /// The raw-read snapshot bracketing a flist span (`flist.c:2855`).
+    /// The raw-read snapshot bracketing a flist span (`flist.c:3130`).
     type FrameMark = u64;
 
     fn role(&self) -> StreamRole {
@@ -540,7 +540,7 @@ impl FlistMarkerSink for ReceiverContext {
     }
 
     fn last_file_ndx(&self) -> i32 {
-        // upstream: rsync.c:345-348 - `first_flist->prev->ndx_start +
+        // upstream: rsync.c:346-349 - `first_flist->prev->ndx_start +
         // first_flist->prev->used - 1`, i.e. the last index of the newest
         // segment, or -1 when no list has been received yet.
         let &(flat_start, ndx_start) = self
@@ -573,7 +573,7 @@ impl FlistMarkerSink for ReceiverContext {
 
     fn begin_frame(&mut self) -> u64 {
         // Snapshot before the ndx read: upstream's raw counter ticks on arrival
-        // (io.c:838), so a segment header or the EOF marker is attributed to an
+        // (io.c:938), so a segment header or the EOF marker is attributed to an
         // adjacent recv_file_list span on any real link. The span is kept only
         // when the frame turns out to be flist traffic; NDX_DONE and per-file
         // replies are transfer-phase frames upstream never counts.
@@ -581,7 +581,7 @@ impl FlistMarkerSink for ReceiverContext {
     }
 
     fn on_del_stats(&mut self, _stats: &DeleteStats) -> io::Result<()> {
-        // upstream: rsync.c:338 read_del_stats() folds the peer's counters into
+        // upstream: rsync.c:339 read_del_stats() folds the peer's counters into
         // the global stats. oc's receiver performs its delete pass inline and
         // reports from `pending_del_stats`, so the echoed copy is redundant; it
         // is drained purely to keep the stream aligned.
@@ -594,10 +594,10 @@ impl FlistMarkerSink for ReceiverContext {
     }
 
     fn set_flist_eof(&mut self, mark: u64) {
-        // upstream: rsync.c:357 - `[%s] flist_eof=1` at DEBUG_GTE(FLIST, 3)
+        // upstream: rsync.c:357-358 - `[%s] flist_eof=1` at DEBUG_GTE(FLIST, 3)
         // when the marker-aware read consumes NDX_FLIST_EOF. Upstream's forked
         // receiver and generator each print a copy (the generator's from
-        // io.c:1969); oc reads the stream once, so one line appears.
+        // io.c:1970); oc reads the stream once, so one line appears.
         protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::Receiver);
         self.flist_eof = true;
         self.flist_span_end(mark);

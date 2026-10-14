@@ -26,7 +26,7 @@ pub(crate) enum ParsedFilterDirective {
     /// a per-directory merge filename to be looked up in each subdirectory
     /// visited beneath the enclosing scope.
     ///
-    /// upstream: exclude.c:1419-1428 - `FILTRULE_PERDIR_MERGE` rules are added
+    /// upstream: exclude.c:1332-1339 - `FILTRULE_PERDIR_MERGE` rules are added
     /// to the rule list with `parse_merge_name` rather than being expanded
     /// immediately. They fire when the receiver descends into a subdirectory
     /// that contains a matching file.

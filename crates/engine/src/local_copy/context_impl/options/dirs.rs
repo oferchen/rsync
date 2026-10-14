@@ -87,10 +87,10 @@ impl<'a> CopyContext<'a> {
     /// Upstream reaches this decision from three separate places, and each
     /// grants the follow on its own:
     ///
-    /// - `--keep-dirlinks`: `generator.c:1745` stats the entry with
+    /// - `--keep-dirlinks`: `generator.c:2159` stats the entry with
     ///   `gen_entry_stat(.., keep_dirlinks && is_dir)`, which FOLLOWS, so a
     ///   symlink to a directory reports `FT_DIR` and never reaches the
-    ///   `delete_item(.., DEL_FOR_DIR)` at `generator.c:1840`. The same call
+    ///   `delete_item(.., DEL_FOR_DIR)` at `generator.c:1841`. The same call
     ///   passes `keep_dirlinks && is_dir`, so a sender *file* of that name
     ///   still lstats and still replaces the symlink.
     /// - The destination root: `util1.c:1313` `change_dir()` resolves the
@@ -98,7 +98,7 @@ impl<'a> CopyContext<'a> {
     ///   of `--keep-dirlinks`. Trust here is ownership, not location - uid 0 or
     ///   our euid is the admin's own `/backup -> /mnt/disk` layout; any other
     ///   uid raced the component and stays refused.
-    /// - `--relative --no-implied-dirs`: `generator.c:1718-1719` tests the
+    /// - `--relative --no-implied-dirs`: `generator.c:2132-2133` tests the
     ///   parent with `do_stat_at()`, which FOLLOWS. A parent that already
     ///   resolves makes the whole `make_path()` arm dead, so the symlink is
     ///   left in place and the transfer writes through it. That redirection is
@@ -147,10 +147,10 @@ impl<'a> CopyContext<'a> {
 
     /// Removes a non-directory occupying a level where a directory must exist.
     ///
-    /// upstream: `generator.c:1839-1842` `recv_generator()` - a directory entry
+    /// upstream: `generator.c:2258-2261` `recv_generator()` - a directory entry
     /// that finds a non-directory in its place runs `delete_item(fname, ..,
     /// del_opts | DEL_FOR_DIR)` and carries on. `--force` contributes only
-    /// `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
+    /// `DEL_RECURSE` (`generator.c:2034`), which governs recursing into a
     /// non-empty *directory*, so clearing a non-directory is unconditional.
     /// Callers reach this only after establishing that `existing` is not a
     /// directory.
@@ -246,7 +246,7 @@ impl<'a> CopyContext<'a> {
     /// `--force` is set.
     ///
     /// Each destination-tree level is decided on its own, outermost first.
-    /// upstream: `generator.c:1839-1842` `recv_generator()` receives every
+    /// upstream: `generator.c:2258-2261` `recv_generator()` receives every
     /// implied parent as its own file-list entry, so an in-the-way
     /// non-directory is found at the level that holds it. Resolving the whole
     /// path in one step would instead traverse such a level, and a symlink
@@ -272,12 +272,12 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        // upstream: main.c:749 get_local_name() - the destination argument's own
+        // upstream: main.c:770 get_local_name() - the destination argument's own
         // missing leading directories are only materialised when --mkpath is set
         // (`make_path(dest_path, ...)`); without it a missing parent prefix makes
         // the transfer fail (ENOENT) rather than being auto-created. Source-relative
         // subdirs created UNDER an existing destination root during recursion are a
-        // separate concern governed by --implied-dirs (main.c:807 do_mkdir of the
+        // separate concern governed by --implied-dirs (main.c:828 do_mkdir of the
         // dest root + generator.c dir creation). Distinguish the two by whether the
         // parent lies at/below the destination root: a parent strictly above the
         // root is the destination arg's leading prefix and needs --mkpath.
@@ -304,8 +304,8 @@ impl<'a> CopyContext<'a> {
                         self.replace_parent_entry_dry_run(parent, &existing, allow_creation)
                     }
                 }
-                // upstream: main.c:823 - `do_mkdir()` returns 0 under `dry_run`
-                // (syscall.c:1151 `if (dry_run) return 0;`), so the destination
+                // upstream: main.c:844 - `do_mkdir()` returns 0 under `dry_run`
+                // (syscall.c:2183 `do_mkdir()`: `if (dry_run) return 0;`), so the destination
                 // directory and every subdir the transfer creates never fail a
                 // dry run, independent of --implied-dirs. In dry-run mode the
                 // physical mkdir is elided, so a missing parent at or below the
@@ -382,7 +382,7 @@ impl<'a> CopyContext<'a> {
                         self.replace_parent_entry_forbidden(parent, &existing)
                     }
                 }
-                // upstream: generator.c:1329-1333 - with `--no-implied-dirs`
+                // upstream: generator.c:2132-2136 - with `--no-implied-dirs`
                 // the implied parent dirs are absent from the flist, but under
                 // `relative_paths && !implied_dirs` recv_generator() still
                 // materializes a missing leading dir on demand via

@@ -222,7 +222,8 @@ fn existing_keeps_updating_present_entries() {
     assert!(lines.is_empty(), "lines = {lines:?}");
 }
 
-/// upstream: generator.c:1745 - the gate reads `link_stat()`, so a dangling
+/// upstream: generator.c:1745 - the gate reads `gen_entry_stat()` (a
+/// `link_stat()`), so a dangling
 /// symlink where a regular file arrives exists and `--ignore-existing` leaves
 /// it standing; a following stat would call it absent and request the file.
 #[test]

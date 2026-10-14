@@ -3,7 +3,7 @@
 /// upstream: `io.c:1503-1505` - `read_args()` cuts the peer off at
 /// `MAX_DAEMON_ARGS` with `rprintf(FERROR, "too many daemon arguments\n")`.
 /// `am_server` is not yet set while the daemon reads the argv
-/// (clientserver.c:1154 vs :1197), so that FERROR goes to the log only
+/// (clientserver.c:1154 vs :1191), so that FERROR goes to the log only
 /// (log.c:331). Measured on 3.5.1: the peer reads EOF after `@RSYNCD: OK`. It
 /// has switched to multiplexed input by then, so a raw line would only desync
 /// it.

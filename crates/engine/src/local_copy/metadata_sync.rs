@@ -96,7 +96,7 @@ pub(crate) fn sync_xattrs_if_requested(
 /// Whether the destination's extended attributes differ from the source's, for
 /// the itemize `x` column.
 ///
-/// Mirrors upstream `generator.c:566-572`, which calls `xattr_diff()` for every
+/// Mirrors upstream `generator.c:571-577`, which calls `xattr_diff()` for every
 /// itemized entry under `preserve_xattrs`. In a local copy upstream still forks
 /// a sender and a generator, so the two sides collect their lists with
 /// different `rsync_xal_get()` globals: the sender with `am_sender = 1`
@@ -136,12 +136,12 @@ pub(crate) fn xattrs_differ_from_source(
         follow_symlinks,
         am_root: ::metadata::am_root(),
         // The local-copy options carry `-X` as a bool, so the `rsync.%FOO`
-        // strip always applies on the sender side. upstream: xattrs.c:260-267.
+        // strip always applies on the sender side. upstream: xattrs.c:272-280.
         preserve_xattrs: 1,
         fake_super,
         filter: sender_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
         // Both lists are read from local disk with full values, so the
-        // abbreviation digest is never consulted. upstream: xattrs.c:584-594.
+        // abbreviation digest is never consulted. upstream: xattrs.c:612-622.
         checksum_seed: 0,
     };
     let Ok(sender) = ::metadata::read_xattrs_for_wire(source, &sender_opts) else {

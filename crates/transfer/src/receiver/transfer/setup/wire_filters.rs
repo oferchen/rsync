@@ -121,7 +121,7 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
 /// `exclude.c:setup_merge_file()` derives the per-directory merge FILENAME from
 /// the basename after the last '/' in the rule pattern (`ex->pattern =
 /// strdup(y+1)` where `y = strrchr(x, '/')`). A client's `-F` reaches the
-/// receiver as `: /.rsync-filter` (exclude.c:1608), so the wire pattern is
+/// receiver as `: /.rsync-filter` (exclude.c:1907), so the wire pattern is
 /// `/.rsync-filter`. Using it verbatim as the merge filename makes
 /// `directory.join("/.rsync-filter")` resolve to the filesystem root (Rust's
 /// `Path::join` discards the base on an absolute component), so the
@@ -232,7 +232,7 @@ mod tests {
     /// A `:C` dir-merge decodes with CVS semantics on the RECEIVER too.
     ///
     /// upstream: exclude.c:1402-1409 - `C` implies NO_PREFIXES | WORD_SPLIT |
-    /// NO_INHERIT | CVS_IGNORE, and exclude.c:1553-1557 defaults the filename
+    /// NO_INHERIT | CVS_IGNORE, and exclude.c:1852-1856 defaults the filename
     /// to `.cvsignore`. This decoder serves both the daemon module's own
     /// `filter = :C` and a client-sent `:C`; dropping the flags read each
     /// merged `.cvsignore` with the standard one-rule-per-line grammar, so a
@@ -371,7 +371,7 @@ mod tests {
     }
 
     /// A real upstream client transmits `-F` as the rule `: /.rsync-filter`
-    /// (exclude.c:1608), so the receiver decodes a `DirMerge` wire rule whose
+    /// (options.c:1721), so the receiver decodes a `DirMerge` wire rule whose
     /// pattern is `/.rsync-filter`. Upstream's `setup_merge_file()` splits at the
     /// last '/' to recover the per-directory filename `.rsync-filter`; keeping the
     /// leading slash makes `directory.join("/.rsync-filter")` escape to the
@@ -422,7 +422,7 @@ mod tests {
 
     /// End-to-end: a `:C` dir-merge as an UPSTREAM peer emits it must yield a
     /// non-inheriting per-directory merge config on the receiver. Upstream's
-    /// `parse_rule_tok` case `C` sets NO_INHERIT (exclude.c:1248-1255), and this
+    /// `parse_rule_tok` case `C` sets NO_INHERIT (exclude.c:1402-1409), and this
     /// receiver gates `DirMergeConfig::with_inherit(false)` on `wire_rule.no_inherit`.
     /// Before the wire parser re-derived the `C`-implied flags, `no_inherit` came
     /// back unset and the config inherited into subdirectories - dropping the CVS

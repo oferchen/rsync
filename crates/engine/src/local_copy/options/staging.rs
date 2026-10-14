@@ -178,7 +178,7 @@ impl LocalCopyOptions {
     /// (including symlinks, devices, FIFOs, and sockets) rather than skipping
     /// non-regular files as a real transfer would.
     ///
-    /// upstream: generator.c:1155 `list_file_entry()`.
+    /// upstream: generator.c:1318 `list_file_entry()`.
     #[must_use]
     pub const fn list_only(mut self, list_only: bool) -> Self {
         self.list_only = list_only;

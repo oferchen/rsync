@@ -1,3 +1,11 @@
+/// Extracts the value of `option` from `argument`, accepting both the
+/// `--opt VALUE` and `--opt=VALUE` forms.
+///
+/// Returns `Ok(None)` when `argument` is a different option.
+///
+/// # Errors
+///
+/// Returns an error when `argument` is exactly `option` and no value follows.
 fn take_option_value<'a, I>(
     argument: &'a OsString,
     iter: &mut I,
@@ -24,6 +32,7 @@ where
     Ok(None)
 }
 
+/// Returns true when `arguments` contains `--config` or `--config=PATH`.
 fn config_argument_present(arguments: &[OsString]) -> bool {
     for argument in arguments {
         if argument == "--config" {
@@ -67,11 +76,15 @@ where
     first_existing_path(paths)
 }
 
+/// Returns the config path from the branded environment variable, falling
+/// back to the legacy one. Empty values are ignored.
 fn environment_config_override() -> Option<OsString> {
     environment_path_override(BRANDED_CONFIG_ENV)
         .or_else(|| environment_path_override(LEGACY_CONFIG_ENV))
 }
 
+/// Returns the secrets path and the name of the environment variable that
+/// supplied it, preferring the branded variable over the legacy one.
 fn environment_secrets_override() -> Option<(OsString, &'static str)> {
     #[cfg(test)]
     if let Some(env) = TEST_SECRETS_ENV.with(|cell| cell.borrow().clone()) {

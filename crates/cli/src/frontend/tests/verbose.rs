@@ -138,7 +138,7 @@ fn level_1_lists_multiple_transferred_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); a trailing-slash directory
+        // recurse defaults to 0 (options.c:117); a trailing-slash directory
         // without -r is "skipping directory ." and lists nothing. Pass -r so
         // the files transfer and -v lists them, mirroring upstream.
         OsString::from("--recursive"),
@@ -211,7 +211,7 @@ fn verbose_transfer_reports_skipped_specials() {
     assert_eq!(code, 0);
     assert!(std::fs::symlink_metadata(&destination).is_err());
 
-    // The upstream-format NONREG notice (generator.c:1687) must appear on
+    // The upstream-format NONREG notice (generator.c:2113) must appear on
     // either stream: emit_verbose renders it to stdout at -v, and the
     // default-on `--info=NONREG` emission feeds the diagnostic queue.
     let stdout_text = String::from_utf8(stdout).expect("verbose stdout is UTF-8");
@@ -226,7 +226,7 @@ fn verbose_transfer_reports_skipped_specials() {
 /// Facet (b): a control byte in a skipped file's name must be octal-escaped
 /// (`\#001`) at the notice render boundary, never written raw. Raw control
 /// bytes on a terminal are a log-injection vector (CWE-117); upstream escapes
-/// the whole output line in `filtered_fwrite` (log.c:250). Reverting the
+/// the whole output line in `filtered_fwrite` (log.c:242). Reverting the
 /// `escape_for_output` call at the boundary restores the raw 0x01 and reddens
 /// the "no raw control byte" assertion, so the escape is load-bearing here.
 #[cfg(unix)]
@@ -371,7 +371,7 @@ fn verbose_human_readable_combined_formats_sizes() {
 
 /// Verifies that -vv lists files using upstream's bare `%n%L` format
 /// (no `copied:`/`symlink:` descriptor prefix, no byte-count wrapper).
-/// Upstream: options.c:2523 sets `stdout_format = "%n%L"`; log.c:603-659
+/// Upstream: options.c:2523 sets `stdout_format = "%n%L"`; log.c:665-690
 /// expands `%n` to the filename and `%L` to ` -> target` for symlinks.
 /// The upstream testsuite `duplicates.test` greps `^name1$` to detect
 /// duplicate copies, so the per-file line must be bare.
@@ -448,8 +448,8 @@ fn level_2_includes_summary_totals() {
 /// sent ... bytes  received ... bytes  ...
 /// ```
 ///
-/// upstream: generator.c:2291-2294 prints the delta-transmission notice at
-/// `DEBUG_GTE(FLIST, 1)` before the generate loop; match.c:439-446
+/// upstream: generator.c:2762-2767 prints the delta-transmission notice at
+/// `DEBUG_GTE(FLIST, 1)` before the generate loop; match.c:480-489
 /// `match_report()` prints the `total:` line at `DEBUG_GTE(DELTASUM, 1)` after
 /// `send_files()` and before `output_summary()`. Both first activate at `-vv`.
 /// Fails before the fix, which emitted the notice dead-last (after the summary)
@@ -504,7 +504,7 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
     // A single well-placed emitter: the match_report total: line must appear
     // exactly once. Guards against a second emitter (e.g. an engine-side
     // debug_log flushed dead-last) re-introducing a duplicate or mispositioned
-    // total: line. upstream: match.c:439 match_report() prints it once.
+    // total: line. upstream: match.c:480 match_report() prints it once.
     assert_eq!(
         rendered.matches("total: matches=").count(),
         1,
@@ -515,7 +515,7 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
 /// A local `--no-whole-file` transfer must print the same single `total:` line,
 /// carrying the delta matcher's REAL counters rather than hardcoded zeros.
 ///
-/// upstream: `match_report()` (match.c:439-448) is gated on
+/// upstream: `match_report()` (match.c:480-489) is gated on
 /// `DEBUG_GTE(DELTASUM, 1)` alone - `--whole-file` does not suppress the line,
 /// it merely leaves the counters at zero. Two regressions this pins, both of
 /// which oc has actually shipped:
@@ -533,7 +533,7 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
 /// ```
 ///
 /// The exactly-once assertion is the guard against a second emitter: upstream
-/// prints the line from one place (sender.c:492), so any additional oc-side
+/// prints the line from one place (sender.c:818), so any additional oc-side
 /// emitter - for example an engine `debug_log!` flushed dead-last - must fail
 /// here rather than silently duplicate or displace the line.
 #[test]
@@ -656,7 +656,7 @@ fn verbose_with_dry_run_lists_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        // recurse defaults to 0 (options.c:112); a trailing-slash directory
+        // recurse defaults to 0 (options.c:117); a trailing-slash directory
         // without -r is "skipping directory ." and lists nothing. Pass -r so
         // the files transfer and -v lists them, mirroring upstream.
         OsString::from("--recursive"),
@@ -1327,11 +1327,11 @@ fn duplicates_testsuite_emits_bare_name_lines() {
 
 /// Verifies that `-vv` on an all-uptodate tree mirrors upstream rsync 3.4.4:
 ///
-/// 1. The first stdout line is `sending incremental file list` (flist.c:2488).
-/// 2. Unchanged files emit `<name> is uptodate` (rsync.c:676) at NAME>=2.
+/// 1. The first stdout line is `sending incremental file list` (flist.c:2764).
+/// 2. Unchanged files emit `<name> is uptodate` (rsync.c:828) at NAME>=2.
 /// 3. Files are NOT pre-listed as bare names before the uptodate notice -
 ///    upstream gates the bare per-file emission on `INFO_EQ(PROGRESS, 1)`
-///    (receiver.c:1027, sender.c:451), and no `--progress` was requested here.
+///    (receiver.c:1266, sender.c:776), and no `--progress` was requested here.
 #[test]
 fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
     let tmp = test_support::create_tempdir();
@@ -1378,7 +1378,7 @@ fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
         "first line must be the FCLIENT banner (flist.c:2488), got: {rendered:?}"
     );
 
-    // Per upstream rsync.c:676 + sender.c:451, no bare `<name>` lines should
+    // Per upstream rsync.c:828 + sender.c:776, no bare `<name>` lines should
     // precede the `is uptodate` notice when --progress is absent. A regression
     // would surface as e.g. `foo/a.txt` on its own line right after the banner.
     let uptodate_count = lines.iter().filter(|l| l.ends_with(" is uptodate")).count();
@@ -1456,7 +1456,7 @@ fn level_1_all_uptodate_emits_banner_only() {
 /// upstream `is uptodate` notice for the hardlink companion instead of the
 /// bare path.
 ///
-/// upstream: hlink.c:218-224 - when the destination already shares the source
+/// upstream: hlink.c:230-238 - when the destination already shares the source
 /// group leader's inode, the generator emits `"%s is uptodate"` at
 /// `INFO_GTE(NAME, 2) && maybe_ATTRS_REPORT`. Mirrors `testsuite/itemize.test`
 /// at line 106 (`foo/extra is uptodate`).
@@ -1487,7 +1487,7 @@ fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
     // see the leader as up-to-date so the quick-check skips it and preserves
     // its inode; only then does the follower's `(dev, ino)` still match the
     // leader's, triggering the hardlink `is uptodate` notice (upstream
-    // generator.c::unchanged_file -> hlink.c:218-224). Pinning source and
+    // generator.c::unchanged_file -> hlink.c:230-238). Pinning source and
     // destination leader to one fixed second makes that precondition
     // deterministic across filesystems and runner speeds instead of relying on
     // both syncs landing in the same wall-clock second. Both files in each tree
@@ -1525,7 +1525,7 @@ fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
 /// `testsuite/itemize.test` `v_filt` helper (`sed -e '/^$/,$d'`) can strip the
 /// trailer before diffing.
 ///
-/// upstream: main.c:464 - `output_summary()` emits `rprintf(FCLIENT, "\n")`
+/// upstream: main.c:467 - `output_summary()` emits `rprintf(FCLIENT, "\n")`
 /// before the `INFO_GTE(STATS, 1)` totals block.
 #[test]
 fn level_2_blank_line_precedes_totals_trailer() {
@@ -1568,7 +1568,7 @@ fn level_2_blank_line_precedes_totals_trailer() {
 /// upstream's pipelined generator-first / receiver-second emission.
 ///
 /// upstream: generator.c emits `"is uptodate"` synchronously while the
-/// receiver emits the bare-name notice from `set_file_attrs` (rsync.c:672-676)
+/// receiver emits the bare-name notice from `set_file_attrs` (rsync.c:824-828)
 /// only after the transfer completes. Mirrors `testsuite/itemize.test`
 /// lines 102-109 which expect uptodate notices to precede the transferred
 /// `foo/config2` line even though `foo/config2` precedes `foo/extra` and
@@ -1630,10 +1630,10 @@ fn level_2_uptodate_lines_precede_transferred_lines() {
 /// Verifies that `-iplrtH` against a destination already linked to the leader
 /// emits the `hf` itemized row WITHOUT the `=> leader` suffix.
 ///
-/// upstream: hlink.c:218-222 - when the destination already shares the source
+/// upstream: hlink.c:230-236 - when the destination already shares the source
 /// group leader's inode, `maybe_hard_link()` calls
 /// `itemize(..., ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0, "")` with an
-/// empty xname. `log.c:643-654` skips the `%L` ` => %s` suffix when the
+/// empty xname. `log.c:675-690` skips the `%L` ` => %s` suffix when the
 /// xname is empty. Mirrors `testsuite/itemize.test` at line 122
 /// (`hf$allspace foo/extra`) which has no `=>` suffix because the dest
 /// alias is already linked to `foo/config1`.
@@ -1680,7 +1680,7 @@ fn itemize_hardlink_already_linked_omits_arrow_suffix() {
 
 /// Verifies that `-rv` lists directories with a trailing `/` and emits a `./`
 /// root row for the transfer root, matching upstream rsync's `f_name()`
-/// formatting (flist.c / log.c:639-640, where `%n` appends `/` for S_ISDIR and
+/// formatting (flist.c / log.c:671-672, where `%n` appends `/` for S_ISDIR and
 /// the root is shown as `./`). The destination is created fresh so every
 /// directory is freshly created and reaches the bare-name emission path.
 #[test]
@@ -1839,9 +1839,9 @@ fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
 /// `--quiet` suppresses info output no matter where `-v` sits on the command
 /// line, and `-v` alone still produces output.
 ///
-/// upstream: `-q` and `-v` are independent - `options.c:1604` just does
+/// upstream: `-q` and `-v` are independent - `options.c:1710-1711` just does
 /// `quiet++`, and the suppression happens once at the output funnel
-/// (`log.c:317-319` `case FINFO: if (quiet) return;`). Neither flag overrides
+/// (`log.c:344-346` `case FINFO: if (quiet) return;`). Neither flag overrides
 /// the other during parsing, so the result does not depend on their order.
 ///
 /// oc previously declared the two clap args as mutually `overrides_with` each
@@ -2046,7 +2046,7 @@ fn recursive_verbose_keeps_incremental_banner() {
 
 /// Recursion alone does not select the incremental banner: `inc_recurse` is
 /// the negotiated CF_INC_RECURSE bit (compat.c:757), which a local copy's
-/// receiving half grants only at protocol >= 30 (compat.c:721-723) and when
+/// receiving half grants only at protocol >= 30 (compat.c:722-724) and when
 /// set_allow_inc_recurse() leaves it allowed (compat.c:172-179). Every cell
 /// here clears it, so `send_file_list()` takes the `show_filelist_progress`
 /// arm (flist.c:2761-2762) instead.

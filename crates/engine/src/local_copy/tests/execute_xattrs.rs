@@ -956,7 +956,7 @@ mod xattr_tests {
     /// same mtimes, then returns the itemize records of a second `-aX` run.
     ///
     /// The second run takes the quick-check skip path, which is where upstream
-    /// itemizes an up-to-date file (`generator.c:1816` -> `itemize()` with
+    /// itemizes an up-to-date file (`generator.c:2247-2248` -> `itemize()` with
     /// `iflags = 0`) and where an unconditional xattr flag is visible on every
     /// row.
     fn itemize_second_pass(src: &Path, dst: &Path) -> Vec<(String, bool)> {
@@ -984,7 +984,7 @@ mod xattr_tests {
                 )
             })
             // The transfer root carries a "." row that upstream itemizes
-            // separately (generator.c:1480-1483); the xattr column under test
+            // separately (generator.c:1869-1872); the xattr column under test
             // belongs to the file rows.
             .filter(|(name, _)| name != ".")
             .collect()
@@ -1044,9 +1044,9 @@ mod xattr_tests {
     /// Case 1: an unchanged tree whose xattrs already match must not light the
     /// itemize `x` column anywhere.
     ///
-    /// upstream: generator.c:566-572 - `itemize()` sets `ITEM_REPORT_XATTR`
+    /// upstream: generator.c:573-576 - `itemize()` sets `ITEM_REPORT_XATTR`
     /// only when `xattr_diff()` reports a difference, and `ITEM_REPORT_XATTR`
-    /// is itself part of the emit gate (generator.c:582), so a spurious flag
+    /// is itself part of the emit gate (generator.c:588), so a spurious flag
     /// both adds an `x` and prints a row upstream omits entirely. Verified
     /// against rsync 3.4.4 (protocol 32), which prints nothing for this tree.
     #[test]
@@ -1099,7 +1099,7 @@ mod xattr_tests {
 
     /// A dry run itemizes the same `x` column as the real run.
     ///
-    /// upstream: generator.c:1816 - the generator itemizes an up-to-date file
+    /// upstream: generator.c:2247-2248 - the generator itemizes an up-to-date file
     /// whether or not `do_xfers` is set, so `-naXi` and `-aXi` must agree. The
     /// dry-run skip path previously hardcoded "no xattr change", which hid a
     /// genuine drift instead of inventing one.
@@ -1147,7 +1147,7 @@ mod xattr_tests {
     /// while the network generator receives an abbreviated sender list. Keying
     /// the comparison on length alone would hash the local plaintext against
     /// the destination plaintext and never match, so every large xattr would
-    /// light `x` forever. upstream: xattrs.c:584-594.
+    /// light `x` forever. upstream: xattrs.c:611-617.
     #[test]
     fn itemize_large_matching_xattr_value_reports_no_change() {
         let temp = tempdir().expect("tempdir");

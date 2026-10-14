@@ -48,22 +48,29 @@ struct GlobalModuleDefaults {
     temp_dir: Option<String>,
     path: Option<PathBuf>,
     charset: Option<String>,
-    // upstream: daemon-parm.txt `Locals:` - `uid`/`gid` are P_LOCAL. A value in
-    // the global section is the default `lp_uid(i)`/`lp_gid(i)` every module
-    // inherits (clientserver.c:781,790 read the per-module value). These are
-    // distinct from the P_GLOBAL `daemon uid`/`daemon gid` process-wide drop
-    // (clientserver.c:1363,1376 `lp_daemon_gid`/`lp_daemon_uid`).
+    /// Global-section default for the module `uid`.
+    ///
+    /// upstream: daemon-parm.txt `Locals:` - `uid`/`gid` are P_LOCAL. A value in
+    /// the global section is the default `lp_uid(i)`/`lp_gid(i)` every module
+    /// inherits (clientserver.c:833,844 read the per-module value). These are
+    /// distinct from the P_GLOBAL `daemon uid`/`daemon gid` process-wide drop
+    /// (clientserver.c:1496,1509 `lp_daemon_gid`/`lp_daemon_uid`).
     uid: Option<Result<u32, String>>,
+    /// Global-section default for the module `gid`; see `uid`.
     gid: Option<Result<GidSetting, String>>,
-    // upstream: daemon-parm.h:262 marks `auth users` P_LOCAL, so a global-section
-    // `auth users` becomes every module's default via loadparm.c
-    // init_section()/copy_section(). authenticate.c:228 auth_server() then reads
-    // lp_auth_users(module) and requires authentication whenever it is non-empty,
-    // so a module inheriting the default authenticates like one with its own list.
+    /// Global-section default for the module `auth users`.
+    ///
+    /// upstream: daemon-parm.txt:20 marks `auth users` P_LOCAL, so a
+    /// global-section `auth users` becomes every module's default via loadparm.c
+    /// init_section()/copy_section(). authenticate.c:288 auth_server() then reads
+    /// lp_auth_users(module) and requires authentication whenever it is non-empty,
+    /// so a module inheriting the default authenticates like one with its own list.
     auth_users: Option<Vec<AuthUser>>,
-    // upstream: daemon-parm.h:273 marks `auth digest` P_LOCAL, so a global
-    // value is every module's default by the same init_section()/copy_section()
-    // route as `auth users` above.
+    /// Global-section default for the module `auth digest`.
+    ///
+    /// upstream: daemon-parm.txt:19 marks `auth digest` P_LOCAL, so a global
+    /// value is every module's default by the same init_section()/copy_section()
+    /// route as `auth users` above.
     auth_digest: Option<String>,
 }
 
@@ -75,7 +82,7 @@ impl GlobalModuleDefaults {
     /// upstream: loadparm.c:394-398 init_section() copies `Vars.l` into the new
     /// section, and loadparm.c:347-348 `FN_LOCAL_STRING(fn, val)` expands to
     /// `if (LP_SNUM_OK(i) && iSECTION(i).val) RETURN_EXPANDED(iSECTION(i).val)
-    /// else RETURN_EXPANDED(Vars.l.val)`. clientserver.c:781-783 calls it only
+    /// else RETURN_EXPANDED(Vars.l.val)`. clientserver.c:739 `rsync_module()` calls it only
     /// when a client selects the module - long after `lp_load()` finished. So
     /// a string-typed P_LOCAL parameter whose default is NULL takes the copied
     /// value when there is one, and the final global value only when there is

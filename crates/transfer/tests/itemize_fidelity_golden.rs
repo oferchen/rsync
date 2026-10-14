@@ -12,17 +12,17 @@
 //! is deterministic. In particular `symlink_retarget` reproduces the case
 //! upstream renders `cLc........` (a retargeted symlink whose mtime falls in
 //! the same whole second as the old link's, so no `t` glyph): upstream
-//! `itemize()` (generator.c:526-527) tests the time via `mtime_differs()` ->
-//! `same_time()` (util1.c:1573), which with the default `modify_window == 0`
+//! `itemize()` (generator.c:532-533) tests the time via `mtime_differs()` ->
+//! `same_time()` (util1.c:1746-1747), which with the default `modify_window == 0`
 //! compares whole seconds only and ignores the fractional part. An exact
 //! nanosecond comparison would spuriously light the `t` glyph (`cLc.t......`);
 //! this test guards that boundary.
 //!
 //! # Upstream Reference
 //!
-//! - `log.c:695-746` - `%i` itemize string construction.
-//! - `generator.c:508-549` - `itemize()` derives the attribute flags.
-//! - `util1.c:1573` - `same_time()` whole-second comparison.
+//! - `log.c:733-784` - `%i` itemize string construction.
+//! - `generator.c:517-612` - `itemize()` derives the attribute flags.
+//! - `util1.c:1744-1754` - `same_time()` whole-second comparison.
 
 #![cfg(unix)]
 
@@ -72,7 +72,7 @@ struct Scenario {
 /// update-glyph + file-type-glyph, or a `*deleting` line. Drops the
 /// "sending incremental file list" preamble and the byte-count summary.
 ///
-/// upstream: log.c:695-746 - `%i` produces `YXcstpoguax`, where `Y` is one of
+/// upstream: log.c:733-784 - `%i` produces `YXcstpoguax`, where `Y` is one of
 /// `<>ch.*` and `X` is one of `fdDLS`; deletions render `*deleting`.
 fn is_itemize_row(line: &str) -> bool {
     if line.starts_with("*deleting") {

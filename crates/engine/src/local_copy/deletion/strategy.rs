@@ -129,8 +129,10 @@ pub fn is_extraneous_entry<S: AsRef<OsStr>>(entry_name: &OsStr, source_entries: 
 
 /// Determines if an entry should be deleted based on context and filters.
 ///
-/// Checks deletion-enabled state, `--max-delete` limits, extraneous
-/// membership, and filter rules before returning `true`.
+/// Checks deletion-enabled state, `--max-delete` limits and extraneous
+/// membership. When `context.relative_path` is set, the final answer comes
+/// from `filter_allows_deletion(relative_path, false)`; otherwise an
+/// extraneous entry is deleted.
 pub fn should_delete_entry<S, F>(
     entry_name: &OsStr,
     source_entries: &[S],

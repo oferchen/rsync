@@ -83,7 +83,6 @@ pub struct DeltaWork {
     /// script application) and reports actual stats. When `None`, the strategy
     /// reports the pre-computed `literal_bytes`/`matched_bytes` set by the
     /// receiver pipeline that already applied the wire delta.
-    ///
     source_path: Option<PathBuf>,
     /// Expected target file size from the file list entry.
     target_size: u64,
@@ -310,8 +309,8 @@ pub enum DeltaResultStatus {
     Success,
     /// Delta failed and the file should be retried in phase 2.
     ///
-    /// Mirrors upstream `receiver.c:976-984` where checksum mismatch triggers
-    /// `MSG_REDO`.
+    /// Mirrors upstream `receiver.c:recv_files()` (the `recv_ok == 0` arm,
+    /// lines 1349-1376) where a whole-file checksum mismatch sends `MSG_REDO`.
     NeedsRedo {
         /// Human-readable reason for the redo.
         reason: String,

@@ -8,7 +8,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `clientserver.c:997-1009` - daemon resolves `munge_symlinks` from
+//! - `clientserver.c:1070-1082` - daemon resolves `munge_symlinks` from
 //!   `lp_munge_symlinks()` and aborts if `rsyncd-munged` already exists at
 //!   the module root.
 //! - `flist.c:1375-1379` - receiver prepends `SYMLINK_PREFIX` to the wire
@@ -77,7 +77,7 @@ fn plain_receiver_config() -> ServerConfig {
 
 #[test]
 fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
-    // upstream: flist.c:1347-1351 - the receiver-side prepend is the only
+    // upstream: flist.c:1295-1297 - the receiver-side prepend is the only
     // signal that the daemon enabled `munge symlinks`. Verify the on-disk
     // link carries the `/rsyncd-munged/` prefix so following it lands inside
     // the module root.
@@ -136,7 +136,7 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
 /// the defect. A path COMPONENT is the right vehicle: `delete_item`
 /// only ever clears the leaf, so no removal can make way for this one.
 ///
-/// upstream: generator.c:1603 atomic_create -> do_symlink - EACCES is
+/// upstream: generator.c:2002 atomic_create -> do_symlink - EACCES is
 /// non-fatal (increment io_error and continue); every other class is
 /// a security boundary the receiver must surface.
 #[cfg(unix)]

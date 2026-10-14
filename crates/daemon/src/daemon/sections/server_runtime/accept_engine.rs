@@ -11,8 +11,8 @@
 /// `IORING_OP_ACCEPT`, kqueue `EVFILT_READ`, IOCP `AcceptEx`) plug into without
 /// touching the shared loop body.
 ///
-/// upstream: socket.c `start_accept_loop()` runs a single `select(2)` over all
-/// listener descriptors; the engine abstraction preserves that "one loop over
+/// upstream: socket.c:743-754 `start_accept_loop()` runs a single `poll(2)`
+/// over all listener descriptors; the engine abstraction preserves that "one loop over
 /// N listeners" shape while letting the readiness mechanism vary.
 ///
 /// [`poll`]: AcceptEngine::poll
@@ -59,8 +59,7 @@ enum AcceptOutcome {
 /// milliseconds.
 ///
 /// Bounds the `poll(2)` park so shutdown/reload/graceful-exit flags are
-/// re-inspected at the same 50ms interval the previous `WouldBlock` sleep
-/// provided - shutdown latency is unchanged, only the idle mechanism differs.
+/// re-inspected every 50ms.
 const READINESS_WAIT_MILLIS: u16 = 50;
 
 /// Parks until at least one listener has a pending connection or
@@ -75,8 +74,8 @@ const READINESS_WAIT_MILLIS: u16 = 50;
 /// kernel wait rather than one wait per family. That is what lets the accept
 /// path stay single-threaded; see [`PollAcceptEngine`].
 ///
-/// upstream: socket.c `start_accept_loop()` parks in `select(2)` over all
-/// listener fds before calling `accept(2)`.
+/// upstream: socket.c:746 `start_accept_loop()` parks in `poll(2)` over all
+/// listener fds before calling `accept(2)` (socket.c:749-754).
 ///
 /// `relay` is the QUIC front channel, when one exists; it is reported ready as
 /// index `listeners.len()`.
@@ -144,7 +143,7 @@ fn poll_ready(
 /// the child, so an engine that kept one acceptor thread per family would make
 /// that fork illegal on exactly the dual-stack topology daemons default to.
 ///
-/// upstream: socket.c `start_accept_loop()` - a single `select(2)` over all
+/// upstream: socket.c:746 `start_accept_loop()` - a single `poll(2)` over all
 /// listener fds in one process, with no per-family threads.
 ///
 /// # One connection per poll (admission correctness)
@@ -160,13 +159,12 @@ fn poll_ready(
 /// # Fairness across families
 ///
 /// The scan of ready listeners starts one past the family served last, so a
-/// continuously busy family cannot starve its sibling. The previous
-/// thread-per-listener engine got this from the OS scheduler; a single-threaded
-/// poll has to rotate explicitly.
+/// continuously busy family cannot starve its sibling; a single-threaded poll
+/// has to rotate explicitly.
 ///
 /// # Accept errors are transient
 ///
-/// upstream: socket.c:601 `if (fd < 0) continue;` - the accept loop ignores
+/// upstream: socket.c:756 `if (fd < 0) continue;` - the accept loop ignores
 /// every `accept(2)` failure and keeps serving. A transient per-connection
 /// error (ECONNABORTED when a client resets between handshake and accept, or
 /// EMFILE/ENFILE under a burst) must never tear the daemon down, and a failure
@@ -347,23 +345,22 @@ impl AcceptEngine for PollAcceptEngine {
 /// macOS `kqueue` accept engine: one `EVFILT_READ` registration per listener,
 /// readiness-driven `accept` that yields exactly one connection per poll.
 ///
-/// Replaces the portable engines' per-listener `poll(2)` park with a single
-/// `kevent(2)` wait over all listener fds. On a quiet daemon the thread parks
-/// in the kernel until a connection arrives or the 100ms signal-check timeout
-/// elapses, bounding shutdown-flag inspection to the same cadence the
-/// dual-stack engine uses.
+/// Uses a single `kevent(2)` wait over all listener fds in place of the
+/// portable engine's `poll(2)`. On a quiet daemon the thread parks in the
+/// kernel until a connection arrives or the 100ms signal-check timeout
+/// elapses, which bounds shutdown-flag inspection latency.
 ///
 /// # One connection per poll (admission correctness)
 ///
 /// The engine returns **exactly one** accepted connection per
-/// [`poll`](AcceptEngine::poll), matching the single-listener engine's
+/// [`poll`](AcceptEngine::poll), matching [`PollAcceptEngine`]'s
 /// one-at-a-time contract. This is load-bearing for `--max-connections`
-/// accounting: the shared accept loop reaps finished worker threads (dropping
+/// accounting: the shared accept loop reaps finished workers (dropping
 /// their [`ConnectionGuard`]s) only once per loop iteration, *before* it polls.
 /// An engine that drained and buffered several ready connections in one poll
 /// would hand them to the admission path back-to-back with no intervening reap,
-/// so guards from just-completed sequential transfers - still held while their
-/// worker threads finish teardown after the client has disconnected - would
+/// so guards from just-completed sequential transfers - still held until the
+/// loop reaps their workers after the client has disconnected - would
 /// accumulate and spuriously trip the cap under rapid sequential load. Yielding
 /// one per poll routes every connection through the loop body's reap cadence,
 /// keeping the process-global counter in lockstep exactly as the portable
@@ -400,8 +397,7 @@ struct KqueueAcceptEngine {
 
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 impl KqueueAcceptEngine {
-    /// Signal-check cadence for the `kevent(2)` wait, matching the dual-stack
-    /// engine's `recv_timeout` interval so shutdown latency is identical.
+    /// Signal-check cadence for the `kevent(2)` wait.
     const WAIT_TIMEOUT: Duration = Duration::from_millis(100);
 
     /// Builds the engine, registering a level-triggered `EVFILT_READ` event per
@@ -543,7 +539,7 @@ impl AcceptEngine for KqueueAcceptEngine {
 /// Returns `Ok(Some(engine))` on success, `Ok(None)` if kqueue setup fails so
 /// the caller falls back to the portable engines, threading `listeners` back out
 /// unchanged on failure. Any kqueue error is non-fatal: connection service must
-/// continue through the blocking engine.
+/// continue through [`PollAcceptEngine`].
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 fn try_build_kqueue_engine(
     listeners: Vec<TcpListener>,

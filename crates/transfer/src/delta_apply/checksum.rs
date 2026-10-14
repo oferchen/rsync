@@ -32,13 +32,13 @@ impl ChecksumVerifier {
     ///
     /// For protocol < 30 (no binary negotiation), the verifier uses MD4 with
     /// the checksum seed prepended as the first 4 bytes of input - matching
-    /// upstream's `CSUM_MD4_OLD` behaviour in `checksum.c:605-612`.
+    /// upstream's `CSUM_MD4_OLD` behaviour in `checksum.c:622-629`.
     /// Protocol 30+ uses MD5 (no seed) or negotiated algorithms.
     ///
     /// # Upstream Reference
     ///
-    /// - `checksum.c:559-620` - `sum_init()` seeds legacy MD4 variants
-    /// - `checksum.c:125-126` - protocol 27-29 uses `CSUM_MD4_OLD`
+    /// - `checksum.c:576-637` - `sum_init()` seeds legacy MD4 variants
+    /// - `checksum.c:142-144` - protocol 27-29 uses `CSUM_MD4_OLD`
     #[must_use]
     pub fn new(
         negotiated: Option<&NegotiationResult>,
@@ -52,7 +52,7 @@ impl ChecksumVerifier {
                 if protocol.uses_varint_encoding() {
                     Self::Md5(Md5::new())
                 } else {
-                    // upstream: checksum.c:125 - protocol >= 27 uses CSUM_MD4_OLD
+                    // upstream: checksum.c:142-144 - protocol >= 27 uses CSUM_MD4_OLD
                     // which prepends the 4-byte seed before file data.
                     Self::for_algorithm_seeded(ChecksumAlgorithm::MD4, seed, protocol)
                 }
@@ -72,7 +72,7 @@ impl ChecksumVerifier {
     ///
     /// # Upstream Reference
     ///
-    /// - `checksum.c:600-611` `sum_init()` - only `CSUM_MD4_OLD`/`BUSTED`/
+    /// - `checksum.c:615-629` `sum_init()` - only `CSUM_MD4_OLD`/`BUSTED`/
     ///   `ARCHAIC` (the protocol < 30 forms) call `sum_update(seed, 4)`; the
     ///   modern `CSUM_MD4` and `CSUM_MD5` cases seed nothing.
     #[must_use]
@@ -285,7 +285,7 @@ mod tests {
     }
 
     /// WHY: the whole-file end-of-file digest must be byte-compatible with a real
-    /// upstream 3.4.4 binary. Upstream `checksum.c:600-611` `sum_init()` prepends
+    /// upstream 3.5.1 binary. Upstream `checksum.c:615-629` `sum_init()` prepends
     /// the 4-byte LE seed ONLY for the legacy MD4 variants (CSUM_MD4_OLD/BUSTED/
     /// ARCHAIC, protocol < 30). The modern CSUM_MD4 negotiated at protocol >= 30
     /// (e.g. `--checksum-choice=md4`) is unseeded. Seeding it would corrupt the

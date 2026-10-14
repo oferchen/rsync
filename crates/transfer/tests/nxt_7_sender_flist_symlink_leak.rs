@@ -1,5 +1,5 @@
 //! NXT-7 regression test for the sender-side file-list symlink leak,
-//! ported from the upstream `sender-flist-symlink-leak.test`.
+//! ported from the upstream `sender-flist-symlink-leak_test.py`.
 //!
 //! # Why this matters
 //!
@@ -21,7 +21,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `testsuite/sender-flist-symlink-leak.test` - the end-to-end daemon
+//! - `testsuite/sender-flist-symlink-leak_test.py` - the end-to-end daemon
 //!   regression this test encodes as a fast in-process check.
 //! - `flist.c:send_file_list()` / `readlink_stat()` - default lstat keeps
 //!   symlinks unfollowed during enumeration.

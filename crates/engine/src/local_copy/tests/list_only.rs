@@ -433,7 +433,7 @@ fn list_only_handles_empty_directory() {
     // executor may emit is a directory-metadata operation on the transfer root
     // ".": DirectoryCreated when the destination is freshly made, or
     // MetadataReused when it already exists (upstream itemizes the "." entry
-    // whether or not it changed - generator.c:1480-1483).
+    // whether or not it changed - generator.c:1869-1872).
     assert_eq!(summary.files_copied(), 0);
     assert!(collector.records.iter().all(|r| {
         r.relative_path() == std::path::Path::new(".")
@@ -609,7 +609,7 @@ fn list_only_shows_device_nodes_when_enabled() {
     assert!(!collector.records.is_empty());
 }
 
-/// upstream: generator.c:1155 list_file_entry() lists every flist entry, so
+/// upstream: generator.c:1318 list_file_entry() lists every flist entry, so
 /// `--list-only` must record a symlink even without `--links`; a real transfer
 /// without `--links` skips it. This encodes WHY the two modes differ: listing
 /// enumerates the flist, transfer applies the generator's skip logic.
@@ -663,7 +663,7 @@ fn list_only_lists_symlink_without_links_flag() {
     );
 }
 
-/// upstream: generator.c:1155 list_file_entry() lists FIFOs regardless of
+/// upstream: generator.c:1318 list_file_entry() lists FIFOs regardless of
 /// `--specials`. `--list-only` records the FIFO; a real transfer without
 /// `--specials` skips it.
 #[cfg(unix)]

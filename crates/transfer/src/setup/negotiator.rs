@@ -16,7 +16,7 @@ use std::io::{self, Read, Write};
 /// Exchanges compatibility flags between server and client.
 ///
 /// Abstracts the unidirectional compat-flags exchange described in
-/// upstream `compat.c:710-741`. The server writes flags; the client reads them.
+/// upstream `compat.c:722-760`. The server writes flags; the client reads them.
 pub trait CompatFlagsExchanger {
     /// Writes the server's compatibility flags to the output stream.
     ///
@@ -47,7 +47,7 @@ pub trait CompatFlagsExchanger {
     ///
     /// # Upstream reference
     ///
-    /// Mirrors `compat.c:712-734`.
+    /// Mirrors `compat.c:729-745`.
     fn build_flags_from_client_info(
         &self,
         client_info: &str,
@@ -68,7 +68,7 @@ pub trait CompatFlagsExchanger {
 /// Negotiates checksum and compression algorithms with the peer.
 ///
 /// Abstracts the `negotiate_the_strings()` exchange from upstream
-/// `compat.c:534-585`. Protocol 30+ peers exchange supported algorithm lists
+/// `compat.c:538` `negotiate_the_strings()`. Protocol 30+ peers exchange supported algorithm lists
 /// and each side independently selects the first mutually supported entry.
 pub trait CapabilityNegotiator {
     /// Performs the full capability negotiation exchange.
@@ -80,7 +80,7 @@ pub trait CapabilityNegotiator {
     ///
     /// When `config.compression_override` is `Some`, the compression vstring
     /// exchange is skipped and the specified algorithm is used directly -
-    /// matching upstream `compat.c:543` (`do_compression && !compress_choice`).
+    /// matching upstream `compat.c:547` (`do_compression && !compress_choice`).
     fn negotiate(
         &self,
         protocol: ProtocolVersion,
@@ -92,12 +92,12 @@ pub trait CapabilityNegotiator {
 
 /// Exchanges the checksum seed between server and client.
 ///
-/// Abstracts the seed exchange at upstream `compat.c:750`. The server generates
+/// Abstracts the seed exchange at upstream `compat.c:822-827`. The server generates
 /// (or uses a fixed) seed and writes 4 bytes LE; the client reads them.
 pub trait ChecksumSeedExchanger {
     /// Generates (or uses a fixed) seed and writes it to the output stream.
     ///
-    /// # Seed generation (upstream `options.c:847`)
+    /// # Seed generation (upstream `compat.c:823-824`)
     ///
     /// - `None` or `Some(0)`: generate from `time() ^ (pid << 6)`
     /// - `Some(n)`: use `n` as the fixed seed
@@ -184,7 +184,7 @@ impl CapabilityNegotiator for RsyncNegotiator {
 
 impl ChecksumSeedExchanger for RsyncNegotiator {
     fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<i32>) -> io::Result<i32> {
-        // upstream: options.c:847 - seed generation
+        // upstream: compat.c:823-824 - seed generation
         let seed = match fixed_seed {
             Some(0) | None => {
                 use std::time::{SystemTime, UNIX_EPOCH};

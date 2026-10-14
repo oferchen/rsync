@@ -11,8 +11,9 @@
 //! - Symlinks to directories are preserved as symlinks
 //! - Behavior comparison with upstream rsync
 //!
-//! Reference: rsync 3.4.1 options.c and flist.c
-//! - The -l / --links flag enables symlink preservation (xfer_symlink)
+//! Reference: rsync 3.5.1 options.c and flist.c
+//! - The -l / --links flag enables symlink preservation (`preserve_links`,
+//!   `options.c:691`)
 //! - Without -l, symlinks may be skipped or dereferenced depending on other flags
 //!
 //! Note: These tests are Unix-only as symlinks behave differently on Windows.

@@ -156,7 +156,7 @@ pub(crate) struct ConfigInputs {
     ///
     /// `None` keeps the upstream default (advertise `'i'`); `Some(false)`
     /// suppresses it (`--no-inc-recursive`). Mirrors upstream
-    /// `compat.c:720 set_allow_inc_recurse()`.
+    /// `compat.c:162 set_allow_inc_recurse()`.
     pub(crate) inc_recursive_send: Option<bool>,
     pub(crate) verbosity: u8,
     pub(crate) progress_mode: Option<ProgressMode>,
@@ -180,21 +180,21 @@ pub(crate) struct ConfigInputs {
     pub(crate) link_dests: Vec<PathBuf>,
     pub(crate) remove_source_files: bool,
     /// `--remove-sent-files` - deprecated alias; forwarded verbatim on the wire.
-    /// upstream: options.c:2992-2995.
+    /// upstream: options.c:744 (`POPT_ARG_VAL` 2), options.c:3163-3166.
     pub(crate) remove_sent_files: bool,
     /// Resolved out-format string carries `%i`; forwards `--log-format=%i`.
     /// Mirrors upstream `stdout_format_has_i`, derived from the resolved format
-    /// string rather than the `-i` flag. upstream: options.c:2354-2367,2782-2785.
+    /// string rather than the `-i` flag. upstream: options.c:2496-2508,2948-2951.
     pub(crate) out_format_forwards_i: bool,
     /// A custom `--out-format` template was given, so remote per-file output is
     /// rendered client-side from collected events instead of the server line.
     pub(crate) render_out_format_locally: bool,
     /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
-    /// forwards `--log-format=%o`. upstream: options.c:2949-2950.
+    /// forwards `--log-format=%o`. upstream: options.c:2952-2953.
     pub(crate) out_format_has_operation: bool,
     /// Explicit `--out-format` / `--log-format` was given with neither `%i` nor
     /// `%o`; forwards the placeholder `--log-format=X` for a non-verbose client.
-    /// upstream: options.c:2788-2789.
+    /// upstream: options.c:2954-2955.
     pub(crate) out_format_placeholder: bool,
     pub(crate) inplace: bool,
     pub(crate) append: bool,
@@ -275,7 +275,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .quiet(inputs.quiet)
         .msgs2stderr(inputs.msgs2stderr)
         .recursive(inputs.recursive)
-        // upstream: options.c:2208-2212 - `else if (recurse) xfer_dirs = 1;
+        // upstream: options.c:2326-2329 - `else if (recurse) xfer_dirs = 1;
         // else if (xfer_dirs < 0) xfer_dirs = list_only ? 1 : 0;`. When neither
         // -r nor an explicit -d/--no-dirs is given, --list-only still transfers
         // (lists) a bare directory operand's own entry.
@@ -285,9 +285,9 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
             inputs.dirs.unwrap_or(inputs.list_only)
         })
         .dirs_explicit(inputs.dirs_explicit)
-        // upstream: options.c:2224-2226 - delete mode is enabled only by an
+        // upstream: options.c:2341-2354 - delete mode is enabled only by an
         // explicit `--delete*` or `--delete-excluded`. `--max-delete` merely caps
-        // the count (options.c:2191-2194) and must never enable deletion.
+        // the count (options.c:2308-2311) and must never enable deletion.
         .delete(inputs.delete_mode.is_enabled() || inputs.delete_excluded)
         .delete_excluded(inputs.delete_excluded)
         .delete_missing_args(inputs.delete_missing_args)
@@ -393,7 +393,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     }
     // Only override the builder's upstream default when the user supplied
     // `--inc-recursive` or `--no-inc-recursive`. Mirrors upstream
-    // `compat.c:720 set_allow_inc_recurse()`.
+    // `compat.c:162 set_allow_inc_recurse()`.
     if let Some(value) = inputs.inc_recursive_send {
         builder = builder.inc_recursive_send(value);
     }
@@ -506,7 +506,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     };
 
     builder = builder.itemize_changes(inputs.itemize_changes);
-    // upstream: generator.c:575-576 - emit itemize rows for unchanged entries
+    // upstream: generator.c:588-589 - emit itemize rows for unchanged entries
     // when `-ii` / `--info=name2` / `-vv` raised the level. The parser folds
     // all three into `NameOutputLevel::UpdatedAndUnchanged`.
     builder = builder.itemize_unchanged(matches!(

@@ -1,4 +1,4 @@
-//! Comprehensive tests for deletion decision logic.
+//! Tests for deletion decision logic.
 
 use super::*;
 use crate::local_copy::DeleteTiming;
@@ -122,7 +122,7 @@ mod is_extraneous_entry_tests {
     fn case_sensitive_matching() {
         let source = vec![OsString::from("File.txt")];
         assert!(!is_extraneous_entry(OsStr::new("File.txt"), &source));
-        // On case-sensitive filesystems, different case = different file
+        // Name comparison is byte-exact, independent of filesystem case folding.
         #[cfg(unix)]
         assert!(is_extraneous_entry(OsStr::new("file.txt"), &source));
     }

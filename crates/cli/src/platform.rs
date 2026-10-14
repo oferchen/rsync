@@ -28,24 +28,28 @@ pub(crate) const fn supports_group_name_lookup() -> bool {
     cfg!(unix)
 }
 
+/// Resolves a user name to its uid via the system user database.
 #[cfg(unix)]
 #[inline]
 pub(crate) fn lookup_user_by_name(name: &str) -> Option<uid_t> {
     get_user_by_name(name).map(|user| user.uid())
 }
 
+/// Always `None`: user names cannot be resolved on this platform.
 #[cfg(not(unix))]
 #[inline]
 pub(crate) fn lookup_user_by_name(_name: &str) -> Option<uid_t> {
     None
 }
 
+/// Resolves a group name to its gid via the system group database.
 #[cfg(unix)]
 #[inline]
 pub(crate) fn lookup_group_by_name(name: &str) -> Option<gid_t> {
     get_group_by_name(name).map(|group| group.gid())
 }
 
+/// Always `None`: group names cannot be resolved on this platform.
 #[cfg(not(unix))]
 #[inline]
 pub(crate) fn lookup_group_by_name(_name: &str) -> Option<gid_t> {

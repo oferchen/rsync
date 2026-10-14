@@ -66,11 +66,11 @@ pub(crate) fn copy_device(
         return Ok(());
     }
 
-    // upstream: generator.c:565-570 / 550-556 - a replace itemize reports
+    // upstream: generator.c:571-576 / 563-569 - a replace itemize reports
     // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
     // basis differs. Mirror the enabled flags across all platforms so the
     // recreate change-set is derivable without cfg branching at the record site.
-    // upstream: generator.c:566-572 - itemize() lights ITEM_REPORT_XATTR from
+    // upstream: generator.c:571-576 - itemize() lights ITEM_REPORT_XATTR from
     // xattr_diff(), not from `preserve_xattrs`. Compare here, before the node is
     // unlinked and recreated, so the diff sees the destination that the row
     // reports against.
@@ -133,16 +133,16 @@ pub(crate) fn copy_device(
             recurse,
             crate::local_copy::MakeWayFor::Device,
         )? {
-            // upstream: generator.c:2482 `return 0` - atomic_create() creates
+            // upstream: generator.c:2483 `return 0` - atomic_create() creates
             // nothing, the caller skips this entry, and the run finishes 23.
             return Ok(());
         }
         existing_metadata = None;
     }
 
-    // upstream: generator.c:1639-1642 - a device whose destination already
+    // upstream: generator.c:2048-2051 - a device whose destination already
     // holds another device (same FT_DEVICE bucket) is recreated rather than
-    // treated as new; quick_check_ok() (generator.c:661-671) compares st_rdev
+    // treated as new; quick_check_ok() (generator.c:674-679) compares st_rdev
     // to decide. Snapshot the existing device and its rdev-difference before
     // removal so the itemize change-set renders `cDc.T.` for a replace instead
     // of `cD+++++++++` for a genuine create. A non-device existing entry
@@ -192,8 +192,8 @@ pub(crate) fn copy_device(
                 Duration::default(),
                 Some(metadata_snapshot),
             );
-            // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW (statret < 0)
-            // so log.c:736-738 fills slots 2-10 with `+` for a device the
+            // upstream: generator.c:584 itemize() sets ITEM_IS_NEW (statret < 0)
+            // so log.c:768-772 fills slots 2-10 with `+` for a device the
             // receiver newly materialises. A device replacing another device is
             // itemized as a local change (`cDc.T.`) instead; the generator runs
             // itemize() even under --dry-run.
@@ -309,14 +309,14 @@ pub(crate) fn copy_device(
     }
 
     if let Some(existing) = existing_metadata.take() {
-        // upstream: generator.c:2019 atomic_create() - `make_backup(fname,
+        // upstream: generator.c:2478 atomic_create() - `make_backup(fname,
         // skip_atomic)` with `skip_atomic` false here, so the hard-link tier
         // runs before the rename.
         context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
         remove_existing_destination(destination)?;
     }
 
-    // upstream: generator.c:1643-1658 try_dests_non() - a `--link-dest` basis
+    // upstream: generator.c:1205-1316 try_dests_non() - a `--link-dest` basis
     // device matching the source (same FT_DEVICE bucket, same st_rdev, unchanged
     // attrs) is hard-linked into place and itemized `hD` + blank rather than
     // recreated. Only applies when creating fresh (no device is being replaced).
@@ -348,7 +348,7 @@ pub(crate) fn copy_device(
 
     // try to materialise as hard link to an earlier device we created
     if let Some(link_source) = existing_hard_link_target.take() {
-        // upstream: log.c:643-654 - the `%L` field renders ` => leader` for a
+        // upstream: log.c:675-689 - the `%L` field renders ` => leader` for a
         // hard-linked non-symlink. Capture the leader's destination-relative
         // path before the match may move `link_source` back on EXDEV so the
         // itemize row can emit `hD+++++++++ alias => leader`.
@@ -423,7 +423,7 @@ pub(crate) fn copy_device(
                         Duration::default(),
                         Some(metadata_snapshot),
                     )
-                    // upstream: hlink.c:218-222 itemize(..., ITEM_LOCAL_CHANGE, ...)
+                    // upstream: hlink.c:246-249 itemize(..., ITEM_LOCAL_CHANGE, ...)
                     // ORs in ITEM_IS_NEW when the destination did not exist, so a
                     // freshly hard-linked device alias renders `hD+++++++++`.
                     .with_creation(!destination_previously_existed),
@@ -447,12 +447,9 @@ pub(crate) fn copy_device(
         }
     }
 
-    // WIND-2: on non-Unix targets the receiver cannot materialise a device
-    // node. Emit a one-shot warning and skip the post-creation bookkeeping
-    // entirely. Previously this arm fell through to
-    // `register_created_path(CreatedEntryKind::Device, ...)` and
-    // `apply_file_metadata_with_options(...)` against an inode that was
-    // never written, silently recording a fake success.
+    // On non-Unix targets the receiver cannot materialise a device node, so
+    // the post-creation bookkeeping is skipped rather than recording a
+    // success for an inode that was never written.
     #[cfg(not(unix))]
     {
         let _ = (metadata_options, destination_previously_existed);
@@ -540,7 +537,7 @@ pub(crate) fn copy_device(
                 Some(metadata_snapshot),
             );
             let record = if let Some(existing) = replaced_device.as_ref() {
-                // upstream: generator.c:1677-1681 - a device replacing another
+                // upstream: generator.c:2091-2096 - a device replacing another
                 // device of the same FT_DEVICE bucket recreates it and itemizes
                 // via ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE (`cDc.T.`), not
                 // ITEM_IS_NEW. Derive the change-set from the rdev comparison.
@@ -555,8 +552,8 @@ pub(crate) fn copy_device(
                 );
                 record.with_creation(false).with_change_set(change_set)
             } else {
-                // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW
-                // (statret < 0) so log.c:736-738 fills slots 2-10 with `+` for a
+                // upstream: generator.c:584 itemize() sets ITEM_IS_NEW
+                // (statret < 0) so log.c:768-772 fills slots 2-10 with `+` for a
                 // device the receiver newly materialises via do_mknod(). A
                 // non-device existing entry hits upstream's statret = -1 path and
                 // is likewise itemized as new.
@@ -578,10 +575,11 @@ pub(crate) fn copy_device(
     Ok(())
 }
 
-/// Builds the WIND-2 skip-with-warn message for a device entry the Windows
-/// receiver cannot materialise. Exposed for regression tests so they can
-/// assert the wording without capturing stderr.
-/// WIND-2: docs/design/windows-device-file-strategy.md
+/// Builds the skip-with-warn message for a device entry the Windows receiver
+/// cannot materialise.
+///
+/// Exposed for regression tests so they can assert the wording without
+/// capturing stderr. Design note: `docs/design/windows-device-file-strategy.md`.
 #[cfg(not(unix))]
 pub(crate) fn format_skip_device_message(destination: &Path) -> String {
     format!(

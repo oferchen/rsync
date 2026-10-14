@@ -43,7 +43,7 @@ pub(super) fn handle_dry_run(
         existing_metadata,
     } = request;
     let destination_previously_existed = existing_metadata.is_some();
-    // upstream: flist.c:1644-1649 - a `--copy-devices` device is reported and
+    // upstream: flist.c:1790-1796 - a `--copy-devices` device is reported and
     // sized as a regular file. `Some(size)` also signals the snapshot below to
     // virtualize the kind/mode so `--list-only` shows `-rw-...` not `brw-...`.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
@@ -71,8 +71,8 @@ pub(super) fn handle_dry_run(
         return Ok(());
     }
 
-    // upstream: generator.c:526,645 - the generator runs the quick check
-    // (unchanged_file()/itemize()) in dry-run exactly as in a real run: a
+    // upstream: generator.c:517,630 - the generator runs the quick check
+    // (quick_check_ok()/itemize()) in dry-run exactly as in a real run: a
     // destination whose size matches and whose mtime is within `--modify-window`
     // of the source is up-to-date, so no transfer is itemized. Mirror the
     // real-run `try_skip_up_to_date` path here; without it the dry-run always
@@ -108,7 +108,7 @@ pub(super) fn handle_dry_run(
         }
     }
 
-    // upstream: generator.c:1469-1483 - in dry-run mode the generator still
+    // upstream: generator.c:2156 - in dry-run mode the generator still
     // evaluates `--link-dest` / `--copy-dest` / `--compare-dest` and itemizes
     // the file against the matched basis (`hf`/`cf`/`.f` + blank) rather than
     // reporting a full transfer (`>f+++++++++`). Mirror that here so a dry-run
@@ -148,7 +148,7 @@ pub(super) fn handle_dry_run(
     }
     // A dry run never writes, so the phase-2 redo a failed `--append-verify`
     // would trigger has nothing to report: upstream's `if (!do_xfers)` leg
-    // (receiver.c:821-826) logs the item and `continue`s, never reaching the
+    // (receiver.c:997-1004) logs the item and `continue`s, never reaching the
     // `recv_ok` switch that queues the redo.
     let append_offset = match append_mode {
         AppendMode::Append { offset, .. } => offset,
@@ -156,7 +156,7 @@ pub(super) fn handle_dry_run(
     };
     let bytes_transferred = file_size.saturating_sub(append_offset);
 
-    // upstream: main.c:1866-1867 - `--only-write-batch` forces dry_run=1 but the
+    // upstream: main.c:1946 - `--only-write-batch` forces dry_run=1 but the
     // batch_fd capture path still runs so the recorded stream contains the
     // file's token data. Mirror that by capturing the whole file into the per-
     // file batch delta buffer and finalising it (token end + xfer checksum)
@@ -166,23 +166,23 @@ pub(super) fn handle_dry_run(
     context.capture_batch_whole_file(source, file_size)?;
     context.finalize_batch_file_delta(source)?;
 
-    // upstream: sender.c:343-344 counts the file into stats.xferred_files and
+    // upstream: sender.c:634-635 counts the file into stats.xferred_files and
     // stats.total_transferred_size, then the `if (!do_xfers)` guard `continue`s
-    // before match_sums(), so stats.literal_data (match.c:436) and
-    // stats.matched_data (match.c:121) stay 0 under --dry-run. record_file would
+    // before match_sums(), so stats.literal_data (match.c:477) and
+    // stats.matched_data (match.c:144) stay 0 under --dry-run. record_file would
     // fold `bytes_transferred` into the literal tally; record_dry_run_file keeps
     // those transferred-byte counters at 0 while still counting the file.
     context
         .summary_mut()
         .record_dry_run_file(file_size, bytes_transferred);
 
-    // upstream: generator.c:1942-1960 - a dry-run still itemizes the file
+    // upstream: generator.c:2385-2386 - a dry-run still itemizes the file
     // against the existing destination via itemize()/report_flags, so an
     // existing but differing dest reports the real attribute drift (e.g.
     // `>f.st......`) rather than a blank `>f.........`. Mirror the real-run
     // change set from execute/mod.rs so `-ni` matches `-i` byte-for-byte.
     let wrote_data = bytes_transferred > 0;
-    // upstream: generator.c:566-572 - itemize() runs xattr_diff() in a dry run
+    // upstream: generator.c:571-576 - itemize() runs xattr_diff() in a dry run
     // exactly as in a real one, and a dry run never writes the destination, so
     // the comparison always sees the pre-transfer state.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
@@ -246,7 +246,7 @@ pub(super) fn handle_dry_run(
 /// filesystem mutation, since dry-run does no I/O. The change set is computed
 /// against the existing destination and honours `--modify-window`, so a file
 /// whose only drift is a sub-window mtime difference produces a blank itemize
-/// (suppressed at plain `-i`), matching upstream generator.c:526.
+/// (suppressed at plain `-i`), matching upstream generator.c:517.
 fn record_dry_run_skip(
     context: &mut CopyContext,
     metadata: &fs::Metadata,
@@ -256,7 +256,7 @@ fn record_dry_run_skip(
     existing: &fs::Metadata,
 ) {
     let metadata_options = context.metadata_options();
-    // upstream: generator.c:1816 -> itemize() with iflags=0. An up-to-date file
+    // upstream: generator.c:2246-2247 -> itemize() with iflags=0. An up-to-date file
     // still runs xattr_diff(), and ITEM_REPORT_XATTR is part of the emit gate
     // (generator.c:582), so a drifted attribute prints `.f........x` even though
     // nothing else changed - in a dry run exactly as in a real one.
@@ -405,7 +405,7 @@ fn simulate_reference_match(
     };
     context.summary_mut().record_regular_file_matched();
     // Itemize against the basis (compare/copy/link) so identical files stay
-    // blank, matching generator.c:1140 and the real-run change set.
+    // blank, matching generator.c:1299 and the real-run change set.
     let basis_metadata = fs::symlink_metadata(&basis)
         .map_err(|error| LocalCopyError::io("inspect reference basis", basis, error))?;
     let change_set = LocalCopyChangeSet::for_file(

@@ -119,7 +119,7 @@ impl LocalCopyChangeSet {
     ///
     /// # Upstream Reference
     ///
-    /// `log.c:730-734` - `ITEM_MISSING_DATA` fills attribute positions with `?`.
+    /// `log.c:768-772` - `ITEM_MISSING_DATA` fills attribute positions with `?`.
     #[must_use]
     pub const fn with_missing_data(mut self, missing: bool) -> Self {
         self.missing_data = missing;
@@ -210,7 +210,7 @@ impl LocalCopyChangeSet {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:581-583` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
+    /// - `generator.c:588-589` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
     #[must_use]
     pub const fn has_any_change(&self) -> bool {
         self.checksum_changed

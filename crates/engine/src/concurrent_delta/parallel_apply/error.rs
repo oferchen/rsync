@@ -1,7 +1,6 @@
 //! Typed error variants for the receive-side parallel delta applier.
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the module
-//! decomposition. Holds [`ParallelApplyError`] (the user-visible shutdown
+//! Holds [`ParallelApplyError`] (the user-visible shutdown
 //! and verification failure modes) and its [`io::Error`] bridge so existing
 //! `io::Result`-shaped callers keep their API.
 
@@ -15,8 +14,8 @@ use super::super::types::FileNdx;
 /// Typed error variants for [`ParallelDeltaApplier::finish_file`] shutdown
 /// paths.
 ///
-/// The audit at `docs/audits/arc-try-unwrap-classification.md` (ATU-3,
-/// tracked in #2380) flagged the previous opaque `io::Error::other(...)`
+/// The audit at `docs/audits/arc-try-unwrap-classification.md` flagged the previous opaque
+/// `io::Error::other(...)`
 /// message as user-visible but undiagnosable: it omitted the residual
 /// [`Arc::strong_count`], the offending `FileNdx`, and the failure mode
 /// (still-in-flight vs poisoned). Each variant below carries enough

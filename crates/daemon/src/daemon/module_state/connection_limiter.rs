@@ -20,7 +20,7 @@ use super::runtime::ModuleConnectionError;
 
 /// Width in bytes of a single connection slot in the lock file.
 ///
-/// upstream: connection.c:38 `lock_range(fd, i*4, 4)` reserves four bytes per
+/// upstream: connection.c:40 `lock_range(fd, i*4, 4)` reserves four bytes per
 /// slot, so slot `i` owns the byte range `[i*4, i*4+4)`. Matching the stride
 /// keeps oc-rsync interoperable with an upstream `rsync --daemon` that shares
 /// the same `lock file`.
@@ -39,7 +39,7 @@ const SLOT_LEN: i64 = 4;
 ///
 /// upstream: connection.c:26 `claim_connection()` opens the lock file and calls
 /// `lock_range(fd, i*4, 4)` for each slot, returning success on the first range
-/// it locks. util1.c:635 `lock_range()` issues `fcntl(fd, F_SETLK, &lock)` with
+/// it locks. util1.c:712-723 `lock_range()` issues `fcntl(fd, F_SETLK, &lock)` with
 /// `l_type = F_WRLCK`. On Windows, which has no equivalent lock-on-death
 /// primitive, the limiter falls back to a counter serialised with `flock`.
 pub(crate) struct ConnectionLimiter {
@@ -94,12 +94,12 @@ impl ConnectionLimiter {
     /// Records the lock file path, creating the file eagerly when it can.
     ///
     /// Construction CANNOT fail. upstream has no build-time open at all: the
-    /// lock file is opened inside `claim_connection()` (connection.c:33), and a
+    /// lock file is opened inside `claim_connection()` (connection.c:35), and a
     /// failed open there is `return 0` - that one connection is refused while
     /// the daemon keeps listening. Propagating a build-time failure instead
     /// killed the daemon before `listen()` whenever an operator-named lock path
-    /// was unopenable - including the refused-symlink case the 3.5.0
-    /// `daemon-config-symlink` cell plants, which upstream serves.
+    /// was unopenable - including the refused-symlink case the upstream
+    /// testsuite's `daemon-config-symlink` cell plants, which upstream serves.
     ///
     /// The eager create is kept because it is where the 0600 mode is
     /// established, but its failure is deliberately ignored: [`Self::acquire`]
@@ -139,12 +139,12 @@ impl ConnectionLimiter {
     /// (rsyncd.conf(5), "lock file"). Isolation is obtained by giving a module
     /// its own `lock file`, exactly as upstream does.
     ///
-    /// upstream: connection.c:31 opens the lock file before the scan, so an
+    /// upstream: connection.c:35 opens the lock file before the scan, so an
     /// unopenable file is an open failure whatever the limit says.
-    /// connection.c:37-40 then scans `[0, max_connections)` and returns the
+    /// connection.c:39-42 then scans `[0, max_connections)` and returns the
     /// first range that locks; a failed lock (`errno` unset) means capacity. A
     /// disabling (negative) limit scans nothing and refuses here, matching the
-    /// `close(fd); errno = 0; return 0` fall-through at connection.c:44-46.
+    /// `close(fd); errno = 0; return 0` fall-through at connection.c:44-48.
     pub(crate) fn acquire(
         self: &Arc<Self>,
         module: &str,
@@ -159,7 +159,7 @@ impl ConnectionLimiter {
                 match nix::fcntl::fcntl(&file, setlk_arg(&lock)) {
                     Ok(_) => return Ok(ConnectionLockGuard { _file: file }),
                     // The range is held by another connection or process; try the
-                    // next slot. upstream: util1.c:645 - `fcntl` returns non-zero
+                    // next slot. upstream: util1.c:722 - `fcntl` returns non-zero
                     // with EACCES/EAGAIN when the lock is contended.
                     Err(nix::errno::Errno::EACCES | nix::errno::Errno::EAGAIN) => break,
                     // A signal interrupted the lock request before it resolved;
@@ -211,7 +211,7 @@ fn setlk_arg(lock: &nix::libc::flock) -> nix::fcntl::FcntlArg<'_> {
 
 /// Selects the non-blocking `F_SETLK` command on non-Linux unix platforms.
 ///
-/// upstream: util1.c:645 uses `fcntl(fd, F_SETLK, &lock)`. Where OFD locks are
+/// upstream: util1.c:722 uses `fcntl(fd, F_SETLK, &lock)`. Where OFD locks are
 /// unavailable the in-process slot count is enforced by the caller's atomic
 /// counter; `F_SETLK` still coordinates across separate daemon processes.
 #[cfg(all(unix, not(target_os = "linux")))]
@@ -236,7 +236,10 @@ impl ConnectionLimiter {
     /// Windows lacks a byte-range-lock-on-death primitive, so the count is kept
     /// in the lock file and serialised with an exclusive `flock`, with a RAII
     /// guard restoring the count on drop. The lock file is opened first for
-    /// every non-zero limit, matching connection.c:31.
+    /// every non-zero limit, matching connection.c:35.
+    ///
+    /// Deviation from upstream: the count is keyed by module name, so modules
+    /// sharing a `lock file` do not share slots as they do on Unix.
     pub(crate) fn acquire(
         self: &Arc<Self>,
         module: &str,

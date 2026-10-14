@@ -16,7 +16,7 @@ use crate::{
     send_client_filter_list, wire_rule_crosses_wire,
 };
 
-// -- receiver_wants_list truth table (exclude.c:1647-1648, 1676-1677) --
+// -- receiver_wants_list truth table (exclude.c:1946-1947, 1975-1976) --
 
 /// `--prune-empty-dirs` always needs the list, independent of delete flags and
 /// protocol, because the sender cannot prune empty dirs without the receiver's
@@ -84,7 +84,7 @@ fn delete_excluded_gates_on_protocol_29() {
     ));
 }
 
-// -- send_rules per-rule elision (exclude.c:1605-1612) --
+// -- send_rules per-rule elision (exclude.c:1904-1914) --
 
 fn dir_merge(no_prefixes: bool) -> FilterRuleWireFormat {
     FilterRuleWireFormat {
@@ -226,12 +226,12 @@ fn explicitly_sided_no_prefix_merge_uses_side_check() {
     ));
 }
 
-// -- CVS-origin send gate (exclude.c:1652-1668 send_filter_list) --
+// -- CVS-origin send gate (exclude.c:1951-1967 send_filter_list) --
 
 /// A built-in `-C` exclude (e.g. `- *.o`) carries no side flag, so before the
 /// CVS gate it crossed the wire on both directions. Upstream only adds the `-C`
 /// rules to the transmitted list on a sending client (`am_sender`); a receiving
-/// client appends them after `send_rules()` (exclude.c:1663-1668), so they must
+/// client appends them after `send_rules()` (exclude.c:1962-1967), so they must
 /// stay local on a pull. The `-C` flag is forwarded to the peer in argv, which
 /// regenerates the excludes itself, so transmitting them would be redundant and
 /// non-upstream bytes on the wire.
@@ -267,7 +267,7 @@ fn cvs_origin_exclude_local_on_pull_transmitted_on_push() {
 
 /// The `:C` per-directory merge is a protocol >= 29 wire feature: upstream adds
 /// it to the transmitted list only when `protocol_version >= 29`
-/// (exclude.c:1653), and keeps it local on a legacy peer (exclude.c:1664).
+/// (exclude.c:1952), and keeps it local on a legacy peer (exclude.c:1963).
 /// Emitting it on a pre-29 peer would abort with "filter rules are too modern"
 /// because `get_rule_prefix()` cannot encode a per-directory merge there.
 #[test]
@@ -337,7 +337,7 @@ fn manual_dir_merge_without_cvs_origin_not_gated() {
     ));
 }
 
-// -- perishable "too modern" abort (exclude.c:1573-1577 / 1624-1628) --
+// -- perishable "too modern" abort (exclude.c:1922-1928) --
 
 fn perishable_exclude() -> FilterRuleWireFormat {
     FilterRuleWireFormat::exclude("*.tmp".to_owned()).with_perishable(true)
@@ -413,7 +413,7 @@ fn non_perishable_rule_unaffected_pre_protocol_30() {
 
 /// The abort maps to upstream's exact observable outcome: the stderr diagnostic
 /// text is byte-for-byte `filter rules are too modern for remote rsync.`
-/// (exclude.c:1625) and it is tagged as a protocol violation, which the core
+/// (exclude.c:1925) and it is tagged as a protocol violation, which the core
 /// exit-code mapper renders as RERR_PROTOCOL (exit code 2) - the same class as
 /// upstream's `exit_cleanup(RERR_PROTOCOL)`.
 #[test]
@@ -432,7 +432,7 @@ fn too_modern_abort_message_and_exit_class() {
     );
 }
 
-// -- pre-29 legality on every client path (exclude.c:1888-1956) --
+// -- pre-29 legality on every client path (exclude.c:1888-1969) --
 
 /// Runs the client filter-list step and returns the bytes it wrote, or the
 /// error it aborted with. `send` is the `receiver_wants_list` decision.

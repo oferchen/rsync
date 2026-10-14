@@ -722,7 +722,7 @@ fn filter_segment_protect_blocks_deletion_but_allows_transfer() {
 fn filter_segment_risk_removes_protection() {
     let mut segment = FilterSegment::default();
     // Risk (specific) before protect (broad): upstream check_filter() first-match
-    // (exclude.c:1058-1061) un-protects data/temp/** while data/** stays guarded.
+    // (exclude.c:1206-1209) un-protects data/temp/** while data/** stays guarded.
     segment
         .push_rule(FilterRule::risk("data/temp/**"))
         .expect("risk data/temp/**");
@@ -867,7 +867,7 @@ fn filter_segment_perishable_exclude_protects_top_level_deletion() {
     );
 
     // Deletion: the top-level scan runs with `ignore_perishable` unset
-    // (upstream exclude.c:1044 / delete.c:147), so a perishable exclude
+    // (upstream exclude.c:1193 / delete.c:208), so a perishable exclude
     // protects a matching candidate just like a plain exclude.
     let mut deletion_outcome = FilterOutcome::default();
     segment.apply(
@@ -897,7 +897,7 @@ fn filter_segment_perishable_protect_applies_in_deletion() {
         FilterContext::Deletion,
     );
     // A perishable protect is honoured at the top-level delete scan (upstream
-    // exclude.c:1044 / delete.c:147), so the path is protected.
+    // exclude.c:1193 / delete.c:208), so the path is protected.
     assert!(
         !outcome.allows_deletion(),
         "perishable protect must protect a matching entry from deletion"

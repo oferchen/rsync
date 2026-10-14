@@ -51,7 +51,7 @@ impl SourceSpec {
 
     /// Returns `true` when the operand contained an explicit `./` dot-dir
     /// marker used to anchor `--relative` paths. Mirrors upstream
-    /// `flist.c:2608` which flips `implied_dot_dir` for `./xxx`-style args.
+    /// `flist.c:2880-2881` which flips `implied_dot_dir` for `./xxx`-style args.
     pub(crate) const fn has_dot_dir_marker(&self) -> bool {
         self.has_dot_dir_marker
     }
@@ -119,7 +119,7 @@ impl SourceSpec {
 
     /// Builds a synthetic NAMED operand from a copy-contents source's immediate
     /// child, used by the local-copy executor to reproduce upstream's global
-    /// merge of multiple copy-contents sources' contents (flist.c:2784
+    /// merge of multiple copy-contents sources' contents (flist.c:3059
     /// flist_sort_and_clean). The child maps to `dest/<basename>` exactly like a
     /// real named operand of the same basename, so it carries no copy-contents,
     /// relative-prefix, or dot-dir markers.
@@ -468,7 +468,7 @@ pub(crate) fn operand_ends_in_parent_dir(path: &OsStr) -> bool {
 /// Returns `true` when the operand's final path component is a bare `.`
 /// (the operand is exactly `.` or ends with `/.`). Upstream treats such a
 /// source as contents-only, identical to a trailing slash. See upstream
-/// flist.c:2571 where a `DOTDIR_NAME` last component sets the
+/// flist.c:2843-2844 where a `DOTDIR_NAME` last component sets the
 /// "copy directory contents" semantics.
 pub(crate) fn operand_is_dot_dir(path: &OsStr) -> bool {
     #[cfg(unix)]
@@ -532,7 +532,7 @@ pub(crate) fn operand_is_dot_dir(path: &OsStr) -> bool {
 ///
 /// - `flist.c:2819-2846` - a trailing `/` gains `.`, a trailing `..` gains `/.`
 /// - `flist.c:2847-2858` - the split at the last `/`
-/// - `flist.c:2914-2921` - a failed `change_pathname()` skips the operand
+/// - `flist.c:2916-2925` - a failed `change_pathname()` skips the operand
 /// - `flist.c:686-694` - `change_pathname()` sets `IOERR_GENERAL` and reports
 ///   `change_dir %s failed`
 pub fn operand_change_dir_failure(operand: &Path) -> Option<(PathBuf, io::Error)> {
@@ -551,7 +551,7 @@ pub fn operand_change_dir_failure(operand: &Path) -> Option<(PathBuf, io::Error)
         Ok(_) => io::Error::from(io::ErrorKind::NotADirectory),
         Err(error) => error,
     };
-    // upstream: flist.c:2852-2853 - a split at the leading `/` names `/`.
+    // upstream: flist.c:2852-2855 - a split at the leading `/` names `/`.
     if dir.as_os_str().is_empty() {
         return Some((PathBuf::from("/"), error));
     }
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn source_spec_from_operand_dot_dir_copies_contents() {
-        // upstream flist.c:2571 treats a `.` last component as contents-only,
+        // upstream flist.c:2843-2844 treats a `.` last component as contents-only,
         // identical to a trailing slash; a bare `.` must not error out trying
         // to derive a directory name from `file_name()`.
         for operand in [".", "foo/.", "/tmp/dir/."] {

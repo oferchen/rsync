@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:356-384` - `handle_stats()` sends build/xfer times
-/// - `flist.c:2428` - `stats.flist_buildtime` timing
+/// - `main.c:351-360` - `handle_stats()` sends build/xfer times
+/// - `flist.c:3017-3020` - `stats.flist_buildtime` timing
 #[derive(Debug)]
 pub(crate) struct TransferTiming {
     /// When file list building started (for flist_buildtime statistic).
@@ -23,10 +23,11 @@ pub(crate) struct TransferTiming {
     /// When file list transfer ended (for flist_xfertime statistic).
     pub(crate) flist_xfer_end: Option<Instant>,
     /// Elapsed time from `send_file_list` entry to the first byte hitting the
-    /// wire. Diagnostic counter for sender-side INC_RECURSE (#2089) - tracks
-    /// how long the receiver waits before observing any file list data.
+    /// wire. Diagnostic counter for sender-side INC_RECURSE - tracks how long
+    /// the receiver waits before observing any file list data.
     ///
-    /// upstream: flist.c send_file_list / send_dir_name first-byte timing
+    /// Deviation from upstream: oc-only diagnostic; `flist.c:send_file_list()`
+    /// keeps no first-byte timing.
     pub(crate) flist_first_byte_latency: Option<Duration>,
     /// Total bytes read from network during transfer (for total_read statistic).
     pub(crate) total_bytes_read: u64,

@@ -4,9 +4,11 @@
 /// NSS lookups (getpwuid, getpwnam, getgrgid, getgrnam) with a simple
 /// line-based protocol over stdin/stdout pipes.
 ///
-/// upstream: clientserver.c:964-971 - the name converter is spawned after
-/// privilege reduction and communicates via stdin/stdout pipes. Requests are
-/// `"{cmd} {arg}\n"`, responses are single lines.
+/// upstream: clientserver.c:1024-1025 spawns the converter with
+/// `start_pre_exec()` and talks to it over two pipes (`namecvt_call()`,
+/// clientserver.c:1311). Requests are `"{cmd} {arg}\n"`, responses are single
+/// lines. Upstream spawns it before the chroot (:1050) and the privilege drop
+/// (:1122); oc spawns it after both (`module_access/transfer/orchestration.rs`).
 #[cfg(unix)]
 struct NameConverter {
     child: std::process::Child,
@@ -267,8 +269,8 @@ impl metadata::id_lookup::NameConverterCallbacks for NameConverter {
 /// uses `LookupAccountNameW` and `NetUserEnum` from the platform crate.
 /// No subprocess is needed since Windows doesn't use chroot.
 ///
-/// upstream: uidlist.c - on Windows, name resolution uses Win32 APIs
-/// instead of NSS/getpwuid/getgrnam.
+/// Deviation from upstream: rsync has no Windows port; uidlist.c resolves
+/// names only through NSS (`getpwnam()` / `getgrnam()`).
 #[cfg(windows)]
 struct WindowsNameConverter;
 

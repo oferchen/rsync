@@ -21,7 +21,7 @@ pub(super) enum DestinationState {
     /// Destination directory already exists and is ready. Carries the existing
     /// directory metadata so callers can itemize attribute drift (mtime, perms,
     /// ownership) against the source's metadata, matching upstream
-    /// `generator.c:1480-1483` which feeds the existing `sx.st` into
+    /// `generator.c:1869-1871` which feeds the existing `sx.st` into
     /// `itemize()` with `iflags=0` and lets `itemize()` compute the
     /// `ITEM_REPORT_TIME|PERMS|...` bits.
     Ready(Option<fs::Metadata>),

@@ -3,8 +3,8 @@ use super::*;
 
 #[test]
 fn protocol_option_accepted_on_local_copy() {
-    // upstream: setup_protocol (compat.c:629-637) runs for local copies too, so
-    // `--protocol=N` (20..=32) is accepted on a local transfer (exit 0) and the
+    // upstream: setup_protocol (compat.c:631-640) runs for local copies too, so
+    // `--protocol=N` (20..=33) is accepted on a local transfer (exit 0) and the
     // copy proceeds. This build ignores the value for a local copy.
     let temp = test_support::create_tempdir();
     let source = temp.path().join("source.txt");
@@ -32,7 +32,7 @@ fn protocol_value_with_whitespace_and_plus_is_accepted() {
 
 #[test]
 fn protocol_below_upstream_floor_is_protocol_error() {
-    // upstream: compat.c:630 rejects `< MIN_PROTOCOL_VERSION` (20) with
+    // upstream: compat.c:631 rejects `< MIN_PROTOCOL_VERSION` (20) with
     // RERR_PROTOCOL (errcode.h:26). errcode.h:26 defines RERR_PROTOCOL = 2.
     let message = parse_protocol_version_arg(OsStr::new("19"))
         .expect_err("protocol 19 is below the upstream floor");
@@ -42,7 +42,7 @@ fn protocol_below_upstream_floor_is_protocol_error() {
 
 #[test]
 fn protocol_33_is_supported() {
-    // upstream 3.5.1: rsync.h:114 `PROTOCOL_VERSION 33`, so compat.c:634-637
+    // upstream 3.5.1: rsync.h:114 `PROTOCOL_VERSION 33`, so compat.c:636-639
     // accepts `--protocol=33`.
     match parse_protocol_version_arg(OsStr::new("33")).expect("protocol 33 is valid") {
         ProtocolArg::Supported(v) => assert_eq!(v.as_u8(), 33),
@@ -52,7 +52,7 @@ fn protocol_33_is_supported() {
 
 #[test]
 fn protocol_above_upstream_ceiling_is_protocol_error() {
-    // upstream: compat.c:635 rejects `> PROTOCOL_VERSION` (33) with RERR_PROTOCOL.
+    // upstream: compat.c:636 rejects `> PROTOCOL_VERSION` (33) with RERR_PROTOCOL.
     let message = parse_protocol_version_arg(OsStr::new("34"))
         .expect_err("protocol 34 is above the upstream ceiling");
     assert_eq!(message.code(), Some(2));

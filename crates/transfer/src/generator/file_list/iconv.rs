@@ -1,7 +1,7 @@
 //! Strict `--iconv` validation of built file-list entries.
 //!
 //! Upstream rsync transcodes every filename through `iconvbufs(ic_send, ...,
-//! ICB_INIT)` in `send_file1()`. `ICB_INIT` is the strict mode: a byte
+//! ICB_INIT)` in `send_file_name()`. `ICB_INIT` is the strict mode: a byte
 //! sequence that cannot be represented in the peer charset makes the call
 //! return `< 0`, whereupon upstream sets `io_error |= IOERR_GENERAL`, prints a
 //! `cannot convert filename` diagnostic, and `return NULL`s so the entry never
@@ -11,8 +11,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1875-1899` `send_file1()` - strict `ic_send` conversion + skip.
-//! - `flist.c:982` `recv_file_entry()` - the receiver mirrors this.
+//! - `flist.c:2010-2040` `send_file_name()` - strict `ic_send` conversion + skip.
+//! - `flist.c:1059-1065` `recv_file_entry()` - the receiver mirrors this.
 
 use protocol::CompatibilityFlags;
 use protocol::flist::DualFileList;
@@ -35,9 +35,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1892` `send_file1()` - name failure: `rprintf(FERROR_XFER,
+    /// - `flist.c:2018-2023` `send_file_name()` - name failure: `rprintf(FERROR_XFER,
     ///   "[%s] cannot convert filename: %s (%s)\n", ...)` then `return NULL`.
-    /// - `flist.c:1867-1876` `send_file1()` - symlink-target failure (guarded by
+    /// - `flist.c:2028-2038` `send_file_name()` - symlink-target failure (guarded by
     ///   `symlink_len && sender_symlink_iconv`): `rprintf(FERROR_XFER, "[%s]
     ///   cannot convert symlink data for: %s (%s)\n", ...)` then `return NULL`.
     pub(super) fn drop_unconvertible_entries(&mut self) {
@@ -48,7 +48,7 @@ impl GeneratorContext {
             return;
         }
 
-        // upstream: compat.c:765-767 - the symlink TARGET is only strict-checked
+        // upstream: compat.c:776-778 - the symlink TARGET is only strict-checked
         // (and thus only a drop condition) when `sender_symlink_iconv` is set,
         // i.e. the peer negotiated CF_SYMLINK_ICONV. Otherwise targets ship as
         // raw local bytes and never gate list membership.
@@ -75,7 +75,7 @@ impl GeneratorContext {
         }
 
         if any_dropped {
-            // upstream: flist.c:1858 - io_error |= IOERR_GENERAL -> exit 23.
+            // upstream: flist.c:2019 - io_error |= IOERR_GENERAL -> exit 23.
             self.add_io_error(io_error_flags::IOERR_GENERAL);
         }
     }
@@ -83,7 +83,7 @@ impl GeneratorContext {
     /// Returns whether `entry` survives strict `--iconv` transcoding, emitting
     /// the matching upstream `FERROR_XFER` diagnostic when it does not.
     ///
-    /// The name is checked first (upstream `send_file1` returns before ever
+    /// The name is checked first (upstream `send_file_name` returns before ever
     /// reaching the symlink block on a name failure), so at most one message is
     /// printed per entry, matching upstream.
     fn entry_is_convertible(
@@ -108,7 +108,7 @@ impl GeneratorContext {
         {
             let target_bytes = symlink_target_bytes(target);
             if converter.local_to_remote(&target_bytes).is_err() {
-                // upstream: flist.c:1873 - FERROR_XFER "cannot convert symlink
+                // upstream: flist.c:2035 - FERROR_XFER "cannot convert symlink
                 // data for", keyed by the symlink's own path.
                 eprintln!(
                     "{}",
@@ -154,8 +154,8 @@ mod drop_decision_tests {
         FilenameConverter::new("UTF-8", "ISO-8859-1").expect("converter builds")
     }
 
-    /// upstream: flist.c:1867-1876 - with `sender_symlink_iconv` (CF_SYMLINK_ICONV
-    /// negotiated) an unconvertible symlink TARGET makes `send_file1` `return
+    /// upstream: flist.c:2028-2038 - with `sender_symlink_iconv` (CF_SYMLINK_ICONV
+    /// negotiated) an unconvertible symlink TARGET makes `send_file_name` `return
     /// NULL`, dropping the entry. The name here converts fine, so the target is
     /// the sole drop cause.
     #[test]
@@ -168,7 +168,7 @@ mod drop_decision_tests {
     /// Without CF_SYMLINK_ICONV the target ships as raw local bytes and never
     /// gates list membership - the entry survives even with a non-Latin-1 target.
     ///
-    /// upstream: flist.c:1867 gate `sender_symlink_iconv` is 0.
+    /// upstream: flist.c:2028 gate `sender_symlink_iconv` is 0.
     #[test]
     fn symlink_with_unconvertible_target_kept_when_not_negotiated() {
         let conv = latin1_converter();
@@ -177,7 +177,7 @@ mod drop_decision_tests {
     }
 
     /// An unconvertible NAME is always a drop cause, independent of the symlink
-    /// gate. upstream: flist.c:1892 `return NULL`.
+    /// gate. upstream: flist.c:2023 `return NULL`.
     #[test]
     fn unconvertible_name_always_dropped() {
         let conv = latin1_converter();

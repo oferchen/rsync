@@ -1,7 +1,7 @@
 //! Receiver-side re-filter of received file-list names.
 //!
 //! A receiver must never be forced to materialize a path its own filter rules
-//! exclude. Upstream `recv_file_entry()` (flist.c:1244-1255) re-runs every
+//! exclude. Upstream `recv_file_entry()` (flist.c:1362-1370) re-runs every
 //! received name through `check_server_filter` and aborts with
 //! `RERR_UNSUPPORTED` when a sender smuggles an excluded name into the list.
 //! These tests encode that invariant for both the server-receiver
@@ -61,7 +61,7 @@ fn included_names_pass_via_filter_chain() {
 
 #[test]
 fn trust_sender_skips_recheck() {
-    // upstream: flist.c:1246 - `!trust_sender_filter` guards the re-check; a
+    // upstream: flist.c:1471 - `!trust_sender_filter` guards the re-check; a
     // local transfer or `--trust-sender` skips it entirely.
     let mut config = test_config();
     config.trust_sender = true;
@@ -87,7 +87,7 @@ fn empty_filter_chain_is_a_no_op() {
 
 #[test]
 fn per_dir_merge_defers_to_sender() {
-    // upstream: exclude.c:1182 - a per-directory merge (`:`) rule sets
+    // upstream: exclude.c:1333 - a per-directory merge (`:`) rule sets
     // trust_sender_filter, so the receiver cannot reproduce the sender's
     // per-directory decision and must trust the sender's filtering.
     let mut chain = chain_excluding("*.log");
@@ -127,7 +127,7 @@ fn client_pull_excluded_name_rejected() {
 
 #[test]
 fn delete_excluded_does_not_weaken_recheck() {
-    // upstream: check_server_filter (exclude.c:1030, LOCAL_RULE) evaluates the
+    // upstream: check_server_filter (exclude.c:1129, LOCAL_RULE) evaluates the
     // sender-side rules regardless of --delete-excluded. --delete-excluded
     // governs which local destination files may be deleted, not which names a
     // sender may place in the file list, so an excluded name is still rejected.
@@ -226,12 +226,12 @@ fn directory_only_wire_rule_still_rejects_a_smuggled_directory() {
 
 #[test]
 fn daemon_rules_merged_into_the_chain_are_screened_out_of_the_recheck() {
-    // upstream: flist.c:1247 - `check_server_filter(&filter_list, ...)` runs
+    // upstream: flist.c:1364 - `check_server_filter(&filter_list, ...)` runs
     // the CLIENT's rules only; `daemon_filter_list` never joins that list. oc
     // prepends the daemon rules to `filter_chain`, so the re-check must use
     // the client-only view captured before the merge.
     //
-    // MEASURED against rsync 3.5.0 (task 1167, p-risk-protect): a module with
+    // MEASURED against rsync 3.5.0: a module with
     // `filter = risk bar protect *` receiving a push of `src1` refuses that
     // one file (`ERROR: daemon refused to receive file "src1"`, exit 23).
     // Re-checking the merged chain instead aborted the whole session with

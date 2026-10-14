@@ -16,7 +16,7 @@ impl ClientConfig {
     /// Returns the modification time tolerance in whole seconds, if configured.
     ///
     /// A negative value requests upstream's nanosecond-exact comparison
-    /// (`modify_window < 0`, util1.c:1577).
+    /// (`modify_window < 0`, util1.c:1748).
     #[doc(alias = "--modify-window")]
     pub const fn modify_window(&self) -> Option<i64> {
         self.modify_window
@@ -25,7 +25,7 @@ impl ClientConfig {
     /// Returns the modification time tolerance as a [`ModifyWindow`].
     ///
     /// Unset defaults to [`ModifyWindow::ZERO`], mirroring upstream's default
-    /// `modify_window = 0` (options.c:143).
+    /// `modify_window = 0` (options.c:149).
     #[must_use]
     pub fn modify_window_setting(&self) -> ModifyWindow {
         self.modify_window
@@ -43,7 +43,7 @@ impl ClientConfig {
     /// Reports whether the deprecated `--remove-sent-files` spelling was the
     /// effective one, so `server_options()` forwards that alias.
     ///
-    /// upstream: options.c:730, 2992-2995 - the option table sets
+    /// upstream: options.c:744, 3163-3166 - the option table sets
     /// `remove_source_files = 2` for the deprecated alias, and the emitter picks
     /// `--remove-sent-files` when the value is 2.
     #[must_use]
@@ -165,7 +165,7 @@ impl ClientConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2456-2499` - files_from parsing
+    /// - `options.c:2616-2670` - files_from parsing
     #[must_use]
     #[doc(alias = "--files-from")]
     pub fn files_from(&self) -> &FilesFromSource {

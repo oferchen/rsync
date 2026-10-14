@@ -37,7 +37,7 @@ struct PartialEntry {
 /// On unix *both* path decisions go through the ownership walk, because
 /// upstream wraps both in `operator_path_resolve = 1`: the reuse probe
 /// (`do_lstat_at`, `util1.c:1616`) and the create (`do_mkdir_at`,
-/// `util1.c:1624`). An absolute `--partial-dir` names a location outside the
+/// `util1.c:1625`). An absolute `--partial-dir` names a location outside the
 /// transfer tree, so a foreign-owned symlink planted at any component would
 /// otherwise redirect the staged file - a complete copy of the source - out of
 /// the tree. Probing with `Path::is_dir()` would defeat the walk on exactly the
@@ -60,11 +60,13 @@ pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
         // rule as the create. A refusal propagates rather than degrading to an
         // unconfined create.
         match fast_io::operator_symlink_metadata(dir) {
-            // upstream: util1.c:1617 - `statret == 0 && S_ISDIR` skips the
-            // mkdir and the dir is reused as it stands.
+            // upstream: util1.c:1617 acts only on `statret == 0 && !S_ISDIR`,
+            // so an existing directory skips both the unlink and the mkdir
+            // (util1.c:1625) and is reused as it stands.
             Ok(metadata) if metadata.is_dir() => return Ok(()),
-            // Something that is not a directory occupies the name. Upstream
-            // unlinks it (util1.c:1618); oc has never done that, and the
+            // Something that is not a directory occupies the name.
+            // Deviation from upstream: upstream unlinks it (util1.c:1618);
+            // oc does not, and the
             // `operator_mkdir` below keeps today's behaviour of reporting the
             // resulting `EEXIST` as success. Left unchanged here on purpose:
             // this function also creates ancestors upstream never touches, so
@@ -94,7 +96,7 @@ pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:1616-1623` `handle_partial_dir()` - `do_lstat_at`
+/// - `rsync-3.5.1/util1.c:1616-1624` `handle_partial_dir()` - `do_lstat_at`
 ///   then, when the entry exists and is not a directory,
 ///   `do_unlink_at(dir) < 0` aborts, otherwise `do_mkdir_at` runs against the
 ///   cleared name. Without the unlink an obstruction is fatal, where upstream
@@ -135,7 +137,7 @@ pub fn clear_partial_dir_obstruction(dir: &Path) -> std::io::Result<()> {
 
 /// Removes an emptied `--partial-dir` once its staged file has been committed.
 ///
-/// upstream: `util1.c:1596-1630 handle_partial_dir(fname, PDIR_DELETE)`, whose
+/// upstream: `util1.c:1596-1636 handle_partial_dir(fname, PDIR_DELETE)`, whose
 /// delete half opens with `if (!create && *partial_dir == '/') return 1;`. An
 /// ABSOLUTE `--partial-dir` is therefore never rmdir'd: it is operator-named,
 /// it is reserved across runs, and it generally exists before the transfer
@@ -168,7 +170,7 @@ pub fn remove_partial_dir(partial_dir: Option<&Path>, staged_file: &Path) {
 }
 /// Moves an interrupted temp file to its partial destination, or removes it.
 ///
-/// upstream: `cleanup.c:exit_cleanup()` calls `finish_transfer()` to rename the
+/// upstream: `cleanup.c:_exit_cleanup()` calls `finish_transfer()` to rename the
 /// temp onto `cleanup_new_fname` (creating the partial dir first via
 /// `handle_partial_dir(PDIR_CREATE)`), tweaking the modtime to epoch 0 when the
 /// partial lands on the real destination file so `--update` will not skip it.
@@ -176,7 +178,7 @@ pub fn remove_partial_dir(partial_dir: Option<&Path>, staged_file: &Path) {
 ///
 /// Creating the partial dir is a PRECONDITION of the rename, not a best-effort
 /// prelude: upstream guards `finish_transfer()` on it in both places
-/// (`cleanup.c:168` has the call inside a `&&`; `receiver.c:1319-1323` reports
+/// (`cleanup.c:169-170` has the call inside a `&&`; `receiver.c:1319-1323` reports
 /// "Unable to create partial-dir for %s -- discarding %s" and `do_unlink_at`s
 /// the temp). Renaming anyway would undo the ownership walk's refusal - the
 /// rename resolves the same path with plain libc and lands the file exactly
@@ -187,7 +189,7 @@ pub fn finalize_partial(temp: &Path, partial_dest: Option<&Path>, tweak_mtime: b
             if let Some(parent) = dest.parent()
                 && create_partial_dir(parent).is_err()
             {
-                // upstream: receiver.c:1323 `do_unlink_at(fnametmp)` - the
+                // upstream: receiver.c:1324 `do_unlink_at(fnametmp)` - the
                 // completed file is discarded rather than retained somewhere
                 // the operator did not name.
                 let _ = std::fs::remove_file(temp);
@@ -367,7 +369,7 @@ impl CleanupManager {
     /// Finalises every registered in-progress temp: moves each onto its partial
     /// destination (or unlinks it), then clears the registry. Invoked from the
     /// abort path (a second interrupt signal) that cannot wait for graceful
-    /// unwinding. upstream: `cleanup.c:exit_cleanup()` on `RERR_SIGNAL`.
+    /// unwinding. upstream: `cleanup.c:_exit_cleanup()` on `RERR_SIGNAL`.
     pub fn finalize_partials(&self) {
         let entries = {
             let Some(state) = CLEANUP_MANAGER.get() else {

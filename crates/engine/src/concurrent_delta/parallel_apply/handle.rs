@@ -1,7 +1,6 @@
 //! Per-file slot handle returned from [`ParallelDeltaApplier::slot_for`].
 //!
-//! Extracted from `parallel_apply/mod.rs` as part of the module
-//! decomposition. [`SlotHandle`] holds the per-file payload
+//! [`SlotHandle`] holds the per-file payload
 //! [`Arc<SlotData>`] so callers can lock the per-file slot mutex, while a
 //! companion [`super::decrement_guard::DecrementGuard`] keeps the slot's
 //! in-flight counter accurate for the whole lifetime of the handle
@@ -33,11 +32,12 @@ use super::slot_barrier::{SlotData, SlotEntry};
 /// Arc's strong-count trajectory disjoint from the notify-bearing
 /// [`Arc<super::slot_barrier::BarrierState>`], so `finish_file`'s
 /// `Arc::try_unwrap` on the payload never observes the worker's lingering
-/// bookkeeping clone (the DG-1 release race).
+/// bookkeeping clone (the release race described in
+/// `docs/design/decrementguard-audit.md`).
 ///
 /// The handle deliberately does not expose the bare [`Arc`] - callers go
-/// through [`SlotHandle::lock_slot`] so the FFB-1 invariant ("every clone
-/// outstanding is reflected in the inflight counter") cannot be bypassed.
+/// through [`SlotHandle::lock_slot`] so the invariant "every clone
+/// outstanding is reflected in the inflight counter" cannot be bypassed.
 ///
 /// [`ParallelDeltaApplier::slot_for`]: super::ParallelDeltaApplier::slot_for
 /// [`Arc<SlotData>`]: std::sync::Arc

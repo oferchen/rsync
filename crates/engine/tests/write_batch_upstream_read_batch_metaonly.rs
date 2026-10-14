@@ -32,9 +32,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:517-586 itemize()` (report bits), `:584` (`ITEM_IS_NEW`
+//! - `generator.c:517-612 itemize()` (report bits), `:584` (`ITEM_IS_NEW`
 //!   only for an absent dest), `sender.c:469 write_ndx_and_attrs()`,
-//!   `log.c:730-746` (itemize string rendering; `.` fill when a report bit is
+//!   `log.c:739-781` (itemize string rendering; `.` fill when a report bit is
 //!   set but the entry is neither new nor transferred).
 
 #![cfg(unix)]
@@ -171,7 +171,7 @@ fn upstream_read_batch_itemizes_kept_nonfile_metadata_changes() {
     let stdout = String::from_utf8_lossy(&stdout);
 
     // rsync `-i` renders a fixed 11-column itemize field `YXcstpoguax`
-    // (log.c:730-746) followed by a space and the name. Parse the field by
+    // (log.c:739-781) followed by a space and the name. Parse the field by
     // position rather than matching an exact dot/space fill, which varies with
     // which attributes are preserved. For a kept (non-new, non-transferred)
     // entry Y is '.'; a changed attribute shows its letter, an unchanged one a

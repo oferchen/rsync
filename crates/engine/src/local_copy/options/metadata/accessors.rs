@@ -90,11 +90,11 @@ impl LocalCopyOptions {
     /// metadata preservation.
     ///
     /// A plain `--backup` without `--backup-dir` implies omit-dir-times so a
-    /// directory's mtime is never applied - upstream `options.c:2351-2352`
+    /// directory's mtime is never applied - upstream `options.c:2493-2494`
     /// (`if (make_backups && !backup_dir) omit_dir_times = -1;`) feeding
-    /// `rsync.c:583` (`ATTRS_SKIP_MTIME` for directories). The implication is
+    /// `rsync.c:719-721` (`ATTRS_SKIP_MTIME` for directories). The implication is
     /// receiver/local-side only; it is never advertised as the sender `-O`
-    /// letter, which stays gated on the explicit flag (`options.c:2655`,
+    /// letter, which stays gated on the explicit flag (`options.c:2822`,
     /// `omit_dir_times > 0`).
     #[must_use]
     pub const fn omit_dir_times_enabled(&self) -> bool {
@@ -140,9 +140,9 @@ impl LocalCopyOptions {
     /// result is forced to `false` so callers route privileged operations
     /// (chown, mknod, mkfifo) through the fake-super xattr placeholder
     /// path, mirroring upstream's `am_root < 0` sentinel.
-    /// upstream: options.c:89 - am_root tri-state: 0 normal, 1 root, 2 --super,
+    /// upstream: options.c:95 - am_root tri-state: 0 normal, 1 root, 2 --super,
     ///                          -1 --fake-super (negative is "fake")
-    /// upstream: clientserver.c:1116-1119 - daemon `fake super = yes` forces am_root=-1
+    /// upstream: clientserver.c:1198-1201 - daemon `fake super = yes` forces am_root=-1
     /// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
     #[must_use]
     pub fn am_root(&self) -> bool {
@@ -163,7 +163,7 @@ impl LocalCopyOptions {
 /// `am_root = -1` sentinel that demotes privileged paths to the
 /// fake-super xattr placeholder branch). Otherwise the explicit `--super`
 /// flag wins, falling back to the effective UID check.
-/// upstream: options.c:89 - am_root tri-state, -1 is "fake-super"
+/// upstream: options.c:95 - am_root tri-state, -1 is "fake-super"
 /// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
 #[must_use]
 pub(super) fn effective_am_root(super_mode: Option<bool>, fake_super: bool) -> bool {

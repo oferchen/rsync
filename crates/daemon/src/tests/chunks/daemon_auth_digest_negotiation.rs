@@ -79,12 +79,13 @@ fn negotiate_protected_module(
 }
 
 /// The digest the daemon negotiated must drive the challenge it sends *and* the
-/// response it accepts. With `md5 sha512` offered, upstream's server-side rule
-/// takes the client's first acceptable name - MD5 - not the strongest one.
+/// response it accepts. With `md5 sha512` offered, the server takes the client's
+/// first acceptable name - MD5 - not the strongest one.
 ///
-/// upstream: compat.c:354 - `if (best == 1 || am_server) break;` stops the walk of
-/// the client's list at its first supported entry; authenticate.c:76 and :90 then
-/// both hash with `valid_auth_checksums.negotiated_nni`.
+/// This is the 3.4.x rule (`if (best == 1 || am_server) break;`). 3.5.1's
+/// compat.c:354 dropped `|| am_server`, so an upstream 3.5.1 server keeps walking
+/// to its own best preference. authenticate.c:104 (`gen_challenge()`) and :128
+/// (`generate_hash()`) both hash with `valid_auth_checksums.negotiated_nni`.
 #[test]
 fn daemon_auth_uses_the_first_client_offered_digest_it_supports() {
     let _lock = ENV_LOCK.lock().expect("env lock");
@@ -137,7 +138,7 @@ fn daemon_auth_uses_the_first_client_offered_digest_it_supports() {
 /// response *length*, so an 86-character SHA-512 response was checked as SHA-512
 /// no matter what the greeting had negotiated - letting the client choose.
 ///
-/// upstream: authenticate.c:90 `generate_hash()` only ever hashes with
+/// upstream: authenticate.c:128 `generate_hash()` only ever hashes with
 /// `valid_auth_checksums.negotiated_nni`.
 #[test]
 fn daemon_auth_rejects_a_response_computed_with_a_non_negotiated_digest() {
@@ -189,7 +190,7 @@ fn daemon_auth_rejects_a_response_computed_with_a_non_negotiated_digest() {
 /// with upstream's exact wording - echoing its *own* list - and never sends a
 /// challenge.
 ///
-/// upstream: compat.c:871-875 - `@ERROR: your client does not support one of our
+/// upstream: compat.c:882-886 - `@ERROR: your client does not support one of our
 /// daemon-auth checksums: %s\n` followed by `exit_cleanup(RERR_UNSUPPORTED)`.
 /// Verified against rsync 3.4.4, which answers exactly this line and exits 4.
 #[test]
@@ -233,7 +234,7 @@ fn daemon_auth_refuses_a_client_with_no_mutual_digest() {
 /// An unprotected module never negotiates, so a foreign digest list is harmless
 /// there.
 ///
-/// upstream: authenticate.c:239-240 - `if (!users || !*users) return "";` returns
+/// upstream: authenticate.c:302-305 - `if (!users || !*users) return "";` returns
 /// before `negotiate_daemon_auth()` is ever called.
 #[test]
 fn daemon_skips_digest_negotiation_when_the_module_needs_no_auth() {
@@ -288,7 +289,7 @@ fn daemon_skips_digest_negotiation_when_the_module_needs_no_auth() {
 /// A protocol > 31 greeting that carries no digest list at all is refused before
 /// any module is looked up.
 ///
-/// upstream: clientserver.c:203-211 - `daemon_auth_choices` is NULL and
+/// upstream: clientserver.c:228-240 - `daemon_auth_choices` is NULL and
 /// `remote_protocol > 31`, so `exchange_protocols()` answers
 /// `@ERROR: your client omitted the digest name list: %s` echoing the raw line and
 /// returns -1. Verified against rsync 3.4.4.
@@ -395,7 +396,7 @@ fn daemon_auth_refuses_a_protocol_32_client_advertising_an_empty_digest_list() {
 /// The contrast case: a greeting with no space at all advertises no list, and
 /// upstream's no-list fallback authenticates it.
 ///
-/// upstream: compat.c:857-862 - `daemon_auth_choices` is NULL, so the substitute
+/// upstream: compat.c:868-873 - `daemon_auth_choices` is NULL, so the substitute
 /// `protocol_version >= 30 ? "md5" : "md4"` is negotiated instead. Protocol 31
 /// is the newest version that can reach this: `remote_protocol > 31` without a
 /// list is refused earlier by `exchange_protocols()`. Verified against rsync
@@ -432,7 +433,7 @@ fn daemon_auth_falls_back_when_the_client_advertised_no_digest_list() {
 /// The single-session entry points (stdio, inetd) surface a session-fatal refusal
 /// as the process exit status, the way upstream's forked child does.
 ///
-/// upstream: compat.c:875 `exit_cleanup(RERR_UNSUPPORTED)`. Confirmed against
+/// upstream: compat.c:886 `exit_cleanup(RERR_UNSUPPORTED)`. Confirmed against
 /// rsync 3.4.4 driven as `rsync --server --daemon`: it prints the refusal and
 /// exits 4.
 #[test]

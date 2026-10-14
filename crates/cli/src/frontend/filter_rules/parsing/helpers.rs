@@ -6,7 +6,7 @@ use super::rule_line::RuleLine;
 /// Builds upstream's `Unknown filter rule` refusal for `line`.
 ///
 /// upstream: exclude.c:1363 `filter_rule_err("Unknown filter rule", *rulestr_ptr)`,
-/// which renders the rule through `rule_text` (exclude.c:88-123) and exits
+/// which renders the rule through `rule_text` (exclude.c:103-124) and exits
 /// `RERR_SYNTAX`. The rule text crosses that same chokepoint here via
 /// `line.shown()`: a merged line is one the peer chose, so echoing it verbatim
 /// would make the parser a read-any-line oracle.
@@ -19,7 +19,7 @@ pub(super) fn unknown_filter_rule(line: RuleLine<'_>) -> Message {
 /// upstream: exclude.c:1475 `filter_rule_err("unexpected end of filter rule",
 /// *rulestr_ptr)`, reached whenever a rule carries no pattern (`!len`) - a bare
 /// prefix, an empty include/exclude, or a merge/dir-merge with no file name.
-/// The rule text crosses `rule_text` (exclude.c:88-123) via `line.shown()`.
+/// The rule text crosses `rule_text` (exclude.c:103-124) via `line.shown()`.
 pub(super) fn unexpected_end_of_filter_rule(line: RuleLine<'_>) -> Message {
     rsync_error!(
         1,
@@ -32,12 +32,12 @@ pub(super) fn unexpected_end_of_filter_rule(line: RuleLine<'_>) -> Message {
 /// terminates the rule character and its modifiers, returning the rest of the
 /// line verbatim.
 ///
-/// upstream: exclude.c:1290-1291 - after the modifier loop stops at the first
-/// ` `/`_` separator, `if (*s) s++` consumes exactly ONE separator character.
-/// The pattern length is then `strlen` (exclude.c:1313), so any further leading
-/// whitespace or `_` stays part of the pattern verbatim and is never trimmed.
-/// The `,` case mirrors the optional comma that may follow a rule character or
-/// keyword (exclude.c:1075-1077, 1176-1177). A non-separator leading character
+/// upstream: exclude.c:1365,1444-1445 - after the modifier loop stops at the
+/// first ` `/`_` separator, `if (*s) s++` consumes exactly ONE separator
+/// character. The pattern length is then `strlen` (exclude.c:1465), so any
+/// further leading whitespace or `_` stays part of the pattern verbatim and is
+/// never trimmed. The `,` case mirrors the optional comma that may follow a rule
+/// character or keyword (exclude.c:1224-1225, 1327-1328). A non-separator leading character
 /// is returned unchanged.
 pub(super) fn consume_rule_separator(remainder: &str) -> &str {
     let mut chars = remainder.chars();
@@ -57,18 +57,17 @@ pub(super) fn consume_rule_separator(remainder: &str) -> &str {
 /// switch's `default:` and dies with `Unknown filter rule` (exclude.c:1363), so
 /// `mergeX` is a syntax error rather than a merge of `X`.
 ///
-/// A `,` returns `str + rule_len` (exclude.c:1225-1226), which puts the modifier
+/// A `,` returns `str + rule_len` (exclude.c:1224-1225), which puts the modifier
 /// loop's `*++s` on the first modifier byte. Every other separator returns
-/// `str + rule_len - 1` (exclude.c:1223), so `*++s` lands ON the separator and
+/// `str + rule_len - 1` (exclude.c:1222-1223), so `*++s` lands ON the separator and
 /// the loop stops at once: a long keyword only ever carries modifiers after a
 /// comma. Either way exactly ONE separator is then consumed by `if (*s) s++`
 /// (exclude.c:1444-1445) and the pattern is the remainder verbatim
 /// (`len = strlen(s)`, exclude.c:1465) - never a whole run of whitespace.
 ///
 /// MEASURED against rsync 3.5.0: `--filter='dir-merge  '` (two trailing spaces)
-/// merges a per-directory file literally named ` `, and `--filter='merge  X'`
-/// tries to open ` X`; oc trimmed the run and merged `X`. `--filter='mergeX'`
-/// exits 1 with `Unknown filter rule`; oc merged `X`.
+/// merges a per-directory file literally named ` `, `--filter='merge  X'`
+/// tries to open ` X`, and `--filter='mergeX'` exits 1 with `Unknown filter rule`.
 pub(super) fn split_long_keyword_tail(after: &str) -> Option<(&str, &str)> {
     let mut chars = after.chars();
     match chars.next() {
@@ -120,7 +119,7 @@ impl InvalidModifier {
     /// passes 1. The enclosing `default: invalid:` arm runs exclude.c:1371-1380.
     ///
     /// BOTH halves cross a provenance chokepoint. The rule text goes through
-    /// `rule_text` (exclude.c:88-123) and the `'%c' at position %d` detail
+    /// `rule_text` (exclude.c:103-124) and the `'%c' at position %d` detail
     /// through `rule_detail` (exclude.c:126-131), which upstream describes as
     /// "the extra detail some messages add ABOUT the text - a character of it,
     /// an offset into it. Dropped along with the text it describes." Reporting
@@ -145,8 +144,8 @@ impl InvalidModifier {
 /// Scans the modifier run that follows a rule character.
 ///
 /// `text` begins immediately after the rule character. Upstream consumes at
-/// most ONE optional `,` there (exclude.c:1075-1077, :1176-1177), then reads
-/// modifiers until the first ` `/`_` separator (exclude.c:1290-1291) and
+/// most ONE optional `,` there (exclude.c:1327-1328), then reads
+/// modifiers until the first ` `/`_` separator (exclude.c:1365, 1444-1445) and
 /// consumes exactly that one separator. Every other byte reaches `default:`
 /// and aborts with `RERR_SYNTAX` (exclude.c:1371-1379) - including a further
 /// `,`, which is why `,` is not a run terminator here.
@@ -176,7 +175,7 @@ fn scan_modifiers(
         }
     }
 
-    // upstream: exclude.c:1214-1287 - with no separator at all the whole
+    // upstream: exclude.c:1365-1443 - with no separator at all the whole
     // remainder is modifiers and the pattern is empty, so `+foo` is rejected as
     // an invalid modifier rather than silently treated as a pattern.
     Ok((body, ""))
@@ -193,9 +192,9 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> Result<(&str, &str), Inv
 
 /// Splits a `.`/`:` merge directive's text into `(modifiers, pattern)`.
 ///
-/// upstream: exclude.c:1256-1264 - the `e` and `n` modifiers are guarded solely
+/// upstream: exclude.c:1410-1419 - the `e` and `n` modifiers are guarded solely
 /// by `FILTRULE_MERGE_FILE`, which `parse_rule_tok` sets for a plain merge (`.`,
-/// exclude.c:1186) as well as a dir-merge (`:`), so both directives accept them.
+/// exclude.c:1337-1338) as well as a dir-merge (`:`), so both directives accept them.
 pub(super) fn split_short_merge_modifiers(text: &str) -> Result<(&str, &str), InvalidModifier> {
     scan_modifiers(text, |ch| {
         matches!(
@@ -234,7 +233,7 @@ mod tests {
     #[test]
     fn consume_rule_separator_leading_whitespace() {
         // Exactly one separator is consumed; any further whitespace stays in the
-        // pattern verbatim (upstream exclude.c:1290-1291 `if (*s) s++`).
+        // pattern verbatim (upstream exclude.c:1444-1445 `if (*s) s++`).
         assert_eq!(consume_rule_separator("  pattern"), " pattern");
         assert_eq!(consume_rule_separator("\t\tpattern"), "\tpattern");
         assert_eq!(consume_rule_separator(" pattern"), "pattern");
@@ -271,7 +270,7 @@ mod tests {
 
     #[test]
     fn split_short_rule_modifiers_no_separator_is_all_modifiers() {
-        // upstream: exclude.c:1214-1287 - with no ` `/`_` separator after the
+        // upstream: exclude.c:1365-1443 - with no ` `/`_` separator after the
         // prefix, every byte is a modifier and the pattern is empty. The caller
         // then rejects the unknown modifier bytes (e.g. `+foo` -> invalid 'f').
         assert_eq!(split_rule("pattern"), ("pattern", ""));
@@ -295,7 +294,7 @@ mod tests {
     #[test]
     fn split_short_rule_modifiers_consumes_one_leading_comma() {
         // MEASURED against rsync 3.5.0: `--filter='-,s a'` exits 0. The comma
-        // that may follow the rule character (exclude.c:1075-1077) is consumed
+        // that may follow the rule character (exclude.c:1327-1328) is consumed
         // once and is not itself a modifier.
         assert_eq!(split_rule(",s a"), ("s", "a"));
     }
@@ -304,8 +303,7 @@ mod tests {
     fn split_short_rule_modifiers_rejects_a_comma_inside_the_run() {
         // MEASURED against rsync 3.5.0: `--filter='-s,r a'` exits 1 with
         // `invalid modifier ',' at position 2`. Only ONE comma is consumed, so a
-        // second one reaches `default:` (exclude.c:1371-1379). The previous
-        // separator-based split silently produced ("sr", "a") instead.
+        // second one reaches `default:` (exclude.c:1371-1379).
         let invalid = split_short_rule_modifiers("s,r a").expect_err("`,` is never a modifier");
         assert_eq!(invalid.ch, ',');
         assert_eq!(invalid.offset + '-'.len_utf8(), 2);
@@ -332,10 +330,9 @@ mod tests {
 
     #[test]
     fn split_short_merge_modifiers_accepts_e_and_n() {
-        // upstream exclude.c:1256-1264 gates `e`/`n` on FILTRULE_MERGE_FILE,
+        // upstream exclude.c:1410-1419 gates `e`/`n` on FILTRULE_MERGE_FILE,
         // which a plain merge (`.`) sets too, so they are modifiers for both
-        // merge forms. Previously `e` ended the run, so `.e FILE` mis-parsed as
-        // the file name "e FILE".
+        // merge forms.
         assert_eq!(split_merge("ce pattern"), ("ce", "pattern"));
         assert_eq!(split_merge("cen pattern"), ("cen", "pattern"));
     }
@@ -348,9 +345,7 @@ mod tests {
     #[test]
     fn split_short_merge_modifiers_rejects_an_unknown_byte() {
         // MEASURED against rsync 3.5.0: `--filter=':n.rsync-filter'` exits 1
-        // with `invalid modifier '.' at position 2`. This is the headline case:
-        // the run previously stopped at `.` and silently produced a dir-merge of
-        // ".rsync-filter", exiting 0.
+        // with `invalid modifier '.' at position 2`.
         let invalid =
             split_short_merge_modifiers("n.rsync-filter").expect_err("`.` is not a modifier");
         assert_eq!(invalid.ch, '.');

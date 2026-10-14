@@ -66,7 +66,6 @@ fn incremental_mode_feature_enabled() {
 fn incremental_transfer_flat_directory() {
     let wire_data = generate_flat_directory(10);
 
-    // Verify wire data is valid
     assert!(!wire_data.is_empty());
     // Should end with zero byte (end marker)
     assert_eq!(*wire_data.last().unwrap(), 0);
@@ -79,7 +78,6 @@ fn incremental_transfer_flat_directory() {
 fn incremental_transfer_nested_directories() {
     let wire_data = generate_nested_directories(3, 2);
 
-    // Verify wire data is valid
     assert!(!wire_data.is_empty());
     assert_eq!(*wire_data.last().unwrap(), 0);
     // Nested structure should be larger than flat
@@ -91,7 +89,6 @@ fn incremental_transfer_nested_directories() {
 fn incremental_transfer_out_of_order_entries() {
     let wire_data = generate_out_of_order_entries();
 
-    // Verify wire data is valid
     assert!(!wire_data.is_empty());
     assert_eq!(*wire_data.last().unwrap(), 0);
 }
@@ -99,7 +96,7 @@ fn incremental_transfer_out_of_order_entries() {
 /// Test for failed directory skipping behavior.
 ///
 /// Note: The FailedDirectories tracking logic is comprehensively tested via
-/// unit tests in `crates/transfer/src/receiver.rs` (see `failed_directories_tests`
+/// unit tests under `crates/transfer/src/receiver/tests/` (see `failed_directories_tests`
 /// and `incremental_mode_tests` modules). Those tests verify:
 /// - Empty FailedDirectories has no ancestors
 /// - Marks and finds exact failed paths
@@ -161,7 +158,6 @@ fn incremental_transfer_failed_directory_skips_children() {
     writer.write_end_marker().expect("write end marker");
     let wire_data = writer.into_bytes();
 
-    // Verify wire data is valid
     assert!(!wire_data.is_empty());
     assert_eq!(*wire_data.last().unwrap(), 0);
 

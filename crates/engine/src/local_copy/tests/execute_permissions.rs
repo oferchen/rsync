@@ -548,7 +548,7 @@ fn mode_0000_preserve_in_existing_file_update() {
 /// setgid bit on `mkdir()` in the same way. If the filesystem does not
 /// support directory setgid inheritance (e.g., some tmpfs configurations),
 /// the test is skipped gracefully.
-// upstream: rsync.c:510-516 - `inherit = !preserve_perms && FLAG_DIR_CREATED`
+// upstream: rsync.c:541-543 - `inherit = !preserve_perms && FLAG_DIR_CREATED`
 // preserves the on-disk S_ISGID when no --perms is specified.
 #[cfg(target_os = "linux")]
 #[test]

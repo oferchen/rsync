@@ -100,13 +100,13 @@ pub(super) fn parse_short_include_rule(
         Err(invalid) => return Some(Err(invalid.into_message(prefix.len_utf8(), line))),
     };
     // `+`/`-` rules never bind a side via their prefix, so the `s`/`r` modifiers
-    // stay valid (prefix_specifies_side = false). upstream: exclude.c:1186-1190.
+    // stay valid (prefix_specifies_side = false). upstream: exclude.c:1340-1344.
     let modifiers = match parse_rule_modifiers(modifier_text, line, true, true, false) {
         Ok(state) => state,
         Err(error) => return Some(Err(error)),
     };
     // `split_short_rule_modifiers` already consumed the single separator that
-    // terminates the modifiers (upstream exclude.c:1290-1291), so the remainder
+    // terminates the modifiers (upstream exclude.c:1444-1445), so the remainder
     // is the pattern verbatim. Do not trim further leading whitespace/`_`.
     let pattern = remainder;
     if pattern.is_empty() {
@@ -129,7 +129,7 @@ pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, 
     // upstream: exclude.c:1222 `rule_strcmp` accepts `_` as a keyword separator
     // alongside `isspace`, and exclude.c:1444-1445 then consumes exactly that one
     // byte. MEASURED against rsync 3.5.0: `--filter='exclude_b.txt'` excludes
-    // `b.txt`; oc split on whitespace only and rejected the rule as unknown.
+    // `b.txt`.
     let mut parts = trimmed.splitn(2, |ch: char| ch == '_' || ch.is_ascii_whitespace());
     let keyword = parts.next().expect("split always yields at least one part");
     let remainder = parts.next().unwrap_or("");
@@ -160,13 +160,13 @@ pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, 
         Ok(FilterDirective::Rule(rule))
     };
 
-    // upstream: exclude.c:1069-1078 rule_strcmp - the long-form keywords are
+    // upstream: exclude.c:1218-1228 rule_strcmp - the long-form keywords are
     // matched with a case-sensitive strncmp dispatched from a switch on the
-    // lowercase first byte (exclude.c:1137-1173). A mixed-case keyword such as
+    // lowercase first byte (exclude.c:1288-1330). A mixed-case keyword such as
     // `EXCLUDE`/`Include` therefore never matches; it reaches the inner switch
     // default and raises "Unknown filter rule" (RERR_SYNTAX). Compare exactly so
     // this parser mirrors that behaviour rather than silently coercing the case.
-    // upstream: exclude.c:1155-1177 - include/exclude do not bind a side, so
+    // upstream: exclude.c:1340-1344 - include/exclude do not bind a side, so
     // `s`/`r`/`p` modifiers are all valid (prefix_specifies_side = false).
     if keyword == "include" {
         return build_rule(FilterRuleSpec::include, true, true, false);
@@ -176,7 +176,7 @@ pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, 
         return build_rule(FilterRuleSpec::exclude, true, true, false);
     }
 
-    // upstream: exclude.c:1163-1206 - show/hide/protect/risk map to the S/H/R/P
+    // upstream: exclude.c:1345-1358 - show/hide/protect/risk map to the S/H/R/P
     // prefixes that set prefix_specifies_side, so `s`/`r` are invalid while `p`
     // (perishable) stays valid.
     if keyword == "show" {

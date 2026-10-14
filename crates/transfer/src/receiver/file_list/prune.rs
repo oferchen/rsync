@@ -1,7 +1,7 @@
 //! Receiver-side `--prune-empty-dirs` pass.
 //!
-//! Mirrors upstream `flist.c:flist_sort_and_clean()` lines 3121-3184 from
-//! rsync-3.4.4: after the receiver has sorted its file list, directories
+//! Mirrors upstream `flist.c:flist_sort_and_clean()` lines 3666-3729:
+//! after the receiver has sorted its file list, directories
 //! whose subtree contains no non-directory entries are cleared. The sender
 //! ships every directory unconditionally; only the receiver runs this prune
 //! pass.
@@ -30,12 +30,12 @@ use protocol::flist::FileEntry;
 
 /// Walks the receiver's sorted `file_list` and clears directories whose
 /// subtrees contain no kept non-directory entries, mirroring upstream
-/// `flist.c:3364-3427`.
+/// `flist.c:3666-3729`.
 ///
 /// `filter_chain` is consulted via [`FilterChain::allows_deletion`] with
 /// `is_dir=true` to mirror upstream's `is_excluded(name, NAME_IS_DIR,
 /// ALL_FILTERS)` call. `ALL_FILTERS` evaluates the receiver-side view of the
-/// rule list (`exclude.c:name_is_excluded` walks `filter_list` without the
+/// rule list (`exclude.c:1109 name_is_excluded()` walks `filter_list` without the
 /// sender's `LOCAL_RULE` elision), so a receiver-only rule - a `protect`/`P`
 /// or an `-r` receiver-side exclude - counts as excluded here even though the
 /// sender never applied it and shipped the directory. The transfer-side
@@ -84,7 +84,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
         let depth = entry_depth(entry) as i64;
 
         if is_dir && depth > 0 {
-            // upstream: flist.c:3411-3418 - "Dump empty dirs when coming back
+            // upstream: flist.c:3678-3685 - "Dump empty dirs when coming back
             // down." Walk back through the candidate chain via prev_i,
             // clearing any candidates whose depth is at or below the current
             // dir's depth that were never reprieved.
@@ -107,7 +107,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
 
             prev_depth = depth;
 
-            // upstream: flist.c:3385 - is_excluded(name, 1, ALL_FILTERS).
+            // upstream: flist.c:3687 - is_excluded(name, 1, ALL_FILTERS).
             // Returns 1 when the dir is excluded by the receiver's filter
             // chain. In that branch, upstream reprieves the chain. ALL_FILTERS
             // is the receiver-side view, so use allows_deletion (which honours
@@ -131,7 +131,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
                     j -= 1;
                 }
             } else {
-                // upstream: flist.c:3394-3395 - mark this dir as a candidate
+                // upstream: flist.c:3696-3697 - mark this dir as a candidate
                 // whose F_DEPTH points back to the prior chain head.
                 marker[i] = -(prev_i as i64) - 1;
             }
@@ -167,7 +167,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
         prev_i = next_prev;
     }
 
-    // upstream: flist.c:3417-3426 retightens flist->low/high after clearing
+    // upstream: flist.c:3719-3728 retightens flist->low/high after clearing
     // entries. We do not maintain a low/high range; instead, mirror upstream's
     // `clear_file()` in place so flat indices keep mapping to wire NDX. The
     // downstream receiver iteration filters by `is_dir()` / `is_file()`, both
@@ -182,7 +182,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
 
 /// Returns the upstream `F_DEPTH(file)` value for an entry.
 ///
-/// upstream: flist.c:1328-1336 - depth is 1 + number of intermediate directory
+/// upstream: flist.c:1446-1450 - depth is 1 + number of intermediate directory
 /// separators in the relative path, decremented by 1 for dir entries whose
 /// basename is `.`.
 fn entry_depth(entry: &FileEntry) -> usize {
@@ -317,7 +317,7 @@ mod tests {
     }
 
     /// A receiver-only rule must reprieve an otherwise-empty directory,
-    /// mirroring upstream `flist.c:3385` `is_excluded(name, 1, ALL_FILTERS)`.
+    /// mirroring upstream `flist.c:3687` `is_excluded(name, 1, ALL_FILTERS)`.
     ///
     /// A `protect`/`P` rule is receiver-side only: the sender never applies it
     /// and ships the empty directory, so the prune pass is the only place the

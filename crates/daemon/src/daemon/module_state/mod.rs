@@ -8,7 +8,7 @@
 //! - Hostname resolution utilities for host-based access control
 //!
 //! upstream: loadparm.c - module parameters are loaded via `lp_load()` from
-//! `rsyncd.conf`. clientserver.c - `rsync_module()` reads per-module settings
+//! `rsyncd.conf`. clientserver.c:739 `rsync_module()` reads per-module settings
 //! via `lp_*()` accessor functions at connection time.
 
 mod auth;

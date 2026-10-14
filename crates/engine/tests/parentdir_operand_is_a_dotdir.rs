@@ -174,9 +174,10 @@ fn parent_dir_operand_matches_the_trailing_slash_and_dot_spellings() {
 /// exit 23, nothing transferred. Measured against stock 3.5.1 (3.5.0 copied
 /// `other`'s contents and exited 0).
 ///
-/// upstream: `rsync-3.5.1/flist.c:302-305` records the root, `flist.c:2869`
-/// cleans the operand, `flist.c:2265-2266` opens it through the held root,
-/// `flist.c:325-329` refuses the changed identity with `ELOOP`, and
+/// upstream: `rsync-3.5.1/flist.c:2969` records the root (`remember_sender_source_arg()`),
+/// `flist.c:246-260` keys it on the lexically cleaned path, `flist.c:2266-2267` opens
+/// the scan through the held root, `flist.c:326-329` refuses the changed identity
+/// with `ELOOP`, and
 /// `flist.c:2374` reports it as a per-item `opendir` failure.
 #[test]
 fn parent_dir_operand_through_a_symlinked_component_is_refused_with_eloop() {

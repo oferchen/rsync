@@ -37,7 +37,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:517-586 itemize()` computes the report bits (`rsync.h:244-254`):
+//! - `generator.c:517-612 itemize()` computes the report bits (`rsync.h:244-254`):
 //!   `ITEM_REPORT_TIME` (1<<3) when the mtime differs, `ITEM_REPORT_PERMS`
 //!   (1<<4) when the mode differs, and so on; `ITEM_REPORT_SIZE` (1<<2) is set
 //!   only for a regular file (`generator.c:527-528` `S_ISREG`) and the same bit
@@ -46,7 +46,7 @@
 //! - `generator.c:584` ORs in `ITEM_IS_NEW` only for an absent destination;
 //!   a kept entry therefore carries none of `ITEM_IS_NEW` (1<<13),
 //!   `ITEM_LOCAL_CHANGE` (1<<14), or `ITEM_TRANSFER` (1<<15).
-//! - `receiver.c:742-802` reads the word in the `!(iflags & ITEM_TRANSFER)`
+//! - `receiver.c:918-971` reads the word in the `!(iflags & ITEM_TRANSFER)`
 //!   branch and, with `ITEM_IS_NEW` clear, itemizes the change without bumping
 //!   any `created_*` counter.
 

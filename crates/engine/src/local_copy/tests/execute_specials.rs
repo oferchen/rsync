@@ -912,7 +912,7 @@ fn execute_recopy_socket_reuses_existing_same_identity_socket() {
 
     let metadata = fs::symlink_metadata(&dest_socket).expect("dest metadata");
     assert!(metadata.file_type().is_socket());
-    // upstream: generator.c:2032-2055 - an existing socket of the same _S_IFMT
+    // upstream: generator.c:2047-2058 - an existing socket of the same _S_IFMT
     // bucket quick-checks equal: set_file_attrs in place, itemize iflags=0
     // (`.S...`), no recreate, and not counted as created. The pre-fix recreate
     // wrongly reported it created and itemized `cS`.

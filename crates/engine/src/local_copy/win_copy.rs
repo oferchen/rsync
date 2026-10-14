@@ -1,9 +1,9 @@
 //! Windows CopyFileEx optimization with dual-path runtime selection.
 //!
-//! This module provides Windows-optimized file copying using `CopyFileExW` when
-//! available, with automatic fallback to standard copy operations. The dual-path
-//! approach tries Windows API copy first (with optional no-buffering optimization),
-//! then falls back to standard read/write copy on error.
+//! `copy_file_optimized` dispatches through `fast_io`'s platform copy strategy.
+//! On Windows that tries a ReFS reflink and `CopyFileExW` (with no-buffering for
+//! large files) before a standard copy; other platforms use their own fast paths
+//! (`FICLONE`/`copy_file_range` on Linux, `clonefile`/`fcopyfile` on macOS).
 //!
 //! The low-level `CopyFileExW` FFI wrapper lives in [`fast_io::copy_file_ex`],
 //! consistent with the project convention of isolating platform-specific unsafe
@@ -16,8 +16,11 @@
 //!
 //! # Platform Support
 //!
-//! - **Windows**: Uses `CopyFileExW` syscall with optional no-buffering for large files
-//! - **Other platforms**: Always uses standard copy (CopyFileExW not available)
+//! - **Windows**: `CopyFileExW` or ReFS reflink, reported as `WindowsCopy`.
+//! - **Other platforms**: never `WindowsCopy`; every method is reported as `StandardCopy`.
+//!
+//! Deviation from upstream: rsync 3.5.1 copies through its own read/write loop;
+//! the platform copy APIs are an oc-only optimisation with byte-identical results.
 //!
 //! # Examples
 //!
@@ -82,18 +85,19 @@ impl WinCopyResult {
 
 /// Copy a file using the best available platform method.
 ///
-/// On Windows, uses `CopyFileExW` with `COPY_FILE_NO_BUFFERING` for large files
-/// (> 4MB). On other platforms, falls back to `std::fs::copy`.
+/// Dispatches through `fast_io::DefaultPlatformCopy`. On Windows that uses
+/// `CopyFileExW` with `COPY_FILE_NO_BUFFERING` for files larger than
+/// `NO_BUFFERING_THRESHOLD` (4 MiB). Other platforms use their own fast paths.
 ///
-/// Returns `Ok(WinCopyResult::WindowsCopy(bytes))` if Windows API succeeded,
-/// `Ok(WinCopyResult::StandardCopy(bytes))` if standard copy was used,
-/// or `Err` on failure of both paths.
+/// Returns `Ok(WinCopyResult::WindowsCopy(bytes))` when `CopyFileExW` or a ReFS
+/// reflink was used, `Ok(WinCopyResult::StandardCopy(bytes))` for any other
+/// method, or `Err` when every method failed. For a zero-copy reflink, `bytes`
+/// is the source size.
 ///
 /// # Platform Behavior
 ///
-/// - **Windows**: Attempts `CopyFileExW` first. Uses `COPY_FILE_NO_BUFFERING`
-///   for files larger than 4MB. On failure, falls back to `std::fs::copy`.
-/// - **Other platforms**: Always uses `std::fs::copy` (CopyFileExW unavailable).
+/// - **Windows**: ReFS reflink, then `CopyFileExW`, then a standard copy.
+/// - **Other platforms**: the platform strategy's methods; never `WindowsCopy`.
 ///
 /// # Errors
 ///

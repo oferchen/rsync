@@ -11,9 +11,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `generator.c:358-390 do_delete_pass()` - `if (!(file->flags &
+//! - `generator.c:364-400 do_delete_pass()` - `if (!(file->flags &
 //!   FLAG_CONTENT_DIR)) continue;` before `delete_in_dir()`.
-//! - `flist.c:2475` - `int flags = recurse ? FLAG_CONTENT_DIR : 0;` (the root is
+//! - `flist.c:2751` - `int flags = recurse ? FLAG_CONTENT_DIR : 0;` (the root is
 //!   a content dir only for a recursive transfer).
 
 use std::fs;
