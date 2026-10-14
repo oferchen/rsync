@@ -919,8 +919,18 @@ start_upstream_daemon() {
     fi
   fi
 
+  # --log-file is new in 2.6.9 (NEWS); older daemons read the path from
+  # rsyncd.conf and exit 1 on the unknown option.
+  local -a log_args=(--log-file "$log_file")
+  if ! "$binary" --help 2>&1 | grep -q -- '--log-file='; then
+    log_args=()
+    if ! grep -q '^log file = ' "$config"; then
+      printf 'log file = %s\n' "$log_file" | cat - "$config" >"${config}.tmp"
+      mv "${config}.tmp" "$config"
+    fi
+  fi
   # Close stdin to prevent SIGPIPE when daemon writes to closed pipe
-  "$binary" --daemon --config "$config" --no-detach --log-file "$log_file" </dev/null &
+  "$binary" --daemon --config "$config" --no-detach ${log_args[@]+"${log_args[@]}"} </dev/null &
   up_pid=$!
 
   if [[ -n "$port" ]]; then

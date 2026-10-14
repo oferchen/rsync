@@ -201,6 +201,15 @@ class CatalogueTest(unittest.TestCase):
         shapes = {(c.transport, c.direction, c.role) for c in cat if c.version == "2.6.3"}
         self.assertEqual(len(shapes), 8)
 
+    def test_daemon_port_budget_covers_the_whole_catalogue(self):
+        # A daemon cell starts a daemon per run and, when it checks the
+        # handshake, a tap per run. Running out of ports fails cells with
+        # "daemon port range exhausted" instead of testing anything.
+        need = sum(4 if c.expect_proto else 2
+                   for c in cells.catalogue(cells.ALL_VERSIONS) if c.transport == "daemon")
+        self.assertLessEqual(need, oracle.PORTS_PER_RUN)
+        self.assertLess(20000 + 4 * oracle.PORTS_PER_RUN, 32768)
+
     def test_core_cases_skip_releases_without_their_option(self):
         # 2.6.3 has no -F (added with --filter in 2.6.4), so its baseline
         # client would exit 1 on the option instead of transferring.

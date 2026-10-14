@@ -260,8 +260,11 @@ def normalize_items(items: list[str], legacy: bool) -> list[str]:
 # (Linux 32768+, macOS/Windows 49152+). A port from bind(0) is ephemeral, so
 # the kernel can hand it to a concurrent cell's client socket before the
 # daemon binds it, and a start probe can then reach another cell's daemon.
-# The pid offset keeps two oracle runs on one host apart.
-_PORT_BASE = 20000 + (os.getpid() % 12) * 1000
+# The pid offset keeps two oracle runs on one host apart. Each daemon cell
+# takes up to four ports (a daemon and a handshake tap per run), so a run
+# needs room for four per daemon cell in the catalogue.
+PORTS_PER_RUN = 3000
+_PORT_BASE = 20000 + (os.getpid() % 4) * PORTS_PER_RUN
 _ports = itertools.count()
 _ports_lock = threading.Lock()
 
@@ -271,7 +274,7 @@ def bind_free_port(sock: socket.socket) -> int:
     while True:
         with _ports_lock:
             n = next(_ports)
-        if n >= 1000:
+        if n >= PORTS_PER_RUN:
             raise RuntimeError("daemon port range exhausted")
         port = _PORT_BASE + n
         try:
