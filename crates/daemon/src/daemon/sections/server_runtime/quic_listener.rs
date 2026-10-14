@@ -123,26 +123,19 @@ struct QuicFront {
 /// Forks the QUIC front process and hands it the bound UDP sockets.
 ///
 /// Must run while the daemon parent is single-threaded: it forks. The TLS
-/// identity (certificate, key and client CA) is loaded here, before the fork,
-/// so the front process can give up filesystem access before it starts any
-/// thread. `listener_fds` are the parent's TCP listeners, which the front
+/// identity (certificate, key and client CA) arrives already loaded, at daemon
+/// startup, so the front process can give up filesystem access before it
+/// starts any thread. `listener_fds` are the parent's TCP listeners, which the front
 /// process closes at once.
 ///
-/// Returns `None` (after logging why) when the QUIC listener cannot start; the
+/// Returns `None` (after logging why) when the front process cannot start; the
 /// TCP listeners keep serving either way.
 fn start_quic_front(
     sockets: Vec<std::net::UdpSocket>,
-    identity: &QuicIdentity,
+    setup: &QuicServerSetup,
     listener_fds: &[std::os::fd::RawFd],
     log_sink: Option<&SharedLogSink>,
 ) -> Option<QuicFront> {
-    let setup = match load_quic_setup(identity) {
-        Ok(setup) => setup,
-        Err(text) => {
-            log_quic_front_error(log_sink, text);
-            return None;
-        }
-    };
     let (parent_end, front_end) = match platform::fd_pass::fd_channel_pair() {
         Ok(pair) => pair,
         Err(error) => {
@@ -158,7 +151,7 @@ fn start_quic_front(
         Ok(platform::session_fork::ForkSide::Child) => {
             drop(parent_end);
             platform::session_fork::close_inherited_listeners(listener_fds);
-            let code = run_quic_front(sockets, &setup, front_end, parent_pid, log_sink);
+            let code = run_quic_front(sockets, setup, front_end, parent_pid, log_sink);
             platform::session_fork::exit_child(code);
         }
         Ok(platform::session_fork::ForkSide::Parent { child_pid }) => {

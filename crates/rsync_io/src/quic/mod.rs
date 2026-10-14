@@ -106,6 +106,18 @@ fn io_err(err: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> io::Error
     io::Error::other(err)
 }
 
+/// Maps a `with_single_cert` failure, naming the operator mistake rustls
+/// reports only as `KeyMismatch`.
+fn identity_err(err: rustls::Error) -> io::Error {
+    match err {
+        rustls::Error::InconsistentKeys(_) => io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the private key does not match the certificate",
+        ),
+        other => io_err(other),
+    }
+}
+
 fn ring_provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
@@ -487,7 +499,7 @@ impl QuicServerSetup {
             None => versions
                 .with_no_client_auth()
                 .with_single_cert(chain, key)
-                .map_err(io_err)?,
+                .map_err(identity_err)?,
             Some(roots) => {
                 let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
                     Arc::new(roots),
@@ -498,7 +510,7 @@ impl QuicServerSetup {
                 versions
                     .with_client_cert_verifier(verifier)
                     .with_single_cert(chain, key)
-                    .map_err(io_err)?
+                    .map_err(identity_err)?
             }
         };
         server_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
