@@ -187,6 +187,28 @@ class CatalogueTest(unittest.TestCase):
             if c.case in {case for case, _, _ in cells.CORE_CASES}:
                 self.assertEqual("--no-inc-recursive" in c.opts, racy, c.cell_id)
 
+    def test_core_cells_check_each_release_negotiates_its_native_protocol(self):
+        # oc speaks 28 through 33, so every session with an upstream peer runs
+        # at the peer's PROTOCOL_VERSION (rsync.h). A cell that silently ran
+        # at another protocol would test the wrong wire format.
+        core = {case for case, _, _ in cells.CORE_CASES}
+        cat = [c for c in cells.catalogue(cells.ALL_VERSIONS) if c.case in core]
+        self.assertEqual({c.version for c in cat}, cells.ALL_VERSIONS)
+        for c in cat:
+            self.assertEqual(c.expect_proto, cells.NATIVE_PROTOCOL[c.version], c.cell_id)
+        self.assertEqual({c.expect_proto for c in cat if c.version == "2.6.3"}, {28})
+        self.assertEqual({c.expect_proto for c in cat if c.version == "2.6.9"}, {29})
+        shapes = {(c.transport, c.direction, c.role) for c in cat if c.version == "2.6.3"}
+        self.assertEqual(len(shapes), 8)
+
+    def test_core_cases_skip_releases_without_their_option(self):
+        # 2.6.3 has no -F (added with --filter in 2.6.4), so its baseline
+        # client would exit 1 on the option instead of transferring.
+        ids = {c.cell_id for c in cells.catalogue({"2.6.3", "2.6.9"})}
+        self.assertNotIn("dir-merge/2.6.3/rsh/push/oc-client", ids)
+        self.assertIn("dir-merge/2.6.9/rsh/push/oc-client", ids)
+        self.assertIn("basic/2.6.3/rsh/push/oc-client", ids)
+
     def test_the_audit_defects_each_have_a_cell(self):
         ids = {c.cell_id for c in cells.catalogue(cells.ALL_VERSIONS)}
         for wanted in ("non-utf8/3.5.1/rsh/push/oc-server",
@@ -326,7 +348,8 @@ class Protocol33Test(unittest.TestCase):
                                     and c.inc == inc
                                     and ("--no-inc-recursive" in c.opts) == (inc == "off")
                                     for c in mine))
-        controls = [c for c in cat if c.expect_proto == 32]
+        controls = [c for c in cat
+                    if c.case.startswith("touched") and c.expect_proto == 32]
         self.assertTrue(controls)
         self.assertTrue(all(c.expect_touched == "absent" for c in controls))
         self.assertIn("touched-batch/3.5.1/rsh/push/oc-server", {c.cell_id for c in cat})

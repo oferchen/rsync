@@ -12,7 +12,13 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ALL_VERSIONS = {"2.6.9", "3.0.9", "3.1.3", "3.2.7", "3.4.4", "3.5.0", "3.5.1"}
+ALL_VERSIONS = {"2.6.3", "2.6.9", "3.0.9", "3.1.3", "3.2.7", "3.4.4", "3.5.0", "3.5.1"}
+
+# PROTOCOL_VERSION in each release's rsync.h. oc speaks 28 through 33, so a
+# session with any of these peers runs at the peer's own protocol, which every
+# core cell checks on the wire for the baseline and the candidate alike.
+NATIVE_PROTOCOL = {"2.6.3": 28, "2.6.9": 29, "3.0.9": 30, "3.1.3": 31, "3.2.7": 31,
+                   "3.4.4": 32, "3.5.0": 32, "3.5.1": 33}
 
 # Fixture mtimes. Both lie before interop_oracle.WALL_CLOCK_NS, so any time a
 # transfer preserves is compared exactly; the basis ("pre") is older than the
@@ -23,6 +29,16 @@ PRE_MTIME = 1_500_000_000
 
 def version_tuple(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in v.split("."))
+
+
+def itemizes(version: str) -> bool:
+    """Whether the release has --itemize-changes (-i), added in 2.6.4 (OLDNEWS)."""
+    return version_tuple(version) >= (2, 6, 4)
+
+
+def has_log_file_option(version: str) -> bool:
+    """Whether the release has --log-file, added in 2.6.9 (NEWS); older ones read it from rsyncd.conf."""
+    return version_tuple(version) >= (2, 6, 9)
 
 
 @dataclass(frozen=True)
@@ -76,6 +92,10 @@ CORE_CASES = (
     ("dir-merge", "filters", ("-a", "-F")),
     ("safe-links", "symlinks", ("-a", "--safe-links")),
 )
+
+# Oldest release that has a core case's option: --filter and its -F helper
+# arrived in 2.6.4 (OLDNEWS), so a 2.6.3 baseline cannot run dir-merge.
+CASE_FLOOR = {"dir-merge": (2, 6, 4)}
 
 
 def _targeted(have: set[str]) -> list[Cell]:
@@ -237,9 +257,10 @@ def catalogue(have: set[str]) -> list[Cell]:
     """Every cell runnable with the upstream releases in `have`."""
     cells = [
         Cell(case=case, version=v, transport=t, direction=d, role=r, fixture=fx,
-             opts=_core_opts(opts, v, d, r))
+             opts=_core_opts(opts, v, d, r), expect_proto=NATIVE_PROTOCOL[v])
         for v in sorted(have, key=version_tuple)
         for case, fx, opts in CORE_CASES
+        if version_tuple(v) >= CASE_FLOOR.get(case, (0,))
         for t in ("rsh", "daemon")
         for d in ("push", "pull")
         for r in ("oc-client", "oc-server")
