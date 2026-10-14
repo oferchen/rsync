@@ -85,7 +85,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Honour the leading-comma form in `auth users` and `gid` (CVE-2026-70463, #7345)
 - A peer can no longer override module settings with an `@RSYNCD: OPTION` line; one sent before the module name is answered as an unknown module, as upstream does (#7754, #8002)
 - Fork one process per connection so chroot and per-module state cannot leak between sessions (#7719, #7718, #7711)
-- QUIC clients no longer trust a daemon certificate on first use. `--quic-ca` is required and strict: the chain, the SAN and the validity period must verify against it, and with no `--quic-ca` the client refuses before dialing (exit 5). The `quic_known_hosts` store and the platform trust store fallback are gone (task 2701)
+- QUIC clients no longer trust a daemon certificate on first use. `--quic-ca` is required and strict: the chain, the SAN and the validity period must verify against it, and with no `--quic-ca` the client refuses before dialing (exit 5). The `quic_known_hosts` store and the platform trust store fallback are gone
 - Serve each QUIC session in its own forked child behind a sandboxed QUIC front process, so a `use chroot` / `uid` module reached over QUIC no longer chroots or drops privileges for the whole daemon; the async daemon refuses to start as root for the same reason (#8027, #8028)
 - Enforce `max connections` on every entry point and across forked sessions (#7440, #7917)
 - Close three `refuse options` bypasses, and refuse `--remove-source-files` under `refuse options = delete` (#7262, #7448, #7427)
@@ -173,6 +173,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 
 ### Changed
 
+- Behaviour change: QUIC clients no longer trust the system trust store or a certificate seen on first use. Every QUIC connection needs `--quic-ca`; without it the client refuses with exit 5 and names the flag
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)

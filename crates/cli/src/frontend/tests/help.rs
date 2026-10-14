@@ -100,6 +100,8 @@ const OC_EXTENSION_FLAGS: &[&str] = &[
     "--spill-dir",
     "--spill-threshold-bytes",
     "--no-spill",
+    "--quic",
+    "--quic-ca",
     "--quic-cc",
     "--quic-window",
     "--quic-cipher",
@@ -110,7 +112,7 @@ const OC_EXTENSION_FLAGS: &[&str] = &[
 /// reorganization only regroups lines, so this count (and the flag set below)
 /// must stay constant: a drop shrinks it, an accidental duplicate collapses the
 /// deduplicated set below it.
-const TOTAL_LONG_FLAG_LINES: usize = 201;
+const TOTAL_LONG_FLAG_LINES: usize = 203;
 
 /// Marker that opens the oc-rsync extensions section in the rendered help.
 const EXTENSIONS_MARKER: &str = "oc-rsync extensions (not present in upstream rsync):";
