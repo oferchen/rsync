@@ -439,3 +439,126 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
          a syscall that step issues is missing from the allowlist",
     );
 }
+
+/// Supplementary group ids for the membership probe: one the process belongs
+/// to besides its effective gid, and one it provably does not belong to.
+/// `None` when the process has no supplementary group to probe with.
+fn membership_probe_gids() -> Option<(u32, u32)> {
+    // SAFETY: `getegid` has no arguments and cannot fail.
+    #[allow(unsafe_code)]
+    let egid = unsafe { libc::getegid() };
+    let mut groups = vec![0 as libc::gid_t; 256];
+    // SAFETY: `groups` holds 256 entries, matching the size passed.
+    #[allow(unsafe_code)]
+    let count = unsafe { libc::getgroups(groups.len() as libc::c_int, groups.as_mut_ptr()) };
+    assert!(
+        count >= 0,
+        "getgroups failed: {}",
+        io::Error::last_os_error()
+    );
+    groups.truncate(count as usize);
+    let member = groups.iter().copied().find(|gid| *gid != egid)?;
+    let outsider = (1u32..=4096)
+        .map(|delta| egid.wrapping_add(delta))
+        .find(|gid| !groups.contains(gid))?;
+    Some((member, outsider))
+}
+
+/// Drops a root test process to a fixed unprivileged identity holding one
+/// supplementary group, so the probe below exercises the non-root membership
+/// gate rather than root's unconditional bypass. Returns the
+/// `(member, outsider)` pair for that identity.
+fn drop_root_to_probe_identity() -> io::Result<(u32, u32)> {
+    const MEMBER: libc::gid_t = 4242;
+    const PRIMARY: libc::gid_t = 4343;
+    const OUTSIDER: libc::gid_t = 4444;
+    const UID: libc::uid_t = 65534;
+    // SAFETY: setgroups reads one gid from a live array; setgid/setuid take
+    // plain ids. Order is groups, gid, uid so the uid drop comes last.
+    #[allow(unsafe_code)]
+    let failed = unsafe {
+        libc::setgroups(1, &MEMBER) != 0 || libc::setgid(PRIMARY) != 0 || libc::setuid(UID) != 0
+    };
+    if failed {
+        return Err(io::Error::last_os_error());
+    }
+    metadata::identity::set_process_identity(UID, PRIMARY);
+    Ok((MEMBER, OUTSIDER))
+}
+
+/// A non-root worker must still see its supplementary groups.
+///
+/// The receiver decides whether it may set a file's group from
+/// `metadata::group_is_settable`, which mirrors upstream `is_in_group()`
+/// (uidlist.c:195-239) and lists the groups with `getgroups(2)`. Under the
+/// worker filter a missing `getgroups` rule fails that call with `EPERM`, the
+/// gate concludes "not a member", and every chown to a supplementary group is
+/// skipped while the transfer still exits 0.
+///
+/// Regression pin. MEASURED on Linux aarch64 with a `--all-features` build:
+/// UTS `daemon-groupmap-wild` over TCP failed with `--groupmap='*:4' wildcard
+/// ignored over daemon: got gid 1000, expected 4`, and passed with
+/// `OC_RSYNC_NO_SECCOMP=1`. An strace of the daemon showed `getgroups` as the
+/// only syscall returning `EPERM`.
+///
+/// The outsider check keeps the pin from passing vacuously: a gate that
+/// answered "settable" for every gid would satisfy the member check alone.
+#[test]
+fn supplementary_group_membership_is_visible_under_the_worker_filter() {
+    let raw = fork_run(|| {
+        // SAFETY: `geteuid` has no arguments and cannot fail.
+        #[allow(unsafe_code)]
+        let is_root = unsafe { libc::geteuid() } == 0;
+        let probe = if is_root {
+            match drop_root_to_probe_identity() {
+                Ok(pair) => pair,
+                Err(_) => return 10,
+            }
+        } else {
+            match membership_probe_gids() {
+                Some(pair) => pair,
+                None => return 78,
+            }
+        };
+        let (member, outsider) = probe;
+        match apply_worker_seccomp_filter() {
+            SeccompOutcome::Installed => {}
+            // Kernel refused the filter, or this build cannot install one:
+            // treat as a skip, matching the sibling tests above.
+            _ => return 77,
+        }
+        if !metadata::group_is_settable(member) {
+            return 11;
+        }
+        if metadata::group_is_settable(outsider) {
+            return 12;
+        }
+        0
+    });
+    let status = std::process::ExitStatus::from_raw(raw);
+    if let Some(sig) = status.signal() {
+        panic!("child killed by signal {sig} while probing group membership");
+    }
+    let code = status.code().expect("child must exit");
+    match code {
+        77 => {
+            eprintln!("seccomp filter install rejected by kernel; skipping");
+            return;
+        }
+        78 => {
+            eprintln!("the test user has no supplementary group to probe; skipping");
+            return;
+        }
+        _ => {}
+    }
+    let failure = match code {
+        10 => "the root test process could not drop to the probe identity",
+        11 => {
+            "a supplementary group was reported as foreign under the worker filter - \
+             `getgroups` is missing from the allowlist and group chowns are silently skipped"
+        }
+        12 => "a foreign group was reported as settable - the pin would pass vacuously",
+        _ => "an unrecognised step",
+    };
+    assert_eq!(code, 0, "{failure}");
+}
