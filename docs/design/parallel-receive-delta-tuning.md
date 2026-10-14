@@ -1,5 +1,9 @@
 # Parallel-receive-delta worker-pool tuning spec
 
+> Note: the reorder-buffer spill layer (`SpillPolicy`, `SpillableReorderBuffer`,
+> the `OC_RSYNC_SPILL_*` variables and the `--spill-*` flags) has been removed.
+> Spill references below are historical.
+
 Tracking: oc-rsync task PIP-9.h.a (#3016). Parent: PIP-9.h (#2603).
 Follow-ups: PIP-9.h.b implementation (#3017) and PIP-9.h.c bench + defaults
 selection (#3018).

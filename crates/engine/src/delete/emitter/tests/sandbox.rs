@@ -104,7 +104,7 @@ fn remove_dir_all_at_peels_nested_tree_without_following_symlinks() {
     std::fs::write(&outside_target, b"do-not-touch").expect("write outside");
     symlink(&outside_target, tree.join("level-1/escape-link")).expect("symlink");
 
-    // No nested plan for "d/tree"; ENOTEMPTY fallback routes through
+    // No nested plan for "d/tree"; the peel routes through
     // remove_dir_all_at -> recursive helper.
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("tree", DeleteEntryKind::Dir)]));
@@ -225,18 +225,16 @@ fn peel_stepped_over_child_error_sets_io_error_exit_23() {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir(tmp.path().join("d")).expect("mkdir d");
 
-    // rmdir_at yields ENOTEMPTY (no nested plan), so the emitter peels via
-    // remove_dir_all_at, which returns a residue reporting a stepped-over
-    // child error plus a surviving (non-empty) root.
-    let fs = ScriptedDeleteFs::new()
-        .fail("locked", std::io::ErrorKind::DirectoryNotEmpty)
-        .peel(
-            "locked",
-            UnlinkResidue {
-                not_empty: true,
-                had_errors: true,
-            },
-        );
+    // With no nested plan the emitter peels via remove_dir_all_at, which
+    // returns a residue reporting a stepped-over child error plus a
+    // surviving (non-empty) root.
+    let fs = ScriptedDeleteFs::new().peel(
+        "locked",
+        UnlinkResidue {
+            not_empty: true,
+            had_errors: true,
+        },
+    );
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("locked", DeleteEntryKind::Dir)]));
     let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
@@ -267,15 +265,13 @@ fn peel_non_empty_without_error_stays_exit_0() {
     let tmp = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir(tmp.path().join("d")).expect("mkdir d");
 
-    let fs = ScriptedDeleteFs::new()
-        .fail("kept", std::io::ErrorKind::DirectoryNotEmpty)
-        .peel(
-            "kept",
-            UnlinkResidue {
-                not_empty: true,
-                had_errors: false,
-            },
-        );
+    let fs = ScriptedDeleteFs::new().peel(
+        "kept",
+        UnlinkResidue {
+            not_empty: true,
+            had_errors: false,
+        },
+    );
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("kept", DeleteEntryKind::Dir)]));
     let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));

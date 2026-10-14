@@ -1032,29 +1032,6 @@ exits with an error.
     affect filesystem-level reflink / CoW cloning (see **--cow** /
     **--no-cow**).
 
-The next two flags govern the receiver-side `SpillPolicy` that bounds the
-concurrent-delta `ReorderBuffer`'s memory footprint. Both are *planned* for
-STN-11 and will land in a future release; until then operators tune the same
-knobs via the `OC_RSYNC_SPILL_DIR` and `OC_RSYNC_SPILL_THRESHOLD_BYTES`
-environment variables (see *Receiver spill tunability* in the operator
-migration guide). When the flags ship, they take precedence over the env
-vars on the same invocation. The remaining `SpillPolicy` fields
-(reclaim mode, granularity, compression) stay env-only by design; see
-**docs/design/spill-policy-public-api.md** for the full surface.
-
-**--spill-dir**=*PATH* (planned, STN-11)
-:   Directory backing the receiver spill file. Created on first spill via
-    `create_dir_all`. When unset the runtime defers to
-    **std::env::temp_dir**(3) through a spooled tempfile that stays in
-    memory up to 1 MiB before rolling over. Maps to `SpillPolicy.dir`.
-
-**--spill-threshold-bytes**=*N*[**K**|**M**|**G**] (planned, STN-11)
-:   Memory budget for the receiver reorder buffer before items spill to
-    disk. Suffixes are case-insensitive base-1024 (`K`=KiB, `M`=MiB,
-    `G`=GiB). Omitting the flag (or passing an empty value) leaves spill
-    disabled and the consumer stays on the bare `ReorderBuffer` path; the
-    value `0` is rejected. Maps to `SpillPolicy.threshold_bytes`.
-
 ## Scheduling Options
 
 **--stop-after**=*MINS*
@@ -1095,9 +1072,6 @@ and are not intended for direct use:
 
 **5**
 :   Error starting client-server protocol.
-
-**6**
-:   Daemon unable to append to log-file.
 
 **10**
 :   Error in socket I/O.
@@ -1246,22 +1220,6 @@ values, defaults, and required build features.
 
 **OC_RSYNC_WINDOWS_RIO**
 :   Windows daemon Registered I/O socket path (**off**, **auto**, **on**).
-
-**OC_RSYNC_SPILL_DIR**
-:   Directory for reorder-buffer spill files; equivalent to
-    **--spill-dir**, which takes precedence.
-
-**OC_RSYNC_SPILL_THRESHOLD_BYTES**
-:   Spill threshold in bytes; equivalent to **--spill-threshold-bytes**,
-    which takes precedence.
-
-**OC_RSYNC_NO_SPILL**
-:   Set to **1** to keep the reorder buffer in memory only; equivalent
-    to **--no-spill**, which takes precedence.
-
-**OC_RSYNC_SPILL_COMPRESSION**
-:   Spill payload compression (**none**, **zstd**, or **zstd:***N*);
-    zstd requires the spill-compression build feature.
 
 **OC_RSYNC_DAEMON_ADDRESS_FAMILY**
 :   Force the daemon listener address family (**ipv4**, **ipv6**,

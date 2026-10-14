@@ -774,61 +774,6 @@ impl LocalCopySummary {
         }
     }
 
-    /// Creates a summary from proxy transfer statistics.
-    ///
-    /// This constructor is used for remote-to-remote transfers where the local side
-    /// acts as a relay/proxy. It records the bytes relayed in each direction.
-    #[must_use]
-    pub const fn from_proxy_stats(bytes_source_to_dest: u64, bytes_dest_to_source: u64) -> Self {
-        Self {
-            bytes_sent: bytes_source_to_dest,
-            bytes_received: bytes_dest_to_source,
-            regular_files_total: 0,
-            regular_files_matched: 0,
-            regular_files_ignored_existing: 0,
-            regular_files_skipped_missing: 0,
-            regular_files_skipped_newer: 0,
-            directories_total: 0,
-            symlinks_total: 0,
-            devices_total: 0,
-            fifos_total: 0,
-            files_copied: 0,
-            directories_created: 0,
-            symlinks_copied: 0,
-            hard_links_created: 0,
-            devices_created: 0,
-            fifos_created: 0,
-            created_regular_files: 0,
-            created_symlinks: 0,
-            created_devices: 0,
-            created_specials: 0,
-            items_deleted: 0,
-            deleted_dirs: 0,
-            deleted_symlinks: 0,
-            deleted_devices: 0,
-            deleted_specials: 0,
-            sources_removed: 0,
-            transferred_file_size: 0,
-            bytes_copied: 0,
-            matched_bytes: 0,
-            touched_blocks_4k: 0,
-            delta_matches: 0,
-            delta_hash_hits: 0,
-            delta_false_alarms: 0,
-            compressed_bytes: 0,
-            compression_used: false,
-            total_source_bytes: 0,
-            total_elapsed: Duration::ZERO,
-            wall_clock_elapsed: Duration::ZERO,
-            bandwidth_sleep: Duration::ZERO,
-            file_list_size: 0,
-            file_list_generation: Duration::ZERO,
-            file_list_transfer: Duration::ZERO,
-            destination_root_created: false,
-            copy_methods: [0; 7],
-        }
-    }
-
     /// Records one transferred file's contribution to the summary.
     ///
     /// `matched_bytes` is supplied by the copy path that produced the matches,

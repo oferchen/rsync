@@ -297,7 +297,7 @@ inter-thread cloning of the in-flight result is needed (today
 `consumer.rs:182` and `consumer.rs:193` both pay `result.clone()`
 because the loop owns the value across iterations). A clean removal
 still requires either the spill-to-tempfile path
-(`reorderbuffer-spill-to-tempfile.md`) or the streaming bound
+(`reorderbuffer-spill-to-tempfile.md` (removed)) or the streaming bound
 (`streaming-reorder-buffer.md`) to land first; this refactor does not
 change the underlying invariant.
 

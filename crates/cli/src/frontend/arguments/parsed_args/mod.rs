@@ -724,27 +724,4 @@ pub struct ParsedArgs {
     /// threshold). Local-only performance knob; never forwarded to the remote
     /// server and never changes wire bytes.
     pub checksum_threads: Option<super::ChecksumThreadsSetting>,
-
-    /// `--spill-dir` - override the reorder-buffer spill directory.
-    ///
-    /// Overrides the `OC_RSYNC_SPILL_DIR` environment variable and the
-    /// `SpillPolicy::dir` default. Precedence: CLI > env > defaults.
-    /// `None` leaves the env-var (or default) value in place.
-    pub spill_dir: Option<PathBuf>,
-
-    /// `--spill-threshold-bytes` - override the reorder-buffer spill byte threshold.
-    ///
-    /// Accepts a positive integer with an optional K/M/G/T/P/E suffix (base
-    /// 1024). Overrides the `OC_RSYNC_SPILL_THRESHOLD_BYTES` environment
-    /// variable and the `SpillPolicy::threshold_bytes` default. Precedence:
-    /// CLI > env > defaults. `None` leaves the env-var (or default) value in
-    /// place.
-    pub spill_threshold_bytes: Option<u64>,
-
-    /// `--no-spill` - disable disk-based spilling for the reorder buffer.
-    ///
-    /// When `true`, the reorder buffer returns an error instead of writing
-    /// excess items to a temporary file. Overrides `OC_RSYNC_NO_SPILL`.
-    /// Precedence: CLI > env > defaults.
-    pub no_spill: bool,
 }

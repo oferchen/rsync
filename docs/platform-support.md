@@ -105,7 +105,7 @@ Notes:
 | SIGINT (Ctrl+C) | yes | yes | Ctrl+C only | Polls atomic flag |
 | SIGTERM | yes | yes | no | N/A |
 | SIGHUP | yes | yes | no | N/A |
-| SIGPIPE | yes | yes | no | N/A |
+| SIGPIPE (ignored; EPIPE write error) | yes | yes | no | N/A |
 | Graceful shutdown (first signal) | yes | yes | yes (Ctrl+C) | Atomic flag check |
 | Forced abort (second signal) | yes | yes | no | Manual `request_abort()` |
 | Temp file cleanup on signal | yes | yes | yes | `CleanupManager` is cross-platform |
@@ -183,7 +183,8 @@ read-only flag:
 ### Signal Handling Detail
 
 Unix signal handling (`core/src/signal/unix.rs`) installs handlers for
-SIGINT, SIGTERM, SIGHUP, and SIGPIPE using libc signal APIs. The stub
+SIGINT, SIGTERM, and SIGHUP using libc signal APIs and leaves SIGPIPE
+ignored, as upstream does (`main.c:1926-1928`). The stub
 (`core/src/signal/stub.rs`) provides the same `SignalHandler` interface
 but only responds to programmatic shutdown requests via atomic flags.
 Windows Ctrl+C handling would need `SetConsoleCtrlHandler` for proper

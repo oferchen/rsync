@@ -118,11 +118,12 @@ test-group = "global-pool-serial"
 [test-groups.global-pool-serial]
 max-threads = 1
 
-# Spill-policy env-var tests mutate OC_RSYNC_SPILL_* and must not run
-# concurrently with other tests reading the same process-wide state.
+# `from_env` tests (throughput governor, reorder ring cap) read process-wide
+# OC_RSYNC_* environment state and must not run concurrently with tests
+# mutating it.
 [[profile.default.overrides]]
-filter = "test(env_spill) | test(from_env)"
-test-group = "spill-env-serial"
+filter = "test(from_env)"
+test-group = "from-env-serial"
 
-[test-groups.spill-env-serial]
+[test-groups.from-env-serial]
 max-threads = 1

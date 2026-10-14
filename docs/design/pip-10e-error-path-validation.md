@@ -1,5 +1,9 @@
 # PIP-10.e - Error-path validation for parallel receive-delta mid-transfer failures
 
+> Note: the reorder-buffer spill layer (`SpillPolicy`, `SpillableReorderBuffer`,
+> the `OC_RSYNC_SPILL_*` variables and the `--spill-*` flags) has been removed.
+> Spill references below are historical.
+
 Tracking: PIP-10.e (#3026). Parent: PIP-10 (end-to-end parallel
 receive-delta validation). Series siblings: PIP-10.a (happy-path byte
 identity), PIP-10.b (phase-2 redo parity), PIP-10.c (metadata commit

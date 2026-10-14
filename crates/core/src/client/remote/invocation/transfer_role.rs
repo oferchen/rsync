@@ -122,8 +122,8 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
 
 /// Determines the transfer type and role from source and destination operands.
 ///
-/// Analyzes the operands to determine whether this is a push (local -> remote),
-/// pull (remote -> local), or proxy (remote -> remote) transfer.
+/// Analyzes the operands to determine whether this is a push (local -> remote)
+/// or pull (remote -> local) transfer.
 ///
 /// # Arguments
 ///
@@ -138,6 +138,7 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
 ///
 /// Returns error if:
 /// - Neither source nor destination is remote (should use local copy)
+/// - Both a source and the destination are remote
 /// - Multiple sources with different remote/local mix
 /// - Multiple remote sources from different hosts, users, or ports
 pub fn determine_transfer_role(
@@ -152,36 +153,11 @@ pub fn determine_transfer_role(
     let all_sources_remote = remote_sources.len() == sources.len();
 
     match (has_remote_source, dest_is_remote) {
-        (true, true) => {
-            if !all_sources_remote {
-                return Err(invalid_argument_error(
-                    "mixing remote and local sources is not supported",
-                    1,
-                ));
-            }
-
-            let parsed_sources: Result<Vec<_>, _> = sources
-                .iter()
-                .map(|s| parse_remote_operand(&s.to_string_lossy()))
-                .collect();
-            let parsed_sources = parsed_sources?;
-
-            validate_same_host(&parsed_sources)?;
-
-            // Preserve the operand bytes verbatim (a non-UTF-8 remote path is a
-            // legal Unix filename); host/user validation above already ran on a
-            // lossy copy, which is fine because those components are ASCII.
-            let remote_sources = if sources.len() > 1 {
-                RemoteOperands::Multiple(sources.to_vec())
-            } else {
-                RemoteOperands::Single(sources[0].clone())
-            };
-
-            Ok(TransferSpec::Proxy {
-                remote_sources,
-                remote_dest: destination.clone(),
-            })
-        }
+        // upstream: main.c:1486-1489 refuses before any connection is made.
+        (true, true) => Err(invalid_argument_error(
+            "The source and destination cannot both be remote.",
+            1,
+        )),
         (false, false) => Err(invalid_argument_error("no remote operand found", 1)),
         (true, false) => {
             if !all_sources_remote {

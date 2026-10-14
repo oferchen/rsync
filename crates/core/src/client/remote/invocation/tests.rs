@@ -400,25 +400,19 @@ fn detects_push_with_multiple_sources() {
 }
 
 #[test]
-fn detects_proxy_when_both_remote() {
+fn rejects_remote_source_with_remote_destination() {
+    // upstream: main.c:1486-1489 - two remote operands are a syntax error,
+    // refused before any connection is opened.
     let sources = vec![OsString::from("host1:/file")];
     let destination = OsString::from("host2:/file");
 
-    let result = determine_transfer_role(&sources, &destination).unwrap();
-    assert_eq!(result.role(), RemoteRole::Proxy);
-    match result {
-        TransferSpec::Proxy {
-            remote_sources,
-            remote_dest,
-        } => {
-            assert_eq!(
-                remote_sources,
-                RemoteOperands::Single(OsString::from("host1:/file"))
-            );
-            assert_eq!(remote_dest, "host2:/file");
-        }
-        _ => panic!("Expected Proxy transfer"),
-    }
+    let err = determine_transfer_role(&sources, &destination).unwrap_err();
+    assert_eq!(err.exit_code(), 1);
+    assert!(
+        err.to_string()
+            .contains("The source and destination cannot both be remote."),
+        "unexpected message: {err}"
+    );
 }
 
 #[test]
@@ -5019,7 +5013,6 @@ fn no_implied_dirs_gated_on_protocol_for_push_only() {
 
 mod oc_flag_forwarding {
     use std::num::{NonZeroU8, NonZeroUsize};
-    use std::path::PathBuf;
 
     use super::super::RemoteRole;
     use super::super::builder::RemoteInvocationBuilder;
@@ -5127,9 +5120,7 @@ mod oc_flag_forwarding {
             .rayon_threads(NonZeroUsize::new(8))
             .tokio_threads(NonZeroUsize::new(4))
             .sparse_detect(engine::SparseDetectStrategy::Map)
-            .tcp_fastopen(TcpFastOpenMode::On)
-            .spill_dir(Some(PathBuf::from("/tmp/spill")))
-            .spill_threshold_bytes(Some(1024));
+            .tcp_fastopen(TcpFastOpenMode::On);
         // `--quic-cc`/`--quic-window` are client-local QUIC transport tuning;
         // like the knobs above they must never alter the remote `--server`
         // argv.

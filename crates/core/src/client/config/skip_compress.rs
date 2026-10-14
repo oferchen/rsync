@@ -1,4 +1,3 @@
-use std::env;
 use std::ffi::OsStr;
 
 use crate::{
@@ -47,40 +46,6 @@ pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Messa
     })
 }
 
-/// Parses the `RSYNC_SKIP_COMPRESS` environment variable into a
-/// [`SkipCompressList`].
-///
-/// Returning `Ok(None)` indicates that the variable was unset, allowing
-/// callers to retain their default skip-compress configuration. When the
-/// variable is present but empty the function returns an empty list, the same
-/// result as an explicit empty `--skip-compress=`.
-///
-/// Deviation from upstream: rsync 3.5.1 reads no skip-compress environment
-/// variable; only `--skip-compress` (`options.c:780`) sets the list.
-///
-/// # Errors
-///
-/// Returns an error when the value is not UTF-8 or is not a valid
-/// skip-compress specification.
-pub fn skip_compress_from_env(variable: &str) -> Result<Option<SkipCompressList>, Message> {
-    let Some(value) = env::var_os(variable) else {
-        return Ok(None);
-    };
-
-    let text = value.to_str().ok_or_else(|| {
-        rsync_error!(
-            1,
-            format!("{variable} accepts only UTF-8 patterns in this build")
-        )
-        .with_role(Role::Client)
-    })?;
-
-    SkipCompressList::parse(text).map(Some).map_err(|error| {
-        rsync_error!(1, format!("invalid {variable} specification: {error}"))
-            .with_role(Role::Client)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,12 +70,5 @@ mod tests {
         let value = OsString::from("*.zip");
         let result = parse_skip_compress_list(&value);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn skip_compress_from_env_unset_returns_none() {
-        let result = skip_compress_from_env("RSYNC_SKIP_COMPRESS_TEST_UNSET_VAR_12345");
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
     }
 }

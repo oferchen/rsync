@@ -53,7 +53,7 @@
 //! | Submodule | Role |
 //! |-----------|------|
 //! | `spawn` | Private spawn machinery: `ReorderMode` selector and the shared `spawn_inner` plumbing |
-//! | `loops` | Background-thread reorder loops for the bare and spillable backends |
+//! | `loops` | Background-thread reorder loop for the in-memory backend |
 //! | `tests` | Integration tests (only built under `#[cfg(test)]`) |
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,32 +75,17 @@ use spawn::{ReorderMode, spawn_inner};
 
 /// Snapshot of consumer-side counters surfaced for diagnostics.
 ///
-/// Mirrors [`SpillStats`](super::spill::SpillStats) for operators that only
-/// hold a [`DeltaConsumer`] handle. All counters are cumulative across the
-/// consumer's lifetime; values are zero when the spill layer is not engaged.
+/// Counters are cumulative across the consumer's lifetime.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DeltaConsumerStats {
-    /// Cumulative count of items written to the spill tempfile.
-    ///
-    /// Always zero when the consumer was spawned without a spill threshold.
-    pub spill_events: u64,
-    /// Cumulative count of `spill_excess` calls that wrote at least one
-    /// record. Granularity-invariant: a single call increments this counter
-    /// by exactly one even when [`SpillGranularity::PerItem`](super::spill::SpillGranularity::PerItem)
-    /// produces many on-disk records. Always zero when the consumer was
-    /// spawned without a spill threshold. This is surfaced
-    /// through the consumer-side stats so operators can observe normal-
-    /// operation spill rate without instrumenting the spillable buffer
-    /// directly.
-    pub spill_activations: u64,
     /// Cumulative count of ordering-fallback inserts performed by the
     /// underlying [`ReorderBuffer`](super::reorder::ReorderBuffer) when the
     /// ring saturated while `next_expected` was still missing.
     ///
     /// Non-zero values flag periods where the consumer broke its capacity
     /// bound to keep the pipeline alive. Operators should treat sustained
-    /// growth here as a signal to raise the reorder capacity or enable the
-    /// spill backend. This is an OC-rsync diagnostic extension - upstream
+    /// growth here as a signal to raise the reorder capacity. This is an
+    /// OC-rsync diagnostic extension - upstream
     /// rsync has no equivalent because its delta loop is sequential.
     pub force_inserts: u64,
 }
@@ -157,16 +142,6 @@ pub struct DeltaConsumer {
     /// background thread after every force_insert and every non-empty
     /// drain. Cheap to poll from the caller via [`Self::metrics`].
     pub(super) metrics: Arc<Mutex<ReorderMetrics>>,
-    /// Shared counter incremented by the reorder thread on each spill-to-disk
-    /// event. Exposed via [`DeltaConsumer::stats`].
-    pub(super) spill_events: Arc<AtomicU64>,
-    /// Shared counter incremented by the reorder thread on each
-    /// `spill_excess` call that wrote at least one record. This
-    /// surfaces the granularity-invariant counter through
-    /// [`DeltaConsumer::stats`] so operators see normal-operation spill
-    /// pressure without compensating for `PerItem` vs `WholeBatch`
-    /// record fan-out.
-    pub(super) spill_activations: Arc<AtomicU64>,
     /// Shared handle aliasing the underlying [`ReorderBuffer`](super::reorder::ReorderBuffer)
     /// `force_insert` counter. The reorder buffer updates this atomic
     /// directly, so [`DeltaConsumer::stats`] reflects the latest value
@@ -226,12 +201,8 @@ impl DeltaConsumer {
     /// Spawns background threads honouring a runtime
     /// [`ConcurrentDeltaConfig`].
     ///
-    /// When `cfg.spill_policy.threshold_bytes` is `Some`, the reorder thread
-    /// is backed by a [`SpillableReorderBuffer`](super::spill::SpillableReorderBuffer)
-    /// instead of the bare ring buffer. Items past the in-memory byte
-    /// threshold spill to a tempfile; they are reloaded transparently as the
-    /// delivery cursor reaches them. When the threshold is `None`, behaviour
-    /// matches [`spawn`](Self::spawn).
+    /// Behaves like [`spawn`](Self::spawn), additionally wiring the
+    /// optional throughput-governor telemetry sink from `cfg`.
     ///
     /// `reorder_capacity` is the in-memory ring window. A good default is the
     /// total number of expected items, or at least
@@ -246,21 +217,23 @@ impl DeltaConsumer {
         reorder_capacity: usize,
         cfg: ConcurrentDeltaConfig,
     ) -> Self {
-        let sink = cfg.telemetry_sink.clone();
-        spawn_inner(rx, ReorderMode::from_config(reorder_capacity, cfg), sink)
+        spawn_inner(
+            rx,
+            ReorderMode::Bare {
+                capacity: reorder_capacity,
+            },
+            cfg.telemetry_sink,
+        )
     }
 
     /// Returns a snapshot of consumer-side diagnostic counters.
     ///
-    /// Exposes the cumulative spill-to-disk event count and the cumulative
-    /// `force_insert` count from the background reorder thread. Safe to
-    /// call from any thread while the consumer is running; the counters
-    /// are updated lock-free.
+    /// Exposes the cumulative `force_insert` count from the background
+    /// reorder thread. Safe to call from any thread while the consumer is
+    /// running; the counter is updated lock-free.
     #[must_use]
     pub fn stats(&self) -> DeltaConsumerStats {
         DeltaConsumerStats {
-            spill_events: self.spill_events.load(Ordering::Relaxed),
-            spill_activations: self.spill_activations.load(Ordering::Relaxed),
             force_inserts: self.force_inserts.load(Ordering::Relaxed),
         }
     }

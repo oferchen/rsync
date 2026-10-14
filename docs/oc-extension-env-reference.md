@@ -224,38 +224,6 @@ SQPOLL is not attempted. Truthy values: `1`, `true`, `yes`, `on`
 only. Primarily an integration-test hook, but usable to pre-empt SQPOLL
 setup in environments the heuristics miss.
 
-## Spill (reorder-buffer overflow to disk)
-
-These variables mirror the `--spill-dir`, `--spill-threshold-bytes`, and
-`--no-spill` CLI flags. Precedence: CLI overrides are applied after the
-env overrides, so a flag always wins over its variable. Spilling is
-disabled by default (no threshold configured).
-
-### OC_RSYNC_SPILL_DIR
-
-Directory for spill files. Any non-empty path; validated when the spill
-backend is constructed, not when the variable is parsed. Equivalent to
-`--spill-dir`.
-
-### OC_RSYNC_SPILL_THRESHOLD_BYTES
-
-Byte threshold above which reorder-buffer contents spill to disk.
-Unsigned integer. Unset: spilling stays disabled. Equivalent to
-`--spill-threshold-bytes`.
-
-### OC_RSYNC_NO_SPILL
-
-In-memory-only mode: truthy values (`1`, `true`, `yes` -
-case-insensitive) prevent the reorder buffer from writing to disk.
-Equivalent to `--no-spill`.
-
-### OC_RSYNC_SPILL_COMPRESSION
-
-Compression for spilled payloads: `none`, `zstd`, or `zstd:N` (integer
-level). Default: `none`. Any `zstd*` value requires the
-`spill-compression` Cargo feature (off by default) and is rejected with a
-warning otherwise.
-
 ## Daemon
 
 ### OC_RSYNC_CONFIG
@@ -409,9 +377,3 @@ Directives:
 `OC_RSYNC_FALLBACK` and `OC_RSYNC_DAEMON_FALLBACK` are historical names
 that are no longer consulted by any production code path; setting them
 has no effect on current builds.
-
-`OC_RSYNC_SPILL_RECLAIM` and `OC_RSYNC_SPILL_GRANULARITY` appeared in
-early spill-policy design documents but were never wired to a read
-site; setting them has no effect on current builds. The corresponding
-`SpillPolicy` fields (`reclaim_mode`, `granularity`) are settable only
-through the builder API.

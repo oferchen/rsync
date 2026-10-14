@@ -1,5 +1,9 @@
 # ROB-7 - Adaptive ReorderBuffer ring sizing spec
 
+> Note: the reorder-buffer spill layer (`SpillPolicy`, `SpillableReorderBuffer`,
+> the `OC_RSYNC_SPILL_*` variables and the `--spill-*` flags) has been removed.
+> Spill references below are historical.
+
 Parent series: ROB (ReorderBuffer normal-operation spill prevention).
 Status: spec, no code change. Date: 2026-06-11.
 Predecessors: ROB-1 (cap-formula audit, shipped), ROB-4 (pressure-paths audit,

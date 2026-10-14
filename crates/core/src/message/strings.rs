@@ -22,9 +22,7 @@
 //!
 //! # Invariants
 //!
-//! - The mapping matches rsync 3.5.1's `rerr_names` table byte-for-byte, except code 6.
-//! - Deviation from upstream: code 6 ("daemon unable to append to log-file") has no
-//!   `errcode.h` or `rerr_names` entry in 3.5.1; it is an oc-only addition.
+//! - The mapping matches rsync 3.5.1's `rerr_names` table byte-for-byte.
 //! - Exit code 24 is the only warning; all other known codes remain errors.
 //! - Unknown codes return `None`, leaving higher layers to supply bespoke text.
 //!
@@ -87,8 +85,8 @@
 
 use super::{Message, Severity};
 
-/// Sorted table mirroring upstream `rerr_names` entries (log.c:81-107), plus oc-only code 6.
-const EXIT_CODE_TABLE: [ExitCodeMessage; 26] = [
+/// Sorted table mirroring upstream `rerr_names` entries (log.c:81-107).
+const EXIT_CODE_TABLE: [ExitCodeMessage; 25] = [
     ExitCodeMessage::new(Severity::Error, 1, "syntax or usage error"),
     ExitCodeMessage::new(Severity::Error, 2, "protocol incompatibility"),
     ExitCodeMessage::new(
@@ -98,7 +96,6 @@ const EXIT_CODE_TABLE: [ExitCodeMessage; 26] = [
     ),
     ExitCodeMessage::new(Severity::Error, 4, "requested action not supported"),
     ExitCodeMessage::new(Severity::Error, 5, "error starting client-server protocol"),
-    ExitCodeMessage::new(Severity::Error, 6, "daemon unable to append to log-file"),
     ExitCodeMessage::new(Severity::Error, 10, "error in socket IO"),
     ExitCodeMessage::new(Severity::Error, 11, "error in file IO"),
     ExitCodeMessage::new(Severity::Error, 12, "error in rsync protocol data stream"),
@@ -330,7 +327,7 @@ mod tests {
 
     #[test]
     fn unknown_exit_code_returns_none() {
-        for code in [-1, 0, 7, 200, 255] {
+        for code in [-1, 0, 6, 7, 200, 255] {
             assert!(
                 exit_code_message(code).is_none(),
                 "unexpected mapping for {code}"

@@ -1,8 +1,8 @@
 //! Integration tests for [`crate::concurrent_delta::consumer::DeltaConsumer`].
 //!
 //! Covers in-order delivery guarantees, the bypass path, backpressure-driven
-//! force-insert behaviour, metrics snapshots, and the spill-enabled
-//! configuration round-trip.
+//! force-insert behaviour, metrics snapshots, and the configured spawn
+//! path.
 
 use std::path::PathBuf;
 
@@ -563,143 +563,9 @@ fn metrics_drain_batch_histogram_accumulates() {
     consumer.join().unwrap();
 }
 
-// ---- SpillableReorderBuffer wiring tests ----
-
-/// Blocks until the consumer's live telemetry reports that the reorder
-/// buffer has spilled. Callers withhold the head-of-line item until this
-/// returns, so the spill precondition is established rather than raced
-/// against a fixed sleep on a loaded machine.
-///
-/// Both spill counters are polled so that a regression in either plumbing
-/// path fails on the assertion naming it instead of stalling until the
-/// deadline.
-///
-/// # Panics
-///
-/// Panics once the deadline elapses: with the head withheld, no contiguous
-/// run can drain, so the buffer's byte usage only grows and a timeout means
-/// the spill telemetry never reached [`DeltaConsumer::stats`].
-fn await_spill(consumer: &DeltaConsumer) {
-    const SPILL_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
-    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
-
-    let deadline = std::time::Instant::now() + SPILL_WAIT;
-    loop {
-        let stats = consumer.stats();
-        if stats.spill_events > 0 || stats.spill_activations > 0 {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "no spill observed within {SPILL_WAIT:?} while the head-of-line item \
-             was withheld against a tight byte threshold"
-        );
-        std::thread::sleep(POLL_INTERVAL);
-    }
-}
-
-/// Drives a 1000-item workload through the spill-enabled consumer with
-/// a withheld head-of-line item so the reorder buffer fills up before any
-/// contiguous run can be drained. A tight 1 KiB byte budget guarantees the
-/// spill machinery engages while delivery remains strictly in submission
-/// order.
 #[test]
-fn spillable_consumer_preserves_order_under_pressure() {
-    const COUNT: u32 = 1000;
-    // Tight budget vs ~52-byte DeltaResult: ~19 items fit before spill.
-    const THRESHOLD: u64 = 1024;
-
-    let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
-    let cfg = ConcurrentDeltaConfig::with_spill_threshold(THRESHOLD);
-    let consumer = DeltaConsumer::spawn_with_config(rx, COUNT as usize, cfg);
-
-    // Send sequences 1..COUNT first so the reorder buffer fills with
-    // out-of-order items; the queue is bounded at COUNT so no send blocks.
-    // Seq 0 is held back until the telemetry confirms the byte budget was
-    // exceeded, so the spill happens before delivery can begin.
-    for seq in 1..COUNT {
-        let work =
-            DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
-        tx.send(work).unwrap();
-    }
-
-    await_spill(&consumer);
-
-    tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
-        .unwrap();
-    drop(tx);
-
-    let results: Vec<DeltaResult> = consumer.iter().collect();
-    let stats = consumer.stats();
-
-    assert_eq!(results.len(), COUNT as usize, "all items must be delivered");
-    for (i, r) in results.iter().enumerate() {
-        assert_eq!(
-            r.sequence(),
-            i as u64,
-            "out of order at position {i}: got seq {}",
-            r.sequence()
-        );
-        assert!(r.is_success(), "result at {i} should be success");
-    }
-    assert!(
-        stats.spill_events > 0,
-        "1 KiB budget against 1000 items must trigger spills, got {}",
-        stats.spill_events
-    );
-}
-
-/// Baseline comparison: the spill-enabled and non-spill paths must deliver
-/// the same sequence of result payloads byte-for-byte. The spill layer is
-/// a local-only memory bound, never a wire-protocol change.
-#[test]
-fn spillable_consumer_matches_bare_output_byte_for_byte() {
-    use crate::concurrent_delta::SpillCodec;
-    const COUNT: u32 = 256;
-
-    fn run(cfg: Option<ConcurrentDeltaConfig>) -> Vec<DeltaResult> {
-        let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
-        let producer = std::thread::spawn(move || {
-            for seq in (0..COUNT).rev() {
-                let work = DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64)
-                    .with_sequence(u64::from(seq));
-                tx.send(work).unwrap();
-            }
-        });
-        let consumer = match cfg {
-            Some(c) => DeltaConsumer::spawn_with_config(rx, COUNT as usize, c),
-            None => DeltaConsumer::spawn(rx, COUNT as usize),
-        };
-        let out: Vec<DeltaResult> = consumer.iter().collect();
-        producer.join().unwrap();
-        out
-    }
-
-    let baseline = run(None);
-    let spilled = run(Some(ConcurrentDeltaConfig::with_spill_threshold(8 * 1024)));
-
-    assert_eq!(baseline.len(), spilled.len(), "result counts must match");
-    for (i, (a, b)) in baseline.iter().zip(spilled.iter()).enumerate() {
-        assert_eq!(a.sequence(), b.sequence(), "sequence mismatch at {i}");
-        assert_eq!(a.ndx().get(), b.ndx().get(), "ndx mismatch at {i}");
-        assert_eq!(a.bytes_written(), b.bytes_written(), "bytes_written at {i}");
-        assert_eq!(a.literal_bytes(), b.literal_bytes(), "literal at {i}");
-        assert_eq!(a.matched_bytes(), b.matched_bytes(), "matched at {i}");
-        assert_eq!(a.is_success(), b.is_success(), "status at {i}");
-
-        // SpillCodec round-trips the binary encoding the spill layer uses;
-        // identical encodings prove the payloads are byte-equivalent.
-        let mut buf_a = Vec::new();
-        let mut buf_b = Vec::new();
-        a.encode(&mut buf_a).unwrap();
-        b.encode(&mut buf_b).unwrap();
-        assert_eq!(buf_a, buf_b, "encoded payload differs at {i}");
-    }
-}
-
-#[test]
-fn spawn_with_config_off_matches_spawn() {
-    let cfg = ConcurrentDeltaConfig::off();
+fn spawn_with_default_config_matches_spawn() {
+    let cfg = ConcurrentDeltaConfig::default();
 
     let (tx_a, rx_a) = spawn_producer(20);
     let prod_a = std::thread::spawn(move || send_items(&tx_a, 20));
@@ -720,18 +586,8 @@ fn spawn_with_config_off_matches_spawn() {
     }
 }
 
-#[test]
-fn stats_zero_when_spill_disabled() {
-    let (tx, rx) = spawn_producer(10);
-    let producer = std::thread::spawn(move || send_items(&tx, 10));
-    let consumer = DeltaConsumer::spawn(rx, 16);
-    let _: Vec<DeltaResult> = consumer.iter().collect();
-    producer.join().unwrap();
-    assert_eq!(consumer.stats().spill_events, 0);
-}
-
 // ---- force_insert coverage: drops, duplicates, payload integrity, ----
-// ---- monotonicity, and bare-loop-vs-spillable path isolation.       ----
+// ---- and monotonicity.                                             ----
 //
 // MEMORY.md flagged the bare-loop `force_insert` as a "smell" because the
 // fallback breaks the capacity bound without a test that proves the
@@ -810,10 +666,8 @@ fn force_insert_no_drops_no_duplicates_under_sustained_backpressure() {
         );
     }
 
-    // (4) The fallback genuinely fired and we are on the bare-loop path
-    // (no spill backend wired), so this isolates the smell.
+    // (4) The fallback genuinely fired, so this isolates the smell.
     let stats = consumer.stats();
-    assert_eq!(stats.spill_events, 0, "bare loop must not spill");
     assert!(
         stats.force_inserts > 0,
         "expected force_inserts > 0 with ring={RING} vs {COUNT} items, got {stats:?}",
@@ -872,8 +726,8 @@ fn force_insert_preserves_payload_fields() {
 /// Polls [`DeltaConsumer::stats`] while pulling results one at a time and
 /// asserts the cumulative `force_inserts` counter never decreases across
 /// the run. Monotonicity is the contract operators depend on when they
-/// graph the counter; a saturating-add bug, a reset on reload, or a race
-/// on the spill path's atomic could silently violate it.
+/// graph the counter; a saturating-add bug or a reset on reload could
+/// silently violate it.
 #[test]
 fn force_insert_counter_is_monotonic_during_drain() {
     const COUNT: u32 = 64;
@@ -923,7 +777,7 @@ fn force_insert_counter_is_monotonic_during_drain() {
 
     // Final stats must agree with the peak we observed and with the
     // Mutex-guarded metrics snapshot. A regression that reset the
-    // counter on shutdown would trip the first assert; a spill/bare
+    // counter on shutdown would trip the first assert; a stats/metrics
     // counter desync would trip the second.
     let final_stats = consumer.stats();
     let final_metrics = consumer.metrics();
@@ -935,44 +789,6 @@ fn force_insert_counter_is_monotonic_during_drain() {
     assert_eq!(
         final_stats.force_inserts, final_metrics.force_insert_count,
         "stats counter must agree with metrics snapshot at end of run",
-    );
-    consumer.join().unwrap();
-}
-
-/// Pins the bare-loop path: spawning without a spill config exercises
-/// `run_bare_loop` in `consumer/loops.rs`, distinct from
-/// `run_spillable_loop`. A future refactor that accidentally routes the
-/// bare path through the spillable backend (or vice versa) would surface
-/// here as a non-zero `spill_events` count when no threshold was set.
-#[test]
-fn force_insert_isolated_to_bare_loop_path() {
-    const COUNT: u32 = 32;
-    let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
-
-    let producer = std::thread::spawn(move || {
-        for seq in 1..COUNT {
-            let work =
-                DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
-            tx.send(work).unwrap();
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
-            .unwrap();
-    });
-
-    let consumer = DeltaConsumer::spawn(rx, 2);
-    let results: Vec<DeltaResult> = consumer.iter().collect();
-    producer.join().unwrap();
-
-    assert_eq!(results.len(), COUNT as usize);
-    let stats = consumer.stats();
-    assert!(
-        stats.force_inserts > 0,
-        "expected bare-loop fallback to fire, got {stats:?}",
-    );
-    assert_eq!(
-        stats.spill_events, 0,
-        "bare-loop path must not engage spill machinery, got {stats:?}",
     );
     consumer.join().unwrap();
 }

@@ -1,5 +1,9 @@
 # PIP-10.b - Adversarial chunk ordering stress tests for parallel receive-delta
 
+> Note: the reorder-buffer spill layer (`SpillPolicy`, `SpillableReorderBuffer`,
+> the `OC_RSYNC_SPILL_*` variables and the `--spill-*` flags) has been removed.
+> Spill references below are historical.
+
 Date: 2026-05-26
 Scope: stress test design for the reorder buffer and parallel dispatch
 path under adversarial chunk arrival orderings

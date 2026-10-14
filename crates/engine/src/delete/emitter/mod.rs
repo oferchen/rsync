@@ -490,8 +490,8 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     }
 
     /// Dispatches one planned entry. Directories route through
-    /// [`Self::dispatch_dir`] so the `ENOTEMPTY` fallback can recurse via
-    /// a nested plan or [`DeleteFs::remove_dir_all`].
+    /// [`Self::dispatch_dir`], which empties them via a nested plan or
+    /// [`DeleteFs::remove_dir_all`] before removing them.
     ///
     /// On Unix, `parent_fd` and `leaf` together carry the
     /// sandbox anchor: when `parent_fd` is `Some`, the dispatcher
@@ -529,17 +529,15 @@ impl<F: DeleteFs> DeleteEmitter<F> {
         }
     }
 
-    /// Handles a directory entry. Tries `rmdir` first (upstream
-    /// `delete.c:222-226`); on [`io::ErrorKind::DirectoryNotEmpty`] takes
-    /// the nested directory's published plan and drains it through the
-    /// shared [`Self::drain_plan`] loop, or falls back to
-    /// [`DeleteFs::remove_dir_all`] when no plan was published (upstream
-    /// `delete.c:91-183 delete_dir_contents`). The `rmdir` is retried after
-    /// a successful drain.
-    ///
-    /// Deviation from upstream: `delete_item()` empties the directory first
-    /// (`delete.c:205-215`) and issues a single `rmdir`; this tries `rmdir`
-    /// first and only peels the contents on `ENOTEMPTY`.
+    /// Handles a directory entry. Empties the directory first, then
+    /// removes it, mirroring upstream `delete_item`, which always runs
+    /// `delete_dir_contents` before its `rmdir` (`delete.c:205-226`).
+    /// The directory's published plan is drained through the shared
+    /// [`Self::drain_plan`] loop and followed by the `rmdir`; without a
+    /// plan the recursive [`DeleteFs::remove_dir_all`] peel does both
+    /// (upstream `delete.c:91-183 delete_dir_contents`). A directory the
+    /// peel leaves populated surfaces as ENOTEMPTY, which `run_entry`
+    /// reports as upstream's "cannot delete non-empty directory" notice.
     #[cfg(unix)]
     fn dispatch_dir(
         &mut self,
@@ -547,65 +545,45 @@ impl<F: DeleteFs> DeleteEmitter<F> {
         parent_fd: Option<std::os::fd::BorrowedFd<'_>>,
         leaf: &std::ffi::OsStr,
     ) -> io::Result<()> {
-        let rmdir_result = match parent_fd {
-            Some(fd) => self.fs.rmdir_at(fd, leaf),
-            None => self.fs.rmdir(path),
-        };
-        match rmdir_result {
-            Ok(()) => Ok(()),
-            Err(err) if is_not_empty(&err) => {
-                if let Some(plan) = self.plans.take(path) {
-                    self.drain_plan(&plan)?;
-                    // Retry the rmdir now that the contents are gone.
-                    match parent_fd {
-                        Some(fd) => self.fs.rmdir_at(fd, leaf),
-                        None => self.fs.rmdir(path),
-                    }
+        if let Some(plan) = self.plans.take(path) {
+            self.drain_plan(&plan)?;
+            return match parent_fd {
+                Some(fd) => self.fs.rmdir_at(fd, leaf),
+                None => self.fs.rmdir(path),
+            };
+        }
+        match parent_fd {
+            Some(fd) => {
+                // Sandbox-anchored recursive peel. The descent steps over
+                // per-child errors (upstream `delete_dir_contents`), so it
+                // reports the outcome instead of aborting: `had_errors`
+                // means a genuine child unlink/rmdir failure was logged and
+                // skipped, which upstream reflects as
+                // `io_error |= IOERR_GENERAL` (exit 23). A residual
+                // `not_empty` alone stays benign - it is re-surfaced as
+                // ENOTEMPTY so `run_entry` prints the "cannot delete
+                // non-empty directory" notice.
+                let residue = self.fs.remove_dir_all_at(fd, leaf)?;
+                if residue.had_errors && !self.policy.ignore_errors {
+                    self.io_error |= IOERR_GENERAL;
+                }
+                if residue.not_empty {
+                    Err(io::Error::from(io::ErrorKind::DirectoryNotEmpty))
                 } else {
-                    match parent_fd {
-                        Some(fd) => {
-                            // Sandbox-anchored recursive peel. The descent
-                            // steps over per-child errors (upstream
-                            // `delete_dir_contents`), so it reports the
-                            // outcome instead of aborting: `had_errors`
-                            // means a genuine child unlink/rmdir failure was
-                            // logged and skipped, which upstream reflects as
-                            // `io_error |= IOERR_GENERAL` (exit 23). A
-                            // residual `not_empty` alone stays benign - it is
-                            // re-surfaced as ENOTEMPTY so `run_entry` prints
-                            // the "cannot delete non-empty directory" notice.
-                            let residue = self.fs.remove_dir_all_at(fd, leaf)?;
-                            if residue.had_errors && !self.policy.ignore_errors {
-                                self.io_error |= IOERR_GENERAL;
-                            }
-                            if residue.not_empty {
-                                Err(io::Error::from(io::ErrorKind::DirectoryNotEmpty))
-                            } else {
-                                Ok(())
-                            }
-                        }
-                        None => self.fs.remove_dir_all(path),
-                    }
+                    Ok(())
                 }
             }
-            Err(err) => Err(err),
+            None => self.fs.remove_dir_all(path),
         }
     }
 
     #[cfg(not(unix))]
     fn dispatch_dir(&mut self, path: &Path) -> io::Result<()> {
-        match self.fs.rmdir(path) {
-            Ok(()) => Ok(()),
-            Err(err) if is_not_empty(&err) => {
-                if let Some(plan) = self.plans.take(path) {
-                    self.drain_plan(&plan)?;
-                    self.fs.rmdir(path)
-                } else {
-                    self.fs.remove_dir_all(path)
-                }
-            }
-            Err(err) => Err(err),
+        if let Some(plan) = self.plans.take(path) {
+            self.drain_plan(&plan)?;
+            return self.fs.rmdir(path);
         }
+        self.fs.remove_dir_all(path)
     }
 
     /// Records a non-fatal failure into `io_error`, honouring

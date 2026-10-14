@@ -237,25 +237,6 @@ pub(crate) struct ConfigInputs {
     pub(crate) remote_options: Vec<OsString>,
     pub(crate) files_from: FilesFromSource,
     pub(crate) from0: bool,
-    /// CLI override for the reorder-buffer spill directory.
-    ///
-    /// `Some` replaces both the env-var value and the `SpillPolicy::dir`
-    /// default. Precedence is **CLI > env > defaults**, applied via
-    /// `engine::SpillPolicy::apply_cli_overrides`.
-    pub(crate) spill_dir: Option<PathBuf>,
-    /// CLI override for the reorder-buffer spill byte threshold.
-    ///
-    /// `Some` replaces both the env-var value and the
-    /// `SpillPolicy::threshold_bytes` default. Precedence is
-    /// **CLI > env > defaults**, applied via
-    /// `engine::SpillPolicy::apply_cli_overrides`.
-    pub(crate) spill_threshold_bytes: Option<u64>,
-    /// CLI flag to disable disk-based spilling.
-    ///
-    /// When `true`, sets `SpillPolicy::in_memory_only` to `true`. Takes
-    /// precedence over `OC_RSYNC_NO_SPILL`. Applied via
-    /// `engine::SpillPolicy::apply_cli_overrides`.
-    pub(crate) no_spill: bool,
 }
 
 /// Builds the base [`ClientConfigBuilder`] from the provided inputs.
@@ -535,11 +516,6 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         || info_del_requested;
 
     builder = builder.files_from(inputs.files_from).from0(inputs.from0);
-
-    builder = builder
-        .spill_dir(inputs.spill_dir)
-        .spill_threshold_bytes(inputs.spill_threshold_bytes)
-        .no_spill(inputs.no_spill);
 
     builder
         .force_event_collection(force_event_collection)

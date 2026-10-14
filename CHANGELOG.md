@@ -437,6 +437,9 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - The dead `--compress-level` help entry (#6778)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030)
 - The non-upstream per-directory filter alias (#6846)
+- The unreachable reorder-buffer spill layer: the `OC_RSYNC_SPILL_*` environment variables, the `--spill-dir`, `--spill-threshold-bytes` and `--no-spill` options and the `spill-compression` build feature; the concurrent-delta receiver keeps its reorder buffer in memory, as upstream has no spill
+- The `RSYNC_SKIP_COMPRESS` environment fallback; like upstream, only `--skip-compress` sets the skip-compress list
+- Exit code 6 ("daemon unable to append to log-file"), which upstream does not define; a raw exit 6 now renders as upstream's "unexplained error (code 6)"
 
 ### Internal
 

@@ -11,7 +11,6 @@
 //! - `ssh_transfer` - SSH-based remote transfers via `--rsh`/`-e`
 //! - `invocation` - Remote rsync `--server` argument construction and role detection
 //! - `flags` - Shared flag builder functions for compact server option strings
-//! - `remote_to_remote` - Two-host proxy relay via local machine
 //!
 //! # Upstream Reference
 //!
@@ -44,7 +43,6 @@ pub(crate) mod output_option;
 /// `OC_RSYNC_PULL_INC_RECURSE` staging flag and the `'i'` advertise decision.
 pub(crate) mod pull_inc_recurse;
 /// Remote-to-remote transfer via local proxy relay.
-pub mod remote_to_remote;
 /// SSH transfer orchestration for `ssh://` and `host:path` targets.
 pub mod ssh_transfer;
 #[cfg(feature = "async-ssh")]
@@ -94,7 +92,7 @@ pub(crate) fn is_quic_url(operand: &str) -> bool {
 }
 
 /// Maps the negotiated [`AddressMode`] onto the SSH `-4`/`-6` hint shared by
-/// every `do_cmd()`-equivalent SSH spawn (single-host and remote-to-remote).
+/// every `do_cmd()`-equivalent SSH spawn.
 ///
 /// [`AddressMode::Default`] yields `None`, leaving the ssh child free to pick
 /// whichever family resolves first; the forced modes map to the matching flag.

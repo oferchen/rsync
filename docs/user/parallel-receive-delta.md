@@ -163,10 +163,8 @@ measurable fraction of wall-clock time. This happens when:
    until the strong count reaches 1. This window is typically nanoseconds
    but is observable under load on Windows.
 
-6. **No spill-to-disk for the parallel path.** The `SpillableReorderBuffer`
-   and `SpillPolicy` configuration exist in the concurrent delta module but
-   are wired to the `DeltaConsumer` path, not to `ParallelDeltaApplier`
-   directly. Under the parallel applier, reorder buffers are memory-only.
+6. **No spill-to-disk.** Reorder buffers are memory-only, on both the
+   `DeltaConsumer` path and the `ParallelDeltaApplier` path.
 
 ## Performance expectations
 

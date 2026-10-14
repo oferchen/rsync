@@ -9,7 +9,6 @@ fn exit_codes_match_upstream() {
     assert_eq!(ExitCode::FileSelect.as_i32(), 3);
     assert_eq!(ExitCode::Unsupported.as_i32(), 4);
     assert_eq!(ExitCode::StartClient.as_i32(), 5);
-    assert_eq!(ExitCode::LogFileAppend.as_i32(), 6);
     assert_eq!(ExitCode::SocketIo.as_i32(), 10);
     assert_eq!(ExitCode::FileIo.as_i32(), 11);
     assert_eq!(ExitCode::StreamIo.as_i32(), 12);
@@ -163,7 +162,6 @@ fn descriptions_are_not_empty() {
         ExitCode::FileSelect,
         ExitCode::Unsupported,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::FileIo,
         ExitCode::StreamIo,
@@ -331,16 +329,13 @@ fn exit_code_description_function_works() {
         exit_code_description(23),
         "some files/attrs were not transferred (see previous errors)"
     );
-    assert_eq!(
-        exit_code_description(6),
-        "daemon unable to append to log-file"
-    );
 }
 
 #[test]
 fn exit_code_description_handles_unknown() {
     assert_eq!(exit_code_description(999), "unknown error code: 999");
     assert_eq!(exit_code_description(-1), "unknown error code: -1");
+    assert_eq!(exit_code_description(6), "unknown error code: 6");
     assert_eq!(exit_code_description(7), "unknown error code: 7");
 }
 
@@ -364,11 +359,6 @@ fn all_upstream_exit_codes_present() {
         ExitCode::StartClient.as_i32(),
         5,
         "Error starting client-server protocol"
-    );
-    assert_eq!(
-        ExitCode::LogFileAppend.as_i32(),
-        6,
-        "Daemon unable to append to log-file"
     );
     assert_eq!(ExitCode::SocketIo.as_i32(), 10, "Error in socket I/O");
     assert_eq!(ExitCode::FileIo.as_i32(), 11, "Error in file I/O");
@@ -430,7 +420,6 @@ fn from_i32_covers_all_exit_codes() {
         ExitCode::FileSelect,
         ExitCode::Unsupported,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::FileIo,
         ExitCode::StreamIo,

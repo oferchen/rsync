@@ -2,7 +2,7 @@
 //!
 //! Goal: catch any non-determinism introduced by the parallel dispatch
 //! path. The receiver-facing contract for `ParallelDeltaPipeline` is that the
-//! ordered `Vec<DeltaResult>` returned by `flush()` must be byte-identical to
+//! ordered `Vec<DeltaResult>` returned by `flush()` must be identical to
 //! the `SequentialDeltaPipeline` baseline for the same input batch, regardless
 //! of:
 //!
@@ -15,8 +15,8 @@
 //! identifies G2 ("no golden test compares sequential vs parallel byte
 //! streams") as an open gap. This test closes G2 at the result-vector layer:
 //! the receiver consumes `Vec<DeltaResult>` strictly in submission order, so
-//! when those vectors serialize identically the downstream wire emissions in
-//! `receiver.c:recv_files()` must also match upstream byte-for-byte.
+//! when those vectors are equal field for field the downstream wire emissions
+//! in `receiver.c:recv_files()` must also match upstream byte-for-byte.
 //!
 //! # Approach
 //!
@@ -33,11 +33,10 @@
 //!    headroom (N = 8). The `new_adaptive` variant additionally selects
 //!    2x/4x/8x based on the batch's average target size, exercising each
 //!    branch of `transfer::delta_pipeline::adaptive_capacity`.
-//! 4. Encode every result via `SpillCodec::encode` - the engine's
-//!    deterministic, on-disk byte representation for `DeltaResult`. The encoded
-//!    stream is the proxy for the wire stream the receiver would emit when
-//!    folding these results into the multiplexed protocol output.
-//! 5. Assert the byte streams are identical across all parallel runs and the
+//! 4. Project every result onto its public fields - NDX, sequence, byte
+//!    counts, and status - which are everything the receiver folds into the
+//!    multiplexed protocol output.
+//! 5. Assert the vectors are identical across all parallel runs and the
 //!    sequential baseline.
 //!
 //! Actual worker concurrency comes from rayon's global pool; the runs share
@@ -46,7 +45,7 @@
 //! logical cores, which is sufficient to reorder small batches through
 //! rayon's work-stealing scheduler.
 //!
-//! # Non-deterministic byte fields that are stripped
+//! # Non-deterministic fields that are stripped
 //!
 //! None remain after constraining the input to whole-file and pre-computed
 //! delta work items:
@@ -82,7 +81,7 @@
 
 use std::path::PathBuf;
 
-use engine::concurrent_delta::{DeltaResult, DeltaWork, SpillCodec};
+use engine::concurrent_delta::{DeltaResult, DeltaResultStatus, DeltaWork};
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::*;
 use transfer::delta_pipeline::{
@@ -175,21 +174,25 @@ fn run_pipeline(pipeline: Box<dyn ReceiverDeltaPipeline>, specs: &[WorkSpec]) ->
     p.flush()
 }
 
-/// Serialises a result vector into a single byte buffer via the engine's
-/// deterministic `SpillCodec` encoding. This is the byte stream that would
-/// flow through any cross-thread persistence layer for `DeltaResult` values,
-/// and it captures every field the consumer would later fold into wire
-/// emissions: NDX, sequence, byte counts, and status tag.
-fn encode_results(results: &[DeltaResult]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    // Length prefix so two encodings of different lengths cannot collide
-    // even if the trailing items happen to align.
-    buf.extend_from_slice(&(results.len() as u64).to_le_bytes());
-    for r in results {
-        r.encode(&mut buf)
-            .expect("encoding into Vec<u8> cannot fail");
-    }
-    buf
+/// Every public field of one [`DeltaResult`], in a comparable form.
+type ResultFields = (u32, u64, u64, u64, u64, DeltaResultStatus);
+
+/// Projects the ordered results onto their public fields so two pipeline
+/// runs can be compared field for field.
+fn result_fields(results: &[DeltaResult]) -> Vec<ResultFields> {
+    results
+        .iter()
+        .map(|r| {
+            (
+                r.ndx().get(),
+                r.sequence(),
+                r.bytes_written(),
+                r.literal_bytes(),
+                r.matched_bytes(),
+                r.status().clone(),
+            )
+        })
+        .collect()
 }
 
 proptest! {
@@ -201,15 +204,15 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// The parallel dispatch path must produce a byte-identical encoded
-    /// result stream to the sequential baseline for every worker count and
+    /// The parallel dispatch path must produce a result vector identical to
+    /// the sequential baseline for every worker count and
     /// every adaptive-capacity branch.
     #[test]
     fn parallel_dispatch_matches_sequential_baseline(specs in batch_strategy()) {
         // Baseline: sequential pipeline. By construction this matches
         // upstream rsync's `receiver.c:recv_files()` 1:1 dispatch order.
         let baseline = run_pipeline(Box::new(SequentialDeltaPipeline::new()), &specs);
-        let baseline_bytes = encode_results(&baseline);
+        let baseline_fields = result_fields(&baseline);
 
         // Sanity: every result must carry a valid NDX/sequence pairing.
         prop_assert_eq!(baseline.len(), specs.len(), "baseline length mismatch");
@@ -226,54 +229,44 @@ proptest! {
                 Box::new(ParallelDeltaPipeline::new(workers)),
                 &specs,
             );
-            let parallel_bytes = encode_results(&parallel);
             prop_assert_eq!(
-                parallel_bytes.len(),
-                baseline_bytes.len(),
-                "encoded length diverged at workers={}", workers
-            );
-            prop_assert!(
-                parallel_bytes == baseline_bytes,
-                "byte stream diverged from sequential baseline at workers={}", workers
+                result_fields(&parallel),
+                baseline_fields.clone(),
+                "results diverged from sequential baseline at workers={}", workers
             );
 
             // Adaptive capacity selects a different queue depth based on the
             // batch's average target size; the choice must not leak into the
-            // encoded byte stream.
+            // results.
             let avg_size = average_target_size(&specs);
             let adaptive = run_pipeline(
                 Box::new(ParallelDeltaPipeline::new_adaptive(workers, avg_size)),
                 &specs,
             );
-            let adaptive_bytes = encode_results(&adaptive);
-            prop_assert!(
-                adaptive_bytes == baseline_bytes,
-                "adaptive byte stream diverged from baseline at workers={}, avg_size={}",
+            prop_assert_eq!(
+                result_fields(&adaptive),
+                baseline_fields.clone(),
+                "adaptive results diverged from baseline at workers={}, avg_size={}",
                 workers, avg_size
             );
         }
     }
 
     /// Re-running the parallel pipeline with the same input must yield the
-    /// same byte stream every time. This catches any latent dependence on
+    /// same results every time. This catches any latent dependence on
     /// thread scheduling order, allocator state, or rayon worker affinity.
     #[test]
     fn parallel_dispatch_is_reproducible(specs in batch_strategy(), workers in 1usize..=8) {
-        let first = encode_results(&run_pipeline(
-            Box::new(ParallelDeltaPipeline::new(workers)),
-            &specs,
-        ));
+        let first = result_fields(&run_pipeline(Box::new(ParallelDeltaPipeline::new(workers)), &specs));
         // Three repeats: gives rayon's work-stealing scheduler ample
         // opportunity to choose a different completion order while the
-        // encoded output must stay constant.
+        // results must stay constant.
         for run in 0..3 {
-            let again = encode_results(&run_pipeline(
-                Box::new(ParallelDeltaPipeline::new(workers)),
-                &specs,
-            ));
-            prop_assert!(
-                again == first,
-                "parallel encoding diverged on repeat run {} at workers={}", run, workers
+            let again = result_fields(&run_pipeline(Box::new(ParallelDeltaPipeline::new(workers)), &specs));
+            prop_assert_eq!(
+                again,
+                first.clone(),
+                "parallel results diverged on repeat run {} at workers={}", run, workers
             );
         }
     }

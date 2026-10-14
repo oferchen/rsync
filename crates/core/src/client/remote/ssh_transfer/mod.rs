@@ -34,7 +34,6 @@ mod progress;
 mod server_config;
 
 pub use drive::run_ssh_transfer;
-pub(super) use exit_status::map_child_exit_status;
 
 #[cfg(any(feature = "async-ssh", feature = "embedded-ssh"))]
 pub(super) use exit_status::convert_server_stats_to_summary;
@@ -236,7 +235,7 @@ mod tests {
 
     #[cfg(unix)]
     mod child_exit_status_tests {
-        use super::*;
+        use super::super::exit_status::map_child_exit_status;
         use crate::exit_code::ExitCode;
 
         #[cfg(unix)]

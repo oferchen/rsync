@@ -2788,9 +2788,7 @@ fn client_build_to_server_parse_round_trip() {
         // Map the client's role to the peer server's role.
         let server_role = match role {
             RemoteRole::Sender => ServerRole::Receiver, // push: peer receives
-            // pull: peer sends. Proxy never occurs in this matrix; the arm
-            // only satisfies exhaustiveness.
-            RemoteRole::Receiver | RemoteRole::Proxy => ServerRole::Generator,
+            RemoteRole::Receiver => ServerRole::Generator, // pull: peer sends
         };
 
         let (joined_flags_str, joined_ops, joined_flags) =

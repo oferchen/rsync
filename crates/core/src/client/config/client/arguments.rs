@@ -111,9 +111,6 @@ impl ClientConfig {
         //   `>`, return false.
         // Local copy (no remote operands): upstream's `local_server` branch
         //   emits `>` -> return false so oc-rsync's formatter matches.
-        // Proxy (both remote): no per-file itemize lines render locally;
-        //   return false so the arrow defaults to `>` for the unreachable
-        //   case.
         dest_remote && !any_source_remote
     }
 

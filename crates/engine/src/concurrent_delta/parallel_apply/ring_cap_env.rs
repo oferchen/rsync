@@ -3,8 +3,8 @@
 //! [`super::ParallelDeltaApplier`] sizes each per-file
 //! `super::ReorderBuffer` with the hard default
 //! [`super::ParallelDeltaApplier::DEFAULT_PER_FILE_REORDER_CAPACITY`] (64).
-//! Adaptive sizing or a workload-tuned cap can avoid normal-operation spill
-//! activations. Until an adaptive path is the default, operators need an
+//! Adaptive sizing or a workload-tuned cap can avoid normal-operation ring
+//! saturations. Until an adaptive path is the default, operators need an
 //! escape hatch: a
 //! single env var that pins the per-file ring capacity, bypassing the hard
 //! 64 default and any future heuristic.
@@ -12,9 +12,7 @@
 //! This module mirrors the [`super::shard_sizing`] pattern: read the
 //! `OC_RSYNC_REORDER_RING_CAP` env var once via a [`OnceLock`], parse it as
 //! a positive `usize`, and expose the result through
-//! [`resolve_ring_capacity`]. Mirrors the spill env-knob convention
-//! (`OC_RSYNC_SPILL_DIR` / `OC_RSYNC_SPILL_THRESHOLD_BYTES` /
-//! `OC_RSYNC_SPILL_COMPRESSION`):
+//! [`resolve_ring_capacity`]. Conventions:
 //!
 //! - Read once at startup (process-wide [`OnceLock<Option<usize>>`]) so the
 //!   env-var read never lands on a hot per-file construction path.
@@ -30,7 +28,7 @@
 //! default, far deeper than any in-flight window the worker pool can produce,
 //! so every legitimate experiment fits below it. Values above the ceiling
 //! are almost always unit typos (a byte count pasted as a slot count), and
-//! because the ring is per-file and spill-to-disk is disabled by default,
+//! because the ring is per-file and held in memory,
 //! honouring them verbatim would pin unbounded RAM with no relief valve.
 //! Over-max values warn and clamp to the ceiling; the parser rejects `0`
 //! since a zero-capacity ring would panic `super::ReorderBuffer::new` at
@@ -58,7 +56,7 @@ pub(super) const RING_CAP_ENV: &str = "OC_RSYNC_REORDER_RING_CAP";
 /// ([`super::ParallelDeltaApplier::DEFAULT_PER_FILE_REORDER_CAPACITY`]),
 /// which comfortably covers the deepest documented experiment (pinning 8192
 /// to study adversarial reordering) while refusing typo-scale values. The
-/// ring is allocated per file and spill-to-disk is disabled by default, so an
+/// ring is allocated per file and held in memory, so an
 /// uncapped override (e.g. a byte count pasted as a slot count) would pin
 /// unbounded RAM with no relief valve. Sibling knobs are clamped the same
 /// way: disk-commit channel capacity uses `[8, 4096]`

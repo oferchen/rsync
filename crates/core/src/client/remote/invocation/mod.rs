@@ -39,15 +39,6 @@ pub enum RemoteRole {
     ///
     /// Used for pull operations: `oc-rsync user@host:remote.txt local.txt`
     Receiver,
-
-    /// Local process is a proxy relaying between two remote hosts.
-    ///
-    /// Used for remote-to-remote transfers: `oc-rsync user@src:file user@dst:file`
-    /// The local machine spawns two SSH connections and relays protocol messages.
-    ///
-    /// Deviation from upstream: upstream refuses this with "The source and
-    /// destination cannot both be remote." (`main.c:1486-1489`).
-    Proxy,
 }
 
 /// Parsed components of a remote operand for validation.
@@ -111,16 +102,6 @@ pub enum TransferSpec {
         /// Local destination path.
         local_dest: OsString,
     },
-
-    /// Proxy transfer: remote sources -> remote destination (via local).
-    ///
-    /// The local process relays protocol messages between two remote hosts.
-    Proxy {
-        /// Remote source operand(s) (e.g., "user@src:/path").
-        remote_sources: RemoteOperands,
-        /// Remote destination operand (e.g., "user@dst:/path").
-        remote_dest: OsString,
-    },
 }
 
 impl TransferSpec {
@@ -131,7 +112,6 @@ impl TransferSpec {
         match self {
             TransferSpec::Push { .. } => RemoteRole::Sender,
             TransferSpec::Pull { .. } => RemoteRole::Receiver,
-            TransferSpec::Proxy { .. } => RemoteRole::Proxy,
         }
     }
 }

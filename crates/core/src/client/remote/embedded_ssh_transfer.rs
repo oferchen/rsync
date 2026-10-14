@@ -96,10 +96,6 @@ pub fn run_embedded_ssh_transfer(
             remote_sources,
             local_dest,
         } => run_embedded_pull(config, &remote_sources, &local_dest, observer, batch_writer),
-        TransferSpec::Proxy { .. } => Err(invalid_argument_error(
-            "remote-to-remote proxy transfers are not supported with embedded SSH",
-            1,
-        )),
     }
 }
 
