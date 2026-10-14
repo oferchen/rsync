@@ -8,7 +8,7 @@
 # Environment variable overrides:
 #   OC_RSYNC              - path to oc-rsync binary
 #   UPSTREAM_INSTALL_ROOT - root of upstream installs (expects {version}/bin/rsync)
-#   UPSTREAM_VERSION      - upstream version to test against (default: "3.4.2")
+#   UPSTREAM_VERSION      - upstream version to test against (default: "3.5.1")
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Paths (overridable via environment)
 OC_RSYNC="${OC_RSYNC:-${WORKSPACE_ROOT}/target/release/oc-rsync}"
 UPSTREAM_INSTALL_ROOT="${UPSTREAM_INSTALL_ROOT:-${WORKSPACE_ROOT}/target/interop/upstream-install}"
-UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.2}"
+UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.5.1}"
 UPSTREAM_RSYNC="${UPSTREAM_INSTALL_ROOT}/${UPSTREAM_VERSION}/bin/rsync"
 
 # Create a temp directory with cleanup trap
@@ -289,18 +289,7 @@ main() {
     # Verify upstream rsync binary exists
     if [ ! -x "$UPSTREAM_RSYNC" ]; then
         log_error "upstream rsync not found or not executable: $UPSTREAM_RSYNC"
-        log_warn "Skipping all filter interop tests"
-        TESTS_SKIPPED=4
-        echo ""
-        echo "========================================="
-        echo "Filter Rules Interoperability Test Summary"
-        echo "========================================="
-        echo "Total tests run:    0"
-        echo "Tests passed:       0"
-        echo "Tests failed:       0"
-        echo "Tests skipped:      $TESTS_SKIPPED"
-        echo "========================================="
-        exit 0
+        exit 1
     fi
 
     test_exclude_pattern

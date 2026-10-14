@@ -39,7 +39,7 @@ OC_RSYNC="${OC_RSYNC:-${WORKSPACE_ROOT}/target/release/oc-rsync}"
 UPSTREAM_INSTALL_ROOT="${UPSTREAM_INSTALL_ROOT:-${WORKSPACE_ROOT}/target/interop/upstream-install}"
 # Default matches the versions built by tools/ci/run_interop.sh; anything else
 # is silently skipped because the binary is not installed.
-UPSTREAM_VERSIONS="${UPSTREAM_VERSIONS:-3.0.9 3.1.3 3.4.4}"
+UPSTREAM_VERSIONS="${UPSTREAM_VERSIONS:-3.0.9 3.1.3 3.4.4 3.5.0 3.5.1}"
 
 # Shared known failure definitions (is_known_failure_from_conf, version_le).
 # shellcheck source=tools/ci/known_failures.conf

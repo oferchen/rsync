@@ -1166,6 +1166,18 @@ ensure_legacy_oracles() {
     echo "==> Legacy oracles: ${built} on disk, ${from_peer} from the --rsync-bin2 peer, ${degraded} consumer(s) running degraded, ${unreachable} not needed on this leg." >&2
 }
 
+# oc does not ship rsync-ssl (no TLS except QUIC). rsync-ssl-type-option runs
+# upstream's own rsync-ssl wrapper against a fake rsync and never executes
+# oc-rsync, so its pass says nothing about oc. Replace it with a stub that
+# reports SKIP with the reason: the cell stays in the run set, and the expect
+# manifests and the skip oracle record it as a documented skip.
+skip_rsync_ssl_cell() {
+    local test_file="${upstream_src_dir}/testsuite/rsync-ssl-type-option_test.py"
+    [[ -f "$test_file" ]] || return 0
+    printf '%s\n' '#!/usr/bin/env python3' 'from rsyncfns import test_skipped' \
+        "test_skipped('oc does not ship rsync-ssl (no TLS except QUIC); use QUIC or ssh')" \
+        >"$test_file"
+}
 # Drive upstream's own runtests.py against oc-rsync.
 #
 # Used for any tree shipping the Python suite - the 3.5.0 release tarball and
@@ -1177,6 +1189,7 @@ ensure_legacy_oracles() {
 run_python_suite_mode() {
     ensure_oc_rsync
     ensure_upstream_src
+    skip_rsync_ssl_cell
 
     echo "==> Building upstream (${upstream_label}) + testsuite helpers..." >&2
     (

@@ -17,9 +17,9 @@ For the full per-feature matrix with exact flags, see
 | rsync 2.6.9      | 28-29    | Pass        | Pass        | -   | Non-blocking |
 | rsync 3.0.9      | 30       | Pass        | Pass        | -   | Required |
 | rsync 3.1.3      | 31       | Pass        | Pass        | -   | Required |
-| rsync 3.4.1      | 32       | Pass        | Pass        | Pass | Required |
-| rsync 3.4.2      | 32       | Pass        | Pass        | Pass | Required |
-| rsync 3.4.3      | 32       | Pass        | Pass        | Pass | Required |
+| rsync 3.4.4      | 32       | Pass        | Pass        | Pass | Required |
+| rsync 3.5.0      | 32       | Pass        | Pass        | Pass | Required |
+| rsync 3.5.1      | 33       | Pass        | Pass        | Pass | Required |
 
 "Push" means oc-rsync client sends to upstream daemon. "Pull" means upstream
 client pulls from oc-rsync daemon. Both directions are tested for every version.
@@ -31,7 +31,7 @@ first, then release tarballs from rsync.samba.org, then source build.
 
 ## Protocol Version Coverage
 
-oc-rsync advertises protocol 32 and negotiates downward to protocol 28 when
+oc-rsync advertises protocol 33 and negotiates downward to protocol 28 when
 connecting to older peers.
 
 | Protocol | Introduced In | Wire Encoding | Default Checksum | Inc. Recurse |
@@ -41,8 +41,9 @@ connecting to older peers.
 | 30       | rsync 3.0.0   | Varint        | MD5              | Yes          |
 | 31       | rsync 3.1.0   | Varint        | MD5              | Yes          |
 | 32       | rsync 3.4.0   | Varint        | MD5              | Yes          |
+| 33       | rsync 3.5.1   | Varint        | MD5              | Yes          |
 
-CI forces each protocol version (28-32) against the newest upstream binary to
+CI forces each protocol version (28-32) against 3.4.4, 3.5.0, and 3.5.1 to
 verify backward compatibility. All pass, subject to upstream-imposed limitations
 at older protocols (see "Known Limitations" below).
 
@@ -51,7 +52,7 @@ at older protocols (see "Known Limitations" below).
 | Protocol | Default | Negotiated Options |
 |----------|---------|--------------------|
 | 28-29    | MD4     | None (no negotiation) |
-| 30-32    | MD5     | XXH128, XXH3, XXH64, MD5, MD4, SHA1 |
+| 30-33    | MD5     | XXH128, XXH3, XXH64, MD5, MD4, SHA1 |
 
 Checksum negotiation requires the `-e.LsfxCIvu` capability string in SSH
 transfers. Without it, transfers fall back to MD5.
@@ -60,7 +61,7 @@ transfers. Without it, transfers fall back to MD5.
 
 ## Test Scenarios
 
-### Core Scenarios (All Versions: 3.0.9, 3.1.3, 3.4.x)
+### Core Scenarios (All Versions: 3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1)
 
 These scenarios run against every upstream version in both directions:
 
@@ -73,9 +74,9 @@ These scenarios run against every upstream version in both directions:
 | Filters | Exclude pattern, relative paths | Pass |
 | Recursion | Incremental recursive (protocol 30+) | Pass |
 
-### Extended Scenarios (3.4.x Only)
+### Extended Scenarios (3.4.4 and Newer)
 
-These run only against upstream 3.4.1, 3.4.2, and 3.4.3 to keep CI within
+These run only against upstream 3.4.4, 3.5.0, and 3.5.1 to keep CI within
 time limits:
 
 | Category | Scenarios | Status |

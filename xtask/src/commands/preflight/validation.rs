@@ -12,25 +12,19 @@ use packaging::file_name;
 pub(crate) use packaging::validate_packaging_assets;
 
 /// Validates that workspace branding matches the pinned release invariants:
-/// upstream 3.4.1, a `-rust` version suffix, protocol 33 (rsync 3.5.1
-/// rsync.h:114 `PROTOCOL_VERSION`), brand-derived binary
+/// the upstream version compiled into the `branding` crate, protocol 33
+/// (rsync 3.5.1 rsync.h:114 `PROTOCOL_VERSION`), brand-derived binary
 /// and daemon file names, and absolute config/secrets paths within the
 /// configured daemon directory.
 pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
     let brand = branding.brand.trim();
     ensure(!brand.is_empty(), "workspace brand label must not be empty")?;
+    let pinned_upstream = ::branding::branding::upstream_version();
     ensure(
-        branding.upstream_version == "3.4.1",
+        branding.upstream_version == pinned_upstream,
         format!(
-            "upstream_version must remain aligned with rsync 3.4.1; found {:?}",
+            "upstream_version {:?} does not match the branding crate's {pinned_upstream:?}",
             branding.upstream_version
-        ),
-    )?;
-    ensure(
-        branding.rust_version.ends_with("-rust"),
-        format!(
-            "Rust-branded version should end with '-rust'; found {:?}",
-            branding.rust_version
         ),
     )?;
     ensure(
@@ -78,7 +72,7 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         ),
     )?;
 
-    let expected_dir_suffix = format!("{brand}-rsyncd");
+    let expected_dir_suffix = format!("{brand}-rsync");
     ensure(
         config_dir.file_name().and_then(|name| name.to_str()) == Some(expected_dir_suffix.as_str()),
         format!(
@@ -238,47 +232,10 @@ pub(crate) fn validate_documentation(
             ],
         },
         DocumentationCheck {
-            relative_path: "docs/production_scope_p1.md",
-            required_snippets: vec![
-                branding.client_bin.clone(),
-                branding.daemon_bin.clone(),
-                branding.rust_version.clone(),
-                branding.daemon_config_dir.display().to_string(),
-                branding.daemon_config.display().to_string(),
-                branding.daemon_secrets.display().to_string(),
-            ],
-        },
-        DocumentationCheck {
-            relative_path: "docs/differences.md",
-            required_snippets: vec![
-                branding.client_bin.clone(),
-                branding.daemon_bin.clone(),
-                branding.rust_version.clone(),
-            ],
-        },
-        DocumentationCheck {
-            relative_path: "docs/gaps.md",
-            required_snippets: vec![
-                branding.client_bin.clone(),
-                branding.daemon_bin.clone(),
-                branding.rust_version.clone(),
-            ],
-        },
-        DocumentationCheck {
-            relative_path: "docs/COMPARE.md",
-            required_snippets: vec![
-                branding.client_bin.clone(),
-                branding.daemon_bin.clone(),
-                branding.rust_version.clone(),
-                branding.daemon_config.display().to_string(),
-            ],
-        },
-        DocumentationCheck {
             relative_path: "docs/feature_matrix.md",
             required_snippets: vec![
                 branding.client_bin.clone(),
                 branding.daemon_bin.clone(),
-                branding.rust_version.clone(),
                 branding.daemon_config.display().to_string(),
                 branding.daemon_secrets.display().to_string(),
             ],

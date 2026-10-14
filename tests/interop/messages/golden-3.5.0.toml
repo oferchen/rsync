@@ -1,4 +1,41 @@
-version = "3.4.1"
+version = "3.5.0"
+
+# Race-dependent: the sender and receiver both print the protocol mismatch
+# description, and either copy can be lost or interleaved with the other.
+[[message_groups]]
+name = "protocol_mismatch_description"
+scenario = "protocol_version_mismatch"
+require_at_least = 1
+messages = [
+    { text = "protocol version mismatch -- is your shell clean?" },
+    { text = "(see the rsync manpage for an explanation)" },
+    { text = "(see the rsync manpage for an explanation)protocol version mismatch -- is your shell clean?" },
+    { text = "protocol version mismatch -- is your shell clean?(see the rsync manpage for an explanation)" },
+]
+
+# Race-dependent: at least one protocol/IPC error must appear.
+[[message_groups]]
+name = "protocol_mismatch_errors"
+scenario = "protocol_version_mismatch"
+require_at_least = 1
+messages = [
+    { pattern = "rsync error: protocol incompatibility \\(code 2\\) at compat\\.c\\(\\d+\\) \\[.*\\]" },
+    { pattern = "rsync error: received SIGUSR1 \\(code 19\\) at main\\.c\\(\\d+\\) \\[.*\\]" },
+    { pattern = "rsync error: error in IPC code \\(code 14\\) at io\\.c\\(\\d+\\) \\[sender\\]", role = "sender" },
+]
+
+# Race-dependent: at least one IPC/connection error must appear after the
+# exec failure; which ones appear depends on when the child dies.
+[[message_groups]]
+name = "remote_not_found_errors"
+scenario = "remote_not_found"
+require_at_least = 1
+messages = [
+    { pattern = "rsync: safe_write failed to write \\d+ bytes to socket \\[sender\\]: Broken pipe.*", role = "sender" },
+    { pattern = "rsync error: error in IPC code \\(code 14\\) at io\\.c\\(\\d+\\) \\[sender\\]", role = "sender" },
+    { pattern = "rsync: connection unexpectedly closed.*\\[sender\\]", role = "sender" },
+    { pattern = "rsync error: error in rsync protocol data stream \\(code 12\\) at io\\.c\\(\\d+\\) \\[sender\\]", role = "sender" },
+]
 
 [[messages]]
 text = 'rsync: [sender] change_dir "<path> failed: No such file or directory (2)'
@@ -6,7 +43,7 @@ role = "sender"
 scenario = "missing_source"
 
 [[messages]]
-text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1394) [sender]"
 role = "sender"
 scenario = "missing_source"
 
@@ -15,16 +52,16 @@ text = "rsync: --invalid-option-xyz: unknown option"
 scenario = "invalid_option"
 
 [[messages]]
-text = "rsync error: syntax or usage error (code 1) at main.c(1782) [client]"
+text = "rsync error: syntax or usage error (code 1) at main.c(1886) [client]"
 role = "client"
 scenario = "invalid_option"
 
 [[messages]]
-text = "rsync version 3.4.1 protocol version 32"
+text = "rsync version 3.5.0 protocol version 32"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "Copyright (C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others."
+text = "Copyright (C) 1996-2026 by Andrew Tridgell, Wayne Davison, and others."
 scenario = "conflicting_options"
 
 [[messages]]
@@ -48,7 +85,11 @@ text = "hardlink-symlinks, IPv6, atimes, batchfiles, inplace, append, ACLs,"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "xattrs, optional secluded-args, iconv, prealloc, stop-at, no crtimes"
+text = "ACL-at, xattrs, optional secluded-args, iconv, prealloc, stop-at,"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "no crtimes"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -64,14 +105,8 @@ text = "Checksum list:"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "xxh128 xxh3 xxh64 (xxhash) md5 md4 sha1 none"
-scenario = "conflicting_options"
-optional = true
-
-[[messages]]
 text = "md5 md4 sha1 none"
 scenario = "conflicting_options"
-optional = true
 
 [[messages]]
 text = "Compress list:"
@@ -80,12 +115,6 @@ scenario = "conflicting_options"
 [[messages]]
 text = "zstd lz4 zlibx zlib none"
 scenario = "conflicting_options"
-optional = true
-
-[[messages]]
-text = "zstd zlibx zlib none"
-scenario = "conflicting_options"
-optional = true
 
 [[messages]]
 text = "Daemon auth list:"
@@ -196,11 +225,23 @@ text = "--recursive, -r recurse into directories"
 scenario = "conflicting_options"
 
 [[messages]]
+text = "--inc-recursive, --i-r enable incremental recursion"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--no-inc-recursive disable incremental recursion"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--no-i-r same as --no-inc-recursive"
+scenario = "conflicting_options"
+
+[[messages]]
 text = "--relative, -R use relative path names"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--no-implied-dirs don't send implied dirs with --relative"
+text = "--no-implied-dirs don't send implied directories with --relative"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -236,7 +277,11 @@ text = "--dirs, -d transfer directories without recursing"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--old-dirs, --old-d works like --dirs when talking to old rsync"
+text = "--old-dirs works like --dirs when talking to old rsync"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--old-d same as --old-dirs"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -248,7 +293,7 @@ text = "--links, -l copy symlinks as symlinks"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--copy-links, -L transform symlink into referent file/dir"
+text = "--copy-links, -L transform symlink into referent file/directory"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -260,15 +305,23 @@ text = "--safe-links ignore symlinks that point outside the tree"
 scenario = "conflicting_options"
 
 [[messages]]
+text = "--insecure-links follow attacker-owned symlinks in operator paths"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--confine-root=DIR refuse operator paths resolving outside DIR"
+scenario = "conflicting_options"
+
+[[messages]]
 text = "--munge-links munge symlinks to make them safe & unusable"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--copy-dirlinks, -k transform symlink to dir into referent dir"
+text = "--copy-dirlinks, -k transform symlink to directory into referent directory"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--keep-dirlinks, -K treat symlinked dir on receiver as dir"
+text = "--keep-dirlinks, -K treat symlinked directory on receiver as directory"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -317,6 +370,10 @@ scenario = "conflicting_options"
 
 [[messages]]
 text = "--specials preserve special files"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--drop-D receiver refuses to create devices/specials"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -372,6 +429,10 @@ text = "--whole-file, -W copy files whole (w/o delta-xfer algorithm)"
 scenario = "conflicting_options"
 
 [[messages]]
+text = "--no-whole-file, --no-W use the delta-xfer algorithm"
+scenario = "conflicting_options"
+
+[[messages]]
 text = "--checksum-choice=STR choose the checksum algorithm (aka --cc)"
 scenario = "conflicting_options"
 
@@ -396,11 +457,15 @@ text = "--existing skip creating new files on receiver"
 scenario = "conflicting_options"
 
 [[messages]]
+text = "--ignore-non-existing skip creating new files on receiver"
+scenario = "conflicting_options"
+
+[[messages]]
 text = "--ignore-existing skip updating files that exist on receiver"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--remove-source-files sender removes synchronized files (non-dir)"
+text = "--remove-source-files sender removes synchronized files (non-directory)"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -408,7 +473,7 @@ text = "--del an alias for --delete-during"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--delete delete extraneous files from dest dirs"
+text = "--delete delete extraneous files from dest directories"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -428,15 +493,15 @@ text = "--delete-after receiver deletes after transfer, not during"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--delete-excluded also delete excluded files from dest dirs"
+text = "--delete-excluded also delete excluded files from dest directories"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--ignore-missing-args ignore missing source args without error"
+text = "--ignore-missing-args ignore missing source arguments without error"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--delete-missing-args delete missing source args from destination"
+text = "--delete-missing-args delete missing source arguments from destination"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -444,7 +509,7 @@ text = "--ignore-errors delete even if there are I/O errors"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--force force deletion of dirs even if not empty"
+text = "--force force deletion of directories even if not empty"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -548,6 +613,10 @@ text = "--compress-level=NUM explicitly set compression level (aka --zl)"
 scenario = "conflicting_options"
 
 [[messages]]
+text = "--compress-threads=NUM explicitly set compression threads (aka --zt)"
+scenario = "conflicting_options"
+
+[[messages]]
 text = "--skip-compress=LIST skip compressing files with suffix in LIST"
 scenario = "conflicting_options"
 
@@ -592,11 +661,11 @@ text = "--from0, -0 all *-from/filter files are delimited by 0s"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--old-args disable the modern arg-protection idiom"
+text = "--old-args disable the modern argument-protection idiom"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "--secluded-args, -s use the protocol to safely send the args"
+text = "--secluded-args, -s use the protocol to safely send the arguments"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -748,43 +817,8 @@ text = "See https://rsync.samba.org/ for updates, bug reports, and answers"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "rsync error: syntax or usage error (code 1) at main.c(1837) [Receiver=3.4.1]"
+text = "rsync error: syntax or usage error (code 1) at main.c(1941) [Receiver=3.5.0]"
 scenario = "conflicting_options"
-
-[[messages]]
-text = "protocol version mismatch -- is your shell clean?"
-scenario = "protocol_version_mismatch"
-
-[[messages]]
-text = "(see the rsync manpage for an explanation)"
-scenario = "protocol_version_mismatch"
-
-[[messages]]
-text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [sender]"
-role = "sender"
-scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [Receiver]"
-scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [Receiver=3.4.1]"
-scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: received SIGUSR1 (code 19) at main.c(1600) [Receiver=3.4.1]"
-scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(232) [sender]"
-role = "sender"
-scenario = "protocol_version_mismatch"
-optional = true
 
 [[messages]]
 text = 'rsync: [sender] change_dir "/nonexistent/source" failed: No such file or directory (2)'
@@ -792,7 +826,7 @@ role = "sender"
 scenario = "source_not_found"
 
 [[messages]]
-text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1394) [sender]"
 role = "sender"
 scenario = "source_not_found"
 
@@ -805,7 +839,7 @@ text = "rsync: [Receiver] failed to connect to localhost (127.0.0.1): Connection
 scenario = "daemon_connection_refused"
 
 [[messages]]
-text = "rsync error: error in socket IO (code 10) at clientserver.c(139) [Receiver=3.4.1]"
+text = "rsync error: error in socket IO (code 10) at clientserver.c(165) [Receiver=3.5.0]"
 scenario = "daemon_connection_refused"
 
 [[messages]]
@@ -814,7 +848,7 @@ role = "sender"
 scenario = "permission_denied_read"
 
 [[messages]]
-text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1394) [sender]"
 role = "sender"
 scenario = "permission_denied_read"
 
@@ -823,7 +857,7 @@ text = 'rsync: [Receiver] change_dir#1 "<path> failed: Permission denied (13)'
 scenario = "permission_denied_write"
 
 [[messages]]
-text = "rsync error: errors selecting input/output files, dirs (code 3) at main.c(751) [Receiver=3.4.1]"
+text = "rsync error: errors selecting input/output files, dirs (code 3) at main.c(768) [Receiver=3.5.0]"
 scenario = "permission_denied_write"
 
 [[messages]]
@@ -832,7 +866,7 @@ role = "sender"
 scenario = "partial_transfer"
 
 [[messages]]
-text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1394) [sender]"
 role = "sender"
 scenario = "partial_transfer"
 
@@ -841,7 +875,7 @@ text = "rsync: --delete does not work without --recursive (-r) or --dirs (-d)."
 scenario = "max_delete_limit"
 
 [[messages]]
-text = "rsync error: syntax or usage error (code 1) at main.c(1782) [client]"
+text = "rsync error: syntax or usage error (code 1) at main.c(1886) [client]"
 role = "client"
 scenario = "max_delete_limit"
 
@@ -854,40 +888,4 @@ scenario = "remote_not_found"
 text = "rsync error: error in IPC code (code 14) at pipe.c(85) [sender]"
 role = "sender"
 scenario = "remote_not_found"
-optional = true
 
-[[messages]]
-text = "rsync: [sender] safe_write failed to write 4 bytes to socket: Broken pipe (32)"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(327) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync error: unexplained error (code 255) at io.c(231) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync: connection unexpectedly closed (0 bytes received so far) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync error: error in rsync protocol data stream (code 12) at io.c(231) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(232) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true

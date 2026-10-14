@@ -373,7 +373,7 @@ jobs:
   # slipping in unreviewed. Every deliberate oc extension is declared with a
   # reason in tools/ci/surface_diff.accepted; anything else fails --check.
   #
-  # Pinned to upstream 3.5.0 (per the 3.5.0 rebaseline): the oracle version is
+  # Pinned to upstream 3.5.1, the reference release: the oracle version is
   # the whole answer to "gap or absorbed?", so a moving pin would silently
   # re-open rows a release already closed. No Rust toolchain: the script reads
   # the two source trees with awk/grep and never compiles anything. --self-test
@@ -382,14 +382,14 @@ jobs:
   # the drift it is meant to catch.
   # ===========================================================================
   surface-diff:
-    name: surface diff (upstream 3.5.0)
+    name: surface diff (upstream 3.5.1)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     env:
-      UPSTREAM_VERSION: "3.5.0"
+      UPSTREAM_VERSION: "3.5.1"
 
     steps:
       - name: Checkout
@@ -404,7 +404,7 @@ jobs:
       - name: Surface extractor self-test
         run: bash tools/ci/surface_diff.sh --self-test
 
-      - name: Surface diff gate (oc vs upstream 3.5.0)
+      - name: Surface diff gate (oc vs upstream 3.5.1)
         run: bash tools/ci/surface_diff.sh --check
 
   # ===========================================================================
@@ -1232,7 +1232,7 @@ jobs:
     with:
       skip: ${{ needs.changes.outputs.docs_only == 'true' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.5.1' }}
       timeout_minutes: 30
 
   # ===========================================================================

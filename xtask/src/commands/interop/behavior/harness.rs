@@ -87,7 +87,7 @@ impl BehaviorHarness {
                 .path
                 .clone()
         } else {
-            // Use latest version (last in list, which is 3.4.1)
+            // Use latest version (last in list, which is 3.5.1)
             upstream_binaries
                 .last()
                 .ok_or_else(|| {

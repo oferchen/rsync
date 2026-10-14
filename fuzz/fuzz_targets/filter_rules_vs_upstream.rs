@@ -34,11 +34,13 @@
 //! The first hit wins:
 //!
 //! 1. `$OC_RSYNC_UPSTREAM_BIN` (absolute path, overrides everything)
-//! 2. `target/interop/upstream-install/3.4.2/bin/rsync`
-//! 3. `target/interop/upstream-install/3.4.1/bin/rsync`
-//! 4. `/opt/homebrew/bin/rsync`
-//! 5. `/usr/local/bin/rsync`
-//! 6. `/usr/bin/rsync`
+//! 2. `target/interop/upstream-install/3.5.1/bin/rsync` under the workspace
+//!    root, as built by `tools/ci/run_interop.sh build-only`
+//!
+//! A system `rsync` is never used: its version is unknown, so a divergence
+//! against it would not be a divergence from the 3.5.1 reference. When the
+//! env var names a missing file the harness panics; when it is unset and the
+//! pinned build is absent the harness prints one skip notice to stderr.
 //!
 //! When no upstream binary is reachable the iteration ends benignly - the
 //! oc-rsync side still runs, which keeps the parser exercised on platforms
@@ -204,6 +206,14 @@ fn render_rule_line(spec: &RuleSpec) -> String {
     format!("{} {}", spec.kind.prefix(), pattern)
 }
 
+/// Pinned upstream reference build, resolved against the workspace root so it
+/// is found regardless of the directory `cargo fuzz` runs from.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const UPSTREAM_ORACLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../target/interop/upstream-install/3.5.1/bin/rsync"
+);
+
 /// Cache the upstream rsync binary path across iterations - filesystem stats
 /// are surprisingly expensive at fuzzer exec rate.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -211,24 +221,24 @@ fn upstream_binary() -> Option<&'static Path> {
     static UPSTREAM: OnceLock<Option<PathBuf>> = OnceLock::new();
     UPSTREAM
         .get_or_init(|| {
-            if let Ok(env) = std::env::var("OC_RSYNC_UPSTREAM_BIN") {
+            if let Some(env) = std::env::var_os("OC_RSYNC_UPSTREAM_BIN") {
                 let p = PathBuf::from(env);
-                if p.is_file() {
-                    return Some(p);
-                }
+                assert!(
+                    p.is_file(),
+                    "OC_RSYNC_UPSTREAM_BIN={} is not a file",
+                    p.display()
+                );
+                return Some(p);
             }
-            for candidate in [
-                "target/interop/upstream-install/3.4.2/bin/rsync",
-                "target/interop/upstream-install/3.4.1/bin/rsync",
-                "/opt/homebrew/bin/rsync",
-                "/usr/local/bin/rsync",
-                "/usr/bin/rsync",
-            ] {
-                let p = PathBuf::from(candidate);
-                if p.is_file() {
-                    return Some(p);
-                }
+            let p = PathBuf::from(UPSTREAM_ORACLE);
+            if p.is_file() {
+                return Some(p);
             }
+            eprintln!(
+                "skipping upstream comparison: rsync 3.5.1 oracle not found at {}; \
+                 set OC_RSYNC_UPSTREAM_BIN or run tools/ci/run_interop.sh build-only",
+                p.display()
+            );
             None
         })
         .as_deref()

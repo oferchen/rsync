@@ -13031,12 +13031,12 @@ echo ""
 echo "=== Standalone Interop Tests ==="
 
 # Use the newest available upstream binary for standalone tests
-# The standalone phase prefers 3.4.4 as the default peer, but under
-# --only-version it MUST use the selected peer: a cell labelled `interop (3.5.0)`
-# that ran its standalone tests against a 3.4.4 binary left on disk from an
-# earlier cached build would be mislabelled, and the per-version matrix exists
-# precisely so a failure names the right version.
-standalone_preferred_version="3.4.4"
+# The standalone phase prefers 3.5.1, the reference release, as the default
+# peer, but under --only-version it MUST use the selected peer: a cell labelled
+# `interop (3.5.0)` that ran its standalone tests against a 3.5.1 binary left on
+# disk from an earlier cached build would be mislabelled, and the per-version
+# matrix exists precisely so a failure names the right version.
+standalone_preferred_version="3.5.1"
 if [[ "$only_version_given" == "true" ]]; then
   standalone_preferred_version="$only_version"
 fi

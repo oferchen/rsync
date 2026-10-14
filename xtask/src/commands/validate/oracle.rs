@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 use crate::commands::interop::shared::upstream;
 use crate::error::{TaskError, TaskResult};
 
-/// The upstream release the fidelity matrix is defined against (protocol 32).
+/// The upstream release the fidelity matrix is defined against (protocol 33).
 ///
 /// `tools/ci/run_interop.sh` builds and installs exactly this version, so the
 /// pinned tree and this constant move together.
-pub const ORACLE_VERSION: &str = "3.4.4";
+pub const ORACLE_VERSION: &str = "3.5.1";
 
 /// Overrides the oracle binary for deliberate cross-version comparison.
 ///

@@ -34,7 +34,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
-  UPSTREAM_RSYNC_VERSION: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
+  UPSTREAM_RSYNC_VERSION: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.5.1' }}
 
 jobs:
   build:
@@ -82,7 +82,7 @@ jobs:
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         uses: ./.github/actions/fetch-upstream-rsync
         with:
-          versions: '2.6.9 3.0.9 3.1.3 3.4.4 3.5.0'
+          versions: '2.6.9 3.0.9 3.1.3 3.4.4 3.5.0 3.5.1'
 
       - name: Build upstream rsync binaries
         if: steps.cache-rsync.outputs.cache-hit != 'true'
@@ -302,10 +302,14 @@ jobs:
           echo "- upstream --write-batch -> oc-rsync --read-batch" >> $GITHUB_STEP_SUMMARY
 
   validate-filters:
-    name: Filter Rules Interop
+    name: Filter Rules Interop (upstream ${{ matrix.upstream }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        upstream: ['3.5.1', '3.5.0', '3.4.4']
 
     steps:
       - name: Checkout
@@ -326,12 +330,14 @@ jobs:
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run filter interop tests
+        env:
+          UPSTREAM_VERSION: ${{ matrix.upstream }}
         run: bash tests/filter_interop_test.sh
 
       - name: Create summary
         if: always()
         run: |
-          echo "## Filter Rules Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Filter Rules Interop Results (upstream ${{ matrix.upstream }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Tests filter rule compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -342,10 +348,14 @@ jobs:
           echo "- \`--delete --exclude '*.keep'\` delete with filters" >> $GITHUB_STEP_SUMMARY
 
   validate-compress:
-    name: Compression Codec Interop
+    name: Compression Codec Interop (upstream ${{ matrix.upstream }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        upstream: ['3.5.1', '3.5.0', '3.4.4']
 
     steps:
       - name: Checkout
@@ -366,12 +376,14 @@ jobs:
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run compress interop tests
+        env:
+          UPSTREAM_VERSION: ${{ matrix.upstream }}
         run: bash tests/compress_interop_test.sh
 
       - name: Create summary
         if: always()
         run: |
-          echo "## Compression Codec Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Compression Codec Interop Results (upstream ${{ matrix.upstream }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Tests compression codec compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -382,10 +394,14 @@ jobs:
           echo "- Auto-negotiation (protocol picks best common codec)" >> $GITHUB_STEP_SUMMARY
 
   validate-inc-recurse:
-    name: INC_RECURSE Interop
+    name: INC_RECURSE Interop (upstream ${{ matrix.upstream }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        upstream: ['3.5.1', '3.5.0', '3.4.4']
 
     steps:
       - name: Checkout
@@ -407,13 +423,13 @@ jobs:
 
       - name: Run INC_RECURSE interop tests
         env:
-          UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+          UPSTREAM_VERSION: ${{ matrix.upstream }}
         run: bash tests/inc_recurse_interop_test.sh
 
       - name: Create summary
         if: always()
         run: |
-          echo "## INC_RECURSE Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "## INC_RECURSE Interop Results (upstream ${{ matrix.upstream }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Tests incremental recursion compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

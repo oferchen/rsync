@@ -38,8 +38,9 @@ OUTPUT_PATH = WORKSPACE_ROOT / "docs" / "user" / "interop-compatibility-matrix.m
 # Upstream versions tested in the interop suite, ordered by protocol age.
 # 3.4.4 supersedes 3.4.1/3.4.2/3.4.3 as a conservative regression-fix release
 # on the same wire protocol (proto 32); only the latest 3.4.x point release is
-# tracked in the matrix.
-UPSTREAM_VERSIONS = ["2.6.9", "3.0.9", "3.1.3", "3.4.4"]
+# tracked in the matrix. 3.5.0 still speaks protocol 32; 3.5.1, the reference
+# release, introduced protocol 33.
+UPSTREAM_VERSIONS = ["2.6.9", "3.0.9", "3.1.3", "3.4.4", "3.5.0", "3.5.1"]
 
 # Protocol metadata (version -> (introduced_in, default_checksum, compat_flags,
 # inc_recurse)).
@@ -49,6 +50,7 @@ PROTOCOL_META: dict[int, tuple[str, str, str, str]] = {
     30: ("rsync 3.0.0", "MD5", "Varint", "Yes"),
     31: ("rsync 3.1.0", "MD5", "Varint", "Yes"),
     32: ("rsync 3.4.0", "MD5", "Varint", "Yes"),
+    33: ("rsync 3.5.1", "MD5", "Varint", "Yes"),
 }
 
 # Map upstream version to protocol version.
@@ -57,6 +59,8 @@ VERSION_PROTO: dict[str, str] = {
     "3.0.9": "30",
     "3.1.3": "31",
     "3.4.4": "32",
+    "3.5.0": "32",
+    "3.5.1": "33",
 }
 
 # Version CI status (blocking vs non-blocking).
@@ -65,6 +69,8 @@ VERSION_CI_STATUS: dict[str, str] = {
     "3.0.9": "Required CI",
     "3.1.3": "Required CI",
     "3.4.4": "Required CI",
+    "3.5.0": "Required CI",
+    "3.5.1": "Required CI",
 }
 
 # Scenario name -> (display label, flags) for the feature matrices.
@@ -283,9 +289,10 @@ RE_269_PUSH_PASS = re.compile(
 RE_269_PULL_PASS = re.compile(
     r"PASS:\s+rsync\s+2\.6\.9\s*->\s*oc-rsync\s+pull"
 )
-# Protocol forcing header: "=== Protocol 28 (forced via --protocol=28) ==="
+# Protocol forcing header:
+# "=== Protocol 28 vs upstream 3.5.1 (forced via --protocol=28) ==="
 RE_PROTO_HEADER = re.compile(
-    r"===\s+Protocol\s+(\d+)\s+\(forced via --protocol=(\d+)\)"
+    r"===\s+Protocol\s+(\d+)(?:\s+vs\s+upstream\s+[\d.]+)?\s+\(forced via --protocol=(\d+)\)"
 )
 # Version header: "=== Comprehensive: upstream 3.4.4 (native protocol) ==="
 RE_VERSION_HEADER = re.compile(
@@ -483,6 +490,8 @@ def generate_matrix(results: InteropResults) -> str:
         ("3.0.9", ["3.0.9"]),
         ("3.1.3", ["3.1.3"]),
         ("3.4.x", ["3.4.4"]),
+        ("3.5.0", ["3.5.0"]),
+        ("3.5.1", ["3.5.1"]),
     ]
 
     lines.append("# Interoperability Compatibility Matrix")
@@ -522,9 +531,9 @@ def generate_matrix(results: InteropResults) -> str:
             push = _infer_daemon_status(results, v, "oc")
             pull = _infer_daemon_status(results, v, "up")
 
-        # SSH status: only 3.4.x versions have SSH interop tested.
+        # SSH status: the SSH interop job covers 3.4.4, 3.5.0 and 3.5.1.
         ssh = "-"
-        if v == "3.4.4":
+        if v in ("3.4.4", "3.5.0", "3.5.1"):
             ssh_status = _get_version_status(results, v, ["ssh-transfer"])
             if ssh_status:
                 ssh = ssh_status
@@ -556,7 +565,7 @@ def generate_matrix(results: InteropResults) -> str:
     lines.append("## Protocol Version Support")
     lines.append("")
     lines.append(
-        "oc-rsync supports protocol versions 28 through 32. It advertises protocol 32"
+        "oc-rsync supports protocol versions 28 through 33. It advertises protocol 33"
     )
     lines.append("and negotiates downward when connecting to older peers.")
     lines.append("")
@@ -567,7 +576,7 @@ def generate_matrix(results: InteropResults) -> str:
         "|----------|---------------|------------------|--------------|--------------|--------|"
     )
     for proto, (intro, checksum, compat, inc_rec) in sorted(PROTOCOL_META.items()):
-        status = "Supported (primary)" if proto == 32 else "Supported"
+        status = "Supported (primary)" if proto == 33 else "Supported"
         lines.append(
             f"| {proto:<8} | {intro:<13} | {checksum:<16} | {compat:<12} | {inc_rec:<12} | {status} |"
         )
@@ -577,9 +586,9 @@ def generate_matrix(results: InteropResults) -> str:
     lines.append("### Forced Protocol Testing")
     lines.append("")
     lines.append(
-        "CI forces each protocol version (28-32) against the newest upstream binary"
+        "CI forces each protocol version (28-32) against each extended-matrix upstream"
     )
-    lines.append("(3.4.4) to verify backward compatibility. Results:")
+    lines.append("binary (3.4.4, 3.5.0, 3.5.1) to verify backward compatibility. Results:")
     lines.append("")
     lines.append(
         "| Forced Protocol | Transfer | Delete | Compress | Hardlinks | Filters | Status |"
@@ -848,7 +857,7 @@ def _emit_feature_table(
         f"| Feature | Flags | {' | '.join(col_headers)} |"
     )
     lines.append(
-        f"|---------|-------|{'|'.join('-------|' for _ in col_headers)}"
+        f"|---------|-------|{'-------|' * len(col_headers)}"
     )
 
     for display, flags, scenario_names in scenarios:
@@ -884,7 +893,7 @@ def _emit_platform_coverage(lines: list[str]) -> None:
     lines.append("| Platform | Workflow | Interop Scope | Status |")
     lines.append("|----------|----------|---------------|--------|")
     lines.append(
-        "| Linux x86_64 (Ubuntu) | `ci.yml`, `_interop.yml` | Full multi-version (2.6.9, 3.0.9, 3.1.3, 3.4.4), SSH, daemon, standalone | Required |"
+        "| Linux x86_64 (Ubuntu) | `ci.yml`, `_interop.yml` | Full multi-version (2.6.9, 3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1), SSH, daemon, standalone | Required |"
     )
     lines.append(
         "| Linux x86_64 (Ubuntu) | `interop-validation.yml` | Exit codes, messages, behavior, batch, filters, compression, INC_RECURSE | Required |"
@@ -1032,7 +1041,7 @@ def _emit_ci_workflows(lines: list[str]) -> None:
     lines.append("| Workflow | File | Scope |")
     lines.append("|----------|------|-------|")
     lines.append(
-        "| CI (interop job) | `ci.yml` + `_interop.yml` | Full bidirectional daemon interop (3.0.9, 3.1.3, 3.4.4), SSH push/pull, protocol forcing (28-32), standalone tests, 2.6.9 push/pull cells, upstream testsuite |"
+        "| CI (interop job) | `ci.yml` + `_interop.yml` | Full bidirectional daemon interop (3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1), SSH push/pull, protocol forcing (28-32), standalone tests, 2.6.9 push/pull cells, upstream testsuite |"
     )
     lines.append(
         "| Interop Validation | `interop-validation.yml` | Exit code validation, message format validation, behavior comparison, batch mode, filter rules, compression codecs, INC_RECURSE. Runs on push, PR, and nightly schedule |"

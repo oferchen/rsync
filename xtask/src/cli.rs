@@ -93,7 +93,7 @@ pub enum Command {
     /// (host `clippy -D warnings`, windows-gnu and linux-musl `cargo check`).
     /// Absent cross toolchains are skipped with a hint, never failed.
     ///
-    /// The upstream side of the comparison is the pinned rsync 3.4.4 built by
+    /// The upstream side of the comparison is the pinned rsync 3.5.1 built by
     /// `bash tools/ci/run_interop.sh` under
     /// `target/interop/upstream-install/`, verified by its
     /// `--version` banner and printed before the results. A missing or
@@ -310,7 +310,7 @@ pub enum InteropCommand {
 /// Arguments for the behavior comparison command.
 #[derive(Parser, Debug, Clone, Default)]
 pub struct BehaviorArgs {
-    /// Test against specific upstream version (3.0.9, 3.1.3, 3.4.1).
+    /// Test against specific upstream version (3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1).
     #[arg(long, value_name = "VER")]
     pub version: Option<String>,
 
@@ -338,7 +338,7 @@ pub struct InteropCommonArgs {
     #[arg(long)]
     pub regenerate: bool,
 
-    /// Test against specific upstream version (3.0.9, 3.1.3, 3.4.1).
+    /// Test against specific upstream version (3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1).
     #[arg(long, value_name = "VER")]
     pub version: Option<String>,
 
