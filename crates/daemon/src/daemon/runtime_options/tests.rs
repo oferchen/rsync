@@ -290,7 +290,10 @@ mod runtime_options_tests {
     // whatever any client wants.
     #[test]
     fn daemon_zero_copy_defaults_off() {
-        assert_eq!(module_zero_copy_policy(&[], None), fast_io::ZeroCopyPolicy::Auto);
+        assert_eq!(
+            module_zero_copy_policy(&[], None),
+            fast_io::ZeroCopyPolicy::Auto
+        );
     }
 
     #[test]

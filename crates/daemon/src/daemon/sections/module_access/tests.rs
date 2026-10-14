@@ -1266,7 +1266,8 @@ mod module_access_tests {
             "[send_zc env] {test}: {}",
             match (io_uring, opcode) {
                 (false, _) => "io_uring unavailable - SEND_ZC not exercised",
-                (true, false) => "SEND_ZC opcode unsupported (kernel < 6.0) - SEND_ZC not exercised",
+                (true, false) =>
+                    "SEND_ZC opcode unsupported (kernel < 6.0) - SEND_ZC not exercised",
                 (true, true) => "ok - SEND_ZC can run",
             }
         );
