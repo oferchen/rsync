@@ -15,14 +15,15 @@ use super::super::{
 use super::{ScriptedDeleteFs, entry, plan};
 
 #[test]
-fn non_empty_dir_recurses_via_nested_plan() {
+fn non_empty_dir_is_emptied_before_its_rmdir() {
     // The directory `d/sub` has a published nested plan with two
-    // entries. The parent plan deletes `d/sub` as a Dir; the
-    // emitter's first rmdir attempt yields ENOTEMPTY, so the
-    // emitter must drain the nested plan (in plan order) and retry
-    // rmdir, mirroring upstream `delete_dir_contents` (`delete.c:86-183`)
-    // followed by the `rmdir` in `delete_item` (`delete.c:222-226`).
-    let fs = ScriptedDeleteFs::new().fail("d/sub", io::ErrorKind::DirectoryNotEmpty);
+    // entries. Upstream `delete_item` runs `delete_dir_contents` before
+    // it ever calls `rmdir` (`delete.c:205-226`), so the nested plan
+    // must drain (in plan order) and only then may the directory itself
+    // be removed. The recording fake accepts any `rmdir`, so an emitter
+    // that tried `rmdir` first would record `d/sub` alone and never
+    // reach the contents.
+    let fs = ScriptedDeleteFs::new();
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("sub", DeleteEntryKind::Dir)]));
     plans.insert(plan(
@@ -38,9 +39,8 @@ fn non_empty_dir_recurses_via_nested_plan() {
     let mut emitter = DeleteEmitter::new(fs, plans, cursor);
     emitter.emit_all().expect("drain succeeds");
 
-    // Expected sequence: rmdir(sub) failed and was never recorded,
-    // then inner-file unlink, inner-link unlink, then the retried
-    // rmdir(sub) succeeded.
+    // Expected sequence: inner-file unlink, inner-link unlink, then the
+    // single rmdir(sub).
     let events = emitter.fs().events();
     assert_eq!(
         events,
@@ -71,8 +71,8 @@ fn non_empty_dir_after_peel_reports_notice_without_error() {
     // "cannot delete non-empty directory: <dir>" via FINFO and treats the
     // outcome as DR_NOT_EMPTY: the user must learn the directory survived,
     // but the run neither counts it as deleted nor records an I/O error, so
-    // the exit code stays 0. Scripting two ENOTEMPTY failures models the
-    // initial rmdir plus the post-peel retry both failing.
+    // the exit code stays 0. The scripted ENOTEMPTY models the post-peel
+    // rmdir failing.
     use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
 
     // NONREG (info_verbosity[0]) is the only info category present at the
@@ -80,9 +80,7 @@ fn non_empty_dir_after_peel_reports_notice_without_error() {
     init(VerbosityConfig::from_verbose_level(0));
     let _ = drain_events();
 
-    let fs = ScriptedDeleteFs::new()
-        .fail("d/sub", io::ErrorKind::DirectoryNotEmpty)
-        .fail("d/sub", io::ErrorKind::DirectoryNotEmpty);
+    let fs = ScriptedDeleteFs::new().fail("d/sub", io::ErrorKind::DirectoryNotEmpty);
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("sub", DeleteEntryKind::Dir)]));
     plans.insert(plan("d/sub", vec![entry("inner", DeleteEntryKind::File)]));
@@ -127,11 +125,11 @@ fn non_empty_dir_after_peel_reports_notice_without_error() {
 }
 
 #[test]
-fn non_empty_dir_without_plan_falls_back_to_remove_dir_all() {
-    // When `d/orphan` has no published plan, ENOTEMPTY must route
+fn dir_without_plan_is_peeled_via_remove_dir_all() {
+    // When `d/orphan` has no published plan, the directory must route
     // through `DeleteFs::remove_dir_all`, mirroring upstream's
-    // `delete_dir_contents` peel.
-    let fs = ScriptedDeleteFs::new().fail("d/orphan", io::ErrorKind::DirectoryNotEmpty);
+    // `delete_dir_contents` peel ahead of the `rmdir`.
+    let fs = ScriptedDeleteFs::new();
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("orphan", DeleteEntryKind::Dir)]));
     let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));

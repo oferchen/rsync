@@ -4,8 +4,7 @@
 //! `concurrent_delta` pipeline. Workers complete in arbitrary order; the buffer
 //! restores file-list order before downstream consumers (checksum verification,
 //! metadata commit) observe results. At 100K+ files its occupancy directly
-//! determines whether async dispatch can keep up with the receiver and whether
-//! spill-to-tempfile (issue #1884) is needed.
+//! determines whether async dispatch can keep up with the receiver.
 //!
 //! This benchmark synthesises 100K, 500K, and 1M out-of-order inserts across a
 //! range of drift windows and reports:
@@ -34,7 +33,7 @@
 //! capacity (`work_queue` bound times worker count). If `max_depth` approaches
 //! that bound the pipeline is fully saturated. If it greatly exceeds the bound
 //! something upstream of the buffer is releasing more work than the consumer
-//! can drain, and the spill layer (issue #1884) is the appropriate mitigation.
+//! can drain.
 //!
 //! # Favorable vs unfavorable readings
 //!
@@ -44,8 +43,7 @@
 //! - **Unfavorable** (`max_depth` grows with the input count for a constant
 //!   drift, or saturates the configured capacity): a slow item is starving
 //!   delivery and the buffer is acting as an unbounded queue. This is the
-//!   signal that the spill layer (issue #1884) or adaptive growth (issue
-//!   #1834) needs to kick in.
+//!   signal that adaptive growth (issue #1834) needs to kick in.
 
 #![deny(unsafe_code)]
 

@@ -1509,7 +1509,7 @@ fn connection_wait_with_stderr_empty_on_success() {
 #[test]
 fn child_handle_wait_with_stderr_surfaces_error_after_split() {
     // Verifies the split() path also captures stderr on connection failure.
-    // This covers the path used by ssh_transfer.rs and remote_to_remote.rs.
+    // This covers the path used by ssh_transfer.rs.
     let mut command = SshCommand::new("ignored");
     command.set_program("sh");
     command.push_option("-c");

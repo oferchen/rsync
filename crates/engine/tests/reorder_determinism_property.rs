@@ -24,33 +24,22 @@
 //! stress tests. Those exercise `insert` / `drain_ready` directly with a
 //! capacity wide enough that `force_insert` never fires. They do not prove the
 //! end-to-end reassembled sequence stays correct once the capacity-stall
-//! fallback (`force_insert`) or the disk spill path engages under adversarial
-//! order. These tests drive the exact control flow of the production consumer
-//! loops (`consumer/loops.rs`) across many generated permutations and tiny
-//! capacities so both fallbacks are actually taken.
+//! fallback (`force_insert`) engages under adversarial order. These tests
+//! drive the exact control flow of the production consumer loop
+//! (`consumer/loops.rs`) across many generated permutations and tiny
+//! capacities so the fallback is actually taken.
 //!
 //! # Coverage
 //!
 //! - `bare_drain_matches_serial_reference` drives [`ReorderBuffer`] through the
 //!   `run_bare_loop` flow, including the `force_insert`-under-stall deadlock
 //!   breaker.
-//! - `spill_disk_reassembly_matches_serial_reference` drives
-//!   [`SpillableReorderBuffer`] with a byte threshold small enough to force
-//!   real disk spill + reload, mirroring the `run_spillable_loop` flow. This is
-//!   the disk-reassembly determinism proof.
-//! - Deterministic anchor tests assert the stress paths are non-vacuous
-//!   (`force_insert` and disk spill genuinely fire) so the properties cannot
-//!   pass trivially.
-//!
-//! The ENOSPC loud-failure contract (a spill hitting a full disk surfaces a
-//! typed error and never silently drops or reorders) is proven at the unit
-//! level in `spill/buffer/tests/enospc_degradation.rs` and is not duplicated
-//! here.
+//! - A deterministic anchor test asserts the stress path is non-vacuous
+//!   (`force_insert` genuinely fires) so the property cannot pass trivially.
 
-use std::io::{self, Read, Write};
 use std::sync::atomic::Ordering;
 
-use engine::concurrent_delta::{ReorderBuffer, SpillCodec, SpillError, SpillableReorderBuffer};
+use engine::concurrent_delta::ReorderBuffer;
 use proptest::prelude::*;
 
 /// A reorder item carrying both its sequence identity and a derived tag.
@@ -59,8 +48,7 @@ use proptest::prelude::*;
 /// sequence itself, so a correct reassembly must place `seq == i` at output
 /// position `i` *and* deliver the matching `tag`. This catches three failure
 /// classes at once: reordering (`seq != i`), drop / duplicate (length or `seq`
-/// mismatch), and payload corruption across the spill round-trip (`tag`
-/// mismatch).
+/// mismatch), and payload corruption inside the ring (`tag` mismatch).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Item {
     seq: u64,
@@ -80,26 +68,6 @@ impl Item {
     /// the identity works; this mixes the bits so a swapped payload is visible.
     fn tag_for(seq: u64) -> u64 {
         seq.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1)
-    }
-}
-
-impl SpillCodec for Item {
-    fn encode(&self, writer: &mut dyn Write) -> io::Result<()> {
-        writer.write_all(&self.seq.to_le_bytes())?;
-        writer.write_all(&self.tag.to_le_bytes())
-    }
-
-    fn decode(reader: &mut dyn Read) -> io::Result<Self> {
-        let mut buf = [0u8; 8];
-        reader.read_exact(&mut buf)?;
-        let seq = u64::from_le_bytes(buf);
-        reader.read_exact(&mut buf)?;
-        let tag = u64::from_le_bytes(buf);
-        Ok(Self { seq, tag })
-    }
-
-    fn estimated_size(&self) -> usize {
-        16
     }
 }
 
@@ -151,58 +119,6 @@ fn drive_bare_loop(capacity: usize, arrival: &[u64]) -> (Vec<Item>, u64) {
     (out, forced)
 }
 
-/// Drives [`SpillableReorderBuffer`] through the production `run_spillable_loop`
-/// control flow and returns the drained output.
-///
-/// Mirrors `crates/engine/src/concurrent_delta/consumer/loops.rs::run_spillable_loop`:
-/// a small `byte_threshold` forces the buffer to serialise higher-sequence
-/// items to a tempfile and reload them on drain. Any non-capacity
-/// [`SpillError`] (or a failed `force_insert`) is surfaced as `Err` - the
-/// loud-failure contract - rather than silently dropped.
-fn drive_spillable_loop(
-    ring_capacity: usize,
-    byte_threshold: usize,
-    arrival: &[u64],
-) -> Result<Vec<Item>, String> {
-    let mut reorder: SpillableReorderBuffer<Item> =
-        SpillableReorderBuffer::new(ring_capacity, byte_threshold);
-    let mut out = Vec::with_capacity(arrival.len());
-
-    for &seq in arrival {
-        let item = Item::new(seq);
-        loop {
-            match reorder.insert(seq, item) {
-                Ok(()) => break,
-                Err(SpillError::Capacity(_)) => {
-                    let mut drained_any = false;
-                    for ready in reorder.drain_ready().map_err(|e| e.to_string())? {
-                        out.push(ready);
-                        drained_any = true;
-                    }
-                    if !drained_any {
-                        reorder.force_insert(seq, item).map_err(|e| e.to_string())?;
-                        break;
-                    }
-                }
-                Err(other) => return Err(other.to_string()),
-            }
-        }
-        for ready in reorder.drain_ready().map_err(|e| e.to_string())? {
-            out.push(ready);
-        }
-    }
-
-    loop {
-        let items = reorder.drain_ready().map_err(|e| e.to_string())?;
-        if items.is_empty() {
-            break;
-        }
-        out.extend(items);
-    }
-
-    Ok(out)
-}
-
 /// Strategy yielding `(capacity, arrival)` where `arrival` is a permutation of
 /// `0..n` for some `n` in `1..=max_n` and `capacity` is in `1..=n`.
 ///
@@ -219,10 +135,6 @@ fn capacity_and_arrival(max_n: usize) -> impl Strategy<Value = (usize, Vec<u64>)
     })
 }
 
-/// Two items' worth of bytes: the byte threshold that forces the spillable
-/// buffer to serialise the third and later held-back items to disk.
-const SPILL_THRESHOLD: usize = 2 * 16;
-
 proptest! {
     /// The bare ring buffer, driven through the real consumer loop including
     /// the `force_insert` deadlock breaker, always reassembles the serial
@@ -234,19 +146,6 @@ proptest! {
         prop_assert_eq!(out, serial_reference(n));
     }
 
-    /// The spillable buffer with a byte threshold small enough to force disk
-    /// spill + reload reassembles the serial reference under adversarial
-    /// arrival. This proves disk reassembly is deterministic, not just the
-    /// in-memory ring.
-    #[test]
-    fn spill_disk_reassembly_matches_serial_reference(
-        (ring_capacity, arrival) in capacity_and_arrival(48),
-    ) {
-        let n = arrival.len();
-        let out = drive_spillable_loop(ring_capacity, SPILL_THRESHOLD, &arrival)
-            .map_err(|e| TestCaseError::fail(format!("spill loop failed: {e}")))?;
-        prop_assert_eq!(out, serial_reference(n));
-    }
 }
 
 /// The bare-loop `force_insert` fallback genuinely fires under a reversed
@@ -261,27 +160,5 @@ fn bare_force_insert_fires_and_preserves_order() {
         forced > 0,
         "reversed arrival with capacity 2 must exercise force_insert"
     );
-    assert_eq!(out, serial_reference(N));
-}
-
-/// The spillable-loop disk path genuinely engages (items are written to the
-/// tempfile) under a reversed arrival with a tiny byte threshold, and the
-/// reloaded stream still matches the serial reference. Guards the disk property
-/// test from becoming vacuous.
-#[test]
-fn spill_disk_path_engages_and_preserves_order() {
-    const N: usize = 64;
-    let arrival: Vec<u64> = (0..N as u64).rev().collect();
-    let mut reorder: SpillableReorderBuffer<Item> = SpillableReorderBuffer::new(N, SPILL_THRESHOLD);
-    for &seq in &arrival {
-        reorder.insert(seq, Item::new(seq)).unwrap();
-    }
-    assert!(
-        reorder.spill_stats().spill_events > 0,
-        "reversed arrival under a tiny threshold must spill to disk"
-    );
-
-    let out =
-        drive_spillable_loop(N, SPILL_THRESHOLD, &arrival).expect("spill reassembly must succeed");
     assert_eq!(out, serial_reference(N));
 }

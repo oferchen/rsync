@@ -5,7 +5,7 @@ Parent task: ROB-1 (spill-prevention initiative for the parallel-delta
 
 - `docs/audits/rob-spill-prevention.md` (telemetry surface added by ROB-2/3,
   PR #5626).
-- `docs/design/reorderbuffer-spill-to-tempfile.md` (spill backend contract).
+- `docs/design/reorderbuffer-spill-to-tempfile.md` (removed) (spill backend contract).
 - `docs/design/reorderbuffer-metrics-and-bypass.md` (metrics surface and
   bypass mode).
 
@@ -247,5 +247,5 @@ Producers ROB-7 should adapt for, ranked by normal-operation spill risk:
 - `docs/design/reorderbuffer-metrics-and-bypass.md` - prior-art metrics
   documentation; the `Metrics`/`spill_stats` surfaces it describes are the
   observability lever ROB-7 will read.
-- `docs/design/reorderbuffer-spill-to-tempfile.md` - spill backend
+- `docs/design/reorderbuffer-spill-to-tempfile.md` (removed) - spill backend
   contract that ROB-7's adaptive policy must continue to honour.

@@ -38,7 +38,6 @@ rustix = { workspace = true, features = ["fs", "param", "process"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 filetime = { workspace = true }
-zstd = { version = "0.14", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-fs = { path = "../apple-fs" }
@@ -48,7 +47,6 @@ checksums = { path = "../checksums" }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 # libc is needed for O_NOATIME (Linux), clonefile (macOS), posix_fadvise, syncfs
 [target.'cfg(unix)'.dependencies]
@@ -123,13 +121,6 @@ dg-stress = []
 # Trade-offs: Relaxes the single-producer compile-time invariant
 multi-producer = []
 
-# Spill payload compression (#2336, #2341) - exposes the SpillCompression::Zstd
-# variant on SpillPolicy and wires the zstd codec into the spill write/read
-# path. Default builds stay free of the zstd dependency, and the on-disk spill
-# format gains a single leading tag byte (0x00 raw / 0x01 zstd) per record so
-# the reader can dispatch without ambiguity.
-spill-compression = ["dep:zstd"]
-
 # EXPERIMENTAL: SMR-3a Option 1 (#2288) - forward to `fast_io/mmap-free-basis`
 # so the basis-read dispatch in `concurrent_delta::strategy` skips the mmap
 # branch and forces io_uring (or a buffered fallback) for every basis read.
@@ -185,7 +176,6 @@ xattr = { workspace = true }
 libc = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-zstd = "0.14"
 
 [[bench]]
 name = "optimizations_benchmark"
@@ -278,8 +268,3 @@ harness = false
 [[bench]]
 name = "dmb_a_dashmap_delete_bench"
 harness = false
-
-[[bench]]
-name = "spill_policy_perf"
-harness = false
-required-features = ["spill-compression"]

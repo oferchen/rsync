@@ -18,8 +18,6 @@ pub enum ShutdownReason {
     Terminated = 2,
     /// Hangup (not supported on Windows).
     HangUp = 3,
-    /// Broken pipe (not supported on Windows).
-    PipeBroken = 4,
     /// Programmatic shutdown request.
     UserRequested = 5,
 }
@@ -31,7 +29,6 @@ impl ShutdownReason {
             1 => Some(Self::Interrupted),
             2 => Some(Self::Terminated),
             3 => Some(Self::HangUp),
-            4 => Some(Self::PipeBroken),
             5 => Some(Self::UserRequested),
             _ => None,
         }
@@ -42,7 +39,6 @@ impl ShutdownReason {
     pub const fn exit_code(self) -> ExitCode {
         match self {
             Self::Interrupted | Self::Terminated | Self::HangUp => ExitCode::Signal,
-            Self::PipeBroken => ExitCode::SocketIo,
             Self::UserRequested => ExitCode::Ok,
         }
     }
@@ -54,7 +50,6 @@ impl ShutdownReason {
             Self::Interrupted => "interrupted",
             Self::Terminated => "terminated",
             Self::HangUp => "hangup",
-            Self::PipeBroken => "broken pipe",
             Self::UserRequested => "user requested shutdown",
         }
     }

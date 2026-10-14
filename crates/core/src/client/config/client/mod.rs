@@ -321,23 +321,6 @@ pub struct ClientConfig {
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
     pub(super) files_from: FilesFromSource,
     pub(super) from0: bool,
-    /// CLI override for the reorder-buffer spill directory.
-    ///
-    /// When `Some`, `engine::SpillPolicy::apply_cli_overrides` replaces
-    /// the env-var (or default) directory. Precedence: **CLI > env >
-    /// defaults**.
-    pub(super) spill_dir: Option<PathBuf>,
-    /// CLI override for the reorder-buffer spill byte threshold.
-    ///
-    /// When `Some`, `engine::SpillPolicy::apply_cli_overrides` replaces
-    /// the env-var (or default) threshold. Precedence: **CLI > env >
-    /// defaults**.
-    pub(super) spill_threshold_bytes: Option<u64>,
-    /// CLI flag to disable disk-based spilling.
-    ///
-    /// When `true`, `engine::SpillPolicy::apply_cli_overrides` sets
-    /// `in_memory_only` to `true`. Precedence: **CLI > env > defaults**.
-    pub(super) no_spill: bool,
     pub(super) no_motd: bool,
     /// Pre-loaded password override for daemon authentication.
     ///
@@ -551,9 +534,6 @@ impl Default for ClientConfig {
             batch_config: None,
             files_from: FilesFromSource::None,
             from0: false,
-            spill_dir: None,
-            spill_threshold_bytes: None,
-            no_spill: false,
             no_motd: false,
             password_override: None,
             remote_options: Vec::new(),

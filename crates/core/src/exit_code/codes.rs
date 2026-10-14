@@ -40,14 +40,6 @@ pub enum ExitCode {
     /// Returned when the initial handshake with the daemon fails.
     StartClient = 5,
 
-    /// Daemon unable to append to log-file (6).
-    ///
-    /// Returned when the daemon cannot write to its log file.
-    ///
-    /// Deviation from upstream: oc-only. Upstream `errcode.h` defines no code 6
-    /// and no `RERR_LOG_FAILURE`; `log.c` has no name for it.
-    LogFileAppend = 6,
-
     /// Error in socket I/O (RERR_SOCKETIO = 10).
     ///
     /// Returned for network-level errors during transfer.
@@ -158,7 +150,6 @@ impl ExitCode {
             Self::FileSelect => 3,
             Self::Unsupported => 4,
             Self::StartClient => 5,
-            Self::LogFileAppend => 6,
             Self::SocketIo => 10,
             Self::FileIo => 11,
             Self::StreamIo => 12,
@@ -186,8 +177,7 @@ impl ExitCode {
     /// Returns a human-readable description of this exit code.
     ///
     /// These descriptions match upstream rsync's `log.c:81-106` `rerr_names`
-    /// strings, except the oc-only `LogFileAppend` (6) and `Ok`, which upstream
-    /// never names.
+    /// strings, except `Ok`, which upstream never names.
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
@@ -197,7 +187,6 @@ impl ExitCode {
             Self::FileSelect => "errors selecting input/output files, dirs",
             Self::Unsupported => "requested action not supported",
             Self::StartClient => "error starting client-server protocol",
-            Self::LogFileAppend => "daemon unable to append to log-file",
             Self::SocketIo => "error in socket IO",
             Self::FileIo => "error in file IO",
             Self::StreamIo => "error in rsync protocol data stream",
@@ -237,7 +226,6 @@ impl ExitCode {
             self,
             Self::Protocol
                 | Self::StartClient
-                | Self::LogFileAppend
                 | Self::SocketIo
                 | Self::StreamIo
                 | Self::Ipc
@@ -269,7 +257,6 @@ impl ExitCode {
             3 => Some(Self::FileSelect),
             4 => Some(Self::Unsupported),
             5 => Some(Self::StartClient),
-            6 => Some(Self::LogFileAppend),
             10 => Some(Self::SocketIo),
             11 => Some(Self::FileIo),
             12 => Some(Self::StreamIo),

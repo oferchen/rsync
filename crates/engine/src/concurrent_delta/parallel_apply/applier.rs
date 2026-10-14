@@ -95,7 +95,7 @@ pub struct ParallelDeltaApplier {
     ///
     /// Incremented exactly once per [`IngestError::ReorderSaturated`]
     /// returned by [`FileSlot::ingest`]. The per-file applier has no
-    /// spill backend today, so saturation events surface as
+    /// overflow backend, so saturation events surface as
     /// [`io::Error::other`] back to the caller; this counter lets
     /// operators observe the rate without parsing error strings.
     ///
@@ -265,8 +265,7 @@ impl ParallelDeltaApplier {
     ///
     /// The warning goes through `tracing::warn!` (visible at `--info=ALL`
     /// minimum) and is mirrored to stderr via [`eprintln!`] so default
-    /// builds without the `tracing` feature still surface it. Mirrors the
-    /// one-shot warning pattern used by `SpillableReorderBuffer`.
+    /// builds without the `tracing` feature still surface it.
     ///
     pub(crate) fn note_reorder_saturation(&self, ndx: FileNdx, chunk_sequence: u64) {
         self.reorder_saturations.fetch_add(1, Ordering::Relaxed);

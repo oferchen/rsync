@@ -23,8 +23,6 @@ pub enum ShutdownReason {
     Terminated = 2,
     /// SIGHUP received.
     HangUp = 3,
-    /// SIGPIPE received (broken pipe/connection).
-    PipeBroken = 4,
     /// Programmatic shutdown request.
     UserRequested = 5,
 }
@@ -38,7 +36,6 @@ impl ShutdownReason {
             1 => Some(Self::Interrupted),
             2 => Some(Self::Terminated),
             3 => Some(Self::HangUp),
-            4 => Some(Self::PipeBroken),
             5 => Some(Self::UserRequested),
             _ => None,
         }
@@ -48,13 +45,11 @@ impl ShutdownReason {
     ///
     /// Maps shutdown reasons to rsync exit codes:
     /// - SIGINT/SIGTERM/SIGHUP -> ExitCode::Signal (20)
-    /// - SIGPIPE -> ExitCode::SocketIo (10)
     /// - UserRequested -> ExitCode::Ok (0)
     #[must_use]
     pub const fn exit_code(self) -> ExitCode {
         match self {
             Self::Interrupted | Self::Terminated | Self::HangUp => ExitCode::Signal,
-            Self::PipeBroken => ExitCode::SocketIo,
             Self::UserRequested => ExitCode::Ok,
         }
     }
@@ -66,7 +61,6 @@ impl ShutdownReason {
             Self::Interrupted => "interrupted by SIGINT",
             Self::Terminated => "terminated by SIGTERM",
             Self::HangUp => "hangup by SIGHUP",
-            Self::PipeBroken => "broken pipe (SIGPIPE)",
             Self::UserRequested => "user requested shutdown",
         }
     }
@@ -174,19 +168,17 @@ extern "C" fn handle_sighup(_signum: libc::c_int) {
     }
 }
 
-/// Signal handler for SIGPIPE.
-///
-/// Treats broken pipe as immediate graceful shutdown (connection lost).
-///
-/// Deviation from upstream: upstream ignores SIGPIPE (main.c:1926-1928).
-extern "C" fn handle_sigpipe(_signum: libc::c_int) {
-    super::request_shutdown(ShutdownReason::PipeBroken);
-}
-
 /// Installs signal handlers for graceful shutdown.
 ///
-/// This function installs handlers for SIGINT, SIGTERM, SIGHUP, and SIGPIPE.
-/// Signal handlers use atomic operations only and are async-signal-safe.
+/// This function installs handlers for SIGINT, SIGTERM, and SIGHUP. Signal
+/// handlers use atomic operations only and are async-signal-safe.
+///
+/// SIGPIPE is deliberately left ignored, which is the disposition the Rust
+/// runtime sets before `main`. A write to a closed pipe or socket then fails
+/// with `EPIPE` and travels the ordinary write-error path instead of
+/// requesting a signal shutdown.
+/// upstream: main.c:1926-1928 `SIGACTION(SIGPIPE, SIG_IGN)` - "we consistently
+/// check error codes and will see the EPIPE".
 ///
 /// # Errors
 ///
@@ -212,7 +204,6 @@ pub fn install_signal_handlers() -> io::Result<SignalHandler> {
     install_signal_handler(libc::SIGINT, handle_sigint)?;
     install_signal_handler(libc::SIGTERM, handle_sigterm)?;
     install_signal_handler(libc::SIGHUP, handle_sighup)?;
-    install_signal_handler(libc::SIGPIPE, handle_sigpipe)?;
 
     Ok(SignalHandler { installed: true })
 }
@@ -256,7 +247,6 @@ mod tests {
         assert_eq!(ShutdownReason::Interrupted.exit_code(), ExitCode::Signal);
         assert_eq!(ShutdownReason::Terminated.exit_code(), ExitCode::Signal);
         assert_eq!(ShutdownReason::HangUp.exit_code(), ExitCode::Signal);
-        assert_eq!(ShutdownReason::PipeBroken.exit_code(), ExitCode::SocketIo);
         assert_eq!(ShutdownReason::UserRequested.exit_code(), ExitCode::Ok);
     }
 
@@ -271,10 +261,6 @@ mod tests {
             "terminated by SIGTERM"
         );
         assert_eq!(ShutdownReason::HangUp.description(), "hangup by SIGHUP");
-        assert_eq!(
-            ShutdownReason::PipeBroken.description(),
-            "broken pipe (SIGPIPE)"
-        );
         assert_eq!(
             ShutdownReason::UserRequested.description(),
             "user requested shutdown"
@@ -299,7 +285,6 @@ mod tests {
             ShutdownReason::Interrupted,
             ShutdownReason::Terminated,
             ShutdownReason::HangUp,
-            ShutdownReason::PipeBroken,
             ShutdownReason::UserRequested,
         ] {
             let code = reason as u8;
@@ -351,14 +336,20 @@ mod tests {
     }
 
     #[test]
-    fn sigpipe_causes_immediate_shutdown() {
+    fn broken_pipe_surfaces_epipe_without_requesting_shutdown() {
+        // upstream: main.c:1926-1928 ignores SIGPIPE so a write to a closed
+        // pipe fails with EPIPE and the ordinary write-error path reports
+        // it. A SIGPIPE handler that requested a shutdown would let the
+        // signal watcher relabel that failure as a signal exit (code 20).
+        install_signal_handlers().expect("install handlers");
         super::super::reset_for_testing();
 
-        handle_sigpipe(libc::SIGPIPE);
-        assert!(super::super::is_shutdown_requested());
-        assert_eq!(
-            super::super::shutdown_reason(),
-            Some(ShutdownReason::PipeBroken)
-        );
+        let (reader, mut writer) = std::io::pipe().expect("pipe");
+        drop(reader);
+        let err = std::io::Write::write_all(&mut writer, b"x").expect_err("reader is closed");
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(!super::super::is_shutdown_requested());
+        assert!(super::super::shutdown_reason().is_none());
     }
 }

@@ -43,4 +43,4 @@ pub use filters::{FilterRuleKind, FilterRuleSpec};
 pub use iconv::{IconvParseError, IconvSetting};
 pub use network::BindAddress;
 pub use reference::{ReferenceDirectory, ReferenceDirectoryKind};
-pub use skip_compress::{parse_skip_compress_list, skip_compress_from_env};
+pub use skip_compress::parse_skip_compress_list;

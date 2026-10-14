@@ -7,8 +7,7 @@ use std::num::{NonZeroU8, NonZeroU32};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use core::client::{
-    BandwidthLimit, CompressRequest, CompressionSetting, SkipCompressList,
-    parse_skip_compress_list, skip_compress_from_env,
+    BandwidthLimit, CompressRequest, CompressionSetting, SkipCompressList, parse_skip_compress_list,
 };
 use core::message::Role;
 use core::rsync_error;
@@ -80,7 +79,7 @@ pub(crate) struct DerivedSettings {
     pub(crate) compression_level_override: Option<CompressionLevel>,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     /// Raw `--skip-compress` spec forwarded to the remote sender; `Some` only
-    /// when explicitly set (CLI or `RSYNC_SKIP_COMPRESS`).
+    /// when `--skip-compress` is given.
     pub(crate) skip_compress_spec: Option<String>,
     pub(crate) compression_setting: CompressionSetting,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
@@ -518,23 +517,17 @@ where
 
     // upstream: options.c:156 - the `skip_compress` global is NULL unless the
     // `--skip-compress` option is given, and only that explicit value is
-    // forwarded to the remote sender (options.c:3035-3036). The
-    // `RSYNC_SKIP_COMPRESS` environment fallback is an oc extension that still
-    // applies locally, but - like upstream - it is not forwarded on the wire.
+    // forwarded to the remote sender (options.c:3035-3036).
     let mut skip_compress_spec = None;
-    let skip_compress_list = if let Some(value) = skip_compress.as_ref() {
-        match parse_skip_compress_list(value.as_os_str()) {
+    let skip_compress_list = match skip_compress.as_ref() {
+        Some(value) => match parse_skip_compress_list(value.as_os_str()) {
             Ok(list) => {
                 skip_compress_spec = Some(value.to_string_lossy().into_owned());
                 Some(list)
             }
             Err(message) => return Err(fail_with_message(message, stderr)),
-        }
-    } else {
-        match skip_compress_from_env("RSYNC_SKIP_COMPRESS") {
-            Ok(value) => value,
-            Err(message) => return Err(fail_with_message(message, stderr)),
-        }
+        },
+        None => None,
     };
 
     let raw_level = match compress_level {

@@ -109,7 +109,6 @@ impl ErrorCodification for ClientError {
             ExitCode::FileSelect => 300,
             ExitCode::Unsupported => 400,
             ExitCode::StartClient => 500,
-            ExitCode::LogFileAppend => 600,
             ExitCode::SocketIo => 1000,
             ExitCode::FileIo => 1100,
             ExitCode::StreamIo => 1200,
@@ -148,7 +147,6 @@ impl ErrorCodification for ClientError {
             ExitCode::FileSelect => "RERR_FILESELECT",
             ExitCode::Unsupported => "RERR_UNSUPPORTED",
             ExitCode::StartClient => "RERR_STARTCLIENT",
-            ExitCode::LogFileAppend => "RERR_LOG_FAILURE",
             ExitCode::SocketIo => "RERR_SOCKETIO",
             ExitCode::FileIo => "RERR_FILEIO",
             ExitCode::StreamIo => "RERR_STREAMIO",
@@ -1086,6 +1084,22 @@ mod tests {
             );
         }
 
+        /// A raw exit 6 has no name in upstream: `errcode.h` defines no code 6
+        /// and `rerr_names` has no entry for it, so `log_exit()` renders the
+        /// "unexplained error" fallback with the raw code.
+        ///
+        /// upstream: errcode.h:29-31 (5 then 10), log.c:950-952
+        #[test]
+        fn remote_exit_6_renders_unexplained_error() {
+            let error = remote_exit_error(ExitCode::from_raw(6), Role::Sender);
+            assert_eq!(error.exit_code(), 6);
+            assert_eq!(error.code(), ExitCode::Other(6));
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("unexplained error (code 6)"),
+                "exit 6 must use upstream's unnamed-code text: {rendered}"
+            );
+        }
         /// A pull tags the diagnostic with the receiver role, and a named exit
         /// code (here RERR_STREAMIO) renders its rerr_name, mirroring
         /// `log_exit()` for both winning-code paths.

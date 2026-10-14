@@ -265,8 +265,6 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 **Parallel delta work.** Delta work is single-threaded per file by default. Opt in with `--parallel-delta-scan` and `--checksum-threads=N`.
 
-**Receiver spill.** The concurrent-delta receiver keeps its reorder buffer in memory by default. Set `OC_RSYNC_SPILL_THRESHOLD_BYTES` (for example `64M`) to spill to disk, and optionally `OC_RSYNC_SPILL_DIR`. The `--spill-threshold-bytes` and `--spill-dir` flags override the variables. See [`docs/design/spill-policy-public-api.md`](./docs/design/spill-policy-public-api.md) and [`docs/operator-migration-guide-vNEXT.md`](./docs/operator-migration-guide-vNEXT.md).
-
 **SSH stderr socketpair.** The `ssh-socketpair-stderr` feature drains the SSH child's stderr through a `socketpair(AF_UNIX, SOCK_STREAM)` instead of a pipe, with event-driven shutdown. It helps with chatty remote shells and many parallel transfers; Linux is the recommended target. See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md). When the runtime cannot honour the feature, one of these warnings appears once per process:
 
 - `SSH stderr async drain unavailable on this platform` - `socketpair` failed; the session falls back to a pipe.

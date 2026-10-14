@@ -138,25 +138,13 @@ fn exit_code_5_is_fatal() {
     assert!(!ExitCode::StartClient.is_partial());
 }
 
+/// upstream: errcode.h defines no code 6, so a raw 6 stays unnamed and renders
+/// as log.c's "unexplained error" fallback.
 #[test]
-fn exit_code_6_is_log_file_append() {
-    assert_eq!(ExitCode::LogFileAppend.as_i32(), 6);
-    assert_eq!(ExitCode::from_i32(6), Some(ExitCode::LogFileAppend));
-}
-
-#[test]
-fn exit_code_6_description() {
-    assert_eq!(
-        ExitCode::LogFileAppend.description(),
-        "daemon unable to append to log-file"
-    );
-}
-
-#[test]
-fn exit_code_6_is_fatal() {
-    assert!(!ExitCode::LogFileAppend.is_success());
-    assert!(ExitCode::LogFileAppend.is_fatal());
-    assert!(!ExitCode::LogFileAppend.is_partial());
+fn exit_code_6_is_not_an_upstream_code() {
+    assert_eq!(ExitCode::from_i32(6), None);
+    assert_eq!(ExitCode::from_raw(6), ExitCode::Other(6));
+    assert_eq!(ExitCode::from_raw(6).description(), "unexplained error");
 }
 
 #[test]
@@ -564,7 +552,6 @@ fn all_exit_codes_have_unique_values() {
         ExitCode::FileSelect,
         ExitCode::Unsupported,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::FileIo,
         ExitCode::StreamIo,
@@ -597,7 +584,7 @@ fn all_exit_codes_have_unique_values() {
     }
 
     // Verify we have all 27 codes
-    assert_eq!(values.len(), 27, "Should have exactly 27 unique exit codes");
+    assert_eq!(values.len(), 26, "Should have exactly 26 unique exit codes");
 }
 
 #[test]
@@ -609,7 +596,6 @@ fn all_exit_codes_roundtrip() {
         ExitCode::FileSelect,
         ExitCode::Unsupported,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::FileIo,
         ExitCode::StreamIo,
@@ -652,7 +638,6 @@ fn all_exit_codes_have_descriptions() {
         ExitCode::FileSelect,
         ExitCode::Unsupported,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::FileIo,
         ExitCode::StreamIo,
@@ -689,7 +674,7 @@ fn all_exit_codes_have_descriptions() {
 fn unknown_exit_codes_return_none() {
     // Test some invalid codes
     let invalid_codes = [
-        -1, 7, 8, 9, 17, 18, 26, 27, 28, 29, 31, 32, 33, 34, 36, 100, 123, 128, 255, 999,
+        -1, 6, 7, 8, 9, 17, 18, 26, 27, 28, 29, 31, 32, 33, 34, 36, 100, 123, 128, 255, 999,
     ];
 
     for value in invalid_codes {
@@ -709,7 +694,6 @@ fn only_ok_is_success() {
         ExitCode::FileSelect,
         ExitCode::Unsupported,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::FileIo,
         ExitCode::StreamIo,
@@ -746,7 +730,6 @@ fn fatal_errors_are_correct() {
     let fatal = [
         ExitCode::Protocol,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::StreamIo,
         ExitCode::Ipc,
@@ -800,7 +783,6 @@ fn partial_errors_are_correct() {
         ExitCode::FileSelect,
         ExitCode::Unsupported,
         ExitCode::StartClient,
-        ExitCode::LogFileAppend,
         ExitCode::SocketIo,
         ExitCode::FileIo,
         ExitCode::StreamIo,
@@ -1001,8 +983,7 @@ fn exit_code_values_match_upstream_exactly() {
     assert_eq!(ExitCode::FileSelect.as_i32(), 3);
     assert_eq!(ExitCode::Unsupported.as_i32(), 4);
     assert_eq!(ExitCode::StartClient.as_i32(), 5);
-    assert_eq!(ExitCode::LogFileAppend.as_i32(), 6);
-    // Note: 7-9 are not defined
+    // Note: 6-9 are not defined
     assert_eq!(ExitCode::SocketIo.as_i32(), 10);
     assert_eq!(ExitCode::FileIo.as_i32(), 11);
     assert_eq!(ExitCode::StreamIo.as_i32(), 12);
@@ -1046,10 +1027,6 @@ fn exit_code_descriptions_match_upstream_log_c() {
     assert_eq!(
         ExitCode::StartClient.description(),
         "error starting client-server protocol"
-    );
-    assert_eq!(
-        ExitCode::LogFileAppend.description(),
-        "daemon unable to append to log-file"
     );
     assert_eq!(ExitCode::SocketIo.description(), "error in socket IO");
     assert_eq!(ExitCode::FileIo.description(), "error in file IO");
@@ -1114,7 +1091,7 @@ fn exit_code_gaps_are_intentional() {
     // Verify that gaps in the exit code numbering are intentional
     // These ranges should NOT have exit codes defined
     let undefined_ranges = vec![
-        (7, 9),    // Between LogFileAppend and SocketIo
+        (6, 9),    // Between StartClient and SocketIo
         (17, 18),  // Between Terminated and Signal1
         (26, 29),  // Between DeleteLimit and Timeout
         (31, 34),  // Between Timeout and ConnectionTimeout
@@ -1165,11 +1142,6 @@ mod upstream_compliance {
     #[test]
     fn rerr_startclient_is_5() {
         assert_eq!(ExitCode::StartClient.as_i32(), 5);
-    }
-
-    #[test]
-    fn rerr_log_failure_is_6() {
-        assert_eq!(ExitCode::LogFileAppend.as_i32(), 6);
     }
 
     #[test]
@@ -1286,7 +1258,6 @@ mod process_exit_code {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
-            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,
@@ -1325,7 +1296,6 @@ mod process_exit_code {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
-            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,
@@ -1369,7 +1339,6 @@ mod process_exit_code {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
-            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,
@@ -1413,7 +1382,6 @@ mod exit_code_semantics {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
-            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,
@@ -1448,7 +1416,6 @@ mod exit_code_semantics {
         let fatal_codes = [
             ExitCode::Protocol,
             ExitCode::StartClient,
-            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::StreamIo,
             ExitCode::Ipc,
@@ -1597,7 +1564,6 @@ mod exit_code_formatting {
             ExitCode::FileSelect,
             ExitCode::Unsupported,
             ExitCode::StartClient,
-            ExitCode::LogFileAppend,
             ExitCode::SocketIo,
             ExitCode::FileIo,
             ExitCode::StreamIo,

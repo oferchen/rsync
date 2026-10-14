@@ -247,36 +247,6 @@ mod core_tests {
     }
 
     #[test]
-    fn take_extracts_without_advancing_cursor() {
-        let mut buf = ReorderBuffer::new(8);
-        buf.insert(0, "a").unwrap();
-        buf.insert(1, "b").unwrap();
-        buf.insert(2, "c").unwrap();
-        buf.insert(4, "e").unwrap();
-
-        // Take seq 2 - cursor stays at 0.
-        let taken = buf.take(2);
-        assert_eq!(taken, Some("c"));
-        assert_eq!(buf.next_expected(), 0);
-        assert_eq!(buf.buffered_count(), 3);
-
-        // Take seq 4.
-        let taken = buf.take(4);
-        assert_eq!(taken, Some("e"));
-        assert_eq!(buf.buffered_count(), 2);
-
-        // Take non-existent seq.
-        assert!(buf.take(3).is_none());
-        assert!(buf.take(99).is_none());
-
-        // Remaining items drain in order.
-        let drained: Vec<&str> = buf.drain_ready().collect();
-        assert_eq!(drained, vec!["a", "b"]);
-        // Seq 2 was taken - gap prevents further drain.
-        assert_eq!(buf.next_expected(), 2);
-    }
-
-    #[test]
     fn force_insert_bypasses_capacity() {
         let mut buf = ReorderBuffer::new(2);
         buf.insert(1, "a").unwrap();
@@ -917,16 +887,6 @@ mod passthrough_tests {
     }
 
     #[test]
-    fn passthrough_take_returns_none() {
-        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
-        buf.insert(0, 42).unwrap();
-        // Take is not supported in bypass mode.
-        assert!(buf.take(0).is_none());
-        // Item is still in the queue.
-        assert_eq!(buf.buffered_count(), 1);
-    }
-
-    #[test]
     fn passthrough_capacity_is_zero() {
         let buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
         assert_eq!(buf.capacity(), 0);
@@ -1124,27 +1084,6 @@ mod metrics_tests {
     }
 
     #[test]
-    fn stall_continues_across_take_when_gap_remains() {
-        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(8);
-        // Two out-of-order items leave a gap at seq 0.
-        buf.insert(1, 1).unwrap();
-        buf.insert(2, 2).unwrap();
-        sleep(Duration::from_millis(5));
-        // Removing seq 2 via take() does not close the gap.
-        let taken = buf.take(2);
-        assert_eq!(taken, Some(2));
-        sleep(Duration::from_millis(5));
-        // Close the gap; total stall should cover both sleeps.
-        buf.insert(0, 0).unwrap();
-        let m = buf.metrics();
-        assert!(
-            m.stall_duration >= Duration::from_millis(10),
-            "expected >=10ms stall across take(), got {:?}",
-            m.stall_duration,
-        );
-    }
-
-    #[test]
     fn metrics_snapshot_includes_in_flight_stall() {
         let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(8);
         buf.insert(1, 1).unwrap();
@@ -1277,7 +1216,7 @@ mod metrics_tests {
 
         // A far-ahead out-of-order arrival stretches the window to its
         // offset+1 even though only two slots are occupied - distinguishing
-        // the window from buffered_count (the spill-pressure signal).
+        // the window from buffered_count (the occupancy signal).
         buf.insert(3, "d").unwrap();
         assert_eq!(buf.in_flight_window(), 4);
         assert_eq!(buf.buffered_count(), 2);

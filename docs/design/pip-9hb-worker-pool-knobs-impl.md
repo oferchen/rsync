@@ -1,5 +1,9 @@
 # PIP-9.h.b: Worker-pool tuning knobs implementation
 
+> Note: the reorder-buffer spill layer (`SpillPolicy`, `SpillableReorderBuffer`,
+> the `OC_RSYNC_SPILL_*` variables and the `--spill-*` flags) has been removed.
+> Spill references below are historical.
+
 Tracking: PIP-9.h.b (#3017). Parent: PIP-9.h (#2603).
 Predecessor: PIP-9.h.a tuning spec (`docs/design/parallel-receive-delta-tuning.md`).
 Successor: PIP-9.h.c bench + defaults selection (#3018).

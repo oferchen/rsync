@@ -176,10 +176,8 @@ oc_info_words() {
 # two-table join. ExitCode::Other is a passthrough for unrecognised raw
 # statuses, not a table row, and matches neither pattern.
 #
-# The two oc-only rows are declared in surface_diff.accepted: upstream's table
-# has no row for 0 (log_exit() special-cases success before consulting it) and
-# none for 6 (errcode.h defines no RERR_* with value 6 - the "daemon unable to
-# append to log-file" description exists only in rsync.1.md:4671).
+# The oc-only row for 0 is declared in surface_diff.accepted: upstream's table
+# has no row for it (log_exit() special-cases success before consulting it).
 up_exit_codes() {
   awk '
     FNR == NR { if ($1 == "#define" && $2 ~ /^RERR_/) code[$2] = $3; next }
@@ -468,12 +466,11 @@ self_test() {
     "23:some files/attrs were not transferred (see previous errors)" \
     "$(up_exit_codes | grep -x '23:.*' || true)"
   # Upstream has NO row for code 6 - errcode.h defines no RERR_* with that
-  # value. This pins the reason the oc-only row is allowlisted; if an upstream
-  # release ever adds one, the allowlist entry must be re-examined.
+  # value - so oc must not define one either.
   check "exit-codes: upstream defines no code-6 row" \
     "" "$(up_exit_codes | grep '^6:' || true)"
-  check "exit-codes: oc declares the man-page-only code-6 row" \
-    "6:daemon unable to append to log-file" "$(oc_exit_codes | grep '^6:' || true)"
+  check "exit-codes: oc defines no code-6 row" \
+    "" "$(oc_exit_codes | grep '^6:' || true)"
 
   # Alias guard: MSG_CLIENT is spelled as an alias of FCLIENT (=7). A naive
   # numeric grep misses every logcode-aliased row and finds 8 of 19 values.

@@ -272,9 +272,6 @@ where
         rayon_threads,
         tokio_threads,
         checksum_threads,
-        spill_dir,
-        spill_threshold_bytes,
-        no_spill,
     } = parsed;
 
     if let Some(level) = simd_override
@@ -1191,9 +1188,6 @@ where
         remote_options,
         files_from: files_from_resolved.clone(),
         from0,
-        spill_dir,
-        spill_threshold_bytes,
-        no_spill,
     };
 
     let builder = config::build_base_config(config_inputs);

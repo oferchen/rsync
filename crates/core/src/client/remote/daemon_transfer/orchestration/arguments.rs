@@ -2144,7 +2144,6 @@ mod server_option_fidelity_tests {
 #[cfg(test)]
 mod oc_flag_forwarding_tests {
     use std::num::{NonZeroU8, NonZeroUsize};
-    use std::path::PathBuf;
 
     use super::build_full_daemon_args;
     use crate::client::ClientConfig;
@@ -2270,8 +2269,6 @@ mod oc_flag_forwarding_tests {
             .tokio_threads(NonZeroUsize::new(4))
             .sparse_detect(engine::SparseDetectStrategy::Map)
             .tcp_fastopen(TcpFastOpenMode::On)
-            .spill_dir(Some(PathBuf::from("/tmp/spill")))
-            .spill_threshold_bytes(Some(1024))
             .build()
     }
 

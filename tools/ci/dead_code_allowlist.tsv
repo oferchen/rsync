@@ -21,7 +21,6 @@ serve	crates/daemon/src/daemon/async_session/listener.rs	2026-11-07	unreviewed b
 run_stdio_session	crates/daemon/src/daemon/sections/stdio_session.rs	2026-11-07	unreviewed baseline row
 update_bytes	crates/daemon/src/daemon/session_registry.rs	2026-11-07	unreviewed baseline row
 all_sessions	crates/daemon/src/daemon/session_registry.rs	2026-11-07	unreviewed baseline row
-set_reclaim	crates/engine/src/concurrent_delta/spill/buffer/lifecycle.rs	2026-11-07	unreviewed baseline row
 plan_directory_entries_parallel	crates/engine/src/local_copy/executor/directory/planner.rs	2026-11-07	unreviewed baseline row
 reference_directory	crates/engine/src/local_copy/options/builder/setters_staging.rs	2026-11-07	unreviewed baseline row
 drop_devices_enabled	crates/engine/src/local_copy/options/path_behavior.rs	2026-11-07	unreviewed baseline row

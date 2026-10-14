@@ -409,8 +409,8 @@ impl<T> ReorderBuffer<T> {
     /// This is how far out-of-order arrivals currently reach, distinct from
     /// [`buffered_count`](Self::buffered_count) (how many slots are occupied).
     /// A window approaching [`capacity`](Self::capacity) is what forces a
-    /// `force_insert` or a spill, so it is the leading indicator of spill
-    /// pressure - whereas the occupied count can stay low while the window
+    /// `force_insert`, so it is the leading indicator of reorder pressure -
+    /// whereas the occupied count can stay low while the window
     /// stretches under a single far-ahead arrival.
     #[must_use]
     pub const fn in_flight_window(&self) -> usize {
@@ -552,29 +552,6 @@ impl<T> ReorderBuffer<T> {
         self.slots = new_slots.into_boxed_slice();
         self.head = 0;
         self.capacity = new_capacity;
-    }
-
-    /// Removes and returns the item at the given sequence number, if present.
-    ///
-    /// Unlike [`next_in_order`](Self::next_in_order), this does not advance the
-    /// delivery cursor - it only removes the item from its slot. Used by the
-    /// spill layer to extract items for disk serialization without changing
-    /// the buffer's ordering state.
-    ///
-    /// Returns `None` if the sequence is outside the current window or if
-    /// the slot is empty.
-    pub fn take(&mut self, sequence: u64) -> Option<T> {
-        if self.bypass {
-            // Bypass mode does not support indexed extraction.
-            return None;
-        }
-        let idx = self.slot_index(sequence)?;
-        let item = self.slots[idx].take()?;
-        self.count -= 1;
-        // Do not adjust high_water_offset here - it remains valid as an
-        // upper bound. The adaptive policy will naturally recalibrate.
-        self.refresh_stall_state();
-        Some(item)
     }
 
     /// Validates that all items have been delivered with no gaps in the sequence.

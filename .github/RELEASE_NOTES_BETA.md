@@ -514,10 +514,6 @@ equivalence with the legacy sequential path.
   changed between v0.6.2 and this beta. The full default set is
   documented in `oc-rsync --help` and `docs/oc-rsync.1.md`.
 - **New env vars:** none introduced this cycle.
-  `OC_RSYNC_SPILL_THRESHOLD_BYTES` and `OC_RSYNC_SPILL_DIR` (introduced
-  in 0.6.x) remain the canonical way to enable disk-backed receiver
-  spill; the `--spill-dir` and `--spill-threshold-bytes` CLI flags
-  shadow the env vars.
 - **New Cargo features:**
   - `landlock` - enables Linux Landlock LSM enforcement on top of the
     SEC-1 `*at` chain (Linux 5.13+, no-op elsewhere).

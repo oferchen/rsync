@@ -28,7 +28,6 @@ daemon	nix	2026-11-07	safe nix errno/fcntl/poll/sys/unistd wrappers across the d
 daemon	windows	2026-11-07	windows::io bindings for the Windows daemon socket path
 engine	libc	2026-11-07	errno constants (EACCES, ELOOP, ENODATA, ...) for local-copy error mapping
 engine	rustix	2026-11-07	safe rustix::fs / fd / param / process wrappers on the local-copy path; production unsafe under the per-crate exemption
-engine	windows-sys	2026-11-07	windows_sys::Win32 bindings for the Windows local-copy path
 metadata	libc	2026-11-07	macOS attrlist (ATTR_CMN_CRTIME), errno and mode constants for the metadata apply path; 96 production unsafe blocks under the per-crate exemption
 metadata	nix	2026-11-07	safe nix errno/fcntl/sys/unistd wrappers for metadata syscalls
 metadata	rustix	2026-11-07	safe rustix::fs / process wrappers for metadata

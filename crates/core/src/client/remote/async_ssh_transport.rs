@@ -125,9 +125,8 @@ fn is_truthy_env_value(value: &str) -> bool {
 /// byte chunks flowing through `std::sync::mpsc` bridges to the blocking
 /// server thread.
 ///
-/// Progress observation and remote-to-remote proxying are intentionally
-/// not wired on this path yet; both rely on lifetime gymnastics that
-/// land alongside the CLI flag in #1806.
+/// Progress observation is intentionally not wired on this path yet; it
+/// relies on lifetime gymnastics that land alongside the CLI flag in #1806.
 ///
 /// # Errors
 ///
@@ -179,10 +178,6 @@ pub fn run_async_ssh_transfer(
             );
             run_async_session(config, plan, server_config, batch_writer)
         }
-        TransferSpec::Proxy { .. } => Err(invalid_argument_error(
-            "async SSH transport does not yet support remote-to-remote proxy transfers (#1805)",
-            1,
-        )),
     }
 }
 

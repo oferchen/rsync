@@ -7,8 +7,7 @@
 //! # Upstream Reference
 //!
 //! Exit codes are defined in `errcode.h` and their string mappings are in `log.c`.
-//! The numeric values match rsync 3.5.1. Deviation from upstream: code 6
-//! (`ExitCode::LogFileAppend`) is oc-only; `errcode.h` defines no code 6.
+//! The numeric values match rsync 3.5.1.
 //!
 //! # Examples
 //!

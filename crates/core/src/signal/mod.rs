@@ -20,10 +20,10 @@
 //!   - Second: Sets abort flag for immediate exit
 //! - **SIGTERM**: Graceful shutdown on first signal, abort on second
 //! - **SIGHUP**: Same as SIGTERM
-//! - **SIGPIPE**: Treated as connection loss, causes immediate graceful shutdown
+//! - **SIGPIPE**: Ignored, so a broken pipe surfaces as an `EPIPE` write error
+//!   (upstream `main.c:1926-1928`)
 //!
-//! Deviation from upstream: upstream ignores SIGPIPE and relies on write errors
-//! (main.c:1926-1928), and its `sig_int()` (rsync.c:843-875) exits on the first
+//! Deviation from upstream: upstream `sig_int()` (rsync.c:843-875) exits on the first
 //! signal unless it is a server or receiver deferring through `got_kill_signal`.
 //! oc uses a graceful-then-abort two-stage scheme instead.
 //!
@@ -63,7 +63,7 @@
 //!
 //! # Platform Support
 //!
-//! - **Unix**: Full signal handling with SIGINT, SIGTERM, SIGHUP, SIGPIPE
+//! - **Unix**: Full signal handling with SIGINT, SIGTERM, SIGHUP; SIGPIPE ignored
 //! - **Windows**: Limited support (Ctrl+C only) with graceful degradation
 
 #[cfg(unix)]
@@ -100,7 +100,7 @@ static ABORT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Global storage for the shutdown reason (encoded as u8).
 ///
-/// 0 = None, 1 = Interrupted, 2 = Terminated, 3 = HangUp, 4 = PipeBroken, 5 = UserRequested
+/// 0 = None, 1 = Interrupted, 2 = Terminated, 3 = HangUp, 5 = UserRequested
 static SHUTDOWN_REASON_CODE: AtomicU8 = AtomicU8::new(0);
 
 /// Sets the graceful shutdown flag.
@@ -264,7 +264,6 @@ mod tests {
             ShutdownReason::Interrupted,
             ShutdownReason::Terminated,
             ShutdownReason::HangUp,
-            ShutdownReason::PipeBroken,
             ShutdownReason::UserRequested,
         ] {
             request_shutdown(reason);

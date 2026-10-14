@@ -55,7 +55,7 @@ fn child_non_zero_exit_and_stderr_surface_to_caller() {
 }
 
 /// Same scenario via `SshConnection::split()` + `SshChildHandle`. The
-/// pipeline used by `ssh_transfer.rs` and `remote_to_remote.rs` reaches
+/// pipeline used by `ssh_transfer.rs` reaches
 /// the child handle, so the exit-status + stderr contract must hold on
 /// that path as well.
 #[test]

@@ -544,34 +544,24 @@ fn dispatch_one<F: DeleteFs>(fs: &F, op: &DeleteOperation) -> io::Result<(Delete
     Ok((op.kind, false))
 }
 
+/// Empties the directory before removing it, mirroring upstream
+/// `delete_item`, which runs `delete_dir_contents` ahead of its `rmdir`
+/// (`delete.c:205-226`). The recursive peel removes the contents and then
+/// the directory itself.
 fn dispatch_dir<F: DeleteFs>(fs: &F, path: &std::path::Path) -> io::Result<()> {
-    match fs.rmdir(path) {
-        Ok(()) => Ok(()),
-        Err(err) if is_not_empty(&err) => fs.remove_dir_all(path),
-        Err(err) => Err(err),
-    }
+    fs.remove_dir_all(path)
 }
 
-/// Dirfd-anchored directory removal: `rmdir_at` first, then the recursive
-/// `remove_dir_all_at` peel on `ENOTEMPTY`, mirroring the path-based
-/// [`dispatch_dir`] but anchored against `parent_fd`. Returns whether the
-/// peel stepped over a genuine child error; a residual non-empty root
-/// without such an error stays benign (upstream `DR_NOT_EMPTY`).
+/// Dirfd-anchored sibling of [`dispatch_dir`]. Returns whether the peel
+/// stepped over a genuine child error; a residual non-empty root without
+/// such an error stays benign (upstream `DR_NOT_EMPTY`).
 #[cfg(unix)]
 fn dispatch_dir_at<F: DeleteFs>(
     fs: &F,
     parent_fd: std::os::fd::BorrowedFd<'_>,
     leaf: &std::ffi::OsStr,
 ) -> io::Result<bool> {
-    match fs.rmdir_at(parent_fd, leaf) {
-        Ok(()) => Ok(false),
-        Err(err) if is_not_empty(&err) => Ok(fs.remove_dir_all_at(parent_fd, leaf)?.had_errors),
-        Err(err) => Err(err),
-    }
-}
-
-fn is_not_empty(err: &io::Error) -> bool {
-    matches!(err.kind(), io::ErrorKind::DirectoryNotEmpty)
+    Ok(fs.remove_dir_all_at(parent_fd, leaf)?.had_errors)
 }
 
 // The delete pass shares the wire bits with the file-list decoders; taking them
@@ -1040,5 +1030,115 @@ mod tests {
                 "parallel consumer drain timed out - cross-cohort serialisation likely deadlocked",
             )
             .expect("parallel consumer drain returned an error")
+    }
+
+    /// Records which removal primitive the directory dispatch chose.
+    #[derive(Debug, Default)]
+    struct DirCallFs {
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    impl DirCallFs {
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn record(&self, call: &'static str) {
+            self.calls.lock().unwrap().push(call);
+        }
+    }
+
+    impl DeleteFs for DirCallFs {
+        fn unlink_file(&self, _path: &std::path::Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn rmdir(&self, _path: &std::path::Path) -> io::Result<()> {
+            self.record("rmdir");
+            Ok(())
+        }
+        fn unlink_symlink(&self, _path: &std::path::Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn unlink_device(&self, _path: &std::path::Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn unlink_special(&self, _path: &std::path::Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn remove_dir_all(&self, _path: &std::path::Path) -> io::Result<()> {
+            self.record("peel");
+            Ok(())
+        }
+        #[cfg(unix)]
+        fn unlink_file_at(
+            &self,
+            _parent_fd: std::os::fd::BorrowedFd<'_>,
+            _name: &std::ffi::OsStr,
+        ) -> io::Result<()> {
+            unreachable!()
+        }
+        #[cfg(unix)]
+        fn rmdir_at(
+            &self,
+            _parent_fd: std::os::fd::BorrowedFd<'_>,
+            _name: &std::ffi::OsStr,
+        ) -> io::Result<()> {
+            self.record("rmdir");
+            Ok(())
+        }
+        #[cfg(unix)]
+        fn unlink_symlink_at(
+            &self,
+            _parent_fd: std::os::fd::BorrowedFd<'_>,
+            _name: &std::ffi::OsStr,
+        ) -> io::Result<()> {
+            unreachable!()
+        }
+        #[cfg(unix)]
+        fn unlink_device_at(
+            &self,
+            _parent_fd: std::os::fd::BorrowedFd<'_>,
+            _name: &std::ffi::OsStr,
+        ) -> io::Result<()> {
+            unreachable!()
+        }
+        #[cfg(unix)]
+        fn unlink_special_at(
+            &self,
+            _parent_fd: std::os::fd::BorrowedFd<'_>,
+            _name: &std::ffi::OsStr,
+        ) -> io::Result<()> {
+            unreachable!()
+        }
+        #[cfg(unix)]
+        fn remove_dir_all_at(
+            &self,
+            _parent_fd: std::os::fd::BorrowedFd<'_>,
+            _name: &std::ffi::OsStr,
+        ) -> io::Result<fast_io::UnlinkResidue> {
+            self.record("peel");
+            Ok(fast_io::UnlinkResidue::default())
+        }
+    }
+
+    /// upstream: delete.c:205-226 `delete_item` empties a directory with
+    /// `delete_dir_contents` before its `rmdir`. The fake accepts any
+    /// `rmdir`, so a dispatcher that tried `rmdir` first would stop there
+    /// and never peel the contents.
+    #[test]
+    fn dir_dispatch_peels_contents_instead_of_trying_rmdir_first() {
+        let fs = DirCallFs::default();
+        dispatch_dir(&fs, std::path::Path::new("/dst/sub")).expect("path dispatch");
+        assert_eq!(fs.calls(), vec!["peel"]);
+
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsFd;
+            let fs = DirCallFs::default();
+            let parent = std::fs::File::open(".").expect("open parent dir");
+            dispatch_dir_at(&fs, parent.as_fd(), std::ffi::OsStr::new("sub"))
+                .expect("dirfd dispatch");
+            assert_eq!(fs.calls(), vec!["peel"]);
+        }
     }
 }
