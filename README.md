@@ -343,7 +343,7 @@ oc-rsync uses threads where upstream forks, while keeping the same protocol. I/O
 
 Branch protection requires ten checks: `fmt + clippy`, `nextest (stable)`, `Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`, `interop / interop with upstream rsync`, and the four Linux [upstream testsuite](#upstream-testsuite) legs (`upstream-testsuite / upstream testsuite`, its `(root)` variant, and the same two under `upstream-testsuite-tcp /`). [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md) has the command that re-derives the list from the ruleset.
 
-Within `nextest (stable)`, the SSH throughput check compares a release build of oc-rsync against upstream; it runs in its own non-blocking step. Benchmarks run only when a release is tagged (see [Performance](#performance)). Interop coverage is described under [Protocol and interop](#protocol-and-interop).
+The SSH throughput check (SSR-1) compares a release build of oc-rsync against upstream in its own `SSH throughput (SSR-1, release)` job. It runs on every pull request and reports its result, but it is not a required check. Benchmarks run only when a release is tagged (see [Performance](#performance)). Interop coverage is described under [Protocol and interop](#protocol-and-interop).
 
 ---
 
