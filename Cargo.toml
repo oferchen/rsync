@@ -307,7 +307,7 @@ quinn-udp = { version = "0.6.3", default-features = false }
 # Byte buffers for the quinn-proto datagram interface (already in the tree
 # as quinn-proto's own buffer type).
 bytes = "1.12"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 # Self-signed certificate generation for QUIC loopback tests
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 # HMAC-SHA1 for writing hashed `known_hosts` entries (HashKnownHosts yes),
