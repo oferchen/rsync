@@ -248,6 +248,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-spill   Disable disk-based spilling for the reorder buffer; error instead of writing excess items to a temporary file.\n",
             "\n",
             "    QUIC transport (requires the 'quic' feature):\n",
+            "      --quic       Carry the daemon protocol over QUIC (873/udp); hard-fails, never falls back to TCP.\n",
+            "      --quic-ca=PATH  Verify the daemon certificate against the PEM CA bundle in PATH. Required for QUIC: the system trust store is not trusted and there is no trust-on-first-use.\n",
             "      --quic-cc=ALGORITHM  Select the client's QUIC congestion controller (bbr, cubic, newreno; default bbr). Client-local tuning; env OC_RSYNC_QUIC_CC is the fallback.\n",
             "      --quic-window=SIZE  Size the client's QUIC flow-control window (bytes; K/M/G suffix). Client-local tuning; env OC_RSYNC_QUIC_WINDOW is the fallback; default is BDP-generous.\n",
             "      --quic-cipher=CIPHER  Fix the client's QUIC TLS 1.3 cipher family: aes or chacha20. Default is CPU-adaptive (AES on hardware AES, otherwise ChaCha20). Client-local tuning.\n",

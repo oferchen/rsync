@@ -197,9 +197,9 @@ oc-rsync can carry the rsync protocol over QUIC (RFC 9000/9001, TLS 1.3 over UDP
 cargo build --release --features quic -p cli -p daemon
 ```
 
-QUIC always runs TLS 1.3 with the ALPN token `rsync`. The client verifies the daemon certificate against the system roots, a private CA (`--quic-ca`), or a trust-on-first-use pin in `quic_known_hosts`. Mutual TLS is optional. Selecting QUIC is hard-fail: if the feature or listener is unavailable, the transfer errors out rather than falling back to TCP. The cipher defaults to AES-GCM with hardware AES and ChaCha20-Poly1305 without; `--quic-cipher aes|chacha20` overrides it.
+QUIC always runs TLS 1.3 with the ALPN token `rsync`. The client verifies the daemon certificate against the CA bundle given by `--quic-ca`, which is required: the system trust store is not trusted, there is no default trust and no trust-on-first-use, so a client without `--quic-ca` refuses to connect. Mutual TLS is optional. Selecting QUIC is hard-fail: if the feature or listener is unavailable, the transfer errors out rather than falling back to TCP. The cipher defaults to AES-GCM with hardware AES and ChaCha20-Poly1305 without; `--quic-cipher aes|chacha20` overrides it.
 
-Create a self-signed daemon certificate (the SubjectAltName must match the host clients connect to):
+Create a self-signed daemon certificate (the SubjectAltName must match the host clients connect to). Clients pass this same certificate as `--quic-ca`; a certificate issued by an internal CA works the same way with the CA certificate as `--quic-ca`:
 
 ```sh
 openssl req -x509 -newkey rsa:2048 -nodes \
@@ -233,11 +233,10 @@ quic client ca file = /etc/oc-rsync/ca-cert.pem
 Client usage:
 
 ```sh
-oc-rsync -a quic://host/module/ dest/
-oc-rsync -a --quic host::module/ dest/
-oc-rsync -a --quic-ca ca-cert.pem quic://host/module/ dest/
-oc-rsync -a --quic --quic-cert client-cert.pem --quic-key client-key.pem host::module/ dest/
-oc-rsync -a --quic --quic-cipher chacha20 quic://host/module/ dest/
+oc-rsync -a --quic-ca quic-cert.pem quic://host/module/ dest/
+oc-rsync -a --quic --quic-ca quic-cert.pem host::module/ dest/
+oc-rsync -a --quic --quic-ca quic-cert.pem --quic-cert client-cert.pem --quic-key client-key.pem host::module/ dest/
+oc-rsync -a --quic-ca quic-cert.pem --quic-cipher chacha20 quic://host/module/ dest/
 ```
 
 `--quic-cc` selects the congestion controller and `--quic-window` the flow-control window. Full guide: [`docs/quic-transport.md`](./docs/quic-transport.md).

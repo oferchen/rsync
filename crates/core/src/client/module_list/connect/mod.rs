@@ -292,17 +292,15 @@ pub(crate) struct DaemonConnectTimeouts {
 
 /// Client-side QUIC dial parameters carried to the connect-selection point.
 ///
-/// Holds the trust-source inputs the QUIC ladder needs: the `--quic-ca` private
-/// CA bundle path (when supplied) anchors the daemon chain; otherwise the
-/// platform trust store is the CA layer, and either way a self-signed daemon
-/// falls to the SSH-style accept-new `quic_known_hosts` default. The
-/// struct is empty (a zero-sized value) and never read when the `quic` feature
+/// Holds the trust-source input the QUIC dial needs: the `--quic-ca` private CA
+/// bundle path, the only trust anchor (there is no default trust). The struct
+/// is empty (a zero-sized value) and never read when the `quic` feature
 /// is disabled, so it threads through the shared connect signature without a cfg
 /// on the parameter itself.
 #[derive(Clone, Default)]
 pub(crate) struct QuicDialParams {
-    /// `--quic-ca <PATH>`: a PEM CA bundle that replaces the platform trust
-    /// store for verifying the daemon's certificate.
+    /// `--quic-ca <PATH>`: the PEM CA bundle the daemon's certificate must
+    /// verify against. `None` refuses the dial.
     #[cfg(feature = "quic")]
     pub(crate) ca: Option<std::path::PathBuf>,
     /// `--quic-cert <PATH>`: the client certificate chain (PEM) presented to the
@@ -375,13 +373,10 @@ pub(crate) fn open_daemon_stream(
 
 /// Opens a QUIC connection to a daemon (the [`Transport::Quic`] path).
 ///
-/// Resolves the client trust source through the QUIC verification ladder - the
-/// SSH-style accept-new default: a chain that validates against
-/// `--quic-ca` or the platform trust store wins, otherwise a self-signed daemon
-/// is trusted on first use and pinned in `quic_known_hosts`. Builds the
+/// Resolves the client trust source from `--quic-ca` - the only trust anchor;
+/// without it the dial is refused before any packet is sent. Builds the
 /// connector with ALPN `rsync`, resolves the daemon host to `host:port`
-/// candidates
-/// (873/udp default), and dials the first that succeeds. The peer certificate
+/// candidates (873/udp default), and dials the first that succeeds. The peer certificate
 /// is validated against the `quic://` authority (`addr.host()`) as the TLS
 /// server name.
 ///
@@ -394,9 +389,7 @@ fn open_quic_daemon_stream(
     address_mode: AddressMode,
     quic: &QuicDialParams,
 ) -> Result<DaemonStream, ClientError> {
-    use rsync_io::quic::{
-        ClientAuth, QuicConnector, QuicTransportTuning, load_private_ca, resolve,
-    };
+    use rsync_io::quic::{ClientAuth, QuicConnector, QuicTransportTuning, resolve};
 
     // Mutual TLS (`--quic-cert` / `--quic-key`): both set presents the client
     // certificate; both unset presents nothing (byte-identical to today). One
@@ -423,21 +416,10 @@ fn open_quic_daemon_stream(
             ));
         }
     };
-    // Trust ladder, SSH-style accept-new default:
-    // `--quic-ca` anchors the chain against a private CA, otherwise the platform
-    // trust store is the CA layer; a chain that validates against either wins,
-    // and a self-signed daemon that validates against neither falls to
-    // trust-on-first-use against `quic_known_hosts` keyed by `host:port`. The
-    // known-hosts location is the default (`None` here).
-    let ca = match &quic.ca {
-        Some(path) => {
-            Some(load_private_ca(path).map_err(|error| quic_dial_error(addr, &error.to_string()))?)
-        }
-        None => None,
-    };
-    let authority = format!("{}:{}", addr.host(), addr.port());
+    // `--quic-ca` is the only trust anchor and is strict (issuer, SAN,
+    // validity); with none configured the dial is refused here.
     let trust =
-        resolve(ca, authority, None).map_err(|error| quic_dial_error(addr, &error.to_string()))?;
+        resolve(quic.ca.as_deref()).map_err(|error| quic_dial_error(addr, &error.to_string()))?;
     // `--quic-cc`/`--quic-window` tune the client endpoint only; unset fields
     // fall back to env then default inside `build_transport_config`.
     let tuning = QuicTransportTuning {
@@ -832,41 +814,6 @@ mod quic_connect_tests {
             .expect("bind server-first acceptor")
     }
 
-    /// Scoped `XDG_CONFIG_HOME` override so the accept-new default writes its
-    /// `quic_known_hosts` pin under a temp dir instead of the real user config.
-    /// `default_known_hosts_path` consults `XDG_CONFIG_HOME` first on every
-    /// platform, so this redirects the pin location everywhere. Safe under
-    /// nextest, which runs each test in its own process (no concurrent env
-    /// access); the previous value is restored on drop for good measure.
-    struct XdgConfigGuard(Option<std::ffi::OsString>);
-
-    impl XdgConfigGuard {
-        fn set(dir: &std::path::Path) -> Self {
-            let previous = std::env::var_os("XDG_CONFIG_HOME");
-            // SAFETY: nextest runs each test in a dedicated single-threaded
-            // process, so no other thread reads or writes the environment
-            // concurrently with this mutation.
-            #[allow(unsafe_code)]
-            unsafe {
-                std::env::set_var("XDG_CONFIG_HOME", dir);
-            }
-            Self(previous)
-        }
-    }
-
-    impl Drop for XdgConfigGuard {
-        fn drop(&mut self) {
-            // SAFETY: see `XdgConfigGuard::set`; single-threaded test process.
-            #[allow(unsafe_code)]
-            unsafe {
-                match &self.0 {
-                    Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-                    None => std::env::remove_var("XDG_CONFIG_HOME"),
-                }
-            }
-        }
-    }
-
     fn dial(addr: &DaemonAddress, ca: Option<PathBuf>) -> Result<DaemonStream, ClientError> {
         dial_with_client_cert(addr, ca, None, None)
     }
@@ -954,68 +901,102 @@ mod quic_connect_tests {
         server.join().expect("server thread");
     }
 
-    /// A `--quic-ca` that does NOT anchor the presented certificate falls
-    /// through to the accept-new default, mirroring SSH: a
-    /// `@cert-authority` line that does not sign the host key does not veto the
-    /// connection, it just doesn't apply, and the decision falls to
-    /// `known_hosts`/accept-new. So dialing a self-signed daemon with an
-    /// unrelated `--quic-ca` SUCCEEDS by pinning on first contact rather than
-    /// hard-failing. `XDG_CONFIG_HOME` is redirected so the pin stays in a temp
-    /// dir. Encodes WHY: this is the security-sensitive half of the default
-    /// change - a supplied CA takes precedence only when it validates
-    /// (`quic_ca_trust_path_dials_and_is_byte_transparent` covers the matching
-    /// case); a non-matching CA no longer forces a hard failure.
-    #[test]
-    fn quic_nonmatching_ca_falls_through_to_accept_new() {
-        let config_home = test_support::create_tempdir();
-        let _xdg = XdgConfigGuard::set(config_home.path());
+    /// Mints a CA-signed `localhost` identity and binds a server-first acceptor
+    /// presenting it. Returns the acceptor, the temp dir holding the PEM files
+    /// (kept alive), and the path of the issuing CA's PEM for `--quic-ca`.
+    fn bind_ca_signed(addr: &str) -> (QuicAcceptor, TempDir, PathBuf) {
+        use rsync_io::quic::QuicServerIdentity;
+        let pki = test_support::quic_cert::localhost_ca_signed();
+        let dir = test_support::create_tempdir();
+        let ca = dir.path().join("ca.pem");
+        let cert = dir.path().join("server.pem");
+        let key = dir.path().join("server.key");
+        std::fs::write(&ca, pki.ca_pem).expect("write ca pem");
+        std::fs::write(&cert, pki.cert_pem).expect("write cert pem");
+        std::fs::write(&key, pki.key_pem).expect("write key pem");
+        let socket = std::net::UdpSocket::bind(addr).expect("udp bind");
+        let acceptor = QuicAcceptor::from_socket_server_first(
+            socket,
+            &QuicServerIdentity::PemFiles { cert, key },
+        )
+        .expect("bind CA-signed acceptor");
+        (acceptor, dir, ca)
+    }
 
-        let acceptor = bind_server_first("127.0.0.1:0");
-        let port = acceptor.local_addr().expect("local addr").port();
-
-        // A second acceptor yields a distinct self-signed cert unrelated to the
-        // one the target acceptor will present, offered as an unrelated CA.
-        let other =
-            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind other acceptor");
-        let (_dir, wrong_ca) = write_ca_pem(other.certificate().as_ref());
-
-        // Server-speaks-first exchange keeps the connection alive past stream
-        // establishment (mirrors `quic_ca_trust_path_dials_and_is_byte_transparent`).
-        let greeting = b"@RSYNCD: 32.0\n".to_vec();
-        let request = b"module\n".to_vec();
-        let server_greeting = greeting.clone();
-        let expected_request = request.clone();
-        let server = thread::spawn(move || {
+    /// Serves one server-first exchange on a background thread: greet, then
+    /// read the client's request line. A refused dial never reaches `accept`,
+    /// so callers that expect a refusal do not join the handle.
+    fn serve_greeting(acceptor: QuicAcceptor) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
             let mut stream = acceptor.accept().expect("accept");
-            stream.write_all(&server_greeting).expect("server write");
+            stream.write_all(b"@RSYNCD: 32.0\n").expect("server write");
             stream.flush().expect("server flush");
-            let mut got = vec![0u8; expected_request.len()];
+            let mut got = [0u8; 7];
             stream.read_exact(&mut got).expect("server read");
+            assert_eq!(&got, b"module\n");
             stream.finish().expect("server finish");
-        });
+        })
+    }
 
-        let addr = quic_addr(port);
-        let stream = dial(&addr, Some(wrong_ca))
-            .expect("a non-matching --quic-ca falls through to accept-new, not a hard failure");
-        let (reader, mut writer, guard) = stream.split().expect("split");
-        let mut reader = reader;
-        let mut got_greeting = vec![0u8; greeting.len()];
+    /// Completes the client half of [`serve_greeting`] over a dialed stream.
+    fn exchange_greeting(stream: DaemonStream) {
+        let (mut reader, mut writer, guard) = stream.split().expect("split");
+        let mut greeting = [0u8; 14];
         reader
-            .read_exact(&mut got_greeting)
+            .read_exact(&mut greeting)
             .expect("client read greeting");
-        writer.write_all(&request).expect("client write");
+        assert_eq!(&greeting, b"@RSYNCD: 32.0\n");
+        writer.write_all(b"module\n").expect("client write");
         writer.flush().expect("client flush");
         drop(writer);
         drop(reader);
         drop(guard);
-        server.join().expect("server thread");
+    }
 
-        let pinned = config_home.path().join("oc-rsync").join("quic_known_hosts");
-        assert!(
-            std::fs::read_to_string(&pinned)
-                .is_ok_and(|recorded| recorded.contains(&format!("localhost:{port}"))),
-            "the fall-through must pin the self-signed cert under the dialed authority"
-        );
+    /// A daemon whose leaf is signed by the `--quic-ca` CA connects, and the
+    /// stream carries the server-first exchange. This is the operator setup
+    /// strict trust exists for: a private CA, a leaf it issued for the host.
+    #[test]
+    fn quic_ca_signed_daemon_connects() {
+        let (acceptor, _pki, ca) = bind_ca_signed("127.0.0.1:0");
+        let port = acceptor.local_addr().expect("local addr").port();
+        let server = serve_greeting(acceptor);
+
+        let stream = dial(&quic_addr(port), Some(ca))
+            .expect("a leaf signed by the --quic-ca CA must connect");
+        exchange_greeting(stream);
+        server.join().expect("server thread");
+    }
+
+    /// A `--quic-ca` naming a different CA than the one that signed the daemon
+    /// certificate is refused with exit 5 and no TCP fallback. Encodes WHY:
+    /// `--quic-ca` is strict - an explicit trust anchor that does not verify
+    /// the chain must never be bypassed.
+    #[test]
+    fn quic_mismatched_ca_is_refused() {
+        let (acceptor, _pki, _right_ca) = bind_ca_signed("127.0.0.1:0");
+        let port = acceptor.local_addr().expect("local addr").port();
+        let _server = serve_greeting(acceptor);
+        let other = test_support::quic_cert::localhost_ca_signed();
+        let (_dir, wrong_ca) = {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("other-ca.pem");
+            std::fs::write(&path, other.ca_pem).expect("write other ca");
+            (dir, path)
+        };
+
+        match dial(&quic_addr(port), Some(wrong_ca)) {
+            Ok(_) => panic!("a --quic-ca that did not sign the daemon leaf must be refused"),
+            Err(err) => {
+                assert_eq!(err.exit_code(), 5);
+                let text = err.to_string();
+                assert!(
+                    text.contains("invalid peer certificate")
+                        && text.contains("refusing to fall back to plaintext TCP"),
+                    "the refusal must be the certificate rejection, with no TCP fallback: {text}"
+                );
+            }
+        }
     }
 
     /// A missing `--quic-ca` bundle fails loudly at trust resolution with exit 5
@@ -1080,66 +1061,29 @@ mod quic_connect_tests {
         assert_eq!(refused.exit_code(), 5);
     }
 
-    /// The zero-config DEFAULT now trusts a self-signed daemon on first use
-    /// (SSH `accept-new`): with no `--quic-ca`, dialing a self-signed
-    /// loopback daemon SUCCEEDS, learns the presented certificate, and PERSISTS
-    /// it to `quic_known_hosts` - where the pre-task system-roots default
-    /// hard-failed with `RERR_STARTCLIENT` (5). Pins that the accept-new default
-    /// is wired into the live connect path
-    /// (`open_quic_daemon_stream` -> `resolve(ca, authority, None)` -> the
-    /// accept-new verifier), not merely unit-tested in isolation.
-    /// `XDG_CONFIG_HOME` is redirected to a temp dir so the pin never touches the
-    /// real user config. Encodes WHY: the point of the accept-new default is that a
-    /// self-signed daemon works with no flags, exactly as `ssh` accepts an
-    /// unknown host on first contact; a resolver that still hard-failed here
-    /// (the old default) would fail the dial.
+    /// With no `--quic-ca`, a self-signed daemon is refused before any packet
+    /// is sent: exit 5, a message naming `--quic-ca`, no connection. Encodes
+    /// WHY: QUIC has no default trust, so a client that has not been told
+    /// whom to trust must not connect. A mutation that accepted unknown
+    /// certificates when no CA is configured completes this dial and fails
+    /// the test.
     #[test]
-    fn quic_self_signed_default_accepts_on_first_use_and_persists() {
-        let config_home = test_support::create_tempdir();
-        let _xdg = XdgConfigGuard::set(config_home.path());
-
+    fn quic_self_signed_daemon_without_ca_is_refused() {
         let acceptor = bind_server_first("127.0.0.1:0");
         let port = acceptor.local_addr().expect("local addr").port();
+        let _server = serve_greeting(acceptor);
 
-        // Server-speaks-first exchange keeps the connection alive past stream
-        // establishment (mirrors `quic_ca_trust_path_dials_and_is_byte_transparent`).
-        let greeting = b"@RSYNCD: 32.0\n".to_vec();
-        let request = b"module\n".to_vec();
-        let server_greeting = greeting.clone();
-        let expected_request = request.clone();
-        let server = thread::spawn(move || {
-            let mut stream = acceptor.accept().expect("accept");
-            stream.write_all(&server_greeting).expect("server write");
-            stream.flush().expect("server flush");
-            let mut got = vec![0u8; expected_request.len()];
-            stream.read_exact(&mut got).expect("server read");
-            stream.finish().expect("server finish");
-        });
-
-        let addr = quic_addr(port);
-        let stream = dial(&addr, None).expect("accept-new default trusts a self-signed daemon");
-        let (reader, mut writer, guard) = stream.split().expect("split");
-        let mut reader = reader;
-        let mut got_greeting = vec![0u8; greeting.len()];
-        reader
-            .read_exact(&mut got_greeting)
-            .expect("client read greeting");
-        writer.write_all(&request).expect("client write");
-        writer.flush().expect("client flush");
-        drop(writer);
-        drop(reader);
-        drop(guard);
-        server.join().expect("server thread");
-
-        // The dial ran the accept-new verifier during the handshake, which pins
-        // on first contact - so the record is on disk by now.
-        let pinned = config_home.path().join("oc-rsync").join("quic_known_hosts");
-        let recorded = std::fs::read_to_string(&pinned)
-            .expect("accept-new must persist the pinned cert under XDG_CONFIG_HOME");
-        assert!(
-            recorded.contains(&format!("localhost:{port}")) && recorded.contains("SHA256:"),
-            "the pin must record the dialed authority and a fingerprint: {recorded:?}"
-        );
+        match dial(&quic_addr(port), None) {
+            Ok(_) => panic!("a QUIC dial without --quic-ca must be refused"),
+            Err(err) => {
+                assert_eq!(err.exit_code(), 5);
+                let text = err.to_string();
+                assert!(
+                    text.contains("--quic-ca") && text.contains("no default trust"),
+                    "the refusal must name --quic-ca and say there is no default trust: {text}"
+                );
+            }
+        }
     }
 
     /// The real `@RSYNCD` greeting codec round-trips over a dialed QUIC stream,

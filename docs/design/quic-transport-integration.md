@@ -1,6 +1,9 @@
 # QUIC Transport: Integration Design (CLI, bootstrap, exit codes)
 
 Tracking tasks: QUIC-5 .. QUIC-11. Status: design note awaiting owner review.
+Trust note (owner decision 2026-09-30): the TOFU `quic_known_hosts` and
+system-root steps described below were removed; `--quic-ca` is the only, strict,
+QUIC trust source (see `docs/design/quic-security-model.md` section 7.1).
 No code is introduced by this note. It sequences the wiring that connects the
 already-shipped transport primitive to the CLI, the daemon listener, and the
 unmodified Protocol 32 handshake, resolving the last open build details against

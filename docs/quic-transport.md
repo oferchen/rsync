@@ -31,8 +31,7 @@ cargo build --release --features quic
 The feature propagates through the crate graph (`cli` -> `core` ->
 `rsync_io`, and `daemon` for the listener side), pulling in the QUIC stack
 (`quinn-proto` for the sans-I/O QUIC state machine, `rustls` with the ring
-crypto provider for TLS 1.3, and `rustls-native-certs` for the system trust
-store; `rcgen` generates self-signed certificates for the QUIC test suite
+crypto provider for TLS 1.3; `rcgen` generates self-signed certificates for the QUIC test suite
 only, not at runtime). A build without the feature is byte-for-byte unaffected
 on every other transport.
 
@@ -44,16 +43,16 @@ There are two ways to ask a client to use QUIC, and both target an rsync
 - **The `quic://` URI scheme** — the QUIC analogue of `rsync://`:
 
   ```sh
-  oc-rsync -a quic://host/module/path/ /local/dest/
-  oc-rsync -a quic://user@host:8730/module/path/ /local/dest/
+  oc-rsync -a --quic-ca ca.pem quic://host/module/path/ /local/dest/
+  oc-rsync -a --quic-ca ca.pem quic://user@host:8730/module/path/ /local/dest/
   ```
 
 - **The `--quic` modifier** — upgrades an ordinary daemon target to QUIC
   without changing the operand spelling:
 
   ```sh
-  oc-rsync -a --quic host::module/path/ /local/dest/
-  oc-rsync -a --quic rsync://host/module/path/ /local/dest/
+  oc-rsync -a --quic --quic-ca ca.pem host::module/path/ /local/dest/
+  oc-rsync -a --quic --quic-ca ca.pem rsync://host/module/path/ /local/dest/
   ```
 
 Both select `Transport::Quic` for the connection. The default port is **873**,
@@ -77,34 +76,27 @@ URL as a host named `quic`.
 
 Every QUIC connection runs TLS 1.3 with the ALPN protocol identifier `rsync`;
 there is no unencrypted QUIC mode. The client verifies the daemon's
-certificate, and the verification source is chosen by a fixed precedence:
+certificate against exactly one trust source: the PEM CA bundle named by
+`--quic-ca <PATH>`.
 
-1. **Private CA (`--quic-ca <PATH>`)** — highest precedence. Verifies the
-   daemon's certificate chain against the PEM CA bundle at `PATH` instead of the
-   platform trust store. Use this when the daemon's certificate is anchored by
-   an internal or corporate CA.
+```sh
+oc-rsync -a --quic-ca /etc/oc-rsync/corp-ca.pem quic://host/module/ dest/
+```
 
-   ```sh
-   oc-rsync -a --quic-ca /etc/oc-rsync/corp-ca.pem quic://host/module/ dest/
-   ```
+- **`--quic-ca` is required.** There is no default trust. Without it the
+  client refuses before sending a packet, exits 5, and names the flag in the
+  error.
+- **`--quic-ca` is strict.** The daemon's chain must verify against the
+  bundle: a certificate issued by another CA, one whose SAN does not name the
+  host being dialed, or one outside its validity period fails the handshake
+  (exit 5). There is no fallback.
+- **No trust-on-first-use, no platform trust store.** The client keeps no
+  known-hosts file and does not consult the operating system's CA store.
 
-2. **System roots (default)** — when `--quic-ca` is not given, the certificate
-   is verified against the live platform trust store. This is the zero-config
-   path for a daemon whose certificate is signed by a publicly trusted CA.
-
-3. **TOFU `quic_known_hosts`** — the trust-on-first-use path for a self-signed
-   daemon, mirroring SSH's `known_hosts`. On first contact the server
-   certificate's SHA-256 fingerprint is pinned into a known-hosts file
-   (recorded as a `SHA256:<base64>` token, the same form SSH prints). A later
-   connection to the same authority whose fingerprint has **changed** aborts the
-   handshake loudly. There is no blanket "insecure" escape hatch that accepts any
-   certificate.
-
-Because a changed fingerprint aborts a TOFU-pinned connection, rotating the
-daemon's certificate invalidates every client's pin for that authority: each
-client trips the loud "host key changed" abort until its stale
-`quic_known_hosts` line is removed. Keep the daemon's certificate and key
-stable across restarts, and plan a coordinated re-pin when you rotate them.
+For a daemon with a self-signed certificate, pass that certificate itself as
+`--quic-ca` (a self-signed certificate is its own trust anchor). For a daemon
+whose certificate is issued by an internal CA, pass the CA certificate.
+Rotating a daemon certificate under the same CA needs no client change.
 
 ### Mutual TLS (client certificate)
 
@@ -114,7 +106,8 @@ above. It is opt-in and off by default: with neither flag set the client
 presents no certificate and the handshake is unchanged.
 
 ```sh
-oc-rsync -a --quic-cert /etc/oc-rsync/client.pem \
+oc-rsync -a --quic-ca /etc/oc-rsync/ca.pem \
+            --quic-cert /etc/oc-rsync/client.pem \
             --quic-key  /etc/oc-rsync/client.key \
             quic://host/module/ dest/
 ```
@@ -220,8 +213,8 @@ QUIC has **no auto-generated or in-memory certificate**. The listener presents
 only the operator-supplied `quic cert file` / `quic key file` pair; if that
 pair is absent the daemon fails loudly at startup rather than minting a
 throwaway self-signed identity. (Auto-generating a daemon certificate was
-considered and dropped: it created more problems than it solved, chiefly the
-unstable identity that would trip every TOFU pin on each restart.)
+considered and dropped: clients could not name an identity that changes on
+every restart as their `--quic-ca`.)
 
 A bad or unreadable certificate does not take the whole daemon down: the
 affected QUIC socket is logged and skipped while the TCP listener keeps
@@ -262,7 +255,7 @@ Selects the client endpoint's congestion-control algorithm:
 | `newreno` | NewReno   | Loss-based; the QUIC baseline.                        |
 
 ```sh
-oc-rsync -a --quic-cc cubic quic://host/module/ dest/
+oc-rsync -a --quic-ca ca.pem --quic-cc cubic quic://host/module/ dest/
 ```
 
 - **Resolution order:** `--quic-cc` (CLI) > `OC_RSYNC_QUIC_CC` (environment) >
@@ -283,7 +276,7 @@ Sizes the client endpoint's QUIC flow-control window in bytes, with an optional
 `K`/`M`/`G` binary (1024-based) suffix:
 
 ```sh
-oc-rsync -a --quic-window 128M quic://host/module/ dest/
+oc-rsync -a --quic-ca ca.pem --quic-window 128M quic://host/module/ dest/
 ```
 
 - **Resolution order:** `--quic-window` (CLI) > `OC_RSYNC_QUIC_WINDOW`

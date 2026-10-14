@@ -275,8 +275,8 @@ pub struct ClientConfig {
     #[cfg(feature = "quic")]
     pub(super) daemon_transport: crate::client::Transport,
     /// `--quic-ca <PATH>` - private CA PEM bundle used to verify the daemon's
-    /// QUIC certificate (policy B). `None` uses the system-roots default. Only
-    /// present under the `quic` feature.
+    /// QUIC certificate, the only QUIC trust anchor. `None` refuses every QUIC
+    /// dial. Only present under the `quic` feature.
     #[cfg(feature = "quic")]
     pub(super) quic_ca: Option<PathBuf>,
     /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the

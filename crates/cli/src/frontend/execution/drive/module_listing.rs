@@ -20,7 +20,7 @@ pub(super) struct ModuleListingInputs<'a> {
     #[cfg(feature = "quic")]
     pub quic: bool,
     /// `--quic-ca <PATH>` - private CA bundle for verifying the QUIC daemon
-    /// certificate; `None` uses the system-roots default.
+    /// certificate; `None` refuses the QUIC dial (no default trust).
     #[cfg(feature = "quic")]
     pub quic_ca: Option<&'a std::path::Path>,
     /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the

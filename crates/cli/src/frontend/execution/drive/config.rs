@@ -34,7 +34,7 @@ pub(crate) struct ConfigInputs {
     #[cfg(feature = "quic")]
     pub(crate) quic: bool,
     /// `--quic-ca <PATH>` - private CA bundle for verifying the QUIC daemon
-    /// certificate; `None` uses the system-roots default.
+    /// certificate; `None` refuses the QUIC dial (no default trust).
     #[cfg(feature = "quic")]
     pub(crate) quic_ca: Option<PathBuf>,
     /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the
@@ -373,8 +373,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         } else {
             core::client::Transport::Tcp
         });
-        // `--quic-ca` selects a private CA bundle for QUIC certificate
-        // verification; `None` keeps the system-roots default.
+        // `--quic-ca` is the only QUIC trust anchor; `None` makes the dial
+        // refuse.
         builder = builder.quic_ca(inputs.quic_ca);
         // `--quic-cert` / `--quic-key` supply the client certificate the client
         // presents to the daemon for mutual TLS; both unset presents nothing

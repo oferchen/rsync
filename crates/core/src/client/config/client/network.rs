@@ -34,9 +34,9 @@ impl ClientConfig {
 
     /// Returns the `--quic-ca` private CA bundle path, if one was supplied.
     ///
-    /// When present it verifies the daemon's QUIC certificate against this PEM
-    /// bundle instead of the platform trust store (policy B). Available only
-    /// under the `quic` feature.
+    /// It is the only QUIC trust anchor: the daemon's certificate chain must
+    /// verify against this PEM bundle, and a QUIC dial without it is refused.
+    /// Available only under the `quic` feature.
     #[cfg(feature = "quic")]
     #[must_use]
     #[doc(alias = "--quic-ca")]

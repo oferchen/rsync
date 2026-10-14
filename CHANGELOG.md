@@ -85,6 +85,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Honour the leading-comma form in `auth users` and `gid` (CVE-2026-70463, #7345)
 - A peer can no longer override module settings with an `@RSYNCD: OPTION` line; one sent before the module name is answered as an unknown module, as upstream does (#7754, #8002)
 - Fork one process per connection so chroot and per-module state cannot leak between sessions (#7719, #7718, #7711)
+- QUIC clients no longer trust a daemon certificate on first use. `--quic-ca` is required and strict: the chain, the SAN and the validity period must verify against it, and with no `--quic-ca` the client refuses before dialing (exit 5). The `quic_known_hosts` store and the platform trust store fallback are gone
 - Serve each QUIC session in its own forked child behind a sandboxed QUIC front process, so a `use chroot` / `uid` module reached over QUIC no longer chroots or drops privileges for the whole daemon; the async daemon refuses to start as root for the same reason (#8027, #8028)
 - Enforce `max connections` on every entry point and across forked sessions (#7440, #7917)
 - Close three `refuse options` bypasses, and refuse `--remove-source-files` under `refuse options = delete` (#7262, #7448, #7427)
@@ -147,7 +148,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - The daemon accepts `--log-file-format`, as upstream does (#8047)
 - `OC_RSYNC_PULL_INC_RECURSE=1` lets a pulling client advertise incremental recursion, except under `--delete-before` or `--delete-after` as in upstream; off by default (#8062, #8091)
-- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, TOFU and private-CA trust, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #7910)
+- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, private-CA trust (`--quic-ca`), mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #7910)
 - Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
 - `StrictHostKeyChecking accept-new` works as documented (#7783)
 - `--out-format` on SSH and daemon transfers (#6917, #6918, #6919, #6921, #6923)
@@ -172,6 +173,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 
 ### Changed
 
+- Behaviour change: QUIC clients no longer trust the system trust store or a certificate seen on first use. Every QUIC connection needs `--quic-ca`; without it the client refuses with exit 5 and names the flag
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
@@ -429,6 +431,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 
 ### Removed
 
+- QUIC trust-on-first-use, the `quic_known_hosts` file and the platform trust store fallback; `--quic-ca` is now the only QUIC trust anchor
 - rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`) (#8087)
 - The unused `flist` crate; the live file list is `protocol::flist` (#8189)
 - The dead `--compress-level` help entry (#6778)

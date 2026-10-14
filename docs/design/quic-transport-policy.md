@@ -117,6 +117,12 @@ means the daemon has no hidden on-disk identity to reason about.
 
 ## 3. Decision B - Client verification ladder
 
+> **Superseded (owner decision 2026-09-30).** The ladder below is not what
+> ships. Trust-on-first-use, the `quic_known_hosts` store and the system-root
+> default were removed: `--quic-ca` is the only trust source, it is strict, and
+> a client without it refuses to connect. See
+> `docs/design/quic-security-model.md` section 7.1 and `docs/quic-transport.md`.
+
 The ladder, in the order the client applies it:
 
 1. **System root store** (default). A cert chaining to a platform CA - e.g. a

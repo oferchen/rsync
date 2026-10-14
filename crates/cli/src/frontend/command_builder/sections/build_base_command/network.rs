@@ -145,7 +145,7 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
             Arg::new("quic-ca")
                 .long("quic-ca")
                 .value_name("PATH")
-                .help("Verify the QUIC daemon certificate against the CA bundle in PATH (PEM) instead of the system trust store.")
+                .help("Verify the QUIC daemon certificate against the CA bundle in PATH (PEM). Required for QUIC: the system trust store is not trusted and there is no default trust.")
                 .hide(quic_unavailable)
                 .num_args(1)
                 .action(ArgAction::Set)
