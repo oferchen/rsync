@@ -47,6 +47,14 @@ fn golden_config() -> VersionInfoConfig {
 }
 
 /// The `Capabilities:` and `Optimizations:` blocks of a rendered report.
+#[cfg(all(
+    unix,
+    target_pointer_width = "64",
+    feature = "acl",
+    feature = "xattr",
+    feature = "iconv",
+    feature = "idn"
+))]
 fn info_sections(rendered: &str) -> &str {
     let start = rendered
         .find("Capabilities:\n")
@@ -116,6 +124,14 @@ fn version_info_sections_match_upstream_layout() {
 }
 
 /// The `"capabilities"` and `"optimizations"` objects of a JSON report.
+#[cfg(all(
+    unix,
+    target_pointer_width = "64",
+    feature = "acl",
+    feature = "xattr",
+    feature = "iconv",
+    feature = "idn"
+))]
 fn json_info_sections(json: &str) -> &str {
     let start = json
         .find(",\n  \"capabilities\"")
