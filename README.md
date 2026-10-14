@@ -10,7 +10,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. The reference version is upstream rsync 3.5.1. oc-rsync speaks protocols 28 through 33 and aims to be a drop-in replacement. Known divergences are listed per test in the [upstream testsuite](#upstream-testsuite) manifests.
+`rsync` re-implemented in Rust. The reference version is upstream rsync 3.5.1. oc-rsync speaks protocols 28 through 33 (protocols below 28 are not supported for now) and aims to be a drop-in replacement. Known divergences are listed per test in the [upstream testsuite](#upstream-testsuite) manifests.
 
 The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` without conflict.
 
@@ -257,11 +257,11 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 | 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
-| 29 | 2.6.4 - 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
-| 28 | 2.6.0 - 2.6.3 | Wire-level support | Golden-byte tests in `crates/protocol/tests/` |
-| <= 27 | <= 2.5.x | Not supported | |
+| 29 | 2.6.4 - 2.6.9 | Full support | Golden-byte tests, plus daemon push and pull cells against 2.6.9 that do not block CI |
+| 28 | 2.6.0 - 2.6.3 | Wire-level support | Golden-byte tests in `crates/protocol/tests/`, and a `--protocol=28` run against 3.4.4, 3.5.0 and 3.5.1 that does not fail CI. No native protocol-28 peer is tested |
+| 20 - 27 | <= 2.5.x | Not supported (deferred) | |
 
-oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 peer runs at 33. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
+Upstream 3.5.1 still accepts protocols 20 through 33 (`MIN_PROTOCOL_VERSION 20` in `rsync.h`). oc-rsync supports 28 through 33; support for older protocols is deferred. oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 peer runs at 33. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
 
 Interop scenarios run in CI against the upstream releases listed in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh): `versions=` for the scenario matrix, `extra_build_versions=` for build-only peers, and `extended_matrix_versions=` for the extended matrix. Push and pull are both covered, across transfer modes, deletion, compression, metadata, reference dirs, file selection, batch round trip, path handling, device nodes and daemon auth. See the [interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for detail.
 

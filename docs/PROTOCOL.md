@@ -203,7 +203,7 @@ Based on upstream rsync 3.4.4 source code:
 - Verify no duplicate stream cloning after protocol negotiation
 
 **"protocol mismatch"** - Version negotiation failure:
-- Server must support protocol 28-32
+- Server must support protocol 28-33 (oc-rsync does not support protocols below 28)
 - Check @RSYNCD handshake for daemon mode
 - Verify binary protocol exchange for SSH mode
 

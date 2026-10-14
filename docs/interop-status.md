@@ -12,14 +12,16 @@ For test infrastructure details, see [INTEROP.md](INTEROP.md) and
 
 ## Upstream Versions Tested
 
-oc-rsync is tested bidirectionally against six upstream rsync releases spanning
-protocol versions 28 through 33. Both directions - oc-rsync client pushing to
-upstream daemon, and upstream client pulling from oc-rsync daemon - are
-validated for every version on every CI run.
+oc-rsync is tested bidirectionally against six upstream rsync releases with
+native protocols 29 through 33. Both directions - oc-rsync client pushing to
+upstream daemon, and upstream client pulling from oc-rsync daemon - run on every
+CI run; the rsync 2.6.9 (protocol 29) cells do not block CI. No native
+protocol-28 peer is tested; protocol 28 is covered only by golden-byte tests and
+a forced `--protocol=28` run whose failures do not fail the job.
 
 | Upstream Version | Protocol | How Obtained | CI Status |
 |------------------|----------|--------------|-----------|
-| rsync 2.6.9      | 28-29    | Always source-built | Non-blocking |
+| rsync 2.6.9      | 29       | Always source-built | Non-blocking |
 | rsync 3.0.9      | 30       | Ubuntu package or source | Required |
 | rsync 3.1.3      | 31       | Ubuntu package or source | Required |
 | rsync 3.4.4      | 32       | Source-built | Required |
@@ -35,20 +37,24 @@ first, then release tarballs from rsync.samba.org, then source build from
 ## Protocol Version Support
 
 oc-rsync advertises protocol 33 and negotiates downward when connecting to
-older peers. All protocol versions from 28 through 33 are supported.
+older peers. All protocol versions from 28 through 33 are supported. Upstream
+3.5.1 still accepts protocols 20 through 33; protocols below 28 are not
+supported by oc-rsync for now, and that support is deferred.
 
 | Protocol | Introduced In | Wire Encoding | Default Checksum | Inc. Recurse | Status |
 |----------|---------------|---------------|------------------|--------------|--------|
 | 28       | rsync 2.6.0   | Legacy 4-byte LE | MD4           | No           | Supported |
-| 29       | rsync 2.6.6   | Legacy 4-byte LE | MD4           | No           | Supported |
+| 29       | rsync 2.6.4   | Legacy 4-byte LE | MD4           | No           | Supported |
 | 30       | rsync 3.0.0   | Varint        | MD5              | Yes          | Supported |
 | 31       | rsync 3.1.0   | Varint        | MD5              | Yes          | Supported |
-| 32       | rsync 3.4.0   | Varint        | MD5              | Yes          | Supported (primary) |
+| 32       | rsync 3.4.0   | Varint        | MD5              | Yes          | Supported |
+| 33       | rsync 3.5.1   | Varint        | MD5              | Yes          | Supported (primary) |
 
 ### Forced Protocol Testing
 
-CI forces each protocol version (28-32) against the newest upstream binary to
-verify backward compatibility:
+CI forces each protocol version (28-32) against upstream 3.4.4, 3.5.0 and
+3.5.1. The sweep is advisory: failures print a warning and do not fail the
+job, so the table below is not enforced by CI:
 
 | Forced Protocol | Transfer | Delete | Compress | Hardlinks | Filters |
 |-----------------|----------|--------|----------|-----------|---------|

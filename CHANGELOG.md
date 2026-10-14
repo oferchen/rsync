@@ -4,7 +4,8 @@ All notable changes to oc-rsync are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-oc-rsync speaks rsync protocols 28 through 33. Its reference version is upstream
+oc-rsync speaks rsync protocols 28 through 33; protocols below 28 are not
+supported for now. Its reference version is upstream
 rsync 3.5.1. Release tags are mirrored on GitHub at
 <https://github.com/oferchen/rsync/releases>.
 
@@ -145,7 +146,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - The daemon accepts `--log-file-format`, as upstream does (#8047)
 - `OC_RSYNC_PULL_INC_RECURSE=1` lets a pulling client advertise incremental recursion, except under `--delete-before` or `--delete-after` as in upstream; off by default (#8062, #8091)
-- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR, CUBIC or NewReno congestion control (`--quic-cc`), `--quic-window` and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195). Further performance-oriented QUIC ALPN protocols are planned.
+- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR, CUBIC or NewReno congestion control (`--quic-cc`), `--quic-window` and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195). Further performance-oriented QUIC ALPN protocols are planned, selectable through a command-line option; the current ALPN, `rsync`, stays the default for now.
 - Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
 - `StrictHostKeyChecking accept-new` works as documented (#7783)
 - `--out-format` on SSH and daemon transfers (#6917, #6918, #6919, #6921, #6923)

@@ -1,7 +1,7 @@
 # Protocol Compatibility Matrix
 
 This document describes oc-rsync's wire protocol compatibility with upstream
-rsync across protocol versions 28-32. The upstream releases the interop
+rsync across protocol versions 28-33. The upstream releases the interop
 harness builds and exercises are listed once, in `versions=(...)` at
 `tools/ci/run_interop.sh:74`, rather than copied here - copying the list is what
 let it drift. At the time of writing that is 2.6.9, 3.0.9, 3.1.3, 3.4.4 and
@@ -12,16 +12,26 @@ request and nightly.
 
 ## Protocol Version Support
 
-oc-rsync supports protocol versions 28 through 32. The implementation
-advertises protocol 32 and negotiates downward when connecting to older peers.
+oc-rsync supports protocol versions 28 through 33. The implementation
+advertises protocol 33 and negotiates downward when connecting to older peers.
+Upstream 3.5.1 still accepts protocols 20 through 33 (`MIN_PROTOCOL_VERSION 20`
+in `rsync.h`); protocols below 28 are not supported by oc-rsync for now, and
+that support is deferred.
+
+Native interop coverage below protocol 30 is thin. No native protocol-28 peer
+is tested: protocol 28 is covered by golden-byte tests and by a forced
+`--protocol=28` run against 3.4.4, 3.5.0 and 3.5.1 whose failures are reported
+but do not fail the job. Protocol 29 is tested natively only by the daemon push
+and pull cells against rsync 2.6.9 (RP28.c / RP28.d), which do not block CI.
 
 | Protocol | Introduced In | Checksum | Compat Flags | Inc. Recurse | Status |
 |----------|---------------|----------|--------------|--------------|--------|
 | 28       | rsync 2.6.0   | MD4      | N/A          | No           | Supported |
-| 29       | rsync 2.6.6   | MD4      | N/A          | No           | Supported |
+| 29       | rsync 2.6.4   | MD4      | N/A          | No           | Supported |
 | 30       | rsync 3.0.0   | MD5      | Varint       | Yes          | Supported |
 | 31       | rsync 3.1.0   | MD5      | Varint       | Yes          | Supported |
-| 32       | rsync 3.4.0   | MD5      | Varint       | Yes          | Supported (primary) |
+| 32       | rsync 3.4.0   | MD5      | Varint       | Yes          | Supported |
+| 33       | rsync 3.5.1   | MD5      | Varint       | Yes          | Supported (primary) |
 
 Protocol 28-29 use the legacy 4-byte LE wire encoding for compatibility flags.
 Protocol 30+ uses varint encoding and supports the binary negotiation handshake

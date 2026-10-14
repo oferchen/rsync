@@ -32,7 +32,7 @@ This document defines the upstream compatibility test scenarios used to validate
 | Delete options                      | `--delete-excluded`, etc.                | ✅        | All variants working |
 | File list diffing                   | Match order, mtime, permission checks     | ✅        | Deterministic ordering |
 | Exit code match                     | Match known upstream codes                | ✅        | All 25 codes verified |
-| Protocol versions 28-32             | Multi-version negotiation                 | ✅        | Protocol 32 primary, 28-31 supported |
+| Protocol versions 28-33             | Multi-version negotiation                 | ✅        | Protocol 33 primary, 28-32 supported; below 28 not supported |
 
 ---
 

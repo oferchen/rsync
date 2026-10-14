@@ -22,7 +22,7 @@ cargo fmt --all -- --check \
 
 | Area | Compatibility | Notes |
 |------|---------------|-------|
-| Protocol Versions | 100%* | Versions 28-32 (upstream supports 20-40) |
+| Protocol Versions | 100%* | Versions 28-33 (upstream 3.5.1 accepts 20-33) |
 | Protocol Constants | 100% | All MSG_*, XMIT_*, NDX_*, CF_* match |
 | Varint Encoding | 100% | INT_BYTE_EXTRA lookup table identical |
 | File List Encoding | 100% | Wire format byte-compatible |
@@ -43,7 +43,7 @@ cargo fmt --all -- --check \
 
 **Overall Wire Protocol: FULLY COMPATIBLE**
 
-\* *Protocol versions 28-32 are fully compatible. Versions 20-27 are intentionally unsupported (15+ years old).*
+\* *Protocol versions 28-33 are supported. Versions 20-27 are not supported for now; that support is deferred.*
 
 ---
 
@@ -87,12 +87,11 @@ cargo fmt --all -- --check \
 |----------|---------------------|------|--------|
 | MIN_PROTOCOL_VERSION | 20 | `OLDEST_SUPPORTED_PROTOCOL = 28` | ⚠️ Intentional |
 | MAX_PROTOCOL_VERSION | 40 | `MAXIMUM_PROTOCOL_ADVERTISEMENT = 40` | ✅ |
-| PROTOCOL_VERSION | 32 | `NEWEST_SUPPORTED_PROTOCOL = 32` | ✅ |
+| PROTOCOL_VERSION | 33 | `NEWEST_SUPPORTED_PROTOCOL = 33` | ✅ |
 
-> **Note:** The Rust implementation intentionally supports a narrower protocol range (28-32)
-> compared to upstream's (20-40). Protocol versions 20-27 are over 15 years old and
-> rarely encountered. This simplifies the codebase while maintaining compatibility with
-> all modern rsync clients and servers.
+> **Note:** oc-rsync supports protocols 28-33. Upstream 3.5.1 accepts 20-33
+> (`MIN_PROTOCOL_VERSION 20`; `MAX_PROTOCOL_VERSION 40` is only an upper sanity bound).
+> Protocols 20-27 are not supported for now; that support is deferred.
 
 ### Version-Specific Features
 
@@ -900,7 +899,7 @@ it clears an obstructing backup entry (`backup.c:321`).
 
 The Rust rsync implementation achieves **full wire protocol compatibility** with upstream rsync 3.5.0:
 
-1. **Protocol versions 28-32** fully supported with version-specific feature gates
+1. **Protocol versions 28-33** supported with version-specific feature gates
 2. **All compatibility flags** match upstream bit positions
 3. **All 18 message codes** match upstream numeric values
 4. **NDX encoding** supports both legacy and modern formats

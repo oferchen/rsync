@@ -396,8 +396,9 @@ Exit codes below were observed with the walkthrough setup.
 
 ## Future work
 
-Additional performance-oriented ALPN protocols are planned alongside the
-current `rsync` ALPN.
+Additional performance-oriented ALPN protocols are planned. They will be
+selectable through a command-line option, and the current ALPN, `rsync`, will
+stay the default for now.
 
 ## See also
 
