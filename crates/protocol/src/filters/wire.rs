@@ -699,7 +699,13 @@ fn parse_wire_rule_modern(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
         && pattern_bytes.first() == Some(&b'/')
     {
         rule.anchored = true;
-        pattern_bytes = &pattern_bytes[1..];
+        // A body that itself starts with `/` (wire `//x`) keeps every slash:
+        // serialize_rule() adds no anchor to such a body, so folding one here
+        // would drop a `/` on each round trip. Upstream stores the pattern
+        // verbatim (exclude.c:add_rule), so `//x` is re-sent as `//x`.
+        if pattern_bytes[1] != b'/' {
+            pattern_bytes = &pattern_bytes[1..];
+        }
     }
 
     strip_directory_suffix(&mut rule, pattern_bytes);
@@ -845,6 +851,28 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].rule_type, RuleType::Include);
         assert_eq!(parsed[0].pattern, "*.txt");
+    }
+
+    /// Wire `//x` must re-encode as `//x`: the decoder used to fold one `/`
+    /// into `anchored`, the encoder added none back because the body still
+    /// began with `/`, and each round trip lost a slash. Reproducer from the
+    /// filter_list_wire fuzz target at protocol 29. upstream: exclude.c
+    /// add_rule() keeps the pattern verbatim and send_rules() re-sends it.
+    #[test]
+    fn multi_slash_anchored_pattern_round_trips_byte_identical() {
+        let protocol = ProtocolVersion::from_supported(29).unwrap();
+        let wire = b"+ ///s y\0\0\0/s y";
+        let mut input = (wire.len() as i32).to_le_bytes().to_vec();
+        input.extend_from_slice(wire);
+        input.extend_from_slice(&0i32.to_le_bytes());
+        let rules = read_filter_list(&mut std::io::Cursor::new(&input), protocol).unwrap();
+        assert!(rules[0].anchored);
+        let mut reencoded = Vec::new();
+        write_filter_list(&mut reencoded, &rules, protocol).unwrap();
+        assert_eq!(
+            reencoded, input,
+            "re-encoding must reproduce the wire bytes"
+        );
     }
 
     #[test]

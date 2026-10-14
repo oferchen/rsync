@@ -12,17 +12,14 @@
 # type-checks the fuzz targets without linking libFuzzer, so the stable
 # toolchain is sufficient and the run stays cheap and cache-friendly.
 #
-# Lockfile drift is tolerated by design. The fuzz workspaces are excluded
-# from the root workspace, so a dependency edge a main-workspace crate gains
-# (e.g. a new `thiserror` use) never refreshes their standalone lockfiles.
-# `cargo check` is run online and WITHOUT `--locked`: in one pass it both
-# minimally re-syncs each fuzz lockfile against the current manifests and
-# type-checks every fuzz target. A genuine API-drift compile break still
-# fails loudly; only stale-lockfile false positives self-heal. An offline
-# pre-sync (`cargo update --offline`) cannot do this - it dies on a cold
-# registry cache and leaves `--locked` to reject the very drift this guard
-# exists to absorb. Dropping `--locked` here is the sole sanctioned
-# exception, recorded in tools/ci/check_locked_flags.sh's ALLOWLIST.
+# The fuzz workspaces commit no Cargo.lock (see .gitignore): every run
+# resolves a fresh one against the current manifests, so a dependency edge a
+# main-workspace crate gains (e.g. a new `thiserror` use) can never leave a
+# stale fuzz lockfile behind. `cargo check` therefore runs online and
+# WITHOUT `--locked` - there is no lockfile to be locked to. A genuine
+# API-drift compile break still fails loudly. This is the sole sanctioned
+# `--locked` exception, recorded in tools/ci/check_locked_flags.sh's
+# ALLOWLIST.
 
 set -euo pipefail
 

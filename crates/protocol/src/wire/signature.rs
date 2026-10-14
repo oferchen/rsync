@@ -7,6 +7,7 @@
 
 use std::io::{self, Read, Write};
 
+use crate::max_alloc::{effective_max_alloc, malloc_failure};
 use crate::varint::{read_varint, write_varint};
 
 /// Single signature block containing rolling and strong checksums.
@@ -153,7 +154,9 @@ pub fn write_signature<W: Write>(
 ///
 /// # Errors
 ///
-/// Returns an error if reading from the underlying stream fails.
+/// Returns an error if reading from the underlying stream fails, or a
+/// `RERR_MALLOC` refusal when the block count would allocate past the
+/// `--max-alloc` ceiling.
 ///
 /// # Examples
 ///
@@ -173,6 +176,15 @@ pub fn read_signature<R: Read>(reader: &mut R) -> io::Result<(u32, u32, u8, Vec<
     let block_length = read_varint(reader)? as u32;
     let strong_sum_length = read_varint(reader)? as u8;
 
+    // upstream: sender.c:364 receive_sums() allocates the peer-declared count
+    // via new_array(), which my_alloc() refuses once `num >= max_alloc / size`
+    // (util2.c:73-80, RERR_MALLOC).
+    let max_alloc = effective_max_alloc();
+    if block_count as usize >= max_alloc / size_of::<SignatureBlock>() {
+        return Err(malloc_failure(format!(
+            "exceeded --max-alloc={max_alloc} setting (file=sender.c, line=364)"
+        )));
+    }
     let mut blocks = Vec::with_capacity(block_count as usize);
 
     for index in 0..block_count {
@@ -294,5 +306,20 @@ mod tests {
         assert_eq!(block_length, 4096);
         assert_eq!(strong_sum_length, 8);
         assert_eq!(decoded_blocks.len(), 0);
+    }
+
+    /// A peer-declared block count past `--max-alloc` is refused with
+    /// RERR_MALLOC before any allocation, as upstream's my_alloc() does for
+    /// receive_sums(). The input is the fuzz_delta reproducer: 8 bytes that
+    /// once drove a 5 GB `Vec::with_capacity`.
+    #[test]
+    fn oversized_block_count_is_refused_before_allocating() {
+        let input = [0xe9, 0x2a, 0x01, 0xe9, 0x2a, 0x01, 0x9e, 0x7e];
+        let err = read_signature(&mut &input[..]).expect_err("count past --max-alloc");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::max_alloc::MallocFailure>()),
+            "refusal must be tagged MallocFailure (RERR_MALLOC=22), got {err:?}"
+        );
     }
 }

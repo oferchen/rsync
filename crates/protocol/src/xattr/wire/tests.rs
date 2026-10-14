@@ -1588,3 +1588,57 @@ fn recv_xattr_name_len_boundary_matches_upstream() {
         "name_len == MAX_WIRE_XATTR_NAMELEN + 1 must be refused as RERR_PROTOCOL"
     );
 }
+
+/// A peer whose relative request deltas overflow the accumulated 1-based
+/// `num` is a protocol violation, not a wrap or a panic. Upstream checks for
+/// signed overflow before `num += rel_pos` and exits RERR_PROTOCOL.
+/// upstream: xattrs.c:730-734 recv_xattr_request().
+#[test]
+fn xattr_request_num_below_one_is_protocol_violation() {
+    // Fuzz reproducer (acl_xattr_wire): a negative delta drove `num` to
+    // i32::MIN and `num - 1` overflowed. Nums are 1-based, so any num below 1
+    // names no entry; upstream exits RERR_PROTOCOL with "[%s] could not find
+    // xattr #%d for %s" (xattrs.c:763-767). Deltas [1, -1] reach num 0 (a bare
+    // 0 delta is the terminator), [i32::MIN] reaches num i32::MIN.
+    for (deltas, num) in [(&[1, -1][..], 0), (&[i32::MIN][..], i32::MIN)] {
+        let mut req = Vec::new();
+        for &rel in deltas {
+            write_varint(&mut req, rel).unwrap();
+        }
+        write_varint(&mut req, 0).unwrap();
+        let mut list = XattrList::new();
+        list.push(XattrEntry::abbreviated(
+            b"user.a".to_vec(),
+            vec![0u8; MAX_XATTR_DIGEST_LEN],
+            100,
+        ));
+        let err = recv_xattr_request(&mut Cursor::new(req), &mut list)
+            .expect_err("num below 1 must be refused");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+            "num {num} must be tagged ProtocolViolation (RERR_PROTOCOL=2), got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("could not find xattr #{num}")),
+            "message must name num {num} like upstream, got {err}"
+        );
+    }
+}
+
+#[test]
+fn xattr_request_accumulation_overflow_is_protocol_violation() {
+    let mut req = Vec::new();
+    write_varint(&mut req, i32::MAX).unwrap();
+    write_varint(&mut req, 1).unwrap();
+    write_varint(&mut req, 0).unwrap();
+    let mut list = XattrList::new();
+    let err = recv_xattr_request(&mut Cursor::new(req), &mut list)
+        .expect_err("overflowing rel_pos accumulation must be refused");
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
+        "overflow must be tagged ProtocolViolation (RERR_PROTOCOL=2), got {err:?}"
+    );
+}
