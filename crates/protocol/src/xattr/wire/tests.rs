@@ -1597,17 +1597,32 @@ fn recv_xattr_name_len_boundary_matches_upstream() {
 fn xattr_request_num_below_one_is_protocol_violation() {
     // Fuzz reproducer (acl_xattr_wire): a negative delta drove `num` to
     // i32::MIN and `num - 1` overflowed. Nums are 1-based, so any num below 1
-    // names no entry; upstream exits RERR_PROTOCOL ("could not find xattr").
-    for rel in [-1, i32::MIN] {
+    // names no entry; upstream exits RERR_PROTOCOL with "[%s] could not find
+    // xattr #%d for %s" (xattrs.c:763-767). Deltas [1, -1] reach num 0 (a bare
+    // 0 delta is the terminator), [i32::MIN] reaches num i32::MIN.
+    for (deltas, num) in [(&[1, -1][..], 0), (&[i32::MIN][..], i32::MIN)] {
         let mut req = Vec::new();
-        write_varint(&mut req, rel).unwrap();
+        for &rel in deltas {
+            write_varint(&mut req, rel).unwrap();
+        }
         write_varint(&mut req, 0).unwrap();
-        let err = recv_xattr_request(&mut Cursor::new(req), &mut XattrList::new())
+        let mut list = XattrList::new();
+        list.push(XattrEntry::abbreviated(
+            b"user.a".to_vec(),
+            vec![0u8; MAX_XATTR_DIGEST_LEN],
+            100,
+        ));
+        let err = recv_xattr_request(&mut Cursor::new(req), &mut list)
             .expect_err("num below 1 must be refused");
         assert!(
             err.get_ref()
                 .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
-            "num {rel} must be tagged ProtocolViolation (RERR_PROTOCOL=2), got {err:?}"
+            "num {num} must be tagged ProtocolViolation (RERR_PROTOCOL=2), got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains(&format!("could not find xattr #{num}")),
+            "message must name num {num} like upstream, got {err}"
         );
     }
 }
