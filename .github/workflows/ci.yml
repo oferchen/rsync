@@ -760,6 +760,15 @@ jobs:
         shell: bash
         run: cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
 
+      # The QUIC daemon listener is Unix-only, so a Windows daemon must refuse
+      # every quic directive as a fatal config error. The test is gated on
+      # cfg(windows); this is the only job that compiles it.
+      - name: Test daemon refuses QUIC directives (--features quic)
+        if: needs.changes.outputs.docs_only != 'true'
+        timeout-minutes: 20
+        shell: bash
+        run: cargo nextest run --locked --profile ci -p daemon --features quic -E 'test(runtime_options_quic_directive_is_refused_on_windows)'
+
       - name: Upload build artifacts
         if: needs.changes.outputs.docs_only != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
