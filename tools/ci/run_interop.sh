@@ -12975,7 +12975,6 @@ for sweep_version in "${extended_matrix_versions[@]}"; do
 done
 if [[ ${#sweep_binaries[@]} -gt 0 ]]; then
   protos=(28 29 30 31 32)
-  fp_warnings=()
 
   for sweep_idx in "${!sweep_binaries[@]}"; do
     newest_label="${sweep_labels[$sweep_idx]}"
@@ -12989,19 +12988,13 @@ if [[ ${#sweep_binaries[@]} -gt 0 ]]; then
           "$oc_port" "$up_port" "--protocol=${proto}"; then
         # Tagged with the release: without it the two sweeps collide on
         # "proto28" and the summary cannot say which upstream regressed.
-        fp_warnings+=("${newest_label}/proto${proto}")
+        failed+=("${newest_label}/proto${proto}")
       fi
 
       stop_oc_daemon
       stop_upstream_daemon
     done
   done
-
-  if (( ${#fp_warnings[@]} > 0 )); then
-    echo ""
-    echo "::warning::Forced-protocol tests had failures (advisory, not blocking): ${fp_warnings[*]}"
-    echo "  These failures are typically caused by daemon connection flakiness under CI load."
-  fi
 
   echo "=== Sequential protocol tests complete ==="
 else
