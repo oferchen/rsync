@@ -920,17 +920,19 @@ start_upstream_daemon() {
   fi
 
   # --log-file is new in 2.6.9 (NEWS); older daemons read the path from
-  # rsyncd.conf and exit 1 on the unknown option.
-  local -a log_args=(--log-file "$log_file")
+  # rsyncd.conf and exit 1 on the unknown option. They also ignore a
+  # `port =` line (2.6.3 loadparm.c has no such parameter) and fall back
+  # to 873, so the port goes on the command line instead.
+  local -a daemon_args=(--log-file "$log_file")
   if ! "$binary" --help 2>&1 | grep -q -- '--log-file='; then
-    log_args=()
+    daemon_args=(${port:+--port "$port"})
     if ! grep -q '^log file = ' "$config"; then
       printf 'log file = %s\n' "$log_file" | cat - "$config" >"${config}.tmp"
       mv "${config}.tmp" "$config"
     fi
   fi
   # Close stdin to prevent SIGPIPE when daemon writes to closed pipe
-  "$binary" --daemon --config "$config" --no-detach ${log_args[@]+"${log_args[@]}"} </dev/null &
+  "$binary" --daemon --config "$config" --no-detach ${daemon_args[@]+"${daemon_args[@]}"} </dev/null &
   up_pid=$!
 
   if [[ -n "$port" ]]; then
