@@ -787,6 +787,7 @@ pub(crate) fn copy_symlink(
         source,
         destination,
         false,
+        Some(context.destination_root()),
     )?;
 
     context.record_hard_link(metadata, destination);

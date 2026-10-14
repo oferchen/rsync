@@ -498,9 +498,11 @@ fn transfer_failure_error(
     // the remote side is still blocked on its input, so its status is not yet
     // available and the local code stands. oc closes the pipes and waits,
     // which makes the child exit with its own EOF code (12) and would
-    // otherwise mask the refusal.
-    let local_protocol_abort = transfer_exit == ExitCode::Protocol;
-    if !local_protocol_abort && child_exit_code.as_i32() > transfer_exit.as_i32() {
+    // otherwise mask the refusal. A receiver that cannot enter its destination
+    // (main.c:778-781, RERR_FILESELECT) aborts the same way, before the remote
+    // sender has finished.
+    let local_setup_abort = matches!(transfer_exit, ExitCode::Protocol | ExitCode::FileSelect);
+    if !local_setup_abort && child_exit_code.as_i32() > transfer_exit.as_i32() {
         remote_exit_error(child_exit_code, local_role)
     } else {
         invalid_argument_error(

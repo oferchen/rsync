@@ -210,7 +210,13 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_symlinks(&setup.dest_dir, writer)?;
         #[cfg(unix)]
-        self.create_specials(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
+        self.create_specials(
+            &setup.dest_dir,
+            setup.acl_cache.as_deref(),
+            setup.acl_id_map.as_deref(),
+            setup.sandbox.as_deref(),
+            writer,
+        )?;
         #[cfg(not(unix))]
         self.create_specials(&setup.dest_dir, writer)?;
 
@@ -1168,7 +1174,14 @@ impl ReceiverContext {
         {
             let sandbox = setup.sandbox.as_deref();
             self.create_symlinks_in_range(range.clone(), &setup.dest_dir, sandbox, writer)?;
-            self.create_specials_in_range(range.clone(), &setup.dest_dir, sandbox, writer)?;
+            self.create_specials_in_range(
+                range.clone(),
+                &setup.dest_dir,
+                setup.acl_cache.as_deref(),
+                setup.acl_id_map.as_deref(),
+                sandbox,
+                writer,
+            )?;
         }
         #[cfg(not(unix))]
         {

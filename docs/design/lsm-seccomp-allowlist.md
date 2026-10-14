@@ -94,6 +94,7 @@ clean run.
 | `gettid` | `tracing` instrumentation, thread-local debugging | identifying worker threads |
 | `getpid` / `getppid` | log_format `%p`, daemon supervision | exposed in transfer log |
 | `getuid` / `geteuid` / `getgid` / `getegid` | post-privilege-drop assertions | confirm effective IDs |
+| `getgroups` | receiver group gate (`metadata::group_is_settable`, upstream `uidlist.c` `is_in_group`) | a non-root worker may set only groups it belongs to; denied, every supplementary-group chown is skipped |
 | `getrandom` | `tempfile::TempDir` naming, MD5/XXH3 seed | per-connection randomness |
 | `prctl` | `PR_SET_NO_NEW_PRIVS` and seccomp init itself | required before `seccomp(2)` |
 | `seccomp` | the filter installation call | must be in the filter to install itself when called from a thread; required for layered filters |

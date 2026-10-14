@@ -259,6 +259,79 @@ pub fn pinned_root_fd_for(path: &Path) -> Option<std::sync::Arc<std::os::fd::Own
     (relative == Path::new(".")).then_some(fd)
 }
 
+/// The operator-named destination, entered once and then held by identity.
+///
+/// Upstream's receiver `change_dir()`s into the destination through
+/// `open_no_attacker_symlinks_dirfd()` and `fchdir()`s to the descriptor it
+/// returns, so every later relative open lands in the directory the ownership
+/// walk accepted, whatever happens to the path afterwards. oc never `chdir`s;
+/// it holds the accepted descriptor here instead, and every open of the root
+/// by its spelling ([`crate::open_trusted_dir`] and the metadata
+/// `DestinationRoot`) is answered with it rather than re-resolved. A
+/// destination swapped for a symlink after the walk therefore cannot redirect
+/// the transfer.
+///
+/// Separate from [`SESSION_ROOT_FD`]: that pin is the daemon's confinement
+/// root, consulted by the sender's source scan and the Landlock rule, while
+/// this one is only ever the receiver's working directory.
+///
+/// upstream: `rsync-3.5.1/util1.c:1363-1393` (absolute) and `:1450-1466`
+/// (relative) - `open_no_attacker_symlinks_dirfd()` then `fchdir()`.
+#[cfg(unix)]
+static DESTINATION_ROOT_FD: RwLock<Option<PinnedRoot>> = RwLock::new(None);
+/// Pin `anchor` as the destination root that `spelling` names.
+///
+/// `anchor` is the descriptor the ownership walk opened for the destination;
+/// `spelling` is the path every later consumer opens the root by. `spelling`
+/// must still name `anchor`'s directory, which is checked here, so a
+/// destination swapped between the walk and this call is refused with `ELOOP`
+/// instead of being pinned under a name that no longer means it.
+///
+/// # Errors
+///
+/// The `stat(2)` error for `spelling` or the `fstat(2)` error for `anchor`, or
+/// `ELOOP` when the two name different directories.
+#[cfg(unix)]
+pub fn pin_destination_root(spelling: &Path, anchor: std::os::fd::OwnedFd) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let held = std::fs::File::from(anchor);
+    let held_meta = held.metadata()?;
+    let named = std::fs::metadata(spelling)?;
+    if (named.dev(), named.ino()) != (held_meta.dev(), held_meta.ino()) {
+        return Err(std::io::Error::from_raw_os_error(libc::ELOOP));
+    }
+    *DESTINATION_ROOT_FD
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PinnedRoot {
+        literal: spelling.to_path_buf(),
+        fd: std::sync::Arc::new(held.into()),
+    });
+    Ok(())
+}
+/// Drop the pinned destination root.
+///
+/// A transfer that does not pin - the destination does not exist yet, or the
+/// session opted out with `--insecure-links` - calls this so a pin left by an
+/// earlier transfer in the same process cannot answer for its root.
+#[cfg(unix)]
+pub fn clear_destination_root() {
+    *DESTINATION_ROOT_FD
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+/// The pinned destination descriptor when `path` names the pinned root itself.
+///
+/// The comparison is by path component, so `dest` and `dest/` both match.
+#[cfg(unix)]
+#[must_use]
+pub fn pinned_destination_root_for(path: &Path) -> Option<std::sync::Arc<std::os::fd::OwnedFd>> {
+    DESTINATION_ROOT_FD
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|pinned| pinned.literal == path)
+        .map(|pinned| std::sync::Arc::clone(&pinned.fd))
+}
 /// Whether this session pinned a root at all.
 #[cfg(unix)]
 #[must_use]

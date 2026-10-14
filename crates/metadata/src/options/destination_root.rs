@@ -116,6 +116,11 @@ impl DestinationRoot {
     ///   module is refused (`ELOOP`).
     #[cfg(unix)]
     pub(crate) fn open_dir(&self, dir: &Path) -> std::io::Result<OwnedFd> {
+        // upstream: util1.c change_dir() - the receiver entered the destination
+        // once with fchdir(); its pinned descriptor is that cwd.
+        if let Some(pinned) = fast_io::confinement::pinned_destination_root_for(dir) {
+            return pinned.as_fd().try_clone_to_owned();
+        }
         let Some(module_root) = &self.module_root else {
             return fast_io::operator_open_dir(dir);
         };
