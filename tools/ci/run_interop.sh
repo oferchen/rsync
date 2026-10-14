@@ -71,11 +71,14 @@ interop_log_dir="${workspace_root}/target/interop/logs"
 # deliberately not gated here - a wire-compatible peer with different local
 # path-resolution rules should pass interop and fail testsuite cells, and
 # conflating the two would hide which one broke.
-versions=(3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
-# Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
-# protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
-# binary is needed so follow-up tasks can wire push/pull cells against it.
-extra_build_versions=(2.6.3 2.6.9)
+#
+# 2.6.3 and 2.6.9 are the native protocol 28 and 29 peers (rsync.h
+# PROTOCOL_VERSION; 28 first shipped in 2.6.1, 29 in 2.6.4). Forcing
+# --protocol=28 on a modern release is not a substitute: the peer still runs
+# its modern code paths and only shapes the wire to match.
+versions=(2.6.3 2.6.9 3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
+# Versions we only build and cache (no scenarios wired up yet).
+extra_build_versions=()
 
 # Versions with no usable per-arch .deb in any pool we track, so the harness
 # builds them from the release tarball instead. 2.6.9 predates the per-arch
@@ -104,6 +107,24 @@ version_is_source_only() {
 # plus capability check at the point of use.
 extended_matrix_versions=(3.4.4 3.5.0 3.5.1)
 
+# PROTOCOL_VERSION in each release's rsync.h, which is what a session with
+# that peer negotiates: oc speaks 28 through 33, so the peer is always the
+# lower end.
+native_protocol() {
+  case "$1" in
+    2.6.[1-3]) echo 28 ;;
+    2.6.*) echo 29 ;;
+    3.0.*) echo 30 ;;
+    3.[1-3].*) echo 31 ;;
+    3.4.*|3.5.0) echo 32 ;;
+    *) echo 33 ;;
+  esac
+}
+# Oldest release that has a scenario's option. --itemize-changes arrived in
+# 2.6.4 (OLDNEWS), so a 2.6.3 client exits 1 on -i before transferring.
+version_has_itemize() {
+  [[ "$(printf '%s\n' "$1" 2.6.4 | sort -V | head -n1)" == 2.6.4 ]]
+}
 version_has_extended_matrix() {
   local version=$1 candidate
   for candidate in "${extended_matrix_versions[@]}"; do
@@ -11858,7 +11879,6 @@ run_comprehensive_interop_case() {
     "delete|-av --delete|delete"
     "exclude|-av --exclude=*.log|exclude"
     "permissions|-rlpv|perms"
-    "itemize|-avi|itemize"
     # acls / xattrs are registered below, gated on both the upstream binary's
     # advertised capability and the host filesystem actually supporting the
     # feature (detect_host_acl_xattr_support). When unsupported the leg is
@@ -11939,6 +11959,11 @@ run_comprehensive_interop_case() {
     fi
   fi
 
+  if version_has_itemize "${version}"; then
+    scenarios+=("itemize|-avi|itemize")
+  else
+    echo "  [info] upstream ${version} predates --itemize-changes, skipping itemize"
+  fi
   # Protocol-31 requires upstream rsync >= 3.1.0 (protocol 31 support).
   # rsync 3.0.x only supports up to protocol 30, so --protocol=31 fails.
   if [[ "${version}" == 3.0.* ]]; then
@@ -11949,27 +11974,13 @@ run_comprehensive_interop_case() {
     scenarios=("${filtered[@]}")
   fi
 
-  # Incremental recursion only supported on protocol 30+
-  local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
-  if [[ -z "$fp" || "$fp" -ge 30 ]]; then
-    scenarios+=("inc-recursive|-av --inc-recursive|inc-recursive")
-  fi
-
   # Effective protocol for this run: forced value if set, else the version's
-  # native protocol. ACL/xattr wire formats require protocol >= 30 (upstream
-  # compat.c:655-668), so the legs below only apply at proto 30+.
-  local eff_proto="$fp"
-  if [[ -z "$eff_proto" ]]; then
-    # Native PROTOCOL_VERSION per release (rsync.h). 3.0.x is 30, NOT 28 - the
-    # earlier value here silently failed the "proto >= 30" gate below, so the
-    # 3.0.9 ACL leg was skipped under a message blaming the host instead of
-    # running. 2.6.9 is 29 and previously fell through to the 32 default.
-    case "$version" in
-      2.6.*) eff_proto=29 ;;
-      3.0.*) eff_proto=30 ;;
-      3.1.*) eff_proto=31 ;;
-      *) eff_proto=32 ;;
-    esac
+  # native protocol. Incremental recursion and the ACL/xattr wire formats need
+  # protocol >= 30 (upstream compat.c:655-668), so those legs only apply there.
+  local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
+  local eff_proto="${fp:-$(native_protocol "$version")}"
+  if [[ "$eff_proto" -ge 30 ]]; then
+    scenarios+=("inc-recursive|-av --inc-recursive|inc-recursive")
   fi
 
   # ACL / xattr legs gated on real capability: protocol >= 30, the upstream
@@ -12758,7 +12769,7 @@ if [[ "$only_version_given" == "true" ]]; then
     # Distinguish "not a peer we test" from "a peer we only build", because the
     # second is a reasonable thing to ask for and a bare "unknown version" would
     # send the caller looking for a typo that is not there.
-    for candidate in "${extra_build_versions[@]}"; do
+    for candidate in ${extra_build_versions[@]+"${extra_build_versions[@]}"}; do
       if [[ "$only_version" == "$candidate" ]]; then
         echo "--only-version=${only_version} selects a build-only peer: it is in" >&2
         echo "extra_build_versions and has no scenarios wired, so the run would" >&2
