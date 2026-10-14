@@ -449,7 +449,7 @@ fn level_2_includes_summary_totals() {
 /// ```
 ///
 /// upstream: generator.c:2762-2767 prints the delta-transmission notice at
-/// `DEBUG_GTE(FLIST, 1)` before the generate loop; match.c:480-490
+/// `DEBUG_GTE(FLIST, 1)` before the generate loop; match.c:480-489
 /// `match_report()` prints the `total:` line at `DEBUG_GTE(DELTASUM, 1)` after
 /// `send_files()` and before `output_summary()`. Both first activate at `-vv`.
 /// Fails before the fix, which emitted the notice dead-last (after the summary)
@@ -515,7 +515,7 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
 /// A local `--no-whole-file` transfer must print the same single `total:` line,
 /// carrying the delta matcher's REAL counters rather than hardcoded zeros.
 ///
-/// upstream: `match_report()` (match.c:480-490) is gated on
+/// upstream: `match_report()` (match.c:480-489) is gated on
 /// `DEBUG_GTE(DELTASUM, 1)` alone - `--whole-file` does not suppress the line,
 /// it merely leaves the counters at zero. Two regressions this pins, both of
 /// which oc has actually shipped:
