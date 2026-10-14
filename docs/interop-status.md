@@ -12,8 +12,8 @@ For test infrastructure details, see [INTEROP.md](INTEROP.md) and
 
 ## Upstream Versions Tested
 
-oc-rsync is tested bidirectionally against five upstream rsync releases spanning
-protocol versions 28 through 32. Both directions - oc-rsync client pushing to
+oc-rsync is tested bidirectionally against six upstream rsync releases spanning
+protocol versions 28 through 33. Both directions - oc-rsync client pushing to
 upstream daemon, and upstream client pulling from oc-rsync daemon - are
 validated for every version on every CI run.
 
@@ -22,7 +22,9 @@ validated for every version on every CI run.
 | rsync 2.6.9      | 28-29    | Always source-built | Non-blocking |
 | rsync 3.0.9      | 30       | Ubuntu package or source | Required |
 | rsync 3.1.3      | 31       | Ubuntu package or source | Required |
-| rsync 3.4.4      | 32       | Source-built (latest release) | Required |
+| rsync 3.4.4      | 32       | Source-built | Required |
+| rsync 3.5.0      | 32       | Source-built | Required |
+| rsync 3.5.1      | 33       | Source-built (latest release) | Required |
 
 Upstream binaries are obtained via multi-tier fallback: Debian/Ubuntu packages
 first, then release tarballs from rsync.samba.org, then source build from
@@ -32,8 +34,8 @@ first, then release tarballs from rsync.samba.org, then source build from
 
 ## Protocol Version Support
 
-oc-rsync advertises protocol 32 and negotiates downward when connecting to
-older peers. All protocol versions from 28 through 32 are supported.
+oc-rsync advertises protocol 33 and negotiates downward when connecting to
+older peers. All protocol versions from 28 through 33 are supported.
 
 | Protocol | Introduced In | Wire Encoding | Default Checksum | Inc. Recurse | Status |
 |----------|---------------|---------------|------------------|--------------|--------|
@@ -77,8 +79,8 @@ transfers. Without it, transfers fall back to MD5.
 ## Transfer Modes
 
 All tested bidirectionally (oc-rsync client to upstream daemon, upstream client
-to oc-rsync daemon) against 3.0.9, 3.1.3, and 3.4.4. 3.4.4 supersedes the
-3.4.1/3.4.2/3.4.3 point releases on the same protocol (32).
+to oc-rsync daemon) against 3.0.9, 3.1.3, 3.4.4, 3.5.0, and 3.5.1. 3.4.4
+supersedes the 3.4.1/3.4.2/3.4.3 point releases on the same protocol (32).
 
 | Feature | Flags | 3.0.9 | 3.1.3 | 3.4.x |
 |---------|-------|-------|-------|-------|
@@ -178,8 +180,8 @@ the codec.
 
 | Direction | Versions Tested |
 |-----------|-----------------|
-| oc-rsync client -> upstream daemon (push) | 2.6.9, 3.0.9, 3.1.3, 3.4.4 |
-| Upstream client -> oc-rsync daemon (pull) | 2.6.9, 3.0.9, 3.1.3, 3.4.4 |
+| oc-rsync client -> upstream daemon (push) | 2.6.9, 3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1 |
+| Upstream client -> oc-rsync daemon (pull) | 2.6.9, 3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1 |
 
 ### SSH Transport
 
@@ -209,7 +211,7 @@ reads these files correctly.
 
 ## Upstream rsync Testsuite
 
-oc-rsync runs upstream rsync's own `testsuite/*.test` corpus (from rsync 3.4.4)
+oc-rsync runs upstream rsync's own `testsuite/*.test` corpus (from rsync 3.5.1)
 with oc-rsync substituted as `$RSYNC`. This is the canonical "does oc-rsync
 look like rsync from upstream's perspective" check. The harness reuses
 upstream's `rsync.fns`, `tls`, `getgroups`, and `support/lsh.sh` helper tools.

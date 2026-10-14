@@ -187,7 +187,7 @@ fn current_gaps(rows: &[Row]) -> BTreeSet<Gap> {
 /// Renders the human-readable coverage report.
 fn render_report(rows: &[Row], gaps: &BTreeSet<Gap>) -> String {
     let mut out = String::new();
-    out.push_str("Receiver-option propagation coverage (upstream rsync 3.4.4)\n");
+    out.push_str("Receiver-option propagation coverage (upstream rsync 3.5.1)\n");
     out.push_str(
         "Options gated by `if (am_sender)` in options.c server_options() are not\n\
          sent on a pull; the local receiver must carry them onto its ServerConfig.\n\n",

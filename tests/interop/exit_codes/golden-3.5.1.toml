@@ -1,0 +1,18 @@
+version = "3.5.1"
+
+[exit_codes]
+permission_denied_write = 3
+permission_denied_read = 23
+conflicting_options = 1
+partial_transfer = 23
+invalid_option = 1
+max_delete_limit = 1
+missing_source = 23
+help_requested = 0
+version_requested = 0
+dry_run_success = 0
+remote_not_found = 14
+exclude_all_files = 0
+protocol_version_mismatch = 2
+source_not_found = 23
+daemon_connection_refused = 10

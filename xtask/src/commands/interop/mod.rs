@@ -1,7 +1,7 @@
 //! Interoperability validation commands for testing against upstream rsync.
 //!
 //! This module provides subcommands to validate exit codes, message formats,
-//! and behavior against upstream rsync versions (3.0.9, 3.1.3, 3.4.1).
+//! and behavior against upstream rsync versions (3.0.9, 3.1.3, 3.4.4, 3.5.0, 3.5.1).
 
 #![allow(clippy::uninlined_format_args)]
 
