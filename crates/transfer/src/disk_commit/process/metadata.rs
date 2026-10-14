@@ -187,6 +187,9 @@ fn apply_metadata_acls_and_xattrs(
                 follow,
                 Some(entry.mode()),
                 acl_id_map,
+                // upstream: rsync.c:582-597,800 - the ACL rides the same
+                // confined leaf pin as the xattrs below.
+                dest_root,
             )
         };
         if let Err(e) = result {
@@ -414,5 +417,77 @@ mod tests {
             ..DiskCommitConfig::default()
         };
         assert!(apply_file_metadata(&path, &begin, &config, None).is_none());
+    }
+
+    /// Runs the commit-path apply for `root/sub/victim`, where `sub` is a
+    /// symlink out of the tree to `outside/`, and reports whether the ACL
+    /// landed on `outside/victim`. `confine` selects whether the commit
+    /// config carries the destination root, as the receiver's does.
+    #[cfg(all(target_os = "linux", feature = "acl"))]
+    fn acl_reaches_outside_through_swapped_parent(confine: bool) -> bool {
+        use protocol::acl::{IdAccess, RsyncAcl};
+
+        let tmp = test_support::create_tempdir();
+        let base = std::fs::canonicalize(tmp.path()).unwrap();
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let victim = outside.join("victim");
+        std::fs::write(&victim, b"outside").unwrap();
+        let swapped = root.join("sub");
+        std::os::unix::fs::symlink(&outside, &swapped).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&swapped)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "fixture must plant the escaping parent symlink"
+        );
+
+        // A named-user entry, so the kernel stores a real ACL xattr instead
+        // of folding the entries into the mode bits.
+        let mut acl = RsyncAcl::from_mode(0o640);
+        acl.names.push(IdAccess::user(54_321, 0x04));
+        let mut cache = protocol::acl::AclCache::new();
+        let ndx = cache.store_access(acl);
+        let mut entry =
+            protocol::flist::FileEntry::new_file(std::path::PathBuf::from("sub/victim"), 7, 0o640);
+        entry.set_acl_ndx(ndx);
+
+        let path = swapped.join("victim");
+        let config = DiskCommitConfig {
+            // ACLs alone: the timestamp apply is path-based and would fail
+            // first on the swapped parent, hiding the ACL arm under test.
+            metadata_opts: Some(
+                metadata::MetadataOptions::new()
+                    .preserve_times(false)
+                    .preserve_permissions(false),
+            ),
+            acl_cache: Some(std::sync::Arc::new(cache)),
+            dest_dir: confine.then(|| root.clone()),
+            ..DiskCommitConfig::default()
+        };
+        let _ = apply_file_metadata(&path, &begin_for(&path, Some(entry)), &config, None);
+        matches!(xattr::get(&victim, "system.posix_acl_access"), Ok(Some(_)))
+    }
+
+    /// CVE-2026-53799: the receiver's commit path must hand its destination
+    /// root to the ACL apply, so a parent raced into a symlink cannot carry
+    /// the received ACL outside the tree. The unconfined run is the control:
+    /// it proves this fixture really redirects a path-based apply, so the
+    /// confined run's clean victim is the pin refusing, not a no-op.
+    /// upstream: rsync.c:582-597,800 - `xattr_refuse` skips set_acl_fdat().
+    #[cfg(all(target_os = "linux", feature = "acl"))]
+    #[test]
+    fn commit_path_acl_apply_is_pinned_beneath_the_destination_root() {
+        if !acl_reaches_outside_through_swapped_parent(false) {
+            eprintln!("skipping: the temp filesystem does not store POSIX ACLs");
+            return;
+        }
+        assert!(
+            !acl_reaches_outside_through_swapped_parent(true),
+            "the commit path applied the ACL outside the destination root through a swapped parent"
+        );
     }
 }

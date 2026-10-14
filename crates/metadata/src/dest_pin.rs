@@ -14,6 +14,8 @@
 //!   `xattr_refuse` when the re-pin fails on a slashed path
 //! - `rsync-3.5.1/rsync.c:713-716,800` - xattr and ACL writes skipped on refusal
 
+#[cfg(unix)]
+use std::fs;
 use std::path::Path;
 
 /// Where a destination metadata write lands.
@@ -25,6 +27,16 @@ pub(crate) enum DestPin {
     /// pin cannot redirect the write.
     #[cfg(unix)]
     Pinned(std::fs::File),
+    /// A device or socket leaf, which upstream never opens: its confined
+    /// parent directory and its name. The ACL write addresses the leaf
+    /// through them; the xattr write keeps upstream's path-based arm.
+    #[cfg(unix)]
+    Parent {
+        /// The confined parent directory.
+        dir: std::fs::File,
+        /// The leaf's name within `dir`.
+        leaf: std::ffi::OsString,
+    },
     /// The pin was required and failed on a slashed path. Every write is
     /// skipped: falling back to `Path` here would reinstate exactly the
     /// redirect the pin exists to refuse.
@@ -47,13 +59,14 @@ pub(crate) fn pin_destination(path: &Path, confine_root: Option<&Path>) -> DestP
         return DestPin::Path;
     };
     // upstream: rsync.c:589-594 - a directory leaf needs O_DIRECTORY.
-    let kind = if path.is_dir() {
+    let kind = if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) {
         fast_io::DestLeafKind::Directory
     } else {
         fast_io::DestLeafKind::NonDirectory
     };
     match fast_io::pin_dest_leaf_confined(root, relative, kind) {
-        Ok(file) => DestPin::Pinned(file),
+        Ok(fast_io::DestLeaf::Held(file)) => DestPin::Pinned(file),
+        Ok(fast_io::DestLeaf::Parent { dir, leaf }) => DestPin::Parent { dir, leaf },
         // upstream: rsync.c:597 - `if (held_fd < 0 && strchr(fname, '/'))
         // xattr_refuse = 1;`. A single-component name has no parent to flip,
         // so the path-based call is still safe there.

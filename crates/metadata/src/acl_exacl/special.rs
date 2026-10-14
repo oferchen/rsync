@@ -14,7 +14,7 @@ use std::path::Path;
 use crate::MetadataError;
 
 /// Special mode bits not representable in a POSIX ACL: setuid, setgid, sticky.
-const SPECIAL_MODE_BITS: u32 = 0o7000;
+pub(super) const SPECIAL_MODE_BITS: u32 = 0o7000;
 
 /// Re-applies the setuid/setgid/sticky bits from `mode` after an access ACL has
 /// been set, restoring the high bits that `setfacl`/`acl_set_file` clears when
@@ -47,14 +47,19 @@ pub(super) fn restore_special_mode_bits(path: &Path, mode: u32) -> Result<(), Me
         .permissions()
         .mode();
 
-    // upstream: rsync.c:807 - the chmod is skipped when the on-disk mode already
-    // matches, mirroring `BITS_EQUAL(sxp->st.st_mode, new_mode, CHMOD_BITS)`.
-    if current & SPECIAL_MODE_BITS == special {
+    let Some(restored) = restored_special_mode(current, mode) else {
         return Ok(());
-    }
-
-    let restored = (current & 0o777) | special;
+    };
     fs::set_permissions(path, fs::Permissions::from_mode(restored)).map_err(|e| {
         MetadataError::new("restore setuid/setgid/sticky bits after ACL apply", path, e)
     })
+}
+
+/// The mode to chmod to so the special bits of `mode` survive an access-ACL
+/// apply, or `None` when the on-disk `current` mode already carries them.
+pub(super) fn restored_special_mode(current: u32, mode: u32) -> Option<u32> {
+    let special = mode & SPECIAL_MODE_BITS;
+    // upstream: rsync.c:807 - the chmod is skipped when the on-disk mode already
+    // matches, mirroring `BITS_EQUAL(sxp->st.st_mode, new_mode, CHMOD_BITS)`.
+    (current & SPECIAL_MODE_BITS != special).then_some((current & 0o777) | special)
 }

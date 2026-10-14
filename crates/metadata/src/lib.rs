@@ -252,6 +252,51 @@ pub const CAN_CHMOD_SYMLINK: bool = cfg!(any(
     target_os = "dragonfly",
 ));
 
+/// Whether a received ACL is applied race-safely through a pinned
+/// `O_NOFOLLOW` leaf fd, rather than by path.
+///
+/// Mirrors the capability upstream reports as `ACL-at` (`usage.c:110-125`).
+/// A `SUPPORT_ACL_FD` build (Linux with POSIX ACLs, `configure.ac:1512-1514`)
+/// lets `set_rsync_acl()` drive the ACL off a held fd or dirfd+leaf, so a
+/// swapped parent symlink cannot redirect it. oc's receiver does the same on
+/// Linux: it serialises the ACL into the kernel's `system.posix_acl_*` xattr
+/// format and writes it with `fsetxattr` on the confined leaf pin
+/// (`acl_exacl/pinned.rs`). Other platforms apply ACLs by path, so
+/// `--version` reports `ACL-at` only on Linux ACL builds.
+pub const ACL_APPLY_IS_FD_PINNED: bool = cfg!(all(target_os = "linux", feature = "acl"));
+
+/// Synchronizes ACLs from `source` to `destination`, keeping the write beneath
+/// `confine_root` when one is given.
+///
+/// On Linux a `confine_root` routes the write through the same confined leaf
+/// pin the receiver's [`apply_acls_from_cache`] uses, so a parent of
+/// `destination` raced into a symlink cannot redirect the source's ACL. A
+/// local copy is a sender and receiver in one process upstream, and its
+/// receiver half drives `set_file_attrs()` off the same held fd. Elsewhere,
+/// and with no root, this is [`sync_acls`].
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] when reading the source ACL or applying it fails.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/rsync.c:555-599,800` the held-fd pin and `set_acl_fdat()`
+pub fn sync_acls_confined(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    follow_symlinks: bool,
+    confine_root: Option<&std::path::Path>,
+) -> Result<(), MetadataError> {
+    #[cfg(all(feature = "acl", target_os = "linux"))]
+    if let Some(root) = confine_root {
+        return acl_exacl::sync_acls_pinned(source, destination, follow_symlinks, root);
+    }
+    #[cfg(not(all(feature = "acl", target_os = "linux")))]
+    let _ = confine_root;
+    sync_acls(source, destination, follow_symlinks)
+}
+
 pub use acl_idmap::AclIdMapper;
 
 #[cfg(all(

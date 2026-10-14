@@ -10,7 +10,9 @@ use std::mem;
 
 fn gpl_footer(program_name: &str) -> String {
     format!(
-        "{program_name} comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details.\n"
+        "{program_name} comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\n\
+         are welcome to redistribute it under certain conditions.  See the GNU\n\
+         General Public Licence for details.\n"
     )
 }
 

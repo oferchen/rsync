@@ -552,6 +552,7 @@ impl ReceiverContext {
                 acl_cache.as_deref(),
                 acl_id_map.as_deref(),
                 !file_entry.is_symlink(),
+                Some(dest_dir.as_path()),
             ) {
                 metadata_errors.push((file_path.clone(), acl_err.to_string()));
             }

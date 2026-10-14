@@ -59,6 +59,9 @@ pub(in crate::receiver) struct PipelineSetup {
 /// and applies the corresponding ACL to `destination`. No-op when `acl_cache`
 /// is `None` or the entry has no ACL index.
 ///
+/// `dest_root`, when supplied, is the destination tree the ACL write is pinned
+/// beneath (see `metadata::apply_acls_from_cache`).
+///
 /// # Upstream Reference
 ///
 /// Mirrors upstream `rsync.c:800-802` `set_file_attrs()`, which applies the
@@ -69,6 +72,7 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
     acl_cache: Option<&AclCache>,
     id_map: Option<&AclIdMapper>,
     follow_symlinks: bool,
+    dest_root: Option<&std::path::Path>,
 ) -> Result<(), metadata::MetadataError> {
     let cache = match acl_cache {
         Some(c) => c,
@@ -86,6 +90,7 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
         follow_symlinks,
         Some(entry.mode()),
         id_map,
+        dest_root,
     )
 }
 

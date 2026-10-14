@@ -171,7 +171,7 @@ pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl, id_map: Option<&AclIdMapper>)
 /// received id-list plus `--usermap`/`--groupmap`, mirroring upstream
 /// `match_acl_ids()` (`acls.c:1430-1450`). The id-list already folds in the
 /// sender-supplied name resolution, so this is the cross-host path.
-fn resolve_ida_id(ida: &IdAccess, id_map: Option<&AclIdMapper>) -> u32 {
+pub(super) fn resolve_ida_id(ida: &IdAccess, id_map: Option<&AclIdMapper>) -> u32 {
     let is_user = ida.access & NAME_IS_USER != 0;
     let wire = ida.id;
 

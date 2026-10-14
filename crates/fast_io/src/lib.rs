@@ -414,7 +414,8 @@ pub use confined_fallback::{ConfinedFallback, FallbackArm};
 pub use confined_open::ConfinedSourceRoot;
 #[cfg(unix)]
 pub use confined_open::{
-    DestLeafKind, LeafPolicy, open_source_confined, pin_dest_leaf_confined, read_link_confined,
+    DestLeaf, DestLeafKind, LeafPolicy, open_source_confined, pin_dest_leaf_confined,
+    read_link_confined,
 };
 pub use confined_readdir::read_dir_confined;
 #[cfg(unix)]
