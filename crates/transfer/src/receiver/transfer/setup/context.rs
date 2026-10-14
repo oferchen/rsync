@@ -26,7 +26,10 @@ use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPhase;
 
 #[cfg(unix)]
-use super::sandbox::{open_sandbox_for_dest, open_sandbox_for_dest_anchored};
+use super::sandbox::{
+    open_operator_destination, open_sandbox_for_dest, open_sandbox_for_dest_anchored,
+    pin_operator_destination,
+};
 use super::wire_filters::parse_wire_filters_for_receiver;
 
 /// Merges the daemon module `incoming chmod` modifiers with the client
@@ -847,6 +850,15 @@ impl ReceiverContext {
         // `change_dir()` chdir's through both spellings alike.
         // `Components::as_path` trims separators without collapsing `.` or
         // `..`, so nothing else about the operand moves.
+        // upstream: util1.c change_dir() - a non-daemon receiver enters the
+        // destination through the ownership walk before it resolves anything
+        // else, so an untrusted symlink is refused here. The daemon server is
+        // the anchored arm below and is not walked.
+        #[cfg(unix)]
+        let anchor = match self.config.connection.served_module_root() {
+            Some(_) => None,
+            None => open_operator_destination(&dest_dir)?,
+        };
         let probe = dest_dir.components().as_path().to_path_buf();
         let dest_dir = if !self.config.flags.skip_dest_writes()
             && self.config.connection.served_module_root().is_none()
@@ -878,6 +890,12 @@ impl ReceiverContext {
         } else {
             dest_dir
         };
+        // The walked descriptor is pinned under the spelling every later open
+        // uses, so a destination swapped after the walk cannot redirect them.
+        #[cfg(unix)]
+        if self.config.connection.served_module_root().is_none() {
+            pin_operator_destination(&dest_dir, anchor)?;
+        }
         // The destination root is entered once and every entry's parent is
         // resolved beneath it; its own attributes go through its descriptor.
         // A daemon's operator named only the module, so the peer's remainder
