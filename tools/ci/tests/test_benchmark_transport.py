@@ -230,7 +230,7 @@ class ResidentChildTests(unittest.TestCase):
 
 class CertificateTests(unittest.TestCase):
     """QUIC clients verify the daemon against a per-run CA via --quic-ca;
-    nothing may depend on trust-on-first-use."""
+    no other trust source exists."""
 
     def test_server_cert_chains_to_the_ca_and_is_not_a_ca(self):
         with tempfile.TemporaryDirectory() as tmp:

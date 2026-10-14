@@ -8,8 +8,8 @@
 //! `--quic-ca` ([`load_private_ca`]/[`private_ca_file`]). The server chain must
 //! verify against it - issuer, SAN and validity period - or the handshake
 //! fails. There is no default trust: with no `--quic-ca`, [`resolve`] refuses
-//! before any packet is sent. There is no trust-on-first-use, no known-hosts
-//! store and no fallback to the platform trust store.
+//! before any packet is sent, and there is no fallback to the platform trust
+//! store.
 //!
 //! See `docs/design/quic-security-model.md` (section 7.1).
 
@@ -246,9 +246,9 @@ mod tests {
     }
 
     /// With no `--quic-ca` there is no trust source at all, so `resolve`
-    /// refuses and names the flag. Encodes WHY: QUIC has no default trust (no
-    /// trust-on-first-use, no platform store), and the refusal must tell the
-    /// operator what to configure rather than fail later in the handshake.
+    /// refuses and names the flag. Encodes WHY: QUIC has no default trust, and
+    /// the refusal must tell the operator what to configure rather than fail
+    /// later in the handshake.
     #[test]
     fn resolve_without_ca_refuses_and_names_the_flag() {
         let err = resolve(None).expect_err("no --quic-ca must not yield a trust source");
@@ -258,10 +258,8 @@ mod tests {
         );
     }
 
-    /// With `--quic-ca`, `resolve` yields the bare root store the connector
-    /// verifies against, never a custom verifier that could fall back to
-    /// another source. A mutation that wrapped the CA in a permissive
-    /// verifier fails the variant check.
+    /// With `--quic-ca`, `resolve` yields the root store the connector hands to
+    /// the rustls WebPKI verifier, so the bundle is the whole trust decision.
     #[test]
     fn resolve_with_ca_yields_a_strict_root_store() {
         let (ca_pem, _leaf) = private_ca_and_leaf();

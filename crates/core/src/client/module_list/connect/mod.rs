@@ -971,8 +971,7 @@ mod quic_connect_tests {
     /// A `--quic-ca` naming a different CA than the one that signed the daemon
     /// certificate is refused with exit 5 and no TCP fallback. Encodes WHY:
     /// `--quic-ca` is strict - an explicit trust anchor that does not verify
-    /// the chain must never be bypassed, which is exactly what the removed
-    /// trust-on-first-use fallback used to do.
+    /// the chain must never be bypassed.
     #[test]
     fn quic_mismatched_ca_is_refused() {
         let (acceptor, _pki, _right_ca) = bind_ca_signed("127.0.0.1:0");
@@ -1064,10 +1063,10 @@ mod quic_connect_tests {
 
     /// With no `--quic-ca`, a self-signed daemon is refused before any packet
     /// is sent: exit 5, a message naming `--quic-ca`, no connection. Encodes
-    /// WHY: QUIC has no default trust - no trust-on-first-use, no platform
-    /// store - so a client that has not been told whom to trust must not
-    /// connect. A mutation that accepted unknown certificates when no CA is
-    /// configured completes this dial and fails the test.
+    /// WHY: QUIC has no default trust, so a client that has not been told
+    /// whom to trust must not connect. A mutation that accepted unknown
+    /// certificates when no CA is configured completes this dial and fails
+    /// the test.
     #[test]
     fn quic_self_signed_daemon_without_ca_is_refused() {
         let acceptor = bind_server_first("127.0.0.1:0");

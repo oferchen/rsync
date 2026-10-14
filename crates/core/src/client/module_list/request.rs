@@ -235,8 +235,8 @@ impl ModuleListOptions {
 
     /// Supplies the `--quic-ca` private CA bundle path for QUIC listings.
     ///
-    /// `None` (the default) verifies the daemon's QUIC certificate against the
-    /// platform trust store. Available only under the `quic` feature.
+    /// `None` (the default) leaves QUIC with no trust anchor, so a QUIC listing
+    /// is refused before dialing. Available only under the `quic` feature.
     #[cfg(feature = "quic")]
     #[must_use]
     #[doc(alias = "--quic-ca")]
