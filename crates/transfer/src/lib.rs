@@ -268,6 +268,20 @@ fn compression_level_to_i32(level: compress::zlib::CompressionLevel) -> i32 {
     }
 }
 
+/// Reports whether a daemon client's verbatim argv carries `-z` (CPRES_ZLIB)
+/// in a single-letter flag cluster.
+///
+/// Each cluster goes through [`ParsedServerFlags::parse`], which stops at the
+/// first `e`: popt binds the rest of the cluster as the `-e` value, so a `z`
+/// among the capability letters is not the compress option.
+// upstream: options.c:server_options() - `z` (options.c:2898) precedes the
+// `e` + capability letters that maybe_add_e_option() (options.c:3202) appends.
+fn client_args_request_zlib(args: &[String]) -> bool {
+    args.iter()
+        .filter(|arg| arg.starts_with('-') && !arg.starts_with("--"))
+        .any(|arg| ParsedServerFlags::parse(arg).is_ok_and(|flags| flags.compress))
+}
+
 /// Reports whether `--compress-level` turns the negotiated codec off, mirroring
 /// the `do_compression_level == off_level` branch of `init_compression_level()`
 /// (`token.c:76-98`).
@@ -796,10 +810,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         // upstream's server_options() before they were parsed into ServerConfig.
         // Scan them directly so the daemon path mirrors upstream's compat.c logic.
 
-        // Check compact flag strings for 'z' (CPRES_ZLIB only).
-        let has_z = args
-            .iter()
-            .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'));
+        let has_z = client_args_request_zlib(args);
 
         // upstream: options.c:2828-2833 - long options for non-ZLIB compression:
         //   CPRES_ZLIBX → --new-compress

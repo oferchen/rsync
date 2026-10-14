@@ -244,6 +244,48 @@ fn send_single_file_entry() {
     assert_eq!(*output.last().unwrap(), 0u8);
 }
 
+/// The file list must stay buffered when `send_file_list` returns.
+///
+/// Upstream's send_file_list() never flushes; client_run() flushes once
+/// afterwards (main.c:1398), so the list and an INC_RECURSE NDX_FLIST_EOF
+/// (flist.c:3092) leave in one write. A flush here splits them, and a
+/// receiver that dies right after reading the list (dest root mkdir fails)
+/// turns the client's second write into EPIPE: exit 10 instead of the 12
+/// upstream reports from EOF.
+#[test]
+fn send_file_list_leaves_the_list_buffered_for_one_flush() {
+    struct CountingWriter {
+        bytes: Vec<u8>,
+        flushes: usize,
+    }
+    impl std::io::Write for CountingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+    let (_handshake, mut ctx) = test_generator();
+    ctx.file_list.push(protocol::flist::FileEntry::new_file(
+        "f.txt".into(),
+        7,
+        0o644,
+    ));
+    let mut writer = CountingWriter {
+        bytes: Vec::new(),
+        flushes: 0,
+    };
+    ctx.send_file_list(&mut writer).unwrap();
+    assert_eq!(
+        writer.bytes.last(),
+        Some(&0u8),
+        "end-of-list marker written"
+    );
+    assert_eq!(writer.flushes, 0, "send_file_list must not flush the list");
+}
 #[test]
 fn send_file_list_records_first_byte_latency() {
     // INC_RECURSE diagnostic I1 (#2196): the first-byte timer must fire when
