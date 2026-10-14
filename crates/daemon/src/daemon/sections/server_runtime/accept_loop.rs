@@ -46,18 +46,29 @@ fn serve_connections(
     // QUIC (any `quic *` directive) but did not supply BOTH `quic cert file`
     // and `quic key file`, the daemon refuses to start rather than synthesizing
     // an identity or silently skipping the listener. This mirrors oc's
-    // hard-fail-no-fallback posture for the QUIC transport.
+    // hard-fail-no-fallback posture for the QUIC transport. An identity that
+    // is configured but unusable (unreadable, malformed, or a key that does
+    // not match the certificate) is just as fatal, so it is loaded here rather
+    // than when the QUIC front starts, where a failure would leave TCP serving
+    // with no QUIC listener.
     #[cfg(all(unix, feature = "quic"))]
-    let quic_bind: Option<(u16, QuicIdentity)> = {
-        if let Some(reason) = options.quic_config_error() {
-            return Err(DaemonError::new(
+    let quic_bind: Option<(u16, QuicServerSetup)> = {
+        let fatal = |reason: String| {
+            DaemonError::new(
                 FEATURE_UNAVAILABLE_EXIT_CODE,
                 rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, reason).with_role(Role::Daemon),
-            ));
+            )
+        };
+        if let Some(reason) = options.quic_config_error() {
+            return Err(fatal(reason));
         }
-        options
-            .resolve_quic_identity()
-            .map(|identity| (options.effective_quic_port(), identity))
+        match options.resolve_quic_identity() {
+            Some(identity) => Some((
+                options.effective_quic_port(),
+                load_quic_setup(&identity).map_err(fatal)?,
+            )),
+            None => None,
+        }
     };
 
     let RuntimeOptions {
@@ -393,11 +404,11 @@ fn serve_connections(
     // single-threaded for every session fork that follows.
     #[cfg(all(unix, feature = "quic"))]
     let quic_front = match quic_bind.as_ref() {
-        Some((_, quic_identity)) if !quic_sockets.is_empty() => {
+        Some((_, quic_setup)) if !quic_sockets.is_empty() => {
             use std::os::fd::AsRawFd;
             let tcp_fds: Vec<std::os::fd::RawFd> =
                 listeners.iter().map(AsRawFd::as_raw_fd).collect();
-            start_quic_front(quic_sockets, quic_identity, &tcp_fds, log_sink.as_ref())
+            start_quic_front(quic_sockets, quic_setup, &tcp_fds, log_sink.as_ref())
         }
         _ => None,
     };
