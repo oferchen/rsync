@@ -195,19 +195,31 @@ fn rope_actuate_from_governor_drives_the_ceiling() {
     });
     let sink = gov.sample_sink().expect("sink");
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
+    // Emit a bounded batch, then count sense-loop windows rather than wall
+    // time: the debounce commits after HYSTERESIS_WINDOWS agreeing windows, so
+    // MAX_WINDOWS leaves ample slack while still failing fast and clearly if
+    // the drum never commits. The timeout only guards against a dead thread.
+    const MAX_WINDOWS: u64 = 32;
+    const HANG_GUARD: Duration = Duration::from_secs(60);
+    for _ in 0..64 {
         sink.emit(StageSample::new(
             Constraint::WireWrite,
             1_000_000,
             Duration::from_millis(1),
             8,
         ));
-        if gov.drum() == Constraint::WireWrite {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "drum never committed");
-        std::thread::yield_now();
+    }
+    let start = gov.windows_completed();
+    let mut seen = start;
+    while gov.drum() != Constraint::WireWrite {
+        assert!(
+            seen - start < MAX_WINDOWS,
+            "drum never committed after {MAX_WINDOWS} sense-loop windows (drum = {:?})",
+            gov.drum()
+        );
+        seen = gov
+            .wait_for_window_after(seen, HANG_GUARD)
+            .expect("governor sense loop made no progress");
     }
 
     // A fast WireWrite drum with 4 KiB units demands well above the floor.
