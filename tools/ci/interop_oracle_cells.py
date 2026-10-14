@@ -91,11 +91,13 @@ CORE_CASES = (
     ("inplace", "delta", ("-a", "--inplace")),
     ("dir-merge", "filters", ("-a", "-F")),
     ("safe-links", "symlinks", ("-a", "--safe-links")),
+    ("append", "append-grow", ("-a", "--append")),
 )
 
 # Oldest release that has a core case's option: --filter and its -F helper
-# arrived in 2.6.4 (OLDNEWS), so a 2.6.3 baseline cannot run dir-merge.
-CASE_FLOOR = {"dir-merge": (2, 6, 4)}
+# arrived in 2.6.4 (OLDNEWS), so a 2.6.3 baseline cannot run dir-merge;
+# --append arrived in 2.6.7 (NEWS.md, 2.6.7 section).
+CASE_FLOOR = {"dir-merge": (2, 6, 4), "append": (2, 6, 7)}
 
 
 def _targeted(have: set[str]) -> list[Cell]:
@@ -365,6 +367,15 @@ def build_fixtures(root: Path) -> None:
     _write(a / "src/grow", "0123456789")
     _write(a / "pre/grow", "0123456789" + "longer destination\n")
     fx["append"] = a
+    ag = root / "append-grow"
+    _write(ag / "src/grow", "0123456789" * 400 + "appended tail\n")
+    _write(ag / "src/new", "new file\n")
+    _write(ag / "pre/grow", "0123456789" * 400)
+    # Sorted ahead of grow: a destination already longer than its source is
+    # skipped, so the next transferred NDX is not the next flist entry.
+    _write(ag / "src/a-shorter", "short\n")
+    _write(ag / "pre/a-shorter", "short\nand a longer destination\n")
+    fx["append-grow"] = ag
 
     g = root / "dangling"
     _write(g / "src/real.txt", "real\n")

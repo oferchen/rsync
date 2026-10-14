@@ -217,6 +217,13 @@ class CatalogueTest(unittest.TestCase):
         self.assertNotIn("dir-merge/2.6.3/rsh/push/oc-client", ids)
         self.assertIn("dir-merge/2.6.9/rsh/push/oc-client", ids)
         self.assertIn("basic/2.6.3/rsh/push/oc-client", ids)
+        # --append arrived in 2.6.7; 2.6.9 is the oldest peer that has it and
+        # is where task 2601 lives, so every one of its shapes must run.
+        self.assertNotIn("append/2.6.3/daemon/pull/oc-server", ids)
+        for t in ("rsh", "daemon"):
+            for d in ("push", "pull"):
+                for r in ("oc-client", "oc-server"):
+                    self.assertIn(f"append/2.6.9/{t}/{d}/{r}", ids)
 
     def test_the_audit_defects_each_have_a_cell(self):
         ids = {c.cell_id for c in cells.catalogue(cells.ALL_VERSIONS)}
