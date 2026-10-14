@@ -73,6 +73,7 @@ CVE-2026-53799 (ACL and xattr symlink race) is partially fixed and not listed: t
 - Let the walk run under Landlock and seccomp, falling back to confined wrappers (#7541, #7545, #7548)
 - Never follow a leaf symlink on the `--partial-dir` basis and staging opens (#8072)
 - Refuse an untrusted destination symlink with upstream's diagnostic (CVE-2026-53796, #8071)
+- Harden the destination entry for CVE-2026-53796: the pull client and the rsh `--server` receiver now walk the destination as local copy does, and every non-daemon receiver keeps the walked directory pinned so data writes cannot follow a later swap. Metadata calls after a swap are still path-based and fail closed, so the CVE stays partially fixed
 - Open sender file content beneath the held source root, and refuse a replaced root with `ELOOP` (CVE-2026-53797, #8120)
 
 **Daemon**
