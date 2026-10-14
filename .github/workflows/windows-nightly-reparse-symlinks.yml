@@ -3,9 +3,8 @@
 # The required `Windows` cell in ci.yml runs nextest against `core`,
 # `engine`, and `cli`, and the `Windows ACL/xattr` cell runs
 # `-p metadata --features acl,xattr` plus a workspace-scoped filter
-# for `acl`/`xattr`/`ads`/`stream` tests. Neither cell links the
-# `flist` crate (`absolutize_returns_absolute_path_unchanged_windows`)
-# nor exercises the reparse-point classifier and `mklink` fixture
+# for `acl`/`xattr`/`ads`/`stream` tests. Neither cell exercises the
+# reparse-point classifier and `mklink` fixture
 # tests under their natural `reparse_`/`symlink_`/`junction_`/
 # `mount_point_` test names.
 #
@@ -27,8 +26,6 @@
 #   crates/metadata/tests/windows_symlink_junction_transfer.rs
 #   (dir_symlink_push_preserves_link,
 #    junction_push_preserves_junction)
-#   crates/flist/src/file_list_walker.rs
-#   (absolutize_returns_absolute_path_unchanged_windows)
 #
 # The reparse classifier guards every push or pull from a Windows
 # source that crosses a directory symlink, junction, or volume mount
@@ -130,15 +127,6 @@ jobs:
 
       - name: Run metadata reparse + symlink Windows tests
         run: cargo nextest run --locked -p metadata --no-fail-fast -E 'test(reparse) or test(symlink) or test(junction) or test(mount_point)'
-
-      # Filter targets `absolutize_returns_absolute_path_unchanged_windows`
-      # in `crates/flist/src/file_list_walker.rs:297`. The other
-      # `absolutize_*` tests in the same module are cross-platform and
-      # already run in the required Linux nextest cell; running them
-      # again here is cheap and surfaces any Windows-specific PathBuf
-      # canonicalisation drift.
-      - name: Run flist absolutize Windows tests
-        run: cargo nextest run --locked -p flist --no-fail-fast -E 'test(absolutize)'
 
       - name: Upload nextest logs
         if: always()

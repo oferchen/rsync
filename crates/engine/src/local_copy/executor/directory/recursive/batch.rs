@@ -296,7 +296,7 @@ pub(crate) fn capture_batch_file_entry(
 
 /// Extracts the major device number from a combined `rdev` (Linux glibc
 /// layout). `rustix::fs::major` is unavailable on Apple targets, so the split
-/// is done here, matching `flist::batched_stat` and `metadata::fake_super`.
+/// is done here, matching `metadata::fake_super`.
 #[cfg(all(unix, target_os = "linux"))]
 fn rdev_major(rdev: u64) -> u32 {
     ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32)

@@ -90,23 +90,6 @@
 //! (not `flat_map`). The final `collect()` assembles blocks in correct
 //! index order. **GUARDED** by chunk-indexed enumeration.
 //!
-//! ### `flist::parallel` - metadata functions (`parallel.rs:80,102,128,323,389`)
-//! Five `par_iter` sites for metadata fetching (`stat` syscalls). All
-//! collect into `Vec` and then call `sort_file_entries()` before returning,
-//! or use `par_iter().map(f).collect()` which preserves input order.
-//! File list ordering is established by the post-collection sort, not by
-//! iteration order. **GUARDED** by post-collection sort or indexed collect.
-//!
-//! ### `flist::batched_stat::cache` (`cache.rs:128`)
-//! `BatchedStatCache::stat_batch` parallelizes stat syscalls. Returns
-//! results via `par_iter().map().collect()` preserving input order.
-//! **GUARDED** by indexed collect preserving order.
-//!
-//! ### `flist::batched_stat::dir_stat` (`dir_stat.rs:150`)
-//! `DirStatHandle::stat_batch_relative` parallelizes per-directory stat
-//! calls. Returns via `par_iter().map().collect()` preserving input order.
-//! **GUARDED** by indexed collect preserving order.
-//!
 //! ### `engine::local_copy::executor::directory::support` (`support.rs:105`)
 //! Parallel metadata fetching for directory entries via `into_par_iter()
 //! .map().collect()`. Results are sorted by filename after collection

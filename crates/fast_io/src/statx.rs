@@ -1,15 +1,12 @@
 //! Lightweight `statx(2)` wrappers for file-list metadata fetching.
 //!
-//! Owns the statx syscall surface that `flist::batched_stat` consumes, per the
-//! two-owner unsafe policy: I/O syscalls live in `fast_io`. The wrappers are
-//! built entirely on `rustix::fs::statx`, so this module contains no
-//! `unsafe`; `flist` re-exports `StatxResult` and the free functions under
-//! their original paths.
+//! Owns the statx syscall surface per the two-owner unsafe policy: I/O
+//! syscalls live in `fast_io`. The wrappers are built entirely on
+//! `rustix::fs::statx`, so this module contains no `unsafe`.
 //!
-//! Everything except `has_statx_support` is gated to non-musl Linux,
-//! mirroring the gating this code carried in `flist` so per-target behaviour
-//! is unchanged. `has_statx_support` compiles everywhere and reports `false`
-//! where the syscall is not wrapped.
+//! Everything except `has_statx_support` is gated to non-musl Linux.
+//! `has_statx_support` compiles everywhere and reports `false` where the
+//! syscall is not wrapped.
 
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
 use std::ffi::OsStr;
@@ -134,26 +131,6 @@ pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<Statx
     )
 }
 
-/// Fetches only the modification time using statx.
-///
-/// Requests only `STATX_MTIME` from the kernel, which is the minimum needed
-/// for rsync change detection. This reduces kernel overhead compared to
-/// fetching all metadata fields.
-///
-/// # Errors
-///
-/// Returns an error if the statx syscall fails or is not supported.
-#[cfg(all(target_os = "linux", not(target_env = "musl")))]
-pub fn statx_mtime<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<(i64, u32)> {
-    let result = statx_with_mask(
-        rustix::fs::CWD,
-        path.as_ref(),
-        follow_symlinks,
-        rustix::fs::StatxFlags::MTIME,
-    )?;
-    Ok((result.mtime_sec, result.mtime_nsec))
-}
-
 /// Fetches only size and mtime using statx (common for rsync change detection).
 ///
 /// # Errors
@@ -176,8 +153,7 @@ pub fn statx_size_and_mtime<P: AsRef<Path>>(
 /// Stats `name` relative to an open directory using statx (Linux 4.11+).
 ///
 /// The directory fd pins the parent, so the lookup resolves a single
-/// component under it rather than re-walking the full path. Consumed by
-/// `flist::batched_stat::DirectoryStatBatch::statx_relative`.
+/// component under it rather than re-walking the full path.
 ///
 /// # Errors
 ///

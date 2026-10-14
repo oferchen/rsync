@@ -41,7 +41,6 @@ rio_notify	crates/fast_io/src/iocp/rio.rs	2026-11-07	unreviewed baseline row
 operator_link	crates/fast_io/src/owner_walk.rs	2026-11-07	unreviewed baseline row
 with_thread_count	crates/fast_io/src/parallel.rs	2026-11-07	unreviewed baseline row
 process_files	crates/fast_io/src/parallel.rs	2026-11-07	unreviewed baseline row
-collect_parallel	crates/flist/src/parallel.rs	2026-11-07	unreviewed baseline row
 init_tracing_with_filter	crates/logging/src/tracing_bridge.rs	2026-11-07	unreviewed baseline row
 set_role	crates/matching/src/index/mod.rs	2026-11-07	unreviewed baseline row
 read_sddl_with_sacl	crates/metadata/src/acl_windows/sddl.rs	2026-11-07	SACL read half awaiting the wire-or-delete decision (task 953)

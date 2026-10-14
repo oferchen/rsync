@@ -126,7 +126,7 @@ def main():
     priority = {
         'core': 1, 'protocol': 2, 'engine': 3, 'transfer': 4, 'checksums': 5,
         'filters': 6, 'metadata': 7, 'daemon': 8, 'cli': 9, 'signature': 10,
-        'compress': 11, 'bandwidth': 12, 'fast_io': 13, 'flist': 14,
+        'compress': 11, 'bandwidth': 12, 'fast_io': 13,
         'rsync_io': 15,
     }
 

@@ -63,7 +63,7 @@ jobs:
             args: "-p daemon -p core -p engine --features tracing"
             needs_bin: true
           - name: serde
-            args: "-p logging -p protocol -p flist --features serde"
+            args: "-p logging -p protocol --features serde"
             needs_bin: false
           - name: concurrent-sessions
             args: "-p daemon --features concurrent-sessions"
@@ -163,7 +163,7 @@ jobs:
             apt: ""
             needs_bin: false
           - name: parallel
-            args: "-p checksums -p flist --features parallel"
+            args: "-p checksums --features parallel"
             apt: ""
             needs_bin: false
           # `incremental-flist` is in `transfer`'s own `default` list, so a row
