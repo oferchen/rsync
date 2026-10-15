@@ -52,7 +52,7 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
 pub(super) fn quick_check_matches(
     entry: &FileEntry,
     dest_path: &Path,
-    dest_meta: &fs::Metadata,
+    dest_meta: &fast_io::EntryMetadata,
     ignore_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
@@ -85,7 +85,6 @@ pub(super) fn quick_check_matches(
     // (util1.c:1748), so pass the sub-second component from both sides.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         modify_window.same_time(
             dest_meta.mtime(),
             dest_meta.mtime_nsec() as u32,
@@ -123,14 +122,13 @@ pub(super) fn quick_check_matches(
 /// modify_window`. Both operands are whole-second `time_t` values, so a purely
 /// sub-second difference never makes the destination newer.
 pub(super) fn dest_mtime_newer(
-    dest_meta: &fs::Metadata,
+    dest_meta: &fast_io::EntryMetadata,
     source_entry: &FileEntry,
     modify_window: ModifyWindow,
 ) -> bool {
     let window_secs = modify_window.as_secs();
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         // upstream: generator.c:recv_generator - file->modtime - st_mtime < window
         source_entry.mtime() - dest_meta.mtime() < window_secs
     }
@@ -632,7 +630,7 @@ fn best_reference_match<'a>(
     for ref_dir in reference_directories {
         let ref_path = ref_dir.path.join(relative_path);
         let ref_meta = match basis_stat(&ref_path, trust) {
-            Some(m) if m.file_type().is_file() => m,
+            Some(m) if m.file_type().is_file() => fast_io::EntryMetadata::from(m),
             _ => continue,
         };
 
@@ -653,12 +651,7 @@ fn best_reference_match<'a>(
         // upstream: generator.c:1096 - unchanged_attrs() distinguishes level 3
         // (every preserved attr equal) from level 2 (content matches, attrs
         // differ). `metadata_unchanged` is oc's `unchanged_attrs` equivalent.
-        let level = if metadata_unchanged(
-            entry,
-            metadata_opts,
-            &fast_io::EntryMetadata::from(ref_meta.clone()),
-            modify_window,
-        ) {
+        let level = if metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
             MatchLevel::Exact
         } else {
             MatchLevel::Content
@@ -1946,7 +1939,15 @@ mod modify_window_tests {
         let mut entry = FileEntry::new_file("payload.bin".into(), payload.len() as u64, 0o644);
         entry.set_mtime(src_secs, src_nsec);
 
-        quick_check_matches(&entry, &dest_path, &dest_meta, false, false, None, window)
+        quick_check_matches(
+            &entry,
+            &dest_path,
+            &fast_io::EntryMetadata::from(dest_meta),
+            false,
+            false,
+            None,
+            window,
+        )
     }
 
     /// A destination whose mtime is within `--modify-window=2` of the source
@@ -2069,7 +2070,7 @@ mod update_modify_window_tests {
         let mut entry = FileEntry::new_file("payload.bin".into(), b"content".len() as u64, 0o644);
         entry.set_mtime(src_secs, 0);
 
-        dest_mtime_newer(&dest_meta, &entry, window)
+        dest_mtime_newer(&fast_io::EntryMetadata::from(dest_meta), &entry, window)
     }
 
     /// With `--modify-window=0` the gate is the strict upstream default: the

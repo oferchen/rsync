@@ -5,6 +5,7 @@
 //! normalized to use `hardlink_idx` and `hlink_first` during file list
 //! reception, so this module handles both protocol versions uniformly.
 
+#[cfg(not(unix))]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -225,13 +226,13 @@ impl ReceiverContext {
             // non-symlink obstacle has `statret` forced to -1 and an absent
             // destination arrives with it, so both render ITEM_IS_NEW.
             // Capture the old lstat before the obstacle is backed up/unlinked.
-            let mut pre_replace_symlink_meta: Option<fs::Metadata> = None;
+            let mut pre_replace_symlink_meta: Option<fast_io::EntryMetadata> = None;
             // Distinct from `pre_replace_symlink_meta` above, which stays
             // symlink-only because the post-create itemize must render a
             // non-symlink obstacle as ITEM_IS_NEW. `dest_mode()` makes no such
             // distinction: its `exists` is `statret == 0 && stype != FT_DIR`
             // (generator.c:1938), true for ANY non-directory that was here.
-            let mut pre_replace_meta: Option<fs::Metadata> = None;
+            let mut pre_replace_meta: Option<fast_io::EntryMetadata> = None;
 
             // upstream: generator.c:1965 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = fast_io::readlinkat_via_sandbox_or_fallback(
@@ -251,7 +252,7 @@ impl ReceiverContext {
                         self.existing_symlink_iflags(
                             entry,
                             &link_path,
-                            super::dest_metadata(sandbox, dest_dir, &link_path, false)
+                            super::dest_lstat(sandbox, dest_dir, &link_path, false)
                                 .ok()
                                 .as_ref(),
                         ),
@@ -288,7 +289,7 @@ impl ReceiverContext {
                     continue;
                 }
                 pre_replace_symlink_meta =
-                    super::dest_metadata(sandbox, dest_dir, &link_path, false).ok();
+                    super::dest_lstat(sandbox, dest_dir, &link_path, false).ok();
                 pre_replace_meta = pre_replace_symlink_meta.clone();
                 // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
                 // - one decision for the obstacle: rmdir a directory, back up
@@ -319,8 +320,7 @@ impl ReceiverContext {
                 // still hands its own permission bits to the link that replaces
                 // it; a directory obstacle takes the absent arm instead.
                 if !obstacle.is_dir() {
-                    pre_replace_meta =
-                        super::dest_metadata(sandbox, dest_dir, &link_path, false).ok();
+                    pre_replace_meta = Some(obstacle);
                 }
                 if self
                     .make_way_for_replacement(
@@ -444,10 +444,7 @@ impl ReceiverContext {
                 &link_path,
                 entry,
                 &symlink_options,
-                pre_replace_meta
-                    .clone()
-                    .map(fast_io::EntryMetadata::from)
-                    .as_ref(),
+                pre_replace_meta.as_ref(),
             ) {
                 // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
                 let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
@@ -580,13 +577,13 @@ impl ReceiverContext {
             // symlink, diffing attributes against the pre-replace lstat; a
             // non-symlink obstacle has `statret` forced to -1 and an absent
             // destination arrives with it, so both render ITEM_IS_NEW.
-            let mut pre_replace_symlink_meta: Option<fs::Metadata> = None;
+            let mut pre_replace_symlink_meta: Option<fast_io::EntryMetadata> = None;
             // Distinct from `pre_replace_symlink_meta` above, which stays
             // symlink-only because the post-create itemize must render a
             // non-symlink obstacle as ITEM_IS_NEW. `dest_mode()` makes no such
             // distinction: its `exists` is `statret == 0 && stype != FT_DIR`
             // (generator.c:1938), true for ANY non-directory that was here.
-            let mut pre_replace_meta: Option<fs::Metadata> = None;
+            let mut pre_replace_meta: Option<fast_io::EntryMetadata> = None;
 
             // upstream: generator.c:1965 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
@@ -597,11 +594,16 @@ impl ReceiverContext {
                     // difference lights the `t` column (keep_time =
                     // !omit_link_times); `sx` was filled by `link_stat` before
                     // `set_file_attrs` runs, so this must precede the apply below.
-                    let iflags = ItemFlags::from_raw(self.existing_symlink_iflags(
-                        entry,
-                        &link_path,
-                        fs::symlink_metadata(&link_path).ok().as_ref(),
-                    ));
+                    let iflags = ItemFlags::from_raw(
+                        self.existing_symlink_iflags(
+                            entry,
+                            &link_path,
+                            fs::symlink_metadata(&link_path)
+                                .ok()
+                                .map(fast_io::EntryMetadata::from)
+                                .as_ref(),
+                        ),
+                    );
                     // upstream: generator.c:1967 - refresh metadata even when the
                     // link is already up-to-date so a stale mtime is corrected.
                     // `MetadataOptions::new()` defaults `preserve_permissions`
@@ -632,7 +634,9 @@ impl ReceiverContext {
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
-                pre_replace_symlink_meta = fs::symlink_metadata(&link_path).ok();
+                pre_replace_symlink_meta = fs::symlink_metadata(&link_path)
+                    .ok()
+                    .map(fast_io::EntryMetadata::from);
                 pre_replace_meta = pre_replace_symlink_meta.clone();
                 // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK).
                 if self
@@ -654,7 +658,7 @@ impl ReceiverContext {
                 // non-directory obstacle still supplies the replacement link's
                 // permission bits.
                 if !obstacle.is_dir() {
-                    pre_replace_meta = Some(obstacle);
+                    pre_replace_meta = Some(fast_io::EntryMetadata::from(obstacle));
                 }
                 if self
                     .make_way_for_replacement(
@@ -729,10 +733,7 @@ impl ReceiverContext {
                 &link_path,
                 entry,
                 &symlink_options,
-                pre_replace_meta
-                    .clone()
-                    .map(fast_io::EntryMetadata::from)
-                    .as_ref(),
+                pre_replace_meta.as_ref(),
             ) {
                 // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
                 let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
@@ -1525,7 +1526,10 @@ mod tests {
         let raw = ctx.existing_symlink_iflags(
             &entry,
             &link_path,
-            std::fs::symlink_metadata(&link_path).ok().as_ref(),
+            std::fs::symlink_metadata(&link_path)
+                .ok()
+                .map(fast_io::EntryMetadata::from)
+                .as_ref(),
         );
         assert_ne!(
             raw & ItemFlags::ITEM_REPORT_TIME,
@@ -1549,7 +1553,10 @@ mod tests {
             ctx.existing_symlink_iflags(
                 &entry,
                 &link_path,
-                std::fs::symlink_metadata(&link_path).ok().as_ref(),
+                std::fs::symlink_metadata(&link_path)
+                    .ok()
+                    .map(fast_io::EntryMetadata::from)
+                    .as_ref(),
             ) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
             0,
             "--omit-link-times must suppress the mtime-only symlink row"
@@ -1561,7 +1568,10 @@ mod tests {
             ctx.existing_symlink_iflags(
                 &entry,
                 &link_path,
-                std::fs::symlink_metadata(&link_path).ok().as_ref(),
+                std::fs::symlink_metadata(&link_path)
+                    .ok()
+                    .map(fast_io::EntryMetadata::from)
+                    .as_ref(),
             ) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
             0,
             "without --times there is no mtime comparison for the symlink"

@@ -61,13 +61,15 @@ fn pre_transfer_stat(
     #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     dest_dir: &Path,
     dir_path: &Path,
-) -> Option<fs::Metadata> {
+) -> Option<fast_io::EntryMetadata> {
     #[cfg(unix)]
-    return super::dest_metadata(sandbox, dest_dir, dir_path, true).ok();
+    return super::dest_lstat(sandbox, dest_dir, dir_path, true).ok();
     #[cfg(not(unix))]
     {
         let _ = dest_dir;
-        fs::metadata(dir_path).ok()
+        fs::metadata(dir_path)
+            .ok()
+            .map(fast_io::EntryMetadata::from)
     }
 }
 
@@ -369,7 +371,7 @@ impl ReceiverContext {
         // emit a spurious `.d..t...... ./` for an otherwise-unchanged transfer
         // root. Capture each already-present directory's pre-mkdir stat here so
         // the itemize pass compares against the true pre-transfer state.
-        let pre_mkdir_meta: Vec<Option<fs::Metadata>> = dir_entries
+        let pre_mkdir_meta: Vec<Option<fast_io::EntryMetadata>> = dir_entries
             .iter()
             .map(|(_, _, dir_path)| {
                 pre_transfer_stat(
@@ -650,7 +652,6 @@ impl ReceiverContext {
                         dest_dir,
                         &dir_path,
                     )
-                    .map(fast_io::EntryMetadata::from)
                 };
                 (dir_path, entry, xattr_list, pre_transfer)
             })
@@ -1159,7 +1160,6 @@ impl ReceiverContext {
                 dest_dir,
                 dir_path,
             )
-            .map(fast_io::EntryMetadata::from)
         };
         // upstream: generator.c:1904-1912 + generator.c:2594 - record the
         // strict mode touch_up_dirs must reinstate before the !preserve_perms

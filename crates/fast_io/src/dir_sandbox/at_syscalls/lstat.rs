@@ -94,53 +94,6 @@ fn stat_outcome(
     .map(EntryMetadata::Std)
 }
 
-/// `stat`/`lstat` of `link_path` as a [`std::fs::Metadata`], for callers whose
-/// consumer is typed on it.
-///
-/// [`std::fs::Metadata`] has no public constructor, so an `fstatat` answer
-/// cannot be returned as one. On Linux the entry is opened `O_PATH` (plus
-/// `O_NOFOLLOW` for `lstat`) through the same three arms as
-/// [`lstat_via_sandbox_or_fallback`] and `fstat`ed: `O_PATH` grants no access
-/// to the contents, so an unreadable entry, a FIFO and a device report their
-/// metadata exactly as `stat` would. Elsewhere there is no `O_PATH`, and the
-/// path-based call is issued; those callers stay on the path until their
-/// consumer accepts [`EntryMetadata`].
-///
-/// # Errors
-///
-/// The `openat`/`fstat` error of the anchored arm, or the path-based call's.
-pub fn metadata_via_sandbox_or_fallback(
-    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
-    dest_dir: &Path,
-    relative_path: &Path,
-    link_path: &Path,
-    follow: bool,
-) -> io::Result<std::fs::Metadata> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let flags = if follow {
-            libc::O_PATH | libc::O_CLOEXEC
-        } else {
-            libc::O_PATH | libc::O_CLOEXEC | libc::O_NOFOLLOW
-        };
-        let fstat_at = |dirfd: BorrowedFd<'_>, name: &OsStr| {
-            super::open::openat(dirfd, name, flags, 0).and_then(|file| file.metadata())
-        };
-        if let Some(meta) =
-            super::nested::at_dest_leaf(sandbox, dest_dir, relative_path, link_path, fstat_at)?
-        {
-            return Ok(meta);
-        }
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    let _ = (sandbox, dest_dir, relative_path);
-    if follow {
-        std::fs::metadata(link_path)
-    } else {
-        std::fs::symlink_metadata(link_path)
-    }
-}
-
 /// Returns the leaf component of `link_path` when `link_path` is
 /// exactly `dest_dir` joined with a single-component `relative_path`.
 ///

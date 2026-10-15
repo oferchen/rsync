@@ -124,7 +124,12 @@ impl ReceiverContext {
         dir_path: &std::path::Path,
     ) -> u32 {
         match std::fs::metadata(dir_path) {
-            Ok(meta) => self.itemize_existing_flags(entry, dir_path, Some(&meta), 0),
+            Ok(meta) => self.itemize_existing_flags(
+                entry,
+                dir_path,
+                Some(&fast_io::EntryMetadata::from(meta.clone())),
+                0,
+            ),
             // Not `None`: a failed stat is upstream's benign "no change"
             // outcome here, not the `statret < 0` ITEM_IS_NEW leg.
             Err(_) => 0,
@@ -152,7 +157,7 @@ impl ReceiverContext {
         &self,
         entry: &protocol::flist::FileEntry,
         link_path: &std::path::Path,
-        link_meta: Option<&std::fs::Metadata>,
+        link_meta: Option<&fast_io::EntryMetadata>,
     ) -> u32 {
         link_meta.map_or(0, |meta| {
             self.itemize_existing_flags(entry, link_path, Some(meta), 0)
@@ -189,7 +194,7 @@ impl ReceiverContext {
                 Ok(meta) => crate::generator::ItemFlags::from_raw(self.itemize_existing_flags(
                     entry,
                     dest_dir,
-                    Some(&meta),
+                    Some(&fast_io::EntryMetadata::from(meta.clone())),
                     0,
                 ))
                 .has_significant_flags(),
@@ -249,10 +254,15 @@ impl ReceiverContext {
                 let emit = match std::fs::symlink_metadata(&dir_path) {
                     // upstream: itemize() compares an existing dir's pre-apply
                     // stat and prints its name only when an attribute differs.
-                    Ok(meta) if meta.is_dir() => crate::generator::ItemFlags::from_raw(
-                        self.itemize_existing_flags(entry, &dir_path, Some(&meta), 0),
-                    )
-                    .has_significant_flags(),
+                    Ok(meta) if meta.is_dir() => {
+                        crate::generator::ItemFlags::from_raw(self.itemize_existing_flags(
+                            entry,
+                            &dir_path,
+                            Some(&fast_io::EntryMetadata::from(meta.clone())),
+                            0,
+                        ))
+                        .has_significant_flags()
+                    }
                     // Present but not a directory: upstream deletes it and
                     // creates the dir (ITEM_IS_NEW), so it is named.
                     Ok(_) => true,
