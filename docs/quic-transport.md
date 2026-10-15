@@ -98,6 +98,44 @@ For a daemon with a self-signed certificate, pass that certificate itself as
 whose certificate is issued by an internal CA, pass the CA certificate.
 Rotating a daemon certificate under the same CA needs no client change.
 
+### Certificate validation rules
+
+The rules below are pinned, row by row, by the integration test
+`crates/transfer/tests/quic_certificate_validation_matrix.rs`, which mints
+every certificate at test time and runs the real daemon and client over
+loopback in both directions (pull and push). That test is the source of
+truth; if this table and the test disagree, the test wins.
+
+| Server certificate or client setup | Result | Exit |
+|---|---|---|
+| Leaf signed by the `--quic-ca` CA: CA:FALSE, `serverAuth`, DNS SAN of the dialled name | accepted | 0 |
+| IP SAN, dialled by that IP address | accepted | 0 |
+| Leaf plus intermediate in `quic cert file`, root in `--quic-ca` | accepted | 0 |
+| Leaf key P-256, P-384, Ed25519 or RSA-2048 | accepted | 0 |
+| Leaf with no extended key usage extension | accepted | 0 |
+| Self-signed leaf named directly as `--quic-ca` | accepted | 0 |
+| Leaf marked CA:TRUE | refused, `CaUsedAsEndEntity` | 5 |
+| SAN does not name the dialled host (including an IP-only SAN dialled by name) | refused, `certificate not valid for name` | 5 |
+| Leaf whose extended key usage lacks `serverAuth` | refused | 5 |
+| Expired, or not yet valid | refused, `certificate expired` / `certificate not valid yet` | 5 |
+| Self-signed leaf, or a leaf from another CA, not anchored by `--quic-ca` | refused, `UnknownIssuer` | 5 |
+| No `--quic-ca` | refused before dialling, names `--quic-ca` | 5 |
+| `--quic-ca` empty, not a certificate, or unreadable | refused before dialling, names the file | 5 |
+| `--quic-cert` without `--quic-key` | refused before dialling | 5 |
+
+With `quic client ca file` set on the daemon (mutual TLS):
+
+| Client certificate | Result | Exit |
+|---|---|---|
+| Signed by the client CA, `clientAuth` | accepted | 0 |
+| None presented | refused, `peer sent no certificates` | 5 |
+| Signed by another CA | refused, `UnknownIssuer` | 5 |
+| Expired | refused, `certificate expired` | 5 |
+| Extended key usage lacks `clientAuth` | refused | 5 |
+
+A client certificate offered to a daemon without `quic client ca file` is
+ignored and the transfer succeeds.
+
 ### Mutual TLS (client certificate)
 
 The client can additionally present its own certificate so the daemon can
@@ -216,9 +254,11 @@ throwaway self-signed identity. (Auto-generating a daemon certificate was
 considered and dropped: clients could not name an identity that changes on
 every restart as their `--quic-ca`.)
 
-A bad or unreadable certificate does not take the whole daemon down: the
-affected QUIC socket is logged and skipped while the TCP listener keeps
-serving, degrading to TCP-only rather than a total outage.
+The daemon loads its QUIC identity at startup, before it binds any
+listener. A certificate or key that cannot be read or parsed, or a key that
+does not match the certificate, stops the daemon with exit 1 and a message
+naming the problem, rather than serving TCP while the operator believes QUIC
+is up.
 
 ### Port selection
 
