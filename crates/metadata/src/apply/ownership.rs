@@ -306,7 +306,17 @@ fn supplementary_groups() -> io::Result<Vec<libc::gid_t>> {
 #[cfg(unix)]
 fn warn_getgroups_failed(err: &io::Error) {
     static WARNED: std::sync::Once = std::sync::Once::new();
-    WARNED.call_once(|| eprintln!("{}", getgroups_failed_message(err)));
+    WARNED.call_once(|| report_getgroups_failed(err));
+}
+
+/// Prints the warning and traces it at `Seccomp` 1, which `-vvv` and
+/// `--debug=seccomp` reach: a seccomp allowlist that denies `getgroups` is
+/// the usual cause, so the line also lands beside the other sandbox traces.
+#[cfg(unix)]
+fn report_getgroups_failed(err: &io::Error) {
+    let message = getgroups_failed_message(err);
+    logging::debug_log!(Seccomp, 1, "{message}");
+    eprintln!("{message}");
 }
 
 #[cfg(unix)]
@@ -1309,6 +1319,35 @@ mod post_chown_tests {
         kernel.sort_unstable();
         assert_eq!(ours, kernel);
     }
+    fn seccomp_messages_after_getgroups_failure(level: u8) -> Vec<String> {
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.seccomp = level;
+        init(cfg);
+        let _ = drain_events();
+        report_getgroups_failed(&io::Error::from_raw_os_error(libc::EPERM));
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Seccomp,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn getgroups_failure_is_traced_at_seccomp_level_one_only() {
+        // A seccomp-denied getgroups silently narrows group membership to the
+        // effective gid; --debug=seccomp must name it, the default must not.
+        let expected = getgroups_failed_message(&io::Error::from_raw_os_error(libc::EPERM));
+        assert_eq!(seccomp_messages_after_getgroups_failure(1), vec![expected]);
+        assert!(seccomp_messages_after_getgroups_failure(0).is_empty());
+    }
+
     #[test]
     fn getgroups_failure_message_names_the_error_and_the_fallback() {
         let err = io::Error::from_raw_os_error(libc::EPERM);

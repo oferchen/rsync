@@ -456,6 +456,11 @@ where
         }
     };
 
+    // A POSIX shell expands wildcards before upstream rsync sees its argv;
+    // cmd.exe and PowerShell do not, so the client does it here instead.
+    #[cfg(windows)]
+    let remainder = crate::frontend::execution::expand_source_operands(remainder);
+
     // upstream: options.c:2618-2621 - with `--files-from` the transferred file
     // set comes from the list, so a client may name exactly one source root and
     // one destination. More than two operands, or a lone operand (a missing
