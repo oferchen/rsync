@@ -15,7 +15,7 @@ use metadata::apply_metadata_with_cached_stat;
 use engine::CleanupManager;
 
 use crate::delta_apply::ChecksumVerifier;
-use crate::receiver::basis::find_basis_file_with_config;
+use crate::receiver::basis::{BasisFileConfig, find_basis_file_with_config};
 use crate::receiver::quick_check::is_hardlink_follower;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::wire::{SenderAttrs, SumHead, write_signature_blocks};
@@ -208,14 +208,18 @@ impl ReceiverContext {
 
             // The basis search must precede the iflags write so a
             // --partial-dir resume basis can set ITEM_BASIS_TYPE_FOLLOWS.
-            let basis_config = self.build_basis_file_config(
-                ndx,
-                &file_path,
-                &dest_dir,
-                file_entry,
-                checksum_length,
-                checksum_algorithm,
-            );
+            let basis_config = BasisFileConfig {
+                #[cfg(unix)]
+                sandbox: sandbox.as_deref(),
+                ..self.build_basis_file_config(
+                    ndx,
+                    &file_path,
+                    &dest_dir,
+                    file_entry,
+                    checksum_length,
+                    checksum_algorithm,
+                )
+            };
             let basis_result = find_basis_file_with_config(&basis_config);
             let signature_opt = basis_result.signature;
             let basis_path_opt = basis_result.basis_path;

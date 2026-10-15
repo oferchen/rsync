@@ -216,9 +216,10 @@ pub(super) fn held_leaf<'a>(
 /// - the destination root itself (an empty `relative_path`) is `.` on the
 ///   sandbox's current dirfd;
 /// - a single component goes to the sandbox's current dirfd;
-/// - a nested entry goes to the held parent, and a failure there drops the
-///   held parent and re-resolves, so the reported answer is always a fresh
-///   walk's;
+/// - a nested entry goes to the held parent. A missing leaf is the held
+///   directory's answer, as upstream's held descriptor gives it; any other
+///   failure drops the held parent and re-resolves, so that verdict is a
+///   fresh walk's;
 /// - otherwise the parent is opened afresh by [`anchor_parent`].
 ///
 /// `Ok(None)` means no arm applies (no sandbox, a path that is not
@@ -247,6 +248,7 @@ pub(super) fn at_dest_leaf<T>(
     if let Some((dirfd, leaf)) = held_leaf(held, dest_dir, relative_path, full_path) {
         match op(dirfd.as_fd(), leaf) {
             Ok(value) => return Ok(Some(value)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Err(error),
             Err(_) => held.release_held_parent(),
         }
     }

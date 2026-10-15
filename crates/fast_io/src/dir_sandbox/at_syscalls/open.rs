@@ -141,6 +141,116 @@ pub fn openat_via_sandbox_or_fallback(
     crate::ConfinedFallback::confined().open_at(link_path, flags, mode)
 }
 
+/// Open a delta basis beneath the destination sandbox and require it to be
+/// a regular file.
+///
+/// The parent resolves through the held, single-component or anchored arms
+/// shared with the other `*_via_sandbox_or_fallback` adaptors, and the leaf
+/// opens with `O_NOFOLLOW | O_NONBLOCK`, so neither a swapped parent nor a
+/// planted leaf symlink can select a file outside the tree. Without a
+/// sandbox, or for a path outside `dest_dir`, it falls back to
+/// [`open_basis_nofollow`](crate::open_basis_nofollow).
+///
+/// upstream: rsync-3.5.1/receiver.c:1086-1093 - a basis in the entry's own
+/// directory opens via `held_dfd_for()` + `do_open_atfd()`.
+///
+/// # Errors
+///
+/// Surfaces the open error, `ELOOP` for a leaf symlink, the confined walk's
+/// refusal, or `InvalidInput` when the basis is not a regular file.
+pub fn open_basis_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    full_path: &Path,
+) -> io::Result<File> {
+    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+    match super::nested::at_dest_leaf(
+        sandbox,
+        dest_dir,
+        relative_path,
+        full_path,
+        |dirfd, leaf| openat(dirfd, leaf, flags, 0),
+    )? {
+        Some(file) => crate::nofollow_open::require_regular_basis(file),
+        None => crate::open_basis_nofollow(full_path),
+    }
+}
+
+/// Open an existing destination entry for writing beneath the destination
+/// sandbox, refusing a leaf symlink.
+///
+/// Serves the receiver's post-transfer truncate and hole punch and its
+/// `--write-devices` target. Without a sandbox, or for a path outside
+/// `dest_dir`, it opens `full_path` for writing by path.
+///
+/// upstream: rsync-3.5.1/syscall.c:3858-3871 held_dfd_for()
+///
+/// # Errors
+///
+/// Surfaces the open error, `ELOOP` for a leaf symlink, or the confined
+/// walk's refusal.
+pub fn open_write_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    full_path: &Path,
+) -> io::Result<File> {
+    let flags = libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    match super::nested::at_dest_leaf(
+        sandbox,
+        dest_dir,
+        relative_path,
+        full_path,
+        |dirfd, leaf| openat(dirfd, leaf, flags, 0),
+    )? {
+        Some(file) => Ok(file),
+        None => std::fs::OpenOptions::new().write(true).open(full_path),
+    }
+}
+
+/// Open an in-place output beneath the destination sandbox.
+///
+/// The first arm creates or opens the leaf with `O_NOFOLLOW` against the
+/// held, single-component or anchored parent. Without a sandbox, for a path
+/// outside `dest_dir`, or when that open fails with `EACCES`, it runs the
+/// path-based chain of [`open_inplace_output`](crate::open_inplace_output),
+/// whose `protected_regular` and read-only arms recover the open.
+///
+/// upstream: rsync-3.5.1/receiver.c:1212-1241 - `secure_recv_open()` first,
+/// then the `EACCES` recovery arms.
+///
+/// # Errors
+///
+/// Surfaces the anchored open's error other than `EACCES`, or the path
+/// chain's error.
+pub fn open_inplace_output_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    full_path: &Path,
+    truncate: bool,
+) -> io::Result<File> {
+    let mut flags = libc::O_WRONLY | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    if truncate {
+        flags |= libc::O_TRUNC;
+    }
+    let path_chain =
+        || crate::open_inplace_output(full_path, truncate, crate::InplaceResolution::Direct);
+    match super::nested::at_dest_leaf(
+        sandbox,
+        dest_dir,
+        relative_path,
+        full_path,
+        |dirfd, leaf| openat(dirfd, leaf, flags, 0o666),
+    ) {
+        Ok(Some(file)) => Ok(file),
+        Ok(None) => path_chain(),
+        Err(error) if error.raw_os_error() == Some(libc::EACCES) => path_chain(),
+        Err(error) => Err(error),
+    }
+}
+
 /// Issue `readlinkat(dirfd, name, buf, size)` and return the link
 /// target as a [`PathBuf`].
 ///

@@ -20,7 +20,6 @@ use engine::CleanupManager;
 
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
-use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
 use crate::reader::ServerReader;
 #[cfg(not(unix))]
@@ -177,7 +176,7 @@ pub fn process_file_response<R: Read>(
     };
 
     let mut basis_map = if let Some(ref path) = basis_path {
-        Some(MapFile::open(path).map_err(|e| {
+        Some(ctx.open_basis_map(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
         })?)
     } else {

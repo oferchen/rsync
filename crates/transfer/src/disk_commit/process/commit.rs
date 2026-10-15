@@ -42,13 +42,36 @@ pub(super) struct SparseFinalize {
 /// run before the timestamp is applied or the just-set mtime is clobbered. The
 /// temp+rename callers invoke it directly for that reason; the inplace branch
 /// of `commit_file` re-applies metadata afterwards.
-pub(super) fn finalize_sparse(target: &Path, sparse: &SparseFinalize) -> io::Result<()> {
-    let mut file = fs::OpenOptions::new().write(true).open(target)?;
+pub(super) fn finalize_sparse(
+    env: BackupEnv<'_>,
+    target: &Path,
+    sparse: &SparseFinalize,
+) -> io::Result<()> {
+    let mut file = open_dest_for_write(env, target)?;
     file.set_len(sparse.logical_len)?;
     for &(pos, len) in &sparse.holes {
         fast_io::punch_hole(&mut file, pos, len)?;
     }
     Ok(())
+}
+
+/// Opens an existing destination entry for writing, anchored beneath the
+/// destination sandbox when `path` lies inside the destination tree.
+///
+/// upstream: syscall.c:3858-3871 held_dfd_for()
+#[cfg(unix)]
+pub(super) fn open_dest_for_write(env: BackupEnv<'_>, path: &Path) -> io::Result<fs::File> {
+    match env.anchor(path) {
+        Some((sandbox, dest_dir, relative)) => {
+            fast_io::open_write_via_sandbox_or_fallback(Some(sandbox), dest_dir, relative, path)
+        }
+        None => fs::OpenOptions::new().write(true).open(path),
+    }
+}
+
+#[cfg(not(unix))]
+pub(super) fn open_dest_for_write(_env: BackupEnv<'_>, path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new().write(true).open(path)
 }
 
 /// Commit result indicating whether a cross-device copy occurred and
@@ -193,7 +216,7 @@ pub(super) fn commit_file(
         if let Some(ref sparse) = sparse_final {
             // upstream: fileio.c:51-56 sparse_end() - punch stale basis blocks
             // then ftruncate to the logical length for the in-place update.
-            finalize_sparse(&begin.file_path, sparse)?;
+            finalize_sparse(config.backup_env(), &begin.file_path, sparse)?;
         } else {
             // upstream: receiver.c:353 - set_file_length(fd, F_LENGTH(file))
             // In append mode, bytes_written only counts newly received data -
@@ -203,7 +226,7 @@ pub(super) fn commit_file(
             } else {
                 bytes_written
             };
-            let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
+            let file = open_dest_for_write(config.backup_env(), &begin.file_path)?;
             file.set_len(final_size)?;
         }
         false
