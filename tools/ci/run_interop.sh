@@ -120,6 +120,31 @@ native_protocol() {
     *) echo 33 ;;
   esac
 }
+# Protocol a session with release $1 runs when a client asks for --protocol=$2:
+# each end announces its newest protocol and both run the lower one
+# (compat.c setup_protocol). It is also the highest value that release's own
+# client accepts: a 3.4.4 client refuses --protocol=33 with "--protocol must
+# be no more than 32" (compat.c:637) before any transfer.
+clamped_protocol() {
+  local native
+  native=$(native_protocol "$1")
+  echo $(( $2 < native ? $2 : native ))
+}
+# Asserts the protocol a daemon session negotiated, read off the wire through
+# a relay the same way the oracle cells read it (interop_oracle.py
+# decode_handshake): $1 is the client, $2 its --protocol flag, $3 the daemon
+# port, $4 the protocol the session must run, $5 the label to report.
+check_negotiated_protocol() {
+  local client=$1 flag=$2 port=$3 want=$4 label=$5 got
+  got=$(python3 "$(dirname "${BASH_SOURCE[0]}")/interop_wire_probe.py" --port "$port" -- \
+          "$client" "$flag" "rsync://127.0.0.1:@PORT@/interop/" 2>/dev/null | tail -n1)
+  if [[ "$got" == "$want" ]]; then
+    echo "  [${label}] negotiated protocol ${got} (${flag})"
+    return 0
+  fi
+  echo "  [${label}] UNEXPECTED: negotiated protocol ${got:-unknown}, want ${want} (${flag})"
+  return 1
+}
 # Oldest release that has a scenario's option. --itemize-changes arrived in
 # 2.6.4 (OLDNEWS), so a 2.6.3 client exits 1 on -i before transferring.
 version_has_itemize() {
@@ -1095,7 +1120,7 @@ run_interop_case() {
 
 # ============================================================================
 # Comprehensive Interop Test Framework
-# Covers all protocols (28-32), major rsync options, bidirectional transfers.
+# Covers all protocols (28-33), major rsync options, bidirectional transfers.
 # ============================================================================
 
 # Rich test data: multiple file types, sizes, metadata, symlinks, hardlinks
@@ -12021,7 +12046,12 @@ run_comprehensive_interop_case() {
   # native protocol. Incremental recursion and the ACL/xattr wire formats need
   # protocol >= 30 (upstream compat.c:655-668), so those legs only apply there.
   local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
-  local eff_proto="${fp:-$(native_protocol "$version")}"
+  local eff_proto
+  eff_proto=$(clamped_protocol "$version" "${fp:-33}")
+  # The upstream client can be forced no higher than its own protocol; oc is
+  # forced to the full value and must settle on the peer's.
+  local up_protocol_flag=""
+  [[ -n "$fp" ]] && up_protocol_flag="--protocol=${eff_proto}"
   if [[ "$eff_proto" -ge 30 ]]; then
     scenarios+=("inc-recursive|-av --inc-recursive|inc-recursive")
   fi
@@ -12057,7 +12087,7 @@ run_comprehensive_interop_case() {
 
   for spec in "${scenarios[@]}"; do
     IFS='|' read -r name flags vtype <<< "$spec"
-    [[ -n "$protocol_flag" ]] && flags="$flags $protocol_flag"
+    [[ -n "$up_protocol_flag" ]] && flags="$flags $up_protocol_flag"
     total=$((total + 1))
     echo "  [upstream ${version}→oc] ${name}${sfx}"
     if comp_run_scenario "$name" "$upstream_binary" "$flags" "$local_src" \
@@ -12074,6 +12104,16 @@ run_comprehensive_interop_case() {
       fi
     fi
   done
+
+  if [[ -n "$fp" ]]; then
+    total=$((total + 1))
+    if check_negotiated_protocol "$upstream_binary" "$up_protocol_flag" "$oc_port" \
+        "$eff_proto" "upstream ${version}→oc"; then
+      passed=$((passed + 1))
+    else
+      unexpected=$((unexpected + 1))
+    fi
+  fi
 
   stop_oc_daemon
 
@@ -12099,6 +12139,16 @@ run_comprehensive_interop_case() {
       fi
     fi
   done
+
+  if [[ -n "$fp" ]]; then
+    total=$((total + 1))
+    if check_negotiated_protocol "$oc_client" "$protocol_flag" "$upstream_port" \
+        "$eff_proto" "oc→upstream ${version}"; then
+      passed=$((passed + 1))
+    else
+      unexpected=$((unexpected + 1))
+    fi
+  fi
 
   stop_upstream_daemon
 
@@ -12984,8 +13034,12 @@ done
 echo "=== Parallel version tests complete ==="
 
 # =====================================================================
-# Protocol version forcing tests: all 5 protocols against each upstream
-# release in extended_matrix_versions that is installed.
+# Protocol version forcing tests: every protocol oc speaks, 28 through 33,
+# against each upstream release in extended_matrix_versions that is
+# installed. 33 is forced explicitly too, not only reached as the native
+# default: against a protocol-32 release oc must settle on 32 without error.
+# Each leg also asserts the negotiated protocol off the wire
+# (check_negotiated_protocol), so a forced value the peer ignores fails.
 #
 # This used to resolve "newest" to the literal 3.4.4, so the sweep never
 # touched 3.5.0 no matter what the version list said. Both releases are
@@ -13003,7 +13057,7 @@ for sweep_version in "${extended_matrix_versions[@]}"; do
   fi
 done
 if [[ ${#sweep_binaries[@]} -gt 0 ]]; then
-  protos=(28 29 30 31 32)
+  protos=(28 29 30 31 32 33)
 
   for sweep_idx in "${!sweep_binaries[@]}"; do
     newest_label="${sweep_labels[$sweep_idx]}"
@@ -13103,4 +13157,4 @@ if (( ${#failed[@]} > 0 )); then
 fi
 
 echo ""
-echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone + quic + oracle)."
+echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-33 + standalone + quic + oracle)."
