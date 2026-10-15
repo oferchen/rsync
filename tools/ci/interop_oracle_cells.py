@@ -166,7 +166,16 @@ def _targeted(have: set[str]) -> list[Cell]:
 # prints it only at protocol >= 33 (main.c:446). Each case mirrors a scenario
 # of upstream's testsuite/write-touched-blocks_test.py and pins its value.
 
-DELTA_INPLACE = ("-a", "--inplace", "-I", "--no-whole-file")
+# A 4 MiB file gets a 2-byte block strong sum (generator.c sum_sizes_sqroot),
+# so a weak-sum collision also passes the seeded MD5 prefix about once in
+# 4,300 transfers and phase 2 redoes the file: upstream behaviour, but it moves
+# the stats and touched count. The seed comes from the daemon unless the
+# client pins it (compat.c:823-824), seeds the block sum (checksum.c:356-372)
+# and is forwarded to the server (options.c:3056-3057), so both runs of a cell
+# use this one, which the tools test proves free of false matches on tb-full.
+TOUCHED_CHECKSUM_SEED = 1
+DELTA_INPLACE = ("-a", "--inplace", "-I", "--no-whole-file",
+                 f"--checksum-seed={TOUCHED_CHECKSUM_SEED}")
 TOUCHED_CASES = (
     ("touched-contiguous", "tb-contiguous", DELTA_INPLACE, "1"),
     ("touched-scattered", "tb-scattered", DELTA_INPLACE, "10"),

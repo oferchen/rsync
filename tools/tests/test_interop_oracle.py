@@ -11,6 +11,7 @@ from hiding behind a stale row.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import socket
 import sys
@@ -383,6 +384,70 @@ class TouchedFixtureTest(unittest.TestCase):
             self.assertEqual((fx["tb-identical"] / "src/base.bin").read_bytes(), pre)
             sparse = fx["tb-sparse"] / "src/sparse.bin"
             self.assertEqual(sparse.stat().st_size, 4 * 1024 * 1024 + 8192)
+
+
+class TouchedChecksumSeedTest(unittest.TestCase):
+    """The pinned seed must not let tb-full's sender take a false block match.
+
+    tb-full shares no block between src and basis, yet some src windows hit a
+    basis block's rolling sum. A hit becomes a match when the 2-byte seeded MD5
+    prefix collides too, which flips the cell to a phase-2 redo. This replays
+    upstream's match decision (match.c hash_search) for the pinned seed.
+    """
+
+    BLOCK = 2048  # sum_sizes_sqroot: sqrt(4 MiB), already a multiple of 8
+    S2LENGTH = 2  # (10 + 2*22 - 11 + 1 - 32 + 7) // 8
+
+    @staticmethod
+    def _signed(data: bytes) -> list[int]:
+        # get_checksum1 sums schar values (checksum.c), not unsigned bytes.
+        return [b - 256 if b > 127 else b for b in data]
+
+    @classmethod
+    def _weak(cls, block: list[int]) -> int:
+        s1 = sum(block) & 0xFFFF
+        s2 = sum((len(block) - i) * v for i, v in enumerate(block)) & 0xFFFF
+        return s1 | s2 << 16
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as a:
+            fx = cells._touched_fixtures(Path(a))["tb-full"]
+            cls.src = (fx / "src/base.bin").read_bytes()
+            cls.basis = (fx / "pre/base.bin").read_bytes()
+        n, src = cls.BLOCK, cls._signed(cls.src)
+        sbasis = cls._signed(cls.basis)
+        blocks: dict[int, list[int]] = {}
+        for i in range(0, len(sbasis), n):
+            blocks.setdefault(cls._weak(sbasis[i:i + n]), []).append(i // n)
+        s1 = sum(src[:n]) & 0xFFFF
+        s2 = sum((n - i) * v for i, v in enumerate(src[:n])) & 0xFFFF
+        cls.hits = []
+        for k in range(len(src) - n + 1):
+            if k:
+                s1 = (s1 - src[k - 1] + src[k + n - 1]) & 0xFFFF
+                s2 = (s2 - n * src[k - 1] + s1) & 0xFFFF
+            cls.hits += [(k, i) for i in blocks.get(s1 | s2 << 16, ())]
+
+    def _false_matches(self, seed: int) -> list[tuple[int, int]]:
+        # proper_seed_order (compat.c:759): the seed precedes the data.
+        prefix = seed.to_bytes(4, "little")
+        n, out = self.BLOCK, []
+        for k, i in self.hits:
+            a = hashlib.md5(prefix + self.src[k:k + n]).digest()[:self.S2LENGTH]
+            b = hashlib.md5(prefix + self.basis[i * n:(i + 1) * n]).digest()[:self.S2LENGTH]
+            if a == b:
+                out.append((k, i))
+        return out
+
+    def test_pinned_seed_takes_no_false_match_on_tb_full(self):
+        self.assertTrue(self.hits, "no weak-sum hit: the model cannot tell seeds apart")
+        self.assertIn(f"--checksum-seed={cells.TOUCHED_CHECKSUM_SEED}", cells.DELTA_INPLACE)
+        self.assertEqual(self._false_matches(cells.TOUCHED_CHECKSUM_SEED), [])
+
+    def test_a_known_bad_seed_is_detected(self):
+        # Seed 9209 made upstream and oc both redo tb-full on a 3.5.1 daemon.
+        self.assertNotEqual(self._false_matches(9209), [])
 
 
 class RunInteropWiringTest(unittest.TestCase):
