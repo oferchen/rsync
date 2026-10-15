@@ -111,7 +111,10 @@ fn chown_path(
 /// upstream: rsync.c:685-687 - `change_uid ? "chown" : "chgrp"`, where
 /// `change_uid` compares the wanted owner with the current one (rsync.c:655).
 #[cfg(unix)]
-fn ownership_context(owner: Option<unix_fs::Uid>, current: Option<&fs::Metadata>) -> &'static str {
+fn ownership_context(
+    owner: Option<unix_fs::Uid>,
+    current: Option<&fast_io::EntryMetadata>,
+) -> &'static str {
     let changes_owner =
         owner.is_some_and(|uid| current.is_none_or(|meta| meta.uid() != uid.as_raw()));
     if changes_owner {
@@ -152,7 +155,7 @@ fn trace_chown_change(
     destination: &Path,
     owner: Option<unix_fs::Uid>,
     group: Option<unix_fs::Gid>,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) {
     let path = destination.display().to_string();
     if let Some(new_uid) = owner {
@@ -230,7 +233,7 @@ fn post_chown_bookkeeping(
     destination: &Path,
     owner: Option<unix_fs::Uid>,
     group: Option<unix_fs::Gid>,
-    pre_chown: Option<&fs::Metadata>,
+    pre_chown: Option<&fast_io::EntryMetadata>,
 ) -> bool {
     if id_is_impossible(
         owner.map(|uid| uid.as_raw()),
@@ -536,7 +539,7 @@ pub(super) fn resolve_ownership(
 pub(super) fn ownership_matches(
     owner: &Option<unix_fs::Uid>,
     group: &Option<unix_fs::Gid>,
-    existing: &fs::Metadata,
+    existing: &fast_io::EntryMetadata,
 ) -> bool {
     let uid_ok = match owner {
         Some(uid) => uid.as_raw() == existing.uid(),
@@ -569,7 +572,7 @@ pub(super) fn set_owner_like(
     destination: &Path,
     follow_symlinks: bool,
     options: &MetadataOptions,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<bool, MetadataError> {
     #[cfg(unix)]
     {
@@ -643,7 +646,7 @@ pub(super) fn set_owner_like_with_fd(
     destination: &Path,
     options: &MetadataOptions,
     fd: BorrowedFd<'_>,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<bool, MetadataError> {
     // upstream: xattrs.c:set_stat_xattr() under am_root < 0 - skip fchown.
     if options.fake_super_enabled()
@@ -694,7 +697,7 @@ pub(super) fn apply_ownership_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<bool, MetadataError> {
     use rustix::process::{RawGid, RawUid};
@@ -799,7 +802,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     if !options.owner()
         && !options.group()
@@ -968,7 +971,7 @@ pub(super) fn apply_ownership_from_entry(
     _destination: &Path,
     _entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    _cached_meta: Option<&fs::Metadata>,
+    _cached_meta: Option<&fast_io::EntryMetadata>,
     _parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<bool, MetadataError> {
     super::platform_warn::warn_ownership_unsupported(options);
@@ -1010,9 +1013,9 @@ mod own_debug_tests {
             .collect()
     }
 
-    fn fake_existing(path: &PathBuf) -> fs::Metadata {
+    fn fake_existing(path: &PathBuf) -> fast_io::EntryMetadata {
         fs::write(path, b"").expect("write probe");
-        fs::metadata(path).expect("probe metadata")
+        fs::metadata(path).expect("probe metadata").into()
     }
 
     #[test]
@@ -1366,7 +1369,7 @@ mod post_chown_tests {
 
         let plain = dir.path().join("plain");
         fs::write(&plain, b"x").expect("write plain");
-        let plain_meta = fs::metadata(&plain).expect("stat plain");
+        let plain_meta = fast_io::EntryMetadata::from(fs::metadata(&plain).expect("stat plain"));
         assert!(
             !post_chown_bookkeeping(&plain, None, None, Some(&plain_meta)),
             "a plain file must not force a re-stat"
@@ -1375,7 +1378,7 @@ mod post_chown_tests {
         let suid = dir.path().join("suid");
         fs::write(&suid, b"x").expect("write suid");
         fs::set_permissions(&suid, fs::Permissions::from_mode(0o4755)).expect("chmod suid");
-        let suid_meta = fs::metadata(&suid).expect("stat suid");
+        let suid_meta = fast_io::EntryMetadata::from(fs::metadata(&suid).expect("stat suid"));
         if suid_meta.mode() & 0o4000 == 0 {
             // The filesystem refused to retain the setuid bit for this user;
             // the pure predicate is still covered by the tests above.

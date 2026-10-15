@@ -468,9 +468,9 @@ fn existing_special_matches(
     };
     if is_device {
         let type_ok = if entry.is_block_device() {
-            meta.is_block_device()
+            meta.file_type().is_block_device()
         } else {
-            meta.is_char_device()
+            meta.file_type().is_char_device()
         };
         type_ok
             && meta.rdev()
@@ -479,8 +479,8 @@ fn existing_special_matches(
                     entry.rdev_minor().unwrap_or(0),
                 )
     } else if entry.file_type() == FileType::Socket {
-        meta.is_socket()
+        meta.file_type().is_socket()
     } else {
-        meta.is_fifo()
+        meta.file_type().is_fifo()
     }
 }

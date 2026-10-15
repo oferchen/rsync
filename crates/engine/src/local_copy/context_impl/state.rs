@@ -439,7 +439,7 @@ impl<'a> CopyContext<'a> {
             destination,
             metadata,
             &metadata_options,
-            pre_transfer_meta,
+            pre_transfer_meta.cloned().map(fast_io::EntryMetadata::from).as_ref(),
         )
         .map_err(map_metadata_error)?;
 
@@ -454,7 +454,7 @@ impl<'a> CopyContext<'a> {
                     ::metadata::apply_file_metadata_with_fd_if_changed(
                         destination,
                         metadata,
-                        &existing,
+                        &fast_io::EntryMetadata::from(existing.clone()),
                         &metadata_options,
                         fd,
                     )
@@ -478,7 +478,7 @@ impl<'a> CopyContext<'a> {
                 ::metadata::apply_file_metadata_if_changed(
                     destination,
                     metadata,
-                    &existing,
+                    &fast_io::EntryMetadata::from(existing.clone()),
                     &metadata_options,
                 )
                 .map_err(map_metadata_error)?;

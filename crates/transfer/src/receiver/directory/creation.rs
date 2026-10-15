@@ -126,7 +126,7 @@ impl ReceiverContext {
         dir_path: &Path,
         entry: &FileEntry,
         metadata_opts: &MetadataOptions,
-        pre_transfer: Option<&fs::Metadata>,
+        pre_transfer: Option<&fast_io::EntryMetadata>,
     ) {
         if metadata_opts.permissions() || metadata_opts.fake_super_enabled() || metadata::am_root()
         {
@@ -612,48 +612,49 @@ impl ReceiverContext {
         let preserve_perms = metadata_opts.permissions();
         #[cfg(unix)]
         let fake_super = metadata_opts.fake_super_enabled();
-        let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>, Option<fs::Metadata>)> =
-            dir_entries
-                .into_iter()
-                .zip(dir_was_new.iter().copied())
-                .filter(|((_, _, dir_path), _)| {
-                    !failed_dir_paths.contains(dir_path)
-                        && !skipped_existing_dirs.contains(dir_path)
-                })
-                .map(|((idx, _, dir_path), is_new)| {
-                    let entry = &self.file_list[idx];
-                    let xattr_list = self.resolve_xattr_list(entry);
-                    // `mut` is only exercised by the Unix transient-writable-mode
-                    // grant below; on other platforms the clone is never mutated.
-                    #[cfg_attr(not(unix), allow(unused_mut))]
-                    let mut entry = entry.clone();
-                    #[cfg(unix)]
-                    if dir_needs_writable_transfer_mode(
-                        preserve_perms,
-                        fake_super,
-                        entry.permissions(),
-                    ) {
-                        entry.set_mode(entry.mode() | 0o700);
-                    }
-                    // upstream: generator.c:1856 dest_mode(..., statret == 0) -
-                    // an existing dir keeps its own perms (exists=true), a new
-                    // dir gets the source mode masked by dflt_perms
-                    // (exists=false). Supply the pre-transfer stat only for a
-                    // dir that already existed so the !perms dest_mode() apply
-                    // takes the exists=true branch and never rewrites its bits.
-                    let pre_transfer = if is_new {
-                        None
-                    } else {
-                        pre_transfer_stat(
-                            #[cfg(unix)]
-                            sandbox,
-                            dest_dir,
-                            &dir_path,
-                        )
-                    };
-                    (dir_path, entry, xattr_list, pre_transfer)
-                })
-                .collect();
+        let entry_snapshots: Vec<(
+            PathBuf,
+            FileEntry,
+            Option<XattrList>,
+            Option<fast_io::EntryMetadata>,
+        )> = dir_entries
+            .into_iter()
+            .zip(dir_was_new.iter().copied())
+            .filter(|((_, _, dir_path), _)| {
+                !failed_dir_paths.contains(dir_path) && !skipped_existing_dirs.contains(dir_path)
+            })
+            .map(|((idx, _, dir_path), is_new)| {
+                let entry = &self.file_list[idx];
+                let xattr_list = self.resolve_xattr_list(entry);
+                // `mut` is only exercised by the Unix transient-writable-mode
+                // grant below; on other platforms the clone is never mutated.
+                #[cfg_attr(not(unix), allow(unused_mut))]
+                let mut entry = entry.clone();
+                #[cfg(unix)]
+                if dir_needs_writable_transfer_mode(preserve_perms, fake_super, entry.permissions())
+                {
+                    entry.set_mode(entry.mode() | 0o700);
+                }
+                // upstream: generator.c:1856 dest_mode(..., statret == 0) -
+                // an existing dir keeps its own perms (exists=true), a new
+                // dir gets the source mode masked by dflt_perms
+                // (exists=false). Supply the pre-transfer stat only for a
+                // dir that already existed so the !perms dest_mode() apply
+                // takes the exists=true branch and never rewrites its bits.
+                let pre_transfer = if is_new {
+                    None
+                } else {
+                    pre_transfer_stat(
+                        #[cfg(unix)]
+                        sandbox,
+                        dest_dir,
+                        &dir_path,
+                    )
+                    .map(fast_io::EntryMetadata::from)
+                };
+                (dir_path, entry, xattr_list, pre_transfer)
+            })
+            .collect();
         // upstream: generator.c:1904-1912 + generator.c:2594 - the
         // !preserve_perms metadata apply raises a directory lacking owner-rwx;
         // record which strict modes touch_up_dirs must reinstate BEFORE the
@@ -1158,6 +1159,7 @@ impl ReceiverContext {
                 dest_dir,
                 dir_path,
             )
+            .map(fast_io::EntryMetadata::from)
         };
         // upstream: generator.c:1904-1912 + generator.c:2594 - record the
         // strict mode touch_up_dirs must reinstate before the !preserve_perms
@@ -1373,7 +1375,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             let needs_update =
                 super::dest_lstat(sandbox, dest_dir, &dir_path, true).is_ok_and(|meta| {
-                    let (secs, nanos) = meta.mtime();
+                    let (secs, nanos) = (meta.mtime(), meta.mtime_nsec());
                     filetime::FileTime::from_unix_time(secs, nanos as u32) != mtime
                 });
             #[cfg(not(unix))]

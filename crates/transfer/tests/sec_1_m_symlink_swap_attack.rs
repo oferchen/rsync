@@ -62,7 +62,7 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use fast_io::{
-    DirSandbox, LstatOutcome, UnlinkFlags, lstat_via_sandbox_or_fallback,
+    DirSandbox, EntryMetadata, UnlinkFlags, lstat_via_sandbox_or_fallback,
     symlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback,
 };
 
@@ -167,7 +167,7 @@ fn scenario_1_lstat_race_does_not_follow_swapped_symlink_outside_sandbox() {
     attacker.join().expect("attacker join");
 
     match outcome {
-        Ok(LstatOutcome::At(meta)) => {
+        Ok(EntryMetadata::At(meta)) => {
             // Two valid interleavings:
             // - receiver won the race: meta describes the original
             //   regular file.
@@ -180,7 +180,7 @@ fn scenario_1_lstat_race_does_not_follow_swapped_symlink_outside_sandbox() {
                  sensitive target"
             );
         }
-        Ok(LstatOutcome::Std(meta)) => {
+        Ok(EntryMetadata::Std(meta)) => {
             // Single-component leaf should normally take the
             // sandbox-anchored path; the Std arm is reserved for
             // multi-component fallback. Accept it for forward
@@ -373,13 +373,13 @@ fn scenario_3_repeated_race_keeps_sensitive_tree_untouched() {
         let stat_outcome =
             lstat_via_sandbox_or_fallback(Some(&sandbox), &dest, Path::new(leaf_name), &leaf_path);
         match stat_outcome {
-            Ok(LstatOutcome::At(meta)) => {
+            Ok(EntryMetadata::At(meta)) => {
                 assert!(
                     meta.is_file() || meta.is_symlink(),
                     "iter sandbox lstat must describe the leaf, never the sensitive target"
                 );
             }
-            Ok(LstatOutcome::Std(meta)) => {
+            Ok(EntryMetadata::Std(meta)) => {
                 assert!(
                     meta.is_file() || meta.is_symlink(),
                     "iter fallback lstat must describe the leaf, never the sensitive target"

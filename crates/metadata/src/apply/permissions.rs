@@ -189,11 +189,9 @@ fn default_perms_seed(parent: Option<&Path>) -> u32 {
 fn compute_dest_mode(
     source_mode: u32,
     is_new: bool,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     dest_parent: Option<&Path>,
 ) -> Option<u32> {
-    use std::os::unix::fs::PermissionsExt;
-
     if is_new {
         // upstream: dest_mode() for new files:
         // new_mode = flist_mode & (~CHMOD_BITS | dflt_perms)
@@ -204,11 +202,11 @@ fn compute_dest_mode(
             // inherited S_ISGID from a setgid parent keeps that bit even when
             // !preserve_perms strips it out of the dest_mode() result:
             // `if (inherit && S_ISDIR(new_mode) && sxp->st.st_mode & S_ISGID)`.
-            if existing.file_type().is_dir() && (existing.permissions().mode() & 0o2000) != 0 {
+            if existing.file_type().is_dir() && (existing.mode() & 0o2000) != 0 {
                 new_mode |= 0o2000;
             }
             // Skip the chmod if the mode already matches
-            if (existing.permissions().mode() & 0o7777) == (new_mode & 0o7777) {
+            if (existing.mode() & 0o7777) == (new_mode & 0o7777) {
                 return None;
             }
         }
@@ -217,7 +215,7 @@ fn compute_dest_mode(
         // upstream: dest_mode() for existing files returns
         // (flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)
         // which keeps existing permissions. No chmod needed.
-        let stat_mode = existing.permissions().mode();
+        let stat_mode = existing.mode();
         let new_mode = (source_mode & !0o7777) | (stat_mode & 0o7777);
         if (new_mode & 0o7777) != (stat_mode & 0o7777) {
             Some(new_mode)
@@ -253,7 +251,7 @@ pub fn apply_dest_mode_pre_transfer(
     destination: &Path,
     source_metadata: &fs::Metadata,
     options: &MetadataOptions,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -304,15 +302,13 @@ pub fn apply_dest_mode_pre_transfer(
 #[cfg(unix)]
 fn dest_mode_for_existing_or_new(
     entry: &protocol::flist::FileEntry,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-
     let source_mode = entry.permissions();
     if let Some(existing) = pre_transfer_meta {
         // Existing file: `(flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)`
         // - keep the destination's prior permission bits.
-        let stat_mode = existing.permissions().mode();
+        let stat_mode = existing.mode();
         (source_mode & !0o7777) | (stat_mode & 0o7777)
     } else {
         // New file: `flist_mode & (~CHMOD_BITS | dflt_perms)` so exec bits
@@ -380,9 +376,8 @@ pub(super) fn set_permissions_like(
 /// `existing`, comparing only the lower 12 bits (suid/sgid/sticky + rwx).
 /// upstream: rsync.c:set_file_attrs() - skips chmod when mode already matches
 #[cfg(unix)]
-pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    (existing.permissions().mode() & 0o7777) == (target_mode & 0o7777)
+pub(super) fn permissions_match(target_mode: u32, existing: &fast_io::EntryMetadata) -> bool {
+    (existing.mode() & 0o7777) == (target_mode & 0o7777)
 }
 
 /// Applies the fake-super permission deflection for a computed mode.
@@ -410,7 +405,7 @@ fn apply_fake_super_mode(
     fmode: u32,
     is_dir: bool,
     options: &MetadataOptions,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     const ACCESSPERMS: u32 = 0o777;
     const S_IFMT: u32 = 0o170000;
@@ -499,7 +494,7 @@ pub(super) fn apply_permissions_with_chmod(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     // upstream: rsync.c:808 set_file_attrs() - under fake-super (am_root<0)
     // the intended mode is deflected into the xattr and the real mode is forced
@@ -632,7 +627,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
     metadata: &fs::Metadata,
     options: &MetadataOptions,
     fd: Option<BorrowedFd<'_>>,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -824,9 +819,9 @@ fn chmod_symlink_leaf(destination: &Path, mode: u32, options: &MetadataOptions) 
 #[cfg(unix)]
 fn symlink_pre_transfer_stat<'a>(
     options: &MetadataOptions,
-    current: &'a fs::Metadata,
-    explicit: Option<&'a fs::Metadata>,
-) -> Option<&'a fs::Metadata> {
+    current: &'a fast_io::EntryMetadata,
+    explicit: Option<&'a fast_io::EntryMetadata>,
+) -> Option<&'a fast_io::EntryMetadata> {
     if options.destination_is_new() {
         None
     } else {
@@ -878,7 +873,7 @@ fn symlink_target_mode(
     destination: &Path,
     source_mode: u32,
     options: &MetadataOptions,
-    pre_transfer: Option<&fs::Metadata>,
+    pre_transfer: Option<&fast_io::EntryMetadata>,
 ) -> u32 {
     chmod_tweaked_dest_mode(
         None, // !S_ISLNK: --chmod never reaches a link
@@ -909,17 +904,15 @@ pub(super) fn apply_symlink_permissions_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<&fs::Metadata>,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     if crate::CAN_CHMOD_SYMLINK {
-        use std::os::unix::fs::PermissionsExt;
-
         let owned_meta;
         let meta = match cached_meta {
             Some(meta) => meta,
-            None => match fs::symlink_metadata(destination) {
+            None => match fs::symlink_metadata(destination).map(fast_io::EntryMetadata::from) {
                 Ok(meta) => {
                     owned_meta = meta;
                     &owned_meta
@@ -927,7 +920,7 @@ pub(super) fn apply_symlink_permissions_from_entry(
                 Err(_) => return Ok(()),
             },
         };
-        let current = meta.permissions().mode() & 0o7777;
+        let current = meta.mode() & 0o7777;
         let target = symlink_target_mode(
             destination,
             entry.mode(),
@@ -964,17 +957,17 @@ pub(super) fn apply_symlink_permissions_like(
     destination: &Path,
     source_metadata: &fs::Metadata,
     options: &MetadataOptions,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     if crate::CAN_CHMOD_SYMLINK {
         use std::os::unix::fs::PermissionsExt;
 
-        let meta = match fs::symlink_metadata(destination) {
+        let meta = match fs::symlink_metadata(destination).map(fast_io::EntryMetadata::from) {
             Ok(meta) => meta,
             Err(_) => return Ok(()),
         };
-        let current = meta.permissions().mode() & 0o7777;
+        let current = meta.mode() & 0o7777;
         let source = source_metadata.permissions().mode();
         let target = symlink_target_mode(
             destination,
@@ -1006,7 +999,7 @@ fn intended_fake_super_mode(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<u32, MetadataError> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -1066,7 +1059,7 @@ pub(super) fn chmod_directory_target_mode(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<Option<u32>, MetadataError> {
     let Some(modifiers) = options.chmod() else {
         return Ok(None);
@@ -1111,7 +1104,7 @@ pub(super) fn directory_dest_mode(
     destination: &Path,
     source_mode: u32,
     options: &MetadataOptions,
-    pre_transfer: Option<&fs::Metadata>,
+    pre_transfer: Option<&fast_io::EntryMetadata>,
 ) -> u32 {
     chmod_tweaked_dest_mode(
         options.chmod(),
@@ -1149,10 +1142,8 @@ fn chmod_tweaked_dest_mode(
     source_is_dir: bool,
     source_is_regular: bool,
     options: &MetadataOptions,
-    pre_transfer: Option<&fs::Metadata>,
+    pre_transfer: Option<&fast_io::EntryMetadata>,
 ) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-
     let tweaked = match modifiers {
         Some(modifiers) => modifiers.apply(source_mode, source_is_dir),
         None => source_mode,
@@ -1167,7 +1158,7 @@ fn chmod_tweaked_dest_mode(
     if let Some(existing) = pre_transfer {
         // upstream: rsync.c:470-480 - an existing destination keeps its own
         // permission bits with the type bits from the (tweaked) flist mode.
-        let mut new_mode = (tweaked & !0o7777) | (existing.permissions().mode() & 0o7777);
+        let mut new_mode = (tweaked & !0o7777) | (existing.mode() & 0o7777);
         if options.executability() && source_is_regular {
             // upstream: rsync.c:472-480 dest_mode() - for existing regular
             // files only, copy the (tweaked) source's exec presence: if it
@@ -1196,7 +1187,7 @@ fn apply_permissions_without_chmod(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     let _ = &existing; // used only on unix
     if options.permissions() {
@@ -1217,7 +1208,7 @@ fn apply_permissions_without_chmod(
             use std::os::unix::fs::PermissionsExt;
 
             let mut destination_permissions = if let Some(existing) = existing {
-                existing.permissions().mode()
+                existing.mode()
             } else {
                 fs::metadata(destination)
                     .map_err(|error| {
@@ -1278,14 +1269,12 @@ pub(super) fn apply_permissions_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<&fs::Metadata>,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-
         if !options.permissions() && !options.executability() && options.chmod().is_none() {
             // upstream: receiver.c:1198-1209 - even when `!preserve_perms` and
             // `!preserve_executability`, the receiver mutates `file->mode` via
@@ -1322,12 +1311,18 @@ pub(super) fn apply_permissions_from_entry(
                 let current_meta = if let Some(meta) = cached_meta {
                     meta
                 } else {
-                    fresh_meta = fs::metadata(destination).map_err(|error| {
-                        MetadataError::new("inspect destination permissions", destination, error)
-                    })?;
+                    fresh_meta = fs::metadata(destination)
+                        .map(fast_io::EntryMetadata::from)
+                        .map_err(|error| {
+                            MetadataError::new(
+                                "inspect destination permissions",
+                                destination,
+                                error,
+                            )
+                        })?;
                     &fresh_meta
                 };
-                if (current_meta.permissions().mode() & 0o7777) != (new_mode & 0o7777) {
+                if (current_meta.mode() & 0o7777) != (new_mode & 0o7777) {
                     // upstream: syscall.c:do_chmod():1745-1746 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs() continues.
@@ -1359,12 +1354,18 @@ pub(super) fn apply_permissions_from_entry(
                 let current_meta = if let Some(meta) = cached_meta {
                     meta
                 } else {
-                    fresh_meta = fs::metadata(destination).map_err(|error| {
-                        MetadataError::new("inspect destination permissions", destination, error)
-                    })?;
+                    fresh_meta = fs::metadata(destination)
+                        .map(fast_io::EntryMetadata::from)
+                        .map_err(|error| {
+                            MetadataError::new(
+                                "inspect destination permissions",
+                                destination,
+                                error,
+                            )
+                        })?;
                     &fresh_meta
                 };
-                let current_mode = current_meta.permissions().mode();
+                let current_mode = current_meta.mode();
                 // upstream: rsync.c:641-645 - a freshly-created dir (no
                 // pre-transfer stat) that inherited S_ISGID from a setgid
                 // parent keeps that bit even though dest_mode() dropped it.
@@ -1410,7 +1411,7 @@ pub(super) fn apply_permissions_from_entry(
             let mode = entry.permissions();
             // upstream: rsync.c:set_file_attrs() - skips chmod when mode already matches
             let needs_chmod = match cached_meta {
-                Some(meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
+                Some(meta) => (meta.mode() & 0o7777) != (mode & 0o7777),
                 None => true,
             };
 
@@ -1445,16 +1446,18 @@ pub(super) fn apply_permissions_from_entry(
             let fresh_meta;
             let current_meta = if options.permissions() && perms_changed {
                 fresh_meta = fs::metadata(destination)
+                    .map(fast_io::EntryMetadata::from)
                     .map_err(|error| MetadataError::new("read permissions", destination, error))?;
                 &fresh_meta
             } else if let Some(meta) = cached_meta {
                 meta
             } else {
                 fresh_meta = fs::metadata(destination)
+                    .map(fast_io::EntryMetadata::from)
                     .map_err(|error| MetadataError::new("read permissions", destination, error))?;
                 &fresh_meta
             };
-            let current_mode = current_meta.permissions().mode();
+            let current_mode = current_meta.mode();
 
             // The exists split consumes the PRE-transfer destination stat
             // (upstream receiver.c:1198-1209 judges `exists` by the basis
@@ -1511,12 +1514,14 @@ pub(super) fn apply_permissions_from_entry(
             let current_meta = if let Some(meta) = cached_meta {
                 meta
             } else {
-                fresh_meta = fs::metadata(destination).map_err(|error| {
-                    MetadataError::new("inspect destination permissions", destination, error)
-                })?;
+                fresh_meta = fs::metadata(destination)
+                    .map(fast_io::EntryMetadata::from)
+                    .map_err(|error| {
+                        MetadataError::new("inspect destination permissions", destination, error)
+                    })?;
                 &fresh_meta
             };
-            if (current_meta.permissions().mode() & 0o7777) != destination_permissions {
+            if (current_meta.mode() & 0o7777) != destination_permissions {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
                 // mirror upstream `generator.c:1745`.
@@ -1788,7 +1793,7 @@ mod tests {
             std::fs::write(&link, b"x").expect("write");
             std::fs::set_permissions(&link, std::fs::Permissions::from_mode(dest_bits))
                 .expect("seed dest bits");
-            let on_disk = std::fs::metadata(&link).expect("meta");
+            let on_disk = fast_io::EntryMetadata::from(std::fs::metadata(&link).expect("meta"));
 
             for (exec, label) in [(false, "no -p, no -E"), (true, "-E, no -p")] {
                 let opts = symlink_opts(false, exec, false);
@@ -1868,21 +1873,23 @@ mod tests {
             .expect("seed current");
         std::fs::set_permissions(&obstacle_path, std::fs::Permissions::from_mode(0o600))
             .expect("seed obstacle");
-        let current = std::fs::metadata(&current_path).expect("current meta");
-        let obstacle = std::fs::metadata(&obstacle_path).expect("obstacle meta");
+        let current =
+            fast_io::EntryMetadata::from(std::fs::metadata(&current_path).expect("current meta"));
+        let obstacle =
+            fast_io::EntryMetadata::from(std::fs::metadata(&obstacle_path).expect("obstacle meta"));
 
         let existing = symlink_opts(false, false, false);
         let got = symlink_pre_transfer_stat(&existing, &current, Some(&obstacle))
             .expect("existing destination has a pre-transfer stat");
         assert_eq!(
-            got.permissions().mode() & 0o7777,
+            got.mode() & 0o7777,
             0o600,
             "a replaced destination must hand dest_mode() the obstacle's bits"
         );
         let got = symlink_pre_transfer_stat(&existing, &current, None)
             .expect("existing destination has a pre-transfer stat");
         assert_eq!(
-            got.permissions().mode() & 0o7777,
+            got.mode() & 0o7777,
             0o755,
             "with nothing replaced, the current stat is its own pre-transfer stat"
         );
@@ -1933,7 +1940,7 @@ mod tests {
         std::fs::create_dir(&dest).expect("create dir");
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o555))
             .expect("seed dest bits");
-        let on_disk = std::fs::metadata(&dest).expect("meta");
+        let on_disk = fast_io::EntryMetadata::from(std::fs::metadata(&dest).expect("meta"));
         let opts = MetadataOptions::new()
             .preserve_permissions(false)
             .preserve_times(false);

@@ -653,7 +653,12 @@ fn best_reference_match<'a>(
         // upstream: generator.c:1096 - unchanged_attrs() distinguishes level 3
         // (every preserved attr equal) from level 2 (content matches, attrs
         // differ). `metadata_unchanged` is oc's `unchanged_attrs` equivalent.
-        let level = if metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
+        let level = if metadata_unchanged(
+            entry,
+            metadata_opts,
+            &fast_io::EntryMetadata::from(ref_meta.clone()),
+            modify_window,
+        ) {
             MatchLevel::Exact
         } else {
             MatchLevel::Content
@@ -941,7 +946,12 @@ pub(super) fn try_reference_dest_non(
         }
         // upstream: generator.c:1241 - unchanged_attrs() promotes to match_level
         // 3; `metadata_unchanged` is oc's equivalent.
-        if !metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
+        if !metadata_unchanged(
+            entry,
+            metadata_opts,
+            &fast_io::EntryMetadata::from(ref_meta.clone()),
+            modify_window,
+        ) {
             return None;
         }
         Some((ref_dir.kind, ref_path))
@@ -1005,7 +1015,12 @@ fn apply_altdest_metadata(
     acl_id_map: Option<&AclIdMapper>,
 ) {
     let cached_meta = fs::symlink_metadata(dest_path).ok();
-    if let Err(e) = apply_metadata_with_cached_stat(dest_path, entry, metadata_opts, cached_meta) {
+    if let Err(e) = apply_metadata_with_cached_stat(
+        dest_path,
+        entry,
+        metadata_opts,
+        cached_meta.map(fast_io::EntryMetadata::from),
+    ) {
         metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
     }
     if let Err(e) = apply_acls_from_receiver_cache(

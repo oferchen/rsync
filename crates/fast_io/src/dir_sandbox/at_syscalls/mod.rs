@@ -52,8 +52,7 @@ pub use create::{
 };
 pub(crate) use create::{fake_super_placeholder_at, mknodat_with_retry};
 pub use lstat::{
-    LstatOutcome, lstat_via_sandbox_or_fallback, metadata_via_sandbox_or_fallback,
-    stat_via_sandbox_or_fallback,
+    lstat_via_sandbox_or_fallback, metadata_via_sandbox_or_fallback, stat_via_sandbox_or_fallback,
 };
 pub use metadata::{AtMetadata, fstatat_follow, fstatat_nofollow};
 pub use metadata_ops::{

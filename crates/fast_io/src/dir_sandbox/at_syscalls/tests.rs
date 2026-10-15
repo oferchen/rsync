@@ -4,6 +4,7 @@
 //! they exercise both the sandbox-anchored fast path and the
 //! path-based fallback for every SEC-1 cutover family.
 
+use crate::EntryMetadata;
 use std::os::fd::AsFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
@@ -87,7 +88,7 @@ fn lstat_via_sandbox_takes_at_path_for_single_component() {
     let leaf = Path::new("file");
     let link = root.join(leaf);
     let outcome = lstat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &link).expect("lstat");
-    assert!(matches!(outcome, LstatOutcome::At(_)));
+    assert!(matches!(outcome, EntryMetadata::At(_)));
 }
 
 #[test]
@@ -110,12 +111,12 @@ fn lstat_via_sandbox_multi_component_anchors_or_falls_back() {
 
     if nested_anchor_live() {
         assert!(
-            matches!(outcome, LstatOutcome::At(_)),
+            matches!(outcome, EntryMetadata::At(_)),
             "multi-component paths must anchor beneath the sandbox root wherever anchoring is available"
         );
     } else {
         assert!(
-            matches!(outcome, LstatOutcome::Std(_)),
+            matches!(outcome, EntryMetadata::Std(_)),
             "multi-component paths degrade to the path-based fallback on a Linux kernel without openat2"
         );
     }
@@ -133,7 +134,7 @@ fn lstat_via_sandbox_falls_back_when_sandbox_absent() {
     let leaf = Path::new("file");
     let link = root.join(leaf);
     let outcome = lstat_via_sandbox_or_fallback(None, &root, leaf, &link).expect("lstat");
-    assert!(matches!(outcome, LstatOutcome::Std(_)));
+    assert!(matches!(outcome, EntryMetadata::Std(_)));
 }
 
 #[test]

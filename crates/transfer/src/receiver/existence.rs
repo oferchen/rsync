@@ -154,7 +154,7 @@ fn non_regular_exists_reason(
     if metadata_unchanged(
         entry,
         &options,
-        meta,
+        &fast_io::EntryMetadata::from(meta.clone()),
         context.config.file_selection.modify_window,
     ) {
         " (uptodate)"

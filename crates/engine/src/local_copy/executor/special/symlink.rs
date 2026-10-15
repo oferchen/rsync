@@ -765,7 +765,10 @@ pub(crate) fn copy_symlink(
         destination,
         metadata,
         &symlink_options,
-        pre_transfer_metadata.as_ref(),
+        pre_transfer_metadata
+            .clone()
+            .map(fast_io::EntryMetadata::from)
+            .as_ref(),
     )
     .map_err(map_metadata_error)?;
 

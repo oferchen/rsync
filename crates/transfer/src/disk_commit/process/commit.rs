@@ -76,7 +76,7 @@ pub(super) fn open_dest_for_write(_env: BackupEnv<'_>, path: &Path) -> io::Resul
 /// Stats `path` beneath the destination sandbox when it lies inside the
 /// destination tree, following a leaf symlink when `follow` is set.
 #[cfg(unix)]
-fn dest_stat(env: BackupEnv<'_>, path: &Path, follow: bool) -> io::Result<fast_io::LstatOutcome> {
+fn dest_stat(env: BackupEnv<'_>, path: &Path, follow: bool) -> io::Result<fast_io::EntryMetadata> {
     let (sandbox, dest_dir, relative) = env
         .anchor(path)
         .map_or((None, path, Path::new("")), |(s, d, r)| (Some(s), d, r));

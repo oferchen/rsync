@@ -115,6 +115,9 @@ pub mod container;
 /// path TOCTOU naturally (see the SEC-1.l audit).
 #[cfg(unix)]
 pub mod dir_sandbox;
+/// Metadata from whichever stat answered: `fstatat` or the path-based call.
+pub mod entry_metadata;
+pub use entry_metadata::{EntryFileType, EntryMetadata};
 /// Unix-only: ownership-walk resolution for a sender's `--files-from`
 /// entries, mirroring upstream `filesfrom_link_stat()` (`flist.c:400`).
 #[cfg(unix)]
@@ -422,9 +425,9 @@ pub use confined_open::{
 pub use confined_readdir::read_dir_confined;
 #[cfg(unix)]
 pub use dir_sandbox::{
-    AtMetadata, CloneAttempt, CloneFreshTimes, DirEntryView, DirSandbox, EntryKind, LstatOutcome,
-    ReadDirOutcome, UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new,
-    confined_link_anonymous, confined_rename, copy_then_unlink_via_sandbox_or_fallback,
+    AtMetadata, CloneAttempt, CloneFreshTimes, DirEntryView, DirSandbox, EntryKind, ReadDirOutcome,
+    UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new, confined_link_anonymous,
+    confined_rename, copy_then_unlink_via_sandbox_or_fallback,
     create_dir_all_via_sandbox_or_fallback, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
     fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
     linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback,
