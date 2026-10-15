@@ -56,8 +56,8 @@ and transfer-mode combinations:
 
 | upstream rsync | protocol | mode (push/pull/daemon)  | status (CI-verified) |
 |----------------|----------|--------------------------|----------------------|
-| 2.6.9          | 29       | push (daemon)            | non-blocking (RP28.c) |
-| 2.6.9          | 29       | pull (daemon)            | non-blocking (RP28.d) |
+| 2.6.3          | 28       | push, pull, daemon       | gating |
+| 2.6.9          | 29       | push, pull, daemon       | gating |
 | 3.0.9          | 30       | push, pull, daemon       | gating |
 | 3.1.3          | 31       | push, pull, daemon       | gating |
 | 3.4.4          | 32       | push, pull, daemon, SSH  | gating |
