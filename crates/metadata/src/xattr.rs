@@ -121,9 +121,15 @@ fn list_attributes(
     follow_symlinks: bool,
     screen: NamespaceScreen,
 ) -> Result<Vec<Vec<u8>>, MetadataError> {
-    let attrs = backend::list_attributes(path, follow_symlinks)
-        .map_err(|error| map_xattr_error("list extended attributes", path, error))?;
-    Ok(attrs
+    backend::list_attributes(path, follow_symlinks)
+        .map(|names| screen_names(names, screen))
+        .map_err(|error| map_xattr_error("list extended attributes", path, error))
+}
+
+/// Byte-encodes listed xattr names and screens them per `screen` by
+/// [`is_xattr_permitted`].
+fn screen_names(names: Vec<std::ffi::OsString>, screen: NamespaceScreen) -> Vec<Vec<u8>> {
+    names
         .into_iter()
         .map(|name| backend::os_name_to_bytes(&name))
         .filter(|bytes| match screen {
@@ -132,7 +138,7 @@ fn list_attributes(
             }
             NamespaceScreen::Bypass => true,
         })
-        .collect())
+        .collect()
 }
 
 /// Selects the namespace screen for one read.
@@ -298,7 +304,7 @@ pub fn strip_source_xattrs(
     let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
 
     let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
-    for name in list_attributes(destination, follow_symlinks, receiver_screen())? {
+    for name in dest.list(receiver_screen())? {
         if source_names.contains(&name) {
             dest.remove(&name)?;
         }
@@ -400,7 +406,7 @@ pub fn sync_xattrs(
         }
     }
 
-    let destination_attrs = list_attributes(destination, follow_symlinks, screen)?;
+    let destination_attrs = dest.list(screen)?;
     for name in &destination_attrs {
         if retained.contains(name) {
             continue;
@@ -550,7 +556,7 @@ pub fn apply_xattrs_from_list(
     }
 
     // Remove destination xattrs not in the source list
-    let dest_attrs = list_attributes(destination, follow_symlinks, receiver_screen())?;
+    let dest_attrs = dest.list(receiver_screen())?;
     for name in &dest_attrs {
         if !applied_names.contains(name) {
             let name_str = String::from_utf8_lossy(name);
@@ -599,12 +605,35 @@ impl<'a> DestinationXattrs<'a> {
     /// pinned. `None` keeps upstream's path-based arm for a receiver that is
     /// not hardened.
     fn open(path: &'a Path, follow_symlinks: bool, confine_root: Option<&Path>) -> Self {
+        let sink = pin_destination(path, confine_root);
+        #[cfg(unix)]
+        let write_permission = TempWritePermission::grant(path, &sink);
         Self {
             path,
             follow_symlinks,
-            sink: pin_destination(path, confine_root),
+            sink,
             #[cfg(unix)]
-            _write_permission: TempWritePermission::grant(path),
+            _write_permission: write_permission,
+        }
+    }
+
+    /// Lists the destination's attribute names, screened per `screen`.
+    /// upstream: `xattrs.c:1008` - `rsync_xal_set()` lists through
+    /// `get_xattr_names(fname, fd)`, so a held fd is listed with
+    /// `flistxattr` rather than by re-resolving the path.
+    fn list(&self, screen: NamespaceScreen) -> Result<Vec<Vec<u8>>, MetadataError> {
+        match &self.sink {
+            #[cfg(unix)]
+            DestPin::Pinned(file) => crate::xattr_unix::list_attributes_at(file)
+                .map(|names| screen_names(names, screen))
+                .map_err(|error| map_xattr_error("list extended attributes", self.path, error)),
+            // upstream: rsync.c:713-716 - a refused pin skips set_xattr()
+            // entirely, so nothing is listed either.
+            #[cfg(unix)]
+            DestPin::Refused => Ok(Vec::new()),
+            DestPin::Path => list_attributes(self.path, self.follow_symlinks, screen),
+            #[cfg(unix)]
+            DestPin::Parent { .. } => list_attributes(self.path, self.follow_symlinks, screen),
         }
     }
 
@@ -651,9 +680,20 @@ impl<'a> DestinationXattrs<'a> {
 /// makes restoration exception-safe by tying it to `Drop`.
 #[cfg(unix)]
 struct TempWritePermission {
-    path: std::path::PathBuf,
+    target: GrantTarget,
     /// Original permission bits (masked to `CHMOD_BITS`) to restore on drop.
     original_bits: u32,
+}
+
+/// What a [`TempWritePermission`] changes the mode of.
+#[cfg(unix)]
+enum GrantTarget {
+    /// The path, for a destination that is not pinned.
+    Path(std::path::PathBuf),
+    /// The pinned inode. upstream: `xattrs.c:1146-1156` - "With a held fd the
+    /// perm change goes through fchmod() on the pinned inode rather than
+    /// re-resolving the path."
+    Pinned(std::fs::File),
 }
 
 #[cfg(unix)]
@@ -670,13 +710,21 @@ impl TempWritePermission {
     /// `!S_ISLNK`), when the file is already owner-writable, or when the
     /// permission change cannot be applied - matching upstream, which then just
     /// attempts the xattr operation directly.
-    fn grant(path: &Path) -> Option<Self> {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    ///
+    /// A pinned destination is read and changed through its descriptor
+    /// (`fstat`/`fchmod`), so the grant lands on the inode the writes will
+    /// hit; a refused one gets no grant, since nothing will be written.
+    fn grant(path: &Path, sink: &DestPin) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
 
         if crate::am_root() {
             return None;
         }
-        let meta = std::fs::symlink_metadata(path).ok()?;
+        let meta = match sink {
+            DestPin::Pinned(file) => file.metadata().ok()?,
+            DestPin::Refused => return None,
+            DestPin::Path | DestPin::Parent { .. } => std::fs::symlink_metadata(path).ok()?,
+        };
         if meta.file_type().is_symlink() {
             return None;
         }
@@ -684,23 +732,34 @@ impl TempWritePermission {
         if original_bits & Self::S_IWUSR != 0 {
             return None;
         }
-        let relaxed = original_bits | Self::S_IWUSR;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(relaxed)).ok()?;
+        let target = match sink {
+            DestPin::Pinned(file) => GrantTarget::Pinned(file.try_clone().ok()?),
+            _ => GrantTarget::Path(path.to_path_buf()),
+        };
+        target.set_mode(original_bits | Self::S_IWUSR).ok()?;
         Some(Self {
-            path: path.to_path_buf(),
+            target,
             original_bits,
         })
     }
 }
 
 #[cfg(unix)]
+impl GrantTarget {
+    fn set_mode(&self, mode: u32) -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(mode);
+        match self {
+            Self::Path(path) => std::fs::set_permissions(path, permissions),
+            Self::Pinned(file) => file.set_permissions(permissions),
+        }
+    }
+}
+
+#[cfg(unix)]
 impl Drop for TempWritePermission {
     fn drop(&mut self) {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(
-            &self.path,
-            std::fs::Permissions::from_mode(self.original_bits),
-        );
+        let _ = self.target.set_mode(self.original_bits);
     }
 }
 
@@ -2493,6 +2552,148 @@ mod tests {
             landed,
             "an in-tree relative parent symlink must still resolve, or the escape \
              test above proves nothing"
+        );
+    }
+
+    /// A tree whose `sub` directory is swapped for a symlink to `outside`
+    /// after a batch on `sub/target` has been opened: the race the held fd
+    /// exists to lose. Returns `(tempdir, root, in-tree target as moved,
+    /// outside target)`.
+    #[cfg(all(unix, feature = "xattr"))]
+    fn swapped_parent_tree() -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let tmp = test_support::create_tempdir();
+        let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(root.join("sub")).expect("mkdir sub");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        std::fs::write(root.join("sub/target"), b"in").expect("write target");
+        std::fs::write(outside.join("target"), b"out").expect("write outside");
+        (
+            tmp,
+            root.clone(),
+            root.join("sub.real/target"),
+            outside.join("target"),
+        )
+    }
+
+    #[cfg(all(unix, feature = "xattr"))]
+    fn swap_sub_for_outside(root: &Path, outside_target: &Path) {
+        std::fs::rename(root.join("sub"), root.join("sub.real")).expect("move sub");
+        std::os::unix::fs::symlink(outside_target.parent().expect("outside"), root.join("sub"))
+            .expect("plant escaping sub");
+    }
+
+    /// The stale-attribute sweep lists the destination before removing what
+    /// the sender did not send. Listing by path after a parent swap reads the
+    /// OUTSIDE file's names, so the in-tree stale attribute survives and the
+    /// sweep is steered by the attacker. Upstream lists through the held fd
+    /// (`xattrs.c:1008` `get_xattr_names(fname, fd)`).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn a_pinned_batch_lists_the_held_inode_after_a_parent_swap() {
+        let (_tmp, root, held, outside) = swapped_parent_tree();
+        if !xattrs_supported(&root.join("sub/target")) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+        let stale = test_xattr_name("stale");
+        let foreign = test_xattr_name("foreign");
+        write_attribute(&root.join("sub/target"), &stale, b"s", false).expect("set stale");
+        write_attribute(&outside, &foreign, b"f", false).expect("set foreign");
+
+        let target = root.join("sub/target");
+        let dest = DestinationXattrs::open(&target, false, Some(&root));
+        swap_sub_for_outside(&root, &outside);
+        let names = dest.list(NamespaceScreen::Bypass).expect("list");
+
+        assert!(names.contains(&stale), "the held inode's names: {names:?}");
+        assert!(
+            !names.contains(&foreign),
+            "listed the outside file: {names:?}"
+        );
+        assert!(held.exists());
+    }
+
+    /// The temporary owner-write grant is restored when the batch ends. A
+    /// path-based restore after a parent swap chmods the OUTSIDE file to the
+    /// in-tree file's mode. Upstream restores with `fchmod(fd)` on the held
+    /// inode (`xattrs.c:1146-1180`).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn a_pinned_batch_restores_its_write_grant_on_the_held_inode() {
+        use std::os::unix::fs::PermissionsExt;
+        if crate::am_root() {
+            eprintln!("running as root, skipping read-only xattr test");
+            return;
+        }
+        let (_tmp, root, held, outside) = swapped_parent_tree();
+        let mode =
+            |path: &Path| std::fs::metadata(path).expect("stat").permissions().mode() & 0o7777;
+        std::fs::set_permissions(
+            root.join("sub/target"),
+            std::fs::Permissions::from_mode(0o444),
+        )
+        .expect("chmod target");
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o666))
+            .expect("chmod outside");
+
+        let target = root.join("sub/target");
+        let dest = DestinationXattrs::open(&target, false, Some(&root));
+        assert_eq!(
+            mode(&root.join("sub/target")),
+            0o644,
+            "the grant must have landed"
+        );
+        swap_sub_for_outside(&root, &outside);
+        drop(dest);
+
+        assert_eq!(
+            mode(&outside),
+            0o666,
+            "the restore chmodded the outside file"
+        );
+        assert_eq!(mode(&held), 0o444, "the held inode keeps its original mode");
+    }
+
+    /// The destination root's own attributes go through a descriptor opened
+    /// once, as upstream applies them to `.` from inside the root
+    /// (`main.c:778`). A root renamed away and replaced by a symlink after the
+    /// batch opened must not redirect the write.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn a_root_batch_writes_through_the_root_it_opened() {
+        let tmp = test_support::create_tempdir();
+        let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir(&root).expect("mkdir root");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        if !xattrs_supported(&root) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+        let marker = test_xattr_name("root_marker");
+
+        let dest = DestinationXattrs::open(&root, false, Some(&root));
+        std::fs::rename(&root, base.join("held")).expect("move root");
+        std::os::unix::fs::symlink(&outside, &root).expect("plant root symlink");
+        dest.write(&marker, b"v").expect("write");
+
+        assert!(
+            read_attribute(&outside, &marker, false)
+                .expect("read")
+                .is_none()
+        );
+        assert!(
+            read_attribute(&base.join("held"), &marker, false)
+                .expect("read")
+                .is_some()
         );
     }
 }

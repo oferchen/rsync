@@ -14,8 +14,6 @@
 //!   `xattr_refuse` when the re-pin fails on a slashed path
 //! - `rsync-3.5.1/rsync.c:713-716,800` - xattr and ACL writes skipped on refusal
 
-#[cfg(unix)]
-use std::fs;
 use std::path::Path;
 
 /// Where a destination metadata write lands.
@@ -64,13 +62,7 @@ pub(crate) fn pin_destination(path: &Path, confine_root: Option<&Path>) -> DestP
         // rather than inventing a refusal here.
         return DestPin::Path;
     };
-    // upstream: rsync.c:589-594 - a directory leaf needs O_DIRECTORY.
-    let kind = if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) {
-        fast_io::DestLeafKind::Directory
-    } else {
-        fast_io::DestLeafKind::NonDirectory
-    };
-    match fast_io::pin_dest_leaf_confined(root, relative, kind) {
+    match fast_io::pin_dest_leaf_confined(root, relative) {
         Ok(fast_io::DestLeaf::Held(file)) => DestPin::Pinned(file),
         #[cfg(all(target_os = "linux", feature = "acl"))]
         Ok(fast_io::DestLeaf::Parent { dir, leaf }) => DestPin::Parent { dir, leaf },

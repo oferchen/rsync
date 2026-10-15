@@ -190,6 +190,12 @@ static SESSION_ROOT_FD: RwLock<Option<PinnedRoot>> = RwLock::new(None);
 struct PinnedRoot {
     literal: PathBuf,
     fd: std::sync::Arc<std::os::fd::OwnedFd>,
+    /// The confined parent directory the last leaf pin beneath this root
+    /// resolved, held so a run of entries in one directory walks it once.
+    /// Scoped to the pin, so a re-pin or clear can never answer with a
+    /// directory of an earlier root. upstream: `syscall.c:3702-3720`, the
+    /// `dpc_dir_fd()` held ancestor cache.
+    parents: std::sync::Arc<crate::HeldDir>,
 }
 
 /// Pin `root` by identity.
@@ -235,6 +241,7 @@ pub fn pin_session_root_fd(root: &Path) -> std::io::Result<()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PinnedRoot {
         literal: root.to_path_buf(),
         fd: std::sync::Arc::new(fd),
+        parents: std::sync::Arc::default(),
     });
     Ok(())
 }
@@ -305,6 +312,7 @@ pub fn pin_destination_root(spelling: &Path, anchor: std::os::fd::OwnedFd) -> st
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PinnedRoot {
         literal: spelling.to_path_buf(),
         fd: std::sync::Arc::new(held.into()),
+        parents: std::sync::Arc::default(),
     });
     Ok(())
 }
@@ -331,6 +339,31 @@ pub fn pinned_destination_root_for(path: &Path) -> Option<std::sync::Arc<std::os
         .as_ref()
         .filter(|pinned| pinned.literal == path)
         .map(|pinned| std::sync::Arc::clone(&pinned.fd))
+}
+/// The held-parent cache of the pinned root `path` names, under either pin.
+///
+/// Answers for exactly the roots [`crate::open_trusted_dir`] answers with a
+/// pinned descriptor, so a parent cached here was resolved beneath that same
+/// descriptor.
+#[cfg(unix)]
+pub(crate) fn pinned_parents_for(path: &Path) -> Option<std::sync::Arc<crate::HeldDir>> {
+    if let Some(pinned) = DESTINATION_ROOT_FD
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|pinned| pinned.literal == path)
+    {
+        return Some(std::sync::Arc::clone(&pinned.parents));
+    }
+    let pinned = SESSION_ROOT_FD
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()?;
+    let relative = path
+        .strip_prefix(&pinned.literal)
+        .ok()
+        .or_else(|| path.strip_prefix(session_confinement_root()?).ok())?;
+    relative.as_os_str().is_empty().then_some(pinned.parents)
 }
 /// Whether this session pinned a root at all.
 #[cfg(unix)]

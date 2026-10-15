@@ -226,26 +226,6 @@ pub(crate) fn open_source_leaf(
     imp::open_leaf(parent, leaf, noatime)
 }
 
-/// What the destination leaf is expected to be, so the pin can ask for
-/// `O_DIRECTORY` where upstream does.
-///
-/// Upstream derives this from the *intended* mode rather than the on-disk
-/// one, because an attacker controls the latter through the very flip the
-/// pin exists to refuse.
-///
-/// # Upstream Reference
-///
-/// - `rsync-3.5.1/rsync.c:589-594` the `odir` computation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DestLeafKind {
-    /// A regular file or a FIFO. `O_NONBLOCK` is what keeps the FIFO open
-    /// from blocking on a missing writer.
-    NonDirectory,
-    /// A directory: the open adds `O_DIRECTORY` so a leaf raced into a
-    /// non-directory is refused rather than pinned.
-    Directory,
-}
-
 /// What [`pin_dest_leaf_confined`] holds for the destination leaf.
 #[derive(Debug)]
 pub enum DestLeaf {
@@ -288,12 +268,12 @@ pub enum DestLeaf {
 /// # Errors
 ///
 /// - `EINVAL` when `relative` is absolute or contains a `..` component.
-/// - `EISDIR` when `relative` has no leaf to pin: it is empty, all slashes,
-///   or its final component is `.` or `..`.
+/// - `EISDIR` when the final component of `relative` is `.` or `..`. An
+///   empty (or all-slash) `relative` names `root` itself, which is pinned
+///   through the root's own trusted descriptor: upstream applies the root's
+///   attributes as `set_file_attrs(".")` from inside it (`main.c:778`).
 /// - `ELOOP` when a symlink is refused - the leaf itself, an absolute or
 ///   escaping target in the parent walk, or an exhausted hop budget.
-/// - `ENOTDIR` when [`DestLeafKind::Directory`] was asked for and the leaf
-///   is not one.
 /// - `ENOENT` when the leaf does not exist beneath `root`.
 /// - Any other I/O error from the underlying syscalls, forwarded verbatim.
 ///
@@ -307,13 +287,9 @@ pub enum DestLeaf {
 /// - `rsync-3.5.1/rsync.c:573-599` `set_file_attrs()`'s secure re-pin, and
 ///   the `xattr_refuse` fallback when the re-pin also fails
 /// - `rsync-3.5.1/xattrs.c:386-390` `fsetxattr` vs `lsetxattr` on `fd >= 0`
-pub fn pin_dest_leaf_confined(
-    root: &Path,
-    relative: &Path,
-    kind: DestLeafKind,
-) -> io::Result<DestLeaf> {
+pub fn pin_dest_leaf_confined(root: &Path, relative: &Path) -> io::Result<DestLeaf> {
     validate_relative(relative)?;
-    imp::pin_dest_leaf_confined(root, relative, kind)
+    imp::pin_dest_leaf_confined(root, relative)
 }
 
 /// Reads the symlink target of `root`/`relative` with the parent components
@@ -412,6 +388,7 @@ const EINVAL: i32 = 22;
 mod imp {
     use super::*;
     use std::ffi::OsStr;
+    use std::os::fd::{AsFd, OwnedFd};
     use std::os::unix::ffi::OsStrExt;
 
     use crate::dir_sandbox::at_syscalls::readlinkat;
@@ -463,28 +440,70 @@ mod imp {
         }
     }
 
-    pub(super) fn pin_dest_leaf_confined(
-        root: &Path,
-        relative: &Path,
-        kind: DestLeafKind,
-    ) -> io::Result<DestLeaf> {
+    pub(super) fn pin_dest_leaf_confined(root: &Path, relative: &Path) -> io::Result<DestLeaf> {
         // Deliberately the shared walk on every platform, with no `openat2`
         // fast path: `openat2_confined` is shaped around the source open's
         // read-a-regular-file semantics, and a second entry point into it
         // would be a second place for the two arms to disagree. The walk is
         // the same resolver either way - only the syscall count differs, and
         // this is a once-per-file metadata pin, not the data path.
+        //
+        // upstream: rsync.c:596 - O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|
+        // O_CLOEXEC, plus O_DIRECTORY for a directory leaf. O_NONBLOCK is
+        // load-bearing: without it, pinning a FIFO blocks until a writer
+        // appears. O_NOCTTY keeps a raced device leaf from becoming this
+        // process's controlling terminal.
+        let flags =
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
+        if relative
+            .as_os_str()
+            .as_bytes()
+            .iter()
+            .all(|byte| *byte == b'/')
+        {
+            // The root itself: `.` beneath its trusted descriptor names that
+            // directory and resolves nothing.
+            let anchor = crate::secure_dir::open_trusted_dir(root)?;
+            return openat(
+                anchor.as_fd(),
+                OsStr::new("."),
+                flags | libc::O_DIRECTORY,
+                0,
+            )
+            .map(DestLeaf::Held);
+        }
         let (_, dir, leaf) = split_leaf(relative)?;
-        let parent = resolve_parent(root, dir)?;
+        let pin = |parent: &OwnedFd| pin_leaf_beneath(parent, leaf, flags);
+        let Some(parents) = crate::confinement::pinned_parents_for(root) else {
+            return pin(&resolve_parent(root, dir)?.root_arc());
+        };
+        // upstream: syscall.c:3702-3720 `dpc_dir_fd()` - a run of entries in
+        // one directory resolves it once. A miss through the held parent
+        // (the directory was replaced since it was resolved) falls back to a
+        // fresh walk, as upstream's held-fd pin falls back to
+        // `secure_relative_open()` (rsync.c:573-599).
+        let walk = || {
+            resolve_parent(root, dir)?
+                .root_arc()
+                .as_fd()
+                .try_clone_to_owned()
+        };
+        match pin(&*parents.get_or_open(dir, walk)?) {
+            Ok(pinned) => Ok(pinned),
+            Err(_) => {
+                parents.invalidate();
+                pin(&*parents.get_or_open(dir, walk)?)
+            }
+        }
+    }
+
+    /// Pins `leaf` beneath the already-confined `parent`.
+    fn pin_leaf_beneath(parent: &OwnedFd, leaf: &OsStr, flags: i32) -> io::Result<DestLeaf> {
         // upstream: rsync.c:563-564 - only a regular file, directory or FIFO
         // is opened. The type is read through the confined parent, so a flip
         // after the walk cannot change which arm is taken.
-        let stat = rustix::fs::statat(
-            parent.root_dirfd(),
-            leaf,
-            rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
-        )
-        .map_err(io::Error::from)?;
+        let stat = rustix::fs::statat(parent, leaf, rustix::fs::AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io::Error::from)?;
         let file_type = rustix::fs::FileType::from_raw_mode(stat.st_mode);
         if matches!(
             file_type,
@@ -492,23 +511,19 @@ mod imp {
                 | rustix::fs::FileType::BlockDevice
                 | rustix::fs::FileType::Socket
         ) {
-            let dir = File::from(parent.root_dirfd().try_clone_to_owned()?);
             return Ok(DestLeaf::Parent {
-                dir,
+                dir: File::from(parent.try_clone()?),
                 leaf: leaf.to_os_string(),
             });
         }
-        // upstream: rsync.c:596 - O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_NOCTTY|
-        // O_CLOEXEC, plus O_DIRECTORY for a directory leaf. O_NONBLOCK is
-        // load-bearing: without it, pinning a FIFO blocks until a writer
-        // appears. O_NOCTTY keeps a raced device leaf from becoming this
-        // process's controlling terminal.
-        let mut flags =
-            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
-        if kind == DestLeafKind::Directory {
-            flags |= libc::O_DIRECTORY;
-        }
-        openat(parent.root_dirfd(), leaf, flags, 0).map(DestLeaf::Held)
+        // upstream: rsync.c:588-591 - O_DIRECTORY from the entry's own type,
+        // read here through the confined parent rather than by path.
+        let flags = if file_type == rustix::fs::FileType::Directory {
+            flags | libc::O_DIRECTORY
+        } else {
+            flags
+        };
+        openat(parent.as_fd(), leaf, flags, 0).map(DestLeaf::Held)
     }
 
     pub(super) fn read_link_confined(
@@ -834,11 +849,7 @@ mod imp {
         ))
     }
 
-    pub(super) fn pin_dest_leaf_confined(
-        _root: &Path,
-        _relative: &Path,
-        _kind: DestLeafKind,
-    ) -> io::Result<DestLeaf> {
+    pub(super) fn pin_dest_leaf_confined(_root: &Path, _relative: &Path) -> io::Result<DestLeaf> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "confined destination leaf pin is Unix-only (it exists for fd-based xattr/ACL writes)",
@@ -1312,9 +1323,8 @@ mod tests {
         let (_tmp, root, outside) = dest_tree();
         symlink(&outside, root.join("sub")).expect("plant escaping parent");
 
-        let error =
-            pin_dest_leaf_confined(&root, Path::new("sub/victim"), DestLeafKind::NonDirectory)
-                .expect_err("an escaping parent must refuse the pin");
+        let error = pin_dest_leaf_confined(&root, Path::new("sub/victim"))
+            .expect_err("an escaping parent must refuse the pin");
         assert!(
             !outside.join("victim").is_symlink(),
             "the sentinel must still be the real file the refusal protected"
@@ -1338,9 +1348,8 @@ mod tests {
         std::fs::write(root.join("real/data"), b"payload").expect("write");
         symlink("real", root.join("sub")).expect("plant in-tree parent");
 
-        let pinned =
-            pin_dest_leaf_confined(&root, Path::new("sub/data"), DestLeafKind::NonDirectory)
-                .expect("an in-tree relative parent symlink must still resolve");
+        let pinned = pin_dest_leaf_confined(&root, Path::new("sub/data"))
+            .expect("an in-tree relative parent symlink must still resolve");
         let DestLeaf::Held(file) = pinned else {
             panic!("a regular leaf must be held, got {pinned:?}");
         };
@@ -1357,26 +1366,9 @@ mod tests {
         std::fs::write(root.join("target"), b"payload").expect("write");
         symlink("target", root.join("leaf")).expect("plant leaf symlink");
 
-        let error = pin_dest_leaf_confined(&root, Path::new("leaf"), DestLeafKind::NonDirectory)
+        let error = pin_dest_leaf_confined(&root, Path::new("leaf"))
             .expect_err("a symlinked leaf must be refused");
         assert_eq!(error.raw_os_error(), Some(libc::ELOOP), "got {error:?}");
-    }
-
-    /// `DestLeafKind::Directory` adds `O_DIRECTORY`, so a leaf that is not a
-    /// directory is refused rather than pinned - upstream derives the flag
-    /// from the INTENDED mode precisely so a raced non-directory cannot slip
-    /// through.
-    #[test]
-    fn a_directory_kind_refuses_a_non_directory_leaf() {
-        let (_tmp, root, _outside) = dest_tree();
-        std::fs::create_dir(root.join("adir")).expect("mkdir");
-        std::fs::write(root.join("afile"), b"payload").expect("write");
-
-        pin_dest_leaf_confined(&root, Path::new("adir"), DestLeafKind::Directory)
-            .expect("a real directory must pin");
-        let error = pin_dest_leaf_confined(&root, Path::new("afile"), DestLeafKind::Directory)
-            .expect_err("a non-directory must be refused under Directory");
-        assert_eq!(error.raw_os_error(), Some(libc::ENOTDIR), "got {error:?}");
     }
 
     /// A FIFO must pin without blocking. `O_NONBLOCK` is the reason, and
@@ -1393,7 +1385,7 @@ mod tests {
         let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
         assert_eq!(rc, 0, "mkfifo: {}", io::Error::last_os_error());
 
-        let pinned = pin_dest_leaf_confined(&root, Path::new("pipe"), DestLeafKind::NonDirectory)
+        let pinned = pin_dest_leaf_confined(&root, Path::new("pipe"))
             .expect("a FIFO leaf must pin without waiting for a writer");
         assert!(
             matches!(pinned, DestLeaf::Held(_)),
@@ -1410,9 +1402,8 @@ mod tests {
         std::fs::create_dir(root.join("dir")).expect("mkdir dir");
         let _listener =
             std::os::unix::net::UnixListener::bind(root.join("dir/sock")).expect("bind socket");
-        let pinned =
-            pin_dest_leaf_confined(&root, Path::new("dir/sock"), DestLeafKind::NonDirectory)
-                .expect("a socket leaf must not be refused");
+        let pinned = pin_dest_leaf_confined(&root, Path::new("dir/sock"))
+            .expect("a socket leaf must not be refused");
         let DestLeaf::Parent { dir, leaf } = pinned else {
             panic!("a socket must not be opened, got {pinned:?}");
         };
@@ -1427,17 +1418,114 @@ mod tests {
         );
     }
 
+    /// The pin reads the leaf type through the confined parent, so the
+    /// caller no longer stats the path to choose `O_DIRECTORY`: a directory
+    /// pins as a directory and a file as a file.
+    #[test]
+    fn a_detected_kind_pins_directories_and_files() {
+        let (_tmp, root, _outside) = dest_tree();
+        std::fs::create_dir(root.join("adir")).expect("mkdir");
+        std::fs::write(root.join("afile"), b"payload").expect("write");
+
+        for (name, is_dir) in [("adir", true), ("afile", false)] {
+            let pinned =
+                pin_dest_leaf_confined(&root, Path::new(name)).expect("an existing leaf must pin");
+            let DestLeaf::Held(file) = pinned else {
+                panic!("{name} must be held, got {pinned:?}");
+            };
+            assert_eq!(file.metadata().expect("fstat").is_dir(), is_dir, "{name}");
+        }
+    }
+
+    /// The destination root's own attributes are applied through a held
+    /// descriptor too. Upstream applies them as `set_file_attrs(".")` from
+    /// inside the root it entered (`main.c:778`); a path-based write would
+    /// follow the root's name, which after the pin may no longer mean it.
+    #[test]
+    fn the_root_itself_pins_the_pinned_root_not_its_current_name() {
+        let (_tmp, root, outside) = dest_tree();
+        let anchor = std::fs::File::open(&root).expect("open root");
+        crate::confinement::pin_destination_root(&root, anchor.into()).expect("pin root");
+        let held = root.with_extension("held");
+        std::fs::rename(&root, &held).expect("move the pinned root away");
+        symlink(&outside, &root).expect("plant the root name at outside");
+
+        let pinned = pin_dest_leaf_confined(&root, Path::new(""));
+        crate::confinement::clear_destination_root();
+        let DestLeaf::Held(file) = pinned.expect("the root must pin") else {
+            panic!("the root must be held");
+        };
+        use std::os::unix::fs::MetadataExt;
+        let (got, want) = (
+            file.metadata().expect("fstat"),
+            std::fs::metadata(&held).expect("stat held"),
+        );
+        assert_eq!((got.dev(), got.ino()), (want.dev(), want.ino()));
+    }
+
+    /// Under a pinned root the parent of a run of entries is resolved once
+    /// and held (upstream `dpc_dir_fd()`). The held parent must never let a
+    /// later pin out of the tree: a parent swapped for an escaping symlink
+    /// after it was held still answers with the in-tree inode it held, and a
+    /// leaf the held directory lacks falls back to a fresh confined walk,
+    /// which refuses the escape.
+    #[test]
+    fn a_held_parent_never_lets_a_later_pin_escape() {
+        let (_tmp, root, outside) = dest_tree();
+        std::fs::create_dir(root.join("sub")).expect("mkdir sub");
+        std::fs::write(root.join("sub/a"), b"a").expect("write a");
+        std::fs::write(outside.join("b"), b"outside").expect("write outside b");
+        let anchor = std::fs::File::open(&root).expect("open root");
+        crate::confinement::pin_destination_root(&root, anchor.into()).expect("pin root");
+
+        pin_dest_leaf_confined(&root, Path::new("sub/a"))
+            .expect("the first pin resolves and holds sub");
+        std::fs::rename(root.join("sub"), root.join("sub.old")).expect("move sub");
+        symlink(&outside, root.join("sub")).expect("plant escaping sub");
+        let held = pin_dest_leaf_confined(&root, Path::new("sub/a"));
+        let escaped = pin_dest_leaf_confined(&root, Path::new("sub/b"));
+        crate::confinement::clear_destination_root();
+
+        let DestLeaf::Held(file) = held.expect("the held parent still names sub.old") else {
+            panic!("a regular leaf must be held");
+        };
+        assert_eq!(read_to_string(file), "a");
+        let error = escaped.expect_err("the fallback walk must refuse the escape");
+        assert_ne!(error.kind(), io::ErrorKind::NotFound, "got {error:?}");
+    }
+
+    /// The fallback is what keeps the cache correct across a legitimate
+    /// replacement: a directory deleted and recreated since it was held is
+    /// found again by the fresh walk.
+    #[test]
+    fn a_replaced_parent_is_found_by_the_fallback_walk() {
+        let (_tmp, root, _outside) = dest_tree();
+        std::fs::create_dir(root.join("sub")).expect("mkdir sub");
+        std::fs::write(root.join("sub/a"), b"a").expect("write a");
+        let anchor = std::fs::File::open(&root).expect("open root");
+        crate::confinement::pin_destination_root(&root, anchor.into()).expect("pin root");
+
+        pin_dest_leaf_confined(&root, Path::new("sub/a"))
+            .expect("the first pin resolves and holds sub");
+        std::fs::remove_dir_all(root.join("sub")).expect("remove sub");
+        std::fs::create_dir(root.join("sub")).expect("recreate sub");
+        std::fs::write(root.join("sub/c"), b"c").expect("write c");
+        let pinned = pin_dest_leaf_confined(&root, Path::new("sub/c"));
+        crate::confinement::clear_destination_root();
+
+        let DestLeaf::Held(file) = pinned.expect("the recreated sub must be walked") else {
+            panic!("a regular leaf must be held");
+        };
+        assert_eq!(read_to_string(file), "c");
+    }
+
     /// Front-door validation is shared with the source open, so a `..` never
     /// reaches the walk.
     #[test]
     fn a_dotdot_component_is_rejected_before_the_walk() {
         let (_tmp, root, _outside) = dest_tree();
-        let error = pin_dest_leaf_confined(
-            &root,
-            Path::new("../outside/victim"),
-            DestLeafKind::NonDirectory,
-        )
-        .expect_err("`..` must be rejected");
+        let error = pin_dest_leaf_confined(&root, Path::new("../outside/victim"))
+            .expect_err("`..` must be rejected");
         assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "got {error:?}");
     }
 
