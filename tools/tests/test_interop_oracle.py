@@ -11,6 +11,7 @@ from hiding behind a stale row.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import socket
 import sys
@@ -187,6 +188,44 @@ class CatalogueTest(unittest.TestCase):
             if c.case in {case for case, _, _ in cells.CORE_CASES}:
                 self.assertEqual("--no-inc-recursive" in c.opts, racy, c.cell_id)
 
+    def test_core_cells_check_each_release_negotiates_its_native_protocol(self):
+        # oc speaks 28 through 33, so every session with an upstream peer runs
+        # at the peer's PROTOCOL_VERSION (rsync.h). A cell that silently ran
+        # at another protocol would test the wrong wire format.
+        core = {case for case, _, _ in cells.CORE_CASES}
+        cat = [c for c in cells.catalogue(cells.ALL_VERSIONS) if c.case in core]
+        self.assertEqual({c.version for c in cat}, cells.ALL_VERSIONS)
+        for c in cat:
+            self.assertEqual(c.expect_proto, cells.NATIVE_PROTOCOL[c.version], c.cell_id)
+        self.assertEqual({c.expect_proto for c in cat if c.version == "2.6.3"}, {28})
+        self.assertEqual({c.expect_proto for c in cat if c.version == "2.6.9"}, {29})
+        shapes = {(c.transport, c.direction, c.role) for c in cat if c.version == "2.6.3"}
+        self.assertEqual(len(shapes), 8)
+
+    def test_daemon_port_budget_covers_the_whole_catalogue(self):
+        # A daemon cell starts a daemon per run and, when it checks the
+        # handshake, a tap per run. Running out of ports fails cells with
+        # "daemon port range exhausted" instead of testing anything.
+        need = sum(4 if c.expect_proto else 2
+                   for c in cells.catalogue(cells.ALL_VERSIONS) if c.transport == "daemon")
+        self.assertLessEqual(need, oracle.PORTS_PER_RUN)
+        self.assertLess(20000 + 4 * oracle.PORTS_PER_RUN, 32768)
+
+    def test_core_cases_skip_releases_without_their_option(self):
+        # 2.6.3 has no -F (added with --filter in 2.6.4), so its baseline
+        # client would exit 1 on the option instead of transferring.
+        ids = {c.cell_id for c in cells.catalogue({"2.6.3", "2.6.9"})}
+        self.assertNotIn("dir-merge/2.6.3/rsh/push/oc-client", ids)
+        self.assertIn("dir-merge/2.6.9/rsh/push/oc-client", ids)
+        self.assertIn("basic/2.6.3/rsh/push/oc-client", ids)
+        # --append arrived in 2.6.7; 2.6.9 is the oldest peer that has it and
+        # is where task 2601 lives, so every one of its shapes must run.
+        self.assertNotIn("append/2.6.3/daemon/pull/oc-server", ids)
+        for t in ("rsh", "daemon"):
+            for d in ("push", "pull"):
+                for r in ("oc-client", "oc-server"):
+                    self.assertIn(f"append/2.6.9/{t}/{d}/{r}", ids)
+
     def test_the_audit_defects_each_have_a_cell(self):
         ids = {c.cell_id for c in cells.catalogue(cells.ALL_VERSIONS)}
         for wanted in ("non-utf8/3.5.1/rsh/push/oc-server",
@@ -326,7 +365,8 @@ class Protocol33Test(unittest.TestCase):
                                     and c.inc == inc
                                     and ("--no-inc-recursive" in c.opts) == (inc == "off")
                                     for c in mine))
-        controls = [c for c in cat if c.expect_proto == 32]
+        controls = [c for c in cat
+                    if c.case.startswith("touched") and c.expect_proto == 32]
         self.assertTrue(controls)
         self.assertTrue(all(c.expect_touched == "absent" for c in controls))
         self.assertIn("touched-batch/3.5.1/rsh/push/oc-server", {c.cell_id for c in cat})
@@ -344,6 +384,70 @@ class TouchedFixtureTest(unittest.TestCase):
             self.assertEqual((fx["tb-identical"] / "src/base.bin").read_bytes(), pre)
             sparse = fx["tb-sparse"] / "src/sparse.bin"
             self.assertEqual(sparse.stat().st_size, 4 * 1024 * 1024 + 8192)
+
+
+class TouchedChecksumSeedTest(unittest.TestCase):
+    """The pinned seed must not let tb-full's sender take a false block match.
+
+    tb-full shares no block between src and basis, yet some src windows hit a
+    basis block's rolling sum. A hit becomes a match when the 2-byte seeded MD5
+    prefix collides too, which flips the cell to a phase-2 redo. This replays
+    upstream's match decision (match.c hash_search) for the pinned seed.
+    """
+
+    BLOCK = 2048  # sum_sizes_sqroot: sqrt(4 MiB), already a multiple of 8
+    S2LENGTH = 2  # (10 + 2*22 - 11 + 1 - 32 + 7) // 8
+
+    @staticmethod
+    def _signed(data: bytes) -> list[int]:
+        # get_checksum1 sums schar values (checksum.c), not unsigned bytes.
+        return [b - 256 if b > 127 else b for b in data]
+
+    @classmethod
+    def _weak(cls, block: list[int]) -> int:
+        s1 = sum(block) & 0xFFFF
+        s2 = sum((len(block) - i) * v for i, v in enumerate(block)) & 0xFFFF
+        return s1 | s2 << 16
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as a:
+            fx = cells._touched_fixtures(Path(a))["tb-full"]
+            cls.src = (fx / "src/base.bin").read_bytes()
+            cls.basis = (fx / "pre/base.bin").read_bytes()
+        n, src = cls.BLOCK, cls._signed(cls.src)
+        sbasis = cls._signed(cls.basis)
+        blocks: dict[int, list[int]] = {}
+        for i in range(0, len(sbasis), n):
+            blocks.setdefault(cls._weak(sbasis[i:i + n]), []).append(i // n)
+        s1 = sum(src[:n]) & 0xFFFF
+        s2 = sum((n - i) * v for i, v in enumerate(src[:n])) & 0xFFFF
+        cls.hits = []
+        for k in range(len(src) - n + 1):
+            if k:
+                s1 = (s1 - src[k - 1] + src[k + n - 1]) & 0xFFFF
+                s2 = (s2 - n * src[k - 1] + s1) & 0xFFFF
+            cls.hits += [(k, i) for i in blocks.get(s1 | s2 << 16, ())]
+
+    def _false_matches(self, seed: int) -> list[tuple[int, int]]:
+        # proper_seed_order (compat.c:759): the seed precedes the data.
+        prefix = seed.to_bytes(4, "little")
+        n, out = self.BLOCK, []
+        for k, i in self.hits:
+            a = hashlib.md5(prefix + self.src[k:k + n]).digest()[:self.S2LENGTH]
+            b = hashlib.md5(prefix + self.basis[i * n:(i + 1) * n]).digest()[:self.S2LENGTH]
+            if a == b:
+                out.append((k, i))
+        return out
+
+    def test_pinned_seed_takes_no_false_match_on_tb_full(self):
+        self.assertTrue(self.hits, "no weak-sum hit: the model cannot tell seeds apart")
+        self.assertIn(f"--checksum-seed={cells.TOUCHED_CHECKSUM_SEED}", cells.DELTA_INPLACE)
+        self.assertEqual(self._false_matches(cells.TOUCHED_CHECKSUM_SEED), [])
+
+    def test_a_known_bad_seed_is_detected(self):
+        # Seed 9209 made upstream and oc both redo tb-full on a 3.5.1 daemon.
+        self.assertNotEqual(self._false_matches(9209), [])
 
 
 class RunInteropWiringTest(unittest.TestCase):

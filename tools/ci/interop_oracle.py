@@ -260,8 +260,11 @@ def normalize_items(items: list[str], legacy: bool) -> list[str]:
 # (Linux 32768+, macOS/Windows 49152+). A port from bind(0) is ephemeral, so
 # the kernel can hand it to a concurrent cell's client socket before the
 # daemon binds it, and a start probe can then reach another cell's daemon.
-# The pid offset keeps two oracle runs on one host apart.
-_PORT_BASE = 20000 + (os.getpid() % 12) * 1000
+# The pid offset keeps two oracle runs on one host apart. Each daemon cell
+# takes up to four ports (a daemon and a handshake tap per run), so a run
+# needs room for four per daemon cell in the catalogue.
+PORTS_PER_RUN = 3000
+_PORT_BASE = 20000 + (os.getpid() % 4) * PORTS_PER_RUN
 _ports = itertools.count()
 _ports_lock = threading.Lock()
 
@@ -271,7 +274,7 @@ def bind_free_port(sock: socket.socket) -> int:
     while True:
         with _ports_lock:
             n = next(_ports)
-        if n >= 1000:
+        if n >= PORTS_PER_RUN:
             raise RuntimeError("daemon port range exhausted")
         port = _PORT_BASE + n
         try:
@@ -302,12 +305,13 @@ def run(cmd: list[str], timeout: float, env: dict | None = None) -> tuple[object
 class Daemon:
     """A daemon on a free loopback port, killed with its process group on exit."""
 
-    def __init__(self, binary: str, conf: Path, log: Path):
+    def __init__(self, binary: str, conf: Path, log: Path | None):
         self.port = free_port()
         env = dict(os.environ, OC_RSYNC_DAEMON_FALLBACK="0")
+        log_args = [f"--log-file={log}"] if log else []
         self.proc = subprocess.Popen(
             [binary, "--daemon", "--no-detach", f"--config={conf}", f"--port={self.port}",
-             "--address=127.0.0.1", f"--log-file={log}"],
+             "--address=127.0.0.1", *log_args],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             env=env, start_new_session=True)
         deadline = time.monotonic() + 10
@@ -486,7 +490,8 @@ def execute(cell: "cells_mod.Cell", client: str, server: str, workdir: Path,
         subprocess.run(["cp", "-a", str(fx / "pre"), str(workdir / "dst")], check=True)
     else:
         (workdir / "dst").mkdir()
-    args = [client, *cell.opts, "-i", "--stats"]
+    itemize = ["-i"] if cells_mod.itemizes(cell.version) else []
+    args = [client, *cell.opts, *itemize, "--stats"]
     args += [a.replace("@FIX@", str(fx)) for a in cell.extra_args]
     wire = workdir / "wire"
     env = None
@@ -508,10 +513,12 @@ def execute(cell: "cells_mod.Cell", client: str, server: str, workdir: Path,
     else:
         modroot = workdir / ("dst" if cell.direction == "push" else "src")
         conf = workdir / "d.conf"
-        conf.write_text("use chroot = false\nmunge symlinks = false\n"
+        log = workdir / "d.log"
+        log_conf = "" if cells_mod.has_log_file_option(cell.version) else f"log file = {log}\n"
+        conf.write_text(f"use chroot = false\nmunge symlinks = false\n{log_conf}"
                         f"[m]\n  path = {modroot}\n  read only = false\n{cell.module_extra}")
         try:
-            with Daemon(server, conf, workdir / "d.log") as d:
+            with Daemon(server, conf, None if log_conf else log) as d:
                 tap = DaemonTap(d.port, cell.timeout) if cell.expect_proto else None
                 url = f"rsync://127.0.0.1:{tap.port if tap else d.port}/m/"
                 if cell.direction == "push":

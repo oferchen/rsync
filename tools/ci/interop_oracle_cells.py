@@ -12,7 +12,13 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ALL_VERSIONS = {"2.6.9", "3.0.9", "3.1.3", "3.2.7", "3.4.4", "3.5.0", "3.5.1"}
+ALL_VERSIONS = {"2.6.3", "2.6.9", "3.0.9", "3.1.3", "3.2.7", "3.4.4", "3.5.0", "3.5.1"}
+
+# PROTOCOL_VERSION in each release's rsync.h. oc speaks 28 through 33, so a
+# session with any of these peers runs at the peer's own protocol, which every
+# core cell checks on the wire for the baseline and the candidate alike.
+NATIVE_PROTOCOL = {"2.6.3": 28, "2.6.9": 29, "3.0.9": 30, "3.1.3": 31, "3.2.7": 31,
+                   "3.4.4": 32, "3.5.0": 32, "3.5.1": 33}
 
 # Fixture mtimes. Both lie before interop_oracle.WALL_CLOCK_NS, so any time a
 # transfer preserves is compared exactly; the basis ("pre") is older than the
@@ -23,6 +29,16 @@ PRE_MTIME = 1_500_000_000
 
 def version_tuple(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in v.split("."))
+
+
+def itemizes(version: str) -> bool:
+    """Whether the release has --itemize-changes (-i), added in 2.6.4 (OLDNEWS)."""
+    return version_tuple(version) >= (2, 6, 4)
+
+
+def has_log_file_option(version: str) -> bool:
+    """Whether the release has --log-file, added in 2.6.9 (NEWS); older ones read it from rsyncd.conf."""
+    return version_tuple(version) >= (2, 6, 9)
 
 
 @dataclass(frozen=True)
@@ -75,7 +91,13 @@ CORE_CASES = (
     ("inplace", "delta", ("-a", "--inplace")),
     ("dir-merge", "filters", ("-a", "-F")),
     ("safe-links", "symlinks", ("-a", "--safe-links")),
+    ("append", "append-grow", ("-a", "--append")),
 )
+
+# Oldest release that has a core case's option: --filter and its -F helper
+# arrived in 2.6.4 (OLDNEWS), so a 2.6.3 baseline cannot run dir-merge;
+# --append arrived in 2.6.7 (NEWS.md, 2.6.7 section).
+CASE_FLOOR = {"dir-merge": (2, 6, 4), "append": (2, 6, 7)}
 
 
 def _targeted(have: set[str]) -> list[Cell]:
@@ -144,7 +166,16 @@ def _targeted(have: set[str]) -> list[Cell]:
 # prints it only at protocol >= 33 (main.c:446). Each case mirrors a scenario
 # of upstream's testsuite/write-touched-blocks_test.py and pins its value.
 
-DELTA_INPLACE = ("-a", "--inplace", "-I", "--no-whole-file")
+# A 4 MiB file gets a 2-byte block strong sum (generator.c sum_sizes_sqroot),
+# so a weak-sum collision also passes the seeded MD5 prefix about once in
+# 4,300 transfers and phase 2 redoes the file: upstream behaviour, but it moves
+# the stats and touched count. The seed comes from the daemon unless the
+# client pins it (compat.c:823-824), seeds the block sum (checksum.c:356-372)
+# and is forwarded to the server (options.c:3056-3057), so both runs of a cell
+# use this one, which the tools test proves free of false matches on tb-full.
+TOUCHED_CHECKSUM_SEED = 1
+DELTA_INPLACE = ("-a", "--inplace", "-I", "--no-whole-file",
+                 f"--checksum-seed={TOUCHED_CHECKSUM_SEED}")
 TOUCHED_CASES = (
     ("touched-contiguous", "tb-contiguous", DELTA_INPLACE, "1"),
     ("touched-scattered", "tb-scattered", DELTA_INPLACE, "10"),
@@ -237,9 +268,10 @@ def catalogue(have: set[str]) -> list[Cell]:
     """Every cell runnable with the upstream releases in `have`."""
     cells = [
         Cell(case=case, version=v, transport=t, direction=d, role=r, fixture=fx,
-             opts=_core_opts(opts, v, d, r))
+             opts=_core_opts(opts, v, d, r), expect_proto=NATIVE_PROTOCOL[v])
         for v in sorted(have, key=version_tuple)
         for case, fx, opts in CORE_CASES
+        if version_tuple(v) >= CASE_FLOOR.get(case, (0,))
         for t in ("rsh", "daemon")
         for d in ("push", "pull")
         for r in ("oc-client", "oc-server")
@@ -344,6 +376,15 @@ def build_fixtures(root: Path) -> None:
     _write(a / "src/grow", "0123456789")
     _write(a / "pre/grow", "0123456789" + "longer destination\n")
     fx["append"] = a
+    ag = root / "append-grow"
+    _write(ag / "src/grow", "0123456789" * 400 + "appended tail\n")
+    _write(ag / "src/new", "new file\n")
+    _write(ag / "pre/grow", "0123456789" * 400)
+    # Sorted ahead of grow: a destination already longer than its source is
+    # skipped, so the next transferred NDX is not the next flist entry.
+    _write(ag / "src/a-shorter", "short\n")
+    _write(ag / "pre/a-shorter", "short\nand a longer destination\n")
+    fx["append-grow"] = ag
 
     g = root / "dangling"
     _write(g / "src/real.txt", "real\n")

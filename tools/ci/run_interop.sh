@@ -71,18 +71,21 @@ interop_log_dir="${workspace_root}/target/interop/logs"
 # deliberately not gated here - a wire-compatible peer with different local
 # path-resolution rules should pass interop and fail testsuite cells, and
 # conflating the two would hide which one broke.
-versions=(3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
-# Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
-# protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
-# binary is needed so follow-up tasks can wire push/pull cells against it.
-extra_build_versions=(2.6.9)
+#
+# 2.6.3 and 2.6.9 are the native protocol 28 and 29 peers (rsync.h
+# PROTOCOL_VERSION; 28 first shipped in 2.6.1, 29 in 2.6.4). Forcing
+# --protocol=28 on a modern release is not a substitute: the peer still runs
+# its modern code paths and only shapes the wire to match.
+versions=(2.6.3 2.6.9 3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
+# Versions we only build and cache (no scenarios wired up yet).
+extra_build_versions=()
 
 # Versions with no usable per-arch .deb in any pool we track, so the harness
 # builds them from the release tarball instead. 2.6.9 predates the per-arch
 # pool coverage; 3.4.4 and 3.5.0 are too recent for a distro to have packaged.
 # Both the primary URL builder and the generic fallback consult this list, so
 # the "source-only" fact is stated once.
-source_only_versions=(2.6.9 3.4.4 3.5.0 3.5.1)
+source_only_versions=(2.6.3 2.6.9 3.4.4 3.5.0 3.5.1)
 
 version_is_source_only() {
   local version=$1 candidate
@@ -104,6 +107,49 @@ version_is_source_only() {
 # plus capability check at the point of use.
 extended_matrix_versions=(3.4.4 3.5.0 3.5.1)
 
+# PROTOCOL_VERSION in each release's rsync.h, which is what a session with
+# that peer negotiates: oc speaks 28 through 33, so the peer is always the
+# lower end.
+native_protocol() {
+  case "$1" in
+    2.6.[1-3]) echo 28 ;;
+    2.6.*) echo 29 ;;
+    3.0.*) echo 30 ;;
+    3.[1-3].*) echo 31 ;;
+    3.4.*|3.5.0) echo 32 ;;
+    *) echo 33 ;;
+  esac
+}
+# Protocol a session with release $1 runs when a client asks for --protocol=$2:
+# each end announces its newest protocol and both run the lower one
+# (compat.c setup_protocol). It is also the highest value that release's own
+# client accepts: a 3.4.4 client refuses --protocol=33 with "--protocol must
+# be no more than 32" (compat.c:637) before any transfer.
+clamped_protocol() {
+  local native
+  native=$(native_protocol "$1")
+  echo $(( $2 < native ? $2 : native ))
+}
+# Asserts the protocol a daemon session negotiated, read off the wire through
+# a relay the same way the oracle cells read it (interop_oracle.py
+# decode_handshake): $1 is the client, $2 its --protocol flag, $3 the daemon
+# port, $4 the protocol the session must run, $5 the label to report.
+check_negotiated_protocol() {
+  local client=$1 flag=$2 port=$3 want=$4 label=$5 got
+  got=$(python3 "$(dirname "${BASH_SOURCE[0]}")/interop_wire_probe.py" --port "$port" -- \
+          "$client" "$flag" "rsync://127.0.0.1:@PORT@/interop/" 2>/dev/null | tail -n1)
+  if [[ "$got" == "$want" ]]; then
+    echo "  [${label}] negotiated protocol ${got} (${flag})"
+    return 0
+  fi
+  echo "  [${label}] UNEXPECTED: negotiated protocol ${got:-unknown}, want ${want} (${flag})"
+  return 1
+}
+# Oldest release that has a scenario's option. --itemize-changes arrived in
+# 2.6.4 (OLDNEWS), so a 2.6.3 client exits 1 on -i before transferring.
+version_has_itemize() {
+  [[ "$(printf '%s\n' "$1" 2.6.4 | sort -V | head -n1)" == 2.6.4 ]]
+}
 version_has_extended_matrix() {
   local version=$1 candidate
   for candidate in "${extended_matrix_versions[@]}"; do
@@ -789,6 +835,17 @@ wait_for_port_free() {
 # Check that a port is available before starting a daemon.
 # If the port is occupied, attempt to kill the owning process.
 # Returns 0 if the port is now available, 1 if still occupied.
+# Set oc_port and up_port to two ports that are distinct from each other.
+# Two separate allocate_ephemeral_port calls can return the same port: each
+# releases its socket before the next bind, so the kernel may hand the port
+# out again and both daemons would then be configured for one port.
+allocate_daemon_port_pair() {
+  local -a pair
+  mapfile -t pair < <(allocate_distinct_ephemeral_ports 2)
+  oc_port=${pair[0]}
+  up_port=${pair[1]}
+}
+
 check_port_available() {
   local port=$1
 
@@ -898,8 +955,20 @@ start_upstream_daemon() {
     fi
   fi
 
+  # --log-file is new in 2.6.9 (NEWS); older daemons read the path from
+  # rsyncd.conf and exit 1 on the unknown option. They also ignore a
+  # `port =` line (2.6.3 loadparm.c has no such parameter) and fall back
+  # to 873, so the port goes on the command line instead.
+  local -a daemon_args=(--log-file "$log_file")
+  if ! "$binary" --help 2>&1 | grep -q -- '--log-file='; then
+    daemon_args=(${port:+--port "$port"})
+    if ! grep -q '^log file = ' "$config"; then
+      printf 'log file = %s\n' "$log_file" | cat - "$config" >"${config}.tmp"
+      mv "${config}.tmp" "$config"
+    fi
+  fi
   # Close stdin to prevent SIGPIPE when daemon writes to closed pipe
-  "$binary" --daemon --config "$config" --no-detach --log-file "$log_file" </dev/null &
+  "$binary" --daemon --config "$config" --no-detach ${daemon_args[@]+"${daemon_args[@]}"} </dev/null &
   up_pid=$!
 
   if [[ -n "$port" ]]; then
@@ -1051,7 +1120,7 @@ run_interop_case() {
 
 # ============================================================================
 # Comprehensive Interop Test Framework
-# Covers all protocols (28-32), major rsync options, bidirectional transfers.
+# Covers all protocols (28-33), major rsync options, bidirectional transfers.
 # ============================================================================
 
 # Rich test data: multiple file types, sizes, metadata, symlinks, hardlinks
@@ -1221,6 +1290,24 @@ symlink_target_escapes() {
     esac
   done
   return 1
+}
+
+# Print what a failed transfer leaves behind before the workdir is removed:
+# the whole client stderr, the daemon log tail, and who is listening on the
+# daemon port. A sweep leg that fails once in many runs is otherwise
+# undiagnosable, because cleanup deletes both logs.
+report_transfer_failure() {
+  local client_err=$1 daemon_log=$2 url=$3
+  local port=${url#rsync://*:}
+  port=${port%%/*}
+  echo "    client stderr:"
+  sed 's/^/      /' "$client_err" 2>/dev/null
+  echo "    daemon log tail (${daemon_log}):"
+  tail -n 20 "$daemon_log" 2>/dev/null | sed 's/^/      /'
+  if [[ "$port" =~ ^[0-9]+$ ]]; then
+    echo "    listeners on port ${port}:"
+    ss -ltnp "sport = :${port}" 2>/dev/null | sed 's/^/      /'
+  fi
 }
 
 comp_run_scenario() {
@@ -1492,7 +1579,7 @@ comp_run_scenario() {
   # --max-delete exits 25 when limit reached; treat as success for verification
   if [[ $rc -ne 0 ]] && ! [[ "$vtype" == "max-delete" && $rc -eq 25 ]]; then
     echo "    FAIL (transfer error, exit=$rc)"
-    echo "    stderr: $(head -5 "$transfer_log.err")"
+    report_transfer_failure "$transfer_log.err" "$log" "$url"
     return 1
   fi
 
@@ -2082,7 +2169,9 @@ comp_run_scenario() {
 # upstream: support/lsh.sh
 resolve_remote_shell() {
   local lsh
-  lsh=$(find "$upstream_src_root" -type f -name lsh.sh 2>/dev/null | head -n1 || true)
+  # The 3.1.3 and older lsh.sh reject the "lh" host ("unable to connect to
+  # host lh"), so pick a copy that has that case arm.
+  lsh=$(grep -l '^ *lh)' "$upstream_src_root"/*/support/lsh.sh 2>/dev/null | head -n1 || true)
   if [[ -n "$lsh" ]]; then
     # "lh" is lsh.sh's no-cd hostname, so the absolute paths rsync hands to
     # the server command are used verbatim.
@@ -11858,7 +11947,6 @@ run_comprehensive_interop_case() {
     "delete|-av --delete|delete"
     "exclude|-av --exclude=*.log|exclude"
     "permissions|-rlpv|perms"
-    "itemize|-avi|itemize"
     # acls / xattrs are registered below, gated on both the upstream binary's
     # advertised capability and the host filesystem actually supporting the
     # feature (detect_host_acl_xattr_support). When unsupported the leg is
@@ -11939,6 +12027,11 @@ run_comprehensive_interop_case() {
     fi
   fi
 
+  if version_has_itemize "${version}"; then
+    scenarios+=("itemize|-avi|itemize")
+  else
+    echo "  [info] upstream ${version} predates --itemize-changes, skipping itemize"
+  fi
   # Protocol-31 requires upstream rsync >= 3.1.0 (protocol 31 support).
   # rsync 3.0.x only supports up to protocol 30, so --protocol=31 fails.
   if [[ "${version}" == 3.0.* ]]; then
@@ -11949,27 +12042,18 @@ run_comprehensive_interop_case() {
     scenarios=("${filtered[@]}")
   fi
 
-  # Incremental recursion only supported on protocol 30+
-  local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
-  if [[ -z "$fp" || "$fp" -ge 30 ]]; then
-    scenarios+=("inc-recursive|-av --inc-recursive|inc-recursive")
-  fi
-
   # Effective protocol for this run: forced value if set, else the version's
-  # native protocol. ACL/xattr wire formats require protocol >= 30 (upstream
-  # compat.c:655-668), so the legs below only apply at proto 30+.
-  local eff_proto="$fp"
-  if [[ -z "$eff_proto" ]]; then
-    # Native PROTOCOL_VERSION per release (rsync.h). 3.0.x is 30, NOT 28 - the
-    # earlier value here silently failed the "proto >= 30" gate below, so the
-    # 3.0.9 ACL leg was skipped under a message blaming the host instead of
-    # running. 2.6.9 is 29 and previously fell through to the 32 default.
-    case "$version" in
-      2.6.*) eff_proto=29 ;;
-      3.0.*) eff_proto=30 ;;
-      3.1.*) eff_proto=31 ;;
-      *) eff_proto=32 ;;
-    esac
+  # native protocol. Incremental recursion and the ACL/xattr wire formats need
+  # protocol >= 30 (upstream compat.c:655-668), so those legs only apply there.
+  local fp=""; [[ -n "$protocol_flag" ]] && fp="${protocol_flag##*=}"
+  local eff_proto
+  eff_proto=$(clamped_protocol "$version" "${fp:-33}")
+  # The upstream client can be forced no higher than its own protocol; oc is
+  # forced to the full value and must settle on the peer's.
+  local up_protocol_flag=""
+  [[ -n "$fp" ]] && up_protocol_flag="--protocol=${eff_proto}"
+  if [[ "$eff_proto" -ge 30 ]]; then
+    scenarios+=("inc-recursive|-av --inc-recursive|inc-recursive")
   fi
 
   # ACL / xattr legs gated on real capability: protocol >= 30, the upstream
@@ -12003,7 +12087,7 @@ run_comprehensive_interop_case() {
 
   for spec in "${scenarios[@]}"; do
     IFS='|' read -r name flags vtype <<< "$spec"
-    [[ -n "$protocol_flag" ]] && flags="$flags $protocol_flag"
+    [[ -n "$up_protocol_flag" ]] && flags="$flags $up_protocol_flag"
     total=$((total + 1))
     echo "  [upstream ${version}→oc] ${name}${sfx}"
     if comp_run_scenario "$name" "$upstream_binary" "$flags" "$local_src" \
@@ -12020,6 +12104,16 @@ run_comprehensive_interop_case() {
       fi
     fi
   done
+
+  if [[ -n "$fp" ]]; then
+    total=$((total + 1))
+    if check_negotiated_protocol "$upstream_binary" "$up_protocol_flag" "$oc_port" \
+        "$eff_proto" "upstream ${version}→oc"; then
+      passed=$((passed + 1))
+    else
+      unexpected=$((unexpected + 1))
+    fi
+  fi
 
   stop_oc_daemon
 
@@ -12045,6 +12139,16 @@ run_comprehensive_interop_case() {
       fi
     fi
   done
+
+  if [[ -n "$fp" ]]; then
+    total=$((total + 1))
+    if check_negotiated_protocol "$oc_client" "$protocol_flag" "$upstream_port" \
+        "$eff_proto" "oc→upstream ${version}"; then
+      passed=$((passed + 1))
+    else
+      unexpected=$((unexpected + 1))
+    fi
+  fi
 
   stop_upstream_daemon
 
@@ -12758,7 +12862,7 @@ if [[ "$only_version_given" == "true" ]]; then
     # Distinguish "not a peer we test" from "a peer we only build", because the
     # second is a reasonable thing to ask for and a bare "unknown version" would
     # send the caller looking for a typo that is not there.
-    for candidate in "${extra_build_versions[@]}"; do
+    for candidate in ${extra_build_versions[@]+"${extra_build_versions[@]}"}; do
       if [[ "$only_version" == "$candidate" ]]; then
         echo "--only-version=${only_version} selects a build-only peer: it is in" >&2
         echo "extra_build_versions and has no scenarios wired, so the run would" >&2
@@ -12930,8 +13034,12 @@ done
 echo "=== Parallel version tests complete ==="
 
 # =====================================================================
-# Protocol version forcing tests: all 5 protocols against each upstream
-# release in extended_matrix_versions that is installed.
+# Protocol version forcing tests: every protocol oc speaks, 28 through 33,
+# against each upstream release in extended_matrix_versions that is
+# installed. 33 is forced explicitly too, not only reached as the native
+# default: against a protocol-32 release oc must settle on 32 without error.
+# Each leg also asserts the negotiated protocol off the wire
+# (check_negotiated_protocol), so a forced value the peer ignores fails.
 #
 # This used to resolve "newest" to the literal 3.4.4, so the sweep never
 # touched 3.5.0 no matter what the version list said. Both releases are
@@ -12949,34 +13057,26 @@ for sweep_version in "${extended_matrix_versions[@]}"; do
   fi
 done
 if [[ ${#sweep_binaries[@]} -gt 0 ]]; then
-  protos=(28 29 30 31 32)
-  fp_warnings=()
+  protos=(28 29 30 31 32 33)
 
   for sweep_idx in "${!sweep_binaries[@]}"; do
     newest_label="${sweep_labels[$sweep_idx]}"
     newest_binary="${sweep_binaries[$sweep_idx]}"
     for proto in "${protos[@]}"; do
-      oc_port=$(allocate_ephemeral_port)
-      up_port=$(allocate_ephemeral_port)
+      allocate_daemon_port_pair
       echo ""
       echo "=== Protocol ${proto} vs upstream ${newest_label} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
       if ! run_comprehensive_interop_case "$newest_label" "$newest_binary" \
           "$oc_port" "$up_port" "--protocol=${proto}"; then
         # Tagged with the release: without it the two sweeps collide on
         # "proto28" and the summary cannot say which upstream regressed.
-        fp_warnings+=("${newest_label}/proto${proto}")
+        failed+=("${newest_label}/proto${proto}")
       fi
 
       stop_oc_daemon
       stop_upstream_daemon
     done
   done
-
-  if (( ${#fp_warnings[@]} > 0 )); then
-    echo ""
-    echo "::warning::Forced-protocol tests had failures (advisory, not blocking): ${fp_warnings[*]}"
-    echo "  These failures are typically caused by daemon connection flakiness under CI load."
-  fi
 
   echo "=== Sequential protocol tests complete ==="
 else
@@ -13016,8 +13116,7 @@ if [[ -z "$standalone_binary" ]]; then
 fi
 
 if [[ -x "$standalone_binary" ]]; then
-  oc_port=$(allocate_ephemeral_port)
-  up_port=$(allocate_ephemeral_port)
+  allocate_daemon_port_pair
   if ! run_standalone_interop_tests "$standalone_binary" \
       "$oc_port" "$up_port"; then
     failed+=("standalone")
@@ -13058,4 +13157,4 @@ if (( ${#failed[@]} > 0 )); then
 fi
 
 echo ""
-echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone + quic + oracle)."
+echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-33 + standalone + quic + oracle)."
