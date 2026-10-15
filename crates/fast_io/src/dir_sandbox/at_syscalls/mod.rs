@@ -63,7 +63,9 @@ pub use metadata_ops::{
 };
 pub use nested::nested_parent_anchoring_supported;
 pub use open::{
-    openat, openat_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
+    open_basis_via_sandbox_or_fallback, open_inplace_output_via_sandbox_or_fallback,
+    open_write_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback, readlinkat,
+    readlinkat_via_sandbox_or_fallback,
 };
 pub use read_dir::{DirEntryView, EntryKind, ReadDirOutcome, read_dir_via_sandbox_or_fallback};
 pub use rename::{

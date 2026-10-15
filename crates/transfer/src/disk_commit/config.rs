@@ -306,6 +306,19 @@ pub(crate) struct BackupEnv<'a> {
     pub(crate) metadata_opts: Option<&'a MetadataOptions>,
 }
 
+#[cfg(unix)]
+impl<'a> BackupEnv<'a> {
+    /// The sandbox, destination root and relative path that anchor `path`, or
+    /// `None` when no sandbox is held or `path` lies outside the destination.
+    pub(crate) fn anchor<'p>(
+        &self,
+        path: &'p Path,
+    ) -> Option<(&'a fast_io::DirSandbox, &'a Path, &'p Path)> {
+        let (sandbox, dest_dir) = (self.sandbox?, self.dest_dir?);
+        Some((sandbox, dest_dir, path.strip_prefix(dest_dir).ok()?))
+    }
+}
+
 impl DiskCommitConfig {
     /// Returns the effective channel capacity, clamped to valid bounds.
     ///

@@ -14,7 +14,6 @@ use std::io::{self, Read};
 use protocol::codec::NdxCodec;
 
 use crate::delta_apply::ChecksumVerifier;
-use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc;
@@ -192,7 +191,7 @@ pub fn process_file_response_streaming<R: Read>(
     });
 
     let mut basis_map = if let Some(ref path) = header.basis_path {
-        let map = MapFile::open(path).map_err(|e| {
+        let map = ctx.open_basis_map(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
         })?;
         // upstream: receiver.c:515-517 - `receive_data()` names the basis it

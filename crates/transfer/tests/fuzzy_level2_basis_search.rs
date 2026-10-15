@@ -63,6 +63,8 @@ fn fuzzy_level2_finds_basis_in_reference_directory() {
     )];
 
     let config = BasisFileConfig {
+        #[cfg(unix)]
+        sandbox: None,
         ndx: 0,
         file_path: &file_path,
         dest_dir: &dest_dir_a,
@@ -126,6 +128,8 @@ fn fuzzy_level1_does_not_search_reference_directories() {
     )];
 
     let config = BasisFileConfig {
+        #[cfg(unix)]
+        sandbox: None,
         ndx: 0,
         file_path: &file_path,
         dest_dir: &dest_dir_a,
@@ -186,6 +190,8 @@ fn fuzzy_level2_selects_best_match_across_reference_dirs() {
     ];
 
     let config = BasisFileConfig {
+        #[cfg(unix)]
+        sandbox: None,
         ndx: 0,
         file_path: &file_path,
         dest_dir: &dest_dir,
@@ -245,6 +251,8 @@ fn fuzzy_level2_generates_valid_signature_from_basis() {
     )];
 
     let config = BasisFileConfig {
+        #[cfg(unix)]
+        sandbox: None,
         ndx: 0,
         file_path: &file_path,
         dest_dir: &dest_dir,
@@ -307,6 +315,8 @@ fn fuzzy_level0_skips_search() {
     )];
 
     let config = BasisFileConfig {
+        #[cfg(unix)]
+        sandbox: None,
         ndx: 0,
         file_path: &file_path,
         dest_dir: &dest_dir,
@@ -359,6 +369,8 @@ fn whole_file_bypasses_fuzzy_search() {
     )];
 
     let config = BasisFileConfig {
+        #[cfg(unix)]
+        sandbox: None,
         ndx: 0,
         file_path: &file_path,
         dest_dir: &dest_dir,
@@ -413,6 +425,8 @@ fn fuzzy_basis_selection_emits_debug_fuzzy_line() {
     let _ = drain_events();
 
     let config = BasisFileConfig {
+        #[cfg(unix)]
+        sandbox: None,
         ndx: 0,
         file_path: &target_path,
         dest_dir: &dest_dir,
