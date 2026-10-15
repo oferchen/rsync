@@ -151,6 +151,11 @@ jobs:
       # is silent, so an informational gate would not change anything.
       - name: Module reachability gate
         run: python3 tools/ci/check_module_reachability.py
+      # Every key and certificate a test uses is generated at run time into its
+      # tempdir. A checked-in key is reusable by anyone and a checked-in cert
+      # turns validity-window tests into calendar tests.
+      - name: No checked-in key material
+        run: python3 tools/ci/check_no_key_material.py
 
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features --no-deps

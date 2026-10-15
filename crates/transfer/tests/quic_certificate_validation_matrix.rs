@@ -22,7 +22,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
 use test_support::Deadlined;
@@ -62,8 +62,17 @@ struct LeafSpec {
     sans: Vec<SanType>,
     ekus: Vec<Eku>,
     ca: bool,
-    validity: Option<(i32, i32)>,
+    validity: Option<Window>,
     key: KeyPair,
+}
+/// A validity window placed relative to the current clock, so no case
+/// depends on a fixed calendar date.
+#[derive(Clone, Copy)]
+enum Window {
+    /// Ended a day ago.
+    Expired,
+    /// Starts a day from now.
+    NotYetValid,
 }
 
 impl LeafSpec {
@@ -95,9 +104,16 @@ impl LeafSpec {
         if self.ca {
             params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         }
-        if let Some((from, to)) = self.validity {
-            params.not_before = rcgen::date_time_ymd(from, 1, 1);
-            params.not_after = rcgen::date_time_ymd(to, 1, 1);
+        if let Some(window) = self.validity {
+            let since_epoch = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock is after the epoch");
+            let now = rcgen::date_time_ymd(1970, 1, 1) + since_epoch;
+            let day = Duration::from_secs(86_400);
+            (params.not_before, params.not_after) = match window {
+                Window::Expired => (now - 2 * day, now - day),
+                Window::NotYetValid => (now + day, now + 2 * day),
+            };
         }
         params
     }
@@ -634,7 +650,7 @@ fn server_leaf_without_eku_extension() {
 fn server_expired_leaf_is_refused() {
     let ca = root_ca("matrix ca");
     let leaf = LeafSpec {
-        validity: Some((2000, 2001)),
+        validity: Some(Window::Expired),
         ..LeafSpec::server()
     }
     .signed_by(&ca);
@@ -645,7 +661,7 @@ fn server_expired_leaf_is_refused() {
 fn server_not_yet_valid_leaf_is_refused() {
     let ca = root_ca("matrix ca");
     let leaf = LeafSpec {
-        validity: Some((2090, 2091)),
+        validity: Some(Window::NotYetValid),
         ..LeafSpec::server()
     }
     .signed_by(&ca);
@@ -887,7 +903,7 @@ fn mtls_client_certificate_from_wrong_ca_is_refused() {
 fn mtls_expired_client_certificate_is_refused() {
     let client_ca = root_ca("client ca");
     let client = LeafSpec {
-        validity: Some((2000, 2001)),
+        validity: Some(Window::Expired),
         ..LeafSpec::client()
     }
     .signed_by(&client_ca);
