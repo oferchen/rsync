@@ -33,14 +33,14 @@ pub(in crate::receiver) fn dest_lstat(
     dest_dir: &std::path::Path,
     path: &std::path::Path,
     follow: bool,
-) -> std::io::Result<fast_io::LstatOutcome> {
+) -> std::io::Result<fast_io::EntryMetadata> {
     match path.strip_prefix(dest_dir) {
         Ok(relative) if follow => {
             fast_io::stat_via_sandbox_or_fallback(sandbox, dest_dir, relative, path)
         }
         Ok(relative) => fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative, path),
-        Err(_) if follow => std::fs::metadata(path).map(fast_io::LstatOutcome::Std),
-        Err(_) => std::fs::symlink_metadata(path).map(fast_io::LstatOutcome::Std),
+        Err(_) if follow => std::fs::metadata(path).map(fast_io::EntryMetadata::Std),
+        Err(_) => std::fs::symlink_metadata(path).map(fast_io::EntryMetadata::Std),
     }
 }
 

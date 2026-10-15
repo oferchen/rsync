@@ -206,7 +206,7 @@ pub fn apply_directory_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
     options: MetadataOptions,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, &options, None)?;
     if options.times() {
@@ -316,7 +316,7 @@ pub fn directory_dest_mode(
     destination: &Path,
     source_mode: u32,
     options: &MetadataOptions,
-    pre_transfer: Option<&fs::Metadata>,
+    pre_transfer: Option<&fast_io::EntryMetadata>,
 ) -> u32 {
     permissions::directory_dest_mode(destination, source_mode, options, pre_transfer)
 }
@@ -331,7 +331,7 @@ pub fn apply_dest_mode_pre_transfer(
     destination: &Path,
     source_metadata: &fs::Metadata,
     options: &MetadataOptions,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     permissions::apply_dest_mode_pre_transfer(
         destination,
@@ -354,7 +354,7 @@ pub fn transfer_root_chmod_self_lock(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<Option<(u32, bool)>, MetadataError> {
     let Some(tweaked) =
         permissions::chmod_directory_target_mode(destination, metadata, options, existing)?
@@ -406,7 +406,7 @@ pub fn apply_file_metadata_with_fd(
 pub fn apply_file_metadata_if_changed(
     destination: &Path,
     metadata: &fs::Metadata,
-    existing: &fs::Metadata,
+    existing: &fast_io::EntryMetadata,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
     let restat_after_chown =
@@ -415,9 +415,11 @@ pub fn apply_file_metadata_if_changed(
     // so re-stat before the chmod compare so they get re-applied.
     let refreshed;
     let existing = if restat_after_chown {
-        refreshed = fs::metadata(destination).map_err(|error| {
-            MetadataError::new("inspect destination permissions", destination, error)
-        })?;
+        refreshed = fs::metadata(destination)
+            .map(fast_io::EntryMetadata::from)
+            .map_err(|error| {
+                MetadataError::new("inspect destination permissions", destination, error)
+            })?;
         &refreshed
     } else {
         existing
@@ -450,7 +452,7 @@ pub fn apply_file_metadata_if_changed(
 pub fn apply_file_metadata_with_fd_if_changed(
     destination: &Path,
     metadata: &fs::Metadata,
-    existing: &fs::Metadata,
+    existing: &fast_io::EntryMetadata,
     options: &MetadataOptions,
     fd: BorrowedFd<'_>,
 ) -> Result<(), MetadataError> {
@@ -460,9 +462,11 @@ pub fn apply_file_metadata_with_fd_if_changed(
     // so re-stat before the chmod compare so they get re-applied.
     let refreshed;
     let existing = if restat_after_chown {
-        refreshed = fs::metadata(destination).map_err(|error| {
-            MetadataError::new("inspect destination permissions", destination, error)
-        })?;
+        refreshed = fs::metadata(destination)
+            .map(fast_io::EntryMetadata::from)
+            .map_err(|error| {
+                MetadataError::new("inspect destination permissions", destination, error)
+            })?;
         &refreshed
     } else {
         existing
@@ -551,13 +555,11 @@ pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly:
 pub fn metadata_unchanged(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: &fs::Metadata,
+    cached_meta: &fast_io::EntryMetadata,
     modify_window: ModifyWindow,
 ) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-
         // upstream: generator.c:500-501 - perms_differ(file, sxp)
         if options.permissions() && (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777)
         {
@@ -623,7 +625,7 @@ pub fn metadata_unchanged(
         }
 
         if options.times() {
-            let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
+            let current_mtime = cached_meta.modified_filetime();
             // upstream: util1.c:1744 same_time() - apply the `--modify-window`
             // tolerance rather than an exact FileTime compare.
             if !modify_window.same_time(
@@ -643,13 +645,12 @@ pub fn metadata_unchanged(
     // the destination exists by definition, so only the `--perms` compare
     // can report a chmod-driven difference.
     #[cfg(unix)]
-    if let Some(chmod) = options.chmod() {
-        use std::os::unix::fs::MetadataExt;
-        if options.permissions() {
-            let new_mode = chmod.apply(entry.permissions(), cached_meta.is_dir());
-            if (cached_meta.mode() & 0o7777) != (new_mode & 0o7777) {
-                return false;
-            }
+    if let Some(chmod) = options.chmod()
+        && options.permissions()
+    {
+        let new_mode = chmod.apply(entry.permissions(), cached_meta.is_dir());
+        if (cached_meta.mode() & 0o7777) != (new_mode & 0o7777) {
+            return false;
         }
     }
     #[cfg(not(unix))]
@@ -659,7 +660,6 @@ pub fn metadata_unchanged(
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         if let Some(uid) = options.owner_override()
             && cached_meta.uid() != uid
         {
@@ -700,7 +700,7 @@ pub fn metadata_unchanged(
 pub fn atime_needs_set(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: &fs::Metadata,
+    cached_meta: &fast_io::EntryMetadata,
     modify_window: ModifyWindow,
     flags: AttrsFlags,
 ) -> bool {
@@ -709,7 +709,7 @@ pub fn atime_needs_set(
         && !entry.is_dir()
         && (flags.accurate_time()
             || !modify_window.same_time(
-                filetime::FileTime::from_last_access_time(cached_meta).unix_seconds(),
+                cached_meta.accessed_filetime().unix_seconds(),
                 0,
                 entry.atime(),
                 0,
@@ -772,7 +772,7 @@ pub fn apply_symlink_metadata_with_options_and_pre_transfer(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, false, options, None)?;
     // upstream: rsync.c:769-791 - the times land before the chmod
@@ -838,9 +838,11 @@ pub fn apply_symlink_metadata_from_entry_with_pre_transfer(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
-    let cached_meta = fs::symlink_metadata(destination).ok();
+    let cached_meta = fs::symlink_metadata(destination)
+        .map(fast_io::EntryMetadata::from)
+        .ok();
 
     #[cfg(unix)]
     ownership::apply_symlink_ownership_from_entry(
@@ -907,7 +909,9 @@ pub fn apply_metadata_from_file_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    let cached_meta = fs::metadata(destination).ok();
+    let cached_meta = fs::metadata(destination)
+        .map(fast_io::EntryMetadata::from)
+        .ok();
     apply_metadata_with_cached_stat(destination, entry, options, cached_meta)
 }
 
@@ -920,7 +924,7 @@ pub fn apply_metadata_with_cached_stat(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<fs::Metadata>,
+    cached_meta: Option<fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     apply_metadata_with_pre_transfer_stat(destination, entry, options, cached_meta, None)
 }
@@ -940,8 +944,8 @@ pub fn apply_metadata_with_pre_transfer_stat(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<fs::Metadata>,
-    pre_transfer_meta: Option<fs::Metadata>,
+    cached_meta: Option<fast_io::EntryMetadata>,
+    pre_transfer_meta: Option<fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     apply_metadata_with_attrs_flags_and_pre_transfer(
         destination,
@@ -972,7 +976,7 @@ pub fn apply_metadata_with_attrs_flags(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<fs::Metadata>,
+    cached_meta: Option<fast_io::EntryMetadata>,
     attrs_flags: AttrsFlags,
 ) -> Result<(), MetadataError> {
     apply_metadata_with_attrs_flags_and_pre_transfer(
@@ -996,9 +1000,9 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<fs::Metadata>,
+    cached_meta: Option<fast_io::EntryMetadata>,
     attrs_flags: AttrsFlags,
-    pre_transfer_meta: Option<fs::Metadata>,
+    pre_transfer_meta: Option<fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     // Resolve the destination's parent directory ONCE through the hardened
     // `confined_parent` walk and share the borrowed dirfd across the three
@@ -1041,7 +1045,10 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     // upstream: rsync.c:694-704 - the chown may have cleared setuid/setgid bits,
     // so refresh the cached stat before the chmod compare re-applies them.
     let cached_meta = if restat_after_chown {
-        fs::metadata(destination).ok().or(cached_meta)
+        fs::metadata(destination)
+            .map(fast_io::EntryMetadata::from)
+            .ok()
+            .or(cached_meta)
     } else {
         cached_meta
     };

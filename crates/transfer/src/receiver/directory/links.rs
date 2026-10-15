@@ -444,7 +444,10 @@ impl ReceiverContext {
                 &link_path,
                 entry,
                 &symlink_options,
-                pre_replace_meta.as_ref(),
+                pre_replace_meta
+                    .clone()
+                    .map(fast_io::EntryMetadata::from)
+                    .as_ref(),
             ) {
                 // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
                 let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
@@ -726,7 +729,10 @@ impl ReceiverContext {
                 &link_path,
                 entry,
                 &symlink_options,
-                pre_replace_meta.as_ref(),
+                pre_replace_meta
+                    .clone()
+                    .map(fast_io::EntryMetadata::from)
+                    .as_ref(),
             ) {
                 // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
                 let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);

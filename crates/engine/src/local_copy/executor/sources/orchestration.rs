@@ -1531,7 +1531,7 @@ fn stamp_directory_from_source(
         dest_dir,
         &source_meta,
         metadata_options.clone(),
-        Some(&dest_meta),
+        Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
     )
     .map_err(crate::local_copy::map_metadata_error)?;
     Ok(())

@@ -127,7 +127,7 @@ pub(super) fn set_timestamp_like(
     metadata: &fs::Metadata,
     destination: &Path,
     follow_symlinks: bool,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
     let modified = FileTime::from_last_modification_time(metadata);
@@ -145,9 +145,9 @@ pub(super) fn set_timestamp_like(
     // upstream: rsync.c:733-749 - mtime and atime are checked independently;
     // the utimensat is only skipped when ALL relevant timestamps match.
     if let Some(existing) = existing {
-        let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
+        let mtime_matches = existing.modified_filetime() == modified;
         let atime_matches = match accessed {
-            Some(accessed) => FileTime::from_last_access_time(existing) == accessed,
+            Some(accessed) => existing.accessed_filetime() == accessed,
             None => true,
         };
         if mtime_matches && atime_matches {
@@ -234,7 +234,7 @@ pub(super) fn set_timestamp_with_fd(
     metadata: &fs::Metadata,
     destination: &Path,
     fd: BorrowedFd<'_>,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
     let modified = FileTime::from_last_modification_time(metadata);
@@ -248,9 +248,9 @@ pub(super) fn set_timestamp_with_fd(
 
     // upstream: rsync.c:733-749 - mtime and atime are checked independently
     if let Some(existing) = existing {
-        let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
+        let mtime_matches = existing.modified_filetime() == modified;
         let atime_matches = match accessed {
-            Some(accessed) => FileTime::from_last_access_time(existing) == accessed,
+            Some(accessed) => existing.accessed_filetime() == accessed,
             None => true,
         };
         if mtime_matches && atime_matches {
@@ -295,7 +295,7 @@ pub(super) fn set_timestamp_with_fd(
 pub(super) fn apply_atime_only_from_metadata(
     metadata: &fs::Metadata,
     destination: &Path,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     parent_walk: super::ParentWalk<'_>,
 ) -> Result<(), MetadataError> {
     // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
@@ -303,14 +303,14 @@ pub(super) fn apply_atime_only_from_metadata(
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
     if let Some(existing) = existing
-        && FileTime::from_last_access_time(existing) == source_atime
+        && existing.accessed_filetime() == source_atime
     {
         return Ok(());
     }
 
     // Preserve the destination's current mtime - only update atime.
     let dest_mtime = match existing {
-        Some(meta) => FileTime::from_last_modification_time(meta),
+        Some(meta) => meta.modified_filetime(),
         None => {
             let meta = fs::metadata(destination).map_err(|error| {
                 MetadataError::new("read current timestamps", destination, error)
@@ -342,21 +342,21 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
     metadata: &fs::Metadata,
     destination: &Path,
     fd: BorrowedFd<'_>,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     // upstream: rsync.c:745 - the applied access time's nanosecond field is 0.
     let source_atime =
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
     if let Some(existing) = existing
-        && FileTime::from_last_access_time(existing) == source_atime
+        && existing.accessed_filetime() == source_atime
     {
         return Ok(());
     }
 
     // Preserve the destination's current mtime - only update atime.
     let dest_mtime = match existing {
-        Some(meta) => FileTime::from_last_modification_time(meta),
+        Some(meta) => meta.modified_filetime(),
         None => {
             let meta = fs::metadata(destination).map_err(|error| {
                 MetadataError::new("read current timestamps", destination, error)
@@ -392,10 +392,10 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
 /// figure, and the written value has `ST_ATIME_NSEC = 0` (rsync.c:745).
 fn entry_atime_to_set(
     entry: &protocol::flist::FileEntry,
-    cached_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
     accurate: bool,
 ) -> Option<FileTime> {
-    let current_secs = cached_meta.map(|meta| FileTime::from_last_access_time(meta).unix_seconds());
+    let current_secs = cached_meta.map(|meta| meta.accessed_filetime().unix_seconds());
     (accurate || current_secs != Some(entry.atime()))
         .then(|| FileTime::from_unix_time(entry.atime(), 0))
 }
@@ -410,7 +410,7 @@ pub(super) fn apply_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
     accurate: bool,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
@@ -431,7 +431,7 @@ pub(super) fn apply_timestamps_from_entry(
     // destination already within the window is never re-stamped.
     let needs_utime = atime.is_some()
         || cached_meta.is_none_or(|meta| {
-            let current = FileTime::from_last_modification_time(meta);
+            let current = meta.modified_filetime();
             if accurate {
                 current != mtime
             } else {
@@ -515,7 +515,7 @@ pub(super) fn apply_symlink_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
-    cached_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
@@ -529,8 +529,8 @@ pub(super) fn apply_symlink_timestamps_from_entry(
     };
 
     // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
-    let needs_utime = atime.is_some()
-        || cached_meta.is_none_or(|meta| FileTime::from_last_modification_time(meta) != mtime);
+    let needs_utime =
+        atime.is_some() || cached_meta.is_none_or(|meta| meta.modified_filetime() != mtime);
 
     if needs_utime {
         // upstream: util1.c:set_times() uses lutimes/utimensat(AT_SYMLINK_NOFOLLOW)
@@ -561,7 +561,7 @@ pub(super) fn apply_symlink_timestamps_from_entry(
 pub(super) fn apply_atime_only_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
-    cached_meta: Option<&fs::Metadata>,
+    cached_meta: Option<&fast_io::EntryMetadata>,
     accurate: bool,
     parent_walk: super::ParentWalk<'_>,
     parent_dirfd: super::ParentDirFd<'_>,
@@ -573,7 +573,7 @@ pub(super) fn apply_atime_only_from_entry(
 
     if let Some(atime) = entry_atime_to_set(entry, cached_meta, accurate) {
         let mtime = match cached_meta {
-            Some(meta) => FileTime::from_last_modification_time(meta),
+            Some(meta) => meta.modified_filetime(),
             None => {
                 let meta = fs::metadata(destination).map_err(|error| {
                     MetadataError::new("read current timestamps", destination, error)

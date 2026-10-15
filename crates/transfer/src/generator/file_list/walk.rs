@@ -39,7 +39,7 @@ enum WalkStep {
     /// metadata before they call in.
     Visit {
         path: PathBuf,
-        metadata: fast_io::pinned_root::SourceMetadata,
+        metadata: fast_io::EntryMetadata,
         is_top_level: bool,
     },
     /// A directory child straight out of the batch stat.
@@ -446,7 +446,7 @@ impl GeneratorContext {
         &mut self,
         base: &Path,
         path: PathBuf,
-        metadata: fast_io::pinned_root::SourceMetadata,
+        metadata: fast_io::EntryMetadata,
         is_top_level: bool,
     ) -> io::Result<()> {
         let mut stack = vec![WalkStep::Visit {
@@ -508,7 +508,7 @@ impl GeneratorContext {
         &mut self,
         scope: WalkScope<'_>,
         path: PathBuf,
-        metadata: fast_io::pinned_root::SourceMetadata,
+        metadata: fast_io::EntryMetadata,
         is_top_level: bool,
         stack: &mut Vec<WalkStep>,
     ) -> io::Result<()> {
@@ -875,7 +875,7 @@ impl GeneratorContext {
         &mut self,
         base: &Path,
         result: StatResult,
-    ) -> Option<(PathBuf, fast_io::pinned_root::SourceMetadata)> {
+    ) -> Option<(PathBuf, fast_io::EntryMetadata)> {
         let StatResult { path, metadata } = result;
         let mut meta = match metadata {
             Ok(meta) => meta,
@@ -1021,7 +1021,7 @@ impl GeneratorContext {
         path: &Path,
         base: &Path,
         is_dotdir: bool,
-    ) -> io::Result<fast_io::pinned_root::SourceMetadata> {
+    ) -> io::Result<fast_io::EntryMetadata> {
         // upstream: flist.c:readlink_stat() operates on paths without the
         // DOTDIR marker. On Linux, lstat("path/") follows symlinks because the
         // kernel resolves the trailing slash, making a symlink appear as its
@@ -1157,7 +1157,7 @@ impl GeneratorContext {
 /// - `rsync-3.5.1/util1.c:1313` `change_dir()` - the daemon resolves the module
 ///   root through this same rule BEFORE the file list is walked, which is why
 ///   upstream never reaches this stat with an unresolved operand.
-fn symlink_target_is_operator_owned(meta: &fast_io::pinned_root::SourceMetadata) -> bool {
+fn symlink_target_is_operator_owned(meta: &fast_io::EntryMetadata) -> bool {
     #[cfg(unix)]
     {
         fast_io::symlink_owner_is_trusted(meta.uid())

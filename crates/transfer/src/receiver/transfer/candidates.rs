@@ -1442,7 +1442,12 @@ impl ReceiverContext {
             } else {
                 " (file change)"
             }
-        } else if !metadata_unchanged(entry, metadata_opts, dest_meta, modify_window) {
+        } else if !metadata_unchanged(
+            entry,
+            metadata_opts,
+            &fast_io::EntryMetadata::from(dest_meta.clone()),
+            modify_window,
+        ) {
             " (attr change)"
         } else {
             " (uptodate)"
@@ -1520,12 +1525,13 @@ impl ReceiverContext {
         // same_time() uses the plain --modify-window, not the -c exact window;
         // under -c ATTRS_ACCURATE_TIME forces the stamp anyway, restoring an
         // atime the checksum read may have moved.
+        let dest_stat = fast_io::EntryMetadata::from(stat_meta.clone());
         let attrs_updated = needs_metadata_apply
-            && (!metadata_unchanged(entry, metadata_opts, stat_meta, mtime_window)
+            && (!metadata_unchanged(entry, metadata_opts, &dest_stat, mtime_window)
                 || atime_needs_set(
                     entry,
                     metadata_opts,
-                    stat_meta,
+                    &dest_stat,
                     self.config.file_selection.modify_window,
                     attrs_flags,
                 ));
@@ -1534,7 +1540,7 @@ impl ReceiverContext {
                 file_path,
                 entry,
                 metadata_opts,
-                Some(stat_meta.clone()),
+                Some(dest_stat),
                 attrs_flags,
             )
         {

@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use fast_io::{
-    DirSandbox, LeafPolicy, LstatOutcome, lstat_via_sandbox_or_fallback, open_source_confined,
+    DirSandbox, EntryMetadata, LeafPolicy, lstat_via_sandbox_or_fallback, open_source_confined,
 };
 use tempfile::TempDir;
 
@@ -149,8 +149,8 @@ fn a_nested_parent_anchor_through_dotdot_survives_a_rename_load() {
     let _storm = RenameStorm::start();
     for attempt in 0..OPENS {
         match lstat_via_sandbox_or_fallback(Some(&sandbox), &dest, relative, &full) {
-            Ok(LstatOutcome::At(_)) => {}
-            Ok(LstatOutcome::Std(_)) => {
+            Ok(EntryMetadata::At(_)) => {}
+            Ok(EntryMetadata::Std(_)) => {
                 panic!("lstat {attempt} of xy/leaf degraded to a path-based op")
             }
             Err(err) => panic!("lstat {attempt} of xy/leaf failed under a rename load: {err}"),

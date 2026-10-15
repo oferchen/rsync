@@ -72,7 +72,10 @@ pub(super) fn apply_final_directory_metadata(
         destination,
         metadata,
         metadata_options.clone(),
-        pre_transfer_meta,
+        pre_transfer_meta
+            .cloned()
+            .map(fast_io::EntryMetadata::from)
+            .as_ref(),
     )
     .map_err(map_metadata_error)?;
 
@@ -229,7 +232,7 @@ pub(super) fn keep_preexisting_directory_writable(
         destination,
         metadata.permissions().mode(),
         &metadata_options,
-        Some(pre_transfer),
+        Some(&fast_io::EntryMetadata::from(pre_transfer.clone())),
     );
     // upstream: generator.c:1904-1906 - raise to mode | S_IRWXU when the
     // target lacks full owner rwx; otherwise the first-visit chmod lands the
@@ -321,7 +324,10 @@ pub(super) fn enforce_transfer_root_self_lock(
         destination,
         metadata,
         &options,
-        pre_transfer_meta,
+        pre_transfer_meta
+            .cloned()
+            .map(fast_io::EntryMetadata::from)
+            .as_ref(),
     )
     .map_err(map_metadata_error)?
     else {
@@ -438,7 +444,7 @@ fn apply_relative_intermediate_dir_mtimes(
             &dst_dir,
             &src_meta,
             metadata_options.clone(),
-            Some(&dst_meta),
+            Some(&fast_io::EntryMetadata::from(dst_meta.clone())),
         )
         .map_err(map_metadata_error)?;
     }
