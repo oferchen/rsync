@@ -957,6 +957,9 @@ pub(in crate::receiver) fn handle_delayed_updates(
         // the unchecked rmdir correct when two entries stage in one directory:
         // the first call fails harmlessly on the still-occupied directory and
         // the second succeeds.
+        #[cfg(unix)]
+        crate::robust_rename::remove_partial_dir(env.commit_anchor(), partial_dir, staging_path);
+        #[cfg(not(unix))]
         engine::remove_partial_dir(partial_dir, staging_path);
     }
 
@@ -2247,10 +2250,11 @@ mod tests {
         fs::rename(&dest_dir, &pinned).expect("move the real dest aside");
         std::os::unix::fs::symlink(&outside, &dest_dir).expect("plant the dest symlink");
 
-        // The pre-transfer destination the sweep must back up, reached through
-        // the swapped path exactly as the receiver's stored path string does.
+        // The pre-transfer destination lives in the pinned tree; the decoy is
+        // what the receiver's stored path string reaches through the swap.
         let final_path = dest_dir.join("payload.bin");
-        fs::write(outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+        fs::write(pinned.join("payload.bin"), b"pre-transfer bytes").unwrap();
+        fs::write(outside.join("payload.bin"), b"decoy outside the tree").unwrap();
 
         let staged_dir = staging.join("staged");
         fs::create_dir(&staged_dir).unwrap();
@@ -2336,7 +2340,8 @@ mod tests {
         std::os::unix::fs::symlink(&outside, &dest_dir).expect("plant the dest symlink");
 
         let final_path = dest_dir.join("payload.bin");
-        fs::write(outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+        fs::write(pinned.join("payload.bin"), b"pre-transfer bytes").unwrap();
+        fs::write(outside.join("payload.bin"), b"decoy outside the tree").unwrap();
 
         let staged_dir = staging.join("staged");
         fs::create_dir(&staged_dir).unwrap();

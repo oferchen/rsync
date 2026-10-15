@@ -16,7 +16,6 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 
 use super::errno_location;
-use super::lstat::single_component_leaf;
 use super::metadata::{fstatat_nofollow, widen_mode};
 use super::open::{openat, openat_dot};
 
@@ -123,7 +122,7 @@ pub enum ReadDirOutcome {
     /// per-entry actions (matches the `recursive_unlinkat` invariant).
     At(std::vec::IntoIter<DirEntryView>),
     /// Path-based [`std::fs::read_dir`] iterator used when the sandbox
-    /// was unavailable or the relative path was not a single component.
+    /// was unavailable or the path does not lie beneath it.
     Std(std::fs::ReadDir),
 }
 
@@ -170,11 +169,13 @@ impl Iterator for ReadDirOutcome {
 ///   `openat(sandbox.current_dirfd(), leaf, O_DIRECTORY | O_NOFOLLOW |
 ///   O_RDONLY | O_CLOEXEC)` so a TOCTOU symlink swap on the leaf cannot
 ///   redirect the listing into an attacker-chosen directory.
-/// - In every other case the helper falls back to
-///   [`std::fs::read_dir`] on `target_path`. The fallback is vulnerable
-///   to the symlink-swap class the carrier closes; it is intended only
-///   for the no-sandbox contexts and multi-component descents that the
-///   SEC-1.f-q chain has not yet plumbed.
+/// - A nested directory opens the same way against its held or anchored
+///   parent (the arms shared with the other `*_via_sandbox_or_fallback`
+///   helpers), so a swapped intermediate directory cannot redirect the
+///   listing either.
+/// - Without a sandbox, or for a path that is not
+///   `dest_dir.join(relative_path)`, the helper falls back to
+///   [`std::fs::read_dir`] on `target_path`.
 ///
 /// The sandbox-anchored branch materialises the full listing up front
 /// (matching the `recursive_unlinkat` invariant) so the dirfd is closed
@@ -195,27 +196,35 @@ pub fn read_dir_via_sandbox_or_fallback(
     relative_path: &Path,
     target_path: &Path,
 ) -> io::Result<ReadDirOutcome> {
-    if let Some(sandbox) = sandbox {
-        if relative_path.as_os_str().is_empty() || relative_path == Path::new(".") {
-            if dest_dir == target_path {
-                let parent = sandbox.current_dirfd();
-                let dir_handle = openat_dot(parent)?;
-                let entries = read_dir_entry_views(dir_handle, parent, None)?;
-                return Ok(ReadDirOutcome::At(entries.into_iter()));
-            }
-        } else if let Some(leaf) = single_component_leaf(dest_dir, relative_path, target_path) {
-            let parent = sandbox.current_dirfd();
+    if let Some(sandbox) = sandbox
+        && (relative_path.as_os_str().is_empty() || relative_path == Path::new("."))
+        && dest_dir == target_path
+    {
+        let parent = sandbox.current_dirfd();
+        let dir_handle = openat_dot(parent)?;
+        let entries = read_dir_entry_views(dir_handle, parent, None)?;
+        return Ok(ReadDirOutcome::At(entries.into_iter()));
+    }
+    // upstream: rsync-3.5.1/syscall.c:3858-3871 held_dfd_for()
+    let listed = super::nested::at_dest_leaf(
+        sandbox,
+        dest_dir,
+        relative_path,
+        target_path,
+        |parent, leaf| {
             let dir_handle = openat(
                 parent,
                 leaf,
                 libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_RDONLY | libc::O_CLOEXEC,
                 0,
             )?;
-            let entries = read_dir_entry_views(dir_handle, parent, Some(leaf))?;
-            return Ok(ReadDirOutcome::At(entries.into_iter()));
-        }
+            read_dir_entry_views(dir_handle, parent, Some(leaf))
+        },
+    )?;
+    match listed {
+        Some(entries) => Ok(ReadDirOutcome::At(entries.into_iter())),
+        None => std::fs::read_dir(target_path).map(ReadDirOutcome::Std),
     }
-    std::fs::read_dir(target_path).map(ReadDirOutcome::Std)
 }
 
 /// Materialise the full listing for the directory `dirfile` refers to,

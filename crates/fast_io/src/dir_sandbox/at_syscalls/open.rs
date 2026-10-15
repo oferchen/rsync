@@ -211,19 +211,19 @@ pub fn open_write_via_sandbox_or_fallback(
 
 /// Open an in-place output beneath the destination sandbox.
 ///
-/// The first arm creates or opens the leaf with `O_NOFOLLOW` against the
-/// held, single-component or anchored parent. Without a sandbox, for a path
-/// outside `dest_dir`, or when that open fails with `EACCES`, it runs the
-/// path-based chain of [`open_inplace_output`](crate::open_inplace_output),
-/// whose `protected_regular` and read-only arms recover the open.
+/// Every arm of the chain - the `O_CREAT` open, the `protected_regular` retry
+/// and the read-only recovery's probe and reopen - resolves the leaf with
+/// `O_NOFOLLOW` against the same held, single-component or anchored parent, so
+/// an `EACCES` never hands the retry to a path resolver a swapped parent could
+/// redirect. Without a sandbox, or for a path outside `dest_dir`, it runs the
+/// path-based chain of [`open_inplace_output`](crate::open_inplace_output).
 ///
-/// upstream: rsync-3.5.1/receiver.c:1212-1241 - `secure_recv_open()` first,
-/// then the `EACCES` recovery arms.
+/// upstream: rsync-3.5.1/receiver.c:1212-1241 - `secure_recv_open()` and its
+/// `EACCES` recovery arms, all through the same resolver.
 ///
 /// # Errors
 ///
-/// Surfaces the anchored open's error other than `EACCES`, or the path
-/// chain's error.
+/// Surfaces the last anchored arm's error, or the path chain's error.
 pub fn open_inplace_output_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -231,23 +231,35 @@ pub fn open_inplace_output_via_sandbox_or_fallback(
     full_path: &Path,
     truncate: bool,
 ) -> io::Result<File> {
-    let mut flags = libc::O_WRONLY | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let mut write_flags = libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     if truncate {
-        flags |= libc::O_TRUNC;
+        write_flags |= libc::O_TRUNC;
     }
-    let path_chain =
-        || crate::open_inplace_output(full_path, truncate, crate::InplaceResolution::Direct);
-    match super::nested::at_dest_leaf(
+    let anchored = super::nested::at_dest_leaf(
         sandbox,
         dest_dir,
         relative_path,
         full_path,
-        |dirfd, leaf| openat(dirfd, leaf, flags, 0o666),
-    ) {
-        Ok(Some(file)) => Ok(file),
-        Ok(None) => path_chain(),
-        Err(error) if error.raw_os_error() == Some(libc::EACCES) => path_chain(),
-        Err(error) => Err(error),
+        |dirfd, leaf| {
+            crate::inplace_open::inplace_chain(
+                |create| {
+                    let create = if create { libc::O_CREAT } else { 0 };
+                    openat(dirfd, leaf, write_flags | create, 0o666)
+                },
+                || {
+                    openat(
+                        dirfd,
+                        leaf,
+                        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                        0,
+                    )
+                },
+            )
+        },
+    )?;
+    match anchored {
+        Some(file) => Ok(file),
+        None => crate::open_inplace_output(full_path, truncate, crate::InplaceResolution::Direct),
     }
 }
 

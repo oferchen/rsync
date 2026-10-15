@@ -44,6 +44,13 @@ pub(crate) struct CommitAnchor<'a> {
     pub(crate) root: &'a Path,
 }
 
+impl<'a> CommitAnchor<'a> {
+    /// The held sandbox and `path` relative to `root`, when both exist.
+    fn beneath<'p>(&self, path: &'p Path) -> Option<(&'a fast_io::DirSandbox, &'p Path)> {
+        Some((self.sandbox?, path.strip_prefix(self.root).ok()?))
+    }
+}
+
 /// Renames `from` to `to` with `rename`, falling back to copy-then-unlink
 /// when the two sit on different filesystems.
 ///
@@ -92,7 +99,7 @@ pub(crate) fn robust_rename(
         }
         let target = match partial {
             Some(partial) => {
-                create_partial_dir(partial)?;
+                create_partial_dir(anchor, partial)?;
                 partial
             }
             None => to,
@@ -142,7 +149,7 @@ pub(crate) fn finish_rename(
         Renamed::Copied(copied) if copied == to => Ok(true),
         Renamed::Copied(staged) => {
             rename(&staged, to)?;
-            engine::remove_partial_dir(partial_dir, &staged);
+            remove_partial_dir(anchor, partial_dir, &staged);
             Ok(true)
         }
     }
@@ -152,14 +159,65 @@ pub(crate) fn finish_rename(
 ///
 /// upstream: `util1.c:1596` `handle_partial_dir(..., PDIR_CREATE)` -
 /// clear a non-directory at the name, then create it.
-fn create_partial_dir(partial: &Path) -> io::Result<()> {
+fn create_partial_dir(anchor: CommitAnchor<'_>, partial: &Path) -> io::Result<()> {
     let Some(dir) = partial.parent() else {
         return Ok(());
     };
-    engine::clear_partial_dir_obstruction(dir)?;
+    clear_partial_dir_obstruction(anchor, dir)?;
     engine::create_partial_dir(dir)
 }
 
+/// [`engine::clear_partial_dir_obstruction`] with the probe and the unlink
+/// resolved beneath the destination sandbox when `dir` lies under its root.
+///
+/// upstream: util1.c:1609-1615 handle_partial_dir(PDIR_CREATE) - `do_lstat_at`
+/// then `do_unlink_at` of a non-directory at the partial-dir name.
+pub(crate) fn clear_partial_dir_obstruction(
+    anchor: CommitAnchor<'_>,
+    dir: &Path,
+) -> io::Result<()> {
+    let Some((sandbox, relative)) = anchor.beneath(dir) else {
+        return engine::clear_partial_dir_obstruction(dir);
+    };
+    match fast_io::lstat_via_sandbox_or_fallback(Some(sandbox), anchor.root, relative, dir) {
+        // A symlink stays, as in the path arm: see engine's rationale.
+        Ok(entry) if entry.is_dir() || entry.is_symlink() => Ok(()),
+        Ok(_) => fast_io::unlink_via_sandbox_or_fallback(
+            Some(sandbox),
+            anchor.root,
+            relative,
+            dir,
+            fast_io::UnlinkFlags::File,
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+/// [`engine::remove_partial_dir`] with the rmdir resolved beneath the
+/// destination sandbox when the partial dir lies under its root.
+///
+/// upstream: util1.c:1617-1627 handle_partial_dir(PDIR_DELETE) - an absolute
+/// `--partial-dir` is never removed; a relative one is `do_rmdir_at`'d.
+pub(crate) fn remove_partial_dir(
+    anchor: CommitAnchor<'_>,
+    partial_dir: Option<&Path>,
+    staged: &Path,
+) {
+    if !partial_dir.is_some_and(Path::is_absolute)
+        && let Some(dir) = staged.parent()
+        && let Some((sandbox, relative)) = anchor.beneath(dir)
+    {
+        let _ = fast_io::unlink_via_sandbox_or_fallback(
+            Some(sandbox),
+            anchor.root,
+            relative,
+            dir,
+            fast_io::UnlinkFlags::Dir,
+        );
+        return;
+    }
+    engine::remove_partial_dir(partial_dir, staged);
+}
 /// Removes a busy rename target so the next try can succeed.
 ///
 /// upstream: `util1.c:625-631` - `robust_unlink(to)`, reporting `ETXTBSY`

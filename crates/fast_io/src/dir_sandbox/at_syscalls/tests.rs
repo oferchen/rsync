@@ -1644,7 +1644,7 @@ fn read_dir_via_sandbox_lists_single_component_subdir() {
 }
 
 #[test]
-fn read_dir_via_sandbox_falls_back_for_multi_component() {
+fn read_dir_via_sandbox_anchors_a_multi_component_path() {
     let (_keep, root) = test_support::create_canonical_tempdir();
     let nested = root.join("a/b");
     std::fs::create_dir_all(&nested).expect("mkdir -p");
@@ -1655,12 +1655,36 @@ fn read_dir_via_sandbox_falls_back_for_multi_component() {
         read_dir_via_sandbox_or_fallback(Some(&sandbox), &root, Path::new("a/b"), &nested)
             .expect("read_dir");
     assert!(
-        matches!(outcome, ReadDirOutcome::Std(_)),
-        "multi-component path must take the path-based fallback"
+        matches!(outcome, ReadDirOutcome::At(_)),
+        "multi-component path must be listed beneath the sandback"
     );
     let names = collect_names(outcome);
     assert_eq!(names.len(), 1);
     assert_eq!(names[0], OsStr::new("leaf"));
+}
+
+// upstream: syscall.c:3858-3871 held_dfd_for - a nested directory is opened
+// beneath the destination, so a parent swapped for a symlink after the
+// receiver resolved it cannot redirect the listing out of the tree.
+#[test]
+fn read_dir_via_sandbox_refuses_a_swapped_nested_parent() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    let outside = root.join("outside");
+    std::fs::create_dir_all(outside.join("b")).expect("mkdir outside/b");
+    std::fs::write(outside.join("b/secret"), b"x").expect("secret");
+    let dest = root.join("dest");
+    std::fs::create_dir(&dest).expect("mkdir dest");
+    symlink(&outside, dest.join("a")).expect("swap a for a symlink");
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
+
+    let nested = dest.join("a/b");
+    match read_dir_via_sandbox_or_fallback(Some(&sandbox), &dest, Path::new("a/b"), &nested) {
+        Err(_) => {}
+        Ok(outcome) => panic!(
+            "listing escaped the sandbox through a/: {:?}",
+            collect_names(outcome)
+        ),
+    }
 }
 
 #[test]
@@ -2557,4 +2581,87 @@ mod held_parent {
         create(&sandbox, &root, "a/b/.t2").expect("create in the recreated dir");
         assert!(root.join("a/b/.t2").exists());
     }
+}
+
+// upstream: receiver.c:1212-1241 - the `EACCES` recovery arms reopen through
+// the same resolver as the first arm. A read-only destination in the pinned
+// tree makes the first anchored open fail with `EACCES`; the recovery must
+// open that pinned file, never the decoy a path retry would reach through the
+// swapped destination root.
+#[test]
+fn inplace_eacces_recovery_stays_beneath_the_pinned_destination() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    let dest = root.join("dest");
+    let pinned = root.join("dest.pinned");
+    let outside = root.join("outside");
+    std::fs::create_dir_all(dest.join("sub")).expect("mkdir dest/sub");
+    std::fs::create_dir_all(outside.join("sub")).expect("mkdir outside/sub");
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
+    std::fs::rename(&dest, &pinned).expect("move dest aside");
+    symlink(&outside, &dest).expect("swap the destination root");
+    let pinned_file = pinned.join("sub/f");
+    std::fs::write(&pinned_file, b"pinned").expect("pinned file");
+    std::fs::set_permissions(&pinned_file, std::fs::Permissions::from_mode(0o444))
+        .expect("read-only");
+    std::fs::write(outside.join("sub/f"), b"decoy").expect("decoy");
+
+    let full = dest.join("sub/f");
+    let mut file = open_inplace_output_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &dest,
+        Path::new("sub/f"),
+        &full,
+        false,
+    )
+    .expect("the read-only recovery opens the pinned file");
+    file.write_all(b"PINNED").expect("write");
+    drop(file);
+
+    assert_eq!(std::fs::read(&pinned_file).unwrap(), b"PINNED");
+    assert_eq!(std::fs::read(outside.join("sub/f")).unwrap(), b"decoy");
+    assert_eq!(
+        std::fs::metadata(&pinned_file)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o444,
+        "the recovery restores the prior mode"
+    );
+}
+
+// The held parent's `ENOENT` is authoritative (upstream: syscall.c:3858-3871
+// held_dfd_for): a missing leaf under the held parent is answered by the one
+// `*at` call against the held dirfd, never by re-resolving the parent. The
+// held `a/b` is renamed away and a fresh `a/b` holding the leaf takes its
+// place; a re-resolve would find that leaf, the held answer does not.
+#[test]
+fn missing_leaf_under_a_held_parent_is_not_re_resolved() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    std::fs::write(root.join("a/b/present"), b"x").expect("present");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    lstat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        Path::new("a/b/present"),
+        &root.join("a/b/present"),
+    )
+    .expect("present leaf primes the held a/b");
+
+    std::fs::rename(root.join("a/b"), root.join("a/held")).expect("move held a/b aside");
+    std::fs::create_dir(root.join("a/b")).expect("fresh a/b");
+    std::fs::write(root.join("a/b/missing"), b"y").expect("leaf only in the fresh a/b");
+
+    let err = lstat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        Path::new("a/b/missing"),
+        &root.join("a/b/missing"),
+    )
+    .expect_err("the held parent answers ENOENT");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }

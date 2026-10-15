@@ -319,6 +319,24 @@ impl<'a> BackupEnv<'a> {
     }
 }
 
+#[cfg(unix)]
+impl<'a> BackupEnv<'a> {
+    /// The anchor partial-dir cleanup resolves under: the destination sandbox
+    /// and root when both are held.
+    pub(crate) fn commit_anchor(&self) -> crate::robust_rename::CommitAnchor<'a> {
+        if let (Some(sandbox), Some(root)) = (self.sandbox, self.dest_dir) {
+            return crate::robust_rename::CommitAnchor {
+                sandbox: Some(sandbox),
+                root,
+            };
+        }
+        crate::robust_rename::CommitAnchor {
+            sandbox: None,
+            root: Path::new(""),
+        }
+    }
+}
+
 impl DiskCommitConfig {
     /// Returns the effective channel capacity, clamped to valid bounds.
     ///

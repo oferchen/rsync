@@ -53,12 +53,26 @@ pub fn open_readonly_inplace(
     truncate: bool,
     resolution: InplaceResolution,
 ) -> io::Result<fs::File> {
-    let eacces = || io::Error::from_raw_os_error(libc::EACCES);
-
     // upstream: receiver.c:227-229 - the probe honours `one_inplace` exactly as
     // the write open does, so a raced operator path is refused here too rather
     // than silently walked by the plain resolver.
-    let probe = resolution.open_probe(path)?;
+    recover_readonly(resolution.open_probe(path), || {
+        resolution.open_write(path, false, truncate)
+    })
+}
+
+/// The mode dance of [`open_readonly_inplace`] over caller-supplied opens, so
+/// the probe and the write open resolve the leaf exactly as the caller's first
+/// arm did - by path, through the ownership walk, or beneath a held dirfd.
+///
+/// `probe` is a read-only, `O_NOFOLLOW` open of the leaf; `open_write` reopens
+/// it for writing without `O_CREAT`.
+pub(crate) fn recover_readonly(
+    probe: io::Result<fs::File>,
+    open_write: impl FnOnce() -> io::Result<fs::File>,
+) -> io::Result<fs::File> {
+    let eacces = || io::Error::from_raw_os_error(libc::EACCES);
+    let probe = probe?;
 
     let metadata = probe.metadata()?;
     // upstream: receiver.c:232-235 - not the read-only regular file we recover.
@@ -75,7 +89,7 @@ pub fn open_readonly_inplace(
 
     probe.set_permissions(fs::Permissions::from_mode(prior_mode | OWNER_WRITE))?;
 
-    let opened = resolution.open_write(path, false, truncate);
+    let opened = open_write();
 
     // upstream: receiver.c:248-254 - restore unconditionally, and a failed
     // restore WINS: drop the descriptor and report the restore error.
