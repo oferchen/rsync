@@ -130,7 +130,7 @@ pub struct DirSandbox {
     secondaries: DashMap<PathBuf, Arc<OwnedFd>>,
     /// The nested parent directory the current run of entries lives in; see
     /// [`held_parent`](Self::held_parent).
-    held: HeldDir,
+    held: Arc<HeldDir>,
 }
 
 /// One frame of the in-tree descent stack.
@@ -229,7 +229,7 @@ impl DirSandbox {
             root: Arc::new(fd),
             stack: Vec::new(),
             secondaries: DashMap::new(),
-            held: HeldDir::new(),
+            held: Arc::new(HeldDir::new()),
         })
     }
 
@@ -253,7 +253,7 @@ impl DirSandbox {
             root: Arc::new(fd),
             stack: Vec::new(),
             secondaries: DashMap::new(),
-            held: HeldDir::new(),
+            held: Arc::new(HeldDir::new()),
         })
     }
 
@@ -470,6 +470,17 @@ impl DirSandbox {
     /// caller's uncached retry and the next lookup resolve afresh.
     pub fn release_held_parent(&self) {
         self.held.invalidate();
+    }
+
+    /// The cache behind [`held_parent`](Self::held_parent), for a consumer
+    /// that resolves the same root-relative directories beneath the same
+    /// root, so the two share one open per parent instead of one each.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:3858-3871` `held_dfd_for()` - the
+    /// receiver keeps a single held parent for every per-entry operation.
+    #[must_use]
+    pub fn held_dir(&self) -> Arc<HeldDir> {
+        Arc::clone(&self.held)
     }
 }
 
@@ -1054,7 +1065,7 @@ impl DirSandbox {
             root: Arc::new(walk.into_leaf()),
             stack: Vec::new(),
             secondaries: DashMap::new(),
-            held: HeldDir::new(),
+            held: Arc::new(HeldDir::new()),
         })
     }
 

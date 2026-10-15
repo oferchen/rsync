@@ -893,37 +893,6 @@ impl ReceiverContext {
         if self.config.connection.served_module_root().is_none() {
             pin_operator_destination(&dest_dir, anchor)?;
         }
-        // The destination root is entered once and every entry's parent is
-        // resolved beneath it; its own attributes go through its descriptor.
-        // A daemon's operator named only the module, so the peer's remainder
-        // is entered beneath the module root.
-        // upstream: util1.c change_dir(), clientserver.c:1059
-        let destination_root = match self.config.connection.served_module_root() {
-            Some(module_root) => {
-                metadata::DestinationRoot::served(dest_dir.clone(), module_root.to_path_buf())
-            }
-            None => metadata::DestinationRoot::new(dest_dir.clone()),
-        };
-        let metadata_opts = metadata_opts.with_destination_root(Some(Arc::new(destination_root)));
-
-        let acl_cache = if self.config.flags.acls {
-            self.flist_reader_cache
-                .as_ref()
-                .map(|r| Arc::new(r.acl_cache().clone()))
-        } else {
-            None
-        };
-
-        // upstream: uidlist.c:483-484 match_acl_ids() - build the cross-host id
-        // remapper for named ACL entries from the received uid/gid id-lists plus
-        // `--usermap`/`--groupmap`, snapshotted so it can ride the Arc onto the
-        // disk-commit thread that applies cached ACLs.
-        let acl_id_map = if self.config.flags.acls {
-            Some(Arc::new(self.build_acl_id_mapper()))
-        } else {
-            None
-        };
-
         // SEC-1.e: open the destination root as a sandboxed dirfd carrier.
         // The carrier rides through every per-entry operation so the
         // SEC-1.f-j cutover sites can replace path-based syscalls with
@@ -959,6 +928,44 @@ impl ReceiverContext {
         let sandbox = match self.config.connection.served_module_root() {
             Some(module_root) => open_sandbox_for_dest_anchored(module_root, &dest_dir)?,
             None => open_sandbox_for_dest(&dest_dir),
+        };
+        // The destination root is entered once and every entry's parent is
+        // resolved beneath it; its own attributes go through its descriptor.
+        // A daemon's operator named only the module, so the peer's remainder
+        // is entered beneath the module root.
+        // upstream: util1.c change_dir(), clientserver.c:1059
+        let destination_root = match self.config.connection.served_module_root() {
+            Some(module_root) => {
+                metadata::DestinationRoot::served(dest_dir.clone(), module_root.to_path_buf())
+            }
+            None => metadata::DestinationRoot::new(dest_dir.clone()),
+        };
+        // The metadata applier and the sandbox resolve the same parents beneath
+        // the same root; one held parent serves both, as upstream's single
+        // held_dfd_for() slot does (syscall.c:3858-3871).
+        #[cfg(unix)]
+        let destination_root = match &sandbox {
+            Some(sandbox) => destination_root.sharing_held(sandbox.held_dir()),
+            None => destination_root,
+        };
+        let metadata_opts = metadata_opts.with_destination_root(Some(Arc::new(destination_root)));
+
+        let acl_cache = if self.config.flags.acls {
+            self.flist_reader_cache
+                .as_ref()
+                .map(|r| Arc::new(r.acl_cache().clone()))
+        } else {
+            None
+        };
+
+        // upstream: uidlist.c:483-484 match_acl_ids() - build the cross-host id
+        // remapper for named ACL entries from the received uid/gid id-lists plus
+        // `--usermap`/`--groupmap`, snapshotted so it can ride the Arc onto the
+        // disk-commit thread that applies cached ACLs.
+        let acl_id_map = if self.config.flags.acls {
+            Some(Arc::new(self.build_acl_id_mapper()))
+        } else {
+            None
         };
 
         // FSM: file list received and sanitized. Advance to DeltaTransfer.
