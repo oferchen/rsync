@@ -423,8 +423,30 @@ impl ReceiverContext {
             .map(|&(idx, entry)| (idx, dest_dir.join(entry.path())))
             .collect();
 
-        let stat_results: Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)> =
-            crate::parallel_io::map_blocking(
+        // A held destination answers every stat beneath the pinned root
+        // through its held parent, one directory at a time, as upstream's
+        // do_stat_at() does through held_dfd_for() (syscall.c:3858-3871).
+        #[cfg(unix)]
+        let anchored = sandbox.map(|sandbox| {
+            stat_paths
+                .iter()
+                .map(|(idx, file_path)| {
+                    let meta = super::super::directory::dest_lstat(
+                        Some(sandbox),
+                        dest_dir,
+                        file_path,
+                        true,
+                    )
+                    .ok();
+                    (*idx, file_path.clone(), meta)
+                })
+                .collect::<Vec<_>>()
+        });
+        #[cfg(not(unix))]
+        let anchored: Option<Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)>> = None;
+        let stat_results: Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)> = match anchored {
+            Some(results) => results,
+            None => crate::parallel_io::map_blocking(
                 stat_paths,
                 self.parallel_thresholds
                     .for_op(crate::parallel_io::ParallelOp::Stat),
@@ -434,7 +456,8 @@ impl ReceiverContext {
                         .map(fast_io::EntryMetadata::from);
                     (idx, file_path, meta)
                 },
-            );
+            ),
+        };
 
         // Phase C: Sequential post-processing with stat results.
         // Pre-size for the expected minority that need transfer.
@@ -3540,6 +3563,48 @@ mod uptodate_notice_tests {
         writer.lines
     }
 
+    /// upstream: syscall.c:3858-3871 `held_dfd_for()` - the generator stats a
+    /// regular-file destination through the held parent beneath the pinned
+    /// root, so a parent directory swapped for a symlink to a tree outside the
+    /// destination is never followed. A quick-check match out there must not
+    /// make the file look up to date: it is requested from the sender instead.
+    #[cfg(unix)]
+    #[test]
+    fn sandboxed_stat_does_not_quick_check_through_a_symlinked_parent() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path().join("dest");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&dest).expect("create dest");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        let bait = uptodate_entry(&outside, "f", 30);
+        std::os::unix::fs::symlink(&outside, dest.join("sub")).expect("plant parent symlink");
+        let mut entry = FileEntry::new_file("sub/f".into(), 30, 0o644);
+        entry.set_mtime(SEED_MTIME, 0);
+        assert_eq!(bait.size(), entry.size());
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, server_config());
+        ctx.file_list = vec![entry].into();
+        let sandbox = fast_io::DirSandbox::open_root(&dest).expect("open sandbox");
+        let mut errs = Vec::new();
+        let mut stats = TransferStats::default();
+        let requested = ctx.build_files_to_transfer(
+            &mut CaptureWriter::default(),
+            &dest,
+            Some(&sandbox),
+            &MetadataOptions::default(),
+            None,
+            &mut errs,
+            &mut stats,
+            None,
+            None,
+        );
+        assert_eq!(
+            requested.iter().map(|(idx, _, _)| *idx).collect::<Vec<_>>(),
+            vec![0],
+            "the outside match must not satisfy the quick-check"
+        );
+    }
     /// upstream: rsync.c:828 - at NAME2 every quick-check match is reported as
     /// `"%s is uptodate"`, framed as `MSG_INFO` by a server generator so the
     /// client both prints it and counts its bytes. A stale file (mtime
