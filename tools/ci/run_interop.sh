@@ -810,6 +810,17 @@ wait_for_port_free() {
 # Check that a port is available before starting a daemon.
 # If the port is occupied, attempt to kill the owning process.
 # Returns 0 if the port is now available, 1 if still occupied.
+# Set oc_port and up_port to two ports that are distinct from each other.
+# Two separate allocate_ephemeral_port calls can return the same port: each
+# releases its socket before the next bind, so the kernel may hand the port
+# out again and both daemons would then be configured for one port.
+allocate_daemon_port_pair() {
+  local -a pair
+  mapfile -t pair < <(allocate_distinct_ephemeral_ports 2)
+  oc_port=${pair[0]}
+  up_port=${pair[1]}
+}
+
 check_port_available() {
   local port=$1
 
@@ -12998,8 +13009,7 @@ if [[ ${#sweep_binaries[@]} -gt 0 ]]; then
     newest_label="${sweep_labels[$sweep_idx]}"
     newest_binary="${sweep_binaries[$sweep_idx]}"
     for proto in "${protos[@]}"; do
-      oc_port=$(allocate_ephemeral_port)
-      up_port=$(allocate_ephemeral_port)
+      allocate_daemon_port_pair
       echo ""
       echo "=== Protocol ${proto} vs upstream ${newest_label} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
       if ! run_comprehensive_interop_case "$newest_label" "$newest_binary" \
@@ -13052,8 +13062,7 @@ if [[ -z "$standalone_binary" ]]; then
 fi
 
 if [[ -x "$standalone_binary" ]]; then
-  oc_port=$(allocate_ephemeral_port)
-  up_port=$(allocate_ephemeral_port)
+  allocate_daemon_port_pair
   if ! run_standalone_interop_tests "$standalone_binary" \
       "$oc_port" "$up_port"; then
     failed+=("standalone")
