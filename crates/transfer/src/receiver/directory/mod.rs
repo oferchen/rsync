@@ -44,24 +44,6 @@ pub(in crate::receiver) fn dest_lstat(
     }
 }
 
-/// [`dest_lstat`] for a consumer typed on [`std::fs::Metadata`]; see
-/// [`fast_io::metadata_via_sandbox_or_fallback`] for the platform arms.
-#[cfg(unix)]
-pub(in crate::receiver) fn dest_metadata(
-    sandbox: Option<&fast_io::DirSandbox>,
-    dest_dir: &std::path::Path,
-    path: &std::path::Path,
-    follow: bool,
-) -> std::io::Result<std::fs::Metadata> {
-    match path.strip_prefix(dest_dir) {
-        Ok(relative) => {
-            fast_io::metadata_via_sandbox_or_fallback(sandbox, dest_dir, relative, path, follow)
-        }
-        Err(_) if follow => std::fs::metadata(path),
-        Err(_) => std::fs::symlink_metadata(path),
-    }
-}
-
 /// Whether an entry exists at `path`, probed without following a final
 /// symlink - through the destination sandbox on Unix (upstream:
 /// syscall.c `do_lstat_at()`).
