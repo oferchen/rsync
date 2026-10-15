@@ -1,6 +1,47 @@
 // Top-level approved-module request driver: connection acquisition,
 // auth, exec hooks, config build, transfer execution, and TCP drain.
 
+/// Refuses a client whose greeting protocol lies outside the supported window,
+/// at the point upstream's setup_protocol() checks it. Returns whether it did.
+///
+/// upstream: compat.c:621-625 - `remote_protocol` outside [MIN_PROTOCOL_VERSION,
+/// MAX_PROTOCOL_VERSION] logs the shell-clean lines and exits RERR_PROTOCOL.
+/// The daemon has not started multiplexing yet, so the text goes only to its
+/// log and the client sees the connection close. The post-xfer hook still runs,
+/// as upstream's waiting parent sees the child's exit status.
+fn refuse_unsupported_peer_protocol(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    host_name: &str,
+    user_name: Option<&str>,
+    client_args: &[String],
+) -> bool {
+    let Some(raw) = ctx.unsupported_peer_protocol else {
+        return false;
+    };
+    if let Some(log) = ctx.log_sink {
+        for line in NegotiationError::UnsupportedVersion(raw)
+            .to_string()
+            .lines()
+        {
+            log_message(log, &rsync_info!(line.to_owned()).with_role(Role::Daemon));
+        }
+        let message = rsync_error!(ExitCode::Protocol.as_i32(), "protocol incompatibility")
+            .with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+    *ctx.session_exit_code = Some(ExitCode::Protocol);
+    run_post_xfer_finalizer(
+        ctx,
+        module,
+        host_name,
+        user_name,
+        client_args,
+        ExitCode::Protocol.as_i32(),
+    );
+    true
+}
+
 /// Runs the module's `post-xfer exec` hook, once it has been armed, with the
 /// given transfer `exit_status`.
 ///
@@ -562,6 +603,17 @@ fn process_approved_module(
             }
         };
         if let Some(text) = failure {
+            // upstream: clientserver.c:1232 - the failure path finishes
+            // setup_protocol() first, so an unsupported peer is refused there.
+            if refuse_unsupported_peer_protocol(
+                ctx,
+                module,
+                &host_name_owned,
+                auth_user.as_deref(),
+                &client_args,
+            ) {
+                return Ok(());
+            }
             // upstream: clientserver.c:1226-1268 - finish the protocol setup so
             // the error can travel multiplexed, send the text as FERROR, and
             // exit RERR_UNSUPPORTED. Nothing is written raw after `@RSYNCD: OK`.
@@ -592,6 +644,19 @@ fn process_approved_module(
         }
     }
 
+    // upstream: every path past the pre-xfer hook runs setup_protocol() before
+    // its first message - the refused-option and pre-xfer error path
+    // (clientserver.c:1226-1232) and start_server() (main.c:1308) alike - so an
+    // unsupported peer is refused ahead of them all.
+    if refuse_unsupported_peer_protocol(
+        ctx,
+        module,
+        &host_name_owned,
+        auth_user.as_deref(),
+        &client_args,
+    ) {
+        return Ok(());
+    }
     // upstream: clientserver.c:rsync_module() -> parse_arguments() applies the
     // module's `refuse options` list against the actual client argv after the
     // post-OK `read_args()` round-trip; this is the only refusal point.

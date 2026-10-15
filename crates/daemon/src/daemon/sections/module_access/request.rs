@@ -45,6 +45,12 @@ struct ModuleRequestContext<'a> {
     /// different state from no list at all, so the distinction is carried in the
     /// type rather than in an `Option<&str>`.
     client_digests: AdvertisedDigests<'a>,
+    /// The client's greeting protocol when it lies outside the supported window,
+    /// refused at the setup_protocol point after `@RSYNCD: OK`.
+    ///
+    /// upstream: clientserver.c:209 stores `remote_protocol` unchecked;
+    /// compat.c:621-625 rejects it once the module request has been accepted.
+    unsupported_peer_protocol: Option<u32>,
     /// Set when the session must end the way upstream's forked child would
     /// `exit_cleanup()`, carrying that exit code.
     ///
@@ -688,6 +694,7 @@ fn respond_with_module_request(
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
+    unsupported_peer_protocol: Option<u32>,
     client_digests: AdvertisedDigests<'_>,
     session_exit_code: &mut Option<ExitCode>,
     early_input_data: Option<Vec<u8>>,
@@ -734,6 +741,7 @@ fn respond_with_module_request(
         messages,
         early_input_data,
         client_digests,
+        unsupported_peer_protocol,
         session_exit_code,
         post_xfer_command: None,
         conn_state,

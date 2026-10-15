@@ -239,6 +239,7 @@ include!("tests/chunks/run_daemon_expands_exec_hooks_like_upstream.rs");
 include!("tests/chunks/run_daemon_answers_early_input_errors_like_upstream.rs");
 include!("tests/chunks/daemon_early_exec_receives_early_input_on_stdin.rs");
 include!("tests/chunks/run_daemon_rejects_non_greeting_first_line.rs");
+include!("tests/chunks/run_daemon_caps_the_client_protocol_like_upstream.rs");
 include!("tests/chunks/run_daemon_serves_slow_handshake.rs");
 include!("tests/chunks/run_daemon_rejects_push_to_default_read_only_module.rs");
 include!("tests/chunks/daemon_pre_xfer_exec_rejects_on_nonzero_exit.rs");

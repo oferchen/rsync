@@ -403,6 +403,7 @@ fn handle_legacy_session(
 
     let mut request = None;
     let mut negotiated_protocol = None;
+    let mut unsupported_peer_protocol = None;
     let mut client_digests: Option<String> = None;
     let mut session_exit_code: Option<ExitCode> = None;
     let mut early_input_data: Option<Vec<u8>> = None;
@@ -494,6 +495,28 @@ fn handle_legacy_session(
                 negotiated_protocol = Some(version);
                 // FSM: Greeting -> ModuleSelect - version exchange complete,
                 // now waiting for the client to request a module name.
+                conn_state = conn_state
+                    .transition(ConnectionState::ModuleSelect)
+                    .map_err(transition_error)?;
+                continue;
+            }
+            // upstream: clientserver.c:209 exchange_protocols() only sscanf's the
+            // client's number; a version outside [MIN_PROTOCOL_VERSION,
+            // MAX_PROTOCOL_VERSION] is still the greeting, never a module name.
+            // setup_protocol() refuses it after `@RSYNCD: OK` (compat.c:621-625),
+            // so the session runs at the nearest supported version until then:
+            // ours for a newer peer (clientserver.c:242-243), the floor for an
+            // older one, which keeps upstream's newline-separated argv below 30.
+            Err(NegotiationError::UnsupportedVersion(raw)) if negotiated_protocol.is_none() => {
+                client_digests = advertised_digests_in_greeting(&line)
+                    .names()
+                    .map(|names| names.trim().to_owned());
+                negotiated_protocol = Some(if raw > u32::from(ProtocolVersion::NEWEST.as_u8()) {
+                    ProtocolVersion::NEWEST
+                } else {
+                    ProtocolVersion::OLDEST
+                });
+                unsupported_peer_protocol = Some(raw);
                 conn_state = conn_state
                     .transition(ConnectionState::ModuleSelect)
                     .map_err(transition_error)?;
@@ -627,6 +650,7 @@ fn handle_legacy_session(
             reverse_lookup,
             messages,
             negotiated_protocol,
+            unsupported_peer_protocol,
             AdvertisedDigests::from(client_digests.as_deref()),
             &mut session_exit_code,
             early_input_data,
