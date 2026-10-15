@@ -521,7 +521,7 @@ pub(in crate::receiver::directory) fn backup_victim(
         return Ok(false);
     }
     // upstream: backup.c:236 - a vanished source (x_lstat != 0) needs no backup.
-    if fs::symlink_metadata(existing).is_err() {
+    if super::dest_lstat(sandbox, dest_dir, existing, false).is_err() {
         return Ok(false);
     }
     // upstream: delete.c:230 - `make_backup(fbuf, True)`. The delete pass is the
@@ -1480,6 +1480,47 @@ mod tests {
             mode, 0o750,
             "the --delete --backup-dir subdir must inherit the dest dir mode"
         );
+    }
+    /// upstream: backup.c:236 - the vanished-source probe is `x_lstat` beneath
+    /// the destination. A victim that exists in the pinned tree must never be
+    /// reported as vanished just because the destination path string now
+    /// resolves through a swapped root to a directory where it is absent: the
+    /// delete pass would then unlink it with no backup taken.
+    #[test]
+    fn delete_backup_probes_the_victim_beneath_the_pinned_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = fs::canonicalize(dir.path()).unwrap();
+        let dest = base.join("dest");
+        let pinned = base.join("dest.pinned");
+        let outside = base.join("outside");
+        fs::create_dir(&dest).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let sandbox = fast_io::DirSandbox::open_root(&dest).expect("sandbox");
+        fs::rename(&dest, &pinned).unwrap();
+        std::os::unix::fs::symlink(&outside, &dest).unwrap();
+        fs::write(pinned.join("gone"), b"pre-delete bytes").unwrap();
+
+        let result = backup_victim(
+            true,
+            None,
+            "~",
+            &dest.join("gone"),
+            Path::new("gone"),
+            &dest,
+            Some(&sandbox),
+            &MetadataOptions::new(),
+            &engine::BackupDirCache::default(),
+        );
+
+        assert!(
+            !matches!(result, Ok(false)),
+            "a victim present in the pinned tree must not be reported as vanished"
+        );
+        assert!(
+            pinned.join("gone").exists() || pinned.join("gone~").exists(),
+            "the pinned victim must survive or be backed up, never lost"
+        );
+        assert!(!outside.join("gone~").exists());
     }
     /// A `--backup-dir` component the session already validated is not checked
     /// again (upstream: backup.c:94-99 `copy_valid_path()`), so a later swap of

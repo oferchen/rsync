@@ -1331,8 +1331,9 @@ fn make_backup_hardlink_tier_anchors_the_backup_on_the_pinned_destination() {
     use std::ffi::OsString;
 
     let fx = swapped_dest_root();
-    // The pre-image the ladder reaches through the swapped path.
-    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+    fs::write(fx.pinned.join("payload.bin"), b"pre-transfer bytes").unwrap();
+    // The decoy the link source would reach through the swap by path.
+    fs::write(fx.outside.join("payload.bin"), b"decoy outside the tree").unwrap();
 
     let config = DiskCommitConfig {
         sandbox: Some(fx.sandbox.clone()),
@@ -1368,6 +1369,49 @@ fn make_backup_hardlink_tier_anchors_the_backup_on_the_pinned_destination() {
         "the backup must carry the destination's pre-transfer bytes verbatim"
     );
     assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
+}
+
+/// upstream: backup.c:236 - the existence and regular-file probes are
+/// `x_lstat` beneath the destination. With the pre-image only in the pinned
+/// tree, a path probe through the swapped root would see nothing and skip the
+/// backup, and a path `is_regular` would drop the hard-link tier so the
+/// rename tier moved the destination away.
+#[cfg(unix)]
+#[test]
+fn make_backup_probes_the_pinned_destination_not_the_swapped_path() {
+    use std::ffi::OsString;
+
+    let fx = swapped_dest_root();
+    fs::write(fx.pinned.join("payload.bin"), b"pre-transfer bytes").unwrap();
+
+    let config = DiskCommitConfig {
+        sandbox: Some(fx.sandbox.clone()),
+        dest_dir: Some(fx.dest_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let backup_config = BackupConfig {
+        dir_cache: Default::default(),
+        dest_dir: fx.dest_dir.clone(),
+        backup_dir: None,
+        suffix: OsString::from("~"),
+    };
+
+    let notice = make_backup(
+        &fx.dest_dir.join("payload.bin"),
+        &backup_config,
+        config.backup_env(),
+    )
+    .expect("anchored backup succeeds");
+
+    assert!(notice.is_some(), "the pinned pre-image must be backed up");
+    assert_eq!(
+        fs::read(fx.pinned.join("payload.bin~")).unwrap(),
+        b"pre-transfer bytes"
+    );
+    assert!(
+        fx.pinned.join("payload.bin").exists(),
+        "a regular pre-image takes the hard-link tier, which leaves it in place"
+    );
 }
 
 /// Non-vacuity companion for
@@ -1520,7 +1564,8 @@ fn make_backup_backup_dir_root_mkdir_anchors_on_the_pinned_destination() {
     use std::ffi::OsString;
 
     let fx = swapped_dest_root();
-    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+    fs::write(fx.pinned.join("payload.bin"), b"pre-transfer bytes").unwrap();
+    fs::write(fx.outside.join("payload.bin"), b"decoy outside the tree").unwrap();
 
     let config = DiskCommitConfig {
         sandbox: Some(fx.sandbox.clone()),
@@ -1551,11 +1596,12 @@ fn make_backup_backup_dir_root_mkdir_anchors_on_the_pinned_destination() {
         !fx.outside.join("bak").exists(),
         "no part of the backup tree may be created out of tree through the swap"
     );
-    assert!(
-        result.is_err(),
-        "with the backup root anchored inside the pinned tree the path-resolved \
-         link/rename tiers find no parent, so the backup fails closed rather \
-         than escaping"
+    result.expect("the anchored backup completes inside the pinned tree");
+    assert_eq!(
+        fs::read(fx.pinned.join("bak/payload.bin")).unwrap(),
+        b"pre-transfer bytes",
+        "both ends of the backup rename must resolve beneath the pinned \
+         destination, so the pinned pre-image lands in the pinned backup dir"
     );
     assert!(
         !fx.outside.join("payload.bin~").exists() && !fx.pinned.join("payload.bin~").exists(),
@@ -1634,8 +1680,10 @@ fn commit_file_backup_anchors_on_the_pinned_destination() {
     // The received temp file lives beside the final name inside the PINNED
     // directory, which is where the receiver created it before the swap.
     fs::write(fx.pinned.join(".tmp.payload"), b"received content").unwrap();
-    // The pre-transfer destination the ladder reaches through the swapped path.
-    fs::write(fx.outside.join("payload.bin"), b"pre-transfer bytes").unwrap();
+    // The pre-transfer destination in the pinned tree, and the decoy the
+    // stored path string reaches through the swap.
+    fs::write(fx.pinned.join("payload.bin"), b"pre-transfer bytes").unwrap();
+    fs::write(fx.outside.join("payload.bin"), b"decoy outside the tree").unwrap();
 
     let config = DiskCommitConfig {
         sandbox: Some(fx.sandbox.clone()),

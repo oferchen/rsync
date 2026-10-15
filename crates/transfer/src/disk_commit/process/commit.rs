@@ -11,9 +11,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::{
-    CleanupManager, clear_partial_dir_obstruction, compute_backup_path, copy_pre_image_to_backup,
-    create_backup_dir_parents, trace_make_backup_copy, trace_make_backup_hlink,
-    trace_make_backup_rename,
+    CleanupManager, compute_backup_path, copy_pre_image_to_backup, create_backup_dir_parents,
+    trace_make_backup_copy, trace_make_backup_hlink, trace_make_backup_rename,
 };
 
 use crate::pipeline::messages::{BackupNotice, BeginMessage};
@@ -72,6 +71,42 @@ pub(super) fn open_dest_for_write(env: BackupEnv<'_>, path: &Path) -> io::Result
 #[cfg(not(unix))]
 pub(super) fn open_dest_for_write(_env: BackupEnv<'_>, path: &Path) -> io::Result<fs::File> {
     fs::OpenOptions::new().write(true).open(path)
+}
+
+/// Stats `path` beneath the destination sandbox when it lies inside the
+/// destination tree, following a leaf symlink when `follow` is set.
+#[cfg(unix)]
+fn dest_stat(env: BackupEnv<'_>, path: &Path, follow: bool) -> io::Result<fast_io::LstatOutcome> {
+    let (sandbox, dest_dir, relative) = env
+        .anchor(path)
+        .map_or((None, path, Path::new("")), |(s, d, r)| (Some(s), d, r));
+    if follow {
+        fast_io::stat_via_sandbox_or_fallback(sandbox, dest_dir, relative, path)
+    } else {
+        fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative, path)
+    }
+}
+
+/// `Path::exists` resolved beneath the destination sandbox.
+#[cfg(unix)]
+fn dest_exists(env: BackupEnv<'_>, path: &Path) -> bool {
+    dest_stat(env, path, true).is_ok()
+}
+
+#[cfg(not(unix))]
+fn dest_exists(_env: BackupEnv<'_>, path: &Path) -> bool {
+    path.exists()
+}
+
+/// Whether the entry at `path` itself, not a symlink target, is a regular file.
+#[cfg(unix)]
+fn dest_is_regular(env: BackupEnv<'_>, path: &Path) -> bool {
+    dest_stat(env, path, false).is_ok_and(|m| m.is_file())
+}
+
+#[cfg(not(unix))]
+fn dest_is_regular(_env: BackupEnv<'_>, path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
 
 /// Commit result indicating whether a cross-device copy occurred and
@@ -170,7 +205,10 @@ pub(super) fn commit_file(
         // `--delay-updates` succeeded. aarch64 has no legacy `mkdir(2)` for
         // glibc to lower to, which is why the defect was architecture-only.
         if let Some(parent) = staging_path.parent() {
-            clear_partial_dir_obstruction(parent)?;
+            #[cfg(unix)]
+            crate::robust_rename::clear_partial_dir_obstruction(commit_anchor(config), parent)?;
+            #[cfg(not(unix))]
+            engine::clear_partial_dir_obstruction(parent)?;
             create_dir_all_sandboxed(config.backup_env(), parent)?;
         }
         let result =
@@ -263,6 +301,9 @@ fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
         return;
     };
     remove_partial_basis_confined(config, &partial);
+    #[cfg(unix)]
+    crate::robust_rename::remove_partial_dir(commit_anchor(config), Some(dir), &partial);
+    #[cfg(not(unix))]
     engine::remove_partial_dir(Some(dir), &partial);
 }
 
@@ -744,7 +785,7 @@ fn apply_copied_backup_metadata(
 }
 
 fn backup_rename_or_copy(old_path: &Path, new_path: &Path, env: BackupEnv<'_>) -> io::Result<bool> {
-    match backup_rename_syscall(old_path, new_path) {
+    match backup_rename_syscall(env, old_path, new_path) {
         Ok(()) => Ok(false),
         Err(e) if is_cross_device(&e) => {
             // upstream: backup.c:400-416 - the keep_backup copy tier duplicates
@@ -787,28 +828,74 @@ fn backup_rename_or_copy(old_path: &Path, new_path: &Path, env: BackupEnv<'_>) -
 /// deterministically on filesystems that would otherwise complete the rename.
 #[cfg(not(test))]
 #[inline]
-fn backup_rename_syscall(old_path: &Path, new_path: &Path) -> io::Result<()> {
-    backup_rename_confined(old_path, new_path)
+fn backup_rename_syscall(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
+    backup_rename_confined(env, old_path, new_path)
 }
 
 #[cfg(test)]
-fn backup_rename_syscall(old_path: &Path, new_path: &Path) -> io::Result<()> {
+fn backup_rename_syscall(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
     if force_exdev_active() {
         return Err(simulated_cross_device_error());
     }
-    backup_rename_confined(old_path, new_path)
+    backup_rename_confined(env, old_path, new_path)
 }
 
 #[cfg(unix)]
-#[inline]
-fn backup_rename_confined(old_path: &Path, new_path: &Path) -> io::Result<()> {
-    fast_io::operator_rename_confined(old_path, new_path, true)
+fn backup_rename_confined(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
+    match BackupWalkBase::of(env) {
+        Some(base) => fast_io::operator_rename_confined_at(
+            base.dirfd(),
+            &base.physical,
+            base.relative(old_path),
+            base.relative(new_path),
+            true,
+        ),
+        None => fast_io::operator_rename_confined(old_path, new_path, true),
+    }
 }
-
 #[cfg(not(unix))]
 #[inline]
-fn backup_rename_confined(old_path: &Path, new_path: &Path) -> io::Result<()> {
+fn backup_rename_confined(_env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
     fs::rename(old_path, new_path)
+}
+
+/// The pinned destination the backup ladder's ownership walk starts from.
+///
+/// Upstream's receiver has `chdir`ed into the destination, so the relative
+/// names `make_backup()` hands `do_link_at()`/`do_rename_at()` begin their
+/// `owner_walk_parent()` there; oc holds the destination open instead, and its
+/// physical path seeds the confinement tracker as `getcwd()` does upstream.
+/// A name outside the destination (an absolute `--backup-dir`) stays absolute
+/// and walks from `/`.
+///
+/// upstream: `backup.c:437-449` `make_backup()` - `operator_path_resolve = 1`
+/// around the whole ladder.
+#[cfg(unix)]
+struct BackupWalkBase<'a> {
+    sandbox: &'a fast_io::DirSandbox,
+    dest_dir: &'a Path,
+    physical: PathBuf,
+}
+
+#[cfg(unix)]
+impl<'a> BackupWalkBase<'a> {
+    fn of(env: BackupEnv<'a>) -> Option<Self> {
+        let (sandbox, dest_dir) = (env.sandbox?, env.dest_dir?);
+        let physical = fs::canonicalize(dest_dir).unwrap_or_else(|_| dest_dir.to_path_buf());
+        Some(Self {
+            sandbox,
+            dest_dir,
+            physical,
+        })
+    }
+
+    fn dirfd(&self) -> std::os::fd::BorrowedFd<'_> {
+        self.sandbox.root_dirfd()
+    }
+
+    fn relative<'p>(&self, path: &'p Path) -> &'p Path {
+        path.strip_prefix(self.dest_dir).unwrap_or(path)
+    }
 }
 
 // Test-only fault injection for the backup rename boundary. A thread-local flag
@@ -940,18 +1027,15 @@ fn backup_hardlink_syscall(env: BackupEnv<'_>, old_path: &Path, new_path: &Path)
     }
     #[cfg(unix)]
     {
-        if let (Some(sandbox), Some(dest_dir)) = (env.sandbox, env.dest_dir)
-            && new_path.parent() == Some(dest_dir)
-        {
-            return fast_io::linkat_via_sandbox_or_fallback(
-                Some(sandbox),
-                old_path,
-                dest_dir,
-                new_path.strip_prefix(dest_dir).unwrap_or(new_path),
-                new_path,
-            );
+        match BackupWalkBase::of(env) {
+            Some(base) => fast_io::operator_link_confined_at(
+                base.dirfd(),
+                &base.physical,
+                base.relative(old_path),
+                base.relative(new_path),
+            ),
+            None => fast_io::operator_link_confined(old_path, new_path),
         }
-        fast_io::operator_link_confined(old_path, new_path)
     }
     #[cfg(not(unix))]
     {
@@ -1009,7 +1093,7 @@ fn create_backup_path_parents(
                 |path| create_dir_all_sandboxed(env, path),
             )
         }
-        None if parent.exists() => Ok(()),
+        None if dest_exists(env, parent) => Ok(()),
         None => create_dir_all_sandboxed(env, parent),
     }
 }
@@ -1070,7 +1154,7 @@ pub(crate) fn make_backup(
     backup_config: &BackupConfig,
     env: BackupEnv<'_>,
 ) -> io::Result<Option<BackupNotice>> {
-    if !file_path.exists() {
+    if !dest_exists(env, file_path) {
         return Ok(None);
     }
 
@@ -1104,7 +1188,7 @@ pub(crate) fn make_backup(
     // upstream gates symlinks and specials on CAN_HARDLINK_SYMLINK /
     // CAN_HARDLINK_SPECIAL (backup.c:231-238), and this commit path only ever
     // replaces a regular destination anyway.
-    let is_regular = fs::symlink_metadata(file_path).is_ok_and(|m| m.is_file());
+    let is_regular = dest_is_regular(env, file_path);
     if is_regular && backup_hardlink_tier(env, file_path, &backup_path) {
         // upstream: backup.c:240-241 - DEBUG_GTE(BACKUP, 1) HLINK success. The
         // original is deliberately left in place (upstream returns 2 and
@@ -1182,7 +1266,7 @@ pub(crate) fn make_backup_copy(
     backup_config: &BackupConfig,
     env: BackupEnv<'_>,
 ) -> io::Result<Option<(PathBuf, BackupNotice)>> {
-    if !file_path.exists() {
+    if !dest_exists(env, file_path) {
         return Ok(None);
     }
 

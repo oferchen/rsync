@@ -56,6 +56,15 @@ impl LstatOutcome {
         }
     }
 
+    /// Reports whether the entry is a regular file.
+    #[must_use]
+    pub fn is_file(&self) -> bool {
+        match self {
+            Self::At(meta) => meta.is_file(),
+            Self::Std(meta) => meta.is_file(),
+        }
+    }
+
     /// Inode number of the entry.
     #[must_use]
     pub fn ino(&self) -> u64 {
