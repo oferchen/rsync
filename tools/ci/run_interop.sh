@@ -1256,6 +1256,24 @@ symlink_target_escapes() {
   return 1
 }
 
+# Print what a failed transfer leaves behind before the workdir is removed:
+# the whole client stderr, the daemon log tail, and who is listening on the
+# daemon port. A sweep leg that fails once in many runs is otherwise
+# undiagnosable, because cleanup deletes both logs.
+report_transfer_failure() {
+  local client_err=$1 daemon_log=$2 url=$3
+  local port=${url#rsync://*:}
+  port=${port%%/*}
+  echo "    client stderr:"
+  sed 's/^/      /' "$client_err" 2>/dev/null
+  echo "    daemon log tail (${daemon_log}):"
+  tail -n 20 "$daemon_log" 2>/dev/null | sed 's/^/      /'
+  if [[ "$port" =~ ^[0-9]+$ ]]; then
+    echo "    listeners on port ${port}:"
+    ss -ltnp "sport = :${port}" 2>/dev/null | sed 's/^/      /'
+  fi
+}
+
 comp_run_scenario() {
   local label=$1 client=$2 flags=$3 sdir=$4 url=$5 ddir=$6 log=$7 vtype=$8
   # push (default): the client sends $sdir to $url, a module whose path is
@@ -1525,7 +1543,7 @@ comp_run_scenario() {
   # --max-delete exits 25 when limit reached; treat as success for verification
   if [[ $rc -ne 0 ]] && ! [[ "$vtype" == "max-delete" && $rc -eq 25 ]]; then
     echo "    FAIL (transfer error, exit=$rc)"
-    echo "    stderr: $(head -5 "$transfer_log.err")"
+    report_transfer_failure "$transfer_log.err" "$log" "$url"
     return 1
   fi
 
