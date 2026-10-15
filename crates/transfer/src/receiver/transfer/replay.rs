@@ -656,7 +656,12 @@ impl ReceiverContext {
 
         // upstream: generator.c:2565-2618 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
-        self.touch_up_dirs(&dest_dir, writer);
+        self.touch_up_dirs(
+            &dest_dir,
+            #[cfg(unix)]
+            sandbox.as_deref(),
+            writer,
+        );
 
         // Flush any buffered `-v` names then the deferred itemize rows in
         // flist-index order before the goodbye handshake, matching run_pipelined.

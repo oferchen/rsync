@@ -160,11 +160,21 @@ fn touch_up_dirs_keepalive_gated_on_timeout() {
     .into();
 
     let (mut writer, sink) = mux_writer(Some(Duration::ZERO));
-    ctx.touch_up_dirs(dir.path(), &mut writer);
+    ctx.touch_up_dirs(
+        dir.path(),
+        #[cfg(unix)]
+        None,
+        &mut writer,
+    );
     assert_only_keepalives(&sink.bytes());
 
     let (mut writer, sink) = mux_writer(None);
-    ctx.touch_up_dirs(dir.path(), &mut writer);
+    ctx.touch_up_dirs(
+        dir.path(),
+        #[cfg(unix)]
+        None,
+        &mut writer,
+    );
     assert!(
         sink.bytes().is_empty(),
         "touch_up_dirs must be a strict no-op without --timeout"

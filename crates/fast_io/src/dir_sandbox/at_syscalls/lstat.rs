@@ -10,12 +10,11 @@
 
 use std::ffi::OsStr;
 use std::io;
-use std::os::fd::AsFd;
+use std::os::fd::BorrowedFd;
 use std::path::Path;
 
 use super::AtMetadata;
-use super::metadata::fstatat_nofollow;
-use super::nested::{ParentAnchor, anchor_parent};
+use super::metadata::{fstatat_follow, fstatat_nofollow};
 
 /// Result of [`lstat_via_sandbox_or_fallback`].
 ///
@@ -74,6 +73,68 @@ impl LstatOutcome {
             Self::Std(meta) => std::os::unix::fs::MetadataExt::mode(meta),
         }
     }
+
+    /// Reports whether the entry is a symbolic link.
+    #[must_use]
+    pub fn is_symlink(&self) -> bool {
+        match self {
+            Self::At(meta) => meta.is_symlink(),
+            Self::Std(meta) => meta.file_type().is_symlink(),
+        }
+    }
+
+    /// Reports whether the entry is a block device node.
+    #[must_use]
+    pub fn is_block_device(&self) -> bool {
+        match self {
+            Self::At(meta) => meta.is_block_device(),
+            Self::Std(meta) => std::os::unix::fs::FileTypeExt::is_block_device(&meta.file_type()),
+        }
+    }
+    /// Reports whether the entry is a character device node.
+    #[must_use]
+    pub fn is_char_device(&self) -> bool {
+        match self {
+            Self::At(meta) => meta.is_char_device(),
+            Self::Std(meta) => std::os::unix::fs::FileTypeExt::is_char_device(&meta.file_type()),
+        }
+    }
+    /// Reports whether the entry is a FIFO.
+    #[must_use]
+    pub fn is_fifo(&self) -> bool {
+        match self {
+            Self::At(meta) => meta.is_fifo(),
+            Self::Std(meta) => std::os::unix::fs::FileTypeExt::is_fifo(&meta.file_type()),
+        }
+    }
+    /// Reports whether the entry is a Unix-domain socket.
+    #[must_use]
+    pub fn is_socket(&self) -> bool {
+        match self {
+            Self::At(meta) => meta.is_socket(),
+            Self::Std(meta) => std::os::unix::fs::FileTypeExt::is_socket(&meta.file_type()),
+        }
+    }
+    /// Device id a block or character device node refers to.
+    #[must_use]
+    pub fn rdev(&self) -> u64 {
+        match self {
+            Self::At(meta) => meta.rdev(),
+            Self::Std(meta) => std::os::unix::fs::MetadataExt::rdev(meta),
+        }
+    }
+
+    /// Modification time: whole seconds and the nanosecond remainder.
+    #[must_use]
+    pub fn mtime(&self) -> (i64, i64) {
+        match self {
+            Self::At(meta) => (meta.mtime(), meta.mtime_nsec()),
+            Self::Std(meta) => (
+                std::os::unix::fs::MetadataExt::mtime(meta),
+                std::os::unix::fs::MetadataExt::mtime_nsec(meta),
+            ),
+        }
+    }
 }
 
 /// Issue `fstatat(AT_SYMLINK_NOFOLLOW)` against `link_path` when the
@@ -99,17 +160,106 @@ pub fn lstat_via_sandbox_or_fallback(
     relative_path: &Path,
     link_path: &Path,
 ) -> io::Result<LstatOutcome> {
-    if let Some(sandbox) = sandbox
-        && let Some(leaf) = single_component_leaf(dest_dir, relative_path, link_path)
+    stat_outcome(sandbox, dest_dir, relative_path, link_path, false)
+}
+
+/// [`lstat_via_sandbox_or_fallback`] with the leaf followed: upstream's
+/// `do_stat_at()` beside its `do_lstat_at()`.
+///
+/// Only the leaf may resolve as a symlink; every component above it is
+/// reached through the sandbox exactly as for the `lstat` form.
+///
+/// # Errors
+///
+/// As for [`lstat_via_sandbox_or_fallback`], plus `ELOOP` for a leaf symlink
+/// chain that does not terminate.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/syscall.c:2336-2400` `do_stat_at()` / `do_lstat_at()`
+pub fn stat_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    link_path: &Path,
+) -> io::Result<LstatOutcome> {
+    stat_outcome(sandbox, dest_dir, relative_path, link_path, true)
+}
+
+/// The three arms shared by the `stat` and `lstat` adaptors; `follow` picks
+/// `fstatat` with or without `AT_SYMLINK_NOFOLLOW`.
+fn stat_outcome(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    link_path: &Path,
+    follow: bool,
+) -> io::Result<LstatOutcome> {
+    let stat_at = |dirfd: BorrowedFd<'_>, name: &OsStr| {
+        if follow {
+            fstatat_follow(dirfd, name)
+        } else {
+            fstatat_nofollow(dirfd, name)
+        }
+    };
+    if let Some(meta) =
+        super::nested::at_dest_leaf(sandbox, dest_dir, relative_path, link_path, stat_at)?
     {
-        return fstatat_nofollow(sandbox.current_dirfd(), leaf).map(LstatOutcome::At);
+        return Ok(LstatOutcome::At(meta));
     }
-    if let ParentAnchor::Anchored { dirfd, name } =
-        anchor_parent(sandbox, dest_dir, relative_path, link_path)?
+    if follow {
+        std::fs::metadata(link_path)
+    } else {
+        std::fs::symlink_metadata(link_path)
+    }
+    .map(LstatOutcome::Std)
+}
+
+/// `stat`/`lstat` of `link_path` as a [`std::fs::Metadata`], for callers whose
+/// consumer is typed on it.
+///
+/// [`std::fs::Metadata`] has no public constructor, so an `fstatat` answer
+/// cannot be returned as one. On Linux the entry is opened `O_PATH` (plus
+/// `O_NOFOLLOW` for `lstat`) through the same three arms as
+/// [`lstat_via_sandbox_or_fallback`] and `fstat`ed: `O_PATH` grants no access
+/// to the contents, so an unreadable entry, a FIFO and a device report their
+/// metadata exactly as `stat` would. Elsewhere there is no `O_PATH`, and the
+/// path-based call is issued; those callers stay on the path until their
+/// consumer accepts [`LstatOutcome`].
+///
+/// # Errors
+///
+/// The `openat`/`fstat` error of the anchored arm, or the path-based call's.
+pub fn metadata_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    link_path: &Path,
+    follow: bool,
+) -> io::Result<std::fs::Metadata> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        return fstatat_nofollow(dirfd.as_fd(), name).map(LstatOutcome::At);
+        let flags = if follow {
+            libc::O_PATH | libc::O_CLOEXEC
+        } else {
+            libc::O_PATH | libc::O_CLOEXEC | libc::O_NOFOLLOW
+        };
+        let fstat_at = |dirfd: BorrowedFd<'_>, name: &OsStr| {
+            super::open::openat(dirfd, name, flags, 0).and_then(|file| file.metadata())
+        };
+        if let Some(meta) =
+            super::nested::at_dest_leaf(sandbox, dest_dir, relative_path, link_path, fstat_at)?
+        {
+            return Ok(meta);
+        }
     }
-    std::fs::symlink_metadata(link_path).map(LstatOutcome::Std)
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = (sandbox, dest_dir, relative_path);
+    if follow {
+        std::fs::metadata(link_path)
+    } else {
+        std::fs::symlink_metadata(link_path)
+    }
 }
 
 /// Returns the leaf component of `link_path` when `link_path` is

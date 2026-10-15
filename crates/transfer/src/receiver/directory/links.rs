@@ -234,7 +234,12 @@ impl ReceiverContext {
             let mut pre_replace_meta: Option<fs::Metadata> = None;
 
             // upstream: generator.c:1965 - quick_check_ok(FT_SYMLINK, ...)
-            if let Ok(existing_target) = std::fs::read_link(&link_path) {
+            if let Ok(existing_target) = fast_io::readlinkat_via_sandbox_or_fallback(
+                sandbox,
+                dest_dir,
+                relative_path,
+                &link_path,
+            ) {
                 if existing_target == *target {
                     // upstream: generator.c:1965-1969 - the up-to-date branch
                     // still calls `itemize(fname, file, ndx, 0, &sx, 0, 0, NULL)`.
@@ -242,8 +247,15 @@ impl ReceiverContext {
                     // difference lights the `t` column (keep_time =
                     // !omit_link_times); `sx` was filled by `link_stat` before
                     // `set_file_attrs` runs, so this must precede the apply below.
-                    let iflags =
-                        ItemFlags::from_raw(self.existing_symlink_iflags(entry, &link_path));
+                    let iflags = ItemFlags::from_raw(
+                        self.existing_symlink_iflags(
+                            entry,
+                            &link_path,
+                            super::dest_metadata(sandbox, dest_dir, &link_path, false)
+                                .ok()
+                                .as_ref(),
+                        ),
+                    );
                     // upstream: generator.c:1967 - even on the up-to-date branch
                     // `set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT)`
                     // still runs so a stale on-disk mtime is corrected.
@@ -275,7 +287,8 @@ impl ReceiverContext {
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
-                pre_replace_symlink_meta = fs::symlink_metadata(&link_path).ok();
+                pre_replace_symlink_meta =
+                    super::dest_metadata(sandbox, dest_dir, &link_path, false).ok();
                 pre_replace_meta = pre_replace_symlink_meta.clone();
                 // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
                 // - one decision for the obstacle: rmdir a directory, back up
@@ -306,7 +319,8 @@ impl ReceiverContext {
                 // still hands its own permission bits to the link that replaces
                 // it; a directory obstacle takes the absent arm instead.
                 if !obstacle.is_dir() {
-                    pre_replace_meta = fs::symlink_metadata(&link_path).ok();
+                    pre_replace_meta =
+                        super::dest_metadata(sandbox, dest_dir, &link_path, false).ok();
                 }
                 if self
                     .make_way_for_replacement(
@@ -350,7 +364,7 @@ impl ReceiverContext {
             // Ensure parent directory exists for --relative paths.
             // upstream: generator.c:1716-1726 - make_path() for relative_paths
             if let Some(parent) = link_path.parent() {
-                let _ = fs::create_dir_all(parent);
+                let _ = super::dest_create_dir_all(sandbox, dest_dir, parent);
             }
 
             // upstream: generator.c:2002 - atomic_create() -> do_symlink()
@@ -580,8 +594,11 @@ impl ReceiverContext {
                     // difference lights the `t` column (keep_time =
                     // !omit_link_times); `sx` was filled by `link_stat` before
                     // `set_file_attrs` runs, so this must precede the apply below.
-                    let iflags =
-                        ItemFlags::from_raw(self.existing_symlink_iflags(entry, &link_path));
+                    let iflags = ItemFlags::from_raw(self.existing_symlink_iflags(
+                        entry,
+                        &link_path,
+                        fs::symlink_metadata(&link_path).ok().as_ref(),
+                    ));
                     // upstream: generator.c:1967 - refresh metadata even when the
                     // link is already up-to-date so a stale mtime is corrected.
                     // `MetadataOptions::new()` defaults `preserve_permissions`
@@ -788,11 +805,17 @@ impl ReceiverContext {
         tracker: &mut engine::HardlinkApplyTracker,
         gnum: u32,
         dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> Option<PathBuf> {
         // A previously recorded leader is only valid while its file is still
         // present (its transfer may have errored after we recorded it).
         if let Some(recorded) = tracker.leader_path(gnum)
-            && recorded.symlink_metadata().is_ok()
+            && super::dest_entry_exists(
+                #[cfg(unix)]
+                sandbox,
+                dest_dir,
+                recorded,
+            )
         {
             return Some(recorded.to_path_buf());
         }
@@ -808,7 +831,12 @@ impl ReceiverContext {
             } else {
                 dest_dir.join(relative_path)
             };
-            if candidate.symlink_metadata().is_ok() {
+            if super::dest_entry_exists(
+                #[cfg(unix)]
+                sandbox,
+                dest_dir,
+                &candidate,
+            ) {
                 tracker.record_leader(gnum, candidate.clone());
                 return Some(candidate);
             }
@@ -940,7 +968,12 @@ impl ReceiverContext {
                     // promote the next present group member (hlink.c:313-324
                     // "virtual first") instead of hard-linking to a path that
                     // does not exist (ENOENT -> fatal abort).
-                    if dest_path.symlink_metadata().is_err() {
+                    if !super::dest_entry_exists(
+                        #[cfg(unix)]
+                        sandbox,
+                        dest_dir,
+                        &dest_path,
+                    ) {
                         continue;
                     }
                     // No deferred followers expected here since we process
@@ -992,6 +1025,8 @@ impl ReceiverContext {
                     &mut tracker,
                     leader_idx,
                     dest_dir,
+                    #[cfg(unix)]
+                    sandbox,
                 ) {
                     Some(p) => p,
                     None => {
@@ -1060,10 +1095,14 @@ impl ReceiverContext {
                 #[cfg(not(unix))]
                 let link_meta_outcome = fs::symlink_metadata(&link_path);
                 if let Ok(link_meta) = link_meta_outcome {
-                    if let Ok(leader_meta) = fs::symlink_metadata(&leader_path) {
+                    #[cfg(unix)]
+                    let leader_meta_outcome =
+                        super::dest_lstat(sandbox, dest_dir, &leader_path, false);
+                    #[cfg(not(unix))]
+                    let leader_meta_outcome = fs::symlink_metadata(&leader_path);
+                    if let Ok(leader_meta) = leader_meta_outcome {
                         #[cfg(unix)]
                         {
-                            use std::os::unix::fs::MetadataExt;
                             if link_meta.dev() == leader_meta.dev()
                                 && link_meta.ino() == leader_meta.ino()
                             {
@@ -1119,6 +1158,9 @@ impl ReceiverContext {
 
                 // Ensure parent directory exists.
                 if let Some(parent) = link_path.parent() {
+                    #[cfg(unix)]
+                    let _ = super::dest_create_dir_all(sandbox, dest_dir, parent);
+                    #[cfg(not(unix))]
                     let _ = fs::create_dir_all(parent);
                 }
 
@@ -1474,7 +1516,11 @@ mod tests {
 
         // -t without -J: keep_time is true, so the mtime difference lights `t`.
         let ctx = ReceiverContext::new_for_test(&handshake, config(true, false));
-        let raw = ctx.existing_symlink_iflags(&entry, &link_path);
+        let raw = ctx.existing_symlink_iflags(
+            &entry,
+            &link_path,
+            std::fs::symlink_metadata(&link_path).ok().as_ref(),
+        );
         assert_ne!(
             raw & ItemFlags::ITEM_REPORT_TIME,
             0,
@@ -1494,7 +1540,11 @@ mod tests {
         // -J drops the symlink mtime leg, so no significant flag survives.
         let ctx = ReceiverContext::new_for_test(&handshake, config(true, true));
         assert_eq!(
-            ctx.existing_symlink_iflags(&entry, &link_path) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
+            ctx.existing_symlink_iflags(
+                &entry,
+                &link_path,
+                std::fs::symlink_metadata(&link_path).ok().as_ref(),
+            ) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
             0,
             "--omit-link-times must suppress the mtime-only symlink row"
         );
@@ -1502,7 +1552,11 @@ mod tests {
         // Without -t there is no mtime comparison at all.
         let ctx = ReceiverContext::new_for_test(&handshake, config(false, false));
         assert_eq!(
-            ctx.existing_symlink_iflags(&entry, &link_path) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
+            ctx.existing_symlink_iflags(
+                &entry,
+                &link_path,
+                std::fs::symlink_metadata(&link_path).ok().as_ref(),
+            ) & ItemFlags::SIGNIFICANT_ITEM_FLAGS,
             0,
             "without --times there is no mtime comparison for the symlink"
         );

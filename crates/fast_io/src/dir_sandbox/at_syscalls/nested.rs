@@ -208,6 +208,54 @@ pub(super) fn held_leaf<'a>(
     sandbox.held_parent(parent).map(|dirfd| (dirfd, leaf))
 }
 
+/// Run `op` against the directory holding `full_path`'s leaf, resolved
+/// beneath the sandbox, and the leaf name.
+///
+/// The arms are tried in the order every `*_via_sandbox_or_fallback` helper
+/// shares:
+/// - the destination root itself (an empty `relative_path`) is `.` on the
+///   sandbox's current dirfd;
+/// - a single component goes to the sandbox's current dirfd;
+/// - a nested entry goes to the held parent, and a failure there drops the
+///   held parent and re-resolves, so the reported answer is always a fresh
+///   walk's;
+/// - otherwise the parent is opened afresh by [`anchor_parent`].
+///
+/// `Ok(None)` means no arm applies (no sandbox, a path that is not
+/// `dest_dir.join(relative_path)`, or a kernel without `RESOLVE_BENEATH`) and
+/// the caller takes its path-based fallback. A refusal from the confined
+/// walk is returned as an error, never folded into that fallback.
+///
+/// upstream: rsync-3.5.1/syscall.c:3858-3871 held_dfd_for()
+pub(super) fn at_dest_leaf<T>(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    full_path: &Path,
+    op: impl Fn(std::os::fd::BorrowedFd<'_>, &OsStr) -> io::Result<T>,
+) -> io::Result<Option<T>> {
+    use std::os::fd::AsFd;
+    let Some(held) = sandbox else {
+        return Ok(None);
+    };
+    if relative_path.as_os_str().is_empty() && full_path == dest_dir {
+        return op(held.current_dirfd(), OsStr::new(".")).map(Some);
+    }
+    if let Some(leaf) = super::lstat::single_component_leaf(dest_dir, relative_path, full_path) {
+        return op(held.current_dirfd(), leaf).map(Some);
+    }
+    if let Some((dirfd, leaf)) = held_leaf(held, dest_dir, relative_path, full_path) {
+        match op(dirfd.as_fd(), leaf) {
+            Ok(value) => return Ok(Some(value)),
+            Err(_) => held.release_held_parent(),
+        }
+    }
+    match anchor_parent(sandbox, dest_dir, relative_path, full_path)? {
+        ParentAnchor::Anchored { dirfd, name } => op(dirfd.as_fd(), name).map(Some),
+        ParentAnchor::Fallback => Ok(None),
+    }
+}
+
 /// Returns `true` when `anchor_parent` resolves a multi-component path's
 /// parent beneath the sandbox root on this host, and `false` when it degrades
 /// to the caller's path-based fallback.
