@@ -19,16 +19,19 @@
 //! (util1.c:989-993): UTS #46 non-transitional mapping, NFC, then the IDNA2008
 //! label rules. The `idna` crate runs UTS #46 non-transitional processing with
 //! NFC and the bidi, joiner and hyphen checks, which this module enables to
-//! match. It has no IDNA2008 code-point table, so a character that UTS #46
-//! accepts but IDNA2008 disallows is converted here where libidn2 refuses it
-//! and upstream keeps the name as typed. Measured against upstream 3.5.1 built
-//! with libidn2 2.3.8: U+2603 SNOWMAN and U+1F600 become `xn--n3h` and
-//! `xn--e28h`, and U+00BD (mapped to `1` U+2044 `2`) becomes `xn--12-c6t`.
-//! Such a name either way reaches the resolver as something no
-//! registry will have delegated. Two narrower differences follow from oc
-//! reading arguments as UTF-8: upstream decodes a command-line host from the
-//! locale's charset (`idn2_lookup_ul`), and a host that is not valid UTF-8
-//! never reaches this module.
+//! match. It differs from libidn2 in three ways:
+//!
+//! - Deviation from upstream: the `idna` crate has no IDNA2008 code-point
+//!   table, so a character that UTS #46 accepts but IDNA2008 disallows is
+//!   converted here, where libidn2 refuses it and upstream keeps the name as
+//!   typed. Measured against upstream 3.5.1 built with libidn2 2.3.8: U+2603
+//!   SNOWMAN and U+1F600 become `xn--n3h` and `xn--e28h`, and U+00BD (mapped to
+//!   `1` U+2044 `2`) becomes `xn--12-c6t`. Either way the name reaches the
+//!   resolver as something no registry will have delegated.
+//! - Deviation from upstream: a command-line host is read as UTF-8, where
+//!   upstream decodes it from the locale's charset (`idn2_lookup_ul`).
+//! - Deviation from upstream: a host that is not valid UTF-8 never reaches
+//!   this module, so it is kept as typed.
 
 use std::borrow::Cow;
 

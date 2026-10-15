@@ -12,6 +12,8 @@ mod flags;
 mod module_list;
 mod operands;
 mod options;
+#[cfg(any(windows, test))]
+mod source_glob;
 mod stop;
 
 pub(super) use drive::execute;
@@ -47,6 +49,8 @@ pub(crate) use options::{
     parse_modify_window_argument, parse_protocol_version_arg, parse_size_limit_argument,
     parse_timeout_argument, resolve_iconv_setting,
 };
+#[cfg(windows)]
+pub(crate) use source_glob::expand_source_operands;
 pub(crate) use stop::{parse_stop_after_argument, parse_stop_at_argument};
 
 #[cfg(test)]

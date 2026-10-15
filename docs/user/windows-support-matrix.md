@@ -86,7 +86,27 @@ flight are marked "Design only" or "Audit only" with a tracking link.
 | Windows service mode | Shipped | `crates/platform/src/windows_service.rs` |
 | SSH transport (russh) | Shipped | Compatible with OpenSSH for Windows, PuTTY (`plink`), any RFC 4253 server |
 | Signal handling (Ctrl+C, Ctrl+Break, console close) | Shipped | `crates/platform/src/signal.rs` (SetConsoleCtrlHandler) |
+| Wildcard source operands (`*`, `?`, `[...]`) | Shipped | `cmd.exe` and PowerShell do not glob, so `oc-rsync` expands local source operands itself the way a POSIX shell would. See the notes below. Source: `crates/cli/src/frontend/execution/source_glob.rs`. |
 | Bounded-RSS file reader (replaces `mmap_reader_stub` `Vec<u8>`-per-file) | Skeleton landed; call sites still on stub | `crates/fast_io/src/windows_chunked_reader.rs` (skeleton); call-site migration tracked under WIN-S.LAND.1.b.4. Chunk size tunable via `OC_RSYNC_WIN_CHUNK_BYTES` (default 4 MiB). |
+
+### Notes on wildcard source operands
+
+On Unix the shell expands `oc-rsync src/*.txt dst/` before the program
+starts. Native Windows shells pass the `*` through, so `oc-rsync` expands
+it with the same rules:
+
+- Only local source operands are expanded. The destination (the last
+  operand), remote `host:path` and `rsync://` operands, `--files-from`
+  entries and option values are never touched. A lone operand is not
+  expanded either.
+- `*` and `?` do not match a leading `.`; write `.*` to select dotfiles.
+- Matching is case-sensitive, and matches are sorted by byte value (the
+  `C` locale order).
+- A pattern that matches nothing is passed through unchanged, so the
+  transfer fails with the usual missing-source error and exit code 23.
+- A trailing `\` or `/` keeps only directories and stays on each match,
+  so `src\d*\` copies the contents of every matching directory.
+- `\` is a path separator, not an escape. Write a literal `[` as `[[]`.
 
 ### Notes on `--devices`, `--specials`, `-D`
 

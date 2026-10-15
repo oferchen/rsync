@@ -114,8 +114,9 @@ impl GeneratorContext {
         if self.config.flags.group || self.config.flags.acls {
             self.gid_list.write(writer, id0_names, protocol_version)?;
         }
-
-        writer.flush()
+        // No flush: upstream send_id_lists() runs inside send_file_list(),
+        // which leaves the whole list for the caller's one flush (main.c:1398).
+        Ok(())
     }
 
     /// Feeds named ACL-entry user/group ids into the shared uid/gid id-list.
@@ -196,8 +197,9 @@ impl GeneratorContext {
             } else {
                 self.io_error
             };
+            // No flush: this word still belongs to send_file_list()'s
+            // buffered output, flushed once by main.c:1398.
             writer.write_all(&value.to_le_bytes())?;
-            writer.flush()?;
         }
         Ok(())
     }
@@ -1138,7 +1140,11 @@ impl GeneratorContext {
         metadata::get_rsync_acl(full_path, mode, is_default)
     }
 
-    /// Sends `NDX_FLIST_EOF` and flushes, marking incremental sending as complete.
+    /// Sends `NDX_FLIST_EOF`, marking incremental sending as complete.
+    ///
+    /// Leaves the marker buffered like upstream's `write_ndx()`: every caller
+    /// flushes before its next blocking read, so the marker shares that write
+    /// instead of costing a syscall of its own.
     ///
     /// # Upstream Reference
     ///
@@ -1149,7 +1155,6 @@ impl GeneratorContext {
         ndx_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
         ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
-        writer.flush()?;
         self.incremental.flist_eof_sent = true;
         // upstream: flist.c:2721 - the sender prints `[sender] flist_eof=1` at
         // DEBUG_GTE(FLIST, 3) as it writes NDX_FLIST_EOF.

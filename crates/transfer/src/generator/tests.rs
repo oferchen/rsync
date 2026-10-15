@@ -244,47 +244,89 @@ fn send_single_file_entry() {
     assert_eq!(*output.last().unwrap(), 0u8);
 }
 
-/// The file list must stay buffered when `send_file_list` returns.
+/// Writer that counts flushes, so a test can pin how many writes the file-list
+/// phase costs on the wire.
+#[derive(Default)]
+struct FlushCountingWriter {
+    bytes: Vec<u8>,
+    flushes: usize,
+}
+impl std::io::Write for FlushCountingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flushes += 1;
+        Ok(())
+    }
+}
+/// The file-list phase must stay buffered until the caller's one flush.
 ///
-/// Upstream's send_file_list() never flushes; client_run() flushes once
-/// afterwards (main.c:1398), so the list and an INC_RECURSE NDX_FLIST_EOF
-/// (flist.c:3092) leave in one write. A flush here splits them, and a
-/// receiver that dies right after reading the list (dest root mkdir fails)
-/// turns the client's second write into EPIPE: exit 10 instead of the 12
-/// upstream reports from EOF.
+/// Upstream's send_file_list() writes the list, the id lists, the pre-30
+/// io_error word and an INC_RECURSE NDX_FLIST_EOF (flist.c:3092) without
+/// flushing; client_run() flushes once afterwards (main.c:1398). Any flush in
+/// between splits that write, and a receiver that dies right after reading the
+/// list (dest root mkdir fails) turns the client's next write into EPIPE: exit
+/// 10 instead of the 12 upstream reports from EOF.
 #[test]
-fn send_file_list_leaves_the_list_buffered_for_one_flush() {
-    struct CountingWriter {
-        bytes: Vec<u8>,
-        flushes: usize,
-    }
-    impl std::io::Write for CountingWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.bytes.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.flushes += 1;
-            Ok(())
-        }
-    }
+fn file_list_phase_leaves_everything_buffered_for_one_flush() {
     let (_handshake, mut ctx) = test_generator();
     ctx.file_list.push(protocol::flist::FileEntry::new_file(
         "f.txt".into(),
         7,
         0o644,
     ));
-    let mut writer = CountingWriter {
-        bytes: Vec::new(),
-        flushes: 0,
-    };
+    let mut writer = FlushCountingWriter::default();
     ctx.send_file_list(&mut writer).unwrap();
     assert_eq!(
         writer.bytes.last(),
         Some(&0u8),
         "end-of-list marker written"
     );
-    assert_eq!(writer.flushes, 0, "send_file_list must not flush the list");
+    ctx.send_id_lists(&mut writer).unwrap();
+    ctx.send_io_error_flag(&mut writer).unwrap();
+    assert_eq!(writer.flushes, 0, "the file-list phase must not flush");
+}
+/// Protocol 29 adds the id lists and the trailing io_error word; both still
+/// belong to send_file_list()'s single buffered write (flist.c:3062-3068).
+#[test]
+fn protocol_29_id_lists_and_io_error_word_are_not_flushed() {
+    let mut config = test_config();
+    config.flags.owner = true;
+    let handshake = test_handshake_with_protocol(29);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    ctx.io_error = 1;
+    ctx.file_list.push(protocol::flist::FileEntry::new_file(
+        "f.txt".into(),
+        7,
+        0o644,
+    ));
+    let mut writer = FlushCountingWriter::default();
+    ctx.send_file_list(&mut writer).unwrap();
+    ctx.send_id_lists(&mut writer).unwrap();
+    ctx.send_io_error_flag(&mut writer).unwrap();
+    assert!(
+        writer.bytes.ends_with(&1i32.to_le_bytes()),
+        "io_error word written last"
+    );
+    assert_eq!(writer.flushes, 0, "the file-list phase must not flush");
+}
+/// Under INC_RECURSE with no directory to expand, NDX_FLIST_EOF follows the
+/// list in the same buffered write (flist.c:3091-3092).
+#[test]
+fn inc_recurse_flist_eof_shares_the_file_list_write() {
+    let mut ctx = inc_recurse_sender(Vec::new());
+    let mut ndx_codec = protocol::codec::create_ndx_codec(ctx.protocol().as_u8());
+    let mut writer = FlushCountingWriter::default();
+    ctx.send_file_list(&mut writer).unwrap();
+    ctx.send_flist_eof(&mut writer, &mut ndx_codec).unwrap();
+    assert!(
+        writer.bytes.ends_with(&[0xFF, 0x01]),
+        "NDX_FLIST_EOF written after the list: {:?}",
+        writer.bytes
+    );
+    assert_eq!(writer.flushes, 0, "NDX_FLIST_EOF must not flush on its own");
 }
 #[test]
 fn send_file_list_records_first_byte_latency() {
