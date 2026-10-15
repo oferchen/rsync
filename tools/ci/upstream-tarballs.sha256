@@ -9,7 +9,7 @@
 #   1. Downloaded https://download.samba.org/pub/rsync/src/rsync-<v>.tar.gz and
 #      its detached signature rsync-<v>.tar.gz.asc to files (no pipe).
 #   2. gpg --verify reported a Good signature for every tarball, from:
-#        2.6.9 3.0.9 3.1.3 3.2.7  Wayne Davison
+#        2.6.3 2.6.9 3.0.9 3.1.3 3.2.7  Wayne Davison
 #                                 0048C8B026D4C96F0E589C2F6C859FB14B96A8C5
 #        3.4.1 3.4.4 3.5.0        Andrew Tridgell
 #                                 9FEF112DCE19A0DC7E882CB81BB24997A8535F6F
@@ -22,6 +22,7 @@
 # was downloaded the same way and matched every digest below byte for byte.
 #
 # To add a version: repeat steps 1-3 and append its line.
+9a8a0057ccb37596c62194d4bc3e51273d77e23178606ec7003bd45df40f4832  rsync-2.6.3.tar.gz
 ca437301becd890e73300bc69a39189ff1564baa761948ff149b3dd7bde633f9  rsync-2.6.9.tar.gz
 30f10f8dd5490d28240d4271bb652b1da7a60b22ed2b9ae28090668de9247c05  rsync-3.0.9.tar.gz
 55cc554efec5fdaad70de921cd5a5eeb6c29a95524c715f3bbf849235b0800c0  rsync-3.1.3.tar.gz

@@ -49,7 +49,8 @@ Every CI run tests both directions for each upstream version:
 
 | Upstream Version | Protocol | Pull (upstream -> oc) | Push (oc -> upstream) |
 |------------------|----------|-----------------------|-----------------------|
-| rsync 2.6.9      | 29       | Non-blocking (RP28.d) | Non-blocking (RP28.c) |
+| rsync 2.6.3      | 28       | Pass                  | Pass                  |
+| rsync 2.6.9      | 29       | Pass                  | Pass                  |
 | rsync 3.0.9      | 30       | Pass                  | Pass                  |
 | rsync 3.1.3      | 31       | Pass                  | Pass                  |
 | rsync 3.4.4      | 32       | Pass                  | Pass                  |
@@ -85,9 +86,9 @@ The columns below record the measured results for 3.0.9, 3.1.3 and 3.4.4; 3.5.0
 is exercised by the same scenarios but has no column here yet, so read its
 status from the interop job rather than inferring it from these tables. Rsync
 3.4.4 supersedes the 3.4.1/3.4.2/3.4.3 point releases on the same protocol
-(32), so those intermediate releases are not tested separately. Rsync 2.6.9 (protocol 29) interop is
-validated via dedicated daemon push/pull cells (RP28.c/RP28.d) rather than
-the full feature matrix below.
+(32), so those intermediate releases are not tested separately. Rsync 2.6.3
+(native protocol 28) and 2.6.9 (native protocol 29) run the protocol-anchor
+scenario set and the oracle cells rather than the full feature matrix below.
 
 ### Transfer Modes
 

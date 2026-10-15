@@ -57,5 +57,43 @@ class DistinctPortAllocationTests(unittest.TestCase):
         self.assertIn("allocate_distinct_ephemeral_ports", body)
 
 
+class DaemonPortPairTests(unittest.TestCase):
+    """The forced-protocol sweep and the standalone leg each start an oc and
+    an upstream daemon. Their ports must be distinct even when the kernel
+    would hand the same free port to two consecutive bind-0 probes."""
+
+    def _pair_with_reusing_allocator(self) -> tuple[int, int]:
+        # Stub the single-port allocator to always return one port, the way
+        # the kernel may after the probe socket is closed. The pair helper
+        # must not depend on it.
+        stub = "allocate_ephemeral_port() { echo 40000; }"
+        script = "\n".join([
+            stub,
+            _function_source("allocate_distinct_ephemeral_ports"),
+            _function_source("allocate_daemon_port_pair"),
+            'allocate_daemon_port_pair; echo "$oc_port $up_port"',
+        ])
+        result = subprocess.run(["bash", "-c", script], capture_output=True,
+                                text=True, check=True)
+        oc, up = (int(v) for v in result.stdout.split())
+        return oc, up
+
+    def test_pair_is_distinct(self) -> None:
+        oc, up = self._pair_with_reusing_allocator()
+        self.assertNotEqual(oc, up)
+        self.assertTrue(0 < oc < 65536 and 0 < up < 65536)
+
+    def test_sweep_and_standalone_use_the_pair_helper(self) -> None:
+        text = SCRIPT.read_text()
+        sweep = text[text.index("for proto in \"${protos[@]}\"; do"):]
+        sweep = sweep[:sweep.index("done")]
+        self.assertIn("allocate_daemon_port_pair", sweep)
+        self.assertNotIn("allocate_ephemeral_port", sweep)
+        standalone = text[text.index('if [[ -x "$standalone_binary" ]]; then'):]
+        standalone = standalone[:standalone.index("fi\n")]
+        self.assertIn("allocate_daemon_port_pair", standalone)
+        self.assertNotIn("allocate_ephemeral_port", standalone)
+
+
 if __name__ == "__main__":
     unittest.main()
