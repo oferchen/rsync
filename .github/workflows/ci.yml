@@ -658,6 +658,18 @@ jobs:
         run: |
           cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-run.log
           bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+      # The certificate validation matrix starts the real daemon and client, so
+      # it needs the quic oc-rsync binary. Naming the two test targets keeps
+      # nextest from building every other transfer test binary.
+      - name: Build oc-rsync (--features quic)
+        run: cargo build --locked --bin oc-rsync --features quic
+      - name: Test QUIC certificate validation matrix (--features quic)
+        shell: bash
+        run: |
+          cargo nextest run --locked --profile ci -p transfer --features quic \
+            --test quic_certificate_validation_matrix \
+            --test quic_daemon_identity_mismatch_fails_startup 2>&1 | tee nextest-cert.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-cert.log
 
   # ===========================================================================
   # Linux musl QUIC - the static musl binary with `--features quic`
