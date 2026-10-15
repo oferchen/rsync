@@ -580,7 +580,12 @@ impl ReceiverContext {
 
         // upstream: generator.c:2565-2618 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
-        self.touch_up_dirs(&dest_dir, writer);
+        self.touch_up_dirs(
+            &dest_dir,
+            #[cfg(unix)]
+            sandbox.as_deref(),
+            writer,
+        );
 
         self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
 

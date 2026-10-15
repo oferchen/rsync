@@ -143,19 +143,20 @@ impl ReceiverContext {
     /// Must be called BEFORE the symlink's metadata is (re)applied: upstream's
     /// `link_stat` fills `sx` before `set_file_attrs()` runs, so the compared
     /// mtime is the pre-transfer on-disk value, not the value the receiver is
-    /// about to write. Uses `symlink_metadata` (an `lstat`, no target follow)
-    /// so the compared mtime is the link's own. Returns raw flags (0 when
+    /// about to write. `link_meta` is the caller's `lstat` of the link (no
+    /// target follow), taken through the destination sandbox on Unix, so the
+    /// compared mtime is the link's own. Returns raw flags (0 when
     /// nothing differs or the lstat fails - upstream's benign "no change"
     /// outcome, not the `statret < 0` ITEM_IS_NEW leg).
     pub(in crate::receiver) fn existing_symlink_iflags(
         &self,
         entry: &protocol::flist::FileEntry,
         link_path: &std::path::Path,
+        link_meta: Option<&std::fs::Metadata>,
     ) -> u32 {
-        match std::fs::symlink_metadata(link_path) {
-            Ok(meta) => self.itemize_existing_flags(entry, link_path, Some(&meta), 0),
-            Err(_) => 0,
-        }
+        link_meta.map_or(0, |meta| {
+            self.itemize_existing_flags(entry, link_path, Some(meta), 0)
+        })
     }
 
     /// Whether upstream would print the transfer root's plain-`-v` NAME line

@@ -407,7 +407,7 @@ fn fchmodat_via_sandbox_takes_at_path_for_single_component() {
 }
 
 #[test]
-fn fchmodat_via_sandbox_falls_back_for_multi_component() {
+fn fchmodat_via_sandbox_anchors_a_multi_component_path() {
     let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
@@ -697,15 +697,23 @@ fn utimensat_via_sandbox_takes_at_path_for_single_component() {
     let atime = FileTime::from_unix_time(1_000_000, 0);
     let mtime = FileTime::from_unix_time(2_000_000, 0);
     let leaf = Path::new("file");
-    utimensat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &path, atime, mtime, true)
-        .expect("utimensat sandbox");
+    utimensat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        leaf,
+        &path,
+        Some(atime),
+        Some(mtime),
+        true,
+    )
+    .expect("utimensat sandbox");
 
     let meta = std::fs::metadata(&path).expect("stat");
     assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
 }
 
 #[test]
-fn utimensat_via_sandbox_falls_back_for_multi_component() {
+fn utimensat_via_sandbox_anchors_a_multi_component_path() {
     let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
@@ -715,8 +723,16 @@ fn utimensat_via_sandbox_falls_back_for_multi_component() {
     let atime = FileTime::from_unix_time(3_000_000, 0);
     let mtime = FileTime::from_unix_time(4_000_000, 0);
     let rel = Path::new("sub/file");
-    utimensat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &path, atime, mtime, true)
-        .expect("utimensat fallback");
+    utimensat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        rel,
+        &path,
+        Some(atime),
+        Some(mtime),
+        true,
+    )
+    .expect("utimensat fallback");
 
     let meta = std::fs::metadata(&path).expect("stat");
     assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
@@ -731,7 +747,7 @@ fn utimensat_via_sandbox_falls_back_when_sandbox_absent() {
     let atime = FileTime::from_unix_time(5_000_000, 0);
     let mtime = FileTime::from_unix_time(6_000_000, 0);
     let leaf = Path::new("file");
-    utimensat_via_sandbox_or_fallback(None, &root, leaf, &path, atime, mtime, true)
+    utimensat_via_sandbox_or_fallback(None, &root, leaf, &path, Some(atime), Some(mtime), true)
         .expect("utimensat fallback");
 
     let meta = std::fs::metadata(&path).expect("stat");
@@ -759,8 +775,8 @@ fn utimensat_via_sandbox_symlink_no_follow_preserves_target_mtime() {
         &root,
         Path::new("link"),
         &link,
-        new_atime,
-        new_mtime,
+        Some(new_atime),
+        Some(new_mtime),
         false,
     )
     .expect("utimensat lutimes");

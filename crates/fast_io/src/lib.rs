@@ -424,18 +424,19 @@ pub use confined_readdir::read_dir_confined;
 pub use dir_sandbox::{
     AtMetadata, CloneAttempt, DirEntryView, DirSandbox, EntryKind, LstatOutcome, ReadDirOutcome,
     UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new, confined_link_anonymous,
-    confined_rename, copy_then_unlink_via_sandbox_or_fallback, fchmodat,
-    fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback, fstatat_follow,
-    fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback,
-    mkdirat, mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
-    nested_parent_anchoring_supported, open_dir_beneath_nofollow, openat,
-    openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
+    confined_rename, copy_then_unlink_via_sandbox_or_fallback,
+    create_dir_all_via_sandbox_or_fallback, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
+    fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
+    linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback,
+    metadata_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback,
+    mknodat_via_sandbox_or_fallback, nested_parent_anchoring_supported, open_dir_beneath_nofollow,
+    openat, openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
     readlinkat_via_sandbox_or_fallback, recursive_unlinkat,
     recursive_unlinkat_via_sandbox_or_fallback, renameat, renameat_via_sandbox_or_fallback,
     secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at, secure_chown_at_dirfd,
-    secure_utimes_at, secure_utimes_at_dirfd, symlinkat, symlinkat_via_sandbox_or_fallback,
-    unlink_path, unlink_via_sandbox_or_fallback, unlinkat, utimensat,
-    utimensat_via_sandbox_or_fallback,
+    secure_utimes_at, secure_utimes_at_dirfd, stat_via_sandbox_or_fallback, symlinkat,
+    symlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback, unlinkat,
+    utimensat, utimensat_via_sandbox_or_fallback,
 };
 #[cfg(unix)]
 pub use files_from_walk::FilesFromBase;

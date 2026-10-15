@@ -22,6 +22,113 @@ mod missing_args;
 pub(in crate::receiver) mod obstacle;
 mod special;
 
+/// `lstat`/`stat` of `path` through the destination sandbox: upstream's
+/// `do_lstat_at()` / `do_stat_at()` against the pinned destination.
+///
+/// A `path` outside `dest_dir` is not the sandbox's to answer and keeps the
+/// path-based call.
+#[cfg(unix)]
+pub(in crate::receiver) fn dest_lstat(
+    sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &std::path::Path,
+    path: &std::path::Path,
+    follow: bool,
+) -> std::io::Result<fast_io::LstatOutcome> {
+    match path.strip_prefix(dest_dir) {
+        Ok(relative) if follow => {
+            fast_io::stat_via_sandbox_or_fallback(sandbox, dest_dir, relative, path)
+        }
+        Ok(relative) => fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative, path),
+        Err(_) if follow => std::fs::metadata(path).map(fast_io::LstatOutcome::Std),
+        Err(_) => std::fs::symlink_metadata(path).map(fast_io::LstatOutcome::Std),
+    }
+}
+
+/// [`dest_lstat`] for a consumer typed on [`std::fs::Metadata`]; see
+/// [`fast_io::metadata_via_sandbox_or_fallback`] for the platform arms.
+#[cfg(unix)]
+pub(in crate::receiver) fn dest_metadata(
+    sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &std::path::Path,
+    path: &std::path::Path,
+    follow: bool,
+) -> std::io::Result<std::fs::Metadata> {
+    match path.strip_prefix(dest_dir) {
+        Ok(relative) => {
+            fast_io::metadata_via_sandbox_or_fallback(sandbox, dest_dir, relative, path, follow)
+        }
+        Err(_) if follow => std::fs::metadata(path),
+        Err(_) => std::fs::symlink_metadata(path),
+    }
+}
+
+/// Whether an entry exists at `path`, probed without following a final
+/// symlink - through the destination sandbox on Unix (upstream:
+/// syscall.c `do_lstat_at()`).
+pub(in crate::receiver) fn dest_entry_exists(
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &std::path::Path,
+    path: &std::path::Path,
+) -> bool {
+    #[cfg(unix)]
+    return dest_lstat(sandbox, dest_dir, path, false).is_ok();
+    #[cfg(not(unix))]
+    {
+        let _ = dest_dir;
+        path.symlink_metadata().is_ok()
+    }
+}
+
+/// Chmod the destination entry `path` through the sandbox (upstream:
+/// syscall.c `do_chmod_at()`), on the path when it lies outside `dest_dir`.
+#[cfg(unix)]
+pub(in crate::receiver) fn dest_chmod(
+    sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &std::path::Path,
+    path: &std::path::Path,
+    mode: u32,
+) -> std::io::Result<()> {
+    let relative = path.strip_prefix(dest_dir).unwrap_or(path);
+    fast_io::fchmodat_via_sandbox_or_fallback(sandbox, dest_dir, relative, path, mode, true)
+}
+
+/// Set the mtime of the destination entry `path` through the sandbox,
+/// leaving its atime alone (upstream: syscall.c `do_utimensat_at()`).
+#[cfg(unix)]
+pub(in crate::receiver) fn dest_set_mtime(
+    sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &std::path::Path,
+    path: &std::path::Path,
+    mtime: filetime::FileTime,
+) -> std::io::Result<()> {
+    let relative = path.strip_prefix(dest_dir).unwrap_or(path);
+    fast_io::utimensat_via_sandbox_or_fallback(
+        sandbox,
+        dest_dir,
+        relative,
+        path,
+        None,
+        Some(mtime),
+        true,
+    )
+}
+
+/// upstream `make_path()` (`util1.c:189-240`): create the missing parents of an
+/// entry beneath the destination sandbox.
+#[cfg(unix)]
+pub(in crate::receiver) fn dest_create_dir_all(
+    sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &std::path::Path,
+    dir: &std::path::Path,
+) -> std::io::Result<()> {
+    match dir.strip_prefix(dest_dir) {
+        Ok(relative) => {
+            fast_io::create_dir_all_via_sandbox_or_fallback(sandbox, dest_dir, relative, dir, 0o777)
+        }
+        Err(_) => std::fs::create_dir_all(dir),
+    }
+}
+
 /// Normalizes a filename for cross-platform comparison.
 ///
 /// On macOS, converts NFD (decomposed) filenames to NFC (composed) so that

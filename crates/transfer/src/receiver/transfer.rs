@@ -585,7 +585,12 @@ impl ReceiverContext {
                 stats,
             )?;
         }
-        self.touch_up_dirs(dest_dir, writer);
+        self.touch_up_dirs(
+            dest_dir,
+            #[cfg(unix)]
+            sandbox.map(|held| &**held),
+            writer,
+        );
         Ok(())
     }
 

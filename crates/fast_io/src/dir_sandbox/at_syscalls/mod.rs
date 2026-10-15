@@ -44,12 +44,16 @@ mod unlink;
 mod tests;
 
 pub use create::{
-    CloneAttempt, confined_clone_file, confined_create_new, confined_link_anonymous, linkat,
-    linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat,
-    mknodat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
+    CloneAttempt, confined_clone_file, confined_create_new, confined_link_anonymous,
+    create_dir_all_via_sandbox_or_fallback, linkat, linkat_via_sandbox_or_fallback, mkdirat,
+    mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat, mknodat_via_sandbox_or_fallback, symlinkat,
+    symlinkat_via_sandbox_or_fallback,
 };
 pub(crate) use create::{fake_super_placeholder_at, mknodat_with_retry};
-pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
+pub use lstat::{
+    LstatOutcome, lstat_via_sandbox_or_fallback, metadata_via_sandbox_or_fallback,
+    stat_via_sandbox_or_fallback,
+};
 pub use metadata::{AtMetadata, fstatat_follow, fstatat_nofollow};
 pub use metadata_ops::{
     fchmodat, fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback,
