@@ -2,7 +2,7 @@
 ///
 /// The digest list is [`supported_daemon_digest_list`] verbatim, at every
 /// protocol version. Upstream never filters it: `output_daemon_greeting()`
-/// (compat.c:838-842) prints
+/// (compat.c:844-854) prints
 /// `get_default_nno_list(&valid_auth_checksums, ...)` straight into
 /// `@RSYNCD: %d.%d %s\n`, so an rsync 3.4.4 daemon forced to `--protocol=28`
 /// greets with `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`. Filtering here would
