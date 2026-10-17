@@ -229,7 +229,12 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     // ~20-byte request instead of upstream's batched iobuf_out pattern.
 
     let pending = match (signature, basis_path) {
-        (Some(sig), Some(basis)) => {
+        (Some(mut sig), Some(basis)) => {
+            // Once the block checksums have been written to the wire, downstream
+            // delta reconstruction only consults `sig.layout()`. Releasing the
+            // block vector here prevents in-flight `PendingTransfer` slots from
+            // pinning `O(blocks)` heap memory across the pipeline window.
+            sig.release_blocks();
             PendingTransfer::new_delta_transfer(ndx, file_path, basis, sig, target_size)
         }
         _ => PendingTransfer::new_full_transfer(ndx, file_path, target_size),

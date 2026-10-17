@@ -321,13 +321,27 @@ impl<T> ReorderBuffer<T> {
     /// Returns [`CapacityExceeded`] when the buffer is full or the sequence
     /// offset exceeds capacity.
     pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), CapacityExceeded> {
+        self.try_insert(sequence, item).map_err(|_| CapacityExceeded)
+    }
+
+    /// Inserts an item with the given sequence number, returning ownership of
+    /// `item` on capacity overflow so callers can retry or force-insert without
+    /// cloning payload buffers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(item)` when the buffer is full or the sequence offset
+    /// exceeds capacity.
+    pub fn try_insert(&mut self, sequence: u64, item: T) -> Result<(), T> {
         if self.bypass {
             self.bypass_queue.push_back(item);
             self.count += 1;
             self.observe_depth();
             return Ok(());
         }
-        let idx = self.slot_index(sequence).ok_or(CapacityExceeded)?;
+        let Some(idx) = self.slot_index(sequence) else {
+            return Err(item);
+        };
         if self.slots[idx].is_none() {
             self.count += 1;
         }

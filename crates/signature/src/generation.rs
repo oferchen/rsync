@@ -96,24 +96,21 @@ pub fn generate_file_signature<R: Read>(
     let mut blocks = Vec::with_capacity(expected_blocks_usize);
     let mut total_bytes: u64 = 0;
 
-    // Reusable per-block buffers; cleared and refilled on every batch iteration.
+    // Single contiguous batch buffer; refilled on every batch iteration without
+    // per-block or per-batch heap allocations.
     let batch_capacity = BATCH_SIZE.min(expected_blocks_usize).max(1);
-    let mut batch_bufs: Vec<Vec<u8>> = (0..batch_capacity)
-        .map(|_| vec![0u8; block_len.max(1)])
-        .collect();
-    // Actual byte lengths of each block in the current batch (last block may be short).
-    let mut batch_lens: Vec<usize> = Vec::with_capacity(batch_capacity);
-    let mut batch_rolling: Vec<RollingDigest> = Vec::with_capacity(batch_capacity);
+    let stride = block_len.max(1);
+    let mut batch_buf: Vec<u8> = vec![0u8; batch_capacity * stride];
+    let mut batch_lens = [0usize; BATCH_SIZE];
+    let mut batch_rolling = [RollingDigest::new(0, 0, 0); BATCH_SIZE];
 
     let mut index: usize = 0;
 
     while index < expected_blocks_usize {
         let batch_end = (index + batch_capacity).min(expected_blocks_usize);
         let batch_count = batch_end - index;
-        batch_lens.clear();
-        batch_rolling.clear();
 
-        for (i, buf) in batch_bufs.iter_mut().enumerate().take(batch_count) {
+        for i in 0..batch_count {
             let block_index = index + i;
             let is_last = block_index + 1 == expected_blocks_usize;
             let target_len = if is_last && layout.remainder() != 0 {
@@ -122,24 +119,25 @@ pub fn generate_file_signature<R: Read>(
                 block_len
             };
 
-            let chunk = &mut buf[..target_len];
+            let start = i * stride;
+            let chunk = &mut batch_buf[start..start + target_len];
             reader.read_exact(chunk)?;
             total_bytes = total_bytes.saturating_add(target_len as u64);
 
-            batch_rolling.push(RollingDigest::from_bytes(chunk));
-            batch_lens.push(target_len);
+            batch_rolling[i] = RollingDigest::from_bytes(chunk);
+            batch_lens[i] = target_len;
         }
 
-        let batch_slices: Vec<&[u8]> = batch_bufs
-            .iter()
-            .zip(batch_lens.iter())
-            .take(batch_count)
-            .map(|(buf, &len)| &buf[..len])
-            .collect();
+        let mut batch_slices: [&[u8]; BATCH_SIZE] = [&[]; BATCH_SIZE];
+        for (i, slot) in batch_slices.iter_mut().enumerate().take(batch_count) {
+            let start = i * stride;
+            *slot = &batch_buf[start..start + batch_lens[i]];
+        }
 
-        let strong_digests = algorithm.compute_truncated_batch(&batch_slices, strong_len);
+        let strong_digests =
+            algorithm.compute_truncated_batch(&batch_slices[..batch_count], strong_len);
 
-        for (i, (rolling, strong)) in batch_rolling
+        for (i, (rolling, strong)) in batch_rolling[..batch_count]
             .iter()
             .zip(strong_digests.into_iter())
             .enumerate()

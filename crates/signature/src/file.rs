@@ -55,6 +55,14 @@ impl FileSignature {
     pub const fn total_bytes(&self) -> u64 {
         self.total_bytes
     }
+
+    /// Releases the in-memory block list after it has been serialized to the
+    /// wire, retaining the [`SignatureLayout`] and `total_bytes` metadata
+    /// required by downstream delta reconstruction.
+    #[inline]
+    pub fn release_blocks(&mut self) {
+        self.blocks = Vec::new();
+    }
 }
 
 #[cfg(test)]

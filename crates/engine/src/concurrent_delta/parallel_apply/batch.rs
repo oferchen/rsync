@@ -90,7 +90,7 @@ impl ParallelDeltaApplier {
         );
 
         for v in verified {
-            let ndx = v.chunk.ndx;
+            let ndx = v.ndx;
             let handle = self.slot_for(ndx)?;
             let mut slot = handle.lock_slot(ndx, "apply_batch_parallel")?;
             // Invariant 2: the per-file Mutex must be held for the
@@ -101,7 +101,7 @@ impl ParallelDeltaApplier {
             // the guard was not dropped prematurely by a future refactor.
             #[cfg(debug_assertions)]
             let bytes_before = slot.bytes_written();
-            if let Err(err) = slot.ingest(v.chunk) {
+            if let Err(err) = slot.ingest(v.chunk_sequence, v.data) {
                 if let IngestError::ReorderSaturated { chunk_sequence, .. } = &err {
                     self.note_reorder_saturation(ndx, *chunk_sequence);
                 }

@@ -9,7 +9,6 @@
 use std::io::{self, Write};
 
 use super::super::reorder::ReorderBuffer;
-use super::DeltaChunk;
 
 /// Error outcomes for [`FileSlot::ingest`].
 ///
@@ -50,9 +49,12 @@ impl From<IngestError> for io::Error {
 
 /// Per-file destination writer plus the reorder buffer that re-establishes
 /// submission order after the rayon verify step completes out of order.
+///
+/// Each reorder slot holds a 16-byte `Option<Box<[u8]>>` handle pointing
+/// directly to the verified payload produced by the rayon worker.
 pub(super) struct FileSlot {
     pub(super) writer: Box<dyn Write + Send>,
-    pub(super) reorder: ReorderBuffer<DeltaChunk>,
+    pub(super) reorder: ReorderBuffer<Box<[u8]>>,
     bytes_written: u64,
 }
 
@@ -65,8 +67,9 @@ impl FileSlot {
         }
     }
 
-    /// Inserts `chunk` into the reorder buffer and drains any contiguous run
-    /// that is now ready, writing each ready chunk to the destination.
+    /// Inserts `data` at `chunk_sequence` into the reorder buffer and drains
+    /// any contiguous run that is now ready, writing each ready slice directly
+    /// to the destination without intermediate collection.
     ///
     /// The reorder buffer is the single source of truth for per-file
     /// sequencing; the writer only sees chunks once they have arrived in
@@ -78,27 +81,29 @@ impl FileSlot {
     /// one-shot warning before mapping back to [`io::Error`] for the caller.
     ///
     /// [`ParallelDeltaApplier::note_reorder_saturation`]: super::ParallelDeltaApplier::note_reorder_saturation
-    pub(super) fn ingest(&mut self, chunk: DeltaChunk) -> Result<(), IngestError> {
-        let seq = chunk.chunk_sequence;
+    pub(super) fn ingest(
+        &mut self,
+        chunk_sequence: u64,
+        data: Box<[u8]>,
+    ) -> Result<(), IngestError> {
         let capacity = self.reorder.capacity();
         self.reorder
-            .insert(seq, chunk)
+            .insert(chunk_sequence, data)
             .map_err(|_| IngestError::ReorderSaturated {
-                chunk_sequence: seq,
+                chunk_sequence,
                 capacity,
             })?;
-        let ready: Vec<DeltaChunk> = self.reorder.drain_ready().collect();
-        for chunk in ready {
-            self.write_chunk(chunk).map_err(IngestError::Io)?;
+        while let Some(ready) = self.reorder.next_in_order() {
+            self.write_chunk(&ready).map_err(IngestError::Io)?;
         }
         Ok(())
     }
 
-    fn write_chunk(&mut self, chunk: DeltaChunk) -> io::Result<()> {
-        self.writer.write_all(&chunk.data)?;
+    fn write_chunk(&mut self, data: &[u8]) -> io::Result<()> {
+        self.writer.write_all(data)?;
         self.bytes_written = self
             .bytes_written
-            .checked_add(chunk.data.len() as u64)
+            .checked_add(data.len() as u64)
             .ok_or_else(|| io::Error::other("parallel apply byte counter overflow"))?;
         Ok(())
     }

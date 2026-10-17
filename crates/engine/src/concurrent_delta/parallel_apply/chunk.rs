@@ -101,16 +101,14 @@ impl DeltaChunk {
 
 /// CPU-bound verification result handed back from the rayon worker so the
 /// owning thread can run the serial per-file write under the per-file mutex.
+///
+/// Carries only the compact routing header (`ndx`, `chunk_sequence`) and a
+/// right-sized `Box<[u8]>` slice handle pointing directly to the verified
+/// payload bytes, dropping the 68-byte `expected_strong` digest inside the
+/// worker before entering the reorder buffer.
 #[derive(Debug)]
 pub(super) struct VerifiedChunk {
-    pub(super) chunk: DeltaChunk,
-    /// Strong-checksum digest computed for `chunk.data` using the
-    /// negotiated strategy. Equal to the chunk's `expected_strong` value
-    /// (when one was attached) by construction: a mismatch is reported as
-    /// a [`ParallelApplyError::ChecksumMismatch`] before this type is
-    /// constructed, so a `VerifiedChunk` is only ever produced for data
-    /// that has cleared verification.
-    ///
-    /// [`ParallelApplyError::ChecksumMismatch`]: super::ParallelApplyError::ChecksumMismatch
-    pub(super) digest: ChecksumDigest,
+    pub(super) ndx: FileNdx,
+    pub(super) chunk_sequence: u64,
+    pub(super) data: Box<[u8]>,
 }

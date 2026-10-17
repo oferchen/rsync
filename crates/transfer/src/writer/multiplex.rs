@@ -271,10 +271,49 @@ impl<W: Write> MultiplexWriter<W> {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "payload length overflow"))?;
         let header = MessageHeader::new(code, len)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let header_bytes = header.encode();
+
+        if MESSAGE_HEADER_LEN + payload_len > SCRATCH_RETAIN {
+            // Zero-allocation vectored drain for oversized frames: pair the
+            // 4-byte stack header with each payload slice directly instead of
+            // allocating and copying into a temporary multi-KB/MB Vec.
+            let mut hdr_off = 0usize;
+            for chunk in chunks {
+                let mut chunk_off = 0usize;
+                while hdr_off < MESSAGE_HEADER_LEN || chunk_off < chunk.len() {
+                    let n = if hdr_off < MESSAGE_HEADER_LEN {
+                        let slices = [
+                            io::IoSlice::new(&header_bytes[hdr_off..]),
+                            io::IoSlice::new(&chunk[chunk_off..]),
+                        ];
+                        self.inner.write_vectored(&slices)?
+                    } else {
+                        self.inner.write(&chunk[chunk_off..])?
+                    };
+                    if n == 0 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "failed to write oversized multiplex frame",
+                        ));
+                    }
+                    let hdr_rem = MESSAGE_HEADER_LEN - hdr_off;
+                    if n <= hdr_rem {
+                        hdr_off += n;
+                    } else {
+                        hdr_off = MESSAGE_HEADER_LEN;
+                        chunk_off += n - hdr_rem;
+                    }
+                }
+            }
+            if hdr_off < MESSAGE_HEADER_LEN {
+                self.inner.write_all(&header_bytes[hdr_off..])?;
+            }
+            return Ok(());
+        }
 
         self.scratch.clear();
         self.scratch.reserve(MESSAGE_HEADER_LEN + payload_len);
-        self.scratch.extend_from_slice(&header.encode());
+        self.scratch.extend_from_slice(&header_bytes);
         for chunk in chunks {
             self.scratch.extend_from_slice(chunk);
         }

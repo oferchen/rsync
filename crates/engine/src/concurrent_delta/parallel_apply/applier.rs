@@ -372,8 +372,7 @@ impl ParallelDeltaApplier {
         let verified = Self::verify_chunk(strategy.as_ref(), chunk)?;
 
         let mut slot = handle.lock_slot(ndx, "apply_one_chunk")?;
-        let _ = verified.digest; // reserved for future stats wiring
-        match slot.ingest(verified.chunk) {
+        match slot.ingest(verified.chunk_sequence, verified.data) {
             Ok(()) => Ok(()),
             Err(err) => {
                 if let IngestError::ReorderSaturated { chunk_sequence, .. } = &err {
@@ -499,7 +498,11 @@ impl ParallelDeltaApplier {
                 });
             }
         }
-        Ok(VerifiedChunk { chunk, digest })
+        Ok(VerifiedChunk {
+            ndx: chunk.ndx,
+            chunk_sequence: chunk.chunk_sequence,
+            data: chunk.data.into_boxed_slice(),
+        })
     }
 }
 

@@ -120,64 +120,19 @@ const fn literal_flush_cadence(block_len: usize) -> usize {
     block_len + CHUNK_SIZE
 }
 
-/// Re-frames a token stream so its literal segmentation is byte-identical to the
-/// single-pass sequential scan.
-///
-/// [`DeltaGenerator::generate_chunked`] emits each match-free gap as one
-/// `Literal` token, whereas the sequential scan flushes a fresh
-/// [`literal_flush_cadence`]-sized token every time its pending accumulator
-/// crosses that threshold. This normalizer coalesces every maximal run of
-/// adjacent `Literal` tokens and re-splits it at exact `literal_flush_cadence`
-/// boundaries from the run start - the identical rule the sequential path
-/// applies inline - so the literal framing (and therefore the wire bytes)
-/// matches. `Copy` tokens and their order pass through untouched.
-fn resegment_literals(tokens: Vec<DeltaToken>, block_len: usize) -> Vec<DeltaToken> {
-    let cadence = literal_flush_cadence(block_len);
-    let mut out: Vec<DeltaToken> = Vec::with_capacity(tokens.len());
-    // Accumulates the current maximal run of adjacent literal bytes. A single
-    // literal token is moved in with zero copies; multi-token runs concatenate
-    // before re-splitting.
-    let mut run: Option<Vec<u8>> = None;
-    for token in tokens {
-        match token {
-            DeltaToken::Literal(bytes) => match run.as_mut() {
-                Some(acc) => acc.extend_from_slice(&bytes),
-                None => run = Some(bytes),
-            },
-            copy => {
-                if let Some(acc) = run.take() {
-                    push_split_literal_run(&mut out, acc, cadence);
-                }
-                out.push(copy);
-            }
-        }
-    }
-    if let Some(acc) = run.take() {
-        push_split_literal_run(&mut out, acc, cadence);
-    }
-    out
-}
-
-/// Splits one coalesced literal `run` into `Literal` tokens at exact `cadence`
-/// boundaries from the run start, mirroring the sequential scan's threshold
-/// flush (a full `cadence`-byte token each time the accumulator crosses the
-/// threshold; the trailing remainder flushes at the next match or EOF). A run
-/// at or below one cadence is emitted whole (and moved without copying).
-fn push_split_literal_run(out: &mut Vec<DeltaToken>, run: Vec<u8>, cadence: usize) {
-    if run.is_empty() {
+/// Appends `slice` into `out` as one or more `DeltaToken::Literal` tokens split
+/// at exact `cadence` boundaries from the start of `slice`, mirroring the
+/// sequential scan's threshold flush in a single allocation and copy pass.
+fn push_split_literal_slice(out: &mut Vec<DeltaToken>, slice: &[u8], cadence: usize) {
+    if slice.is_empty() {
         return;
     }
-    if run.len() <= cadence {
-        out.push(DeltaToken::Literal(run));
-        return;
-    }
-    let len = run.len();
     let mut start = 0usize;
-    while len - start > cadence {
-        out.push(DeltaToken::Literal(run[start..start + cadence].to_vec()));
+    while slice.len() - start > cadence {
+        out.push(DeltaToken::Literal(slice[start..start + cadence].to_vec()));
         start += cadence;
     }
-    out.push(DeltaToken::Literal(run[start..].to_vec()));
+    out.push(DeltaToken::Literal(slice[start..].to_vec()));
 }
 
 /// A `Copy` token lifted to an absolute source offset for the parallel merge.
@@ -204,11 +159,13 @@ struct CopyRun {
 /// duplicate-free basis: every match the sequential scan would find was scanned
 /// with a full window by the owning worker (so it is present here), and a run
 /// starting before the cursor is one the sequential scan also skips. Gaps are
-/// literal bytes taken verbatim from `source`, then [`resegment_literals`]
-/// frames them at the sequential cadence. The result covers `[0, source.len())`
-/// contiguously, so reconstruction is byte-exact regardless of the basis.
+/// literal bytes sliced directly from `source` at [`literal_flush_cadence`]
+/// boundaries in a single pass without intermediate staging buffers. The result
+/// covers `[0, source.len())` contiguously, so reconstruction is byte-exact
+/// regardless of the basis.
 fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> DeltaScript {
     let n = source.len() as u64;
+    let cadence = literal_flush_cadence(block_len);
 
     // Earliest start first; on a tie prefer the longer run so a seam-truncated
     // duplicate never shadows the owning worker's full run.
@@ -219,6 +176,7 @@ fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> D
     });
 
     let mut tokens: Vec<DeltaToken> = Vec::new();
+    let mut literal_bytes = 0u64;
     let mut cursor = 0u64;
     let mut next = 0usize;
     while cursor < n {
@@ -235,22 +193,16 @@ fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> D
             }
             other => {
                 // Literal gap from the cursor up to the next accepted match (or
-                // EOF), taken verbatim from `source`.
+                // EOF), sliced directly from `source` at `cadence` boundaries.
                 let gap_end = other.map_or(n, |run| run.source_start);
-                tokens.push(DeltaToken::Literal(
-                    source[cursor as usize..gap_end as usize].to_vec(),
-                ));
+                let gap_slice = &source[cursor as usize..gap_end as usize];
+                literal_bytes += gap_slice.len() as u64;
+                push_split_literal_slice(&mut tokens, gap_slice, cadence);
                 cursor = gap_end;
             }
         }
     }
 
-    let tokens = resegment_literals(tokens, block_len);
-    let literal_bytes = tokens
-        .iter()
-        .filter(|token| token.is_literal())
-        .map(|token| token.byte_len() as u64)
-        .sum();
     DeltaScript::new(tokens, n, literal_bytes)
 }
 
@@ -507,13 +459,45 @@ impl DeltaGenerator {
     /// stripe that merely stops early must not claim it mid-file.
     fn scan<R: Read>(
         &self,
-        mut reader: R,
+        reader: R,
         index: &DeltaSignatureIndex,
         tail_match: bool,
     ) -> io::Result<(DeltaScript, ScanCounters)> {
+        self.scan_inner(reader, index, tail_match, None)
+    }
+
+    fn scan_stripe_runs(
+        &self,
+        stripe: &[u8],
+        scan_start: u64,
+        index: &DeltaSignatureIndex,
+        tail_match: bool,
+    ) -> io::Result<(Vec<CopyRun>, ScanCounters)> {
+        let mut runs = Vec::new();
+        let (_, counters) = self.scan_inner(
+            Cursor::new(stripe),
+            index,
+            tail_match,
+            Some((&mut runs, scan_start)),
+        )?;
+        Ok((runs, counters))
+    }
+
+    fn scan_inner<R: Read>(
+        &self,
+        mut reader: R,
+        index: &DeltaSignatureIndex,
+        tail_match: bool,
+        mut copy_runs: Option<(&mut Vec<CopyRun>, u64)>,
+    ) -> io::Result<(DeltaScript, ScanCounters)> {
+        let emit_literals = copy_runs.is_none();
         let block_len = index.block_length();
         let mut window = RingBuffer::with_capacity(block_len);
-        let mut pending_literals = Vec::with_capacity(block_len);
+        let mut pending_literals = if emit_literals {
+            Vec::with_capacity(block_len)
+        } else {
+            Vec::new()
+        };
         let mut rolling = RollingChecksum::new();
         let mut tokens = Vec::new();
         let mut total_bytes = 0u64;
@@ -572,16 +556,18 @@ impl DeltaGenerator {
                 rolling
                     .roll(outgoing_byte, byte)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                pending_literals.push(outgoing_byte);
                 offset += 1;
+                if emit_literals {
+                    pending_literals.push(outgoing_byte);
 
-                // upstream: match.c:372-373 - flush early to bound memory growth
-                if pending_literals.len() >= literal_flush_cadence(block_len) {
-                    literal_bytes += pending_literals.len() as u64;
-                    total_bytes += pending_literals.len() as u64;
-                    let filled =
-                        std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
-                    tokens.push(DeltaToken::Literal(filled));
+                    // upstream: match.c:372-373 - flush early to bound memory growth
+                    if pending_literals.len() >= literal_flush_cadence(block_len) {
+                        literal_bytes += pending_literals.len() as u64;
+                        total_bytes += pending_literals.len() as u64;
+                        let filled =
+                            std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
+                        tokens.push(DeltaToken::Literal(filled));
+                    }
                 }
             } else {
                 rolling.update_byte(byte);
@@ -682,19 +668,27 @@ impl DeltaGenerator {
                     let block = index.block(match_idx);
                     let block_basis_idx = block.index();
 
-                    match run_start_idx {
-                        Some(start_idx) if start_idx + run_len as u64 == block_basis_idx => {
-                            run_len += 1;
-                        }
-                        _ => {
-                            flush_seq_match_run(
-                                &mut tokens,
-                                &mut run_start_idx,
-                                &mut run_len,
-                                block_len,
-                            );
-                            run_start_idx = Some(block_basis_idx);
-                            run_len = 1;
+                    if let Some((ref mut runs, scan_start)) = copy_runs {
+                        runs.push(CopyRun {
+                            source_start: scan_start + offset,
+                            basis_index: block_basis_idx,
+                            len: block_len.min(block.len()),
+                        });
+                    } else {
+                        match run_start_idx {
+                            Some(start_idx) if start_idx + run_len as u64 == block_basis_idx => {
+                                run_len += 1;
+                            }
+                            _ => {
+                                flush_seq_match_run(
+                                    &mut tokens,
+                                    &mut run_start_idx,
+                                    &mut run_len,
+                                    block_len,
+                                );
+                                run_start_idx = Some(block_basis_idx);
+                                run_len = 1;
+                            }
                         }
                     }
                     total_bytes += block.len() as u64;
@@ -766,7 +760,9 @@ impl DeltaGenerator {
                         break;
                     }
                 }
-                flush_seq_match_run(&mut tokens, &mut run_start_idx, &mut run_len, block_len);
+                if copy_runs.is_none() {
+                    flush_seq_match_run(&mut tokens, &mut run_start_idx, &mut run_len, block_len);
+                }
                 continue;
             } else {
                 false_alarms += 1;
@@ -802,7 +798,9 @@ impl DeltaGenerator {
         {
             while window.len() > tail_len {
                 if let Some(byte) = window.pop_front() {
-                    pending_literals.push(byte);
+                    if emit_literals {
+                        pending_literals.push(byte);
+                    }
                     offset += 1;
                 }
             }
@@ -851,24 +849,34 @@ impl DeltaGenerator {
                 // `run_len * block_len`, so absorbing a shorter block
                 // would over-state the run and desync the receiver's
                 // compressed-token dictionary (`token.c:see_deflate_token`).
-                tokens.push(DeltaToken::Copy {
-                    index: block.index(),
-                    len: block.len(),
-                });
+                if let Some((ref mut runs, scan_start)) = copy_runs {
+                    runs.push(CopyRun {
+                        source_start: scan_start + offset,
+                        basis_index: block.index(),
+                        len: block.len(),
+                    });
+                } else {
+                    tokens.push(DeltaToken::Copy {
+                        index: block.index(),
+                        len: block.len(),
+                    });
+                }
                 total_bytes += block.len() as u64;
                 window.clear();
             }
         }
 
         // Drain whatever the tail probe left behind as literals.
-        while let Some(byte) = window.pop_front() {
-            pending_literals.push(byte);
-        }
+        if emit_literals {
+            while let Some(byte) = window.pop_front() {
+                pending_literals.push(byte);
+            }
 
-        if !pending_literals.is_empty() {
-            literal_bytes += pending_literals.len() as u64;
-            total_bytes += pending_literals.len() as u64;
-            tokens.push(DeltaToken::Literal(pending_literals));
+            if !pending_literals.is_empty() {
+                literal_bytes += pending_literals.len() as u64;
+                total_bytes += pending_literals.len() as u64;
+                tokens.push(DeltaToken::Literal(pending_literals));
+            }
         }
 
         // upstream: match.c:442-443. The per-file counter line is NOT emitted
@@ -1286,56 +1294,19 @@ impl DeltaGenerator {
         let block_len = index.block_length();
         let n = source.len();
 
-        let scripts: Vec<io::Result<(DeltaScript, ScanCounters)>> = ranges
+        let stripe_results: Vec<io::Result<(Vec<CopyRun>, ScanCounters)>> = ranges
             .par_iter()
-            .map(|&(s, e)| self.scan(Cursor::new(&source[s..e]), index, e == n))
+            .map(|&(s, e)| self.scan_stripe_runs(&source[s..e], s as u64, index, e == n))
             .collect();
 
         let mut counters = ScanCounters::default();
-
-        // Lift every worker `Copy` to an absolute source offset. Literals are
-        // ignored: [`merge_copy_runs`] regenerates them from `source`, so a
-        // stripe boundary can never drop or duplicate a literal byte.
         let mut runs: Vec<CopyRun> = Vec::new();
-        for (&(scan_start, _), script) in ranges.iter().zip(scripts) {
-            let (script, stripe_counters) = script?;
+        for res in stripe_results {
+            let (mut stripe_runs, stripe_counters) = res?;
             counters.matches += stripe_counters.matches;
             counters.hash_hits += stripe_counters.hash_hits;
             counters.false_alarms += stripe_counters.false_alarms;
-            let mut local_off = 0u64;
-            for token in script.into_tokens() {
-                let token_len = token.byte_len() as u64;
-                if let DeltaToken::Copy {
-                    index: basis_index,
-                    len,
-                } = token
-                {
-                    // Split a fat seq-match run into per-block runs so the merge
-                    // operates at block granularity. A run that overshoots a
-                    // stripe boundary (forward read-ahead) overlaps the next
-                    // worker's run; at block granularity the greedy cursor dedups
-                    // the shared boundary block and tiles the remainder, whereas
-                    // a fat run whose start falls inside the cursor would be
-                    // skipped wholesale and its bytes drained as literals. The
-                    // wire layer expands fat Copies to one op per block anyway, so
-                    // this is byte-transparent. `block_len` divides `len` for
-                    // every matched run; the `min` guards the rare partial tail.
-                    let start = scan_start as u64 + local_off;
-                    let mut covered = 0usize;
-                    let mut block = 0u64;
-                    while covered < len {
-                        let this = block_len.min(len - covered);
-                        runs.push(CopyRun {
-                            source_start: start + covered as u64,
-                            basis_index: basis_index + block,
-                            len: this,
-                        });
-                        covered += this;
-                        block += 1;
-                    }
-                }
-                local_off += token_len;
-            }
+            runs.append(&mut stripe_runs);
         }
 
         Ok((merge_copy_runs(source, runs, block_len), counters))

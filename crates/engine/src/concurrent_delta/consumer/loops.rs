@@ -31,18 +31,26 @@ pub(super) fn run_bare_loop(
     };
 
     for result in stream_rx {
-        while reorder.insert(result.sequence(), result.clone()).is_err() {
-            match drain_and_record(&mut reorder, result_tx, &mut last_drain_at, sink) {
-                DrainOutcome::Disconnected => return,
-                DrainOutcome::Empty => {
-                    // Buffer full but next_expected is not buffered.
-                    // Force insert to break the deadlock.
-                    reorder.force_insert(result.sequence(), result.clone());
-                    publish(&reorder);
-                    break;
-                }
-                DrainOutcome::Forwarded => {
-                    publish(&reorder);
+        let seq = result.sequence();
+        let mut pending = Some(result);
+        while let Some(item) = pending.take() {
+            match reorder.try_insert(seq, item) {
+                Ok(()) => break,
+                Err(rejected) => {
+                    match drain_and_record(&mut reorder, result_tx, &mut last_drain_at, sink) {
+                        DrainOutcome::Disconnected => return,
+                        DrainOutcome::Empty => {
+                            // Buffer full but next_expected is not buffered.
+                            // Force insert by moving the rejected item directly.
+                            reorder.force_insert(seq, rejected);
+                            publish(&reorder);
+                            break;
+                        }
+                        DrainOutcome::Forwarded => {
+                            publish(&reorder);
+                            pending = Some(rejected);
+                        }
+                    }
                 }
             }
         }
