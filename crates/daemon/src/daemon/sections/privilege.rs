@@ -496,6 +496,7 @@ mod privilege_tests {
             messages: LegacyMessageCache::shared(),
             early_input_data: None,
             client_digests: AdvertisedDigests::Absent,
+            unsupported_peer_protocol: None,
             session_exit_code: &mut session_exit_code,
             post_xfer_command: None,
             conn_state: ConnectionState::Authenticating,

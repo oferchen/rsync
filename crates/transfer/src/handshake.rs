@@ -392,6 +392,16 @@ mod tests {
         assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
     }
 
+    // WHY: the first four bytes oc writes on an rsh connection, in either
+    // role, are its protocol int (compat.c:606 write_int). Pinning the literal
+    // bytes catches both a NEWEST change and an encoding change.
+    #[test]
+    fn golden_binary_advertisement_is_33_little_endian() {
+        let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
+        let mut stdout = Vec::new();
+        perform_handshake(&mut stdin, &mut stdout).expect("handshake succeeds");
+        assert_eq!(stdout, [0x21, 0x00, 0x00, 0x00]);
+    }
     #[test]
     fn max_version_caps_negotiated_below_remote() {
         // Remote advertises 32; we cap to 29 via --protocol=29. The negotiated
@@ -459,7 +469,7 @@ mod tests {
     // rsync.h:149) must negotiate down to our NEWEST, not abort.
     #[test]
     fn binary_handshake_clamps_newer_peer_to_newest() {
-        for newer in [33u8, 40] {
+        for newer in [33u8, 34, 35, 40] {
             let mut stdin = Cursor::new(vec![newer, 0, 0, 0]);
             let mut stdout = Vec::new();
 
@@ -691,7 +701,7 @@ mod tests {
     // 34.0 or 40.0 greeting negotiates to NEWEST and the response advertises it.
     #[test]
     fn legacy_handshake_clamps_newer_peer_to_newest() {
-        for newer in ["@RSYNCD: 34.0\n", "@RSYNCD: 40.0\n"] {
+        for newer in ["@RSYNCD: 34.0\n", "@RSYNCD: 35.0\n", "@RSYNCD: 40.0\n"] {
             let mut stdin = Cursor::new(newer.as_bytes().to_vec());
             let mut stdout = Vec::new();
 

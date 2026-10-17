@@ -16,13 +16,13 @@ use protocol::{
 
 use crate::auth::{compute_daemon_auth_response, negotiate_client_daemon_digest};
 
-use super::super::super::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
 use super::super::super::error::{
     ClientError, daemon_auth_negotiation_error, daemon_error, socket_error,
 };
 #[cfg(feature = "quic")]
 use super::super::super::module_list::Transport;
 use super::super::super::module_list::{DaemonAddress, load_daemon_password};
+use super::super::super::{CLIENT_SERVER_PROTOCOL_EXIT_CODE, PROTOCOL_INCOMPATIBLE_EXIT_CODE};
 use crate::client::error::invalid_argument_error;
 
 /// Parsed daemon transfer request containing connection and path details.
@@ -247,7 +247,7 @@ fn split_module_path(module_path: &OsStr) -> (String, OsString) {
 ///
 /// upstream: `clientserver.c:209` `exchange_protocols()` -
 /// `sscanf(buf, "@RSYNCD: %d.%d", ...)`
-fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, ClientError> {
+fn parse_protocol_from_greeting(greeting: &str) -> Result<u32, ClientError> {
     let rest = greeting.get(9..).ok_or_else(|| {
         daemon_error(
             format!("malformed greeting: {greeting}"),
@@ -272,19 +272,10 @@ fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, Clien
         )
     })?;
 
-    // upstream: clientserver.c:251-255 exchange_protocols() - a daemon that is
-    // NEWER than us is not refused: `protocol_version` simply stays at ours (a
-    // release build has SUBPROTOCOL_VERSION == 0, so the newer peer's
-    // sub-protocol is ignored). The clamp mirrors that by folding any version
-    // above ours - up to MAX_PROTOCOL_VERSION (40, rsync.h:149) - down to
-    // NEWEST. Only a peer outside upstream's [MIN, MAX] sanity window keeps the
-    // shell-clean refusal (compat.c:621-625 setup_protocol).
-    ProtocolVersion::from_peer_advertisement(version_num).map_err(|e| {
-        daemon_error(
-            format!("unsupported protocol version {version_num}: {e}"),
-            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-        )
-    })
+    // upstream: clientserver.c:209 exchange_protocols() only parses the number.
+    // The [MIN, MAX] window is applied after `@RSYNCD: OK`, in
+    // `perform_daemon_handshake`, where upstream's setup_protocol() checks it.
+    Ok(version_num)
 }
 
 /// Resolves the username the client sends in its `@RSYNCD` auth response.
@@ -407,7 +398,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     }
 
     // upstream: clientserver.c:209 exchange_protocols() - sscanf(buf, "@RSYNCD: %d.%d", ...)
-    let remote_protocol = parse_protocol_from_greeting(&greeting)?;
+    let remote_raw = parse_protocol_from_greeting(&greeting)?;
 
     // upstream: clientserver.c:217-240 (exchange_protocols, am_client == 1) - a
     // server greeting that omits the subprotocol value (protocol >= 30) or the
@@ -523,13 +514,15 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
             // names nothing we implement - the empty list included - aborts
             // with RERR_UNSUPPORTED rather than falling back (compat.c:384-406
             // recv_negotiate_str()).
-            let digest =
-                negotiate_client_daemon_digest(advertised_digests, remote_protocol.as_u8())
-                    .map_err(|_| {
-                        daemon_auth_negotiation_error(
-                            advertised_digests.names().unwrap_or_default(),
-                        )
-                    })?;
+            // compat.c:871 keys the default on protocol_version, which
+            // exchange_protocols() has already lowered to MIN(ours, peer).
+            let session_protocol = our_version
+                .as_u8()
+                .min(u8::try_from(remote_raw).unwrap_or(u8::MAX));
+            let digest = negotiate_client_daemon_digest(advertised_digests, session_protocol)
+                .map_err(|_| {
+                    daemon_auth_negotiation_error(advertised_digests.names().unwrap_or_default())
+                })?;
 
             // upstream: compat.c:877-880 - `DEBUG_GTE(NSTR, 1)` emits
             // "Client negotiated auth: <name>" after the strongest mutual
@@ -574,6 +567,16 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
             println!("{trimmed}");
         }
     }
+
+    // upstream: compat.c:621-625 setup_protocol() - only now, after
+    // `@RSYNCD: OK`, is a daemon outside [MIN_PROTOCOL_VERSION,
+    // MAX_PROTOCOL_VERSION] refused, with the shell-clean text and
+    // RERR_PROTOCOL. One above ours but within MAX (40, rsync.h:149) clamps to
+    // NEWEST, as clientserver.c:242-243 keeps our version. The floor is 28, not
+    // MIN_PROTOCOL_VERSION (20): see the deviation note in protocol's
+    // `version` module.
+    let remote_protocol = ProtocolVersion::from_peer_advertisement(remote_raw)
+        .map_err(|e| daemon_error(e.to_string(), PROTOCOL_INCOMPATIBLE_EXIT_CODE))?;
 
     // upstream: clientserver.c:242-255 exchange_protocols() - negotiate to the
     // minimum of our and the daemon's version (sub-protocols are 0 in releases).
