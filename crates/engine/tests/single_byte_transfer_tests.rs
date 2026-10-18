@@ -74,7 +74,7 @@ fn apply_and_reconstruct(
 
 /// Generates a delta and verifies round-trip reconstruction.
 #[allow(dead_code)]
-fn verify_round_trip(basis: &[u8], input: &[u8]) -> engine::DeltaScript {
+fn verify_round_trip(basis: &[u8], input: &[u8]) -> engine::DeltaScript<'static> {
     let index = build_index(basis).expect("should build index");
     let script = generate_delta(input, &index).expect("should generate delta");
     let reconstructed = apply_and_reconstruct(basis, &index, &script);

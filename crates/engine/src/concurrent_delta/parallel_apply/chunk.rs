@@ -33,7 +33,7 @@ pub struct DeltaChunk {
     /// order, mirroring the per-file byte order the sender emitted.
     pub chunk_sequence: u64,
     /// Resolved bytes for this chunk.
-    pub data: Vec<u8>,
+    pub data: Box<[u8]>,
     /// `true` for literal payloads, `false` for basis-file matches. The
     /// verify and write paths are identical today; the discriminator is kept
     /// so future stats reporting can split literal vs matched bytes without
@@ -62,11 +62,15 @@ pub struct DeltaChunk {
 impl DeltaChunk {
     /// Builds a literal-data chunk with no expected digest attached.
     #[must_use]
-    pub fn literal(ndx: impl Into<FileNdx>, chunk_sequence: u64, data: Vec<u8>) -> Self {
+    pub fn literal(
+        ndx: impl Into<FileNdx>,
+        chunk_sequence: u64,
+        data: impl Into<Box<[u8]>>,
+    ) -> Self {
         Self {
             ndx: ndx.into(),
             chunk_sequence,
-            data,
+            data: data.into(),
             is_literal: true,
             expected_strong: None,
         }
@@ -74,11 +78,15 @@ impl DeltaChunk {
 
     /// Builds a basis-match chunk with no expected digest attached.
     #[must_use]
-    pub fn matched(ndx: impl Into<FileNdx>, chunk_sequence: u64, data: Vec<u8>) -> Self {
+    pub fn matched(
+        ndx: impl Into<FileNdx>,
+        chunk_sequence: u64,
+        data: impl Into<Box<[u8]>>,
+    ) -> Self {
         Self {
             ndx: ndx.into(),
             chunk_sequence,
-            data,
+            data: data.into(),
             is_literal: false,
             expected_strong: None,
         }

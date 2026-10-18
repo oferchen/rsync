@@ -92,7 +92,7 @@ fn apply_and_reconstruct(
 }
 
 /// Generates a delta and verifies round-trip reconstruction.
-fn verify_round_trip(basis: &[u8], input: &[u8]) -> DeltaScript {
+fn verify_round_trip(basis: &[u8], input: &[u8]) -> DeltaScript<'static> {
     let index = build_index(basis).expect("should build index");
     let script = generate_delta(input, &index).expect("should generate delta");
     let reconstructed = apply_and_reconstruct(basis, &index, &script);
@@ -1605,13 +1605,7 @@ mod algorithm_correctness {
         let total_literal: usize = script
             .tokens()
             .iter()
-            .filter_map(|t| {
-                if let DeltaToken::Literal(bytes) = t {
-                    Some(bytes.len())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|t| t.literal_data().map(|b| b.len()))
             .sum();
 
         // Should have at least our prefix and suffix as literals

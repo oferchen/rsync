@@ -189,7 +189,7 @@ impl DeltaChunkAdapter {
         DeltaChunk {
             ndx: work.ndx(),
             chunk_sequence: payload.chunk_sequence,
-            data: payload.data,
+            data: payload.data.into_boxed_slice(),
             is_literal: payload.source.is_literal(),
             expected_strong: payload.expected_strong,
         }
@@ -242,7 +242,7 @@ mod tests {
 
         assert_eq!(chunk.ndx, FileNdx::new(7));
         assert_eq!(chunk.chunk_sequence, 0);
-        assert_eq!(chunk.data, bytes);
+        assert_eq!(&chunk.data[..], &bytes[..]);
         assert!(chunk.is_literal);
         assert!(chunk.expected_strong.is_none());
     }
@@ -256,7 +256,7 @@ mod tests {
 
         assert_eq!(chunk.ndx, FileNdx::new(3));
         assert_eq!(chunk.chunk_sequence, 42);
-        assert_eq!(chunk.data, bytes);
+        assert_eq!(&chunk.data[..], &bytes[..]);
         assert!(!chunk.is_literal);
         assert!(chunk.expected_strong.is_none());
     }

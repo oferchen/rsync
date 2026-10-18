@@ -16,7 +16,10 @@ impl<'a> CopyContext<'a> {
             .with_chmod(self.options.chmod().cloned())
             .with_user_mapping(self.options.user_mapping().cloned())
             .with_group_mapping(self.options.group_mapping().cloned())
-            .with_keep_dirlinks(self.options.keep_dirlinks_enabled())
+            .with_keep_dirlinks(
+                self.options.keep_dirlinks_enabled()
+                    || (self.relative_paths_enabled() && !self.implied_dirs_enabled()),
+            )
             // Upstream resolves the destination once via `change_dir`
             // (`main.c:799`) and works relative to it, so a symlinked root is
             // never a path component the per-entry syscalls have to walk. oc

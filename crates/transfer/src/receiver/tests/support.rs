@@ -82,6 +82,9 @@ pub(super) fn apply_whole_file_delta(
             DeltaToken::Literal(data) => {
                 output.write_all(data)?;
             }
+            DeltaToken::LiteralSlice(data) => {
+                output.write_all(data)?;
+            }
             DeltaToken::Copy { .. } => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -96,7 +99,7 @@ pub(super) fn apply_whole_file_delta(
 }
 
 /// Converts wire protocol delta operations to engine delta script.
-pub(super) fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
+pub(super) fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript<'static> {
     let mut tokens = Vec::with_capacity(ops.len());
     let mut total_bytes = 0u64;
     let mut literal_bytes = 0u64;
@@ -109,6 +112,7 @@ pub(super) fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
                 literal_bytes += len;
                 tokens.push(DeltaToken::Literal(data));
             }
+
             DeltaOp::Copy {
                 block_index,
                 length,

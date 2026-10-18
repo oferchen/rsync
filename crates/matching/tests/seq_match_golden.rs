@@ -61,7 +61,7 @@ fn copy_bytes_only(script: &DeltaScript) -> u64 {
         .iter()
         .map(|t| match t {
             DeltaToken::Copy { len, .. } => *len as u64,
-            DeltaToken::Literal(_) => 0,
+            DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_) => 0,
         })
         .sum()
 }

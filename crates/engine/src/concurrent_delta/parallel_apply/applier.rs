@@ -501,7 +501,7 @@ impl ParallelDeltaApplier {
         Ok(VerifiedChunk {
             ndx: chunk.ndx,
             chunk_sequence: chunk.chunk_sequence,
-            data: chunk.data.into_boxed_slice(),
+            data: chunk.data,
         })
     }
 }

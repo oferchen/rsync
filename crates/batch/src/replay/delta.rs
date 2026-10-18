@@ -42,7 +42,7 @@ pub(super) fn write_literals_to_file(
     let mut output = BufWriter::new(output_file);
 
     for op in delta_ops {
-        if let protocol::wire::DeltaOp::Literal(data) = op {
+        if let Some(data) = op.literal_data() {
             output.write_all(data).map_err(|e| {
                 BatchError::Io(std::io::Error::new(
                     e.kind(),
@@ -140,6 +140,7 @@ pub fn apply_delta_ops(
                     ))
                 })?;
             }
+
             protocol::wire::DeltaOp::Copy {
                 block_index,
                 length,

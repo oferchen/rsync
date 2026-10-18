@@ -12,9 +12,11 @@ use crate::index::DeltaSignatureIndex;
 
 /// Token describing how to reconstruct a target file from an rsync delta stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DeltaToken {
+pub enum DeltaToken<'a> {
     /// Literal byte payload that must be written to the receiver.
     Literal(Vec<u8>),
+    /// Borrowed literal byte slice directly referencing source memory.
+    LiteralSlice(&'a [u8]),
     /// Reference to a block from the basis file identified by index.
     Copy {
         /// Zero-based index of the signature block being reused.
@@ -26,12 +28,13 @@ pub enum DeltaToken {
     },
 }
 
-impl DeltaToken {
+impl<'a> DeltaToken<'a> {
     /// Returns the number of bytes contributed by this token.
     #[must_use]
     pub const fn byte_len(&self) -> usize {
         match self {
             DeltaToken::Literal(bytes) => bytes.len(),
+            DeltaToken::LiteralSlice(bytes) => bytes.len(),
             DeltaToken::Copy { len, .. } => *len,
         }
     }
@@ -39,22 +42,32 @@ impl DeltaToken {
     /// Returns `true` when the token is a literal payload.
     #[must_use]
     pub const fn is_literal(&self) -> bool {
-        matches!(self, DeltaToken::Literal(_))
+        matches!(self, DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_))
+    }
+
+    /// Returns the literal bytes as a slice if this token is a literal.
+    #[must_use]
+    pub fn literal_data(&self) -> Option<&[u8]> {
+        match self {
+            DeltaToken::Literal(bytes) => Some(bytes.as_slice()),
+            DeltaToken::LiteralSlice(bytes) => Some(bytes),
+            DeltaToken::Copy { .. } => None,
+        }
     }
 }
 
 /// Ordered collection of [`DeltaToken`] values that reconstruct a target file.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeltaScript {
-    tokens: Vec<DeltaToken>,
+pub struct DeltaScript<'a> {
+    tokens: Vec<DeltaToken<'a>>,
     total_bytes: u64,
     literal_bytes: u64,
 }
 
-impl DeltaScript {
+impl<'a> DeltaScript<'a> {
     /// Creates a new script from the provided token stream.
     #[must_use]
-    pub const fn new(tokens: Vec<DeltaToken>, total_bytes: u64, literal_bytes: u64) -> Self {
+    pub const fn new(tokens: Vec<DeltaToken<'a>>, total_bytes: u64, literal_bytes: u64) -> Self {
         Self {
             tokens,
             total_bytes,
@@ -64,13 +77,13 @@ impl DeltaScript {
 
     /// Returns the underlying token stream.
     #[must_use]
-    pub fn tokens(&self) -> &[DeltaToken] {
+    pub fn tokens(&self) -> &[DeltaToken<'a>] {
         &self.tokens
     }
 
     /// Consumes the script and returns its token list.
     #[must_use]
-    pub fn into_tokens(self) -> Vec<DeltaToken> {
+    pub fn into_tokens(self) -> Vec<DeltaToken<'a>> {
         self.tokens
     }
 
@@ -108,7 +121,7 @@ pub fn apply_delta<R, W>(
     mut basis: R,
     mut output: W,
     index: &DeltaSignatureIndex,
-    script: &DeltaScript,
+    script: &DeltaScript<'_>,
 ) -> io::Result<()>
 where
     R: Read + Seek,
@@ -132,6 +145,9 @@ where
     for token in script.tokens() {
         match token {
             DeltaToken::Literal(bytes) => {
+                output.write_all(bytes)?;
+            }
+            DeltaToken::LiteralSlice(bytes) => {
                 output.write_all(bytes)?;
             }
             DeltaToken::Copy {

@@ -120,19 +120,19 @@ const fn literal_flush_cadence(block_len: usize) -> usize {
     block_len + CHUNK_SIZE
 }
 
-/// Appends `slice` into `out` as one or more `DeltaToken::Literal` tokens split
+/// Appends `slice` into `out` as one or more `DeltaToken::LiteralSlice` tokens split
 /// at exact `cadence` boundaries from the start of `slice`, mirroring the
-/// sequential scan's threshold flush in a single allocation and copy pass.
-fn push_split_literal_slice(out: &mut Vec<DeltaToken>, slice: &[u8], cadence: usize) {
+/// sequential scan's threshold flush in a single pass with zero heap allocations or copies.
+fn push_split_literal_slice<'a>(out: &mut Vec<DeltaToken<'a>>, slice: &'a [u8], cadence: usize) {
     if slice.is_empty() {
         return;
     }
     let mut start = 0usize;
     while slice.len() - start > cadence {
-        out.push(DeltaToken::Literal(slice[start..start + cadence].to_vec()));
+        out.push(DeltaToken::LiteralSlice(&slice[start..start + cadence]));
         start += cadence;
     }
-    out.push(DeltaToken::Literal(slice[start..].to_vec()));
+    out.push(DeltaToken::LiteralSlice(&slice[start..]));
 }
 
 /// A `Copy` token lifted to an absolute source offset for the parallel merge.
@@ -163,7 +163,7 @@ struct CopyRun {
 /// boundaries in a single pass without intermediate staging buffers. The result
 /// covers `[0, source.len())` contiguously, so reconstruction is byte-exact
 /// regardless of the basis.
-fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> DeltaScript {
+fn merge_copy_runs<'a>(source: &'a [u8], mut runs: Vec<CopyRun>, block_len: usize) -> DeltaScript<'a> {
     let n = source.len() as u64;
     let cadence = literal_flush_cadence(block_len);
 
@@ -175,7 +175,7 @@ fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> D
             .then_with(|| b.len.cmp(&a.len))
     });
 
-    let mut tokens: Vec<DeltaToken> = Vec::new();
+    let mut tokens: Vec<DeltaToken<'a>> = Vec::new();
     let mut literal_bytes = 0u64;
     let mut cursor = 0u64;
     let mut next = 0usize;
@@ -216,7 +216,7 @@ fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> D
 /// the previous full-block `Copy` whenever the next block continues it
 /// reproduces the sequential token stream exactly. A short final block is
 /// always its own token, as in the sequential scan.
-fn push_merged_copy(tokens: &mut Vec<DeltaToken>, run: &CopyRun, block_len: usize) {
+fn push_merged_copy<'a>(tokens: &mut Vec<DeltaToken<'a>>, run: &CopyRun, block_len: usize) {
     if run.len == block_len
         && let Some(DeltaToken::Copy { index, len }) = tokens.last_mut()
         && *len % block_len == 0
@@ -388,7 +388,7 @@ impl DeltaGenerator {
         &self,
         reader: R,
         index: &DeltaSignatureIndex,
-    ) -> io::Result<DeltaScript> {
+    ) -> io::Result<DeltaScript<'static>> {
         self.generate_counted(reader, index)
             .map(|(script, _)| script)
     }
@@ -403,7 +403,7 @@ impl DeltaGenerator {
         &self,
         reader: R,
         index: &DeltaSignatureIndex,
-    ) -> io::Result<(DeltaScript, ScanCounters)> {
+    ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
         // The gated scan only matches full-length blocks, so it can form a run
         // of `needed` only when the basis holds at least `needed` full blocks.
         // With fewer (e.g. one full block plus a short tail) every match is
@@ -462,7 +462,7 @@ impl DeltaGenerator {
         reader: R,
         index: &DeltaSignatureIndex,
         tail_match: bool,
-    ) -> io::Result<(DeltaScript, ScanCounters)> {
+    ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
         self.scan_inner(reader, index, tail_match, None)
     }
 
@@ -489,7 +489,7 @@ impl DeltaGenerator {
         index: &DeltaSignatureIndex,
         tail_match: bool,
         mut copy_runs: Option<(&mut Vec<CopyRun>, u64)>,
-    ) -> io::Result<(DeltaScript, ScanCounters)> {
+    ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
         let emit_literals = copy_runs.is_none();
         let block_len = index.block_length();
         let mut window = RingBuffer::with_capacity(block_len);
@@ -928,7 +928,7 @@ impl DeltaGenerator {
         &self,
         mut reader: R,
         index: &DeltaSignatureIndex,
-    ) -> io::Result<(DeltaScript, ScanCounters)> {
+    ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
         let block_len = index.block_length();
         let mut window = RingBuffer::with_capacity(block_len);
         let mut pending_literals = Vec::with_capacity(block_len);
@@ -1206,12 +1206,12 @@ impl DeltaGenerator {
     /// * `source` - The full source buffer to delta-encode.
     /// * `index` - Pre-built signature index from the basis file.
     /// * `max_chunks` - Upper bound on parallel stripes (clamped to `>= 1`).
-    pub fn generate_chunked(
+    pub fn generate_chunked<'a>(
         &self,
-        source: &[u8],
+        source: &'a [u8],
         index: &DeltaSignatureIndex,
         max_chunks: usize,
-    ) -> io::Result<DeltaScript> {
+    ) -> io::Result<DeltaScript<'a>> {
         self.generate_chunked_counted(source, index, max_chunks)
             .map(|(script, _)| script)
     }
@@ -1224,12 +1224,12 @@ impl DeltaGenerator {
     /// lines, however, are emitted on the rayon workers, whose thread-local
     /// diagnostic buffers are never drained - see this module's note on the
     /// parallel path in `trace_deltasum`.
-    pub fn generate_chunked_counted(
+    pub fn generate_chunked_counted<'a>(
         &self,
-        source: &[u8],
+        source: &'a [u8],
         index: &DeltaSignatureIndex,
         max_chunks: usize,
-    ) -> io::Result<(DeltaScript, ScanCounters)> {
+    ) -> io::Result<(DeltaScript<'a>, ScanCounters)> {
         // The consecutive-match extension needs a single sequential pass to
         // reason about cross-range block adjacency, so route it through the
         // gated scan rather than the parallel range split. This path is only
@@ -1285,12 +1285,12 @@ impl DeltaGenerator {
     /// stops at a boundary would otherwise place that block mid-file, where
     /// upstream's `MIN((OFF_T)s->blength, len-offset)` test (`match.c:254-256`) never
     /// admits it.
-    fn scan_ranges_and_merge(
+    fn scan_ranges_and_merge<'a>(
         &self,
-        source: &[u8],
+        source: &'a [u8],
         index: &DeltaSignatureIndex,
         ranges: &[(usize, usize)],
-    ) -> io::Result<(DeltaScript, ScanCounters)> {
+    ) -> io::Result<(DeltaScript<'a>, ScanCounters)> {
         let block_len = index.block_length();
         let n = source.len();
 
@@ -1332,12 +1332,12 @@ impl DeltaGenerator {
     /// contracts stay observable through this entry too. Not compiled into
     /// release builds; gated behind `bench-internal`.
     #[cfg(any(test, feature = "bench-internal"))]
-    pub fn generate_chunked_forced(
+    pub fn generate_chunked_forced<'a>(
         &self,
-        source: &[u8],
+        source: &'a [u8],
         index: &DeltaSignatureIndex,
         stripes: usize,
-    ) -> io::Result<(DeltaScript, ScanCounters)> {
+    ) -> io::Result<(DeltaScript<'a>, ScanCounters)> {
         if self.consecutive_match_needed >= 2
             && index.full_block_count() >= self.consecutive_match_needed as usize
         {
@@ -1385,7 +1385,7 @@ impl Default for DeltaGenerator {
     feature = "tracing",
     instrument(skip(reader, index), name = "generate_delta")
 )]
-pub fn generate_delta<R: Read>(reader: R, index: &DeltaSignatureIndex) -> io::Result<DeltaScript> {
+pub fn generate_delta<R: Read>(reader: R, index: &DeltaSignatureIndex) -> io::Result<DeltaScript<'static>> {
     DeltaGenerator::new().generate(reader, index)
 }
 
@@ -2115,6 +2115,7 @@ mod tests {
                     cursor += *len as u64;
                 }
                 DeltaToken::Literal(bytes) => cursor += bytes.len() as u64,
+                DeltaToken::LiteralSlice(bytes) => cursor += bytes.len() as u64,
             }
         }
         true
@@ -2167,7 +2168,7 @@ mod tests {
             inplace
                 .tokens()
                 .iter()
-                .any(|t| matches!(t, DeltaToken::Literal(_))),
+                .any(|t| matches!(t, DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_))),
             "the backward block must be demoted to a literal"
         );
         // Data is still transferred: reconstruction is byte-identical.

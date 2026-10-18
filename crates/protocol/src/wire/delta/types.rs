@@ -44,3 +44,15 @@ pub enum DeltaOp {
         length: u32,
     },
 }
+
+impl DeltaOp {
+    /// Returns the literal bytes if this is a [`Literal`](Self::Literal) variant.
+    #[inline]
+    #[must_use]
+    pub fn literal_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::Literal(vec) => Some(vec.as_slice()),
+            Self::Copy { .. } => None,
+        }
+    }
+}

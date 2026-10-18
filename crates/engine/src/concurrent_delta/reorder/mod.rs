@@ -149,13 +149,11 @@ pub struct ReorderBuffer<T> {
     stall_started_at: Option<Instant>,
     /// Cumulative count of [`force_insert`](Self::force_insert) invocations.
     ///
-    /// Stored behind an `Arc<AtomicU64>` so external observers (the
+    /// Lazily initialized behind an `Arc<AtomicU64>` so external observers (the
     /// consumer thread and any operator-facing diagnostics handle) can
-    /// poll the counter without taking the metrics `Mutex`. Updates use
-    /// `Relaxed` ordering because the value is purely diagnostic - no
-    /// happens-before relationship with the delivered payloads is
-    /// required.
-    force_insert_count: Arc<AtomicU64>,
+    /// poll the counter without taking the metrics `Mutex`, while per-file
+    /// reorder rings that never call `force_insert` pay zero heap allocation.
+    force_insert_count: std::sync::OnceLock<Arc<AtomicU64>>,
     /// Distribution of drain-batch sizes recorded via
     /// [`record_drain_batch`](Self::record_drain_batch).
     drain_batch_size: HistogramStats,
@@ -179,8 +177,9 @@ impl std::error::Error for CapacityExceeded {}
 impl<T> ReorderBuffer<T> {
     /// Creates a new reorder buffer with the given capacity bound.
     ///
-    /// Pre-allocates a ring buffer of `capacity` slots, trading memory for
-    /// O(1) insert and drain operations.
+    /// Lazily allocates the underlying ring buffer of `capacity` slots on the
+    /// first buffered insertion so in-order fast-path streams pay zero heap
+    /// allocation at construction time.
     ///
     /// # Panics
     ///
@@ -188,9 +187,8 @@ impl<T> ReorderBuffer<T> {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         assert!(capacity > 0, "reorder buffer capacity must be non-zero");
-        let slots: Vec<Option<T>> = (0..capacity).map(|_| None).collect();
         Self {
-            slots: slots.into_boxed_slice(),
+            slots: Box::new([]),
             head: 0,
             next_expected: 0,
             count: 0,
@@ -201,7 +199,7 @@ impl<T> ReorderBuffer<T> {
             max_depth: 0,
             stall_duration: Duration::ZERO,
             stall_started_at: None,
-            force_insert_count: Arc::new(AtomicU64::new(0)),
+            force_insert_count: std::sync::OnceLock::new(),
             drain_batch_size: HistogramStats::new_pow2(),
             drain_pause: HistogramStats::new_microseconds(),
         }
@@ -235,7 +233,7 @@ impl<T> ReorderBuffer<T> {
     #[must_use]
     pub fn passthrough() -> Self {
         Self {
-            slots: Vec::new().into_boxed_slice(),
+            slots: Box::new([]),
             head: 0,
             next_expected: 0,
             count: 0,
@@ -246,9 +244,34 @@ impl<T> ReorderBuffer<T> {
             max_depth: 0,
             stall_duration: Duration::ZERO,
             stall_started_at: None,
-            force_insert_count: Arc::new(AtomicU64::new(0)),
+            force_insert_count: std::sync::OnceLock::new(),
             drain_batch_size: HistogramStats::new_pow2(),
             drain_pause: HistogramStats::new_microseconds(),
+        }
+    }
+
+    /// Ensures the backing ring storage is allocated to `self.capacity` slots.
+    #[inline]
+    fn ensure_slots(&mut self) {
+        if self.slots.is_empty() && !self.bypass && self.capacity > 0 {
+            let slots: Vec<Option<T>> = (0..self.capacity).map(|_| None).collect();
+            self.slots = slots.into_boxed_slice();
+        }
+    }
+
+    /// Fast-path sequence advance when `sequence == next_expected` and no
+    /// out-of-order items are currently buffered.
+    ///
+    /// Allows callers such as [`FileSlot::ingest_slice`] to stream in-order
+    /// slice pointers directly to the destination writer without allocating
+    /// ring slots or boxing the payload.
+    #[inline]
+    pub(crate) fn try_fast_advance(&mut self, sequence: u64) -> bool {
+        if !self.bypass && self.count == 0 && sequence == self.next_expected {
+            self.next_expected += 1;
+            true
+        } else {
+            false
         }
     }
 
@@ -278,7 +301,7 @@ impl<T> ReorderBuffer<T> {
         if self.bypass {
             return;
         }
-        let stalled = self.count > 0 && self.slots[self.head].is_none();
+        let stalled = self.count > 0 && self.slots.get(self.head).is_none_or(Option::is_none);
         match (stalled, self.stall_started_at) {
             (true, None) => {
                 self.stall_started_at = Some(Instant::now());
@@ -342,6 +365,7 @@ impl<T> ReorderBuffer<T> {
         let Some(idx) = self.slot_index(sequence) else {
             return Err(item);
         };
+        self.ensure_slots();
         if self.slots[idx].is_none() {
             self.count += 1;
         }
@@ -368,6 +392,9 @@ impl<T> ReorderBuffer<T> {
             self.count -= 1;
             self.next_expected += 1;
             return Some(item);
+        }
+        if self.count == 0 {
+            return None;
         }
         let item = self.slots[self.head].take()?;
         self.head = (self.head + 1) % self.capacity;
@@ -451,7 +478,10 @@ impl<T> ReorderBuffer<T> {
             stall_duration: self.stall_duration.saturating_add(in_flight),
             current_depth: self.count,
             max_depth: self.max_depth,
-            force_insert_count: self.force_insert_count.load(Ordering::Relaxed),
+            force_insert_count: self
+                .force_insert_count
+                .get()
+                .map_or(0, |c| c.load(Ordering::Relaxed)),
             drain_batch_size_histogram: self.drain_batch_size,
             drain_pause_histogram: self.drain_pause,
         }
@@ -490,7 +520,10 @@ impl<T> ReorderBuffer<T> {
     /// diagnostic.
     #[must_use]
     pub fn force_insert_counter(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.force_insert_count)
+        Arc::clone(
+            self.force_insert_count
+                .get_or_init(|| Arc::new(AtomicU64::new(0))),
+        )
     }
 
     /// Inserts an item regardless of the capacity bound.
@@ -501,7 +534,9 @@ impl<T> ReorderBuffer<T> {
     /// ring capacity, this inserts directly. For sequences beyond capacity,
     /// the ring is grown to accommodate the item.
     pub fn force_insert(&mut self, sequence: u64, item: T) {
-        self.force_insert_count.fetch_add(1, Ordering::Relaxed);
+        self.force_insert_count
+            .get_or_init(|| Arc::new(AtomicU64::new(0)))
+            .fetch_add(1, Ordering::Relaxed);
         if self.bypass {
             self.bypass_queue.push_back(item);
             self.count += 1;
@@ -509,6 +544,7 @@ impl<T> ReorderBuffer<T> {
             return;
         }
         if let Some(idx) = self.slot_index(sequence) {
+            self.ensure_slots();
             if self.slots[idx].is_none() {
                 self.count += 1;
             }
@@ -558,10 +594,12 @@ impl<T> ReorderBuffer<T> {
             self.high_water_offset
         );
         let mut new_slots: Vec<Option<T>> = (0..new_capacity).map(|_| None).collect();
-        let copy_len = self.capacity.min(new_capacity);
-        for (i, slot) in new_slots.iter_mut().enumerate().take(copy_len) {
-            let src = (self.head + i) % self.capacity;
-            *slot = self.slots[src].take();
+        if !self.slots.is_empty() {
+            let copy_len = self.capacity.min(new_capacity);
+            for (i, slot) in new_slots.iter_mut().enumerate().take(copy_len) {
+                let src = (self.head + i) % self.capacity;
+                *slot = self.slots[src].take();
+            }
         }
         self.slots = new_slots.into_boxed_slice();
         self.head = 0;

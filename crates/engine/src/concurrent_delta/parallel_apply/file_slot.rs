@@ -86,6 +86,10 @@ impl FileSlot {
         chunk_sequence: u64,
         data: Box<[u8]>,
     ) -> Result<(), IngestError> {
+        if self.reorder.try_fast_advance(chunk_sequence) {
+            self.write_chunk(&data).map_err(IngestError::Io)?;
+            return Ok(());
+        }
         let capacity = self.reorder.capacity();
         self.reorder
             .insert(chunk_sequence, data)

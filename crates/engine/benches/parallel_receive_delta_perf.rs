@@ -66,7 +66,9 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{
+    BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 
 use engine::concurrent_delta::{DeltaChunk, FileNdx, ParallelDeltaApplier};
 
@@ -305,17 +307,17 @@ fn bench_workload(c: &mut Criterion, workload_name: &str, specs: Vec<FileSpec>) 
         BenchmarkId::new("parallel_apply", workload_name),
         &specs,
         |b, specs| {
-            b.iter(|| {
-                // Clone the chunk list per iteration because
-                // `apply_batch_parallel` consumes it; the clone happens
-                // outside the timed verify+write path on the
-                // sequential cell too (it just borrows), so the
-                // comparison still isolates scheduling cost rather than
-                // allocation cost.
-                let owned = chunks.clone();
-                let n = parallel_apply(specs, owned, PARALLEL_WORKERS);
-                black_box(n);
-            });
+            b.iter_batched(
+                // Clone the chunk list in the setup phase outside the timed
+                // loop because `apply_batch_parallel` consumes it; isolates
+                // scheduling and parallel verify/write cost from allocation cost.
+                || chunks.clone(),
+                |owned| {
+                    let n = parallel_apply(specs, owned, PARALLEL_WORKERS);
+                    black_box(n);
+                },
+                BatchSize::LargeInput,
+            );
         },
     );
 

@@ -63,7 +63,7 @@ fn build_index(data: &[u8], block_len: u32) -> DeltaSignatureIndex {
     DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index")
 }
 
-fn scan(source: &[u8], index: &DeltaSignatureIndex) -> DeltaScript {
+fn scan(source: &[u8], index: &DeltaSignatureIndex) -> DeltaScript<'static> {
     DeltaGenerator::new()
         .generate(Cursor::new(source.to_vec()), index)
         .expect("scan")
@@ -75,7 +75,7 @@ fn copy_lens(script: &DeltaScript) -> Vec<usize> {
         .iter()
         .filter_map(|token| match token {
             DeltaToken::Copy { len, .. } => Some(*len),
-            DeltaToken::Literal(_) => None,
+            DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_) => None,
         })
         .collect()
 }

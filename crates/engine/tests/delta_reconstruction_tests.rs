@@ -59,7 +59,7 @@ fn reconstruct_file(basis: &[u8], index: &DeltaSignatureIndex, script: &DeltaScr
 }
 
 /// Generates a delta and reconstructs the target, verifying it matches.
-fn generate_and_verify(basis: &[u8], target: &[u8]) -> DeltaScript {
+fn generate_and_verify(basis: &[u8], target: &[u8]) -> DeltaScript<'static> {
     let index = create_signature_index(basis);
     let script = generate_delta(target, &index).expect("delta generation should succeed");
     let reconstructed = reconstruct_file(basis, &index, &script);

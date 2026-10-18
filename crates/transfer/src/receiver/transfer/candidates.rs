@@ -3379,6 +3379,12 @@ mod uptodate_notice_tests {
     fn uptodate_entry(dest: &Path, name: &str, size: usize) -> FileEntry {
         let path = dest.join(name);
         std::fs::write(&path, vec![b'x'; size]).expect("seed dest file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+                .expect("set dest permissions");
+        }
         let stamp = filetime::FileTime::from_unix_time(SEED_MTIME, 0);
         filetime::set_file_mtime(&path, stamp).expect("pin dest mtime");
         let mut entry = FileEntry::new_file(name.into(), size as u64, 0o644);

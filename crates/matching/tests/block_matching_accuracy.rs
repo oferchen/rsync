@@ -728,7 +728,7 @@ fn matching_at_exact_block_boundaries() {
         .iter()
         .map(|t| match t {
             DeltaToken::Copy { len, .. } => *len,
-            DeltaToken::Literal(_) => 0,
+            DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_) => 0,
         })
         .sum();
     assert_eq!(
@@ -861,7 +861,7 @@ fn statistical_matching_accuracy() {
             .iter()
             .map(|t| match t {
                 DeltaToken::Copy { len, .. } => len / block_len,
-                DeltaToken::Literal(_) => 0,
+                DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_) => 0,
             })
             .sum();
 

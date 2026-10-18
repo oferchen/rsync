@@ -1286,7 +1286,7 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let wire_ops = script_to_wire_delta(delta_script, block_length);
+                let wire_ops = script_to_wire_delta(&delta_script, block_length);
                 let is_zlib = matches!(
                     negotiated_compression,
                     Some(protocol::CompressionAlgorithm::Zlib)
@@ -1319,6 +1319,7 @@ impl GeneratorContext {
                         is_zlib,
                         &source_path,
                         &source_open,
+                        source_mmap.as_ref().map(|m| m.as_slice()),
                         checksum_algorithm,
                         self.checksum_seed,
                         self.protocol,
