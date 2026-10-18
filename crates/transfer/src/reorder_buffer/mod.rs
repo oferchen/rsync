@@ -381,8 +381,7 @@ mod zero_copy_stress_tests {
                 for (i, b) in scratch.as_mut_slice()[..payload_len].iter_mut().enumerate() {
                     *b = ((seq + i) & 0xFF) as u8;
                 }
-                let right_sized: Box<[u8]> =
-                    scratch[..payload_len].to_vec().into_boxed_slice();
+                let right_sized: Box<[u8]> = scratch[..payload_len].to_vec().into_boxed_slice();
                 let original_ptr = right_sized.as_ptr() as usize;
                 // Return 64 KB scratch buffer immediately inside worker before reorder stage
                 drop(scratch);

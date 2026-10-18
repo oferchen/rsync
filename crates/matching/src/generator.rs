@@ -163,7 +163,11 @@ struct CopyRun {
 /// boundaries in a single pass without intermediate staging buffers. The result
 /// covers `[0, source.len())` contiguously, so reconstruction is byte-exact
 /// regardless of the basis.
-fn merge_copy_runs<'a>(source: &'a [u8], mut runs: Vec<CopyRun>, block_len: usize) -> DeltaScript<'a> {
+fn merge_copy_runs<'a>(
+    source: &'a [u8],
+    mut runs: Vec<CopyRun>,
+    block_len: usize,
+) -> DeltaScript<'a> {
     let n = source.len() as u64;
     let cadence = literal_flush_cadence(block_len);
 
@@ -1385,7 +1389,10 @@ impl Default for DeltaGenerator {
     feature = "tracing",
     instrument(skip(reader, index), name = "generate_delta")
 )]
-pub fn generate_delta<R: Read>(reader: R, index: &DeltaSignatureIndex) -> io::Result<DeltaScript<'static>> {
+pub fn generate_delta<R: Read>(
+    reader: R,
+    index: &DeltaSignatureIndex,
+) -> io::Result<DeltaScript<'static>> {
     DeltaGenerator::new().generate(reader, index)
 }
 

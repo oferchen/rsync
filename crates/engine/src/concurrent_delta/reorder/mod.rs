@@ -344,7 +344,8 @@ impl<T> ReorderBuffer<T> {
     /// Returns [`CapacityExceeded`] when the buffer is full or the sequence
     /// offset exceeds capacity.
     pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), CapacityExceeded> {
-        self.try_insert(sequence, item).map_err(|_| CapacityExceeded)
+        self.try_insert(sequence, item)
+            .map_err(|_| CapacityExceeded)
     }
 
     /// Inserts an item with the given sequence number, returning ownership of

@@ -16,12 +16,12 @@ use std::path::Path;
 
 use compress::zlib::CompressionLevel;
 use logging::debug_log;
-#[cfg(test)]
-use protocol::wire::write_token_stream;
 use protocol::wire::{
-    CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, write_token_block_match, write_token_end,
+    CHUNK_SIZE, CompressedTokenEncoder, write_token_block_match, write_token_end,
     write_token_literal,
 };
+#[cfg(test)]
+use protocol::wire::{DeltaOp, write_token_stream};
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm};
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
@@ -839,25 +839,6 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
     })
 }
 
-/// Converts engine delta script to wire protocol delta operations.
-///
-/// Takes ownership of the script to avoid cloning literal data. Multi-block
-/// Copy tokens emitted by the seq-match optimization (where a single
-/// `DeltaToken::Copy` covers a run of `N` adjacent basis blocks) are expanded
-/// here into `N` consecutive `DeltaOp::Copy` entries with `length =
-/// block_length`. This keeps the wire byte stream byte-identical to the
-/// no-coalesce baseline: each basis block is still emitted as one
-/// `write_int(-(block_index + 1))` token by the wire layer.
-///
-/// `block_length` is the canonical length of a full basis block. Tokens whose
-/// stored `len` is not a multiple of `block_length` are emitted unchanged so
-/// last-block tail copies (when the basis ends with a short block) round-trip
-/// cleanly.
-///
-/// # Upstream Reference
-///
-/// - `match.c:matched()` - emits tokens as they are generated
-/// - `token.c:send_token()` - writes tokens to the wire
 /// A delta operation to be emitted over the wire.
 ///
 /// Borrows literal slices directly from [`DeltaScript`] (and thus from `source_mmap` or
@@ -865,29 +846,7 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum WireOp<'a> {
     Literal(&'a [u8]),
-    Copy {
-        block_index: u32,
-        length: u32,
-    },
-}
-
-impl<'a> WireOp<'a> {
-    /// Converts this wire operation to an owned [`DeltaOp`].
-    #[inline]
-    #[must_use]
-    #[allow(dead_code)]
-    pub fn to_delta_op(&self) -> DeltaOp {
-        match self {
-            Self::Literal(s) => DeltaOp::Literal(s.to_vec()),
-            Self::Copy {
-                block_index,
-                length,
-            } => DeltaOp::Copy {
-                block_index: *block_index,
-                length: *length,
-            },
-        }
-    }
+    Copy { block_index: u32, length: u32 },
 }
 
 /// Converts a [`DeltaScript`] into a sequence of wire-level [`WireOp`] tokens.

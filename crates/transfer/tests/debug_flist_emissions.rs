@@ -96,7 +96,10 @@ fn build_fixture(scratch: &TempDir) -> PathBuf {
     fs::write(src.join("a.txt"), b"hello\n").expect("write a.txt");
     fs::write(src.join("sub").join("b.txt"), b"world\n").expect("write b.txt");
     let _ = fs::set_permissions(src.join("a.txt"), fs::Permissions::from_mode(0o644));
-    let _ = fs::set_permissions(src.join("sub").join("b.txt"), fs::Permissions::from_mode(0o644));
+    let _ = fs::set_permissions(
+        src.join("sub").join("b.txt"),
+        fs::Permissions::from_mode(0o644),
+    );
     let _ = fs::set_permissions(src.join("sub"), fs::Permissions::from_mode(0o755));
     let _ = fs::set_permissions(&src, fs::Permissions::from_mode(0o755));
     PathBuf::from(format!("{}/", src.display()))

@@ -199,6 +199,10 @@ fn count_tokens(script: &DeltaScript) -> (u64, u64, u64, u64) {
                 literals += 1;
                 literal_bytes += bytes.len() as u64;
             }
+            DeltaToken::LiteralSlice(bytes) => {
+                literals += 1;
+                literal_bytes += bytes.len() as u64;
+            }
         }
     }
     (copies, literals, literal_bytes, copy_bytes)
