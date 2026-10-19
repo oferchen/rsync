@@ -176,6 +176,11 @@ pub struct BeginMessage {
     /// `None` means no metadata is applied (matches the former behavior when the
     /// index did not resolve in the shared list).
     pub file_entry: Option<protocol::flist::FileEntry>,
+    /// When true, the target destination did not exist prior to transfer (`ITEM_IS_NEW`).
+    ///
+    /// Skips calling `symlink_metadata` on the missing target path, saving a failing
+    /// `statx(ENOENT)` syscall per new file transferred.
+    pub is_new: bool,
 }
 
 /// Sender's trailing whole-file checksum, carried to the disk thread for

@@ -13,7 +13,7 @@ pub struct LocalCopyRecord {
     bytes_transferred: u64,
     total_bytes: Option<u64>,
     elapsed: Duration,
-    metadata: Option<LocalCopyMetadata>,
+    metadata: Option<Box<LocalCopyMetadata>>,
     created: bool,
     change_set: LocalCopyChangeSet,
     hardlink_uptodate: bool,
@@ -29,7 +29,7 @@ pub struct LocalCopyRecord {
 
 impl LocalCopyRecord {
     /// Creates a new [`LocalCopyRecord`].
-    pub(in crate::local_copy) const fn new(
+    pub(in crate::local_copy) fn new(
         relative_path: PathBuf,
         action: LocalCopyAction,
         bytes_transferred: u64,
@@ -43,7 +43,7 @@ impl LocalCopyRecord {
             bytes_transferred,
             total_bytes,
             elapsed,
-            metadata,
+            metadata: metadata.map(Box::new),
             created: false,
             change_set: LocalCopyChangeSet::new(),
             hardlink_uptodate: false,
@@ -137,8 +137,8 @@ impl LocalCopyRecord {
     }
 
     /// Returns the metadata snapshot associated with this record, when available.
-    pub const fn metadata(&self) -> Option<&LocalCopyMetadata> {
-        self.metadata.as_ref()
+    pub fn metadata(&self) -> Option<&LocalCopyMetadata> {
+        self.metadata.as_deref()
     }
 
     /// Returns whether the record corresponds to a newly created destination entry.
@@ -203,7 +203,7 @@ impl LocalCopyRecord {
             self.bytes_transferred,
             self.total_bytes,
             self.elapsed,
-            self.metadata,
+            self.metadata.map(|b| *b),
             self.created,
             self.change_set,
             self.hardlink_uptodate,

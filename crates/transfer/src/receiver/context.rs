@@ -1085,6 +1085,7 @@ impl ReceiverContext {
             whole_file: self.config.flags.whole_file,
             compat_flags: self.compat_flags,
             block_size: self.config.block_size,
+            is_new: false,
             // Only the decoupled pipeline loop threads the `--inplace --backup`
             // delta-basis backup (generator.c:2328-2356); this builder serves
             // `run_sync`, which writes via temp+rename and never in place.

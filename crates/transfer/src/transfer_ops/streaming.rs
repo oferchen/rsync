@@ -189,6 +189,7 @@ pub fn process_file_response_streaming<R: Read>(
         // entry per in-flight file is transient (freed at commit) and immune to
         // the receiver reclaiming its own flist segments mid-transfer.
         file_entry: Some(file_entry.clone()),
+        is_new: header.is_new,
     });
 
     let mut basis_map = if let Some(ref path) = header.basis_path {

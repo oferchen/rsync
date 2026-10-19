@@ -487,6 +487,7 @@ fn read_response_header<R: Read>(
     // The echoed sum_head carries the existing file length used for the append mode offset.
     let echoed_sum_head = SumHead::read(reader)?;
 
+    let is_new = pending.is_new();
     let (file_path, local_basis_path, signature, target_size) = pending.into_parts();
 
     // upstream: receiver.c:1025-1062 - a fuzzy or alt-dest selector names the
@@ -526,6 +527,7 @@ fn read_response_header<R: Read>(
         append_offset,
         xattr_values: sender_attrs.xattr_values,
         data_read_start,
+        is_new,
     }))
 }
 
@@ -556,6 +558,8 @@ pub(crate) struct ResponseHeader {
     xattr_values: Vec<(i32, Vec<u8>)>,
     /// `ServerReader::data_read()` just before the sum head was read.
     data_read_start: u64,
+    /// Whether the destination file was absent before transfer (`ITEM_IS_NEW`).
+    is_new: bool,
 }
 
 #[cfg(test)]

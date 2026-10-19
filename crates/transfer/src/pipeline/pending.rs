@@ -32,6 +32,8 @@ pub struct PendingTransfer {
     signature: Option<FileSignature>,
     /// Expected file size from file list.
     target_size: u64,
+    /// Whether the destination file was absent before transfer (`ITEM_IS_NEW`).
+    is_new: bool,
 }
 
 impl PendingTransfer {
@@ -46,6 +48,7 @@ impl PendingTransfer {
             basis_path: None,
             signature: None,
             target_size,
+            is_new: false,
         }
     }
 
@@ -66,7 +69,21 @@ impl PendingTransfer {
             basis_path: Some(basis_path),
             signature: Some(signature),
             target_size,
+            is_new: false,
         }
+    }
+
+    /// Sets whether the destination file was absent before transfer.
+    #[must_use]
+    pub const fn with_is_new(mut self, is_new: bool) -> Self {
+        self.is_new = is_new;
+        self
+    }
+
+    /// Returns whether the destination file was absent before transfer.
+    #[must_use]
+    pub const fn is_new(&self) -> bool {
+        self.is_new
     }
 
     /// Returns the file index (NDX) for this transfer.

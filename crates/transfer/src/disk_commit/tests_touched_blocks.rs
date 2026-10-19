@@ -28,6 +28,7 @@ fn begin(file_path: &Path, target_size: u64, is_inplace: bool, append_offset: u6
         xattr_list: None,
         xattr_basis: None,
         file_entry: None,
+        is_new: false,
     }
 }
 
