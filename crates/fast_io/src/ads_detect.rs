@@ -145,6 +145,7 @@ mod imp {
     }
 
     #[cfg(test)]
+    /// Resets the ADS one-shot warning flag for testing purposes.
     pub fn reset_ads_warning_for_test() {
         ADS_WARNING_EMITTED.store(false, Ordering::SeqCst);
     }
@@ -155,7 +156,13 @@ pub use imp::{has_named_ads, warn_ads_without_xattrs_once};
 
 #[cfg(windows)]
 #[cfg(test)]
+#[doc(inline)]
 pub use imp::reset_ads_warning_for_test;
+
+#[cfg(not(windows))]
+#[cfg(test)]
+/// Resets the ADS one-shot warning flag on non-Windows platforms (no-op).
+pub fn reset_ads_warning_for_test() {}
 
 #[cfg(not(windows))]
 /// Returns `true` when `path` has at least one named NTFS alternate
