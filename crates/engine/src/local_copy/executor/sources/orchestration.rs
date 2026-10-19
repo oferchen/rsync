@@ -1464,12 +1464,10 @@ fn retouch_relative_implied_dirs(
     };
 
     // Phase 1: stamp the destination operand from the dot-dir anchor when the
-    // operand carries an explicit `./` marker. Upstream emits this as the
-    // synthetic `.` entry in `flist.c:2931`.
-    if source.has_dot_dir_marker()
-        && let Some(anchor) = source.dot_dir_anchor()
-    {
-        stamp_directory_from_source(destination_path, &anchor, &metadata_options)?;
+    // operand carries an explicit leading `./` marker. Upstream emits this as
+    // the synthetic `.` entry in `flist.c:2880-2881+2929-2931`.
+    if source.dot_dir_anchor().as_deref() == Some(Path::new(".")) {
+        stamp_directory_from_source(destination_path, Path::new("."), &metadata_options)?;
     }
 
     // Phase 2: walk every implied parent dir along the relative chain and
@@ -1527,13 +1525,22 @@ fn stamp_directory_from_source(
     // The implied parent already exists on disk here, so its current stat is
     // the `dest_mode()` exists input: a `--chmod` without `--perms` keeps
     // its bits rather than rewriting them.
-    ::metadata::apply_directory_metadata_with_options(
+    if let Err(error) = ::metadata::apply_directory_metadata_with_options(
         dest_dir,
         &source_meta,
         metadata_options.clone(),
         Some(&dest_meta),
-    )
-    .map_err(crate::local_copy::map_metadata_error)?;
+    ) {
+        // Upstream touch_up_dirs / set_file_attrs for implied directories is
+        // best-effort: EPERM / EACCES when attempting to update attributes
+        // on existing implied directories (e.g. unprivileged user in a user
+        // namespace where the implied directory is owned by another user) is
+        // tolerated rather than failing the transfer.
+        if error.source_error().kind() == std::io::ErrorKind::PermissionDenied {
+            return Ok(());
+        }
+        return Err(crate::local_copy::map_metadata_error(error));
+    }
     Ok(())
 }
 

@@ -52,6 +52,7 @@ impl SourceSpec {
     /// Returns `true` when the operand contained an explicit `./` dot-dir
     /// marker used to anchor `--relative` paths. Mirrors upstream
     /// `flist.c:2880-2881` which flips `implied_dot_dir` for `./xxx`-style args.
+    #[allow(dead_code)]
     pub(crate) const fn has_dot_dir_marker(&self) -> bool {
         self.has_dot_dir_marker
     }
