@@ -265,6 +265,7 @@ fn reconcile_copied_ads(
     let (source, destination) = (source.as_path(), destination.as_path());
 
     if !flags.xattrs_enabled() {
+        fast_io::ads_detect::warn_ads_without_xattrs_once(source);
         ::metadata::strip_source_xattrs(source, destination, false, None)
             .map_err(map_metadata_error)?;
         return Ok(());

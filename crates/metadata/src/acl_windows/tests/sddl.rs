@@ -66,6 +66,43 @@ fn parse_aces_skips_malformed_entries() {
     assert_eq!(aces[1].trustee, "WD");
 }
 
+#[test]
+fn parse_dacl_flags_extracts_protected_and_auto_inherited() {
+    use crate::acl_windows::sddl::parse_dacl_flags;
+
+    assert_eq!(parse_dacl_flags("D:P(A;;FA;;;BA)"), (true, false));
+    assert_eq!(parse_dacl_flags("D:AI(A;;FA;;;BA)"), (false, true));
+    assert_eq!(parse_dacl_flags("D:PAI(A;;FA;;;BA)"), (true, true));
+    assert_eq!(parse_dacl_flags("D:(A;;FA;;;BA)"), (false, false));
+    assert_eq!(parse_dacl_flags("O:BAG:SYD:AI(A;;FA;;;BA)"), (false, true));
+    assert_eq!(parse_dacl_flags("O:BAG:SY"), (false, false));
+}
+
+#[test]
+fn dacl_protection_flags_selects_unprotected_only_when_ai_and_not_p() {
+    use crate::acl_windows::sddl::dacl_protection_flags;
+    use windows::Win32::Security::{
+        PROTECTED_DACL_SECURITY_INFORMATION, UNPROTECTED_DACL_SECURITY_INFORMATION,
+    };
+
+    assert_eq!(
+        dacl_protection_flags("D:AI(A;;FA;;;BA)"),
+        UNPROTECTED_DACL_SECURITY_INFORMATION
+    );
+    assert_eq!(
+        dacl_protection_flags("D:P(A;;FA;;;BA)"),
+        PROTECTED_DACL_SECURITY_INFORMATION
+    );
+    assert_eq!(
+        dacl_protection_flags("D:PAI(A;;FA;;;BA)"),
+        PROTECTED_DACL_SECURITY_INFORMATION
+    );
+    assert_eq!(
+        dacl_protection_flags("D:(A;;FA;;;BA)"),
+        PROTECTED_DACL_SECURITY_INFORMATION
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn read_dacl_sddl_returns_non_empty_for_temp_file() {

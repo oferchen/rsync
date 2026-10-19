@@ -205,6 +205,10 @@ pub mod adaptive_dispatch;
 /// `cargo doc` on the default feature set.
 pub mod ewma;
 
+/// Probing helper for NTFS Alternate Data Streams (ADS).
+pub mod ads_detect;
+pub use ads_detect::{has_named_ads, warn_ads_without_xattrs_once};
+
 /// Linux `FICLONERANGE` partial-reflink wrapper for the delta-apply COPY-token
 /// fast path. Returns `Ok(true)` on metadata-only clone, `Ok(false)` when the
 /// platform / filesystem / alignment is unsuitable so the caller can fall

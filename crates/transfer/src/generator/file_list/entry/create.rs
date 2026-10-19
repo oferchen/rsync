@@ -354,7 +354,7 @@ impl GeneratorContext {
         }
 
         // upstream: flist.c:make_file() -> get_xattr() reads xattrs for -X mode
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.config.flags.xattrs {
             // upstream: xattrs.c:319-352 - get_xattr() only reads for regular files,
             // dirs, symlinks (if preserve_links), specials (if preserve_specials),
@@ -396,6 +396,11 @@ impl GeneratorContext {
                     }
                 }
             }
+        }
+
+        #[cfg(windows)]
+        if !self.config.flags.xattrs && file_type.is_file() {
+            fast_io::ads_detect::warn_ads_without_xattrs_once(full_path);
         }
 
         // Windows ACL collection: when --acls is on (and on Windows the
