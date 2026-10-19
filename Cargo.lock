@@ -1342,6 +1342,7 @@ dependencies = [
  "crossbeam-channel",
  "crossbeam-queue",
  "dashmap",
+ "exacl",
  "fast_io",
  "filetime",
  "filters",

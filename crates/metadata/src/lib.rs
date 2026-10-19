@@ -304,8 +304,8 @@ pub use acl_idmap::AclIdMapper;
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
 pub use acl_exacl::{
-    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
-    sync_acls, sync_acls_via_fake_super,
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, reset_acl_from_mode,
+    store_acls_via_fake_super, sync_acls, sync_acls_via_fake_super,
 };
 
 #[cfg(all(
@@ -313,16 +313,16 @@ pub use acl_exacl::{
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 pub use acl_stub::{
-    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
-    sync_acls, sync_acls_via_fake_super,
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, reset_acl_from_mode,
+    store_acls_via_fake_super, sync_acls, sync_acls_via_fake_super,
 };
 
 #[cfg(all(feature = "acl", windows))]
 pub use acl_windows::{
     WINDOWS_SDDL_XATTR_NAME, apply_acls_from_cache, apply_sddl_from_xattrs, dacl_to_posix_mode,
     default_perms_for_dir, find_sddl_in_xattrs, get_rsync_acl, posix_mode_to_dacl, read_dacl_sddl,
-    read_sddl_with_sacl, sddl_xattr_entry, store_acls_via_fake_super, sync_acls,
-    sync_acls_via_fake_super, write_dacl_sddl,
+    read_sddl_with_sacl, reset_acl_from_mode, sddl_xattr_entry, store_acls_via_fake_super,
+    sync_acls, sync_acls_via_fake_super, write_dacl_sddl,
 };
 
 #[cfg(not(any(
@@ -340,8 +340,8 @@ pub use acl_windows::{
     all(feature = "acl", windows),
 )))]
 pub use acl_noop::{
-    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
-    sync_acls, sync_acls_via_fake_super,
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, reset_acl_from_mode,
+    store_acls_via_fake_super, sync_acls, sync_acls_via_fake_super,
 };
 
 pub use apply::group_is_settable;
@@ -359,7 +359,7 @@ pub use apply::{
     apply_metadata_with_pre_transfer_stat, apply_symlink_metadata,
     apply_symlink_metadata_from_entry, apply_symlink_metadata_from_entry_with_pre_transfer,
     apply_symlink_metadata_with_options, apply_symlink_metadata_with_options_and_pre_transfer,
-    atime_needs_set, metadata_unchanged,
+    atime_needs_set, metadata_unchanged, set_crtime,
 };
 
 pub use chmod::{ChmodError, ChmodModifiers, directory_transfer_mode, transfer_root_self_locks};

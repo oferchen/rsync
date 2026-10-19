@@ -32,7 +32,7 @@ use super::error::is_unsupported_error;
 ///
 /// Matches upstream rsync's behavior when the source has no extended
 /// ACL entries - the destination retains only base owner/group/other entries.
-pub(super) fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
+pub fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         let metadata = match fs::symlink_metadata(path) {

@@ -266,10 +266,28 @@ pub(super) fn try_clone(
     // without --xattrs.
     #[cfg(all(unix, feature = "xattr"))]
     if !flags.preserve_xattrs {
-        ::metadata::strip_source_xattrs(source, destination, false, None)
+        ::metadata::strip_source_xattrs(
+            source,
+            destination,
+            false,
+            Some(context.destination_root()),
+        )
+        .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
+    }
+
+    // clonefile() copies the source's ACLs verbatim. When the user did not
+    // request ACL preservation (`-a` without `-A`), strip the cloned source ACLs
+    // by resetting the destination ACL to its base permission bits, preventing
+    // ACL leakage.
+    #[cfg(all(any(unix, windows), feature = "acl"))]
+    if !flags.preserve_acls {
+        ::metadata::reset_acl_from_mode(destination)
             .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
     }
 
+    // clonefile(2) already cloned xattrs (including com.apple.ResourceFork and
+    // FinderInfo) and ACLs verbatim into the new inode. Passing preserve_xattrs: false
+    // and preserve_acls: false avoids redundant multi-megabyte re-reads and re-writes.
     finalize_guard_and_metadata(
         context,
         None,
@@ -286,9 +304,9 @@ pub(super) fn try_clone(
         &mut None,
         existing_metadata,
         #[cfg(all(unix, feature = "xattr"))]
-        flags.preserve_xattrs,
+        false,
         #[cfg(all(any(unix, windows), feature = "acl"))]
-        flags.preserve_acls,
+        false,
     )?;
 
     Ok(true)
@@ -306,6 +324,7 @@ pub(super) fn try_clone(
 /// - Permissions: reset to `source_mode & ~umask` (matching `open()` behavior)
 /// - Timestamps: reset mtime to current time when `--times` is off, and atime to
 ///   current time when `--atimes`/`-U` is off (matching newly created files)
+/// - Creation time: reset crtime to current time on macOS when `--crtimes` is off
 fn normalize_cloned_metadata(
     destination: &Path,
     source_metadata: &fs::Metadata,
@@ -380,6 +399,19 @@ fn normalize_cloned_metadata(
                 std::io::Error::from_raw_os_error(e.raw_os_error()),
             )
         })?;
+    }
+    // clonefile() also preserves the source's creation time (btime) verbatim.
+    // When creation time preservation (--crtimes/-N) is not requested, normalize
+    // the destination birth time to current time so the cloned file does not retain
+    // the source's historical creation timestamp.
+    #[cfg(target_os = "macos")]
+    if !options.crtimes() {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        ::metadata::set_crtime(destination, now_secs)
+            .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
     }
 
     Ok(())

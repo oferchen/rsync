@@ -54,7 +54,7 @@ libc = { workspace = true }
 
 [features]
 # Parallel receive-side delta apply is unconditionally compiled (PFF-7).
-default = ["zstd", "lz4", "xattr", "lazy-metadata"]
+default = ["zstd", "lz4", "xattr", "acl", "lazy-metadata"]
 
 # ============================================================================
 # Compression Features
@@ -172,6 +172,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 proptest = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
+exacl = { workspace = true }
 xattr = { workspace = true }
 libc = { workspace = true }
 criterion = { workspace = true }

@@ -135,6 +135,11 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
     0o777u32 & !(orig_umask & 0o777)
 }
 
+/// Stub for resetting ACLs from mode on iOS/tvOS/watchOS platforms.
+pub fn reset_acl_from_mode(_path: &Path) -> Result<(), MetadataError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

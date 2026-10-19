@@ -683,7 +683,7 @@ fn crtime_needs_update(
 /// upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
-fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
+pub fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
@@ -773,7 +773,7 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
 /// upstream: rsync.c uses utimensat for mtime/atime; crtime uses SetFileTime on Windows
 #[cfg(windows)]
 #[allow(unsafe_code)]
-fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
+pub fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     use std::os::windows::ffi::OsStrExt;
 
     use fast_io::to_extended_path;
@@ -850,7 +850,7 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
 /// No-op stub for platforms where creation time cannot be set (Linux birthtime
 /// is generally not settable; other non-macOS, non-Windows targets lack an API).
 #[cfg(not(any(target_os = "macos", windows)))]
-fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
+pub fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
     Ok(())
 }
 

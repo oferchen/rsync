@@ -69,4 +69,5 @@ pub use default_perms::default_perms_for_dir;
 #[cfg(target_os = "linux")]
 pub(crate) use pinned::sync_acls_pinned;
 pub use read::get_rsync_acl;
+pub use reset::reset_acl_from_mode;
 pub use sync::{sync_acls, sync_acls_via_fake_super};

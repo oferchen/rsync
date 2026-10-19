@@ -108,6 +108,11 @@ pub fn default_perms_for_dir(_dir: &Path, orig_umask: u32) -> u32 {
     0o777u32 & !(orig_umask & 0o777)
 }
 
+/// No-op stub for resetting ACLs from mode on platforms without ACL support.
+pub fn reset_acl_from_mode(_path: &Path) -> Result<(), MetadataError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

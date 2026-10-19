@@ -795,6 +795,9 @@ fn clone_at(
     dirfd: BorrowedFd<'_>,
     name: &CString,
 ) -> io::Result<CloneAttempt> {
+    // sys/clonefile.h: CLONE_ACL = 0x0004 (copy access control lists from source).
+    const CLONE_ACL: u32 = 0x0004;
+
     // SAFETY: `source` is borrowed for the call and outlives it; `dirfd` is the
     // walked parent held by the caller's endpoint; `name` is a valid
     // NUL-terminated string borrowed for the duration of the call.
@@ -804,7 +807,7 @@ fn clone_at(
             source.as_raw_fd(),
             dirfd.as_raw_fd(),
             name.as_ptr(),
-            0, /* flags */
+            CLONE_ACL,
         )
     };
     if rc == 0 {
