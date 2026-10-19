@@ -181,7 +181,7 @@ mod tests {
         #[cfg(not(windows))]
         {
             let path = Path::new("dummy/file.txt");
-            assert_eq!(has_named_ads(path).unwrap(), false);
+            assert!(!has_named_ads(path).unwrap());
         }
     }
 
