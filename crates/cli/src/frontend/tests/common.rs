@@ -195,11 +195,14 @@ pub(super) fn assert_contains_server_trailer(rendered: &str) {
 
 pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+static RUN_LOCK: Mutex<()> = Mutex::new(());
+
 pub(super) fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
+    let _lock = RUN_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let code = run(args, &mut stdout, &mut stderr);

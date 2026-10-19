@@ -95,6 +95,8 @@ fn parse_max_alloc_lowercase_suffix() {
 
 #[test]
 fn parse_max_alloc_default_is_none() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _max_alloc = EnvGuard::remove("RSYNC_MAX_ALLOC");
     let parsed = parse_args([
         OsString::from(RSYNC),
         OsString::from("source"),
@@ -347,6 +349,7 @@ fn copy_with_max_alloc(args: &[&str]) -> (i32, String) {
 fn max_alloc_zero_value_transfers() {
     // upstream: rsync 3.5.1 testsuite/max-alloc-zero_test.py - "0 is accepted,
     // and a transfer using it works". 3.5.0 had refused it outright.
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let _guard = clear_rsync_rsh();
     let (code, stderr) = copy_with_max_alloc(&["--max-alloc=0"]);
     assert_eq!(code, 0, "--max-alloc=0 should transfer, got: {stderr}");
@@ -354,6 +357,7 @@ fn max_alloc_zero_value_transfers() {
 
 #[test]
 fn max_alloc_non_zero_value_still_transfers() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let _guard = clear_rsync_rsh();
     let tmp = test_support::create_tempdir();
     let src = tmp.path().join("src");
@@ -395,6 +399,7 @@ fn max_alloc_zero_from_the_environment_transfers() {
 fn max_alloc_below_one_mib_produces_error_exit() {
     // upstream: options.c:2073 - a non-zero `--max-alloc` below 1 MiB is a
     // syntax error (exit 1).
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let _guard = clear_rsync_rsh();
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -412,6 +417,7 @@ fn max_alloc_below_one_mib_produces_error_exit() {
 
 #[test]
 fn max_alloc_invalid_value_produces_error_exit() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let _guard = clear_rsync_rsh();
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -429,6 +435,7 @@ fn max_alloc_invalid_value_produces_error_exit() {
 
 #[test]
 fn max_alloc_negative_value_produces_error_exit() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
     let _guard = clear_rsync_rsh();
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
