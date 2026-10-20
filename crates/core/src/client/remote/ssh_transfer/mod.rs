@@ -35,8 +35,12 @@ mod server_config;
 
 pub use drive::run_ssh_transfer;
 
+#[cfg(feature = "embedded-ssh")]
+pub(super) use drive::{local_client_role, transfer_failure_error};
 #[cfg(any(feature = "async-ssh", feature = "embedded-ssh"))]
 pub(super) use exit_status::convert_server_stats_to_summary;
+#[cfg(feature = "embedded-ssh")]
+pub(super) use exit_status::map_remote_exit;
 #[cfg(feature = "async-ssh")]
 pub(super) use parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 #[cfg(any(test, feature = "async-ssh"))]

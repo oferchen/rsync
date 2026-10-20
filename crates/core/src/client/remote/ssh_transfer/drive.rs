@@ -47,7 +47,7 @@ use crate::server::{ServerConfig, ServerRole, TransferProgressCallback};
 /// client drives the server flow as a `ServerRole::Generator` on a push (local
 /// sends) and as a `ServerRole::Receiver` on a pull (local receives), matching
 /// the `is_sender = role == Generator` split used for batch recording.
-const fn local_client_role(server_role: ServerRole) -> Role {
+pub(in crate::client::remote) const fn local_client_role(server_role: ServerRole) -> Role {
     match server_role {
         ServerRole::Generator => Role::Sender,
         ServerRole::Receiver => Role::Receiver,
@@ -460,7 +460,7 @@ fn run_server_over_ssh_connection(
 
 /// Resolves a failed transfer's final error from the local failure and the
 /// remote-shell child's exit status.
-fn transfer_failure_error(
+pub(in crate::client::remote) fn transfer_failure_error(
     transfer_error: std::io::Error,
     child_exit_code: ExitCode,
     local_role: Role,

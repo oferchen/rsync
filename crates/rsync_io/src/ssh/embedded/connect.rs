@@ -49,6 +49,33 @@ const SSH_EXTENDED_DATA_STDERR: u32 = 1;
 /// as a wall-clock cliff.
 pub const SSH_GOODBYE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long the bridge keeps the channel open after the session starts
+/// shutting down (the remote sent EOF, or the local writer half was dropped)
+/// to collect the remote command's `exit-status` or `exit-signal`.
+///
+/// OpenSSH reports the exit status after its EOF, so the bridge cannot stop
+/// at EOF and still learn how the remote command ended. Half of
+/// [`SSH_GOODBYE_TIMEOUT`] keeps a server that never closes the channel from
+/// turning a finished transfer into a goodbye-phase timeout: the bridge gives
+/// up first and the exit status is simply unknown.
+const EXIT_STATUS_GRACE: Duration = Duration::from_secs(SSH_GOODBYE_TIMEOUT.as_secs() / 2);
+
+/// How the remote command ended, as reported by the SSH server.
+///
+/// The embedded transport has no child process to `waitpid()`, so this is its
+/// equivalent of the subprocess transport's child exit status: the
+/// `exit-status` or `exit-signal` channel request (RFC 4254 section 6.10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteExit {
+    /// The remote command exited normally with this status.
+    Status(u32),
+    /// The remote command was killed by a signal.
+    Signal {
+        /// Whether the server reported a core dump.
+        core_dumped: bool,
+    },
+}
+
 /// Synchronous reader wrapping data received from the SSH channel.
 ///
 /// Receives channel data chunks via a bounded sync channel and presents
@@ -60,13 +87,19 @@ pub struct ChannelReader {
     /// Unread tail of the current chunk; empty when the next read must
     /// receive a fresh chunk.
     pending: Bytes,
+    /// Receives the remote command's exit report once the bridge finishes.
+    exit_rx: std::sync::mpsc::Receiver<Option<RemoteExit>>,
 }
 
 impl ChannelReader {
-    fn new(rx: std::sync::mpsc::Receiver<Bytes>) -> Self {
+    fn new(
+        rx: std::sync::mpsc::Receiver<Bytes>,
+        exit_rx: std::sync::mpsc::Receiver<Option<RemoteExit>>,
+    ) -> Self {
         Self {
             rx,
             pending: Bytes::new(),
+            exit_rx,
         }
     }
 }
@@ -128,6 +161,24 @@ impl ChannelReader {
                 }
             }
         }
+    }
+
+    /// Waits up to `budget` for the bridge to report how the remote command
+    /// ended.
+    ///
+    /// Call after [`Self::wait_for_eof_with_timeout`]. Returns `None` when the
+    /// server sent neither `exit-status` nor `exit-signal` before the channel
+    /// closed or the bridge's exit-status grace period (half of
+    /// [`SSH_GOODBYE_TIMEOUT`]) ran out, when the bridge thread is gone, or
+    /// when `budget` elapses first. Because the bridge gives up after its grace
+    /// period, a budget of [`SSH_GOODBYE_TIMEOUT`] never expires before it
+    /// reports.
+    ///
+    /// upstream: `main.c:198` `wait_process_with_flush()` reaps the ssh child;
+    /// this is the embedded transport's equivalent.
+    #[must_use]
+    pub fn wait_for_remote_exit(&mut self, budget: Duration) -> Option<RemoteExit> {
+        self.exit_rx.recv_timeout(budget).ok().flatten()
     }
 }
 
@@ -200,6 +251,7 @@ pub fn connect_and_exec(
     let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Bytes>(DEFAULT_CHANNEL_CAPACITY);
     let (write_tx, write_rx) = tokio::sync::mpsc::channel::<Bytes>(DEFAULT_CHANNEL_CAPACITY);
     let (setup_tx, setup_rx) = std::sync::mpsc::sync_channel::<Result<(), SshError>>(1);
+    let (exit_tx, exit_rx) = std::sync::mpsc::sync_channel::<Option<RemoteExit>>(1);
 
     let ssh_config = ssh_config.clone();
     let remote_command = remote_command.to_owned();
@@ -228,6 +280,7 @@ pub fn connect_and_exec(
                 data_tx,
                 write_rx,
                 setup_tx,
+                exit_tx,
             ));
         })
         .map_err(SshError::Io)?;
@@ -238,7 +291,10 @@ pub fn connect_and_exec(
         ))
     })??;
 
-    Ok((ChannelReader::new(data_rx), ChannelWriter::new(write_tx)))
+    Ok((
+        ChannelReader::new(data_rx, exit_rx),
+        ChannelWriter::new(write_tx),
+    ))
 }
 
 /// Forwards one SSH extended-data chunk to the local process stderr when it is
@@ -271,14 +327,16 @@ fn forward_remote_stderr(
 /// Runs the full SSH lifecycle on the bridge thread: setup, then bridge loop.
 ///
 /// Signals setup completion (or failure) via `setup_tx`, then runs the
-/// bridge loop which keeps the tokio runtime alive until the channel closes.
+/// bridge loop which keeps the tokio runtime alive until the channel closes,
+/// and finally reports how the remote command ended through `exit_tx`.
 async fn bridge_main(
     ssh_config: &SshConfig,
     remote_command: &str,
     stdin_data: Option<&[u8]>,
     data_tx: std::sync::mpsc::SyncSender<Bytes>,
-    mut write_rx: tokio::sync::mpsc::Receiver<Bytes>,
+    write_rx: tokio::sync::mpsc::Receiver<Bytes>,
     setup_tx: std::sync::mpsc::SyncSender<Result<(), SshError>>,
+    exit_tx: std::sync::mpsc::SyncSender<Option<RemoteExit>>,
 ) {
     let (mut channel, handle, channel_id) =
         match ssh_setup(ssh_config, remote_command, stdin_data).await {
@@ -293,13 +351,55 @@ async fn bridge_main(
         return;
     }
 
+    let remote_exit = bridge_loop(
+        &mut channel,
+        &handle,
+        channel_id,
+        data_tx,
+        write_rx,
+        &mut std::io::stderr(),
+    )
+    .await;
+    let _ = exit_tx.send(remote_exit);
+}
+
+/// Pumps channel traffic until the channel closes and returns how the remote
+/// command ended.
+///
+/// Remote EOF ends the protocol stream at once (`data_tx` is dropped, so the
+/// reader sees EOF exactly as before), but the loop keeps reading: OpenSSH
+/// sends `exit-status` after its EOF. A dropped local writer sends our EOF and
+/// likewise keeps reading. Once either side has shut down, the loop stops at
+/// the close from the server or after [`EXIT_STATUS_GRACE`], whichever comes
+/// first. Remote stderr (extended data) goes to `stderr` unchanged.
+async fn bridge_loop(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    handle: &russh::client::Handle<SshClientHandler>,
+    channel_id: russh::ChannelId,
+    data_tx: std::sync::mpsc::SyncSender<Bytes>,
+    mut write_rx: tokio::sync::mpsc::Receiver<Bytes>,
+    stderr: &mut dyn std::io::Write,
+) -> Option<RemoteExit> {
+    let mut data_tx = Some(data_tx);
+    let mut writes_open = true;
+    let mut remote_exit = None;
+    let mut shutdown_deadline: Option<tokio::time::Instant> = None;
     loop {
+        let grace_expired = async {
+            match shutdown_deadline {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending().await,
+            }
+        };
         tokio::select! {
             msg = channel.wait() => {
                 match msg {
                     Some(russh::ChannelMsg::Data { data }) => {
-                        if data_tx.send(data).is_err() {
-                            break;
+                        if let Some(tx) = &data_tx
+                            && tx.send(data).is_err()
+                        {
+                            data_tx = None;
+                            start_shutdown(&mut shutdown_deadline);
                         }
                     }
                     Some(russh::ChannelMsg::ExtendedData { data, ext }) => {
@@ -309,26 +409,45 @@ async fn bridge_main(
                         // transport surfaces remote diagnostics identically to
                         // the subprocess transport and native ssh - see
                         // `forward_remote_stderr`.
-                        let _ = forward_remote_stderr(ext, &data, &mut std::io::stderr().lock());
+                        let _ = forward_remote_stderr(ext, &data, stderr);
                     }
-                    Some(russh::ChannelMsg::Eof) | None => {
-                        break;
+                    Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                        remote_exit = Some(RemoteExit::Status(exit_status));
                     }
+                    Some(russh::ChannelMsg::ExitSignal { core_dumped, .. }) => {
+                        remote_exit = Some(RemoteExit::Signal { core_dumped });
+                    }
+                    Some(russh::ChannelMsg::Eof) => {
+                        data_tx = None;
+                        start_shutdown(&mut shutdown_deadline);
+                    }
+                    Some(russh::ChannelMsg::Close) | None => break,
                     _ => continue,
                 }
             }
-            write_data = write_rx.recv() => {
+            write_data = write_rx.recv(), if writes_open => {
                 match write_data {
                     Some(data) => {
                         if handle.data(channel_id, data).await.is_err() {
                             break;
                         }
                     }
-                    None => break,
+                    None => {
+                        writes_open = false;
+                        let _ = channel.eof().await;
+                        start_shutdown(&mut shutdown_deadline);
+                    }
                 }
             }
+            () = grace_expired => break,
         }
     }
+    remote_exit
+}
+
+/// Arms the exit-status grace deadline on the first shutdown signal.
+fn start_shutdown(deadline: &mut Option<tokio::time::Instant>) {
+    deadline.get_or_insert_with(|| tokio::time::Instant::now() + EXIT_STATUS_GRACE);
 }
 
 /// SSH channel window size tuned for rsync bulk transfers.
@@ -591,6 +710,11 @@ mod tests {
     use super::*;
     use std::io::Read;
 
+    /// A reader whose bridge never reports an exit, for the stream-only tests.
+    fn reader_without_exit_report(rx: std::sync::mpsc::Receiver<Bytes>) -> ChannelReader {
+        ChannelReader::new(rx, std::sync::mpsc::sync_channel(1).1)
+    }
+
     /// The remote command's stderr stream (`SSH_EXTENDED_DATA_STDERR`) must be
     /// forwarded to the local stderr verbatim: this is the byte the embedded
     /// (russh) push transport dropped, so upstream's `--append-verify` phase-1
@@ -632,7 +756,7 @@ mod tests {
     #[test]
     fn channel_reader_eof_on_closed_channel() {
         let (_, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
-        let mut reader = ChannelReader::new(rx);
+        let mut reader = reader_without_exit_report(rx);
         let mut buf = [0u8; 64];
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(n, 0);
@@ -644,7 +768,7 @@ mod tests {
         tx.send(Bytes::from_static(b"hello")).unwrap();
         drop(tx);
 
-        let mut reader = ChannelReader::new(rx);
+        let mut reader = reader_without_exit_report(rx);
         let mut buf = [0u8; 64];
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(&buf[..n], b"hello");
@@ -656,7 +780,7 @@ mod tests {
         tx.send(Bytes::from_static(b"hello world")).unwrap();
         drop(tx);
 
-        let mut reader = ChannelReader::new(rx);
+        let mut reader = reader_without_exit_report(rx);
 
         let mut buf = [0u8; 5];
         let n = reader.read(&mut buf).unwrap();
@@ -680,7 +804,7 @@ mod tests {
     #[test]
     fn wait_for_eof_times_out_when_bridge_stalls() {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
-        let mut reader = ChannelReader::new(rx);
+        let mut reader = reader_without_exit_report(rx);
 
         let budget = Duration::from_millis(50);
         let start = Instant::now();
@@ -715,7 +839,7 @@ mod tests {
     #[test]
     fn wait_for_eof_returns_ok_on_clean_drop() {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(1);
-        let mut reader = ChannelReader::new(rx);
+        let mut reader = reader_without_exit_report(rx);
         drop(tx);
 
         let start = Instant::now();
@@ -739,7 +863,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Bytes>(4);
         tx.send(Bytes::from_static(b"stale")).unwrap();
         tx.send(Bytes::from_static(b"goodbye-bytes")).unwrap();
-        let mut reader = ChannelReader::new(rx);
+        let mut reader = reader_without_exit_report(rx);
 
         let budget = Duration::from_millis(75);
         let result = reader.wait_for_eof_with_timeout(budget);
@@ -943,6 +1067,243 @@ mod tests {
         assert!(
             !resolved.is_empty(),
             "empty input should fall back to defaults"
+        );
+    }
+}
+
+#[cfg(test)]
+mod remote_exit_tests {
+    use super::*;
+    use russh::server::Server as _;
+    use std::io::Read;
+    use tokio::net::TcpListener;
+
+    /// How the mock server ends the remote command after `exec`.
+    #[derive(Clone)]
+    struct Script {
+        /// Bytes written to the remote stderr stream before the command ends.
+        stderr: Vec<u8>,
+        /// The exit report, sent after EOF as OpenSSH does.
+        exit: Option<RemoteExit>,
+    }
+
+    #[derive(Clone)]
+    struct ScriptedServer {
+        script: Script,
+    }
+
+    struct ScriptedHandler {
+        script: Script,
+    }
+
+    impl russh::server::Handler for ScriptedHandler {
+        type Error = russh::Error;
+
+        async fn auth_password(
+            &mut self,
+            _user: &str,
+            _password: &str,
+        ) -> Result<russh::server::Auth, Self::Error> {
+            Ok(russh::server::Auth::Accept)
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            _channel: russh::Channel<russh::server::Msg>,
+            reply: russh::server::ChannelOpenHandle,
+            _session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            reply.accept().await;
+            Ok(())
+        }
+
+        async fn exec_request(
+            &mut self,
+            channel: russh::ChannelId,
+            _data: &[u8],
+            session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            session.channel_success(channel)?;
+            if !self.script.stderr.is_empty() {
+                session.extended_data(
+                    channel,
+                    SSH_EXTENDED_DATA_STDERR,
+                    self.script.stderr.clone(),
+                )?;
+            }
+            // OpenSSH sends EOF before the exit report, so a client that stops
+            // reading at EOF never learns how the command ended.
+            session.eof(channel)?;
+            match self.script.exit {
+                Some(RemoteExit::Status(code)) => session.exit_status_request(channel, code)?,
+                Some(RemoteExit::Signal { core_dumped }) => session.exit_signal_request(
+                    channel,
+                    russh::Sig::KILL,
+                    core_dumped,
+                    "killed",
+                    "",
+                )?,
+                None => {}
+            }
+            session.close(channel)?;
+            Ok(())
+        }
+    }
+
+    impl russh::server::Server for ScriptedServer {
+        type Handler = ScriptedHandler;
+        fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
+            ScriptedHandler {
+                script: self.script.clone(),
+            }
+        }
+    }
+
+    /// Starts the scripted server on an ephemeral port with a fresh host key.
+    async fn start_server(script: Script) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        let host_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .expect("keygen");
+        let config = Arc::new(russh::server::Config {
+            keys: vec![host_key],
+            ..Default::default()
+        });
+        let mut server = ScriptedServer { script };
+        tokio::spawn(async move {
+            let _ = server.run_on_socket(config, &listener).await;
+        });
+        port
+    }
+
+    fn client_config(port: u16) -> SshConfig {
+        SshConfig {
+            host: "127.0.0.1".to_owned(),
+            port,
+            username: Some("testuser".to_owned()),
+            password: Some("pw".to_owned()),
+            identity_files: Vec::new(),
+            use_agent: false,
+            connect_timeout: Duration::from_secs(5),
+            strict_host_key_checking: super::super::types::StrictHostKeyChecking::No,
+            ..SshConfig::default()
+        }
+    }
+
+    /// Runs the bridge loop against the scripted server with the local writer
+    /// still open, so the remote side drives the shutdown, and returns the exit
+    /// report plus everything forwarded to stderr.
+    async fn run_bridge(script: Script) -> (Option<RemoteExit>, Vec<u8>) {
+        let port = start_server(script).await;
+        let (mut channel, handle, channel_id) =
+            ssh_setup(&client_config(port), "rsync --server", None)
+                .await
+                .expect("ssh setup");
+        let (data_tx, _data_rx) = std::sync::mpsc::sync_channel::<Bytes>(8);
+        let (_write_tx, write_rx) = tokio::sync::mpsc::channel::<Bytes>(8);
+        let mut stderr = Vec::new();
+        let exit = tokio::time::timeout(
+            SSH_GOODBYE_TIMEOUT,
+            bridge_loop(
+                &mut channel,
+                &handle,
+                channel_id,
+                data_tx,
+                write_rx,
+                &mut stderr,
+            ),
+        )
+        .await
+        .expect("the bridge must finish once the server closes the channel");
+        (exit, stderr)
+    }
+
+    /// upstream: main.c:226 - a remote rsync exiting 23 (RERR_PARTIAL) is
+    /// reported verbatim; the status arrives after EOF, so this also pins that
+    /// the bridge keeps reading past EOF.
+    #[tokio::test]
+    async fn exit_status_after_eof_is_recorded() {
+        let (exit, _) = run_bridge(Script {
+            stderr: Vec::new(),
+            exit: Some(RemoteExit::Status(23)),
+        })
+        .await;
+        assert_eq!(exit, Some(RemoteExit::Status(23)));
+    }
+
+    /// A remote shell that cannot find `rsync` exits 127 (RERR_CMD_NOTFOUND).
+    #[tokio::test]
+    async fn command_not_found_status_is_recorded() {
+        let (exit, _) = run_bridge(Script {
+            stderr: b"sh: rsync: command not found\n".to_vec(),
+            exit: Some(RemoteExit::Status(127)),
+        })
+        .await;
+        assert_eq!(exit, Some(RemoteExit::Status(127)));
+    }
+
+    /// upstream: main.c:215-224 - a command killed by a signal is reported as
+    /// such, with its core-dump flag.
+    #[tokio::test]
+    async fn exit_signal_is_recorded_with_core_dump_flag() {
+        let (exit, _) = run_bridge(Script {
+            stderr: Vec::new(),
+            exit: Some(RemoteExit::Signal { core_dumped: true }),
+        })
+        .await;
+        assert_eq!(exit, Some(RemoteExit::Signal { core_dumped: true }));
+    }
+
+    /// A server that closes without an exit report leaves it unknown, so the
+    /// caller keeps judging the run by the local transfer alone.
+    #[tokio::test]
+    async fn close_without_exit_report_reports_none() {
+        let (exit, _) = run_bridge(Script {
+            stderr: Vec::new(),
+            exit: None,
+        })
+        .await;
+        assert_eq!(exit, None);
+    }
+
+    /// Remote stderr reaches the local stderr byte for byte, including bytes
+    /// that are not valid UTF-8, as upstream's inherited fd 2 passes them.
+    #[tokio::test]
+    async fn remote_stderr_is_forwarded_byte_exact() {
+        let bytes = b"rsync: \xff\xfe bad name\npartial line".to_vec();
+        let (_, stderr) = run_bridge(Script {
+            stderr: bytes.clone(),
+            exit: Some(RemoteExit::Status(0)),
+        })
+        .await;
+        assert_eq!(stderr, bytes);
+    }
+
+    /// The public path: a caller that drops its writer, drains to EOF and then
+    /// asks for the exit report gets the remote status.
+    #[test]
+    fn connect_and_exec_hands_the_exit_report_to_the_reader() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let port = rt.block_on(start_server(Script {
+            stderr: Vec::new(),
+            exit: Some(RemoteExit::Status(23)),
+        }));
+        let (mut reader, writer) =
+            connect_and_exec(&client_config(port), "rsync --server", None).expect("connect");
+        drop(writer);
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest).expect("read to EOF");
+        reader
+            .wait_for_eof_with_timeout(SSH_GOODBYE_TIMEOUT)
+            .expect("goodbye phase");
+        assert_eq!(
+            reader.wait_for_remote_exit(SSH_GOODBYE_TIMEOUT),
+            Some(RemoteExit::Status(23))
         );
     }
 }
