@@ -475,12 +475,25 @@ fn remove_entry_capped(
     // leaves the parent in place. The check runs at every recursion level, so a
     // mount nested inside a doomed subtree pins the whole ancestor chain.
     if is_delete_mount_point(boundary_dev, path, file_type) {
-        info_log!(
-            Mount,
-            1,
-            "cannot delete mount point: {}",
-            entry_relative.display()
-        );
+        if nested {
+            // upstream: delete.c:144-149 - inside delete_dir_contents() the
+            // mount point is only a DEBUG_GTE(DEL, 1) note.
+            debug_log!(
+                Del,
+                1,
+                "mount point, {}, pins parent directory",
+                entry_relative.display()
+            );
+        } else {
+            // upstream: generator.c:336-340 - delete_in_dir() reports a
+            // top-level one at INFO_GTE(MOUNT, 1).
+            info_log!(
+                Mount,
+                1,
+                "cannot delete mount point: {}",
+                entry_relative.display()
+            );
+        }
         return Ok(false);
     }
 

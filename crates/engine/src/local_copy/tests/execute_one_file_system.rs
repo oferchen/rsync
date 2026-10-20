@@ -1294,3 +1294,84 @@ fn one_file_system_windows_boundary_uses_volume_serial_identity() {
         "an unresolvable path has no volume identity"
     );
 }
+
+/// A directory obstacle cleared to make room for an incoming file must not be
+/// peeled across a `--one-file-system` boundary: a child on another device is
+/// a mount point that pins the obstacle, so the make-room fails and the
+/// mounted filesystem keeps every file.
+///
+/// The unbounded peel used to `unlink` straight into the mount, while the
+/// `--max-delete` leaf walk already stopped at it. Measured against rsync 3.5.1
+/// with a tmpfs mounted inside the obstacle and `-rv --force -x`: exit 23,
+/// `deleting obst/plain`, `cannot delete non-empty directory: obst`, `could not
+/// make way for new regular file: obst`, and the mount's file intact.
+///
+/// upstream: delete.c:141-149 delete_dir_contents() skips a FLAG_MOUNT_DIR
+/// child (flist.c:1715) and returns DR_NOT_EMPTY, so delete.c:283-285 reports
+/// the make-way failure.
+#[cfg(unix)]
+#[test]
+fn one_file_system_make_room_keeps_a_mount_inside_the_obstacle() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("obst"), b"incoming file").expect("write incoming");
+
+    let dest_root = temp.path().join("dest");
+    let obstacle = dest_root.join("source").join("obst");
+    let mnt = obstacle.join("mnt");
+    fs::create_dir_all(&mnt).expect("create obst/mnt");
+    fs::write(obstacle.join("plain"), b"same-device").expect("write plain");
+    fs::write(mnt.join("data.txt"), b"mounted data").expect("write mounted data");
+
+    let operands = vec![source_root.into_os_string(), dest_root.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let error = with_device_id_override(
+        |path, _metadata| {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mnt"))
+            {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        },
+        || {
+            plan.execute_with_report(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .one_file_system(true)
+                    .force_replacements(true)
+                    .collect_events(true),
+            )
+        },
+    )
+    .expect_err("a pinned obstacle cannot make way");
+
+    assert_eq!(
+        error.exit_code(),
+        23,
+        "the make-way failure is RERR_PARTIAL"
+    );
+    assert!(
+        mnt.join("data.txt").exists(),
+        "the peel must not cross into the mounted filesystem"
+    );
+    assert!(obstacle.is_dir(), "the mount pins the obstacle directory");
+    assert!(
+        !obstacle.join("plain").exists(),
+        "a same-device child is still peeled"
+    );
+    let report = error
+        .completed_report()
+        .expect("the run finished, so its report survives the exit status");
+    assert!(
+        report
+            .records()
+            .iter()
+            .any(|record| record.relative_path() == std::path::Path::new("source/obst/plain")),
+        "the peeled child is itemized like upstream's `deleting obst/plain`"
+    );
+}

@@ -425,6 +425,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - A remote `--max-delete=0` transfer no longer exits 12: the server clamps the forwarded `-1` to 0 as upstream does (#8218)
 - `--max-delete` caps the contents of a directory cleared to make room for an incoming file, sharing one run-wide budget and `Deletions stopped` warning with the delete sweeps (#8218)
 - A local `--max-delete` cap no longer aborts the transfer (under `--delete-before` it stopped the run before anything was copied); the skipped total is reported once, a partial error (23) outranks the limit (25), and the trailer names `the --max-delete limit stopped deletions` (#PRNUM)
+- Under `--one-file-system`, clearing a directory obstacle for an incoming file keeps a mount point inside it instead of deleting into the mounted filesystem (#PRNUM)
 
 **Incremental recursion**
 - `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)

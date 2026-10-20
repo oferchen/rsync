@@ -196,8 +196,11 @@ fn peel_or_probe(
     }
 
     // upstream: delete.c:217 - each child is capped like a delete-pass victim,
-    // so the cap-aware leaf walk empties the obstacle under `--max-delete`.
-    if context.options().max_deletion_limit().is_some() {
+    // and delete.c:141-149 - a child that is a `--one-file-system` mount point
+    // (FLAG_MOUNT_DIR, flist.c:1715) is never entered and pins the obstacle.
+    // The leaf walk enforces both, so it empties the obstacle whenever either
+    // `--max-delete` or `-x` is in force, as the delete passes do.
+    if context.options().max_deletion_limit().is_some() || context.one_file_system_enabled() {
         let display = relative.map_or_else(
             || {
                 destination
