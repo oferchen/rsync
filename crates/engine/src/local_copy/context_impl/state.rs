@@ -439,7 +439,10 @@ impl<'a> CopyContext<'a> {
             destination,
             metadata,
             &metadata_options,
-            pre_transfer_meta.cloned().map(fast_io::EntryMetadata::from).as_ref(),
+            pre_transfer_meta
+                .cloned()
+                .map(fast_io::EntryMetadata::from)
+                .as_ref(),
         )
         .map_err(map_metadata_error)?;
 
