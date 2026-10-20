@@ -873,8 +873,7 @@ pub(super) fn script_to_wire_delta<'a>(
     let mut ops = Vec::with_capacity(script.tokens().len());
     for token in script.tokens() {
         match token {
-            DeltaToken::Literal(data) => ops.push(WireOp::Literal(data.as_slice())),
-            DeltaToken::LiteralSlice(slice) => ops.push(WireOp::Literal(slice)),
+            DeltaToken::Literal(data) => ops.push(WireOp::Literal(data)),
             DeltaToken::Copy { index, len } => {
                 let len = *len;
                 let index = *index;
@@ -1755,7 +1754,6 @@ mod tests {
                     cursor += *len as u64;
                 }
                 DeltaToken::Literal(bytes) => cursor += bytes.len() as u64,
-                DeltaToken::LiteralSlice(bytes) => cursor += bytes.len() as u64,
             }
         }
         true
@@ -2150,7 +2148,7 @@ mod tests {
         assert!(
             on.tokens()
                 .iter()
-                .any(|t| matches!(t, DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_))),
+                .any(|t| matches!(t, DeltaToken::Literal(_))),
             "the suppressed backward block must reappear as a literal",
         );
     }

@@ -9,6 +9,7 @@
 //! - **Level 3**: Detailed checksum information (potential matches, search params)
 //! - **Level 4**: Per-iteration offset tracking (very verbose)
 
+use std::borrow::Cow;
 use std::io::{self, Cursor, Read};
 
 use checksums::{RollingChecksum, RollingDigest};
@@ -120,7 +121,7 @@ const fn literal_flush_cadence(block_len: usize) -> usize {
     block_len + CHUNK_SIZE
 }
 
-/// Appends `slice` into `out` as one or more `DeltaToken::LiteralSlice` tokens split
+/// Appends `slice` into `out` as one or more borrowed `DeltaToken::Literal` tokens split
 /// at exact `cadence` boundaries from the start of `slice`, mirroring the
 /// sequential scan's threshold flush in a single pass with zero heap allocations or copies.
 fn push_split_literal_slice<'a>(out: &mut Vec<DeltaToken<'a>>, slice: &'a [u8], cadence: usize) {
@@ -129,10 +130,10 @@ fn push_split_literal_slice<'a>(out: &mut Vec<DeltaToken<'a>>, slice: &'a [u8], 
     }
     let mut start = 0usize;
     while slice.len() - start > cadence {
-        out.push(DeltaToken::LiteralSlice(&slice[start..start + cadence]));
+        out.push(DeltaToken::Literal(Cow::Borrowed(&slice[start..start + cadence])));
         start += cadence;
     }
-    out.push(DeltaToken::LiteralSlice(&slice[start..]));
+    out.push(DeltaToken::Literal(Cow::Borrowed(&slice[start..])));
 }
 
 /// A `Copy` token lifted to an absolute source offset for the parallel merge.
@@ -570,7 +571,7 @@ impl DeltaGenerator {
                         total_bytes += pending_literals.len() as u64;
                         let filled =
                             std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
-                        tokens.push(DeltaToken::Literal(filled));
+                        tokens.push(DeltaToken::Literal(filled.into()));
                     }
                 }
             } else {
@@ -666,7 +667,7 @@ impl DeltaGenerator {
                         total_bytes += pending_literals.len() as u64;
                         let filled =
                             std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
-                        tokens.push(DeltaToken::Literal(filled));
+                        tokens.push(DeltaToken::Literal(filled.into()));
                     }
 
                     let block = index.block(match_idx);
@@ -844,7 +845,7 @@ impl DeltaGenerator {
                     total_bytes += pending_literals.len() as u64;
                     let filled =
                         std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
-                    tokens.push(DeltaToken::Literal(filled));
+                    tokens.push(DeltaToken::Literal(filled.into()));
                 }
                 let block = index.block(tail_idx);
                 // The short block is emitted as its OWN Copy carrying its
@@ -879,7 +880,7 @@ impl DeltaGenerator {
             if !pending_literals.is_empty() {
                 literal_bytes += pending_literals.len() as u64;
                 total_bytes += pending_literals.len() as u64;
-                tokens.push(DeltaToken::Literal(pending_literals));
+                tokens.push(DeltaToken::Literal(pending_literals.into()));
             }
         }
 
@@ -977,7 +978,7 @@ impl DeltaGenerator {
                     total_bytes += pending_literals.len() as u64;
                     let filled =
                         std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
-                    tokens.push(DeltaToken::Literal(filled));
+                    tokens.push(DeltaToken::Literal(filled.into()));
                 }
             };
         }
@@ -1124,7 +1125,7 @@ impl DeltaGenerator {
             } else if !run.is_empty() {
                 literal_bytes += lone_src.len() as u64;
                 total_bytes += lone_src.len() as u64;
-                tokens.push(DeltaToken::Literal(lone_src));
+                tokens.push(DeltaToken::Literal(lone_src.into()));
             }
         }
 
@@ -1468,7 +1469,7 @@ mod tests {
         let script = generate_delta(&input[..], &index).expect("script");
         assert_eq!(script.tokens().len(), 1);
         assert!(
-            matches!(script.tokens()[0], DeltaToken::Literal(ref bytes) if bytes == b"new data")
+            matches!(script.tokens()[0], DeltaToken::Literal(ref bytes) if bytes.as_ref() == b"new data")
         );
         assert_eq!(script.literal_bytes(), input.len() as u64);
     }
@@ -1484,7 +1485,7 @@ mod tests {
 
         let script = generate_delta(&input[..], &index).expect("script");
         assert!(matches!(script.tokens()[0], DeltaToken::Copy { .. }));
-        assert!(matches!(script.tokens()[1], DeltaToken::Literal(ref bytes) if bytes == b"extra"));
+        assert!(matches!(script.tokens()[1], DeltaToken::Literal(ref bytes) if bytes.as_ref() == b"extra"));
 
         let mut basis_cursor = Cursor::new(basis);
         let mut output = Vec::new();
@@ -1560,7 +1561,7 @@ mod tests {
 
         let script = generate_delta(&input[..], &index).expect("script");
         assert_eq!(script.tokens().len(), 1);
-        assert!(matches!(script.tokens()[0], DeltaToken::Literal(ref bytes) if bytes == &[42]));
+        assert!(matches!(script.tokens()[0], DeltaToken::Literal(ref bytes) if bytes.as_ref() == [42]));
         assert_eq!(script.literal_bytes(), 1);
     }
 
@@ -2122,7 +2123,6 @@ mod tests {
                     cursor += *len as u64;
                 }
                 DeltaToken::Literal(bytes) => cursor += bytes.len() as u64,
-                DeltaToken::LiteralSlice(bytes) => cursor += bytes.len() as u64,
             }
         }
         true
@@ -2175,7 +2175,7 @@ mod tests {
             inplace
                 .tokens()
                 .iter()
-                .any(|t| matches!(t, DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_))),
+                .any(|t| matches!(t, DeltaToken::Literal(_))),
             "the backward block must be demoted to a literal"
         );
         // Data is still transferred: reconstruction is byte-identical.

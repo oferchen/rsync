@@ -858,7 +858,7 @@ fn script_byte_accounting() {
 /// Verifies DeltaToken byte_len method.
 #[test]
 fn token_byte_len_accuracy() {
-    let literal = DeltaToken::Literal(vec![1, 2, 3, 4, 5]);
+    let literal = DeltaToken::Literal(vec![1, 2, 3, 4, 5].into());
     assert_eq!(literal.byte_len(), 5);
 
     let copy = DeltaToken::Copy {
@@ -867,14 +867,14 @@ fn token_byte_len_accuracy() {
     };
     assert_eq!(copy.byte_len(), 1024);
 
-    let empty_literal = DeltaToken::Literal(vec![]);
+    let empty_literal = DeltaToken::Literal(vec![].into());
     assert_eq!(empty_literal.byte_len(), 0);
 }
 
 /// Verifies DeltaToken is_literal method.
 #[test]
 fn token_is_literal_check() {
-    let literal = DeltaToken::Literal(vec![1, 2, 3]);
+    let literal = DeltaToken::Literal(vec![1, 2, 3].into());
     assert!(literal.is_literal());
 
     let copy = DeltaToken::Copy { index: 0, len: 100 };
@@ -885,7 +885,7 @@ fn token_is_literal_check() {
 #[test]
 fn script_into_tokens() {
     let tokens = vec![
-        DeltaToken::Literal(vec![1, 2, 3]),
+        DeltaToken::Literal(vec![1, 2, 3].into()),
         DeltaToken::Copy { index: 0, len: 100 },
     ];
     let script = DeltaScript::new(tokens.clone(), 103, 3);
@@ -901,7 +901,7 @@ fn script_is_empty() {
     let empty = DeltaScript::new(vec![], 0, 0);
     assert!(empty.is_empty());
 
-    let non_empty = DeltaScript::new(vec![DeltaToken::Literal(vec![1])], 1, 1);
+    let non_empty = DeltaScript::new(vec![DeltaToken::Literal(vec![1].into())], 1, 1);
     assert!(!non_empty.is_empty());
 }
 
@@ -992,9 +992,9 @@ fn apply_consecutive_literals() {
 
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Literal(b"Hello, ".to_vec()),
-            DeltaToken::Literal(b"World".to_vec()),
-            DeltaToken::Literal(b"!".to_vec()),
+            DeltaToken::Literal(b"Hello, ".to_vec().into()),
+            DeltaToken::Literal(b"World".to_vec().into()),
+            DeltaToken::Literal(b"!".to_vec().into()),
         ],
         13,
         13,
@@ -1040,17 +1040,17 @@ fn apply_interleaved_tokens() {
 
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Literal(b"PREFIX".to_vec()),
+            DeltaToken::Literal(b"PREFIX".to_vec().into()),
             DeltaToken::Copy {
                 index: 0,
                 len: block_len,
             },
-            DeltaToken::Literal(b"MIDDLE".to_vec()),
+            DeltaToken::Literal(b"MIDDLE".to_vec().into()),
             DeltaToken::Copy {
                 index: 1,
                 len: block_len,
             },
-            DeltaToken::Literal(b"SUFFIX".to_vec()),
+            DeltaToken::Literal(b"SUFFIX".to_vec().into()),
         ],
         (block_len * 2 + 18) as u64,
         18,
@@ -1605,7 +1605,13 @@ mod algorithm_correctness {
         let total_literal: usize = script
             .tokens()
             .iter()
-            .filter_map(|t| t.literal_data().map(|b| b.len()))
+            .filter_map(|t| {
+                if let DeltaToken::Literal(bytes) = t {
+                    Some(bytes.len())
+                } else {
+                    None
+                }
+            })
             .sum();
 
         // Should have at least our prefix and suffix as literals

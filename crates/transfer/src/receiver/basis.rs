@@ -555,59 +555,16 @@ fn generate_basis_signature(
         basis_size,
     );
 
-    let signature = if basis_size > 0
-        && (basis_size as usize) <= engine::local_copy::buffer_pool::DEFAULT_BUFFER_POOL_BLOCK_SIZE
-    {
-        let mut guard = engine::local_copy::buffer_pool::BufferPool::acquire_from(
-            engine::local_copy::buffer_pool::global_buffer_pool(),
-        );
-        let len = basis_size as usize;
-        let mut file = basis_file;
-        match std::io::Read::read_exact(&mut file, &mut guard.as_mut_slice()[..len]) {
-            Ok(()) => {
-                let mut extra = [0u8; 1];
-                match std::io::Read::read(&mut file, &mut extra) {
-                    Ok(0) => {
-                        let cursor = std::io::Cursor::new(&guard[..len]);
-                        let res = compute_basis_signature(
-                            cursor,
-                            basis_size,
-                            layout,
-                            config.checksum_algorithm,
-                            parallel,
-                        );
-                        // Return the pooled read buffer to BufferPool immediately
-                        // inside the Rayon worker so the reorder slot holds only the
-                        // compact signature output.
-                        drop(guard);
-                        res
-                    }
-                    Ok(_) => {
-                        drop(guard);
-                        Err(signature::SignatureError::TrailingData { bytes: 1 })
-                    }
-                    Err(e) => {
-                        drop(guard);
-                        Err(signature::SignatureError::Io(e))
-                    }
-                }
-            }
-            Err(e) => {
-                drop(guard);
-                Err(signature::SignatureError::Io(e))
-            }
-        }
-    } else {
-        let cap = (basis_size as usize).clamp(8 * 1024, MAX_MAP_SIZE);
-        let reader = std::io::BufReader::with_capacity(cap, basis_file);
-        compute_basis_signature(
-            reader,
-            basis_size,
-            layout,
-            config.checksum_algorithm,
-            parallel,
-        )
-    };
+    // A basis smaller than the map window needs no more buffer than its own size.
+    let capacity = usize::try_from(basis_size).map_or(MAX_MAP_SIZE, |n| n.clamp(8 * 1024, MAX_MAP_SIZE));
+    let reader = std::io::BufReader::with_capacity(capacity, basis_file);
+    let signature = compute_basis_signature(
+        reader,
+        basis_size,
+        layout,
+        config.checksum_algorithm,
+        parallel,
+    );
 
     match signature {
         Ok(sig) => {

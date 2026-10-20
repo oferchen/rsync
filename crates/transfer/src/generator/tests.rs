@@ -1087,8 +1087,8 @@ fn filter_application_no_filters_includes_all() {
 #[test]
 fn script_to_wire_delta_converts_literals() {
     let tokens = vec![
-        DeltaToken::Literal(vec![1, 2, 3]),
-        DeltaToken::Literal(vec![4, 5, 6]),
+        DeltaToken::Literal(vec![1, 2, 3].into()),
+        DeltaToken::Literal(vec![4, 5, 6].into()),
     ];
     let script = DeltaScript::new(tokens, 6, 6);
 
@@ -1108,7 +1108,7 @@ fn script_to_wire_delta_converts_literals() {
 #[test]
 fn script_to_wire_delta_converts_literal_slices() {
     let slice: &[u8] = &[7, 8, 9];
-    let tokens = vec![DeltaToken::LiteralSlice(slice)];
+    let tokens = vec![DeltaToken::Literal(std::borrow::Cow::Borrowed(slice))];
     let script = DeltaScript::new(tokens, 3, 3);
 
     let wire_ops = script_to_wire_delta(&script, 1024);
@@ -1127,7 +1127,7 @@ fn script_to_wire_delta_converts_copy_operations() {
             index: 0,
             len: 1024,
         },
-        DeltaToken::Literal(vec![99]),
+        DeltaToken::Literal(vec![99].into()),
         DeltaToken::Copy { index: 1, len: 512 },
     ];
     let script = DeltaScript::new(tokens, 1537, 1);

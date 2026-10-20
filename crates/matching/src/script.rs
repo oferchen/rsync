@@ -1,5 +1,6 @@
 //! Delta script representation and application.
 
+use std::borrow::Cow;
 use std::cmp::min;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
@@ -14,9 +15,10 @@ use crate::index::DeltaSignatureIndex;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeltaToken<'a> {
     /// Literal byte payload that must be written to the receiver.
-    Literal(Vec<u8>),
-    /// Borrowed literal byte slice directly referencing source memory.
-    LiteralSlice(&'a [u8]),
+    ///
+    /// Borrowed when the scan can reference the source buffer directly,
+    /// owned when the bytes were assembled from a streaming read.
+    Literal(Cow<'a, [u8]>),
     /// Reference to a block from the basis file identified by index.
     Copy {
         /// Zero-based index of the signature block being reused.
@@ -31,10 +33,9 @@ pub enum DeltaToken<'a> {
 impl<'a> DeltaToken<'a> {
     /// Returns the number of bytes contributed by this token.
     #[must_use]
-    pub const fn byte_len(&self) -> usize {
+    pub fn byte_len(&self) -> usize {
         match self {
             DeltaToken::Literal(bytes) => bytes.len(),
-            DeltaToken::LiteralSlice(bytes) => bytes.len(),
             DeltaToken::Copy { len, .. } => *len,
         }
     }
@@ -42,17 +43,7 @@ impl<'a> DeltaToken<'a> {
     /// Returns `true` when the token is a literal payload.
     #[must_use]
     pub const fn is_literal(&self) -> bool {
-        matches!(self, DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_))
-    }
-
-    /// Returns the literal bytes as a slice if this token is a literal.
-    #[must_use]
-    pub fn literal_data(&self) -> Option<&[u8]> {
-        match self {
-            DeltaToken::Literal(bytes) => Some(bytes.as_slice()),
-            DeltaToken::LiteralSlice(bytes) => Some(bytes),
-            DeltaToken::Copy { .. } => None,
-        }
+        matches!(self, DeltaToken::Literal(_))
     }
 }
 
@@ -147,9 +138,6 @@ where
             DeltaToken::Literal(bytes) => {
                 output.write_all(bytes)?;
             }
-            DeltaToken::LiteralSlice(bytes) => {
-                output.write_all(bytes)?;
-            }
             DeltaToken::Copy {
                 index: block_index,
                 len,
@@ -215,7 +203,7 @@ mod tests {
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
-        let script = DeltaScript::new(vec![DeltaToken::Literal(b"hello".to_vec())], 5, 5);
+        let script = DeltaScript::new(vec![DeltaToken::Literal(b"hello".to_vec().into())], 5, 5);
 
         let mut basis = Cursor::new(index_data);
         let mut output = Vec::new();
@@ -247,7 +235,7 @@ mod tests {
                     index: 0,
                     len: block_len,
                 },
-                DeltaToken::Literal(b"tail".to_vec()),
+                DeltaToken::Literal(b"tail".to_vec().into()),
             ],
             block_len as u64 + 4,
             4,
@@ -295,7 +283,7 @@ mod tests {
 
     #[test]
     fn delta_token_literal_byte_len() {
-        let token = DeltaToken::Literal(vec![1, 2, 3, 4, 5]);
+        let token = DeltaToken::Literal(vec![1, 2, 3, 4, 5].into());
         assert_eq!(token.byte_len(), 5);
     }
 
@@ -307,7 +295,7 @@ mod tests {
 
     #[test]
     fn delta_token_is_literal_true_for_literal() {
-        let token = DeltaToken::Literal(vec![1, 2, 3]);
+        let token = DeltaToken::Literal(vec![1, 2, 3].into());
         assert!(token.is_literal());
     }
 
@@ -319,29 +307,29 @@ mod tests {
 
     #[test]
     fn delta_token_empty_literal_byte_len_is_zero() {
-        let token = DeltaToken::Literal(vec![]);
+        let token = DeltaToken::Literal(vec![].into());
         assert_eq!(token.byte_len(), 0);
     }
 
     #[test]
     fn delta_token_clone() {
-        let token = DeltaToken::Literal(vec![1, 2, 3]);
+        let token = DeltaToken::Literal(vec![1, 2, 3].into());
         let cloned = token.clone();
         assert_eq!(token, cloned);
     }
 
     #[test]
     fn delta_token_debug() {
-        let token = DeltaToken::Literal(vec![1, 2, 3]);
+        let token = DeltaToken::Literal(vec![1, 2, 3].into());
         let debug = format!("{token:?}");
         assert!(debug.contains("Literal"));
     }
 
     #[test]
     fn delta_token_eq() {
-        let a = DeltaToken::Literal(vec![1, 2, 3]);
-        let b = DeltaToken::Literal(vec![1, 2, 3]);
-        let c = DeltaToken::Literal(vec![4, 5, 6]);
+        let a = DeltaToken::Literal(vec![1, 2, 3].into());
+        let b = DeltaToken::Literal(vec![1, 2, 3].into());
+        let c = DeltaToken::Literal(vec![4, 5, 6].into());
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
@@ -349,7 +337,7 @@ mod tests {
     #[test]
     fn delta_script_new_and_accessors() {
         let tokens = vec![
-            DeltaToken::Literal(vec![1, 2, 3]),
+            DeltaToken::Literal(vec![1, 2, 3].into()),
             DeltaToken::Copy { index: 0, len: 10 },
         ];
         let script = DeltaScript::new(tokens, 13, 3);
@@ -368,13 +356,13 @@ mod tests {
 
     #[test]
     fn delta_script_is_empty_false_for_non_empty() {
-        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1])], 1, 1);
+        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1].into())], 1, 1);
         assert!(!script.is_empty());
     }
 
     #[test]
     fn delta_script_into_tokens() {
-        let tokens = vec![DeltaToken::Literal(vec![1, 2, 3])];
+        let tokens = vec![DeltaToken::Literal(vec![1, 2, 3].into())];
         let script = DeltaScript::new(tokens.clone(), 3, 3);
         let result = script.into_tokens();
         assert_eq!(result, tokens);
@@ -382,7 +370,7 @@ mod tests {
 
     #[test]
     fn delta_script_copy_bytes_all_literal() {
-        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1, 2, 3])], 3, 3);
+        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1, 2, 3].into())], 3, 3);
         assert_eq!(script.copy_bytes(), 0);
     }
 
@@ -394,7 +382,7 @@ mod tests {
 
     #[test]
     fn delta_script_clone() {
-        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1])], 1, 1);
+        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1].into())], 1, 1);
         let cloned = script.clone();
         assert_eq!(script, cloned);
     }
@@ -448,8 +436,8 @@ mod tests {
 
         let script = DeltaScript::new(
             vec![
-                DeltaToken::Literal(b"hello ".to_vec()),
-                DeltaToken::Literal(b"world".to_vec()),
+                DeltaToken::Literal(b"hello ".to_vec().into()),
+                DeltaToken::Literal(b"world".to_vec().into()),
             ],
             11,
             11,

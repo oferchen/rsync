@@ -251,7 +251,7 @@ fn single_literal_inserted_correctly() {
 
     let literal_data = b"Hello, World!";
     let script = DeltaScript::new(
-        vec![DeltaToken::Literal(literal_data.to_vec())],
+        vec![DeltaToken::Literal(literal_data.to_vec().into())],
         literal_data.len() as u64,
         literal_data.len() as u64,
     );
@@ -276,9 +276,9 @@ fn multiple_consecutive_literals() {
 
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Literal(literal1.to_vec()),
-            DeltaToken::Literal(literal2.to_vec()),
-            DeltaToken::Literal(literal3.to_vec()),
+            DeltaToken::Literal(literal1.to_vec().into()),
+            DeltaToken::Literal(literal2.to_vec().into()),
+            DeltaToken::Literal(literal3.to_vec().into()),
         ],
         total_len as u64,
         total_len as u64,
@@ -300,7 +300,7 @@ fn large_literal_insertion() {
     // Create a large literal (larger than typical I/O buffer)
     let literal_data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
     let script = DeltaScript::new(
-        vec![DeltaToken::Literal(literal_data.clone())],
+        vec![DeltaToken::Literal(literal_data.clone().into())],
         literal_data.len() as u64,
         literal_data.len() as u64,
     );
@@ -320,9 +320,9 @@ fn empty_literal_tokens() {
 
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Literal(b"Before".to_vec()),
-            DeltaToken::Literal(vec![]),
-            DeltaToken::Literal(b"After".to_vec()),
+            DeltaToken::Literal(b"Before".to_vec().into()),
+            DeltaToken::Literal(vec![].into()),
+            DeltaToken::Literal(b"After".to_vec().into()),
         ],
         11,
         11,
@@ -348,12 +348,12 @@ fn alternating_delta_and_literal() {
 
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Literal(literal1.to_vec()),
+            DeltaToken::Literal(literal1.to_vec().into()),
             DeltaToken::Copy {
                 index: 0,
                 len: block_len,
             },
-            DeltaToken::Literal(literal2.to_vec()),
+            DeltaToken::Literal(literal2.to_vec().into()),
         ],
         total_len as u64,
         (literal1.len() + literal2.len()) as u64,
@@ -386,7 +386,7 @@ fn complex_delta_literal_interleaving() {
 
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Literal(literal1.to_vec()),
+            DeltaToken::Literal(literal1.to_vec().into()),
             DeltaToken::Copy {
                 index: 0,
                 len: block_len,
@@ -395,12 +395,12 @@ fn complex_delta_literal_interleaving() {
                 index: 1,
                 len: block_len,
             },
-            DeltaToken::Literal(literal2.to_vec()),
+            DeltaToken::Literal(literal2.to_vec().into()),
             DeltaToken::Copy {
                 index: 2,
                 len: block_len,
             },
-            DeltaToken::Literal(literal3.to_vec()),
+            DeltaToken::Literal(literal3.to_vec().into()),
         ],
         total_len as u64,
         (literal1.len() + literal2.len() + literal3.len()) as u64,
@@ -438,7 +438,7 @@ fn literal_between_sequential_blocks() {
                 index: 0,
                 len: block_len,
             },
-            DeltaToken::Literal(literal.to_vec()),
+            DeltaToken::Literal(literal.to_vec().into()),
             DeltaToken::Copy {
                 index: 1,
                 len: block_len,
@@ -601,7 +601,7 @@ fn only_literals_no_delta_blocks() {
 
     let literal_data = b"This is only literal data, no blocks referenced.";
     let script = DeltaScript::new(
-        vec![DeltaToken::Literal(literal_data.to_vec())],
+        vec![DeltaToken::Literal(literal_data.to_vec().into())],
         literal_data.len() as u64,
         literal_data.len() as u64,
     );

@@ -82,9 +82,6 @@ pub(super) fn apply_whole_file_delta(
             DeltaToken::Literal(data) => {
                 output.write_all(data)?;
             }
-            DeltaToken::LiteralSlice(data) => {
-                output.write_all(data)?;
-            }
             DeltaToken::Copy { .. } => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -110,7 +107,7 @@ pub(super) fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript<'static> {
                 let len = data.len() as u64;
                 total_bytes += len;
                 literal_bytes += len;
-                tokens.push(DeltaToken::Literal(data));
+                tokens.push(DeltaToken::Literal(data.into()));
             }
 
             DeltaOp::Copy {

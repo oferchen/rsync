@@ -133,8 +133,7 @@ fn script_to_ops(script: &DeltaScript, block_len: usize) -> Vec<DeltaOp> {
     let mut ops = Vec::with_capacity(script.tokens().len());
     for token in script.tokens() {
         match token {
-            DeltaToken::Literal(data) => ops.push(DeltaOp::Literal(data.clone())),
-            DeltaToken::LiteralSlice(data) => ops.push(DeltaOp::Literal(data.to_vec())),
+            DeltaToken::Literal(data) => ops.push(DeltaOp::Literal(data.to_vec())),
             DeltaToken::Copy { index, len } => {
                 if block_len > 0 && *len > block_len && *len % block_len == 0 {
                     let run = *len / block_len;
@@ -469,7 +468,7 @@ fn compact_rolling_key_preserves_wire_bytes() {
         .iter()
         .filter_map(|t| match t {
             DeltaToken::Copy { index, .. } => Some(*index),
-            DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_) => None,
+            DeltaToken::Literal(_) => None,
         })
         .collect();
     assert_eq!(

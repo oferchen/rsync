@@ -90,18 +90,10 @@ fn pipeline_for(role: ServerRole) -> TransferPipeline {
 /// trailing-slash spelling (`src/`) so the transfer root is the directory's
 /// CONTENTS and the dot entry is emitted, as in the measured cells.
 fn build_fixture(scratch: &TempDir) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let src = scratch.path().join("src");
     fs::create_dir_all(src.join("sub")).expect("mkdir src/sub");
     fs::write(src.join("a.txt"), b"hello\n").expect("write a.txt");
     fs::write(src.join("sub").join("b.txt"), b"world\n").expect("write b.txt");
-    let _ = fs::set_permissions(src.join("a.txt"), fs::Permissions::from_mode(0o644));
-    let _ = fs::set_permissions(
-        src.join("sub").join("b.txt"),
-        fs::Permissions::from_mode(0o644),
-    );
-    let _ = fs::set_permissions(src.join("sub"), fs::Permissions::from_mode(0o755));
-    let _ = fs::set_permissions(&src, fs::Permissions::from_mode(0o755));
     PathBuf::from(format!("{}/", src.display()))
 }
 

@@ -66,8 +66,8 @@ fn apply_whole_file_delta_accepts_only_literals() {
     let output_path = temp_dir.path().join("output.txt");
 
     let tokens = vec![
-        DeltaToken::Literal(b"Hello, ".to_vec()),
-        DeltaToken::Literal(b"world!".to_vec()),
+        DeltaToken::Literal(b"Hello, ".to_vec().into()),
+        DeltaToken::Literal(b"world!".to_vec().into()),
     ];
     let script = DeltaScript::new(tokens, 13, 13);
 
@@ -85,7 +85,7 @@ fn apply_whole_file_delta_rejects_copy_operations() {
     let output_path = temp_dir.path().join("output.txt");
 
     let tokens = vec![
-        DeltaToken::Literal(b"data".to_vec()),
+        DeltaToken::Literal(b"data".to_vec().into()),
         DeltaToken::Copy {
             index: 0,
             len: 1024,
@@ -122,7 +122,7 @@ fn apply_whole_file_delta_handles_large_literal() {
     let output_path = temp_dir.path().join("output.txt");
 
     let large_data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
-    let tokens = vec![DeltaToken::Literal(large_data.clone())];
+    let tokens = vec![DeltaToken::Literal(large_data.clone().into())];
     let script = DeltaScript::new(tokens, 65536, 65536);
 
     apply_whole_file_delta(&output_path, &script).unwrap();
@@ -139,9 +139,9 @@ fn apply_whole_file_delta_concatenates_multiple_literals() {
     let output_path = temp_dir.path().join("output.txt");
 
     let tokens = vec![
-        DeltaToken::Literal(b"part1_".to_vec()),
-        DeltaToken::Literal(b"part2_".to_vec()),
-        DeltaToken::Literal(b"part3".to_vec()),
+        DeltaToken::Literal(b"part1_".to_vec().into()),
+        DeltaToken::Literal(b"part2_".to_vec().into()),
+        DeltaToken::Literal(b"part3".to_vec().into()),
     ];
     let script = DeltaScript::new(tokens, 17, 17);
 

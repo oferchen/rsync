@@ -476,7 +476,7 @@ fn single_byte_at_start_of_input() {
 /// Verifies that DeltaToken correctly reports single-byte literal length.
 #[test]
 fn delta_token_single_byte_literal() {
-    let literal = DeltaToken::Literal(vec![0x42]);
+    let literal = DeltaToken::Literal(vec![0x42].into());
     assert_eq!(
         literal.byte_len(),
         1,
@@ -614,7 +614,7 @@ fn apply_delta_single_byte_literal() {
     let index = build_index(&basis).expect("index");
 
     // Manually construct a script with a single-byte literal
-    let script = engine::DeltaScript::new(vec![DeltaToken::Literal(vec![0x42])], 1, 1);
+    let script = engine::DeltaScript::new(vec![DeltaToken::Literal(vec![0x42].into())], 1, 1);
 
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, [0x42]);

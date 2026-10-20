@@ -402,7 +402,6 @@ fn k_two_smallest_fixture_emits_two_copy_tokens_then_literal() {
         .iter()
         .filter_map(|t| match t {
             DeltaToken::Literal(payload) => Some(payload.len()),
-            DeltaToken::LiteralSlice(payload) => Some(payload.len()),
             DeltaToken::Copy { .. } => None,
         })
         .sum();

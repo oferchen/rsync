@@ -1349,7 +1349,7 @@ mod compressed_delta_tests {
 
         let mut reconstructed = Vec::new();
         for op in &ops {
-            if let Some(data) = op.literal_data() {
+            if let protocol::wire::DeltaOp::Literal(data) = op {
                 reconstructed.extend_from_slice(data);
             }
         }
@@ -1408,7 +1408,6 @@ mod compressed_delta_tests {
         for op in &ops {
             match op {
                 protocol::wire::DeltaOp::Literal(data) => literals.extend_from_slice(data),
-
                 protocol::wire::DeltaOp::Copy { block_index, .. } => {
                     block_refs.push(*block_index);
                 }

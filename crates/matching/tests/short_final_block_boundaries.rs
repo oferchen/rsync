@@ -75,7 +75,7 @@ fn copy_lens(script: &DeltaScript) -> Vec<usize> {
         .iter()
         .filter_map(|token| match token {
             DeltaToken::Copy { len, .. } => Some(*len),
-            DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_) => None,
+            DeltaToken::Literal(_) => None,
         })
         .collect()
 }

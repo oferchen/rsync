@@ -51,7 +51,7 @@ fn wire_tokens(script: &DeltaScript) -> Vec<Option<u64>> {
     let mut out = Vec::new();
     for token in script.tokens() {
         match token {
-            DeltaToken::Literal(_) | DeltaToken::LiteralSlice(_) => out.push(None),
+            DeltaToken::Literal(_) => out.push(None),
             DeltaToken::Copy { index, len } => {
                 let blocks = len.div_ceil(BLOCK_LEN) as u64;
                 out.extend((0..blocks).map(|k| Some(index + k)));
