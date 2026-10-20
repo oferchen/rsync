@@ -871,6 +871,32 @@ fn process_approved_module(
     // is read here, so nothing in this statement depends on paths the chroot
     // or the uid drop has since taken away.
     config.daemon_filter_rules = daemon_filter_rules;
+    // upstream: options.c:1620-1656 - the daemon's `parse_arguments()` applies
+    // the filter options a client puts in the server argv (reachable with
+    // `-M`). It runs after the module root is entered and privileges are
+    // dropped, which is when these files are read here too, and every one is
+    // gated by the module's own rules installed above.
+    let module_root = config
+        .connection
+        .daemon_module_root
+        .clone()
+        .unwrap_or_else(|| config_module.path.clone());
+    match build_argv_filter_rules(&client_args, &config.daemon_filter_rules, &module_root) {
+        Ok(rules) => config.argv_filter_rules = rules,
+        Err(refusal) => {
+            refuse_argv_filters(ctx, &refusal, negotiated_protocol, &client_args)?;
+            let host_owned = ctx.host_display().to_owned();
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                &host_owned,
+                auth_user.as_deref(),
+                &client_args,
+                MODULE_ABORT_EXIT_CODE,
+            );
+            return Ok(());
+        }
+    }
 
     // LSM-CAP.3: drop every Linux capability not required by this module
     // before Landlock engages. The worker process inherits the resulting

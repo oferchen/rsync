@@ -254,3 +254,23 @@ fn forwarded_exclude_protects_a_file_from_push_delete() {
     );
     assert!(!module.join("zap").exists(), "control: --delete ran");
 }
+
+#[test]
+fn exclude_from_through_a_symlink_leaving_the_module_is_refused() {
+    // `link` sits in the module but points at a rules file outside it that
+    // would exclude `keep`. upstream confines the open to the module root
+    // (exclude.c:1686-1690), so the read fails and the session ends.
+    let fixture = Fixture::new();
+    let outside = fixture.temp.path().join("outside");
+    fs::create_dir_all(&outside).expect("create outside");
+    fs::write(outside.join("rules"), b"- keep\n").expect("write outside rules");
+    std::os::unix::fs::symlink(outside.join("rules"), fixture.module().join("link"))
+        .expect("plant symlink");
+    let (output, dest) = fixture.pull(&["-M--exclude-from=link"]);
+    assert!(
+        !output.status.success(),
+        "the daemon read a file outside the module through `link`: {}",
+        stderr(&output)
+    );
+    assert!(names(&dest).is_empty(), "nothing may be transferred");
+}
