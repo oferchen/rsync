@@ -92,6 +92,11 @@ pub(crate) struct RuntimeOptions {
     /// under load. Global-only, like the other QUIC directives.
     #[cfg(feature = "quic")]
     quic_retry: Option<rsync_io::quic::RetryPolicy>,
+    /// QUIC listener addresses from the `quic address` global directive (oc
+    /// extension). `None` means the QUIC listener binds the TCP listener's
+    /// addresses (dual-stack by default). Global-only.
+    #[cfg(feature = "quic")]
+    quic_address: Option<Vec<IpAddr>>,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
     syslog_facility: Option<String>,
@@ -210,6 +215,8 @@ impl Default for RuntimeOptions {
             quic_port: None,
             #[cfg(feature = "quic")]
             quic_retry: None,
+            #[cfg(feature = "quic")]
+            quic_address: None,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
             syslog_facility: None,

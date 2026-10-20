@@ -47,7 +47,7 @@ impl RuntimeOptions {
     /// docs/design/quic-transport-policy.md (Decision, daemon-side config) is
     /// not yet parsed, so this interim predicate treats QUIC as requested when
     /// the operator configured any QUIC directive: a certificate path, a key
-    /// path, a client-auth CA path, an explicit `quic port`, or `quic retry`. A daemon with no QUIC directives never
+    /// path, a client-auth CA path, an explicit `quic port`, `quic retry`, or `quic address`. A daemon with no QUIC directives never
     /// opens the UDP socket, so a default `--all-features` build stays TCP-only
     /// and byte-identical. When the enable directive lands, this is the single
     /// seam to consult it instead.
@@ -69,6 +69,7 @@ impl RuntimeOptions {
             ("quic client ca file", self.quic_client_ca_file.is_some()),
             ("quic port", self.quic_port.is_some()),
             ("quic retry", self.quic_retry.is_some()),
+            ("quic address", self.quic_address.is_some()),
         ]
         .into_iter()
         .find_map(|(directive, set)| set.then_some(directive))
@@ -104,6 +105,13 @@ impl RuntimeOptions {
     #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
     pub(crate) fn effective_quic_port(&self) -> u16 {
         self.quic_port.unwrap_or(self.port)
+    }
+
+    /// Returns the `quic address` list the QUIC listener binds instead of the
+    /// TCP listener's addresses, or `None` when unset.
+    #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
+    pub(crate) fn quic_address(&self) -> Option<&[IpAddr]> {
+        self.quic_address.as_deref()
     }
 
     /// Returns when the QUIC listener answers a new client with a stateless

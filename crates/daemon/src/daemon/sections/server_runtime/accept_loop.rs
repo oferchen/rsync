@@ -52,7 +52,7 @@ fn serve_connections(
     // than when the QUIC front starts, where a failure would leave TCP serving
     // with no QUIC listener.
     #[cfg(all(unix, feature = "quic"))]
-    let quic_bind: Option<(u16, QuicServerSetup)> = {
+    let quic_bind: Option<(u16, Option<Vec<IpAddr>>, QuicServerSetup)> = {
         let fatal = |reason: String| {
             DaemonError::new(
                 FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -65,6 +65,7 @@ fn serve_connections(
         match options.resolve_quic_identity() {
             Some(identity) => Some((
                 options.effective_quic_port(),
+                options.quic_address().map(<[IpAddr]>::to_vec),
                 load_quic_setup(&identity)
                     .map_err(fatal)?
                     .with_admission(options.quic_retry_policy(), options.quic_incoming_limits()),
@@ -251,36 +252,35 @@ fn serve_connections(
     }
 
     // QUIC/UDP listener (oc extension): bind the UDP sockets alongside the TCP
-    // listeners, over the identical `resolve_bind_addresses` set, while
+    // listeners, on `quic address` or else the `resolve_bind_addresses` set, while
     // CAP_NET_BIND_SERVICE is still held (the default port 873 is privileged).
     // Only the raw sockets are bound here; each is turned into a live
     // QUIC front process forked just before the accept loop, which terminates
     // QUIC in its own threads so this process stays single-threaded. See
     // `start_quic_front`.
     #[cfg(all(unix, feature = "quic"))]
-    let quic_sockets: Vec<std::net::UdpSocket> = if let Some((quic_port, _)) = &quic_bind {
-        match bind_quic_sockets_per_family(&bind_addresses, *quic_port, log_sink.as_ref()) {
-            Ok(sockets) => {
-                if let Some(log) = log_sink.as_ref() {
-                    let addrs: Vec<String> = sockets
-                        .iter()
-                        .filter_map(|s| s.local_addr().ok())
-                        .map(|a| a.to_string())
-                        .collect();
-                    let text = format!("QUIC listener bound on {}", addrs.join(" and "));
-                    let message = rsync_info!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
+    let quic_sockets: Vec<std::net::UdpSocket> =
+        if let Some((quic_port, quic_address, _)) = &quic_bind {
+            let plan = resolve_quic_bind_addresses(quic_address.as_deref(), &bind_addresses);
+            match bind_quic_sockets_per_family(&plan, *quic_port, log_sink.as_ref()) {
+                Ok(sockets) => {
+                    if let Some(log) = log_sink.as_ref() {
+                        let addrs: Vec<String> = sockets
+                            .iter()
+                            .filter_map(|s| s.local_addr().ok())
+                            .map(|a| a.to_string())
+                            .collect();
+                        let text = format!("QUIC listener bound on {}", addrs.join(" and "));
+                        let message = rsync_info!(text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                    sockets
                 }
-                sockets
+                Err((requested_addr, error)) => return Err(bind_error(requested_addr, error)),
             }
-            Err(error) => {
-                let requested_addr = SocketAddr::new(bind_addresses[0], *quic_port);
-                return Err(bind_error(requested_addr, error));
-            }
-        }
-    } else {
-        Vec::new()
-    };
+        } else {
+            Vec::new()
+        };
 
     // CAP_NET_BIND_SERVICE is no longer needed once the listener
     // has bound. Drop it from effective, permitted, and bounding sets so a
@@ -406,7 +406,7 @@ fn serve_connections(
     // single-threaded for every session fork that follows.
     #[cfg(all(unix, feature = "quic"))]
     let quic_front = match quic_bind.as_ref() {
-        Some((_, quic_setup)) if !quic_sockets.is_empty() => {
+        Some((_, _, quic_setup)) if !quic_sockets.is_empty() => {
             use std::os::fd::AsRawFd;
             let tcp_fds: Vec<std::os::fd::RawFd> =
                 listeners.iter().map(AsRawFd::as_raw_fd).collect();

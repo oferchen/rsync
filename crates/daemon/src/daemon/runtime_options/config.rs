@@ -89,6 +89,12 @@ impl RuntimeOptions {
         if let Some((retry, _origin)) = startup.quic_retry {
             self.quic_retry = Some(retry);
         }
+        // QUIC listener addresses (oc extension). Unset follows the TCP
+        // listener's addresses.
+        #[cfg(feature = "quic")]
+        if let Some((addresses, _origin)) = startup.quic_address {
+            self.quic_address = Some(addresses);
+        }
 
         if let Some((secrets, origin)) = parsed.global_secrets_file {
             self.set_global_secrets_file(secrets, &origin)?;

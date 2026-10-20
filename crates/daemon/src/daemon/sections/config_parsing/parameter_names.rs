@@ -80,6 +80,8 @@ const PARAMETER_NAMES: &[&str] = &[
     "quicport",
     #[cfg(feature = "quic")]
     "quicretry",
+    #[cfg(feature = "quic")]
+    "quicaddress",
 ];
 
 /// Reports whether `name` is a daemon parameter, compared the way loadparm.c's

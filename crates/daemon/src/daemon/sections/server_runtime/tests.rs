@@ -2103,7 +2103,8 @@ fn bind_quic_listeners_binds_dual_stack_loopback() {
     ];
 
     let sockets =
-        bind_quic_sockets_per_family(&bind_addresses, 0, None).expect("dual-stack QUIC bind");
+        bind_quic_sockets_per_family(&resolve_quic_bind_addresses(None, &bind_addresses), 0, None)
+            .expect("dual-stack QUIC bind");
 
     assert_eq!(sockets.len(), 2, "both families must bind a QUIC socket");
     let bound: Vec<SocketAddr> = sockets
@@ -2129,8 +2130,9 @@ fn bind_quic_listeners_falls_back_from_ipv6_to_ipv4() {
     let reachable_v4 = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
     let bind_addresses = vec![unreachable_v6, reachable_v4];
 
-    let sockets = bind_quic_sockets_per_family(&bind_addresses, 0, None)
-        .expect("IPv4 fallback must bind when IPv6 is unreachable");
+    let sockets =
+        bind_quic_sockets_per_family(&resolve_quic_bind_addresses(None, &bind_addresses), 0, None)
+            .expect("IPv4 fallback must bind when IPv6 is unreachable");
 
     assert_eq!(sockets.len(), 1, "only the reachable IPv4 family binds");
     let bound = sockets[0].local_addr().expect("local addr");
@@ -2147,8 +2149,69 @@ fn bind_quic_listeners_single_family_propagates_error() {
         0x2001, 0x0db8, 0, 0, 0, 0, 0, 1,
     ))];
 
-    bind_quic_sockets_per_family(&bind_addresses, 0, None)
+    bind_quic_sockets_per_family(&resolve_quic_bind_addresses(None, &bind_addresses), 0, None)
         .expect_err("the single unreachable address must fail the QUIC bind");
+}
+
+/// The default dual-stack wildcard the TCP listener resolves when nothing
+/// overrides it.
+#[cfg(all(unix, feature = "quic"))]
+fn default_dual_stack() -> Vec<IpAddr> {
+    resolve_bind_addresses(DEFAULT_BIND_ADDRESS, false, None, false, None)
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_bind_addresses_unset_follow_the_dual_stack_tcp_set() {
+    // Without `quic address` the QUIC listener stays dual-stack like TCP and
+    // keeps the per-family fallback.
+    let tcp = default_dual_stack();
+    assert_eq!(
+        tcp,
+        vec![
+            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        ]
+    );
+    assert_eq!(
+        resolve_quic_bind_addresses(None, &tcp),
+        QuicBindPlan {
+            addresses: tcp.clone(),
+            tolerate_family_failure: true,
+        }
+    );
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_bind_addresses_set_replace_the_tcp_set_exactly() {
+    // `quic address` wins over the TCP addresses, keeps its own order, and
+    // every entry must bind, even a dual-stack pair.
+    let loopback = [
+        IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+    ];
+    assert_eq!(
+        resolve_quic_bind_addresses(Some(&loopback), &default_dual_stack()),
+        QuicBindPlan {
+            addresses: loopback.to_vec(),
+            tolerate_family_failure: false,
+        }
+    );
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_bind_explicit_address_that_fails_is_fatal_and_named() {
+    // An operator-named address that cannot bind stops the daemon instead of
+    // being skipped, and the error names that address. The same pair without
+    // `quic address` would fall back (see the test above).
+    let unreachable_v6 = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1));
+    let explicit = [IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), unreachable_v6];
+    let plan = resolve_quic_bind_addresses(Some(&explicit), &default_dual_stack());
+    let (failed, _error) = bind_quic_sockets_per_family(&plan, 0, None)
+        .expect_err("an explicit address that cannot bind must be fatal");
+    assert_eq!(failed.ip(), unreachable_v6);
 }
 
 /// The shared, transport-agnostic per-connection context used by the parity
