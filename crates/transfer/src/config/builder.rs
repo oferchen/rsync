@@ -656,6 +656,7 @@ impl ServerConfigBuilder {
             backup_dir: self.backup_dir.clone(),
             backup_suffix: self.backup_suffix.clone(),
             daemon_filter_rules: self.daemon_filter_rules.clone(),
+            argv_filter_rules: Vec::new(),
             file_selection: self.file_selection.clone(),
             do_stats: self.do_stats,
             temp_dir: self.temp_dir.clone(),

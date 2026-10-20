@@ -645,6 +645,19 @@ pub struct ServerConfig {
     ///   `lp_filter()`, `lp_include()`, `lp_exclude()`, `lp_include_from()`,
     ///   `lp_exclude_from()` before the transfer starts.
     pub daemon_filter_rules: Vec<FilterRuleWireFormat>,
+    /// Filter rules the client passed in the daemon's server argv.
+    ///
+    /// A client reaches these with `-M` / `--remote-option`: `--filter`,
+    /// `--exclude`, `--include`, `--exclude-from`, `--include-from` and `-F`.
+    /// The daemon builds them already confined to the module and gated by
+    /// [`Self::daemon_filter_rules`]; they rank after those and before the
+    /// rules the client later sends on the filter list.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:1620-1656` - `parse_arguments()` adds them to `filter_list`
+    ///   before `recv_filter_list()` (`exclude.c:1971`) appends the stream.
+    pub argv_filter_rules: Vec<FilterRuleWireFormat>,
     /// File selection and filtering configuration.
     pub file_selection: FileSelectionConfig,
     /// Whether `--stats` was requested, enabling detailed transfer statistics.
@@ -853,6 +866,7 @@ impl Default for ServerConfig {
             backup_dir: None,
             backup_suffix: None,
             daemon_filter_rules: Vec::new(),
+            argv_filter_rules: Vec::new(),
             file_selection: FileSelectionConfig::default(),
             do_stats: false,
             temp_dir: None,
@@ -864,6 +878,45 @@ impl Default for ServerConfig {
             group_mapping: None,
             munge_symlinks: false,
         }
+    }
+}
+
+impl ServerConfig {
+    /// The rules a server consults: the module's own, then the client's argv
+    /// rules, then the filter list it received.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:933-952` builds `daemon_filter_list` first;
+    ///   `options.c:1620-1656` and then `exclude.c:1971` fill `filter_list`
+    ///   in argv order, then stream order.
+    #[must_use]
+    pub fn server_filter_rules(
+        &self,
+        received: Vec<FilterRuleWireFormat>,
+    ) -> Vec<FilterRuleWireFormat> {
+        let mut rules = self.daemon_filter_rules.clone();
+        rules.extend(self.client_filter_rules(received));
+        rules
+    }
+
+    /// The client-controlled rules alone: argv rules, then the received list.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1615-1620` - the received-name re-check consults
+    ///   `filter_list`, which holds exactly these.
+    #[must_use]
+    pub fn client_filter_rules(
+        &self,
+        received: Vec<FilterRuleWireFormat>,
+    ) -> Vec<FilterRuleWireFormat> {
+        if self.argv_filter_rules.is_empty() {
+            return received;
+        }
+        let mut rules = self.argv_filter_rules.clone();
+        rules.extend(received);
+        rules
     }
 }
 

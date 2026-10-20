@@ -9,6 +9,8 @@ include!("module_access/client_args.rs");
 
 include!("module_access/helpers.rs");
 
+include!("module_access/argv_filters.rs");
+
 include!("module_access/request.rs");
 
 include!("module_access/transfer.rs");

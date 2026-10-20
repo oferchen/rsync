@@ -217,9 +217,9 @@ fn pull_anchored_rule_is_matched_on_the_module_relative_path() {
 
 /// Pushes with `--delete` and `-M<option>`, which forwards `<option>` into the
 /// daemon's server argv rather than the filter-list channel, into a module
-/// that hides `secret`. Reports whether `decoy` survived, i.e. whether the
-/// daemon read `secret`.
-fn decoy_survives_argv_option(option: &str) -> bool {
+/// that hides `secret`. Returns the client's output and whether `decoy`
+/// survived, i.e. whether the daemon read `secret`.
+fn push_with_argv_option(option: &str) -> (std::process::Output, bool) {
     let temp = TempDir::new().expect("tempdir");
     let src = temp.path().join("src");
     let module = temp.path().join("mod");
@@ -249,32 +249,42 @@ fn decoy_survives_argv_option(option: &str) -> bool {
         .env("OC_RSYNC_FALLBACK", "0")
         .output()
         .expect("run client");
-    assert!(
-        output.status.success(),
-        "push must complete: status {:?}, stderr {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    path_exists(&module.join("decoy"))
+    let decoy_survived = path_exists(&module.join("decoy"));
+    (output, decoy_survived)
 }
 
-/// Defence in depth: filter options a client forwards into the daemon's
-/// server argv never make the daemon read a merge or pattern file its module
-/// filter hides. Upstream reaches the same outcome by gating the argv rules
-/// (`exclude.c:1638-1659`, `options.c:1635-1652` refuses a daemon-excluded
-/// `--exclude-from`); oc's daemon does not apply argv filter options at all
-/// (`client_args/long_form_args.rs` default arm), so neither path can read
-/// `secret`.
+/// Filter options a client forwards into the daemon's server argv with `-M`
+/// never make the daemon read a file its module filter hides.
+///
+/// upstream: a forwarded dir-merge rule is gated like a stream one
+/// (`exclude.c:1638-1659`), so the push runs and `decoy` is deleted; a
+/// forwarded `--exclude-from`/`--include-from` naming a hidden file rejects the
+/// options before anything is read (`options.c:1636-1652`, `options.c:2684`).
+/// MEASURED against rsync 3.5.1: rc 0 with `decoy` deleted, and rc 4 with
+/// "Your options have been rejected by the server." respectively.
 #[test]
 fn argv_filter_options_never_read_a_hidden_file() {
-    for option in [
-        "--filter=: secret",
-        "--exclude-from=secret",
-        "--include-from=secret",
-    ] {
+    let (output, decoy_survived) = push_with_argv_option("--filter=: secret");
+    assert!(
+        output.status.success(),
+        "the push must complete: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !decoy_survived,
+        "the daemon read `secret` through the argv dir-merge rule (CVE-2026-53786)"
+    );
+    for option in ["--exclude-from=secret", "--include-from=secret"] {
+        let (output, _) = push_with_argv_option(option);
         assert!(
-            !decoy_survives_argv_option(option),
-            "the daemon read `secret` through the argv option `{option}` (CVE-2026-53786)"
+            !output.status.success(),
+            "`{option}` names a hidden file and must reject the options"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("Your options have been rejected by the server."),
+            "`{option}` must be refused with upstream's message: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }

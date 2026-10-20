@@ -1008,18 +1008,13 @@ impl ReceiverContext {
         self.recheck_client_filter = if daemon_rules.is_empty() {
             None
         } else {
-            let (client_set, _merge_configs) = parse_wire_filters_for_receiver(&wire_rules)?;
+            let client_rules = self.config.client_filter_rules(wire_rules.clone());
+            let (client_set, _merge_configs) = parse_wire_filters_for_receiver(&client_rules)?;
             Some(client_set)
         };
-        let combined = if daemon_rules.is_empty() {
-            wire_rules
-        } else if wire_rules.is_empty() {
-            daemon_rules.clone()
-        } else {
-            let mut combined = daemon_rules.clone();
-            combined.extend(wire_rules);
-            combined
-        };
+        // upstream: options.c:1620-1656 - rules the client passed in the
+        // server argv (via `-M`) sit in `filter_list` ahead of these.
+        let combined = self.config.server_filter_rules(wire_rules);
 
         // Compile the combined rules into the receiver's filter chains.
         // upstream: generator.c:delete_in_dir() - is_excluded() before deletion

@@ -266,6 +266,7 @@ fn build_daemon_filter_rules(
     module: &ModuleRuntime,
 ) -> Result<Vec<FilterRuleWireFormat>, io::Error> {
     let mut rules = Vec::new();
+    let merges = ModuleConfigMerges { root: &module.path };
 
     // 1. filter rules - full filter syntax (e.g., "- *.tmp", "+ *.rs")
     // upstream: clientserver.c:933-935 - parse_filter_str(&daemon_filter_list, lp_filter(i),
@@ -291,7 +292,7 @@ fn build_daemon_filter_rules(
     // and is what `parse_merge_name()` prepends to a slash-bearing relative name.
     for filter_str in &module.filter {
         for token in split_filter_tokens(filter_str.trim()) {
-            push_token_rules(&mut rules, &token, &module.path, 0, RuleXflags::Daemon)?;
+            push_token_rules(&mut rules, &token, &merges, 0, RuleXflags::Daemon)?;
         }
     }
 
@@ -303,7 +304,12 @@ fn build_daemon_filter_rules(
         let name = path.display().to_string();
         for (pattern, line) in read_patterns_from_file(path)? {
             let source = filters::RuleSource::File { name: &name, line };
-            rules.push(old_prefix_record_rule(&pattern, true, &source)?);
+            rules.push(old_prefix_record_rule(
+                &pattern,
+                true,
+                &source,
+                RuleXflags::Daemon,
+            )?);
         }
     }
 
@@ -322,7 +328,12 @@ fn build_daemon_filter_rules(
         let name = path.display().to_string();
         for (pattern, line) in read_patterns_from_file(path)? {
             let source = filters::RuleSource::File { name: &name, line };
-            rules.push(old_prefix_record_rule(&pattern, false, &source)?);
+            rules.push(old_prefix_record_rule(
+                &pattern,
+                false,
+                &source,
+                RuleXflags::Daemon,
+            )?);
         }
     }
 
@@ -373,12 +384,12 @@ const MAX_MERGE_DEPTH: usize = 32;
 fn push_token_rules(
     rules: &mut Vec<FilterRuleWireFormat>,
     token: &str,
-    root: &Path,
+    merges: &dyn MergeFileSource,
     depth: usize,
     xflags: RuleXflags,
 ) -> Result<(), io::Error> {
     if let Some(merge) = merge_rule(token, xflags).map_err(MalformedRule::into_io_error)? {
-        return push_merge_file_rules(rules, &merge, root, depth);
+        return push_merge_file_rules(rules, &merge, merges, depth);
     }
     if let Some(rule) =
         parse_daemon_filter_token(token, xflags).map_err(MalformedRule::into_io_error)?
@@ -611,7 +622,7 @@ fn scan_merge_modifiers(
 fn push_merge_file_rules(
     rules: &mut Vec<FilterRuleWireFormat>,
     merge: &MergeRule<'_>,
-    root: &Path,
+    merges: &dyn MergeFileSource,
     depth: usize,
 ) -> Result<(), io::Error> {
     if merge.exclude_self {
@@ -636,8 +647,6 @@ fn push_merge_file_rules(
         ));
     }
 
-    let path = merge_file_path(merge.name, root);
-
     // upstream: exclude.c:1639-1664. Before the open, `parse_filter_file` tests
     // the merge file's own name against `daemon_filter_list` and, when a rule
     // already in that list hides it, returns as if the file did not exist -
@@ -655,16 +664,9 @@ fn push_merge_file_rules(
     //   NOSUCHFILE`, with no self-exclude, is rc 5 on both.)
     // * `filter = - keep . MERGEF` -> the merge file is NOT hidden by `- keep`,
     //   so it IS read and `bait` is excluded.
-    if merge_file_hidden_by_daemon_rules(rules, &path, root) {
+    let Some(content) = merges.read(merge.name, rules)? else {
         return Ok(());
-    }
-
-    let content = read_filter_file_contents(&path).map_err(|err| {
-        io::Error::new(
-            err.kind(),
-            format!("failed to open exclude file '{}': {err}", path.display()),
-        )
-    })?;
+    };
 
     // upstream: exclude.c:1756-1809 cuts the file into records, and
     // `word_split` (raised by the `w` modifier) changes BOTH halves of that
@@ -690,13 +692,59 @@ fn push_merge_file_rules(
                 RuleXflags::MergeFile,
             ));
         } else {
-            push_token_rules(rules, record, root, depth + 1, RuleXflags::MergeFile)?;
+            push_token_rules(rules, record, merges, depth + 1, RuleXflags::MergeFile)?;
         }
     }
 
     Ok(())
 }
 
+/// Where the file an eager `merge` rule names comes from.
+///
+/// upstream: `parse_filter_file()` (`exclude.c:1601-1719`) is one function for
+/// every caller, but what its open may reach depends on who supplied the name:
+/// a module directive is operator configuration, while a rule in the client's
+/// argv is peer input. Each implementation owns that difference - how the name
+/// resolves, which list gates it, and how the file is opened - so the record
+/// parsing in [`push_merge_file_rules`] is shared.
+trait MergeFileSource {
+    /// Reads the merge file `name` names, or `Ok(None)` when the daemon's
+    /// filter hides it.
+    ///
+    /// `rules` is the list the merge rule is being added to. upstream treats a
+    /// hidden merge file as non-existent: no open, no `XFLG_FATAL_ERRORS`
+    /// exit, and so no fatal-vs-silent oracle (`exclude.c:1639-1664`).
+    ///
+    /// # Errors
+    ///
+    /// The open or read failed. `XFLG_FATAL_ERRORS` makes that fatal
+    /// (`exclude.c:1714-1719`).
+    fn read(&self, name: &str, rules: &[FilterRuleWireFormat]) -> io::Result<Option<String>>;
+}
+/// A merge file named by a module directive (`filter = merge FILE`).
+///
+/// upstream: `clientserver.c:933-935` parses the directive with the module
+/// root as `dirbuf`. The rules built so far ARE `daemon_filter_list`, so they
+/// are what gate the open, and the read takes the operator arm of the
+/// ownership walk rather than module confinement (`exclude.c:1677-1684`).
+struct ModuleConfigMerges<'a> {
+    /// The module root, upstream's `dirbuf` for this parse.
+    root: &'a Path,
+}
+impl MergeFileSource for ModuleConfigMerges<'_> {
+    fn read(&self, name: &str, rules: &[FilterRuleWireFormat]) -> io::Result<Option<String>> {
+        let path = merge_file_path(name, self.root);
+        if merge_file_hidden_by_daemon_rules(rules, &path, self.root) {
+            return Ok(None);
+        }
+        read_filter_file_contents(&path).map(Some).map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!("failed to open exclude file '{}': {err}", path.display()),
+            )
+        })
+    }
+}
 /// Answers upstream's pre-open `check_filter(&daemon_filter_list, ...)` gate.
 ///
 /// upstream: `exclude.c:1639-1664`. The name tested is the RESOLVED merge-file
@@ -880,6 +928,7 @@ fn old_prefix_record_rule(
     record: &str,
     template_include: bool,
     source: &filters::RuleSource<'_>,
+    xflags: RuleXflags,
 ) -> Result<FilterRuleWireFormat, io::Error> {
     let (pattern, is_include) = match old_prefix(record) {
         OldPrefix::Exclude => (&record[2..], false),
@@ -909,7 +958,7 @@ fn old_prefix_record_rule(
     if pattern.is_empty() {
         return Err(unexpected_end_of_filter_rule(record, source));
     }
-    Ok(build_pattern_rule(pattern, is_include, RuleXflags::Daemon))
+    Ok(build_pattern_rule(pattern, is_include, xflags))
 }
 
 /// Appends the rules a word-split `include` / `exclude` value expands to.
