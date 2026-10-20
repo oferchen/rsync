@@ -752,9 +752,12 @@ pub(crate) fn copy_sources(
                         // deletion is suppressed. A directory operand re-raising a
                         // vanish from inside its tree already reported it.
                         // full_fname() wraps the path in double quotes (util1.c:1528).
-                        if error.vanished_path() == Some(source.path()) {
+                        let error = if error.vanished_path() == Some(source.path()) {
                             eprintln!("file has vanished: \"{}\"", source.path().display());
-                        }
+                            error.reported()
+                        } else {
+                            error
+                        };
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
                         }
@@ -876,8 +879,12 @@ fn completed_run_exit_error(
         || context.source_read_error_occurred()
         || context.io_error_requires_partial_exit();
     match first_io_error {
+        Some(error) if !error.is_vanished_error() && error.is_reported() => {
+            Some(LocalCopyError::partial_transfer())
+        }
         Some(error) if !error.is_vanished_error() => Some(error),
         Some(_) if general => Some(LocalCopyError::partial_transfer()),
+        Some(vanished) if vanished.is_reported() => Some(LocalCopyError::vanished_summary()),
         Some(vanished) => Some(vanished),
         None if general => Some(LocalCopyError::partial_transfer()),
         None if skipped > 0 => Some(LocalCopyError::delete_limit_exceeded(skipped)),

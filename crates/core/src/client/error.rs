@@ -344,6 +344,17 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             .with_role(Role::Sender);
             ClientError::with_code(code, message)
         }
+        LocalCopyErrorKind::Vanished => {
+            // upstream: cleanup.c:215-216 maps IOERR_VANISHED to RERR_VANISHED;
+            // log.c:99 names it at warning level, from the sending half
+            // (main.c:1412), each vanish having been reported at its site.
+            let code = ExitCode::Vanished;
+            let message =
+                crate::rsync_warning!("some files vanished before they could be transferred")
+                    .with_code(code.as_i32())
+                    .with_role(Role::Sender);
+            ClientError::with_code(code, message)
+        }
         LocalCopyErrorKind::FilterSyntax { message } => {
             let code = ExitCode::Syntax;
             let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);

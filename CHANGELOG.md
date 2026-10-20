@@ -407,6 +407,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - `--list-only` no longer consults the destination (#8040)
 - Count `--delete-missing-args` entries in `--stats` as upstream does (#8043)
 - Show changed directories in local `-v` and `--out-format` output (#7946)
+- A local copy reports every source it cannot open as `send_files failed to open`, then ends with upstream's `some files/attrs were not transferred (see previous errors)` or `some files vanished before they could be transferred` summary; before, only the first failure was printed and later ones were lost (#PRNUM)
 
 **Embedded SSH**
 - `Host` pattern matching, `IdentitiesOnly`, `IdentityAgent`, tilde expansion, tokenising and first-obtained-wins precedence match OpenSSH (#7803, #7791, #7205, #7792, #7814, #7836, #7856)

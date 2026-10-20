@@ -679,9 +679,12 @@ fn copy_directory_recursive_inner(
                 // the warning names the vanished file once: a subdirectory
                 // frame re-raising its child's vanish must not report itself.
                 // full_fname() wraps the path in double quotes (util1.c:1528).
-                if error.vanished_path() == Some(planned.entry.path.as_path()) {
+                let error = if error.vanished_path() == Some(planned.entry.path.as_path()) {
                     eprintln!("file has vanished: \"{}\"", planned.entry.path.display());
-                }
+                    error.reported()
+                } else {
+                    error
+                };
                 if first_entry_io_error.is_none() {
                     first_entry_io_error = Some(error);
                 }

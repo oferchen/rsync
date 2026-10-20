@@ -148,7 +148,7 @@ pub(super) fn try_clone(
     let clone_method = {
         let reader = context
             .open_source_content(source)
-            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+            .map_err(|error| super::super::open::source_open_error(source, error))?;
         let fresh = fast_io::CloneFreshTimes {
             crtime: !metadata_options.crtimes(),
             mtime: !metadata_options.times(),

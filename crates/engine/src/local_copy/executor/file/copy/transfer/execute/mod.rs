@@ -45,7 +45,7 @@ use super::super::super::compute_backup_path;
 use super::super::super::guard::remove_incomplete_destination;
 use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
 use super::finalize::finalize_guard_and_metadata;
-use super::open::open_source_file;
+use super::open::{open_source_file, source_open_error};
 use super::write_strategy::{open_destination_writer, select_write_strategy};
 use super::{TransferFlags, TransferOutcome};
 
@@ -360,7 +360,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
 
     let mut reader = context
         .open_source_content(source)
-        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+        .map_err(|error| source_open_error(source, error))?;
 
     // The number of bytes to actually move, as opposed to `file_size`, which is
     // the length the scan recorded and which every decision above is made from.
