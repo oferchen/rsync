@@ -199,3 +199,32 @@ fn at_call(
         Err(io::Error::last_os_error())
     }
 }
+
+/// Runs `call` with a spelling of `path` that resolves through the pinned
+/// destination descriptor, for consumers that accept only a path - libacl's
+/// `acl_get_file()` behind the default-ACL read.
+///
+/// On Linux that spelling is the descriptor's `/proc/self/fd/N` magic link
+/// joined with the remainder, which the kernel resolves exactly as
+/// `fstatat(N, remainder)` would, so the consumer's own syscalls are anchored
+/// without changing in number. The descriptor is held for the duration of
+/// `call`, so the number cannot be reused under it. Elsewhere, when nothing is
+/// pinned, or when `/proc` is not mounted (a chroot without it), `call` gets
+/// `path` itself.
+pub fn with_anchored_path<T>(path: &Path, call: impl FnOnce(&Path) -> T) -> T {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        static PROC_FD_MOUNTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if let Some((fd, relative)) = crate::confinement::pinned_destination_relative(path)
+            && *PROC_FD_MOUNTED.get_or_init(|| Path::new("/proc/self/fd").is_dir())
+        {
+            let anchored = std::path::PathBuf::from(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+                .join(relative);
+            let result = call(&anchored);
+            drop(fd);
+            return result;
+        }
+    }
+    call(path)
+}
