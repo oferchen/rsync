@@ -47,28 +47,33 @@ pub fn read_fake_super_link(
     if on_disk.mode() & S_IFMT == S_IFLNK {
         return Ok(PathBuf::new());
     }
-    let is_link_placeholder = on_disk.mode() & S_IFMT == S_IFREG
-        && crate::fake_super::load_fake_super(link_path)
-            .ok()
-            .flatten()
-            .is_some_and(|stat| stat.mode & S_IFMT == S_IFLNK);
-    if !is_link_placeholder {
-        return Err(io::Error::new(
+    let not_a_link = || {
+        io::Error::new(
             io::ErrorKind::InvalidInput,
             "not a fake-super symlink placeholder",
-        ));
+        )
+    };
+    if on_disk.mode() & S_IFMT != S_IFREG {
+        return Err(not_a_link());
     }
-    let mut target = Vec::new();
-    fast_io::openat_via_sandbox_or_fallback(
+    let file = fast_io::openat_via_sandbox_or_fallback(
         sandbox,
         dest_dir,
         relative_path,
         link_path,
         libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
         0,
-    )?
-    .take(MAX_TARGET_LEN)
-    .read_to_end(&mut target)?;
+    )?;
+    let is_link_placeholder = file.metadata()?.is_file()
+        && crate::fake_super::load_fake_super_fd(&file)
+            .ok()
+            .flatten()
+            .is_some_and(|stat| stat.mode & S_IFMT == S_IFLNK);
+    if !is_link_placeholder {
+        return Err(not_a_link());
+    }
+    let mut target = Vec::new();
+    file.take(MAX_TARGET_LEN).read_to_end(&mut target)?;
     Ok(PathBuf::from(std::ffi::OsString::from_vec(target)))
 }
 

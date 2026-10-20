@@ -3996,3 +3996,99 @@ fn fake_super_local_copy_records_the_stat_of_a_read_only_file() {
         })
     );
 }
+
+// upstream: xattrs.c:1268-1297 - set_stat_xattr() works through a held
+// O_NOFOLLOW descriptor, so a directory swapped for a symlink to a tree
+// outside the destination cannot redirect the %stat write. The swap is
+// planted before the call: the path-based ops followed it on every run, so
+// no timing window is needed to show the escape.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_stat_refuses_a_parent_swapped_for_a_symlink() {
+    use crate::fake_super::{FakeSuperStat, load_fake_super};
+    use std::os::unix::fs::PermissionsExt;
+    let temp = test_support::create_tempdir();
+    if !fake_super_xattrs_supported(temp.path()) {
+        return;
+    }
+    let root = temp.path().join("root");
+    let outside = temp.path().join("outside");
+    fs::create_dir(&root).expect("create root");
+    fs::create_dir(&outside).expect("create outside");
+    let victim = outside.join("f");
+    fs::write(&victim, b"keep").expect("write victim");
+    fs::set_permissions(&victim, fs::Permissions::from_mode(0o644)).expect("chmod victim");
+    std::os::unix::fs::symlink(&outside, root.join("sub")).expect("swap sub for a symlink");
+    let owner = fs::metadata(&victim).expect("stat victim");
+    // 0644 needs no chmod, so only the xattr op can reach the victim.
+    let intended = FakeSuperStat {
+        mode: 0o100_644,
+        uid: owner.uid().wrapping_add(1),
+        gid: owner.gid(),
+        rdev: None,
+    };
+    let options = MetadataOptions::new()
+        .fake_super(true)
+        .with_destination_root(Some(std::sync::Arc::new(crate::DestinationRoot::new(
+            root.clone(),
+        ))));
+    // upstream: rsync.c:581-596 - neither the held pin nor the secure re-pin
+    // opens the leaf, so xattr_refuse skips the %stat ops; a 0644 file needs
+    // no chmod, so nothing else runs either.
+    let _ = apply_fake_super_stat(&root.join("sub").join("f"), &intended, &options, None);
+    assert_eq!(
+        load_fake_super(&victim).expect("read victim %stat"),
+        None,
+        "no %stat may land outside the destination"
+    );
+    assert_eq!(
+        fs::metadata(&victim)
+            .expect("stat victim")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644
+    );
+}
+
+// The leaf itself is held with O_NOFOLLOW: a destination swapped for a
+// symlink is not followed into its target.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_stat_does_not_follow_a_leaf_symlink() {
+    use crate::fake_super::{FakeSuperStat, load_fake_super};
+    use std::os::unix::fs::PermissionsExt;
+    let temp = test_support::create_tempdir();
+    if !fake_super_xattrs_supported(temp.path()) {
+        return;
+    }
+    let root = temp.path().join("root");
+    fs::create_dir(&root).expect("create root");
+    let victim = temp.path().join("victim");
+    fs::write(&victim, b"keep").expect("write victim");
+    fs::set_permissions(&victim, fs::Permissions::from_mode(0o444)).expect("chmod victim");
+    let leaf = root.join("f");
+    std::os::unix::fs::symlink(&victim, &leaf).expect("swap the leaf for a symlink");
+    let intended = FakeSuperStat {
+        mode: 0o100_444,
+        uid: 0,
+        gid: 0,
+        rdev: None,
+    };
+    let options = MetadataOptions::new()
+        .fake_super(true)
+        .with_destination_root(Some(std::sync::Arc::new(crate::DestinationRoot::new(
+            root.clone(),
+        ))));
+    let _ = apply_fake_super_stat(&leaf, &intended, &options, None);
+    assert_eq!(
+        fs::metadata(&victim)
+            .expect("stat victim")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o444,
+        "the symlink target's mode must not change"
+    );
+    assert_eq!(load_fake_super(&victim).expect("read victim %stat"), None);
+}

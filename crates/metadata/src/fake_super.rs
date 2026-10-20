@@ -264,7 +264,41 @@ pub fn store_fake_super(path: &Path, stat: &FakeSuperStat) -> io::Result<()> {
 /// Returns `None` if the xattr doesn't exist.
 #[cfg(all(unix, feature = "xattr"))]
 pub fn load_fake_super(path: &Path) -> io::Result<Option<FakeSuperStat>> {
-    match xattr::get(path, FAKE_SUPER_XATTR) {
+    decode_stat_xattr(xattr::get(path, FAKE_SUPER_XATTR))
+}
+/// [`load_fake_super`] through an open descriptor (`fgetxattr`).
+///
+/// # Errors
+///
+/// Returns the read error, or `InvalidData` for a value that does not decode.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn load_fake_super_fd(file: &std::fs::File) -> io::Result<Option<FakeSuperStat>> {
+    use xattr::FileExt;
+    decode_stat_xattr(file.get_xattr(FAKE_SUPER_XATTR))
+}
+/// [`store_fake_super`] through an open descriptor (`fsetxattr`).
+///
+/// # Errors
+///
+/// Returns the write error.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn store_fake_super_fd(file: &std::fs::File, stat: &FakeSuperStat) -> io::Result<()> {
+    use xattr::FileExt;
+    file.set_xattr(FAKE_SUPER_XATTR, stat.encode().as_bytes())
+}
+/// [`remove_fake_super`] through an open descriptor (`fremovexattr`).
+///
+/// # Errors
+///
+/// Returns the removal error; an absent `%stat` is not one.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn remove_fake_super_fd(file: &std::fs::File) -> io::Result<()> {
+    use xattr::FileExt;
+    tolerate_absent_xattr(file.remove_xattr(FAKE_SUPER_XATTR))
+}
+#[cfg(all(unix, feature = "xattr"))]
+fn decode_stat_xattr(read: io::Result<Option<Vec<u8>>>) -> io::Result<Option<FakeSuperStat>> {
+    match read {
         Ok(Some(value)) => {
             let s = String::from_utf8(value).map_err(|e| {
                 io::Error::new(
@@ -299,7 +333,11 @@ fn is_absent_xattr(err: &io::Error) -> bool {
 /// Removes fake-super metadata from a file.
 #[cfg(all(unix, feature = "xattr"))]
 pub fn remove_fake_super(path: &Path) -> io::Result<()> {
-    match xattr::remove(path, FAKE_SUPER_XATTR) {
+    tolerate_absent_xattr(xattr::remove(path, FAKE_SUPER_XATTR))
+}
+#[cfg(all(unix, feature = "xattr"))]
+fn tolerate_absent_xattr(removal: io::Result<()>) -> io::Result<()> {
+    match removal {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) if is_absent_xattr(&e) => Ok(()),
@@ -514,6 +552,12 @@ pub fn store_fake_super(_path: &Path, _stat: &FakeSuperStat) -> io::Result<()> {
 /// Always returns `Ok(None)` on platforms without xattr support.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn load_fake_super(_path: &Path) -> io::Result<Option<FakeSuperStat>> {
+    Ok(None)
+}
+
+/// Always returns `Ok(None)` on Unix builds without xattr support.
+#[cfg(all(unix, not(feature = "xattr")))]
+pub fn load_fake_super_fd(_file: &std::fs::File) -> io::Result<Option<FakeSuperStat>> {
     Ok(None)
 }
 

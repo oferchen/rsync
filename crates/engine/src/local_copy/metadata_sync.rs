@@ -291,7 +291,7 @@ pub(crate) fn store_effective_fake_super_if_requested(
     (stat.uid, stat.gid) = ::metadata::fake_super_ids(options, Some(stat.uid), Some(stat.gid));
     let _ = metadata;
     // upstream: xattrs.c:1304-1356 set_stat_xattr() with the x_lstat() stat.
-    ::metadata::apply_fake_super_stat(destination, &stat, options).map_err(map_metadata_error)
+    ::metadata::apply_fake_super_stat(destination, &stat, options, None).map_err(map_metadata_error)
 }
 
 /// Converts a [`MetadataError`] into a [`LocalCopyError`].

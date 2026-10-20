@@ -410,7 +410,7 @@ fn apply_fake_super_mode(
             gid,
             ..FakeSuperStat::from_metadata(metadata)
         };
-        apply_fake_super_stat(destination, &intended, options)
+        apply_fake_super_stat(destination, &intended, options, None)
     }
     #[cfg(not(feature = "xattr"))]
     {
@@ -473,42 +473,246 @@ pub fn apply_fake_super_stat(
     destination: &Path,
     intended: &crate::fake_super::FakeSuperStat,
     options: &MetadataOptions,
+    current: Option<&fast_io::EntryMetadata>,
+) -> Result<(), MetadataError> {
+    let re_stat = |error| MetadataError::new("re-stat", destination, error);
+    // upstream: rsync.c:563-570 - a regular file, directory or FIFO is pinned
+    // with openat(O_NOFOLLOW|O_NONBLOCK) and every %stat op goes through it.
+    let pinnable = current.is_none_or(|current| {
+        current.is_file() || current.is_dir() || current.file_type().is_fifo()
+    });
+    if pinnable {
+        let refused = match open_held_stat_target(destination, options) {
+            Ok(file) => {
+                let held = fast_io::EntryMetadata::from(file.metadata().map_err(re_stat)?);
+                return StatPlan::new(&held, intended).apply_held(&file, destination, intended);
+            }
+            Err(error) => error,
+        };
+        // With no stat in hand, the open finds a symlink (ELOOP) or socket
+        // (ENXIO) leaf; an lstat beneath the same confined parent tells it
+        // from a refused parent, and a leaf that is neither takes the path
+        // arm, as upstream's fd < 0 case does.
+        let found = match (current, refused.raw_os_error()) {
+            (None, Some(libc::ELOOP | libc::ENXIO)) => lstat_held_leaf(destination, options)
+                .ok()
+                .filter(|leaf| !(leaf.is_file() || leaf.is_dir() || leaf.file_type().is_fifo())),
+            _ => None,
+        };
+        let Some(found) = found else {
+            // upstream: rsync.c:581-596 - when neither the held pin nor the
+            // secure re-pin opens the leaf, xattr_refuse skips the %stat ops
+            // rather than re-resolving the path; the chmod keeps its secure
+            // path wrapper.
+            let Some(current) = current else {
+                return Ok(());
+            };
+            let plan = StatPlan::new(current, intended);
+            return if plan.chmod {
+                chmod_path_honoring_keep_dirlinks(
+                    destination,
+                    plan.real_mode & 0o7777,
+                    options,
+                    "preserve permissions",
+                    None,
+                )
+            } else {
+                Ok(())
+            };
+        };
+        return apply_fake_super_stat_by_path(destination, intended, options, Some(&found));
+    }
+    apply_fake_super_stat_by_path(destination, intended, options, current)
+}
+/// The `fd < 0` arm of set_stat_xattr(): a symlink, device or socket, whose
+/// `%stat` ops go through the l-variant calls.
+// upstream: xattrs.c:1298-1302,1316-1350 - x_lstat(), do_chmod_at() and
+// sys_l{set,remove}xattr().
+#[cfg(all(unix, feature = "xattr"))]
+fn apply_fake_super_stat_by_path(
+    destination: &Path,
+    intended: &crate::fake_super::FakeSuperStat,
+    options: &MetadataOptions,
+    current: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     use crate::fake_super::{load_fake_super, remove_fake_super, store_fake_super};
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    const S_IFMT: u32 = 0o170000;
-    let current = fs::symlink_metadata(destination)
-        .map_err(|error| MetadataError::new("re-stat", destination, error))?;
-    let is_dir = current.is_dir();
-    let real_mode = fake_super_real_mode(current.mode(), intended.mode, is_dir);
-    if current.permissions().mode() & 0o7777 != real_mode & 0o7777 {
-        chmod_path_honoring_keep_dirlinks(
-            destination,
-            real_mode & 0o7777,
-            options,
-            "preserve permissions",
-            None,
-        )?;
+    let looked_up;
+    let current = match current {
+        Some(current) => current,
+        None => {
+            looked_up = fs::symlink_metadata(destination)
+                .map(fast_io::EntryMetadata::from)
+                .map_err(|error| MetadataError::new("re-stat", destination, error))?;
+            &looked_up
+        }
+    };
+    let plan = StatPlan::new(current, intended);
+    if plan.chmod {
+        // upstream: syscall.c:1909 do_chmod_at() - a symlink goes to
+        // do_chmod(), which uses lchmod() where it exists and never follows
+        // the link.
+        if current.is_symlink() {
+            if crate::CAN_CHMOD_SYMLINK {
+                chmod_symlink_leaf(destination, plan.real_mode & 0o7777, options).map_err(
+                    |error| MetadataError::new("preserve permissions", destination, error),
+                )?;
+            }
+        } else {
+            chmod_path_honoring_keep_dirlinks(
+                destination,
+                plan.real_mode & 0o7777,
+                options,
+                "preserve permissions",
+                None,
+            )?;
+        }
     }
-    // upstream: xattrs.c:1325-1336 - the shim is redundant when the real mode,
-    // owner and group already carry the intended values (rdev 0 off devices).
-    let stored_mode = fake_super_type_bits(intended.mode, is_dir) | (intended.mode & 0o7777);
-    let faithful = real_mode & (S_IFMT | 0o7777) == stored_mode
-        && current.uid() == intended.uid
-        && current.gid() == intended.gid
-        && intended.rdev.is_none();
-    if faithful {
-        return remove_fake_super(destination)
-            .map_err(|error| MetadataError::new("remove fake-super metadata", destination, error));
+    let recorded = load_fake_super(destination).ok().flatten();
+    if plan.faithful {
+        if recorded.is_some() {
+            remove_fake_super(destination).map_err(|error| {
+                MetadataError::new("remove fake-super metadata", destination, error)
+            })?;
+        }
+        return Ok(());
     }
-    // upstream: xattrs.c:1338-1354 - rewrite only when the stored stat differs.
-    if load_fake_super(destination).ok().flatten().as_ref() == Some(intended) {
+    if recorded.as_ref() == Some(intended) {
         return Ok(());
     }
     store_fake_super(destination, intended)
         .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
 }
+/// The write-or-remove decision set_stat_xattr() makes for one inode.
+#[cfg(all(unix, feature = "xattr"))]
+struct StatPlan {
+    /// `(type) | (fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)`.
+    real_mode: u32,
+    /// The real mode must change.
+    chmod: bool,
+    /// The real mode, owner and group carry the intended stat, so no
+    /// `%stat` is kept.
+    faithful: bool,
+}
+#[cfg(all(unix, feature = "xattr"))]
+impl StatPlan {
+    // upstream: xattrs.c:1313-1326 set_stat_xattr()
+    fn new(current: &fast_io::EntryMetadata, intended: &crate::fake_super::FakeSuperStat) -> Self {
+        const S_IFMT: u32 = 0o170000;
+        let is_dir = current.is_dir();
+        let real_mode = fake_super_real_mode(current.mode(), intended.mode, is_dir);
+        let stored_mode = fake_super_type_bits(intended.mode, is_dir) | (intended.mode & 0o7777);
+        Self {
+            real_mode,
+            chmod: current.mode() & 0o7777 != real_mode & 0o7777,
+            faithful: real_mode & (S_IFMT | 0o7777) == stored_mode
+                && current.uid() == intended.uid
+                && current.gid() == intended.gid
+                && intended.rdev.is_none(),
+        }
+    }
 
+    /// Applies the plan through `file`, a held `O_NOFOLLOW` descriptor:
+    /// fgetxattr, then fchmod and fsetxattr or fremovexattr as needed.
+    // upstream: xattrs.c:1288-1350 set_stat_xattr() with fd >= 0.
+    fn apply_held(
+        &self,
+        file: &fs::File,
+        destination: &Path,
+        intended: &crate::fake_super::FakeSuperStat,
+    ) -> Result<(), MetadataError> {
+        use crate::fake_super::{load_fake_super_fd, remove_fake_super_fd, store_fake_super_fd};
+        use std::os::unix::fs::PermissionsExt;
+        let recorded = load_fake_super_fd(file).ok().flatten();
+        if self.chmod {
+            file.set_permissions(fs::Permissions::from_mode(self.real_mode & 0o7777))
+                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+        }
+        if self.faithful {
+            if recorded.is_some() {
+                remove_fake_super_fd(file).map_err(|error| {
+                    MetadataError::new("remove fake-super metadata", destination, error)
+                })?;
+            }
+            return Ok(());
+        }
+        if recorded.as_ref() == Some(intended) {
+            return Ok(());
+        }
+        store_fake_super_fd(file, intended)
+            .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
+    }
+}
+/// Stats `destination` without following it, beneath its confined parent,
+/// so a symlink in a parent component is refused rather than followed.
+#[cfg(all(unix, feature = "xattr"))]
+fn lstat_held_leaf(
+    destination: &Path,
+    options: &MetadataOptions,
+) -> io::Result<fast_io::EntryMetadata> {
+    if options.parent_walk().follows() {
+        return fs::symlink_metadata(destination).map(fast_io::EntryMetadata::from);
+    }
+    let found = std::cell::RefCell::new(None);
+    super::at_confined_parent(
+        destination,
+        None,
+        options.parent_walk().root(),
+        |parent, leaf| {
+            *found.borrow_mut() = Some(fast_io::EntryMetadata::At(fast_io::fstatat_nofollow(
+                parent, leaf,
+            )?));
+            Ok(())
+        },
+        || {
+            *found.borrow_mut() = Some(fs::symlink_metadata(destination)?.into());
+            Ok(())
+        },
+    )?;
+    found
+        .into_inner()
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+}
+/// Opens `destination` with `O_NOFOLLOW|O_NONBLOCK|O_NOCTTY` beneath its
+/// confined parent, so the `%stat` re-stat, chmod and xattr ops act on that
+/// inode and a symlink swapped into its path cannot redirect them.
+///
+/// # Errors
+///
+/// Returns the open error: `ELOOP` for a symlink leaf, or the confined
+/// walk's refusal of a parent.
+// upstream: rsync.c:563-596 set_file_attrs() - the held pin, then the secure
+// re-pin, of a regular file, directory or FIFO.
+#[cfg(all(unix, feature = "xattr"))]
+fn open_held_stat_target(destination: &Path, options: &MetadataOptions) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    const FLAGS: i32 =
+        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
+    let open_leaf = || {
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
+            .open(destination)
+    };
+    if options.parent_walk().follows() {
+        return open_leaf();
+    }
+    let held = std::cell::RefCell::new(None);
+    super::at_confined_parent(
+        destination,
+        None,
+        options.parent_walk().root(),
+        |parent, leaf| {
+            *held.borrow_mut() = Some(fast_io::openat(parent, leaf, FLAGS, 0)?);
+            Ok(())
+        },
+        || {
+            *held.borrow_mut() = Some(open_leaf()?);
+            Ok(())
+        },
+    )?;
+    held.into_inner()
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+}
 /// Records a received entry's mode, owner and device under `--fake-super`,
 /// as upstream `set_file_attrs()` does through `set_stat_xattr()`.
 ///
@@ -566,7 +770,7 @@ pub(super) fn apply_fake_super_from_entry(
         gid,
         rdev,
     };
-    apply_fake_super_stat(destination, &intended, options)
+    apply_fake_super_stat(destination, &intended, options, cached_meta)
 }
 /// Applies permissions with optional chmod modifiers (path-based).
 ///
@@ -2132,7 +2336,7 @@ mod tests {
             if store_fake_super(&dest, &recorded).is_err() {
                 return;
             }
-            apply_fake_super_stat(&dest, &recorded, &options).expect("apply stat");
+            apply_fake_super_stat(&dest, &recorded, &options, None).expect("apply stat");
             assert_eq!(
                 load_fake_super(&dest).expect("read %stat"),
                 Some(recorded),
