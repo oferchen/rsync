@@ -107,14 +107,32 @@ fn run(fixture: &Fixture, extra: &[&str]) -> Output {
         .expect("run oc-rsync")
 }
 
+/// Linux `EBUSY`.
+const EBUSY: i32 = 16;
+
+/// The C library's `strerror` text for `code`, as upstream prints it.
+///
+/// upstream: log.c `rsyserr()` formats `strerror(errno)`, so the wording follows
+/// the C library: glibc says "Device or resource busy", musl "Resource busy".
+fn libc_strerror(code: i32) -> String {
+    let message = std::io::Error::from_raw_os_error(code).to_string();
+    let suffix = format!(" (os error {code})");
+    message
+        .strip_suffix(&suffix)
+        .map_or_else(|| message.clone(), str::to_owned)
+}
+
 fn assert_matches_upstream(fixture: &Fixture, output: &Output) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let context = format!("stdout: {stdout}\nstderr: {stderr}");
     assert_eq!(output.status.code(), Some(23), "{context}");
+    let expected = format!(
+        "rsync: [generator] delete_file: rmdir(x/m) failed: {} (16)",
+        libc_strerror(EBUSY)
+    );
     assert!(
-        stderr.lines().any(|line| line
-            == "rsync: [generator] delete_file: rmdir(x/m) failed: Device or resource busy (16)"),
+        stderr.lines().any(|line| line == expected),
         "the busy mount is reported as upstream 3.5.1 does: {context}"
     );
     assert!(
