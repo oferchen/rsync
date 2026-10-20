@@ -221,6 +221,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Batch sender whole-file source reads through io_uring (#8065)
 - Hold the per-file parent dirfd on the receiver and sender (#8067)
 - SHA-256 and SHA-512 use the ARMv8 hardware path on macOS aarch64 again (#8064)
+- Skip the sender seek between adjacent matched blocks and batch receiver signature buffers: daemon push 282K to 158K syscalls and 0.536 s to 0.472 s, pull 361K to 208K and 0.491 s to 0.419 s (#8210)
 
 ### Fixed
 
