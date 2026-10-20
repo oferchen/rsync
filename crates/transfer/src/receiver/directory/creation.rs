@@ -52,6 +52,27 @@ impl DirDestination {
     }
 }
 
+/// A directory's pre-transfer `stat`, which `dest_mode()` reads as its
+/// `exists` and current bits (upstream: generator.c:1856).
+///
+/// On Unix it is taken through the destination sandbox, upstream's
+/// `do_stat_at()`.
+fn pre_transfer_stat(
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    dir_path: &Path,
+) -> Option<fast_io::EntryMetadata> {
+    #[cfg(unix)]
+    return super::dest_lstat(sandbox, dest_dir, dir_path, true).ok();
+    #[cfg(not(unix))]
+    {
+        let _ = dest_dir;
+        fs::metadata(dir_path)
+            .ok()
+            .map(fast_io::EntryMetadata::from)
+    }
+}
+
 /// Reports whether a directory whose final permission bits are `real_mode`
 /// must be granted a temporary `u+rwx` while the receiver writes files into
 /// it, with the real mode restored afterward by `touch_up_dirs`.
@@ -107,7 +128,7 @@ impl ReceiverContext {
         dir_path: &Path,
         entry: &FileEntry,
         metadata_opts: &MetadataOptions,
-        pre_transfer: Option<&fs::Metadata>,
+        pre_transfer: Option<&fast_io::EntryMetadata>,
     ) {
         if metadata_opts.permissions() || metadata_opts.fake_super_enabled() || metadata::am_root()
         {
@@ -153,8 +174,18 @@ impl ReceiverContext {
         // exists on Unix.
         #[cfg(not(unix))]
         let _ = (dest_dir, relative_path);
-        match fs::symlink_metadata(dir_path) {
-            Ok(existing) if existing.file_type().is_symlink() => {
+        // upstream: generator.c:1745 gen_entry_stat() - do_lstat_at() against
+        // the pinned destination, so a parent swapped after entry is not walked.
+        #[cfg(unix)]
+        let probe = super::dest_lstat(sandbox, dest_dir, dir_path, false).map(|m| m.is_symlink());
+        #[cfg(not(unix))]
+        let probe = fs::symlink_metadata(dir_path).map(|m| m.file_type().is_symlink());
+        match probe {
+            Ok(true) => {
+                #[cfg(unix)]
+                let resolves_to_dir =
+                    super::dest_lstat(sandbox, dest_dir, dir_path, true).is_ok_and(|m| m.is_dir());
+                #[cfg(not(unix))]
                 let resolves_to_dir = fs::metadata(dir_path)
                     .map(|meta| meta.file_type().is_dir())
                     .unwrap_or(false);
@@ -187,7 +218,7 @@ impl ReceiverContext {
             }
             // An existing real directory (or any other existing non-symlink
             // entry, matching the prior `.exists()` semantics) is reused.
-            Ok(_) => Ok(DirDestination::Existing),
+            Ok(false) => Ok(DirDestination::Existing),
             // A stat failure of ANY errno class classifies as `Missing`; it is
             // never raised from here.
             //
@@ -340,9 +371,16 @@ impl ReceiverContext {
         // emit a spurious `.d..t...... ./` for an otherwise-unchanged transfer
         // root. Capture each already-present directory's pre-mkdir stat here so
         // the itemize pass compares against the true pre-transfer state.
-        let pre_mkdir_meta: Vec<Option<fs::Metadata>> = dir_entries
+        let pre_mkdir_meta: Vec<Option<fast_io::EntryMetadata>> = dir_entries
             .iter()
-            .map(|(_, _, dir_path)| fs::metadata(dir_path).ok())
+            .map(|(_, _, dir_path)| {
+                pre_transfer_stat(
+                    #[cfg(unix)]
+                    sandbox,
+                    dest_dir,
+                    dir_path,
+                )
+            })
             .collect();
         for (idx, relative_path, dir_path) in &dir_entries {
             // `relative_path` is only read on Unix (mkdirat fast path).
@@ -576,43 +614,48 @@ impl ReceiverContext {
         let preserve_perms = metadata_opts.permissions();
         #[cfg(unix)]
         let fake_super = metadata_opts.fake_super_enabled();
-        let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>, Option<fs::Metadata>)> =
-            dir_entries
-                .into_iter()
-                .zip(dir_was_new.iter().copied())
-                .filter(|((_, _, dir_path), _)| {
-                    !failed_dir_paths.contains(dir_path)
-                        && !skipped_existing_dirs.contains(dir_path)
-                })
-                .map(|((idx, _, dir_path), is_new)| {
-                    let entry = &self.file_list[idx];
-                    let xattr_list = self.resolve_xattr_list(entry);
-                    // `mut` is only exercised by the Unix transient-writable-mode
-                    // grant below; on other platforms the clone is never mutated.
-                    #[cfg_attr(not(unix), allow(unused_mut))]
-                    let mut entry = entry.clone();
-                    #[cfg(unix)]
-                    if dir_needs_writable_transfer_mode(
-                        preserve_perms,
-                        fake_super,
-                        entry.permissions(),
-                    ) {
-                        entry.set_mode(entry.mode() | 0o700);
-                    }
-                    // upstream: generator.c:1856 dest_mode(..., statret == 0) -
-                    // an existing dir keeps its own perms (exists=true), a new
-                    // dir gets the source mode masked by dflt_perms
-                    // (exists=false). Supply the pre-transfer stat only for a
-                    // dir that already existed so the !perms dest_mode() apply
-                    // takes the exists=true branch and never rewrites its bits.
-                    let pre_transfer = if is_new {
-                        None
-                    } else {
-                        fs::metadata(&dir_path).ok()
-                    };
-                    (dir_path, entry, xattr_list, pre_transfer)
-                })
-                .collect();
+        let entry_snapshots: Vec<(
+            PathBuf,
+            FileEntry,
+            Option<XattrList>,
+            Option<fast_io::EntryMetadata>,
+        )> = dir_entries
+            .into_iter()
+            .zip(dir_was_new.iter().copied())
+            .filter(|((_, _, dir_path), _)| {
+                !failed_dir_paths.contains(dir_path) && !skipped_existing_dirs.contains(dir_path)
+            })
+            .map(|((idx, _, dir_path), is_new)| {
+                let entry = &self.file_list[idx];
+                let xattr_list = self.resolve_xattr_list(entry);
+                // `mut` is only exercised by the Unix transient-writable-mode
+                // grant below; on other platforms the clone is never mutated.
+                #[cfg_attr(not(unix), allow(unused_mut))]
+                let mut entry = entry.clone();
+                #[cfg(unix)]
+                if dir_needs_writable_transfer_mode(preserve_perms, fake_super, entry.permissions())
+                {
+                    entry.set_mode(entry.mode() | 0o700);
+                }
+                // upstream: generator.c:1856 dest_mode(..., statret == 0) -
+                // an existing dir keeps its own perms (exists=true), a new
+                // dir gets the source mode masked by dflt_perms
+                // (exists=false). Supply the pre-transfer stat only for a
+                // dir that already existed so the !perms dest_mode() apply
+                // takes the exists=true branch and never rewrites its bits.
+                let pre_transfer = if is_new {
+                    None
+                } else {
+                    pre_transfer_stat(
+                        #[cfg(unix)]
+                        sandbox,
+                        dest_dir,
+                        &dir_path,
+                    )
+                };
+                (dir_path, entry, xattr_list, pre_transfer)
+            })
+            .collect();
         // upstream: generator.c:1904-1912 + generator.c:2594 - the
         // !preserve_perms metadata apply raises a directory lacking owner-rwx;
         // record which strict modes touch_up_dirs must reinstate BEFORE the
@@ -1036,6 +1079,8 @@ impl ReceiverContext {
         // dry_run, so no metadata, xattrs, or ACLs reach the destination.
         if !skip_dest_writes {
             self.apply_incremental_dir_metadata(
+                #[cfg(unix)]
+                sandbox,
                 dest_dir,
                 &dir_path,
                 entry,
@@ -1072,8 +1117,10 @@ impl ReceiverContext {
     /// - `generator.c:1904-1912` - transient `u+rwx` grant, undone by
     ///   [`Self::touch_up_dirs`]
     /// - `xattrs.c:set_xattr()` - xattrs are applied after metadata
+    #[allow(clippy::too_many_arguments)]
     fn apply_incremental_dir_metadata(
         &self,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         dest_dir: &Path,
         dir_path: &Path,
         entry: &FileEntry,
@@ -1107,7 +1154,12 @@ impl ReceiverContext {
         let pre_transfer = if is_new {
             None
         } else {
-            fs::metadata(dir_path).ok()
+            pre_transfer_stat(
+                #[cfg(unix)]
+                sandbox,
+                dest_dir,
+                dir_path,
+            )
         };
         // upstream: generator.c:1904-1912 + generator.c:2594 - record the
         // strict mode touch_up_dirs must reinstate before the !preserve_perms
@@ -1216,6 +1268,7 @@ impl ReceiverContext {
     pub(in crate::receiver) fn touch_up_dirs<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) {
         if self.config.flags.skip_dest_writes() {
@@ -1237,7 +1290,6 @@ impl ReceiverContext {
         // needs.
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
             let mut recorded = std::mem::take(
                 &mut *self
                     .dir_perm_restores
@@ -1247,7 +1299,7 @@ impl ReceiverContext {
             recorded.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
             for (dir_path, mode) in recorded {
                 let _ = writer.maybe_send_keepalive();
-                if let Err(e) = fs::set_permissions(&dir_path, fs::Permissions::from_mode(mode)) {
+                if let Err(e) = super::dest_chmod(sandbox, dest_dir, &dir_path, mode) {
                     debug_log!(
                         Recv,
                         1,
@@ -1298,18 +1350,17 @@ impl ReceiverContext {
             // the mtime repair. Only directories that lack the user write bit
             // were tweaked, so only those are chmod'd back.
             #[cfg(unix)]
-            if retouch_perms && (entry.permissions() & 0o200) == 0 {
-                use std::os::unix::fs::PermissionsExt;
-                let perms = fs::Permissions::from_mode(entry.permissions());
-                if let Err(e) = fs::set_permissions(&dir_path, perms) {
-                    debug_log!(
-                        Recv,
-                        1,
-                        "touch_up_dirs: failed to restore perms on {}: {}",
-                        dir_path.display(),
-                        e
-                    );
-                }
+            if retouch_perms
+                && (entry.permissions() & 0o200) == 0
+                && let Err(e) = super::dest_chmod(sandbox, dest_dir, &dir_path, entry.permissions())
+            {
+                debug_log!(
+                    Recv,
+                    1,
+                    "touch_up_dirs: failed to restore perms on {}: {}",
+                    dir_path.display(),
+                    e
+                );
             }
 
             if !retouch_times {
@@ -1318,13 +1369,24 @@ impl ReceiverContext {
 
             let mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-            // Only update if the current mtime differs from the desired one.
-            let needs_update = match fs::metadata(&dir_path) {
-                Ok(meta) => filetime::FileTime::from_last_modification_time(&meta) != mtime,
-                Err(_) => false, // directory may not exist (permission denied, etc.)
-            };
+            // upstream: generator.c:2602-2607 - gen_entry_stat() then
+            // gen_entry_set_times() only when mtime_differs(); a directory that
+            // can no longer be stat'd is left alone.
+            #[cfg(unix)]
+            let needs_update =
+                super::dest_lstat(sandbox, dest_dir, &dir_path, true).is_ok_and(|meta| {
+                    let (secs, nanos) = (meta.mtime(), meta.mtime_nsec());
+                    filetime::FileTime::from_unix_time(secs, nanos as u32) != mtime
+                });
+            #[cfg(not(unix))]
+            let needs_update = fs::metadata(&dir_path)
+                .is_ok_and(|meta| filetime::FileTime::from_last_modification_time(&meta) != mtime);
 
-            if needs_update && let Err(e) = filetime::set_file_mtime(&dir_path, mtime) {
+            #[cfg(unix)]
+            let set_mtime = || super::dest_set_mtime(sandbox, dest_dir, &dir_path, mtime);
+            #[cfg(not(unix))]
+            let set_mtime = || filetime::set_file_mtime(&dir_path, mtime);
+            if needs_update && let Err(e) = set_mtime() {
                 debug_log!(
                     Recv,
                     1,
@@ -1704,6 +1766,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dir.path(),
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
 
@@ -1745,6 +1809,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dir.path(),
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
 
@@ -1826,6 +1892,8 @@ mod touch_up_dirs_tests {
         // under root / --fake-super, matching upstream fix_dir_perms).
         ctx.touch_up_dirs(
             dest,
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
         if !metadata::am_root() {
@@ -1892,6 +1960,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dest,
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
         let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
@@ -1938,6 +2008,8 @@ mod touch_up_dirs_tests {
         .expect("create_directories succeeds");
         ctx.touch_up_dirs(
             dest,
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
 
@@ -1998,6 +2070,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dest,
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
         let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
@@ -2029,6 +2103,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dir.path(),
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
 
@@ -2068,6 +2144,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dir.path(),
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
 
@@ -2102,6 +2180,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dir.path(),
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
 
@@ -2199,6 +2279,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(
             dir.path(),
+            #[cfg(unix)]
+            None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
         );
 

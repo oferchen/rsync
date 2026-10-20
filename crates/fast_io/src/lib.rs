@@ -80,6 +80,9 @@
 #![deny(missing_docs)]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
+/// Extended ACL apply through a held descriptor (macOS only).
+#[cfg(target_os = "macos")]
+pub mod acl_fd;
 /// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
 /// Sender-side confined source open beneath a module root.
@@ -112,6 +115,9 @@ pub mod container;
 /// path TOCTOU naturally (see the SEC-1.l audit).
 #[cfg(unix)]
 pub mod dir_sandbox;
+/// Metadata from whichever stat answered: `fstatat` or the path-based call.
+pub mod entry_metadata;
+pub use entry_metadata::{EntryFileType, EntryMetadata};
 /// Unix-only: ownership-walk resolution for a sender's `--files-from`
 /// entries, mirroring upstream `filesfrom_link_stat()` (`flist.c:400`).
 #[cfg(unix)]
@@ -419,20 +425,22 @@ pub use confined_open::{
 pub use confined_readdir::read_dir_confined;
 #[cfg(unix)]
 pub use dir_sandbox::{
-    AtMetadata, CloneAttempt, CloneFreshTimes, DirEntryView, DirSandbox, EntryKind, LstatOutcome,
-    ReadDirOutcome, UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new,
-    confined_link_anonymous, confined_rename, copy_then_unlink_via_sandbox_or_fallback, fchmodat,
-    fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback, fstatat_follow,
-    fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback,
-    mkdirat, mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
-    nested_parent_anchoring_supported, open_dir_beneath_nofollow, openat,
-    openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
-    readlinkat_via_sandbox_or_fallback, recursive_unlinkat,
-    recursive_unlinkat_via_sandbox_or_fallback, renameat, renameat_via_sandbox_or_fallback,
-    secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at, secure_chown_at_dirfd,
-    secure_utimes_at, secure_utimes_at_dirfd, symlinkat, symlinkat_via_sandbox_or_fallback,
-    unlink_path, unlink_via_sandbox_or_fallback, unlinkat, utimensat,
-    utimensat_via_sandbox_or_fallback,
+    AtMetadata, CloneAttempt, CloneFreshTimes, DirEntryView, DirSandbox, EntryKind, ReadDirOutcome,
+    UnlinkFailure, UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new,
+    confined_link_anonymous, confined_rename, copy_then_unlink_via_sandbox_or_fallback,
+    create_dir_all_via_sandbox_or_fallback, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
+    fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
+    linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
+    mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
+    nested_parent_anchoring_supported, open_basis_via_sandbox_or_fallback,
+    open_dir_beneath_nofollow, open_inplace_output_via_sandbox_or_fallback,
+    open_write_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback,
+    read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
+    recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
+    renameat_via_sandbox_or_fallback, secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at,
+    secure_chown_at_dirfd, secure_utimes_at, secure_utimes_at_dirfd, stat_via_sandbox_or_fallback,
+    symlinkat, symlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback,
+    unlinkat, utimensat, utimensat_via_sandbox_or_fallback,
 };
 #[cfg(unix)]
 pub use files_from_walk::FilesFromBase;
@@ -450,14 +458,15 @@ pub use nofollow_open::open_basis_nofollow;
 #[cfg(unix)]
 pub use owner_walk::{
     operator_create_dir_all, operator_create_dir_all_confined, operator_link,
-    operator_link_confined, operator_mkdir, operator_mknod_confined, operator_open_append,
-    operator_open_basis_read, operator_open_create_new, operator_open_destination,
-    operator_open_dir, operator_open_read, operator_open_read_confined, operator_open_recv,
-    operator_open_rw_create, operator_open_write_create, operator_open_write_create_confined,
-    operator_read_to_string, operator_read_to_string_confined, operator_remove_file_confined,
-    operator_rename, operator_rename_confined, operator_symlink_confined,
-    operator_symlink_metadata, operator_symlink_metadata_confined, owner_trusted_parent,
-    owner_trusted_parent_kind, symlink_owner_is_trusted,
+    operator_link_confined, operator_link_confined_at, operator_mkdir, operator_mknod_confined,
+    operator_open_append, operator_open_basis_read, operator_open_create_new,
+    operator_open_destination, operator_open_dir, operator_open_read, operator_open_read_confined,
+    operator_open_recv, operator_open_rw_create, operator_open_write_create,
+    operator_open_write_create_confined, operator_read_to_string, operator_read_to_string_confined,
+    operator_remove_file_confined, operator_rename, operator_rename_confined,
+    operator_rename_confined_at, operator_symlink_confined, operator_symlink_metadata,
+    operator_symlink_metadata_confined, owner_trusted_parent, owner_trusted_parent_kind,
+    symlink_owner_is_trusted,
 };
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]

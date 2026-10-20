@@ -748,10 +748,16 @@ pub(crate) fn copy_sources(
                 if let Err(error) = result {
                     if error.is_vanished_error() {
                         // upstream: flist.c:1688 - vanished files produce a warning
-                        // and set IOERR_VANISHED, but transfer continues.
+                        // and set IOERR_VANISHED, but transfer continues and no
+                        // deletion is suppressed. A directory operand re-raising a
+                        // vanish from inside its tree already reported it.
                         // full_fname() wraps the path in double quotes (util1.c:1528).
-                        eprintln!("file has vanished: \"{}\"", source.path().display());
-                        context.record_io_error();
+                        let error = if error.vanished_path() == Some(source.path()) {
+                            eprintln!("file has vanished: \"{}\"", source.path().display());
+                            error.reported()
+                        } else {
+                            error
+                        };
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
                         }
@@ -768,8 +774,9 @@ pub(crate) fn copy_sources(
                     } else if error.is_io_error() {
                         // upstream: rsync continues transferring remaining sources
                         // when individual entries fail with I/O errors, regardless
-                        // of whether --delete is active.
-                        context.record_io_error();
+                        // of whether --delete is active. A walk-time failure was
+                        // already recorded where the walk found it.
+                        context.record_transfer_io_error();
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
                         }
@@ -872,8 +879,12 @@ fn completed_run_exit_error(
         || context.source_read_error_occurred()
         || context.io_error_requires_partial_exit();
     match first_io_error {
+        Some(error) if !error.is_vanished_error() && error.is_reported() => {
+            Some(LocalCopyError::partial_transfer())
+        }
         Some(error) if !error.is_vanished_error() => Some(error),
         Some(_) if general => Some(LocalCopyError::partial_transfer()),
+        Some(vanished) if vanished.is_reported() => Some(LocalCopyError::vanished_summary()),
         Some(vanished) => Some(vanished),
         None if general => Some(LocalCopyError::partial_transfer()),
         None if skipped > 0 => Some(LocalCopyError::delete_limit_exceeded(skipped)),
@@ -1516,7 +1527,7 @@ fn stamp_directory_from_source(
         dest_dir,
         &source_meta,
         metadata_options.clone(),
-        Some(&dest_meta),
+        Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
     )
     .map_err(crate::local_copy::map_metadata_error)?;
     Ok(())

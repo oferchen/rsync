@@ -155,7 +155,7 @@ fn apply_metadata_acls_and_xattrs(
         entry,
         opts,
         None,
-        pre_transfer_meta,
+        pre_transfer_meta.map(fast_io::EntryMetadata::from),
     ) {
         return Some((file_path.to_path_buf(), e.to_string()));
     }

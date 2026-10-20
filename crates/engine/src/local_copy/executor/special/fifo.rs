@@ -509,8 +509,13 @@ pub(crate) fn copy_fifo(
     // (rather than an unconditional apply) mirrors upstream and preserves the
     // FIFO type.
     if let Ok(created_metadata) = fs::symlink_metadata(destination) {
-        apply_file_metadata_if_changed(destination, metadata, &created_metadata, metadata_options)
-            .map_err(map_metadata_error)?;
+        apply_file_metadata_if_changed(
+            destination,
+            metadata,
+            &fast_io::EntryMetadata::from(created_metadata.clone()),
+            metadata_options,
+        )
+        .map_err(map_metadata_error)?;
     } else {
         apply_file_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;

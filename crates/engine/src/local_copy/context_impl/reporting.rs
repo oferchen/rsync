@@ -100,7 +100,7 @@ impl<'a> CopyContext<'a> {
             ));
         }
         self.unsupported_operation_skipped = true;
-        self.io_errors_occurred = true;
+        self.walk_io_error = true;
     }
 
     /// Records a skip event for a directory (when `-r` is not enabled).
@@ -441,6 +441,19 @@ impl<'a> CopyContext<'a> {
         // `delete_in_dir` and is where the check belongs.
         let preserve_times = self.metadata_options().times() && !self.omit_dir_times_enabled();
         let mut pending = std::mem::take(&mut self.deferred_ops.deletions);
+        // The --delete-after pass is the one place a send-time error does
+        // gate deletion: it rescans once the transfer is over. A
+        // --delete-delay plan and the multi-source downgrade were gated when
+        // they were decided.
+        // upstream: generator.c do_delete_pass() runs delete_in_dir() after
+        // the transfer, when io_error holds the sender's MSG_IO_ERROR
+        // (sender.c:811-812).
+        if self.options.delete_timing() == Some(crate::local_copy::DeleteTiming::After)
+            && pending.iter().any(|entry| entry.decided.is_none())
+            && self.after_pass_blocked_by_io_error()
+        {
+            pending.retain(|entry| entry.decided.is_some());
+        }
         // Deferred entries are queued in post-order (a directory defers its own
         // sweep AFTER recursing into and deferring its children). Upstream's
         // `do_delete_pass` instead walks the flist forward - parent before child

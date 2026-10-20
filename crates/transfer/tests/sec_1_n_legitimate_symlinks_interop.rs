@@ -58,14 +58,14 @@
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
-use fast_io::{DirSandbox, LstatOutcome, lstat_via_sandbox_or_fallback};
+use fast_io::{DirSandbox, EntryMetadata, lstat_via_sandbox_or_fallback};
 
 /// Mirrors the receiver's `create_symlinks` shape: probe the
 /// destination leaf through the sandbox-anchored stat (SEC-1.f), then
 /// create the symlink via `std::os::unix::fs::symlink`, exactly as
 /// `receiver/directory/links.rs` does on the post-SEC-1.f code path.
 ///
-/// Returns the `LstatOutcome` the receiver would observe for the new
+/// Returns the `EntryMetadata` the receiver would observe for the new
 /// leaf. Callers assert the outcome reports the symlink (not the
 /// target it points at) - the SEC-1 invariant for legitimate symlinks.
 fn receiver_shaped_symlink_create(
@@ -73,7 +73,7 @@ fn receiver_shaped_symlink_create(
     dest_root: &Path,
     leaf: &Path,
     target: &Path,
-) -> LstatOutcome {
+) -> EntryMetadata {
     let link_path = dest_root.join(leaf);
     // The receiver's pre-create obstacle probe. ENOENT here is the
     // legitimate empty-destination case; anything else means a stale
@@ -93,16 +93,16 @@ fn receiver_shaped_symlink_create(
         .expect("post-create lstat must succeed")
 }
 
-/// Asserts an `LstatOutcome` reports a symlink leaf rather than the
+/// Asserts an `EntryMetadata` reports a symlink leaf rather than the
 /// target it points at. This is the legitimate-use mirror of SEC-1.m's
 /// "must not resolve to sensitive target" assertion.
-fn assert_outcome_is_symlink(outcome: &LstatOutcome, ctx: &str) {
+fn assert_outcome_is_symlink(outcome: &EntryMetadata, ctx: &str) {
     match outcome {
-        LstatOutcome::At(meta) => assert!(
+        EntryMetadata::At(meta) => assert!(
             meta.is_symlink(),
             "{ctx}: sandbox-anchored lstat must report a symlink leaf"
         ),
-        LstatOutcome::Std(meta) => assert!(
+        EntryMetadata::Std(meta) => assert!(
             meta.is_symlink(),
             "{ctx}: fallback lstat must report a symlink leaf"
         ),

@@ -31,7 +31,7 @@ pub struct DestinationRoot {
     /// The directory below the root the current run of entries lives in,
     /// held so consecutive applies in it do not re-resolve it.
     #[cfg(unix)]
-    held: fast_io::HeldDir,
+    held: Arc<fast_io::HeldDir>,
 }
 
 impl DestinationRoot {
@@ -45,7 +45,7 @@ impl DestinationRoot {
             #[cfg(unix)]
             anchor: OnceLock::new(),
             #[cfg(unix)]
-            held: fast_io::HeldDir::new(),
+            held: Arc::new(fast_io::HeldDir::new()),
         }
     }
 
@@ -67,6 +67,20 @@ impl DestinationRoot {
             drop(module_root);
             Self::new(path)
         }
+    }
+
+    /// Resolves held directories through `held` instead of a private cache.
+    ///
+    /// The receiver hands in its destination sandbox's cache: both resolve
+    /// the same root-relative parents beneath the same pinned root, so
+    /// sharing it opens each parent once rather than once per consumer.
+    /// upstream: `syscall.c:3858-3871` `held_dfd_for()` - one held parent
+    /// serves every per-entry operation.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn sharing_held(mut self, held: Arc<fast_io::HeldDir>) -> Self {
+        self.held = held;
+        self
     }
 
     /// The destination operand as the operator spelled it.
@@ -146,3 +160,36 @@ impl PartialEq for DestinationRoot {
 }
 
 impl Eq for DestinationRoot {}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The receiver hands its destination sandbox's held-parent cache to the
+    /// metadata applier. A nested parent the sandbox already resolved must
+    /// reach the applier as the same descriptor, not as a second open: with a
+    /// private cache each, every nested parent was opened once per consumer.
+    #[test]
+    fn a_shared_cache_opens_each_nested_parent_once_for_both_consumers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("a/b")).expect("tree");
+        let sandbox = fast_io::DirSandbox::open_root(temp.path()).expect("sandbox");
+        let parent = Path::new("a/b");
+
+        let shared =
+            DestinationRoot::new(temp.path().to_path_buf()).sharing_held(sandbox.held_dir());
+        let from_sandbox = sandbox.held_parent(parent).expect("sandbox parent");
+        let from_root = shared.held_dir_beneath(parent).expect("root parent");
+        assert!(
+            Arc::ptr_eq(&from_sandbox, &from_root),
+            "the applier must reuse the parent the sandbox opened"
+        );
+
+        let private = DestinationRoot::new(temp.path().to_path_buf());
+        let separate = private.held_dir_beneath(parent).expect("private parent");
+        assert!(
+            !Arc::ptr_eq(&from_sandbox, &separate),
+            "control: an unshared root resolves the parent itself"
+        );
+    }
+}

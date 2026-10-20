@@ -90,7 +90,7 @@ pub fn open_basis_nofollow(path: &Path) -> io::Result<File> {
 /// `fstat(2)` on the descriptor itself: a pre-open `fstatat(2)` would leave
 /// a window in which the node it checked is replaced by the FIFO the check
 /// exists to refuse.
-fn require_regular_basis(file: File) -> io::Result<File> {
+pub(crate) fn require_regular_basis(file: File) -> io::Result<File> {
     if !file.metadata()?.file_type().is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

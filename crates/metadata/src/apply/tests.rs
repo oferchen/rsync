@@ -633,7 +633,10 @@ fn symlink_owner_override_non_root_chown_is_skipped_not_fatal() {
         &MetadataOptions::new()
             .preserve_owner(true)
             .with_owner_override(Some(0)),
-        cached_meta.as_ref(),
+        cached_meta
+            .clone()
+            .map(fast_io::EntryMetadata::from)
+            .as_ref(),
     )
     .expect("non-root symlink --chown to an unreachable uid must be skipped, not fatal");
 
@@ -684,7 +687,10 @@ fn symlink_group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal()
         &MetadataOptions::new()
             .preserve_group(true)
             .with_group_override(Some(foreign_gid)),
-        cached_meta.as_ref(),
+        cached_meta
+            .clone()
+            .map(fast_io::EntryMetadata::from)
+            .as_ref(),
     )
     .expect("non-root symlink --chown to a foreign group must be skipped, not fatal");
 
@@ -905,7 +911,7 @@ fn no_perms_existing_file_from_entry_keeps_prior_mode() {
         .preserve_permissions(false)
         .preserve_times(false);
 
-    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta))
+    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta.into()))
         .expect("apply from entry");
 
     assert_eq!(
@@ -944,7 +950,7 @@ fn chmod_without_perms_existing_file_from_entry_keeps_prior_mode() {
         .preserve_times(false)
         .with_chmod(Some(crate::ChmodModifiers::parse("F604").expect("parse")));
 
-    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta))
+    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta.into()))
         .expect("apply from entry");
 
     assert_eq!(
@@ -1021,8 +1027,13 @@ fn chmod_without_perms_pre_transfer_rides_the_exists_split() {
     fs::write(&pre, b"old").expect("write pre");
     fs::set_permissions(&pre, PermissionsExt::from_mode(0o600)).expect("seed pre mode");
     let pre_meta = fs::metadata(&pre).expect("pre metadata");
-    apply_dest_mode_pre_transfer(&dest, &source_meta, &opts, Some(&pre_meta))
-        .expect("apply dest_mode");
+    apply_dest_mode_pre_transfer(
+        &dest,
+        &source_meta,
+        &opts,
+        Some(&fast_io::EntryMetadata::from(pre_meta.clone())),
+    )
+    .expect("apply dest_mode");
     let existing_got = current_mode(&dest) & 0o7777;
 
     // Fresh destination: the tweak is masked by dflt_perms (0o604 & 0o755).
@@ -1073,8 +1084,13 @@ fn chmod_without_perms_directory_rides_the_exists_split() {
     fs::create_dir(&existing).expect("create existing dir");
     fs::set_permissions(&existing, fs::Permissions::from_mode(0o711)).expect("chmod existing");
     let pre_meta = fs::symlink_metadata(&existing).expect("stat existing");
-    apply_directory_metadata_with_options(&existing, &src_meta, opts.clone(), Some(&pre_meta))
-        .expect("apply dir metadata");
+    apply_directory_metadata_with_options(
+        &existing,
+        &src_meta,
+        opts.clone(),
+        Some(&fast_io::EntryMetadata::from(pre_meta.clone())),
+    )
+    .expect("apply dir metadata");
     let existing_got = fs::symlink_metadata(&existing).expect("restat").mode() & 0o7777;
 
     // Fresh directory: 0o755 tweaked to 0o644, masked by dflt (no-op), then
@@ -1122,7 +1138,7 @@ fn chmod_with_perms_applies_tweaked_source_mode_exactly() {
         .preserve_times(false)
         .with_chmod(Some(crate::ChmodModifiers::parse("F604").expect("parse")));
 
-    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta))
+    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta.into()))
         .expect("apply from entry");
 
     assert_eq!(
@@ -1976,7 +1992,12 @@ fn metadata_unchanged_returns_true_when_all_attrs_match() {
         .preserve_group(true);
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return true when all attributes match"
     );
 }
@@ -2009,7 +2030,12 @@ fn metadata_unchanged_returns_false_on_permission_mismatch() {
         .preserve_group(true);
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return false when permissions differ"
     );
 }
@@ -2038,7 +2064,12 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
         .preserve_group(true);
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return false when mtime differs"
     );
 }
@@ -2075,20 +2106,35 @@ fn metadata_unchanged_honors_modify_window() {
     // "the same" (upstream same_time returns 1), so nothing changed.
     entry.set_mtime(base + 1, 0);
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::from_secs(2)),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::from_secs(2)
+        ),
         "mtime delta (1s) <= window (2s) must be unchanged, mirroring same_time()"
     );
     // The default zero window keeps the exact whole-second comparison, so the
     // same 1s drift is reported as changed.
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "window 0 must stay exact: a 1s drift is a change"
     );
 
     // A drift larger than the window is a change regardless of tolerance.
     entry.set_mtime(base + 3, 0);
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::from_secs(2)),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::from_secs(2)
+        ),
         "mtime delta (3s) > window (2s) must be changed"
     );
 }
@@ -2153,7 +2199,12 @@ fn metadata_unchanged_detects_readonly_difference() {
         .preserve_times(true);
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "a read-only-only difference must be reported as changed"
     );
 
@@ -2167,7 +2218,12 @@ fn metadata_unchanged_detects_readonly_difference() {
 
     // Now the destination matches: the quick-check reports unchanged.
     assert!(
-        metadata_unchanged(&entry, &opts, &applied, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(applied),
+            crate::ModifyWindow::ZERO
+        ),
         "matching read-only attribute must be reported as unchanged"
     );
 }
@@ -2197,7 +2253,12 @@ fn metadata_unchanged_ignores_perms_when_not_preserved() {
         .preserve_group(true);
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return true when perms differ but preservation is off"
     );
 }
@@ -2233,7 +2294,12 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
         .preserve_times(true);
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "executable source vs non-executable dest must force the attr pass"
     );
 
@@ -2243,7 +2309,12 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
     fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).expect("chmod dest");
     let meta = fs::metadata(&dest).expect("metadata");
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "non-executable source vs executable dest must force the attr pass"
     );
 }
@@ -2275,7 +2346,12 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
     let mut entry = FileEntry::new_file("exec-match.txt".into(), 4, 0o700);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "matching exec presence must not force the attr pass"
     );
 
@@ -2288,7 +2364,12 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
     let mut dir_entry = FileEntry::new_directory("subdir".into(), 0o755);
     dir_entry.set_mtime(dir_mtime.unix_seconds(), dir_mtime.nanoseconds());
     assert!(
-        metadata_unchanged(&dir_entry, &opts, &dir_meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &dir_entry,
+            &opts,
+            &fast_io::EntryMetadata::from(dir_meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "-E never applies to directories"
     );
 }
@@ -2316,7 +2397,12 @@ fn metadata_unchanged_returns_false_when_chmod_would_change_mode() {
         .with_chmod(Some(chmod));
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return false when the tweaked flist mode differs under --perms"
     );
 }
@@ -2347,7 +2433,12 @@ fn metadata_unchanged_ignores_chmod_without_perms_on_existing_dest() {
         .with_chmod(Some(chmod));
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "an existing destination keeps its own bits when --perms is off"
     );
 }
@@ -2381,7 +2472,12 @@ fn metadata_unchanged_returns_true_when_chmod_is_noop() {
         .with_chmod(Some(chmod));
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return true when chmod modifier does not change mode"
     );
 }
@@ -2410,7 +2506,12 @@ fn metadata_unchanged_returns_true_when_owner_override_matches() {
         .with_owner_override(Some(meta.uid()));
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return true when owner override matches current uid"
     );
 }
@@ -2439,7 +2540,12 @@ fn metadata_unchanged_returns_false_when_owner_override_differs() {
         .with_owner_override(Some(meta.uid() + 1));
 
     assert!(
-        !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        !metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return false when owner override differs from current uid"
     );
 }
@@ -2468,7 +2574,12 @@ fn metadata_unchanged_returns_true_when_group_override_matches() {
         .with_group_override(Some(meta.gid()));
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "should return true when group override matches current gid"
     );
 }
@@ -2502,7 +2613,12 @@ fn metadata_unchanged_ignores_atime() {
         .preserve_atimes(true);
 
     assert!(
-        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        metadata_unchanged(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            crate::ModifyWindow::ZERO
+        ),
         "an atime-only difference is not an unchanged_attrs difference"
     );
 }
@@ -2556,33 +2672,63 @@ fn atime_needs_set_mirrors_set_file_attrs_atime_leg() {
     let (_t, _d, entry, meta) =
         atime_fixture(FileTime::from_unix_time(1_650_000_000, 7), 1_650_000_000);
     assert!(
-        !atime_needs_set(&entry, &opts, &meta, w0, none),
+        !atime_needs_set(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            w0,
+            none
+        ),
         "sub-second only: equal"
     );
     assert!(
-        atime_needs_set(&entry, &opts, &meta, w0, accurate),
+        atime_needs_set(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            w0,
+            accurate
+        ),
         "ACCURATE_TIME forces"
     );
     assert!(
-        !atime_needs_set(&entry, &MetadataOptions::new(), &meta, w0, accurate),
+        !atime_needs_set(
+            &entry,
+            &MetadataOptions::new(),
+            &fast_io::EntryMetadata::from(meta.clone()),
+            w0,
+            accurate
+        ),
         "no --atimes, no atime"
     );
     assert!(
-        !atime_needs_set(&entry, &opts, &meta, w0, accurate | AttrsFlags::SKIP_ATIME),
+        !atime_needs_set(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            w0,
+            accurate | AttrsFlags::SKIP_ATIME
+        ),
         "SKIP_ATIME wins"
     );
 
     let (_t, _d, entry, meta) =
         atime_fixture(FileTime::from_unix_time(1_649_999_999, 0), 1_650_000_000);
     assert!(
-        atime_needs_set(&entry, &opts, &meta, w0, none),
+        atime_needs_set(
+            &entry,
+            &opts,
+            &fast_io::EntryMetadata::from(meta.clone()),
+            w0,
+            none
+        ),
         "whole seconds differ"
     );
     assert!(
         !atime_needs_set(
             &entry,
             &opts,
-            &meta,
+            &fast_io::EntryMetadata::from(meta.clone()),
             crate::ModifyWindow::from_secs(2),
             none
         ),
@@ -2594,7 +2740,13 @@ fn atime_needs_set_mirrors_set_file_attrs_atime_leg() {
     let mut dir_entry = protocol::flist::FileEntry::new_directory("d".into(), 0o755);
     dir_entry.set_atime(1);
     assert!(
-        !atime_needs_set(&dir_entry, &opts, &dir_meta, w0, accurate),
+        !atime_needs_set(
+            &dir_entry,
+            &opts,
+            &fast_io::EntryMetadata::from(dir_meta.clone()),
+            w0,
+            accurate
+        ),
         "a directory is never atime-stamped (rsync.c:731 S_ISDIR)"
     );
 }
@@ -2615,8 +2767,14 @@ fn accurate_time_restamps_atime_despite_a_matching_stale_stat() {
     let opts = MetadataOptions::new()
         .preserve_times(true)
         .preserve_atimes(true);
-    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stale), AttrsFlags::ACCURATE_TIME)
-        .expect("apply");
+    apply_metadata_with_attrs_flags(
+        &dest,
+        &entry,
+        &opts,
+        Some(stale.into()),
+        AttrsFlags::ACCURATE_TIME,
+    )
+    .expect("apply");
     assert_eq!(atime_of(&dest), (1_650_000_000, 0));
 }
 
@@ -2640,7 +2798,7 @@ fn skip_mtime_accurate_time_restamps_atime_and_keeps_mtime() {
         &dest,
         &entry,
         &opts,
-        Some(stale),
+        Some(stale.into()),
         AttrsFlags::SKIP_MTIME | AttrsFlags::ACCURATE_TIME,
     )
     .expect("apply");
@@ -2661,7 +2819,7 @@ fn subsecond_atime_difference_is_not_restamped() {
     let opts = MetadataOptions::new()
         .preserve_times(true)
         .preserve_atimes(true);
-    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stat), AttrsFlags::empty())
+    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stat.into()), AttrsFlags::empty())
         .expect("apply");
     assert_eq!(atime_of(&dest), (1_650_000_000, 500_000_000));
 }
@@ -2676,7 +2834,7 @@ fn epoch_atime_is_stamped() {
     let opts = MetadataOptions::new()
         .preserve_times(true)
         .preserve_atimes(true);
-    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stat), AttrsFlags::empty())
+    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stat.into()), AttrsFlags::empty())
         .expect("apply");
     assert_eq!(atime_of(&dest), (0, 0));
 }
@@ -2734,7 +2892,7 @@ fn subsecond_skewed_dir() -> (
 fn mtime_within_modify_window_is_not_restamped() {
     let (_t, dir, entry, stat) = subsecond_skewed_dir();
     let opts = MetadataOptions::new().with_modify_window(ModifyWindow::ZERO);
-    apply_metadata_with_attrs_flags(&dir, &entry, &opts, Some(stat), AttrsFlags::empty())
+    apply_metadata_with_attrs_flags(&dir, &entry, &opts, Some(stat.into()), AttrsFlags::empty())
         .expect("apply");
     let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
     assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 400_000_000));
@@ -2746,8 +2904,14 @@ fn mtime_within_modify_window_is_not_restamped() {
 fn accurate_time_restamps_a_subsecond_mtime_skew() {
     let (_t, dir, entry, stat) = subsecond_skewed_dir();
     let opts = MetadataOptions::new().with_modify_window(ModifyWindow::ZERO);
-    apply_metadata_with_attrs_flags(&dir, &entry, &opts, Some(stat), AttrsFlags::ACCURATE_TIME)
-        .expect("apply");
+    apply_metadata_with_attrs_flags(
+        &dir,
+        &entry,
+        &opts,
+        Some(stat.into()),
+        AttrsFlags::ACCURATE_TIME,
+    )
+    .expect("apply");
     let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
     assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 0));
 }
@@ -2761,7 +2925,7 @@ fn default_options_restamp_a_subsecond_mtime_skew() {
         &dir,
         &entry,
         &MetadataOptions::new(),
-        Some(stat),
+        Some(stat.into()),
         AttrsFlags::empty(),
     )
     .expect("apply");
@@ -3104,7 +3268,7 @@ fn dir_without_perms_over_entry_path_keeps_existing_dir_mode() {
         .preserve_times(false);
     // pre_transfer = Some means the dir already existed: upstream keeps its own
     // permission bits (dest_mode exists=true), never rewriting them.
-    apply_metadata_with_pre_transfer_stat(&dir, &entry, &opts, None, Some(pre_transfer))
+    apply_metadata_with_pre_transfer_stat(&dir, &entry, &opts, None, Some(pre_transfer.into()))
         .expect("apply dir entry");
 
     assert_eq!(
@@ -3583,8 +3747,13 @@ fn apply_directory_metadata_sets_times_before_readonly_chmod() {
     let opts = MetadataOptions::new()
         .preserve_permissions(true)
         .preserve_times(true);
-    apply_directory_metadata_with_options(&dest, &metadata, opts, Some(&pre))
-        .expect("apply directory metadata");
+    apply_directory_metadata_with_options(
+        &dest,
+        &metadata,
+        opts,
+        Some(&fast_io::EntryMetadata::from(pre.clone())),
+    )
+    .expect("apply directory metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let landed_mtime = FileTime::from_last_modification_time(&dest_meta);
@@ -3677,7 +3846,13 @@ fn apply_file_metadata_if_changed_sets_times_before_readonly_chmod() {
     let opts = MetadataOptions::new()
         .preserve_permissions(true)
         .preserve_times(true);
-    apply_file_metadata_if_changed(&dest, &metadata, &existing, &opts).expect("apply metadata");
+    apply_file_metadata_if_changed(
+        &dest,
+        &metadata,
+        &fast_io::EntryMetadata::from(existing.clone()),
+        &opts,
+    )
+    .expect("apply metadata");
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     assert_eq!(

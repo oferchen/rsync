@@ -198,29 +198,26 @@ pub fn utimensat(
     }
 }
 
-/// Issue `fchmodat` against `link_path` when the `sandbox` root is the
-/// immediate parent.
+/// Chmod `link_path` through the destination sandbox.
 ///
-/// SEC-1.i adaptor for callers that already have an absolute path:
-/// - When `sandbox` is `Some`, `link_path` equals
-///   `dest_dir.join(relative_path)`, and `relative_path` has a single
-///   component, the helper resolves the leaf through the sandbox dirfd so
-///   a mid-syscall symlink swap on the leaf cannot redirect the chmod to
-///   an attacker-chosen inode.
-/// - In every other case the helper falls back to
-///   [`std::fs::set_permissions`] on `link_path`.
+/// When `sandbox` is `Some` and `link_path` is `dest_dir.join(relative_path)`,
+/// the leaf is changed with `fchmodat` against its parent resolved beneath the
+/// sandbox (the arms of `at_dest_leaf`), so a directory swapped for a symlink
+/// anywhere above the leaf cannot redirect the chmod out of the tree. In every
+/// other case the helper falls back to [`std::fs::set_permissions`].
 ///
-/// `follow_symlinks` controls whether the sandbox fast path uses
-/// `AT_SYMLINK_NOFOLLOW`. The fallback path uses [`std::fs::set_permissions`]
+/// `follow_symlinks` controls whether the anchored arm passes
+/// `AT_SYMLINK_NOFOLLOW`. The fallback uses [`std::fs::set_permissions`]
 /// regardless because the standard library has no `lchmod`-equivalent;
 /// callers that need symlink-no-follow semantics on the fallback path
 /// must short-circuit before reaching this helper.
 ///
+/// upstream: rsync-3.5.1/syscall.c do_chmod_at()
+///
 /// # Errors
 ///
-/// Surfaces either the [`fchmodat`] error or the
-/// [`std::fs::set_permissions`] error verbatim, depending on which path
-/// was taken.
+/// Surfaces the anchored `fchmodat` error, the confined walk's refusal, or
+/// the [`std::fs::set_permissions`] error verbatim.
 pub fn fchmodat_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -229,10 +226,12 @@ pub fn fchmodat_via_sandbox_or_fallback(
     mode: u32,
     follow_symlinks: bool,
 ) -> io::Result<()> {
-    if let Some(sandbox) = sandbox
-        && let Some(leaf) = single_component_leaf(dest_dir, relative_path, link_path)
+    let chmod_at = |dirfd: BorrowedFd<'_>, name: &OsStr| {
+        secure_chmod_at_dirfd(dirfd, name, mode, follow_symlinks)
+    };
+    if super::nested::at_dest_leaf(sandbox, dest_dir, relative_path, link_path, chmod_at)?.is_some()
     {
-        return fchmodat(sandbox.current_dirfd(), leaf, mode, follow_symlinks);
+        return Ok(());
     }
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(link_path, std::fs::Permissions::from_mode(mode))
@@ -621,39 +620,42 @@ pub fn fchownat_via_sandbox_or_fallback(
     chown_path_libc(link_path, uid, gid, follow_symlinks)
 }
 
-/// Issue `utimensat` against `link_path` when the `sandbox` root is the
-/// immediate parent.
+/// Set the times of `link_path` through the destination sandbox, leaving a
+/// `None` slot unchanged (`UTIME_OMIT`).
 ///
-/// SEC-1.i adaptor for the utimes-class cutover. Routes to the sandbox
-/// dirfd when the relative path is a single component, falls back to the
-/// [`filetime`] crate otherwise.
+/// When `sandbox` is `Some` and `link_path` is `dest_dir.join(relative_path)`,
+/// the leaf is changed with `utimensat` against its parent resolved beneath
+/// the sandbox (the arms of `at_dest_leaf`). In every other case the same
+/// `utimensat` is issued against the path.
 ///
-/// `follow_symlinks = false` mirrors [`filetime::set_symlink_file_times`].
+/// `follow_symlinks = false` passes `AT_SYMLINK_NOFOLLOW` on either arm.
+///
+/// upstream: rsync-3.5.1/syscall.c do_utimensat_at()
 ///
 /// # Errors
 ///
-/// Surfaces either the [`utimensat`] error or the
-/// [`filetime::set_file_times`] / [`filetime::set_symlink_file_times`]
-/// error verbatim, depending on which path was taken.
+/// Surfaces the `utimensat(2)` error or the confined walk's refusal
+/// verbatim, or `EINVAL` when `link_path` contains an interior NUL byte.
 pub fn utimensat_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
     relative_path: &Path,
     link_path: &Path,
-    atime: FileTime,
-    mtime: FileTime,
+    atime: Option<FileTime>,
+    mtime: Option<FileTime>,
     follow_symlinks: bool,
 ) -> io::Result<()> {
-    if let Some(sandbox) = sandbox
-        && let Some(leaf) = single_component_leaf(dest_dir, relative_path, link_path)
+    let utimes_at = |dirfd: BorrowedFd<'_>, name: &OsStr| {
+        secure_utimes_at_dirfd(dirfd, name, atime, mtime, follow_symlinks)
+    };
+    if super::nested::at_dest_leaf(sandbox, dest_dir, relative_path, link_path, utimes_at)?
+        .is_some()
     {
-        return utimensat(sandbox.current_dirfd(), leaf, atime, mtime, follow_symlinks);
+        return Ok(());
     }
-    if follow_symlinks {
-        filetime::set_file_times(link_path, atime, mtime)
-    } else {
-        filetime::set_symlink_file_times(link_path, atime, mtime)
-    }
+    let c_path = CString::new(link_path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    utimensat_omit_raw(libc::AT_FDCWD, &c_path, atime, mtime, follow_symlinks)
 }
 
 #[cfg(test)]

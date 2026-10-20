@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use fast_io::pinned_root::SourceMetadata;
+use fast_io::EntryMetadata;
 
 use crate::parallel_io::{ParallelOp, ParallelThresholds, map_blocking};
 
@@ -24,10 +24,10 @@ pub(in crate::generator) struct StatResult {
     pub path: PathBuf,
     /// Resolved metadata, or the error from the stat call.
     ///
-    /// A [`SourceMetadata`] rather than a [`std::fs::Metadata`] because the
+    /// A [`EntryMetadata`] rather than a [`std::fs::Metadata`] because the
     /// anchored arm answers with `fstatat`, whose `struct stat` cannot be
     /// spelled as the latter - see [`fast_io::pinned_root`].
-    pub metadata: Result<SourceMetadata, std::io::Error>,
+    pub metadata: Result<EntryMetadata, std::io::Error>,
 }
 
 /// Collects `read_dir()` entries into paths and batch-resolves their metadata.

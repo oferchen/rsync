@@ -34,7 +34,7 @@ impl GeneratorContext {
         &self,
         full_path: &Path,
         relative_path: PathBuf,
-        metadata: &fast_io::pinned_root::SourceMetadata,
+        metadata: &fast_io::EntryMetadata,
         filter_level: u8,
     ) -> io::Result<FileEntry> {
         // upstream: flist.c:1767 DEBUG_GTE(FLIST, 2) `[%s] make_file(%s,*,%d)`.
@@ -512,7 +512,7 @@ impl GeneratorContext {
     fn fake_super_override(
         &self,
         full_path: &Path,
-        metadata: &fast_io::pinned_root::SourceMetadata,
+        metadata: &fast_io::EntryMetadata,
     ) -> Option<metadata::FakeSuperStat> {
         if !self.config.fake_super {
             return None;
@@ -609,7 +609,7 @@ mod fake_super_round_trip_tests {
             .create_entry(
                 &path,
                 PathBuf::from("placeholder"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -637,7 +637,7 @@ mod fake_super_round_trip_tests {
             .create_entry(
                 &path,
                 PathBuf::from("placeholder"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -663,7 +663,7 @@ mod fake_super_round_trip_tests {
             .create_entry(
                 &path,
                 PathBuf::from("sda"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -724,7 +724,7 @@ mod fake_super_round_trip_tests {
             .create_entry(
                 dev,
                 PathBuf::from("zero"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -767,7 +767,7 @@ mod fake_super_round_trip_tests {
             .create_entry(
                 dev,
                 PathBuf::from("zero"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -790,7 +790,7 @@ mod fake_super_round_trip_tests {
             .create_entry(
                 &path,
                 PathBuf::from("plain"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -873,7 +873,7 @@ mod daemon_outgoing_chmod_tests {
             .create_entry(
                 &path,
                 PathBuf::from("source.txt"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -900,7 +900,7 @@ mod daemon_outgoing_chmod_tests {
             .create_entry(
                 &path,
                 PathBuf::from("source.txt"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -978,7 +978,7 @@ mod client_chmod_tests {
             .create_entry(
                 &file,
                 PathBuf::from("f644"),
-                &fast_io::pinned_root::SourceMetadata::from(fmeta.clone()),
+                &fast_io::EntryMetadata::from(fmeta.clone()),
                 2,
             )
             .expect("create_entry file");
@@ -993,7 +993,7 @@ mod client_chmod_tests {
             .create_entry(
                 &dir,
                 PathBuf::from("sub"),
-                &fast_io::pinned_root::SourceMetadata::from(dmeta.clone()),
+                &fast_io::EntryMetadata::from(dmeta.clone()),
                 2,
             )
             .expect("create_entry dir");
@@ -1025,7 +1025,7 @@ mod client_chmod_tests {
             .create_entry(
                 &file,
                 PathBuf::from("f"),
-                &fast_io::pinned_root::SourceMetadata::from(fmeta.clone()),
+                &fast_io::EntryMetadata::from(fmeta.clone()),
                 2,
             )
             .expect("create_entry file");
@@ -1040,7 +1040,7 @@ mod client_chmod_tests {
             .create_entry(
                 &dir,
                 PathBuf::from("d"),
-                &fast_io::pinned_root::SourceMetadata::from(dmeta.clone()),
+                &fast_io::EntryMetadata::from(dmeta.clone()),
                 2,
             )
             .expect("create_entry dir");
@@ -1067,7 +1067,7 @@ mod client_chmod_tests {
             .create_entry(
                 &link,
                 PathBuf::from("link"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1075,7 +1075,7 @@ mod client_chmod_tests {
             .create_entry(
                 &link,
                 PathBuf::from("link"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1101,7 +1101,7 @@ mod client_chmod_tests {
             .create_entry(
                 &path,
                 PathBuf::from("f"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1167,7 +1167,7 @@ mod munge_symlinks_tests {
             .create_entry(
                 &link,
                 PathBuf::from("escape"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -1195,7 +1195,7 @@ mod munge_symlinks_tests {
             .create_entry(
                 &link,
                 PathBuf::from("escape"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -1263,7 +1263,7 @@ mod symlink_mode_tests {
             .create_entry(
                 link,
                 PathBuf::from("link"),
-                &fast_io::pinned_root::SourceMetadata::from(meta),
+                &fast_io::EntryMetadata::from(meta),
                 2,
             )
             .expect("create_entry");
@@ -1434,7 +1434,7 @@ mod windows_reparse_tests {
             .create_entry(
                 &path,
                 PathBuf::from("plain.txt"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1475,7 +1475,7 @@ mod windows_reparse_tests {
             .create_entry(
                 &junction,
                 PathBuf::from("link"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1523,7 +1523,7 @@ mod windows_reparse_tests {
             .create_entry(
                 &link,
                 PathBuf::from("link"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1594,7 +1594,7 @@ mod entry_length_tests {
             .create_entry(
                 &dir,
                 PathBuf::from("subdir"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1626,7 +1626,7 @@ mod entry_length_tests {
             .create_entry(
                 &link,
                 PathBuf::from("link"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .expect("create_entry");
@@ -1721,7 +1721,7 @@ mod flist_checksum_tests {
             .create_entry(
                 &path,
                 PathBuf::from("payload.bin"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -1747,7 +1747,7 @@ mod flist_checksum_tests {
             .create_entry(
                 &path,
                 PathBuf::from("empty"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -1771,7 +1771,7 @@ mod flist_checksum_tests {
             .create_entry(
                 &path,
                 PathBuf::from("payload.bin"),
-                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                &fast_io::EntryMetadata::from(meta.clone()),
                 2,
             )
             .unwrap();
@@ -1839,7 +1839,7 @@ mod windows_ads_xattr_tests {
             .create_entry(
                 path,
                 PathBuf::from("carrier.txt"),
-                &fast_io::pinned_root::SourceMetadata::from(meta),
+                &fast_io::EntryMetadata::from(meta),
                 2,
             )
             .expect("create_entry");

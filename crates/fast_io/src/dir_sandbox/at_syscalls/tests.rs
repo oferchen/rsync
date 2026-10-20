@@ -4,6 +4,7 @@
 //! they exercise both the sandbox-anchored fast path and the
 //! path-based fallback for every SEC-1 cutover family.
 
+use crate::EntryMetadata;
 use std::os::fd::AsFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
@@ -87,7 +88,7 @@ fn lstat_via_sandbox_takes_at_path_for_single_component() {
     let leaf = Path::new("file");
     let link = root.join(leaf);
     let outcome = lstat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &link).expect("lstat");
-    assert!(matches!(outcome, LstatOutcome::At(_)));
+    assert!(matches!(outcome, EntryMetadata::At(_)));
 }
 
 #[test]
@@ -110,12 +111,12 @@ fn lstat_via_sandbox_multi_component_anchors_or_falls_back() {
 
     if nested_anchor_live() {
         assert!(
-            matches!(outcome, LstatOutcome::At(_)),
+            matches!(outcome, EntryMetadata::At(_)),
             "multi-component paths must anchor beneath the sandbox root wherever anchoring is available"
         );
     } else {
         assert!(
-            matches!(outcome, LstatOutcome::Std(_)),
+            matches!(outcome, EntryMetadata::Std(_)),
             "multi-component paths degrade to the path-based fallback on a Linux kernel without openat2"
         );
     }
@@ -133,7 +134,7 @@ fn lstat_via_sandbox_falls_back_when_sandbox_absent() {
     let leaf = Path::new("file");
     let link = root.join(leaf);
     let outcome = lstat_via_sandbox_or_fallback(None, &root, leaf, &link).expect("lstat");
-    assert!(matches!(outcome, LstatOutcome::Std(_)));
+    assert!(matches!(outcome, EntryMetadata::Std(_)));
 }
 
 #[test]
@@ -407,7 +408,7 @@ fn fchmodat_via_sandbox_takes_at_path_for_single_component() {
 }
 
 #[test]
-fn fchmodat_via_sandbox_falls_back_for_multi_component() {
+fn fchmodat_via_sandbox_anchors_a_multi_component_path() {
     let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
@@ -697,15 +698,23 @@ fn utimensat_via_sandbox_takes_at_path_for_single_component() {
     let atime = FileTime::from_unix_time(1_000_000, 0);
     let mtime = FileTime::from_unix_time(2_000_000, 0);
     let leaf = Path::new("file");
-    utimensat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &path, atime, mtime, true)
-        .expect("utimensat sandbox");
+    utimensat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        leaf,
+        &path,
+        Some(atime),
+        Some(mtime),
+        true,
+    )
+    .expect("utimensat sandbox");
 
     let meta = std::fs::metadata(&path).expect("stat");
     assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
 }
 
 #[test]
-fn utimensat_via_sandbox_falls_back_for_multi_component() {
+fn utimensat_via_sandbox_anchors_a_multi_component_path() {
     let (_keep, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
@@ -715,8 +724,16 @@ fn utimensat_via_sandbox_falls_back_for_multi_component() {
     let atime = FileTime::from_unix_time(3_000_000, 0);
     let mtime = FileTime::from_unix_time(4_000_000, 0);
     let rel = Path::new("sub/file");
-    utimensat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &path, atime, mtime, true)
-        .expect("utimensat fallback");
+    utimensat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        rel,
+        &path,
+        Some(atime),
+        Some(mtime),
+        true,
+    )
+    .expect("utimensat fallback");
 
     let meta = std::fs::metadata(&path).expect("stat");
     assert_eq!(FileTime::from_last_modification_time(&meta), mtime);
@@ -731,7 +748,7 @@ fn utimensat_via_sandbox_falls_back_when_sandbox_absent() {
     let atime = FileTime::from_unix_time(5_000_000, 0);
     let mtime = FileTime::from_unix_time(6_000_000, 0);
     let leaf = Path::new("file");
-    utimensat_via_sandbox_or_fallback(None, &root, leaf, &path, atime, mtime, true)
+    utimensat_via_sandbox_or_fallback(None, &root, leaf, &path, Some(atime), Some(mtime), true)
         .expect("utimensat fallback");
 
     let meta = std::fs::metadata(&path).expect("stat");
@@ -759,8 +776,8 @@ fn utimensat_via_sandbox_symlink_no_follow_preserves_target_mtime() {
         &root,
         Path::new("link"),
         &link,
-        new_atime,
-        new_mtime,
+        Some(new_atime),
+        Some(new_mtime),
         false,
     )
     .expect("utimensat lutimes");
@@ -1628,7 +1645,7 @@ fn read_dir_via_sandbox_lists_single_component_subdir() {
 }
 
 #[test]
-fn read_dir_via_sandbox_falls_back_for_multi_component() {
+fn read_dir_via_sandbox_anchors_a_multi_component_path() {
     let (_keep, root) = test_support::create_canonical_tempdir();
     let nested = root.join("a/b");
     std::fs::create_dir_all(&nested).expect("mkdir -p");
@@ -1639,12 +1656,36 @@ fn read_dir_via_sandbox_falls_back_for_multi_component() {
         read_dir_via_sandbox_or_fallback(Some(&sandbox), &root, Path::new("a/b"), &nested)
             .expect("read_dir");
     assert!(
-        matches!(outcome, ReadDirOutcome::Std(_)),
-        "multi-component path must take the path-based fallback"
+        matches!(outcome, ReadDirOutcome::At(_)),
+        "multi-component path must be listed beneath the sandback"
     );
     let names = collect_names(outcome);
     assert_eq!(names.len(), 1);
     assert_eq!(names[0], OsStr::new("leaf"));
+}
+
+// upstream: syscall.c:3858-3871 held_dfd_for - a nested directory is opened
+// beneath the destination, so a parent swapped for a symlink after the
+// receiver resolved it cannot redirect the listing out of the tree.
+#[test]
+fn read_dir_via_sandbox_refuses_a_swapped_nested_parent() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    let outside = root.join("outside");
+    std::fs::create_dir_all(outside.join("b")).expect("mkdir outside/b");
+    std::fs::write(outside.join("b/secret"), b"x").expect("secret");
+    let dest = root.join("dest");
+    std::fs::create_dir(&dest).expect("mkdir dest");
+    symlink(&outside, dest.join("a")).expect("swap a for a symlink");
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
+
+    let nested = dest.join("a/b");
+    match read_dir_via_sandbox_or_fallback(Some(&sandbox), &dest, Path::new("a/b"), &nested) {
+        Err(_) => {}
+        Ok(outcome) => panic!(
+            "listing escaped the sandbox through a/: {:?}",
+            collect_names(outcome)
+        ),
+    }
 }
 
 #[test]
@@ -2541,4 +2582,87 @@ mod held_parent {
         create(&sandbox, &root, "a/b/.t2").expect("create in the recreated dir");
         assert!(root.join("a/b/.t2").exists());
     }
+}
+
+// upstream: receiver.c:1212-1241 - the `EACCES` recovery arms reopen through
+// the same resolver as the first arm. A read-only destination in the pinned
+// tree makes the first anchored open fail with `EACCES`; the recovery must
+// open that pinned file, never the decoy a path retry would reach through the
+// swapped destination root.
+#[test]
+fn inplace_eacces_recovery_stays_beneath_the_pinned_destination() {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    let dest = root.join("dest");
+    let pinned = root.join("dest.pinned");
+    let outside = root.join("outside");
+    std::fs::create_dir_all(dest.join("sub")).expect("mkdir dest/sub");
+    std::fs::create_dir_all(outside.join("sub")).expect("mkdir outside/sub");
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
+    std::fs::rename(&dest, &pinned).expect("move dest aside");
+    symlink(&outside, &dest).expect("swap the destination root");
+    let pinned_file = pinned.join("sub/f");
+    std::fs::write(&pinned_file, b"pinned").expect("pinned file");
+    std::fs::set_permissions(&pinned_file, std::fs::Permissions::from_mode(0o444))
+        .expect("read-only");
+    std::fs::write(outside.join("sub/f"), b"decoy").expect("decoy");
+
+    let full = dest.join("sub/f");
+    let mut file = open_inplace_output_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &dest,
+        Path::new("sub/f"),
+        &full,
+        false,
+    )
+    .expect("the read-only recovery opens the pinned file");
+    file.write_all(b"PINNED").expect("write");
+    drop(file);
+
+    assert_eq!(std::fs::read(&pinned_file).unwrap(), b"PINNED");
+    assert_eq!(std::fs::read(outside.join("sub/f")).unwrap(), b"decoy");
+    assert_eq!(
+        std::fs::metadata(&pinned_file)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o444,
+        "the recovery restores the prior mode"
+    );
+}
+
+// The held parent's `ENOENT` is authoritative (upstream: syscall.c:3858-3871
+// held_dfd_for): a missing leaf under the held parent is answered by the one
+// `*at` call against the held dirfd, never by re-resolving the parent. The
+// held `a/b` is renamed away and a fresh `a/b` holding the leaf takes its
+// place; a re-resolve would find that leaf, the held answer does not.
+#[test]
+fn missing_leaf_under_a_held_parent_is_not_re_resolved() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    std::fs::write(root.join("a/b/present"), b"x").expect("present");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    lstat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        Path::new("a/b/present"),
+        &root.join("a/b/present"),
+    )
+    .expect("present leaf primes the held a/b");
+
+    std::fs::rename(root.join("a/b"), root.join("a/held")).expect("move held a/b aside");
+    std::fs::create_dir(root.join("a/b")).expect("fresh a/b");
+    std::fs::write(root.join("a/b/missing"), b"y").expect("leaf only in the fresh a/b");
+
+    let err = lstat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        Path::new("a/b/missing"),
+        &root.join("a/b/missing"),
+    )
+    .expect_err("the held parent answers ENOENT");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }

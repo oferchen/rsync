@@ -74,19 +74,15 @@ fn permission_read_denied_single_file() {
     // Restore permissions for cleanup
     restore_permissions(&unreadable, 0o644);
 
-    // Should fail with an I/O error related to permission denied
+    // upstream: sender.c:719-721 reports the failed open at its site, and
+    // cleanup.c:217-218 ends the run with RERR_PARTIAL (23).
     let error = result.expect_err("should fail with permission denied");
-    match error.kind() {
-        LocalCopyErrorKind::Io { source, .. } => {
-            assert_eq!(
-                source.kind(),
-                io::ErrorKind::PermissionDenied,
-                "expected PermissionDenied, got {:?}",
-                source.kind()
-            );
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    assert!(
+        matches!(error.kind(), LocalCopyErrorKind::PartialTransfer),
+        "an unreadable source ends the run with the RERR_PARTIAL summary, got {:?}",
+        error.kind()
+    );
+    assert_eq!(error.exit_code(), 23);
 }
 
 #[test]
@@ -129,17 +125,17 @@ fn permission_read_denied_returns_io_error_with_multiple_files() {
             );
         }
         Err(error) => {
-            // Error is expected for permission denied
-            match error.kind() {
-                LocalCopyErrorKind::Io { source, .. } => {
-                    assert_eq!(
-                        source.kind(),
-                        io::ErrorKind::PermissionDenied,
-                        "expected PermissionDenied error"
-                    );
-                }
-                other => panic!("unexpected error kind: {other:?}"),
-            }
+            // upstream: sender.c:719-721 reports the failed open at its site;
+            // the run itself ends with RERR_PARTIAL (cleanup.c:217-218).
+            assert!(
+                matches!(error.kind(), LocalCopyErrorKind::PartialTransfer),
+                "expected the RERR_PARTIAL summary, got {:?}",
+                error.kind()
+            );
+            assert!(
+                dest_root.join("readable.txt").exists(),
+                "the readable sibling must still be copied"
+            );
         }
     }
 }
@@ -593,7 +589,7 @@ fn permission_immutable_file_handling() {
 }
 
 #[test]
-fn permission_denied_error_includes_path() {
+fn permission_denied_run_error_is_the_partial_summary() {
     if is_root() {
         return;
     }
@@ -618,14 +614,14 @@ fn permission_denied_error_includes_path() {
     // Restore permissions for cleanup
     restore_permissions(&unreadable, 0o644);
 
-    if let Err(error) = result {
-        let message = error.to_string();
-        // Error message should include the path for debugging
-        assert!(
-            message.contains("secret.txt") || message.contains(&source_root.display().to_string()),
-            "error message should include path: {message}"
-        );
-    }
+    // The path is named where the open fails (`send_files failed to open`,
+    // pinned by tests/local_copy_unreadable_source_reporting.rs); the run's own
+    // error is upstream's summary, which never repeats it.
+    let error = result.expect_err("an unreadable source fails the run");
+    assert_eq!(
+        error.to_string(),
+        "some files/attrs were not transferred (see previous errors)"
+    );
 }
 
 #[test]

@@ -20,8 +20,6 @@
 //! - `syscall.c:do_mknod()` - the underlying `mknod(2)` (or fake-super
 //!   placeholder) that materialises the node.
 
-#[cfg(unix)]
-use std::fs;
 use std::path::Path;
 
 #[cfg(unix)]
@@ -179,13 +177,14 @@ impl ReceiverContext {
             // Ensure parent directory exists for --relative paths.
             // upstream: generator.c:1716-1726 make_path() for relative_paths
             if let Some(parent) = node_path.parent() {
-                let _ = fs::create_dir_all(parent);
+                let _ = super::dest_create_dir_all(sandbox, dest_dir, parent);
             }
 
             // upstream: generator.c:2048-2063 - an existing node of the same
             // type (and, for devices, the same rdev) is treated as up-to-date;
             // only its metadata is refreshed.
-            let up_to_date = existing_special_matches(&node_path, entry, is_device);
+            let up_to_date =
+                existing_special_matches(sandbox, dest_dir, &node_path, entry, is_device);
 
             // Whether the destination already existed before this create. Only a
             // truly absent destination is ITEM_IS_NEW and bumps
@@ -197,7 +196,7 @@ impl ReceiverContext {
             let mut dest_existed = up_to_date;
 
             if !up_to_date {
-                dest_existed = fs::symlink_metadata(&node_path).is_ok();
+                dest_existed = super::dest_entry_exists(sandbox, dest_dir, &node_path);
                 // upstream: generator.c:2064 - `else if (basis_dir[0] != NULL)`
                 // is reached only when the destination is absent (`statret !=
                 // 0`). An identical node in a `--compare-dest` basis leaves the
@@ -205,7 +204,7 @@ impl ReceiverContext {
                 // wrong-type obstacle (dest present) skips the basis lookup and
                 // is replaced below, matching upstream's `statret == 0` branch.
                 if !self.config.reference_directories.is_empty()
-                    && fs::symlink_metadata(&node_path).is_err()
+                    && !super::dest_entry_exists(sandbox, dest_dir, &node_path)
                 {
                     let basis = if is_device {
                         crate::receiver::quick_check::NonRegularBasis::Device {
@@ -457,20 +456,21 @@ impl ReceiverContext {
 /// upstream: generator.c:2048-2063 - the receiver's quick-check leaves a
 /// matching special/device node in place instead of recreating it.
 #[cfg(unix)]
-fn existing_special_matches(path: &Path, entry: &FileEntry, is_device: bool) -> bool {
-    use std::os::unix::fs::{FileTypeExt, MetadataExt};
-
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(_) => return false,
+fn existing_special_matches(
+    sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    path: &Path,
+    entry: &FileEntry,
+    is_device: bool,
+) -> bool {
+    let Ok(meta) = super::dest_lstat(sandbox, dest_dir, path, false) else {
+        return false;
     };
-    let file_type = meta.file_type();
-
     if is_device {
         let type_ok = if entry.is_block_device() {
-            file_type.is_block_device()
+            meta.file_type().is_block_device()
         } else {
-            file_type.is_char_device()
+            meta.file_type().is_char_device()
         };
         type_ok
             && meta.rdev()
@@ -479,8 +479,8 @@ fn existing_special_matches(path: &Path, entry: &FileEntry, is_device: bool) -> 
                     entry.rdev_minor().unwrap_or(0),
                 )
     } else if entry.file_type() == FileType::Socket {
-        file_type.is_socket()
+        meta.file_type().is_socket()
     } else {
-        file_type.is_fifo()
+        meta.file_type().is_fifo()
     }
 }

@@ -133,7 +133,22 @@ pub fn open_inplace_output(
     truncate: bool,
     resolution: InplaceResolution,
 ) -> io::Result<fs::File> {
-    let opened = resolution.open_write(path, true, truncate);
+    inplace_chain(
+        |create| resolution.open_write(path, create, truncate),
+        #[cfg(unix)]
+        || resolution.open_probe(path),
+    )
+}
+
+/// Upstream's three-arm chain over caller-supplied opens: `open_write(true)`,
+/// then on Linux `open_write(false)`, then the read-only recovery around
+/// `open_probe`. Every arm resolves the leaf through the same opener, so a
+/// retry can never fall back to a weaker resolver than the first arm used.
+pub(crate) fn inplace_chain(
+    open_write: impl Fn(bool) -> io::Result<fs::File>,
+    #[cfg(unix)] open_probe: impl FnOnce() -> io::Result<fs::File>,
+) -> io::Result<fs::File> {
+    let opened = open_write(true);
 
     // upstream: receiver.c:1228-1235 - "Maybe the error was due to
     // protected_regular setting?" Under that sysctl the kernel refuses an
@@ -141,9 +156,7 @@ pub fn open_inplace_output(
     // world-writable directory. The file exists on this path, so drop O_CREAT.
     #[cfg(target_os = "linux")]
     let opened = match opened {
-        Err(error) if error.raw_os_error() == Some(libc::EACCES) => {
-            resolution.open_write(path, false, truncate)
-        }
+        Err(error) if error.raw_os_error() == Some(libc::EACCES) => open_write(false),
         other => other,
     };
 
@@ -152,7 +165,7 @@ pub fn open_inplace_output(
     #[cfg(unix)]
     let opened = match opened {
         Err(error) if error.raw_os_error() == Some(libc::EACCES) => {
-            crate::readonly_inplace::open_readonly_inplace(path, truncate, resolution)
+            crate::readonly_inplace::recover_readonly(open_probe(), || open_write(false))
         }
         other => other,
     };

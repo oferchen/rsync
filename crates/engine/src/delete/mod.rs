@@ -47,8 +47,9 @@ pub use cohort_batcher::{CohortBatch, CohortBatchEntry, CohortBatcher};
 pub use cohort_index::CohortIndex;
 pub use context::{DeleteContext, DrainOutcome, EmitterTiming};
 pub use emitter::{
-    CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE,
-    EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,
+    CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFailure, DeleteFs,
+    EMITTER_PARTIAL_EXIT_CODE, EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs,
+    RecordingDeleteFs,
 };
 pub use error::DeleteError;
 pub use extras::{compute_extras, compute_extras_with_cohorts};

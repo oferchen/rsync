@@ -219,10 +219,17 @@ pub(crate) struct CopyContext<'a> {
     /// matching upstream's single generator `link_stat` per destination. Empty
     /// outside checksum mode, so the non-checksum path keeps its own lstat.
     destination_metadata_cache: HashMap<PathBuf, fs::Metadata>,
-    /// Tracks whether any I/O errors occurred during the transfer.
-    /// When set to `true` and `--ignore-errors` is not enabled, deletions
-    /// are suppressed to prevent data loss.
-    io_errors_occurred: bool,
+    /// Set by a general I/O error found while walking the source (the
+    /// file-list phase). It gates every delete pass, because upstream's
+    /// generator sees file-list errors as each list arrives.
+    // upstream: flist.c:2736, flist.c:3070 - MSG_IO_ERROR after each file list
+    walk_io_error: bool,
+    /// Set by a general I/O error raised while sending an entry the walk had
+    /// already listed (a source that cannot be opened or read). It gates only
+    /// the `--delete-after` pass: upstream's sender reports it once the whole
+    /// send loop has finished, after every walk-time deletion was decided.
+    // upstream: sender.c:811-812 - send_msg_int(MSG_IO_ERROR, io_error)
+    transfer_io_error: bool,
     /// Guards the one-shot "IO error encountered -- skipping file deletion"
     /// notice. Upstream prints it exactly once (guarded by a static
     /// `already_warned`) the first time the delete pass is skipped because a

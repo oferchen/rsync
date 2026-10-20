@@ -33,7 +33,7 @@ for detail.
 | CVE-2026-53793 | Fixed | #7585, #8010 |
 | CVE-2026-53794 | Fixed | #7285, #7693, #8011 |
 | CVE-2026-53795 | Fixed | #7393, #7398, #7404, #7415, #7419, #7421-#7426, #7439, #7441-#7443, #7459, #7463 |
-| CVE-2026-53796 | Partially fixed | #8071, #8201 |
+| CVE-2026-53796 | Partially fixed | #8071, #8201, #8228 |
 | CVE-2026-53797 | Fixed | #8120 |
 | CVE-2026-53798 | Fixed | #8108 |
 | CVE-2026-53799 | Fixed | #8167, #8201 |
@@ -76,6 +76,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Let the walk run under Landlock and seccomp, falling back to confined wrappers (#7541, #7545, #7548)
 - Never follow a leaf symlink on the `--partial-dir` basis and staging opens (#8072)
 - Every non-daemon receiver walks its destination, refuses an untrusted destination symlink with exit 3 and upstream's diagnostic, and keeps the walked directory pinned for data writes. Metadata calls after a swap are still path-based, so CVE-2026-53796 stays partially fixed (#8071, #8201)
+- Anchor the receiver's directory, link and special probes, basis and destination opens, backup, listing and partial-dir cleanup, and destination stats through the held destination parent, with one held parent shared by the sandbox and metadata apply (CVE-2026-53796, #8228)
 - Open sender file content beneath the held source root, and refuse a replaced root with `ELOOP` (CVE-2026-53797, #8120)
 
 **Daemon**
@@ -141,6 +142,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Refuse a negative hard-link reference and bound the live xattr count (CVE-2026-70458, #8173)
 - Step the zstd token decoder through a fixed output buffer (#8172)
 - Write received xattrs through a leaf pinned beneath the destination root, and on Linux ACLs too, special files included; macOS and the BSDs apply ACLs by path, as upstream does (CVE-2026-53799, #8167, #8201)
+- Bump `rustls-webpki` to 0.103.16, which rejects certificate paths through the distrusted emSign intermediates (RUSTSEC-2026-0382, #8228)
 
 ### Added
 
@@ -412,6 +414,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `--list-only` no longer consults the destination (#8040)
 - Count `--delete-missing-args` entries in `--stats` as upstream does (#8043)
 - Show changed directories in local `-v` and `--out-format` output (#7946)
+- A local copy reports every source it cannot open as `send_files failed to open`, then ends with upstream's `some files/attrs were not transferred (see previous errors)` or `some files vanished before they could be transferred` summary; before, only the first failure was printed and later ones were lost (#8228)
+- A local copy whose source file cannot be opened still counts it in `--stats` as created and transferred, as upstream does (#8228)
 
 **Embedded SSH**
 - `Host` pattern matching, `IdentitiesOnly`, `IdentityAgent`, tilde expansion, tokenising and first-obtained-wins precedence match OpenSSH (#7803, #7791, #7205, #7792, #7814, #7836, #7856)
@@ -436,6 +440,9 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `--max-delete` caps the contents of a directory cleared to make room for an incoming file, sharing one run-wide budget and `Deletions stopped` warning with the delete sweeps (#8218)
 - A local `--max-delete` cap no longer aborts the transfer (under `--delete-before` it stopped the run before anything was copied); the skipped total is reported once, a partial error (23) outranks the limit (25), and the trailer names `the --max-delete limit stopped deletions` (#8222)
 - Under `--one-file-system`, clearing a directory obstacle for an incoming file keeps a mount point inside it instead of deleting into the mounted filesystem (#8222)
+- A local copy whose source file cannot be opened no longer skips deletions already decided during the walk (`--delete`, `--delete-delay`), and `--delete-after` now honours a send error from any directory, matching upstream, where the sender reports it only after the send loop (#8228)
+- A local source file or directory that vanishes mid-transfer no longer suppresses deletions at any `--delete` timing, and it is reported once instead of once per enclosing directory (#8228)
+- A local `--delete` that cannot remove an entry inside a doomed directory (such as a busy mount point without `-x`) now prints `delete_file: rmdir(<name>) failed`, still deletes the entry's siblings and, under `--max-delete`, no longer aborts the transfer; `cannot delete non-empty directory` names the directory relative to the transfer, as upstream does (#8228)
 
 **Incremental recursion**
 - `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)

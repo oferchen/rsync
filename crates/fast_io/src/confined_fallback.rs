@@ -248,10 +248,9 @@ impl ConfinedFallback {
     /// than surviving entries.
     pub fn remove_dir_all_at(&self, path: &Path) -> io::Result<UnlinkResidue> {
         match self.resolve(path)? {
-            Resolved::Unconfined => std::fs::remove_dir_all(path).map(|()| UnlinkResidue {
-                not_empty: false,
-                had_errors: false,
-            }),
+            Resolved::Unconfined => {
+                std::fs::remove_dir_all(path).map(|()| UnlinkResidue::default())
+            }
             Resolved::Confined { parent, leaf } => {
                 crate::recursive_unlinkat(parent.as_fd(), leaf.as_os_str())
             }

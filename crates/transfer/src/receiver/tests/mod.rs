@@ -32,6 +32,8 @@ mod block_stats_goodbye;
 mod create_specials;
 mod daemon_log_sink;
 mod delta_apply;
+#[cfg(unix)]
+mod dest_parent_swap;
 mod dry_run_pre29;
 mod errors_and_timeouts;
 #[cfg(unix)]

@@ -818,6 +818,16 @@ pub fn owner_trusted_parent_kind(
     path: &Path,
     kind: crate::confinement::PathKind,
 ) -> io::Result<(OwnedFd, OsString)> {
+    owner_trusted_parent_from(path, kind, None)
+}
+
+/// [`owner_trusted_parent_kind`] with a relative `path` walked from `base`
+/// instead of the process cwd; an absolute `path` ignores `base`.
+fn owner_trusted_parent_from(
+    path: &Path,
+    kind: crate::confinement::PathKind,
+    base: Option<&WalkBase<'_>>,
+) -> io::Result<(OwnedFd, OsString)> {
     let Some(leaf) = path.file_name().map(OsStr::to_os_string) else {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     };
@@ -830,7 +840,7 @@ pub fn owner_trusted_parent_kind(
         traversal_dir_flags(),
         Mode::empty(),
         kind,
-        None,
+        base,
         &mut parent_abs,
     )?;
     // upstream: `if (pabs[0])` - an untracked walk has nothing to judge.
@@ -1041,6 +1051,69 @@ pub fn operator_rename_confined(old_path: &Path, new_path: &Path, replace: bool)
         &new_leaf,
         replace,
     )
+}
+
+/// [`operator_rename_confined`] with relative endpoints walked from a held
+/// base directory instead of the process cwd.
+///
+/// Upstream's receiver has `chdir`ed into the destination, so a backup's
+/// relative names start their ownership walk there. oc does not `chdir`; the
+/// destination is held open as `base` and its physical path, `base_physical`,
+/// seeds the confinement tracker exactly as `getcwd()` does upstream. An
+/// absolute endpoint (an absolute `--backup-dir`) walks from `/` as before.
+///
+/// upstream: `rsync-3.5.1/syscall.c:2026-2047` `do_rename_at()` under
+/// `operator_path_resolve`.
+///
+/// # Errors
+///
+/// As [`operator_rename_confined`].
+pub fn operator_rename_confined_at(
+    base: BorrowedFd<'_>,
+    base_physical: &Path,
+    old_path: &Path,
+    new_path: &Path,
+    replace: bool,
+) -> io::Result<()> {
+    let base = WalkBase {
+        dir: base,
+        physical: base_physical,
+    };
+    let kind = crate::confinement::PathKind::Confined;
+    let (old_dirfd, old_leaf) = owner_trusted_parent_from(old_path, kind, Some(&base))?;
+    let (new_dirfd, new_leaf) = owner_trusted_parent_from(new_path, kind, Some(&base))?;
+    crate::renameat(
+        old_dirfd.as_fd(),
+        &old_leaf,
+        new_dirfd.as_fd(),
+        &new_leaf,
+        replace,
+    )
+}
+
+/// [`operator_link_confined`] with relative endpoints walked from a held base
+/// directory; see [`operator_rename_confined_at`] for the base contract.
+///
+/// upstream: `rsync-3.5.1/syscall.c:1100-1120` `do_link_at()` under
+/// `operator_path_resolve`.
+///
+/// # Errors
+///
+/// As [`operator_link_confined`].
+pub fn operator_link_confined_at(
+    base: BorrowedFd<'_>,
+    base_physical: &Path,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<()> {
+    let base = WalkBase {
+        dir: base,
+        physical: base_physical,
+    };
+    let kind = crate::confinement::PathKind::Confined;
+    let (old_dirfd, old_leaf) = owner_trusted_parent_from(old_path, kind, Some(&base))?;
+    let (new_dirfd, new_leaf) = owner_trusted_parent_from(new_path, kind, Some(&base))?;
+    crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
 }
 
 /// Hard-link `old_path` to `new_path` with both endpoints resolved by the

@@ -58,6 +58,9 @@ pub fn upstream_io_error(error: &io::Error) -> String {
 pub struct LocalCopyError {
     kind: LocalCopyErrorKind,
     completed: Option<Box<LocalCopyReport>>,
+    /// The diagnostic was already printed where the error arose, so the end
+    /// of the run summarises it instead of repeating it.
+    reported: bool,
 }
 
 impl fmt::Display for LocalCopyError {
@@ -83,7 +86,21 @@ impl LocalCopyError {
         Self {
             kind,
             completed: None,
+            reported: false,
         }
+    }
+
+    /// Marks the error as already reported at its site.
+    #[must_use]
+    pub(crate) const fn reported(mut self) -> Self {
+        self.reported = true;
+        self
+    }
+
+    /// Reports whether the diagnostic was already printed at its site.
+    #[must_use]
+    pub(crate) const fn is_reported(&self) -> bool {
+        self.reported
     }
 
     /// Attaches the report of a run that finished every entry but still owes a
@@ -204,6 +221,17 @@ impl LocalCopyError {
         Self::new(LocalCopyErrorKind::PartialTransfer)
     }
 
+    /// Constructs the end-of-run summary for a transfer whose only problem was
+    /// a source that vanished; each vanish was reported where it happened.
+    ///
+    /// upstream: `cleanup.c:215-216` maps `io_error & IOERR_VANISHED` to
+    /// `RERR_VANISHED`, which `log.c:99` names `some files vanished before
+    /// they could be transferred` at warning level.
+    #[must_use]
+    pub const fn vanished_summary() -> Self {
+        Self::new(LocalCopyErrorKind::Vanished)
+    }
+
     /// Constructs an error representing an inactivity timeout.
     #[must_use]
     pub const fn timeout(duration: Duration) -> Self {
@@ -257,6 +285,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
             LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
             LocalCopyErrorKind::PartialTransfer => INVALID_OPERAND_EXIT_CODE,
+            LocalCopyErrorKind::Vanished => VANISHED_EXIT_CODE,
             LocalCopyErrorKind::Interrupted => SIGNAL_EXIT_CODE,
         }
     }
@@ -284,6 +313,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => "RERR_DEL_LIMIT",
             LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
             LocalCopyErrorKind::PartialTransfer => "RERR_PARTIAL",
+            LocalCopyErrorKind::Vanished => "RERR_VANISHED",
             LocalCopyErrorKind::Interrupted => "RERR_SIGNAL",
         }
     }
@@ -311,6 +341,18 @@ impl LocalCopyError {
             LocalCopyErrorKind::Io { source, .. }
                 if source.kind() == io::ErrorKind::NotFound
         )
+    }
+
+    /// The path a vanished-file error names, or `None` for any other error.
+    pub(crate) fn vanished_path(&self) -> Option<&Path> {
+        match &self.kind {
+            LocalCopyErrorKind::Io { path, source, .. }
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
+                Some(path.as_path())
+            }
+            _ => None,
+        }
     }
 
     /// Reports whether this is a failed initial `link_stat` of a source
@@ -422,6 +464,15 @@ pub enum LocalCopyErrorKind {
     /// (see previous errors)`, selected when `io_error` is set at exit (`cleanup.c:217`).
     #[error("some files/attrs were not transferred (see previous errors)")]
     PartialTransfer,
+    /// One or more sources vanished between the walk and their send, and
+    /// nothing worse happened, so the transfer completes with
+    /// `RERR_VANISHED` (exit 24). Each vanish was reported where it happened.
+    ///
+    /// upstream: `log.c:99` maps `RERR_VANISHED` to `some files vanished
+    /// before they could be transferred`, printed as a warning
+    /// (`log.c:log_exit()`).
+    #[error("some files vanished before they could be transferred")]
+    Vanished,
     /// The transfer was aborted by an interrupt signal (SIGINT/SIGTERM/SIGHUP),
     /// exiting `RERR_SIGNAL` (20). The copy loop stopped mid-file so the
     /// destination guard could finalise its `--partial` file.

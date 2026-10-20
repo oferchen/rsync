@@ -1,13 +1,11 @@
-//! The metadata a source-scan lookup answers with, whichever syscall answered.
+//! The metadata an anchored lookup answers with, whichever syscall answered.
 //!
 //! [`std::fs::Metadata`] has no public constructor, so a lookup that resolves
-//! through `fstatat` cannot report its answer as one. That is the same wall
-//! [`AtMetadata`] was built for, and
-//! [`LstatOutcome`](crate::dir_sandbox::LstatOutcome) is the established shape
-//! for the either/or it forces: one variant per syscall, one accessor surface
-//! over both. [`SourceMetadata`] is that shape widened to the field set the
-//! sender's `make_file()` reads, and [`SourceFileType`] is the same thing for
-//! the type bits.
+//! through `fstatat` cannot report its answer as one. That is the wall
+//! [`AtMetadata`] was built for; [`EntryMetadata`] is the either/or it forces -
+//! one variant per syscall, one accessor surface over both - shared by the
+//! sender's source scan and the receiver's destination stats, and
+//! [`EntryFileType`] is the same thing for the type bits.
 //!
 //! The accessors are named and widened after
 //! [`std::os::unix::fs::MetadataExt`] on purpose: the caller is code that used
@@ -22,15 +20,15 @@ use std::time::SystemTime;
 #[cfg(unix)]
 use crate::dir_sandbox::AtMetadata;
 
-/// Metadata for a source path, from whichever lookup reached it.
+/// Metadata for a source or destination entry, from whichever lookup reached it.
 ///
 /// `Std` is the ordinary path-based [`std::fs::symlink_metadata`] /
 /// [`std::fs::metadata`] answer, and on Linux it is also the anchored answer,
 /// which arrives as a real [`std::fs::Metadata`] through `O_PATH` + `fstat`.
 /// `At` is the anchored `fstatat` answer on the Unixes without `O_PATH`. See
 /// [`crate::pinned_root`]'s Platform section for why the split falls there.
-#[derive(Debug)]
-pub enum SourceMetadata {
+#[derive(Clone, Debug)]
+pub enum EntryMetadata {
     /// A [`std::fs::Metadata`], from a path-based lookup or from `fstat` on an
     /// `O_PATH` descriptor.
     Std(std::fs::Metadata),
@@ -39,20 +37,20 @@ pub enum SourceMetadata {
     At(AtMetadata),
 }
 
-impl From<std::fs::Metadata> for SourceMetadata {
+impl From<std::fs::Metadata> for EntryMetadata {
     fn from(metadata: std::fs::Metadata) -> Self {
         Self::Std(metadata)
     }
 }
 
-impl SourceMetadata {
+impl EntryMetadata {
     /// The entry's type bits.
     #[must_use]
-    pub fn file_type(&self) -> SourceFileType {
+    pub fn file_type(&self) -> EntryFileType {
         match self {
-            Self::Std(metadata) => SourceFileType::Std(metadata.file_type()),
+            Self::Std(metadata) => EntryFileType::Std(metadata.file_type()),
             #[cfg(unix)]
-            Self::At(metadata) => SourceFileType::At(*metadata),
+            Self::At(metadata) => EntryFileType::At(*metadata),
         }
     }
 
@@ -192,7 +190,7 @@ impl SourceMetadata {
 /// Split out so the `#[cfg(unix)]` gate is stated once instead of on ten
 /// methods.
 #[cfg(unix)]
-impl SourceMetadata {
+impl EntryMetadata {
     /// Raw `st_mode`, matching [`std::os::unix::fs::MetadataExt::mode`].
     #[must_use]
     pub fn mode(&self) -> u32 {
@@ -287,15 +285,51 @@ impl SourceMetadata {
             Self::At(metadata) => metadata.atime(),
         }
     }
+    /// Sub-second access time, matching
+    /// [`std::os::unix::fs::MetadataExt::atime_nsec`].
+    #[must_use]
+    pub fn atime_nsec(&self) -> i64 {
+        match self {
+            Self::Std(metadata) => std::os::unix::fs::MetadataExt::atime_nsec(metadata),
+            Self::At(metadata) => metadata.atime_nsec(),
+        }
+    }
 }
 
-/// The type bits of a [`SourceMetadata`], from whichever lookup answered.
+impl EntryMetadata {
+    /// Modification time as a [`filetime::FileTime`], matching
+    /// [`filetime::FileTime::from_last_modification_time`].
+    #[must_use]
+    pub fn modified_filetime(&self) -> filetime::FileTime {
+        match self {
+            Self::Std(metadata) => filetime::FileTime::from_last_modification_time(metadata),
+            #[cfg(unix)]
+            Self::At(metadata) => {
+                filetime::FileTime::from_unix_time(metadata.mtime(), metadata.mtime_nsec() as u32)
+            }
+        }
+    }
+    /// Access time as a [`filetime::FileTime`], matching
+    /// [`filetime::FileTime::from_last_access_time`].
+    #[must_use]
+    pub fn accessed_filetime(&self) -> filetime::FileTime {
+        match self {
+            Self::Std(metadata) => filetime::FileTime::from_last_access_time(metadata),
+            #[cfg(unix)]
+            Self::At(metadata) => {
+                filetime::FileTime::from_unix_time(metadata.atime(), metadata.atime_nsec() as u32)
+            }
+        }
+    }
+}
+
+/// The type bits of a [`EntryMetadata`], from whichever lookup answered.
 ///
 /// Mirrors [`std::fs::FileType`] plus the
 /// [`std::os::unix::fs::FileTypeExt`] predicates, for the same reason
-/// [`SourceMetadata`] mirrors `MetadataExt`.
+/// [`EntryMetadata`] mirrors `MetadataExt`.
 #[derive(Clone, Copy, Debug)]
-pub enum SourceFileType {
+pub enum EntryFileType {
     /// Type bits carried by a [`std::fs::Metadata`].
     Std(std::fs::FileType),
     /// Type bits read out of a `struct stat`.
@@ -303,7 +337,7 @@ pub enum SourceFileType {
     At(AtMetadata),
 }
 
-impl SourceFileType {
+impl EntryFileType {
     /// Reports whether the entry is a regular file.
     #[must_use]
     pub fn is_file(&self) -> bool {
@@ -337,7 +371,7 @@ impl SourceFileType {
 
 /// The [`std::os::unix::fs::FileTypeExt`] half of the surface.
 #[cfg(unix)]
-impl SourceFileType {
+impl EntryFileType {
     /// Reports whether the entry is a block device.
     #[must_use]
     pub fn is_block_device(&self) -> bool {
@@ -387,5 +421,116 @@ fn system_time(secs: i64, nsecs: i64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::new(secs.unsigned_abs(), nsecs)
     } else {
         SystemTime::UNIX_EPOCH - Duration::new(secs.unsigned_abs(), 0) + Duration::new(0, nsecs)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::ffi::OsStr;
+    use std::fs::File;
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, symlink};
+    use std::path::Path;
+
+    use filetime::FileTime;
+
+    use super::EntryMetadata;
+    use crate::dir_sandbox::at_syscalls::mkfifoat;
+    use crate::dir_sandbox::fstatat_nofollow;
+
+    const ATIME: (i64, u32) = (1_600_000_000, 123_456_789);
+    const MTIME: (i64, u32) = (1_650_000_000, 987_654_321);
+
+    /// Asserts both variants report exactly what `lstat` reports for `leaf`.
+    ///
+    /// The quick-check compares mtime to the nanosecond, so a variant that
+    /// truncated or swapped the sub-second field would turn every unchanged
+    /// file into a transfer; the stamps are set with distinct non-zero
+    /// nanoseconds so such a slip cannot pass.
+    fn assert_variants_agree(root: &Path, leaf: &str) {
+        let path = root.join(leaf);
+        filetime::set_symlink_file_times(
+            &path,
+            FileTime::from_unix_time(ATIME.0, ATIME.1),
+            FileTime::from_unix_time(MTIME.0, MTIME.1),
+        )
+        .expect("stamp times");
+        let raw = std::fs::symlink_metadata(&path).expect("lstat");
+        assert_eq!(
+            raw.mtime_nsec(),
+            i64::from(MTIME.1),
+            "{leaf}: fs keeps nanoseconds"
+        );
+
+        let dir = File::open(root).expect("open root");
+        let at =
+            EntryMetadata::At(fstatat_nofollow(dir.as_fd(), OsStr::new(leaf)).expect("fstatat"));
+        let std = EntryMetadata::Std(raw.clone());
+        for meta in [&at, &std] {
+            let fields = [
+                ("mode", u64::from(meta.mode()), u64::from(raw.mode())),
+                ("uid", u64::from(meta.uid()), u64::from(raw.uid())),
+                ("gid", u64::from(meta.gid()), u64::from(raw.gid())),
+                ("dev", meta.dev(), raw.dev()),
+                ("ino", meta.ino(), raw.ino()),
+                ("nlink", meta.nlink(), raw.nlink()),
+                ("rdev", meta.rdev(), raw.rdev()),
+                ("size", meta.len(), raw.len()),
+            ];
+            for (name, got, want) in fields {
+                assert_eq!(got, want, "{leaf}: {name} of {meta:?}");
+            }
+            assert_eq!(
+                (meta.mtime(), meta.mtime_nsec()),
+                (raw.mtime(), raw.mtime_nsec()),
+                "{leaf}: mtime"
+            );
+            assert_eq!(
+                (meta.atime(), meta.atime_nsec()),
+                (raw.atime(), raw.atime_nsec()),
+                "{leaf}: atime"
+            );
+            assert_eq!(
+                meta.modified_filetime(),
+                FileTime::from_last_modification_time(&raw),
+                "{leaf}"
+            );
+            assert_eq!(
+                meta.accessed_filetime(),
+                FileTime::from_last_access_time(&raw),
+                "{leaf}"
+            );
+            let (kind, want) = (meta.file_type(), raw.file_type());
+            assert_eq!(
+                [
+                    kind.is_file(),
+                    kind.is_dir(),
+                    kind.is_symlink(),
+                    kind.is_fifo()
+                ],
+                [
+                    want.is_file(),
+                    want.is_dir(),
+                    want.is_symlink(),
+                    want.is_fifo()
+                ],
+                "{leaf}: file type"
+            );
+        }
+    }
+
+    #[test]
+    fn at_and_std_variants_report_identical_fields_for_every_entry_kind() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(root.join("file"), b"seven b").expect("write file");
+        std::fs::create_dir(root.join("dir")).expect("mkdir");
+        symlink("file", root.join("link")).expect("symlink");
+        let dir = File::open(root).expect("open root");
+        mkfifoat(dir.as_fd(), OsStr::new("fifo"), 0o640).expect("mkfifo");
+
+        for leaf in ["file", "dir", "link", "fifo"] {
+            assert_variants_agree(root, leaf);
+        }
     }
 }

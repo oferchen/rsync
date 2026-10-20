@@ -380,6 +380,64 @@ pub fn mkdirat_via_sandbox_or_fallback(
     crate::ConfinedFallback::confined().mkdir_at(dir_path, mode)
 }
 
+/// Create every missing directory of `dir_path`, which is
+/// `dest_dir.join(relative_dir)`, beneath the `sandbox` root.
+///
+/// upstream `make_path()` (`util1.c:189-240`) issues `do_mkdir_at()` for each
+/// missing prefix, so every component is created and entered relative to the
+/// pinned destination, never re-resolved from the absolute path. Here:
+/// - a directory the sandbox already holds is present, so nothing is issued;
+/// - otherwise each component is `mkdirat` against its parent's descriptor
+///   (an existing one is accepted) and entered with the sandbox walk, which
+///   follows an in-tree directory symlink and refuses an escape;
+/// - with no sandbox, or a `relative_dir` that is not plain names, each
+///   ancestor goes through [`ConfinedFallback`](crate::ConfinedFallback)'s
+///   three-arm `do_mkdir_at()` contract.
+///
+/// # Errors
+///
+/// The first `mkdirat` or walk error other than `EEXIST`, or the fallback's.
+pub fn create_dir_all_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_dir: &Path,
+    dir_path: &Path,
+    mode: u32,
+) -> io::Result<()> {
+    let plain = relative_dir
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if let Some(sandbox) = sandbox
+        && plain
+        && dest_dir.join(relative_dir) == dir_path
+    {
+        if sandbox.held_parent(relative_dir).is_some() {
+            return Ok(());
+        }
+        let mut held: Option<std::os::fd::OwnedFd> = None;
+        for name in relative_dir.iter() {
+            let parent = held
+                .as_ref()
+                .map_or_else(|| sandbox.current_dirfd(), AsFd::as_fd);
+            match mkdirat(parent, name, mode) {
+                Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+                _ => {}
+            }
+            held = Some(crate::dir_sandbox::walk_beneath(parent, Path::new(name))?);
+        }
+        return Ok(());
+    }
+    let mut missing: Vec<&Path> = dir_path.ancestors().take_while(|p| !p.is_dir()).collect();
+    missing.reverse();
+    for dir in missing {
+        match crate::ConfinedFallback::confined().mkdir_at(dir, mode) {
+            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Issue `symlinkat` against `link_path` when the `sandbox` root is
 /// the immediate parent.
 ///

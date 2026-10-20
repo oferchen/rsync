@@ -70,7 +70,8 @@ impl<'a> CopyContext<'a> {
             deferred_sync,
             checksum_cache: None,
             destination_metadata_cache: HashMap::new(),
-            io_errors_occurred: false,
+            walk_io_error: false,
+            transfer_io_error: false,
             io_error_delete_warning_emitted: false,
             source_read_error: false,
             source_read_events: 0,
@@ -439,7 +440,10 @@ impl<'a> CopyContext<'a> {
             destination,
             metadata,
             &metadata_options,
-            pre_transfer_meta,
+            pre_transfer_meta
+                .cloned()
+                .map(fast_io::EntryMetadata::from)
+                .as_ref(),
         )
         .map_err(map_metadata_error)?;
 
@@ -454,7 +458,7 @@ impl<'a> CopyContext<'a> {
                     ::metadata::apply_file_metadata_with_fd_if_changed(
                         destination,
                         metadata,
-                        &existing,
+                        &fast_io::EntryMetadata::from(existing.clone()),
                         &metadata_options,
                         fd,
                     )
@@ -478,7 +482,7 @@ impl<'a> CopyContext<'a> {
                 ::metadata::apply_file_metadata_if_changed(
                     destination,
                     metadata,
-                    &existing,
+                    &fast_io::EntryMetadata::from(existing.clone()),
                     &metadata_options,
                 )
                 .map_err(map_metadata_error)?;
@@ -672,12 +676,18 @@ impl<'a> CopyContext<'a> {
             .map_err(|error| LocalCopyError::io("flush syncs", PathBuf::new(), error))
     }
 
-    /// Records that an I/O error occurred during the transfer.
+    /// Records a general I/O error found while walking the source.
     ///
-    /// When I/O errors are recorded and `--ignore-errors` is not set,
-    /// deletion operations are suppressed to prevent data loss.
+    /// Without `--ignore-errors` it suppresses every later delete pass.
     pub(super) fn record_io_error(&mut self) {
-        self.io_errors_occurred = true;
+        self.walk_io_error = true;
+    }
+
+    /// Records a general I/O error raised while sending an already-listed
+    /// entry. Without `--ignore-errors` it suppresses only the
+    /// `--delete-after` pass.
+    pub(super) fn record_transfer_io_error(&mut self) {
+        self.transfer_io_error = true;
     }
 
     /// Records that a source entry was dropped from the file list after its
@@ -690,7 +700,7 @@ impl<'a> CopyContext<'a> {
     /// set io_error |= IOERR_GENERAL.
     pub(super) fn record_flist_io_error(&mut self) {
         self.flist_io_error = true;
-        self.io_errors_occurred = true;
+        self.walk_io_error = true;
     }
 
     /// Reports whether any source entry was dropped from the file list, so the
@@ -782,7 +792,7 @@ impl<'a> CopyContext<'a> {
     /// before moving on to the next entry (sender.c:789-797).
     pub(super) fn record_source_read_error(&mut self) {
         self.source_read_error = true;
-        self.io_errors_occurred = true;
+        self.transfer_io_error = true;
         self.source_read_events += 1;
     }
 
@@ -828,13 +838,16 @@ impl<'a> CopyContext<'a> {
         self.delete_io_error && !self.options.ignore_errors_enabled()
     }
 
-    /// Reports whether deletions should proceed despite I/O errors.
-    ///
-    /// Returns `true` if:
-    /// - No I/O errors occurred, OR
-    /// - `--ignore-errors` is enabled
+    /// Reports whether a delete pass decided during the walk may proceed: no
+    /// walk-time general I/O error, or `--ignore-errors`.
     pub(super) const fn deletions_allowed(&self) -> bool {
-        !self.io_errors_occurred || self.options.ignore_errors_enabled()
+        !self.walk_io_error || self.options.ignore_errors_enabled()
+    }
+
+    /// Reports whether the `--delete-after` pass may proceed: no general I/O
+    /// error from either the walk or the send, or `--ignore-errors`.
+    const fn after_pass_deletions_allowed(&self) -> bool {
+        !(self.walk_io_error || self.transfer_io_error) || self.options.ignore_errors_enabled()
     }
 
     /// Returns `true` when the delete pass must be skipped because a general
@@ -853,7 +866,23 @@ impl<'a> CopyContext<'a> {
     /// `already_warned`) and returns without deleting whenever
     /// `io_error & IOERR_GENERAL && !ignore_errors`.
     pub(super) fn delete_pass_blocked_by_io_error(&mut self) -> bool {
-        if self.deletions_allowed() {
+        let allowed = self.deletions_allowed();
+        self.delete_blocked_unless(allowed)
+    }
+
+    /// The `--delete-after` counterpart of
+    /// [`Self::delete_pass_blocked_by_io_error`], consulted when the after
+    /// pass actually runs so it also sees every send-time error.
+    ///
+    /// upstream: generator.c do_delete_pass() calls delete_in_dir() only after
+    /// the transfer, when io_error already holds the sender's MSG_IO_ERROR.
+    pub(super) fn after_pass_blocked_by_io_error(&mut self) -> bool {
+        let allowed = self.after_pass_deletions_allowed();
+        self.delete_blocked_unless(allowed)
+    }
+
+    fn delete_blocked_unless(&mut self, allowed: bool) -> bool {
+        if allowed {
             return false;
         }
         if !self.io_error_delete_warning_emitted {
