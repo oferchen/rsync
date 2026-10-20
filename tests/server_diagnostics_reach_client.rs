@@ -199,17 +199,7 @@ fn daemon_transfer(max_verbosity: u8, flags: &[&str], push: bool) -> Option<(Str
         args.push(format!("{}/", root.join("dst").display()));
     }
     let stdout = run_client(&args);
-    let mut log_text = fs::read_to_string(&log).unwrap_or_default();
-    if max_verbosity >= 3 && flags.contains(&"-vvv") {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            if log_text.contains(PUSH_MARKER) || log_text.contains(PULL_MARKER) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-            log_text = fs::read_to_string(&log).unwrap_or_default();
-        }
-    }
+    let log_text = fs::read_to_string(&log).unwrap_or_default();
     Some((stdout, log_text))
 }
 
