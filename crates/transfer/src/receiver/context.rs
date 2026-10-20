@@ -270,6 +270,17 @@ pub struct ReceiverContext {
     ///
     /// - `flist.c:3032` - `stats.flist_size += stats.total_read - start_read;`
     pub(in crate::receiver) flist_size: u64,
+    /// Number of file-list entries received, initial list and INC_RECURSE
+    /// sub-lists alike - the `--stats` "Number of files" total.
+    ///
+    /// Bumped with [`Self::received_type_counts`], so it survives segment
+    /// reclaim and never depends on which entries are still resident.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:3335` - `stats.num_files += flist->used` at the end of every
+    ///   `recv_file_list()` call.
+    pub(in crate::receiver) received_files_total: usize,
     /// Per-type tallies `(dirs, symlinks, devices, specials)` of every
     /// received file-list entry, initial list and INC_RECURSE sub-lists alike.
     ///
@@ -282,11 +293,6 @@ pub struct ReceiverContext {
     ///
     /// - `flist.c:3236-3249` - `recv_file_list()` bumps `stats.num_dirs` /
     ///   `num_symlinks` / `num_devices` / `num_specials` in its read loop.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:3236` - `stats.num_files++` in `recv_file_list()` read loop.
-    pub(in crate::receiver) received_files_total: usize,
     pub(in crate::receiver) received_type_counts: (u64, u64, u64, u64),
     /// Sum of `F_LENGTH` over every received regular file and symlink, bumped
     /// at the same point as [`Self::received_type_counts`].

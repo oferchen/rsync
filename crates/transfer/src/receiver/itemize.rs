@@ -92,6 +92,26 @@ impl ReceiverContext {
     pub(in crate::receiver) const fn file_type_counts(&self) -> (u64, u64, u64, u64) {
         self.received_type_counts
     }
+    /// Copies the receive-time file-list tallies into `stats`.
+    ///
+    /// Covers the "Number of files" total and its per-type breakdown. Read
+    /// after the transfer loop, because incremental recursion keeps appending
+    /// sub-list segments until then.
+    ///
+    /// upstream: flist.c:3335 - `stats.num_files += flist->used` per
+    /// `recv_file_list()` call, sub-lists included.
+    pub(in crate::receiver) fn apply_received_list_counts(
+        &self,
+        stats: &mut crate::receiver::stats::TransferStats,
+    ) {
+        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+        stats.files_listed = self.received_files_total;
+        stats.entries_received = self.received_files_total as u64;
+        stats.num_dirs = num_dirs;
+        stats.num_symlinks = num_symlinks;
+        stats.num_devices = num_devices;
+        stats.num_specials = num_specials;
+    }
 
     /// Sum of source sizes counted toward the `--stats` "total size".
     ///
