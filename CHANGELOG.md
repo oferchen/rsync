@@ -291,6 +291,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The server sets its stderr blocking after protocol setup, as upstream `start_server()` does (`main.c:1356-1364`) (#8224)
 
 **Daemon**
+- Itemize a directory before deleting in it under `--delete`, and after the `--delete-before` pass, so the log carries upstream's `.d..t......` rows (#8226)
 - The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)
 - Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
 - Honour a client's `--timeout`, `--partial-dir`, `--backup-dir`, `--max-size` and `--min-size` (#7584, #7498, #7501, #7577, #7449)
@@ -379,6 +380,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A local copy that finishes with exit 23, 24 or 25 still prints its itemize rows, names and `--stats` totals before the exit trailer, as upstream's `cleanup.c` decides the code only after the transfer (#8222)
 
 **Permissions and metadata**
+- `--fake-super` applies a source's recorded `%stat` like upstream: the real mode follows it and a `%stat` equal to the real stat is not stored (#8226)
 - `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
 - Apply timestamps before chmod (#7832, #7087)
 - Answer `am_root` from the process identity (#7574, #7562)

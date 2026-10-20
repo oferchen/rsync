@@ -344,6 +344,8 @@ pub use acl_noop::{
     sync_acls, sync_acls_via_fake_super,
 };
 
+#[cfg(all(unix, feature = "xattr"))]
+pub use apply::apply_fake_super_stat;
 pub use apply::group_is_settable;
 #[cfg(any(target_os = "macos", windows))]
 pub use apply::set_crtime;

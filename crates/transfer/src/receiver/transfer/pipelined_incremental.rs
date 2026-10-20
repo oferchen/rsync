@@ -672,6 +672,24 @@ impl ReceiverContext {
             // read so far, as upstream's global does.
             stats.io_error |=
                 self.flist_reader_io_error() | self.flist_io_error | reader.take_io_error();
+            // upstream: flist.c:3315-3325 roots the first list at `.`, and
+            // generator.c:2780-2788 runs recv_generator() on a list's directory -
+            // stat and itemize - before delete_in_dir() changes its mtime.
+            // Later heads were itemized from their parent's segment already.
+            let early_head = if walk_dirs {
+                self.segment_root_head(segment_idx)
+            } else {
+                None
+            };
+            if let Some(flist_idx) = early_head {
+                self.walk_streamed_directory(
+                    flist_idx,
+                    &setup,
+                    &mut *writer,
+                    &mut failed_dirs,
+                    &mut stats,
+                )?;
+            }
             self.delete_in_segment(
                 segment_idx,
                 &setup.dest_dir,
@@ -723,38 +741,19 @@ impl ReceiverContext {
             // restricted to the segment's range. upstream: generator.c:1432 /
             // :2260 itemize new / existing directory.
             for flist_idx in range.clone() {
-                let file_entry = &self.file_list[flist_idx];
-                if !walk_dirs || !file_entry.is_dir() {
+                if !walk_dirs
+                    || early_head == Some(flist_idx)
+                    || !self.file_list[flist_idx].is_dir()
+                {
                     continue;
                 }
-                let result = self.create_directory_incremental(
-                    &setup.dest_dir,
-                    file_entry,
+                self.walk_streamed_directory(
+                    flist_idx,
+                    &setup,
                     &mut *writer,
-                    &setup.metadata_opts,
                     &mut failed_dirs,
-                    setup.acl_cache.as_deref(),
-                    setup.acl_id_map.as_deref(),
-                    #[cfg(unix)]
-                    setup.sandbox.as_deref(),
+                    &mut stats,
                 )?;
-                match result {
-                    Some((is_new, iflags_raw)) => {
-                        if is_new {
-                            stats.directories_created += 1;
-                            self.record_created(file_entry.mode());
-                        }
-                        let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
-                        let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
-                        self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
-                    }
-                    // upstream: generator.c:1755-1761 - an --existing skip
-                    // is not an error.
-                    None if failed_dirs.is_missing_or_below(file_entry.path()) => {}
-                    None => {
-                        stats.directories_failed += 1;
-                    }
-                }
             }
 
             // upstream: generator.c:2780-2787 - the directory this sub-list
@@ -1088,6 +1087,67 @@ impl ReceiverContext {
 
         self.segments_released_mid_walk += 1;
         self.release_segment_locally(rel);
+        Ok(())
+    }
+
+    /// The flist index of the `.` entry heading segment `segment_idx`, when that
+    /// segment is the first list and it is rooted at `.`.
+    ///
+    /// upstream: flist.c:3315-3325 - only a first list whose lowest sorted entry
+    /// is `.` gets a parent, and that parent is `.` itself.
+    fn segment_root_head(&self, segment_idx: usize) -> Option<usize> {
+        if segment_idx != 0 || self.segment_parent_dir_ndx.first().copied().flatten() != Some(0) {
+            return None;
+        }
+        let start = self.ndx_segments.first()?.0;
+        (start..self.segment_end(0)).find(|&idx| {
+            let entry = &self.file_list[idx];
+            entry.is_dir()
+                && crate::receiver::file_list::strip_leading_slashes(entry.path())
+                    == std::path::Path::new(".")
+        })
+    }
+
+    /// Creates and itemizes the directory at `flist_idx` of a streamed segment.
+    ///
+    /// upstream: generator.c:1432 / :2260 itemize new / existing directory.
+    fn walk_streamed_directory<W: Write + crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        flist_idx: usize,
+        setup: &PipelineSetup,
+        writer: &mut W,
+        failed_dirs: &mut crate::receiver::directory::FailedDirectories,
+        stats: &mut TransferStats,
+    ) -> io::Result<()> {
+        let file_entry = &self.file_list[flist_idx];
+        let result = self.create_directory_incremental(
+            &setup.dest_dir,
+            file_entry,
+            &mut *writer,
+            &setup.metadata_opts,
+            failed_dirs,
+            setup.acl_cache.as_deref(),
+            setup.acl_id_map.as_deref(),
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        )?;
+        match result {
+            Some((is_new, iflags_raw)) => {
+                if is_new {
+                    stats.directories_created += 1;
+                    self.record_created(file_entry.mode());
+                }
+                let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
+                let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
+                self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+            }
+            // upstream: generator.c:1755-1761 - an --existing skip
+            // is not an error.
+            None if failed_dirs.is_missing_or_below(file_entry.path()) => {}
+            None => {
+                stats.directories_failed += 1;
+            }
+        }
         Ok(())
     }
 
