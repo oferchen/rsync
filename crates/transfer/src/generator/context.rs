@@ -264,6 +264,9 @@ pub struct GeneratorContext {
     /// Whether the module's `log format` contains a `%i` escape (upstream
     /// `logfile_format_has_i`). Gates non-transfer items; transfers always log.
     pub(crate) daemon_logfile_format_has_i: bool,
+    /// Daemon-log writer for the diagnostics this sender frames to the peer;
+    /// `None` unless a daemon module logs to a file.
+    pub(crate) daemon_log_sink: Option<crate::progress::SharedDaemonLog>,
     /// Per-file daemon-log rows collected during the send, keyed by flist index
     /// so they flush in the order upstream logs them. Each row is
     /// `(transfer-relative name, file length, rendered %i string)`.
@@ -414,6 +417,7 @@ impl GeneratorContext {
             receiver_symlink_times,
             daemon_log_active: false,
             daemon_logfile_format_has_i: false,
+            daemon_log_sink: None,
             daemon_log_rows: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             confined_source_root: std::sync::OnceLock::new(),
             source_roots: Arc::new(fast_io::SourceRoots::new()),
@@ -431,6 +435,13 @@ impl GeneratorContext {
         self.daemon_logfile_format_has_i = format_has_i;
     }
 
+    /// Routes each diagnostic this sender frames for the peer to the daemon log.
+    ///
+    /// upstream: log.c:312-332 - a daemon's `rwrite()` logs every message before
+    /// framing it, whether or not the module has `transfer logging`.
+    pub fn set_daemon_log_sink(&mut self, log: crate::progress::SharedDaemonLog) {
+        self.daemon_log_sink = Some(log);
+    }
     /// Collects one per-file daemon-log row when daemon transfer logging is armed.
     ///
     /// The daemon sender's own FLOG write, independent of the client's `-i`.

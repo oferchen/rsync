@@ -48,7 +48,8 @@ use core::{
     server::{
         DaemonFileLog, DaemonLog, DaemonLogRow, HandshakeResult, ReferenceDirectory,
         ReferenceDirectoryKind, ServerConfig, ServerResult, ServerRole, ServerStats,
-        ServerTransferHooks, config::parse_block_size_arg, run_server_with_handshake_adopting,
+        ServerTransferHooks, SharedDaemonLog, config::parse_block_size_arg,
+        run_server_with_handshake_adopting,
     },
 };
 use logging_sink::MessageSink;

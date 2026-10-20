@@ -501,7 +501,6 @@ impl ReceiverContext {
                     self.delayed_delete_victims = victims;
                 } else {
                     self.run_immediate_delete_pass(
-                        phase,
                         dest_dir,
                         #[cfg(unix)]
                         sandbox,
@@ -518,7 +517,6 @@ impl ReceiverContext {
                 self.flush_itemize_rows(writer)?;
                 if self.config.deletion.delete_after {
                     self.run_immediate_delete_pass(
-                        phase,
                         dest_dir,
                         #[cfg(unix)]
                         sandbox,
@@ -536,7 +534,7 @@ impl ReceiverContext {
                         &victims,
                         writer,
                     )?;
-                    self.record_daemon_log_deletions(phase, removed);
+                    self.record_daemon_log_deletions(removed);
                     stats.io_error |= io_bits;
                     stats.delete_stats = delete_stats;
                     // Carry the per-type counters into the receiver context so the
@@ -740,7 +738,7 @@ impl ReceiverContext {
         } else {
             // upstream: delete.c:delete_item() -> log.c:924 log_delete() writes
             // each removal to the module log as delete_in_dir() makes it.
-            self.record_daemon_log_deletions(DeletePassPhase::Early, &victims);
+            self.record_daemon_log_deletions(&victims);
         }
         // upstream: delete.c:241-256 - one global stats.deleted_* tally feeds
         // the single NDX_DEL_STATS frame (main.c:228-240).
@@ -754,7 +752,6 @@ impl ReceiverContext {
     /// and a capped/`--one-file-system` `--delete-delay`.
     fn run_immediate_delete_pass<W>(
         &mut self,
-        phase: DeletePassPhase,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
@@ -769,7 +766,7 @@ impl ReceiverContext {
             sandbox,
             writer,
         )?;
-        self.record_daemon_log_deletions(phase, &deleted);
+        self.record_daemon_log_deletions(&deleted);
         stats.io_error |= io_bits;
         stats.delete_stats = delete_stats;
         stats.delete_limit_exceeded = limit_exceeded;

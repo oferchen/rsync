@@ -100,9 +100,9 @@ impl<F: FnMut(&str)> ItemizeCallback for F {
 /// - `log.c:865-873` - `log_item()` writes `FLOG` whenever `logfile_format` is set
 /// - `log.c:875-891` - `maybe_log_item()` gates non-transfer items on the daemon
 /// - `receiver.c:1290` / `sender.c:787` - the per-transfer `log_item()`
-pub trait DaemonFileLog {
+pub trait DaemonFileLog: Send + Sync {
     /// Renders and writes one daemon-log line for a processed entry.
-    fn on_entry(&mut self, row: &DaemonLogRow);
+    fn on_entry(&self, row: &DaemonLogRow);
 
     /// Writes one diagnostic line the transfer sent to the client.
     ///
@@ -112,17 +112,42 @@ pub trait DaemonFileLog {
     ///
     /// `line` is raw bytes without its trailing newline, so a file name that
     /// is not valid UTF-8 reaches the log exactly as upstream writes it.
-    fn on_message(&mut self, line: &[u8]);
+    fn on_message(&self, line: &[u8]);
 }
 
-/// One line a server receiver queued for the daemon's module log.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DaemonLogEntry {
-    /// A per-entry `log_item()` / `log_delete()` row.
-    Row(DaemonLogRow),
-    /// A diagnostic `rwrite()` also logs, as raw bytes without its trailing
-    /// newline.
-    Message(Vec<u8>),
+/// Shared handle to the daemon's module log, held by the transfer for the
+/// whole run so each line is written when the transfer reaches it.
+///
+/// upstream: log.c:312-332 `rwrite()` hands a daemon's message to `logit()`,
+/// which writes and flushes it (log.c:135-137), before the `am_server` branch
+/// frames it for the peer (log.c:357-366); `log_item()` and `log_delete()`
+/// reach the same `logit()` as each entry is processed. Writing through this
+/// handle at those points puts every line on disk before the client can see
+/// the transfer end.
+#[derive(Clone)]
+pub struct SharedDaemonLog(std::sync::Arc<dyn DaemonFileLog>);
+
+impl SharedDaemonLog {
+    /// Wraps the daemon's module-log writer.
+    pub fn new(log: impl DaemonFileLog + 'static) -> Self {
+        Self(std::sync::Arc::new(log))
+    }
+
+    /// Writes `line`, raw bytes without its trailing newline, to the log.
+    pub fn write(&self, line: &[u8]) {
+        self.0.on_message(line);
+    }
+
+    /// Renders and writes the line for one processed or deleted entry.
+    pub fn write_row(&self, row: &DaemonLogRow) {
+        self.0.on_entry(row);
+    }
+}
+
+impl std::fmt::Debug for SharedDaemonLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SharedDaemonLog")
+    }
 }
 
 /// The per-file fields one daemon transfer-log line renders.

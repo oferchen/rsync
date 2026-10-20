@@ -31,10 +31,13 @@ fn fixture(root: &Path) {
     fs::create_dir_all(root.join("chk/foo")).expect("mkdir chk/foo");
     fs::create_dir_all(root.join("chk/bar")).expect("mkdir chk/bar");
 }
-fn pull(root: &Path, inc_recurse: bool, filters: &[&str]) -> CliOutput {
+fn pull(root: &Path, inc_recurse: Option<bool>, filters: &[&str]) -> CliOutput {
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
-    OcRsyncCliRunner::new()
-        .env(PULL_INC_RECURSE_ENV, if inc_recurse { "1" } else { "0" })
+    let mut runner = OcRsyncCliRunner::new();
+    if let Some(ir) = inc_recurse {
+        runner = runner.env(PULL_INC_RECURSE_ENV, if ir { "1" } else { "0" });
+    }
+    runner
         .arg("-av")
         .arg("--existing")
         .args(filters)
@@ -78,7 +81,7 @@ fn assert_skipped_cleanly(out: &CliOutput, root: &Path, expected_tree: &[&str]) 
     );
     assert_eq!(tree(&root.join("chk")), expected_tree);
 }
-fn assert_dirs_only_pull(inc_recurse: bool) {
+fn assert_dirs_only_pull(inc_recurse: Option<bool>) {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
     fixture(tmp.path());
@@ -95,12 +98,16 @@ fn assert_dirs_only_pull(inc_recurse: bool) {
     }
 }
 #[test]
+fn default_pull_existing_skips_missing_dirs_and_exits_0() {
+    assert_dirs_only_pull(None);
+}
+#[test]
 fn inc_recurse_pull_existing_skips_missing_dirs_and_exits_0() {
-    assert_dirs_only_pull(true);
+    assert_dirs_only_pull(Some(true));
 }
 #[test]
 fn eager_pull_existing_skips_missing_dirs_and_exits_0() {
-    assert_dirs_only_pull(false);
+    assert_dirs_only_pull(Some(false));
 }
 /// Entries below a skipped directory are skipped silently too: upstream
 /// returns at generator.c:1648-1656 before the "not creating new" notices, so
@@ -111,7 +118,7 @@ fn inc_recurse_pull_existing_skips_entries_below_missing_dirs_silently() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
     fixture(tmp.path());
-    let out = pull(tmp.path(), true, &["--info=skip"]);
+    let out = pull(tmp.path(), None, &["--info=skip"]);
     assert_skipped_cleanly(&out, tmp.path(), &["bar", "foo"]);
     let mut notices: Vec<String> = out
         .stdout_str()

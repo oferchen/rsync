@@ -442,13 +442,8 @@ impl ReceiverContext {
         stats.total_source_bytes = self.total_source_size();
         // upstream: flist.c:3236-3249 - the per-type tallies were bumped as
         // each entry (sub-lists included) was read, so they stay exact even
-        // after completed segments are reclaimed. Read after the loop because
-        // incremental recursion keeps appending sub-list segments until then.
-        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
-        stats.num_dirs = num_dirs;
-        stats.num_symlinks = num_symlinks;
-        stats.num_devices = num_devices;
-        stats.num_specials = num_specials;
+        // after completed segments are reclaimed.
+        self.apply_received_list_counts(&mut stats);
         // Folded in after the late delete pass, which never consulted these
         // local failures.
         let local_failure =
@@ -970,11 +965,7 @@ impl ReceiverContext {
         stats.matched_data = matched_data;
         stats.touched_blocks_4k = self.touched_blocks_4k;
         stats.total_source_bytes = self.total_source_size();
-        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
-        stats.num_dirs = num_dirs;
-        stats.num_symlinks = num_symlinks;
-        stats.num_devices = num_devices;
-        stats.num_specials = num_specials;
+        self.apply_received_list_counts(&mut stats);
         // Folded in after the late delete pass, which never consulted these
         // local failures.
         let local_failure =

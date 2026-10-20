@@ -12406,7 +12406,7 @@ quic_inc_modes=(default no-inc-recursive)
 # sends (daemon_transfer/orchestration/arguments.rs). Measured identically over
 # TCP, so it is not a QUIC property. --no-inc-recursive must negotiate 0
 # regardless.
-declare -A quic_default_inc_recurse=([push]=1 [pull]=0)
+declare -A quic_default_inc_recurse=([push]=1 [pull]=1)
 # Checks the session a client reported in $1.out/$1.err (see
 # quic_write_client): the negotiated suite must belong to cipher family $2,
 # and CF_INC_RECURSE must match incremental-recursion mode $3 in direction $4.
