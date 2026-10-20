@@ -49,14 +49,14 @@ pub fn xattrs_match(_a: &Path, _b: &Path, _follow_symlinks: bool) -> Result<bool
 /// `source`.
 ///
 /// On platforms without xattr support there are no attributes to strip, so
-/// this returns `Ok(())` without warning (no preservation was promised).
+/// this returns `Ok(false)` without warning (no preservation was promised).
 pub fn strip_source_xattrs(
     _source: &Path,
     _destination: &Path,
     _follow_symlinks: bool,
     _confine_root: Option<&Path>,
-) -> Result<(), MetadataError> {
-    Ok(())
+) -> Result<bool, MetadataError> {
+    Ok(false)
 }
 
 /// Reads xattr data from a file and returns it as a wire-format `XattrList`.

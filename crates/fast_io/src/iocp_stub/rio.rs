@@ -25,20 +25,15 @@ pub const RIO_ENV_VAR: &str = "OC_RSYNC_WINDOWS_RIO";
 
 /// Mirrors [`crate::iocp::rio::RioMode`] so cross-platform callers can
 /// thread a single type through their config plumbing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RioMode {
     /// RIO disabled.
+    #[default]
     Off,
     /// Attempt RIO; transparent fallback to standard sockets.
     Auto,
     /// Require RIO (never satisfied on this platform).
     On,
-}
-
-impl Default for RioMode {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 /// Parses the `OC_RSYNC_WINDOWS_RIO` env var into a [`RioMode`].

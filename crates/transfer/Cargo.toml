@@ -84,7 +84,7 @@ zlib-ng = ["engine/zlib-ng", "compress/zlib-ng", "protocol/zlib-ng"]
 # Metadata Features
 # ============================================================================
 acl = ["metadata/acl", "engine/acl"]
-xattr = []
+xattr = ["metadata/xattr", "engine/xattr"]
 
 # ============================================================================
 # Filename Encoding (iconv)

@@ -16,6 +16,8 @@
 
 use std::fs;
 use std::path::Path;
+#[cfg(feature = "xattr")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use metadata::MetadataOptions;
@@ -265,8 +267,11 @@ fn reconcile_copied_ads(
     let (source, destination) = (source.as_path(), destination.as_path());
 
     if !flags.xattrs_enabled() {
-        ::metadata::strip_source_xattrs(source, destination, false, None)
+        let stripped = ::metadata::strip_source_xattrs(source, destination, false, None)
             .map_err(map_metadata_error)?;
+        if stripped {
+            warn_ads_dropped_once(source);
+        }
         return Ok(());
     }
 
@@ -301,12 +306,56 @@ fn reconcile_copied_ads(
     Ok(())
 }
 
+/// Warns once per process that named NTFS streams were dropped because
+/// `--xattrs` is off.
+///
+/// oc-only: upstream has no ADS concept and drops xattrs silently without
+/// `-X`. The signal comes from the strip the copy already performs, so an
+/// ADS-free tree pays no extra syscall.
+#[cfg(feature = "xattr")]
+fn warn_ads_dropped_once(source: &Path) {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if let Some(message) = ads_dropped_warning(source, &WARNED) {
+        logging::emit_warning(message);
+    }
+}
+
+/// Returns the ADS-dropped warning the first time `warned` is claimed, and
+/// `None` on every later call.
+#[cfg(feature = "xattr")]
+fn ads_dropped_warning(source: &Path, warned: &AtomicBool) -> Option<String> {
+    if warned.swap(true, Ordering::Relaxed) {
+        return None;
+    }
+    Some(format!(
+        "alternate data streams were not preserved (first seen on {}); use --xattrs (-X) to keep them",
+        source.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use fast_io::{CopyMethod, CopyResult, PlatformCopy};
     use std::io;
     use std::sync::Mutex;
     use tempfile::TempDir;
+
+    #[cfg(feature = "xattr")]
+    #[test]
+    fn ads_dropped_warning_fires_once_and_names_the_option() {
+        use std::path::Path;
+        use std::sync::atomic::AtomicBool;
+
+        let warned = AtomicBool::new(false);
+        let first = super::ads_dropped_warning(Path::new(r"C:\src\a.txt"), &warned)
+            .expect("the first dropped stream must warn");
+        assert!(first.contains(r"C:\src\a.txt"), "got {first:?}");
+        assert!(first.contains("--xattrs (-X)"), "got {first:?}");
+        assert!(
+            super::ads_dropped_warning(Path::new(r"C:\src\b.txt"), &warned).is_none(),
+            "the warning is once per process, not once per file"
+        );
+    }
 
     /// Test double that records the size hint and returns a chosen method.
     #[derive(Debug)]

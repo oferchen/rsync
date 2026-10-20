@@ -291,25 +291,29 @@ pub fn read_xattrs_for_wire(
 /// applied to the new inode on its own (e.g. `com.apple.provenance`) are
 /// left untouched. Removing only names confirmed present on `destination`
 /// avoids spurious `ENOATTR` churn.
+///
+/// Returns `true` when at least one attribute was removed.
 pub fn strip_source_xattrs(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
     confine_root: Option<&Path>,
-) -> Result<(), MetadataError> {
+) -> Result<bool, MetadataError> {
     let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
     if source_attrs.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
 
     let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
+    let mut removed = false;
     for name in dest.list(receiver_screen())? {
         if source_names.contains(&name) {
             dest.remove(&name)?;
+            removed = true;
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
 /// Reports whether the transferable extended attributes of `a` and `b` match.
@@ -917,7 +921,14 @@ mod tests {
         write_attribute(&dest, &shared, b"from-source", false).expect("write dest shared");
         write_attribute(&dest, &dest_only, b"fs", false).expect("write dest-only attr");
 
-        strip_source_xattrs(&source, &dest, false, None).expect("strip");
+        assert!(
+            strip_source_xattrs(&source, &dest, false, None).expect("strip"),
+            "a removed source attribute must be reported so the caller can warn"
+        );
+        assert!(
+            !strip_source_xattrs(&source, &dest, false, None).expect("strip again"),
+            "nothing left to remove must report false"
+        );
 
         let dest_attrs = list_attributes(&dest, false, receiver_screen()).expect("list dest");
         assert!(
@@ -931,6 +942,32 @@ mod tests {
         // The source is read-only input to the strip and must be untouched.
         let source_attrs = list_attributes(&source, false, receiver_screen()).expect("list source");
         assert!(source_attrs.contains(&shared), "source must be untouched");
+    }
+
+    /// A stream created through the raw `file:stream` syntax, as Explorer's
+    /// `Zone.Identifier` is, must be seen and stripped under its bare name.
+    #[cfg(windows)]
+    #[test]
+    fn strip_source_xattrs_removes_a_raw_ntfs_stream() {
+        let dir = test_support::create_tempdir();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&source, "src").expect("write source");
+        fs::write(&dest, "dst").expect("write dest");
+        let stream =
+            |p: &Path| std::path::PathBuf::from(format!("{}:Zone.Identifier", p.display()));
+        fs::write(stream(&source), "[ZoneTransfer]").expect("write source stream");
+        fs::write(stream(&dest), "[ZoneTransfer]").expect("write dest stream");
+
+        assert!(strip_source_xattrs(&source, &dest, false, None).expect("strip"));
+        assert!(
+            fs::metadata(stream(&dest)).is_err(),
+            "the destination stream must be gone"
+        );
+        assert!(
+            fs::metadata(stream(&source)).is_ok(),
+            "source must be untouched"
+        );
     }
 
     #[test]

@@ -170,6 +170,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Per-directory deletion during an incremental-recursion walk (#8090)
 - Zero-copy socket writes (io_uring `SEND_ZC`) are built by default but stay off unless the local node asks: `--zero-copy` on a client, `oc-rsync --daemon --zero-copy`, or `OC_RSYNC_ZERO_COPY`. The setting is never forwarded to the peer (#8183)
 
+- On Windows, `-X` sends NTFS alternate data streams as xattrs on network transfers too, and a local copy without `-X` warns once that streams were dropped. The warning is oc-only; upstream has no ADS concept (#8214)
 ### Changed
 
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
@@ -405,6 +406,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 
 **Windows**
 - Compare the read-only bit, open directories for `--fsync`, honour `--one-file-system` across volumes, and warn when metadata cannot be applied (#7163, #7164, #7210, #7054)
+- An auto-inherited (`AI`) Windows DACL is written unprotected, so the destination keeps inheriting from its parent like the source did; protected and POSIX-synthesised DACLs stay protected (#8214)
 
 **Output parity**
 - `--quiet` suppresses the client listing, itemize rows, stats, the daemon MOTD and the module listing (#8117, #8151); MOTD lines print once (#8161)

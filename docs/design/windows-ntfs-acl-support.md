@@ -174,10 +174,15 @@ Three ACEs in canonical order:
 3. Allow ACE for `S-1-1-0` (Everyone) with the mask from `other_obj`.
 
 Additional `RsyncAcl::names` entries become extra allow ACEs after the
-three base entries, in the order the wire format presented them. The
-DACL is written with `PROTECTED_DACL_SECURITY_INFORMATION` set so
-parent inheritance does not silently add ACEs that were never on the
-source.
+three base entries, in the order the wire format presented them. A DACL
+synthesised this way carries no inheritance flags and is written with
+`PROTECTED_DACL_SECURITY_INFORMATION`, so parent inheritance does not
+silently add ACEs that were never on the source.
+
+A native Windows SDDL keeps its own DACL flags. When it is auto-inherited
+(`AI`) and not protected (`P`), it is written with
+`UNPROTECTED_DACL_SECURITY_INFORMATION` so the destination keeps inheriting
+from its parent like the source did. Every other DACL is written protected.
 
 ### 5.3 Lossy cases
 
