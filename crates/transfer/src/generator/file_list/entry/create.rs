@@ -1839,7 +1839,7 @@ mod windows_ads_xattr_tests {
             .create_entry(
                 path,
                 PathBuf::from("carrier.txt"),
-                &fast_io::pinned_root::SourceMetadata::from(meta),
+                &fast_io::EntryMetadata::from(meta),
                 2,
             )
             .expect("create_entry");
