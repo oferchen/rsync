@@ -152,29 +152,68 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
 pub(in crate::client::remote) fn map_child_exit_status(
     status: std::process::ExitStatus,
 ) -> ExitCode {
-    if status.success() {
-        return ExitCode::Ok;
-    }
-
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        // upstream: main.c:215-224 - a child that did not exit normally maps to
-        // RERR_CRASHED (core dump) or RERR_TERMINATED (killed by signal).
         if status.signal().is_some() {
-            return if status.core_dumped() {
-                ExitCode::Crashed
-            } else {
-                ExitCode::Terminated
-            };
+            return map_remote_end(RemoteEnd::Signaled {
+                core_dumped: status.core_dumped(),
+            });
         }
     }
 
     match status.code() {
+        Some(code) => map_remote_end(RemoteEnd::Exited(code)),
+        None => map_remote_end(RemoteEnd::Unknown),
+    }
+}
+
+/// Maps the embedded SSH transport's remote exit report to an rsync exit code.
+///
+/// The embedded transport has no child to `waitpid()`; the server's
+/// `exit-status` / `exit-signal` channel request carries the same facts, so it
+/// maps exactly like [`map_child_exit_status`]. A status that does not fit an
+/// `i32` cannot come from `WEXITSTATUS` and maps to `RERR_WAITCHILD`.
+#[cfg(feature = "embedded-ssh")]
+pub(in crate::client::remote) fn map_remote_exit(
+    exit: rsync_io::ssh::embedded::RemoteExit,
+) -> ExitCode {
+    use rsync_io::ssh::embedded::RemoteExit;
+    map_remote_end(match exit {
+        RemoteExit::Status(code) => {
+            i32::try_from(code).map_or(RemoteEnd::Unknown, RemoteEnd::Exited)
+        }
+        RemoteExit::Signal { core_dumped } => RemoteEnd::Signaled { core_dumped },
+    })
+}
+
+/// How the remote side of an SSH transfer ended, independent of transport.
+enum RemoteEnd {
+    /// Exited normally with this status.
+    Exited(i32),
+    /// Killed by a signal.
+    #[cfg(any(unix, feature = "embedded-ssh"))]
+    Signaled { core_dumped: bool },
+    /// The status could not be determined.
+    Unknown,
+}
+
+/// Applies upstream's child-status mapping to a [`RemoteEnd`].
+///
+/// upstream: main.c:198-226 `wait_process_with_flush()`.
+fn map_remote_end(end: RemoteEnd) -> ExitCode {
+    match end {
         // upstream: main.c:226 - WEXITSTATUS is returned raw, never collapsed.
-        Some(code) => ExitCode::from_raw(code),
+        RemoteEnd::Exited(0) => ExitCode::Ok,
+        RemoteEnd::Exited(code) => ExitCode::from_raw(code),
+        // upstream: main.c:215-224 - a child that did not exit normally maps to
+        // RERR_CRASHED (core dump) or RERR_TERMINATED (killed by signal).
+        #[cfg(any(unix, feature = "embedded-ssh"))]
+        RemoteEnd::Signaled { core_dumped: true } => ExitCode::Crashed,
+        #[cfg(any(unix, feature = "embedded-ssh"))]
+        RemoteEnd::Signaled { core_dumped: false } => ExitCode::Terminated,
         // upstream: main.c:212-214/224 - a failed waitpid() maps to RERR_WAITCHILD.
-        None => ExitCode::WaitChild,
+        RemoteEnd::Unknown => ExitCode::WaitChild,
     }
 }
 

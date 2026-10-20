@@ -38,7 +38,9 @@ pub use auth::authenticate;
 #[cfg(feature = "embedded-ssh")]
 pub use config::SshConfig;
 #[cfg(feature = "embedded-ssh")]
-pub use connect::{ChannelReader, ChannelWriter, SSH_GOODBYE_TIMEOUT, connect_and_exec};
+pub use connect::{
+    ChannelReader, ChannelWriter, RemoteExit, SSH_GOODBYE_TIMEOUT, connect_and_exec,
+};
 #[cfg(feature = "embedded-ssh")]
 pub use error::SshError;
 #[cfg(feature = "embedded-ssh")]
