@@ -316,10 +316,8 @@ class Protocol33Test(unittest.TestCase):
             return cells.Cell(case="c", version="3.5.1", transport="rsh", direction=direction,
                               role=role, fixture="f", opts=(), inc=inc)
         for d, r in (("push", "oc-server"), ("push", "oc-client"), ("pull", "oc-server"), ("pull", "oc-client")):
-            self.assertTrue(cells.expected_inc(cell(d, r), candidate=True))
-            self.assertTrue(cells.expected_inc(cell(d, r), candidate=False))
-            self.assertFalse(cells.expected_inc(cell(d, r, "off"), candidate=True))
-            self.assertFalse(cells.expected_inc(cell(d, r, "off"), candidate=False))
+            self.assertTrue(cells.expected_inc(cell(d, r)))
+            self.assertFalse(cells.expected_inc(cell(d, r, "off")))
     def test_a_missing_touched_line_is_a_divergence(self):
         # compare() skips stats a side lacks; the proto-33 line must not be.
         base, got = outcome(), outcome()

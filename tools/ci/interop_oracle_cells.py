@@ -192,13 +192,12 @@ SHAPES = tuple((t, d, r) for t in ("rsh", "daemon") for d in ("push", "pull")
 INC_MODES = (("on", "", ()), ("off", "-no-inc", ("--no-inc-recursive",)))
 
 
-def expected_inc(cell: Cell, candidate: bool) -> bool:
-    """Whether INC_RECURSE is negotiated on the wire for a cell's baseline or candidate run.
+def expected_inc(cell: Cell) -> bool:
+    """Whether INC_RECURSE is negotiated on the wire for a cell's runs.
 
-    Upstream negotiates it whenever the client did not turn it off (compat.c:
-    set_allow_inc_recurse, compat.c:724 on the server). An oc server receiver
-    grants it on a push like upstream, and an oc client negotiates it on a pull
-    when enabled.
+    Upstream negotiates it whenever the client did not turn it off (compat.c:162-180
+    set_allow_inc_recurse, compat.c:724 on the server). oc matches it in every
+    role and direction, so the baseline and candidate runs expect the same answer.
     """
     return cell.inc == "on"
 

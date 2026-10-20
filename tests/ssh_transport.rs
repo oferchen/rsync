@@ -654,7 +654,10 @@ fn test_remote_invocation_with_multiple_paths() {
     let flags_idx = 3;
     let flags = args[flags_idx].to_string_lossy();
     assert!(flags.starts_with('-'));
-    // upstream: options.c:2720, compat.c:162-181, options.c:3220.
+    // upstream: options.c:2904 - server_options() embeds maybe_add_e_option()
+    // in the compact flag string (e.g. `-re.iLsfxCIvu`), not a separate
+    // argument; options.c:3220-3221 adds i whenever compat.c:162-180
+    // set_allow_inc_recurse() leaves it enabled, which a recursive pull does.
     let expected_suffix = build_capability_string_suffix(true);
     assert!(
         flags.ends_with(&expected_suffix),

@@ -317,7 +317,7 @@ executable name. Intended for testing and development.
 
 Override flag for incremental recursion on pulls. By default, pulling clients
 advertise the `i` capability under upstream's own conditions
-(`compat.c:162-181`), so the remote sender ships the tree as per-directory
+(`compat.c:162-180`), so the remote sender ships the tree as per-directory
 sub-lists and the local receiver consumes them one at a time. Explicitly
 disabling values (`0`, `off`, `false`, `no`, case-insensitive) withhold `i`,
 restoring the whole-list pull behavior. Works against upstream rsync and
