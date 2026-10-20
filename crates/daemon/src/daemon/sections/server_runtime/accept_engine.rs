@@ -83,9 +83,9 @@ const READINESS_WAIT_MILLIS: u16 = 50;
 fn poll_ready(
     listeners: &[(TcpListener, SocketAddr)],
     relay: Option<std::os::fd::BorrowedFd<'_>>,
-    timeout_millis: u16,
+    timeout: nix::poll::PollTimeout,
 ) -> io::Result<Vec<usize>> {
-    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+    use nix::poll::{PollFd, PollFlags, poll};
     use std::os::fd::AsFd;
 
     let mut fds: Vec<PollFd<'_>> = listeners
@@ -93,7 +93,7 @@ fn poll_ready(
         .map(|(listener, _)| PollFd::new(listener.as_fd(), PollFlags::POLLIN))
         .chain(relay.map(|fd| PollFd::new(fd, PollFlags::POLLIN)))
         .collect();
-    match poll(&mut fds, PollTimeout::from(timeout_millis)) {
+    match poll(&mut fds, timeout) {
         Ok(0) => Ok(Vec::new()),
         Ok(_) => Ok(fds
             .iter()
@@ -285,7 +285,11 @@ impl PollAcceptEngine {
 impl AcceptEngine for PollAcceptEngine {
     fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
         #[cfg(unix)]
-        let ready = poll_ready(&self.listeners, self.relay_fd(), READINESS_WAIT_MILLIS);
+        let ready = poll_ready(
+            &self.listeners,
+            self.relay_fd(),
+            nix::poll::PollTimeout::from(READINESS_WAIT_MILLIS),
+        );
         #[cfg(not(unix))]
         let ready = poll_ready(&self.listeners, READINESS_WAIT_MILLIS);
         let ready = match ready {
@@ -393,6 +397,8 @@ struct KqueueAcceptEngine {
     /// kqueue event surface; dropped (closing its fd) on [`Self::shutdown`].
     kq: fast_io::KqueueLoop,
     log_sink: Option<SharedLogSink>,
+    /// Bound on each `kevent(2)` wait; `None` waits until a listener is ready.
+    wait_timeout: Option<Duration>,
 }
 
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
@@ -410,6 +416,7 @@ impl KqueueAcceptEngine {
         listeners: Vec<TcpListener>,
         bound_addresses: &[SocketAddr],
         log_sink: Option<SharedLogSink>,
+        wait_timeout: Option<Duration>,
     ) -> io::Result<Self> {
         use std::os::unix::io::AsRawFd;
 
@@ -432,6 +439,7 @@ impl KqueueAcceptEngine {
             listeners: registered,
             kq,
             log_sink,
+            wait_timeout,
         })
     }
 
@@ -474,7 +482,7 @@ impl KqueueAcceptEngine {
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 impl AcceptEngine for KqueueAcceptEngine {
     fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
-        let events = match self.kq.wait(Some(Self::WAIT_TIMEOUT)) {
+        let events = match self.kq.wait(self.wait_timeout) {
             Ok(events) => events,
             // EINTR is folded into an empty result by KqueueLoop::wait; any
             // other kevent failure means the readiness surface is unusable.
@@ -555,7 +563,12 @@ fn try_build_kqueue_engine(
             Err(_) => return Err(listeners),
         }
     }
-    match KqueueAcceptEngine::new(clones, bound_addresses, state.log_sink.clone()) {
+    match KqueueAcceptEngine::new(
+        clones,
+        bound_addresses,
+        state.log_sink.clone(),
+        Some(KqueueAcceptEngine::WAIT_TIMEOUT),
+    ) {
         Ok(engine) => Ok(Box::new(engine)),
         Err(error) => {
             if let Some(log) = state.log_sink.as_ref() {
