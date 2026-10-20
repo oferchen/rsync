@@ -49,7 +49,7 @@ for detail.
 | CVE-2026-70463 | Fixed | #7345 |
 | CVE-2026-70464 | Fixed | #7688, #7754, #8002 |
 
-SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70460 are fixed, with their upstream testsuite cells passing; CVE-2026-53783, 70454 and 70461 do not apply.
+The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are fixed, with their upstream testsuite cells passing; CVE-2026-53783, 70454 and 70461 do not apply.
 
 **Path confinement (CVE-2026-53795 family)**
 - Confine destination writes and source reads against symlink races through one shared per-component resolver (#7393, #7349)
@@ -70,6 +70,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - Refuse a staging directory the module filter excludes, confine the filter-file open, and honour the admin symlink opt-out at the sender root (#7495, #7512, #7517)
 - Stop confining a client's own destination on a daemon pull (#7503)
 - Anchor ownership and timestamp writes against parent symlink swaps (#6808)
+- Hold the confined parent across leaf pins, pin the destination root as `.` under its trusted descriptor, and list and grant xattrs through the pinned descriptor (CVE-2026-53796, #8207)
 - Open sender source files confined and `O_NOFOLLOW`, with a device guard (#7092); the macOS `clonefile` fast path inherits the confined open (#7653)
 - Honour `--insecure-links` inside the walk, at the destination sandbox and at the DOTDIR follow (#7459, #7695, #7734)
 - Let the walk run under Landlock and seccomp, falling back to confined wrappers (#7541, #7545, #7548)
@@ -143,7 +144,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 
 ### Added
 
-- On Windows, wildcard source operands (`*`, `?`, `[...]`) are expanded as a POSIX shell would, since `cmd.exe` and PowerShell do not glob
+- On Windows, wildcard source operands (`*`, `?`, `[...]`) are expanded as a POSIX shell would, since `cmd.exe` and PowerShell do not glob (#8206)
 - Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
@@ -161,7 +162,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - `--debug=flist` and `--debug=deltasum` reach the real trace sites (#7775, #7782)
 - `--help` is grouped by subject, with a section for oc-rsync extensions (#7110)
 - `--version` names the `quic`, `sd-notify`, `vmsplice` and `send_zc` build features (#7616), and reports `ACL-at` and the `none` list entries in upstream 3.5.1's text and JSON layout (#8201)
-- oc-only `--debug` words `SECCOMP` and `LANDLOCK`, plus a `sandbox` alias, for the daemon and `--server` sandbox decisions (#8203)
+- oc-only `--debug` words `SECCOMP` and `LANDLOCK`, plus a `sandbox` alias, for the daemon and `--server` sandbox decisions; a failed `getgroups` is also traced at `--debug=seccomp` (#8203, #8206)
 - Daemon auto-probes chroot capability and splits `/./` module paths (#6862)
 - Abbreviated xattr lists resolve against the basis file (#7091, #7122)
 - Apply symlink modes on macOS (#7021)
@@ -172,18 +173,18 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - A server or daemon receiver negotiates incremental recursion, so a push into oc-rsync uses it (#8169)
 - Per-directory deletion during an incremental-recursion walk (#8090)
 - Zero-copy socket writes (io_uring `SEND_ZC`) are built by default but stay off unless the local node asks: `--zero-copy` on a client, `oc-rsync --daemon --zero-copy`, or `OC_RSYNC_ZERO_COPY`. The setting is never forwarded to the peer (#8183)
-
 - On Windows, `-X` sends NTFS alternate data streams as xattrs on network transfers too, and a local copy without `-X` warns once that streams were dropped. The warning is oc-only; upstream has no ADS concept (#8214)
+
 ### Changed
 
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
-- A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
+- A peer that advertises a newer protocol than oc-rsync's is negotiated down to 33 instead of refused, and a peer outside 28-40 is refused with exit 2 after `@RSYNCD: OK`, as upstream does (#7916, #8209)
 - Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
 - The 3.5.0 test suite is retired; its test names are a subset of 3.5.1's. 3.5.0 stays in the interop matrix (#8030)
 - Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape (#8080)
 - rsync 3.5.0 and 3.5.1 join the interop matrix as gating peers, with an upstream-baseline oracle in the harness (#7290, #7337, #8033)
 - Release benchmarks compare against rsync 3.5.1, 3.5.0 and 3.4.4 on Linux and macOS, and report peak RSS for every mode (#7595, #8106)
-- The remote shell's stderr is inherited, as upstream `piped_child()` leaves it (`pipe.c:48-97`): ssh's messages reach the terminal unmodified instead of being captured and re-printed by oc-rsync (#8224)
+- The remote shell's stderr is inherited, as upstream `piped_child()` leaves it (`pipe.c:48-97`): ssh's messages reach the terminal byte for byte, as soon as they are written and once, instead of being captured and re-printed by oc-rsync (#8224)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
 - `--safe-links` is evaluated on the receiver only, as upstream does (#7763, #7777)
 - Module filter rules follow upstream parsing: `merge`, `dir-merge`, `!`, `-C`, short prefixes and provenance (#7729, #7732, #7747, #7757, #7795, #7804, #7807, #7813, #7826, #7833, #7850, #7862)
@@ -276,6 +277,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - Read protocol 30 `--files-from` names unframed on the sender (#8048)
 - Decode hard-link follower echoes with the transfer loop's NDX state, and group hard-linked non-regular files below protocol 30 (#8050, #8052)
 - Keep one zstd decoder across INC_RECURSE sub-lists (#8094)
+- Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
 - Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)
@@ -286,7 +288,6 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - Honour `--modify-window` in the `--update` skip (#7112)
 - A remote push names each entry once, lists its directories, and reports module-relative `created directory` lines and per-file progress sizes like upstream (#8008)
 - A remote-shell server sender honours `--copy-unsafe-links` (#8032)
-- Remote-shell stderr keeps its exact bytes (non-UTF-8 is no longer rewritten to U+FFFD), shows output without a trailing newline immediately, and prints a failed ssh's error once instead of twice (#8224)
 - The server sets its stderr blocking after protocol setup, as upstream `start_server()` does (`main.c:1356-1364`) (#8224)
 
 **Daemon**
@@ -461,17 +462,17 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 
 - CI: the 3.5.1 testsuite on macOS and over a TCP daemon, per-leg results and badges, old-rsync oracles and a skip oracle, re-baselined manifests and a canonical scratch path (#7638, #7636, #7855, #7837, #8019, #8024, #8017, #8023, #8045, #8096, #8102)
 - CI: one publisher per required check (#7438); pinned and cached upstream tarballs (#7993); distinct interop daemon ports (#8006); Windows long-path and case-insensitive legs (#7967, #7969); `quic` build coverage, QUIC interop cells, a QUIC-vs-TCP daemon benchmark and protocol 33 in the interop oracle (#7902, #8060, #8061, #8068)
-- CI: interop runs one upstream version per job (#8184); only required jobs run on a master push, redundant workflows are gone, and benchmarks run on releases only (#8181, #8182); docs-only PRs run lightweight checks (#8145); apt mirror handling and criterion cells reworked (#8088, #8128, #8134, #8142); the SSH throughput check times a release build (#8202)
+- CI: interop runs one upstream version per job (#8184); only required jobs run on a master push, redundant workflows are gone, and benchmarks run on releases only (#8181, #8182); docs-only PRs run lightweight checks (#8145); apt mirror handling and criterion cells reworked (#8088, #8128, #8134, #8142); the SSH throughput check times a release build in its own job (#8202, #8205); the native protocol 28 and 29 peers (2.6.3, 2.6.9) gate the interop matrix, and the forced-protocol sweep is blocking (#8208)
 - Fuzzing: every target in the three fuzz workspaces runs daily, the fuzz workspaces resolve a fresh lockfile on every run, and the crashes the sweep found are fixed (#8185, #8199)
 - Tests: confinement, INC_RECURSE ordering, daemon sessions, SIMD over-reads, PULL wire transcripts, batch hard-link replay, an out-of-process daemon harness, an rsyncd.conf parser corpus, deterministic temp paths and ports (#7953, #7956, #7971, #7976, #7985, #7989, #7990, #8132, #8085, #8097, #8139, #8143, #8149, #8180, #8081)
-- Groundwork for incremental recursion on pulls, not negotiated by default: upstream's receiver clause in the inc-recurse decision, and a streaming walk for non-transfer modes inside the sender's lookahead window (#8038, #8041)
+- Groundwork for incremental recursion on pulls: upstream's receiver clause in the inc-recurse decision, and a streaming walk for non-transfer modes inside the sender's lookahead window (#8038, #8041)
 - `platform::fd_pass`, a descriptor-plus-metadata channel over an `AF_UNIX` socketpair (#8027)
 - Lazy file-list production behind `OC_RSYNC_LAZY_FLIST`, off by default (#7925, #7943, #7944, #7947, #7949)
 - Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
 - `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders, rustdoc links, SAFETY comments and direct FFI dependencies (#7767, #7770, #7776, #7932, #7940)
 - Refactors with no behaviour change (#7715, #7716, #7762, #7787, #7790, #7794, #7798, #7954, #7955, #7962, #7978, #7980, #8044, #8127)
-- Documentation: upstream citations retargeted at 3.5.0 and then 3.5.1 with a stricter citation gate, a CVE and testsuite coverage matrix, the INC_RECURSE receiver plan, the QUIC security review and process model, and README/SECURITY/CHANGELOG refreshes (#7286, #7308, #7315, #7318, #7994, #8187, #8191, #8170, #8131, #8066, #7960, #7963, #7998, #8018, #8020, #8031, #8049, #8105, #8121, #8144, #8192, #8194, #8196)
-- Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022, #8100, #8101, #8174, #8175, #8176, #8177, #8178, #8200)
+- Documentation: upstream citations retargeted at 3.5.0 and then 3.5.1 with a stricter citation gate, a CVE and testsuite coverage matrix, the INC_RECURSE receiver plan, the QUIC security review and process model, and README/SECURITY/CHANGELOG refreshes (#7286, #7308, #7315, #7318, #7994, #8187, #8191, #8170, #8131, #8066, #7960, #7963, #7998, #8018, #8020, #8031, #8049, #8105, #8121, #8144, #8192, #8194, #8196, #8204, #8221)
+- Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022, #8100, #8101, #8174, #8175, #8176, #8177, #8178, #8200, #8211, #8212)
 
 ## [0.6.4] - 2026-07-18
 
