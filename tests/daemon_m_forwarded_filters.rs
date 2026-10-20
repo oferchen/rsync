@@ -98,6 +98,28 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// Asserts the client saw the daemon close the session after `@RSYNCD: OK`
+/// without a word, the way upstream does when `parse_arguments()` dies.
+///
+/// upstream: exclude.c:1714-1719 (`exit_cleanup(RERR_FILEIO)`) and
+/// exclude.c:136 (`exit_cleanup(RERR_SYNTAX)`) exit from inside the daemon's
+/// `parse_arguments()` (clientserver.c:1160), before the `setup_protocol()` +
+/// `io_start_multiplex_out()` pair that would carry an error back
+/// (clientserver.c:1226-1252). The client hits EOF reading the protocol setup:
+/// io.c:299-303 whine_about_eof(), rc 12.
+fn assert_silent_daemon_exit(output: &Output, context: &str) {
+    let text = stderr(output);
+    assert_eq!(output.status.code(), Some(12), "{context}: {text}");
+    assert!(
+        text.contains("connection unexpectedly closed (0 bytes received so far)"),
+        "{context}: {text}"
+    );
+    assert!(
+        !text.contains("@ERROR"),
+        "{context}: upstream sends nothing after @RSYNCD: OK: {text}"
+    );
+}
+
 #[test]
 fn exclude_from_a_daemon_hidden_file_rejects_the_options() {
     let fixture = Fixture::new();
@@ -267,10 +289,49 @@ fn exclude_from_through_a_symlink_leaving_the_module_is_refused() {
     std::os::unix::fs::symlink(outside.join("rules"), fixture.module().join("link"))
         .expect("plant symlink");
     let (output, dest) = fixture.pull(&["-M--exclude-from=link"]);
-    assert!(
-        !output.status.success(),
-        "the daemon read a file outside the module through `link`: {}",
-        stderr(&output)
-    );
+    assert_silent_daemon_exit(&output, "escaping -M--exclude-from symlink");
     assert!(names(&dest).is_empty(), "nothing may be transferred");
+}
+
+#[test]
+fn fatal_argv_filter_errors_end_the_session_silently() {
+    // MEASURED against rsync 3.5.1: each of these exits the daemon inside
+    // parse_arguments(), leaving the client rc 12 and the reason only in the
+    // daemon log - RERR_FILEIO (11) for an open failure, RERR_SYNTAX (1) for a
+    // malformed rule - followed by log_exit()'s totals line (cleanup.c:222-226).
+    let fixture = Fixture::new();
+    for (arg, cause, code) in [
+        (
+            "-M--exclude-from=missing",
+            "failed to open exclude file missing",
+            11,
+        ),
+        (
+            "-M--include-from=missing",
+            "failed to open include file missing",
+            11,
+        ),
+        (
+            "-M--filter=merge missing",
+            "failed to open exclude file missing",
+            11,
+        ),
+        (
+            "-M--filter=bogus rule",
+            "Unknown filter rule: bogus rule",
+            1,
+        ),
+    ] {
+        let (output, dest) = fixture.pull(&[arg]);
+        assert_silent_daemon_exit(&output, arg);
+        assert!(names(&dest).is_empty(), "{arg}: nothing may be transferred");
+        let log = fs::read_to_string(fixture.temp.path().join("rsyncd.log")).expect("read log");
+        let tail = &log[log.rfind(cause).unwrap_or_else(|| panic!("{arg}: {log}"))..];
+        let (line, rest) = tail.split_once('\n').expect("log line ends");
+        assert!(line.contains(&format!("(code {code})")), "{arg}: {line}");
+        assert!(
+            rest.contains("sent 0 bytes  received 0 bytes  total size 0"),
+            "{arg}: {log}"
+        );
+    }
 }
