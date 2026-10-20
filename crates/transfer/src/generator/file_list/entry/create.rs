@@ -16,7 +16,7 @@ use super::super::super::GeneratorContext;
 #[cfg(unix)]
 use super::device::rdev_to_major_minor;
 #[cfg(unix)]
-use super::fake_super::build_entry_from_fake_super;
+use super::fake_super::{build_entry_from_fake_super, read_placeholder_target};
 use super::munge::strip_symlink_munge_prefix;
 
 impl GeneratorContext {
@@ -146,7 +146,18 @@ impl GeneratorContext {
             // can masquerade as a device/symlink/special on the wire.
             #[cfg(unix)]
             let entry = if let Some(stat) = fake_super_override.as_ref() {
-                build_entry_from_fake_super(relative_path, metadata.len(), stat)
+                // upstream: flist.c:482-500 readlink_stat() - a placeholder
+                // whose %stat says S_IFLNK holds its link target as file
+                // content, and a munged target loses its prefix.
+                let link_target = if stat.mode & 0o170000 == 0o120000 {
+                    strip_symlink_munge_prefix(
+                        self.config.munge_symlinks,
+                        read_placeholder_target(full_path)?,
+                    )
+                } else {
+                    PathBuf::new()
+                };
+                build_entry_from_fake_super(relative_path, metadata.len(), stat, link_target)
             } else {
                 FileEntry::new_file(relative_path, metadata.len(), mode)
             };

@@ -190,6 +190,8 @@ pub use nfsv4_acl_stub as nfsv4_acl;
 
 /// Fake super-user mode for preserving privileged metadata without root.
 pub mod fake_super;
+#[cfg(unix)]
+mod fake_super_link;
 
 /// Netgroup host-membership lookup for daemon `hosts allow`/`hosts deny`
 /// `@netgroup` tokens.
@@ -406,6 +408,10 @@ pub use fake_super::{
     FAKE_SUPER_ACCESS_ACL_XATTR, FAKE_SUPER_DEFAULT_ACL_XATTR, FAKE_SUPER_XATTR, FakeSuperStat,
     effective_source_stat, fake_super_ids, load_fake_super, load_fake_super_acl, remove_fake_super,
     remove_fake_super_default_acl, store_fake_super, store_fake_super_acl,
+};
+#[cfg(unix)]
+pub use fake_super_link::{
+    create_fake_super_link, read_fake_super_link, symlinks_are_placeholders,
 };
 
 pub use symlink_munge::{SYMLINK_MUNGE_PREFIX, munge_symlink, unmunge_symlink};
