@@ -20,18 +20,18 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 **Release:** 0.6.4 (2026-07-18). Changes merged since then are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md). All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are implemented; the table below lists the gaps.
 
-**Upstream reference.** Behaviour, source citations and the testsuite gate all track rsync 3.5.1 (`upstream_version` in `Cargo.toml`). 3.5.1 raised the protocol to 33. oc-rsync speaks 33, including `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003). It negotiates down to 28 for older peers and caps a newer peer at 33 instead of refusing it (#7916). The options and daemon directives added in 3.5.0 are implemented (see *Path confinement* below). The per-CVE audit is in [`SECURITY.md`](./SECURITY.md).
+**Upstream reference.** Behaviour, source citations and the testsuite gate all track rsync 3.5.1 (`upstream_version` in `Cargo.toml`). 3.5.1 raised the protocol to 33. oc-rsync speaks 33, including `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003). It negotiates down to 28 for older peers and caps a newer peer at 33 instead of refusing it (#7916, #8209). The options and daemon directives added in 3.5.0 are implemented (see *Path confinement* below). The per-CVE audit is in [`SECURITY.md`](./SECURITY.md).
 
 | Component | Status |
 |-----------|--------|
 | **Transfer** | Local, SSH, daemon push/pull, daemon over remote shell (`host::module`) |
-| **Delta** | Rolling + strong checksums, block matching, parallel receive-delta pipeline |
+| **Delta** | Rolling + strong checksums, block matching |
 | **Metadata** | Permissions, timestamps, ownership, ACLs (`-A`), xattrs (`-X`) |
 | **File handling** | Sparse, hardlinks, symlinks, devices, FIFOs |
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
 | **Compression** | zlib, zstd, lz4 with level control and negotiation |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Negotiated whenever oc-rsync sends, when an oc-rsync server or daemon receives a push (#8169), and on client pulls by default (#8062, #8091). `OC_RSYNC_PULL_INC_RECURSE=0` opts a pull out. `--delete-before` and `--delete-after` need the whole list and withhold it as in upstream. |
+| **Incremental recursion** | Negotiated whenever oc-rsync sends, when an oc-rsync server or daemon receives a push (#8169), and on client pulls by default (#8062, #8091, #8217). `OC_RSYNC_PULL_INC_RECURSE=0` opts a pull out. `--delete-before` and `--delete-after` need the whole list and withhold it as in upstream. |
 | **Batch** | `--write-batch` / `--read-batch` round trip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
 | **Host names** | Internationalized host names converted to IDNA A-labels, as upstream 3.5.1 does (#8104) |
@@ -45,7 +45,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 Upstream's own 3.5.1 test suite runs against `oc-rsync` as `$RSYNC` on every pull request and nightly on master, in **eight legs**: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. The pipe legs run the whole 360-test corpus. The TCP legs add `--daemon-tests-only` and run the 161 tests that start a daemon. The legs run from [`upstream-testsuite-3.5.1.yml`](./.github/workflows/upstream-testsuite-3.5.1.yml), behind the 3.5.1 badge at the top.
 
-The four Linux legs are required status checks. The four macOS legs gate on their own manifests but are not required contexts.
+All eight legs are required status checks.
 
 Outcomes, counted from each leg's committed manifest:
 
@@ -114,36 +114,50 @@ cargo build --workspace --release
 
 | Feature | Crate(s) | Default | Purpose | Status |
 |---------|----------|:-------:|---------|--------|
-| `zstd` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol`, `batch` | yes | zstd codec and negotiation. | stable |
-| `lz4` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | yes | LZ4 codec. | stable |
-| `zlib-ng` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | no | SIMD `zlib-ng` C backend instead of pure-Rust zlib. | stable |
-| `xattr` | workspace, `cli`, `core`, `transfer`, `daemon`, `metadata` | yes | Extended attributes (`-X`); NTFS ADS on Windows. | stable |
+| `zstd` | workspace, `cli`, `core`, `engine`, `transfer`, `compress`, `protocol`, `batch` | yes | zstd codec and negotiation. | stable |
+| `zstdmt` | `compress` | no | Multithreaded zstd, needed to honour `--compress-threads=N` above 0. | stable |
+| `lz4` | workspace, `cli`, `core`, `engine`, `transfer`, `compress`, `protocol` | yes | LZ4 codec. | stable |
+| `zlib-ng` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | yes | SIMD `zlib-ng` C backend for zlib. `compress` and `protocol` enable it by default, so every build that links `core` uses it. | stable |
+| `zlib-rs` | `compress`, `protocol` | no | Pure-Rust `zlib-rs` backend for zlib. | stable |
+| `xattr` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `metadata` | yes | Extended attributes (`-X`); NTFS ADS on Windows. | stable |
 | `acl` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `metadata` | yes | ACLs (`-A`) via `exacl`; NTFS ACLs via `windows-rs`. | stable |
-| `iconv` | workspace, `cli`, `core`, `transfer`, `daemon`, `protocol` | yes | Filename charset conversion (`--iconv`). | stable |
+| `iconv` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `protocol` | yes | Filename charset conversion (`--iconv`). | stable |
 | `idn` | workspace, `core` | yes | IDNA A-label conversion of host names (upstream `SUPPORT_IDN`). Without it, hosts are used as typed and `--version` reports `no IDN`. | stable |
-| `parallel` | workspace, `cli`, `engine`, `checksums` | yes | Rayon-based parallel file and checksum work. | stable |
+| `parallel` | workspace, `cli`, `engine`, `checksums`, `signature` | yes | Rayon-based parallel file and checksum work. | stable |
 | `io_uring` | workspace, `transfer`, `fast_io` | yes | Linux 5.6+ batched I/O with runtime fallback. | stable |
+| `sqpoll-mlock-basis` | `fast_io` | yes | Pins the mmap'd basis window with `mlock(2)` so an SQPOLL ring can stay on beside an mmap basis reader. | stable |
 | `iocp` | workspace, `transfer`, `fast_io` | yes | Windows I/O Completion Ports. | stable |
 | `copy_file_range` | workspace, `fast_io` | yes | Compatibility alias; the syscall is always compiled with runtime detection. | stable |
-| `async` | workspace, `core`, `engine`, `daemon` | yes | tokio for async I/O paths. | stable |
-| `embedded-ssh` | workspace, `core`, `rsync_io` | yes | Built-in SSH client for `ssh://` operands. | stable |
+| `async` | workspace, `core`, `engine`, `daemon`, `bandwidth`, `protocol` | yes | tokio for async I/O paths. | stable |
+| `embedded-ssh` | workspace, `cli`, `core`, `rsync_io` | yes | Built-in SSH client for `ssh://` operands. | stable |
+| `ssh-config-parse` | `rsync_io` | yes | `ssh_config` reader for the embedded client and the SSH compression warning. | stable |
 | `openssl` | workspace, `checksums` | no | MD4/MD5 through system OpenSSL. | stable |
 | `openssl-vendored` | workspace, `checksums` | no | As `openssl`, statically linked. | stable |
 | `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` for the daemon. | stable |
-| `quic` | workspace, `cli`, `core`, `daemon` | no | QUIC transport (see [QUIC transport](#quic-transport)). | opt-in |
+| `quic` | workspace, `cli`, `core`, `daemon`, `rsync_io`, `transfer`, `test-support` | no | QUIC transport (see [QUIC transport](#quic-transport)). | opt-in |
 | `iouring-send-zc` | workspace, `fast_io` | yes | io_uring `SEND_ZC` socket writes (Linux 6.0+). Built in, but used only when the local node asks for zero-copy (see [Performance tuning](#performance-tuning)). | stable |
+| `daemon-zero-copy` | `daemon` | yes | Lets a daemon sender use `SEND_ZC` when zero-copy is requested. | stable |
 | `daemon-seccomp` | workspace, `daemon` | no | seccomp allowlist for daemon workers. Once compiled in, it is on at runtime; opt out with `OC_RSYNC_NO_SECCOMP=1`. | opt-in |
 | `incremental-flist` | `transfer` | yes | Gates tests only. The incremental receiver is chosen at runtime from the negotiated flags (#7968). | stable |
 | `lazy-metadata` | `engine` | yes | Defers `stat()` until metadata is needed. | stable |
 | `mmap-free-basis` | workspace, `engine`, `fast_io` | no | Reads the basis without mmap, through io_uring where available or buffered I/O. | experimental |
 | `multi-producer` | `engine` | no | Relaxes the single-producer invariant on `WorkQueueSender`. | experimental |
-| `thread-slab-pool` | `engine` | no | Per-thread slab in front of `BufferPool`. | experimental |
+| `thread-slab-pool` | `engine`, `transfer` | no | Per-thread slab in front of `BufferPool`. | experimental |
+| `parallel-delete-consumer` | `engine` | no | Parallel consumer for delete operations that keeps the wire order. | experimental |
 | `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` writer. | experimental |
+| `dontcache` | `fast_io`, `transfer` | no | Linux 6.14+ `RWF_DONTCACHE` bulk writer that does not evict the page cache. | experimental |
+| `macos-gcd` | `fast_io`, `transfer` | no | macOS Grand Central Dispatch `dispatch_io` disk writer. | experimental |
+| `macos-kqueue` | `daemon` | no | macOS daemon accept loop on one `kqueue(2)` wait over all listeners. | experimental |
+| `transmitfile` | `fast_io` | no | Windows `TransmitFile()` file-to-socket primitive. | experimental |
+| `iouring-data-reads` / `iouring-data-writes` | `engine`, `fast_io` | no | Route large file reads or writes through io_uring. | experimental |
 | `adaptive-basis-dispatch` | `fast_io` | no | Per-file basis-read dispatch between mmap and io_uring by recent throughput; on Windows it also selects the IOCP file reader. | experimental |
 | `async-ssh` | `core`, `rsync_io` | no | Async SSH transport; enable at runtime with `OC_RSYNC_ASYNC_SSH=1`. | experimental |
-| `async-daemon` | `daemon` | no | tokio accept loop dispatching sync workers. | experimental |
+| `async-daemon` | `cli`, `daemon` | no | tokio accept loop dispatching sync workers. | experimental |
 | `concurrent-sessions` | `daemon` | no | Shared session state for multi-session daemons. | experimental |
-| `tracing` | `core`, `engine`, `transfer`, `daemon` | no | Structured `tracing` instrumentation. | stable |
+| `tokio-transfer` | `protocol` | no | Async multiplex read leaf; not wired into a transfer path. | experimental |
+| `tracing` | `core`, `engine`, `transfer`, `daemon`, `protocol`, `filters`, `logging`, `matching`, `signature` | no | Structured `tracing` instrumentation. | stable |
+
+Not listed: `landlock` (`fast_io`), which `cli` and `daemon` always enable on Linux; `syscall_batch` (`fast_io`), an empty alias; `block2` (`fast_io`), the `macos-gcd` dependency; and the internal `serde`, `bench-internal` and `test-support` features.
 
 ---
 
@@ -263,7 +277,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 **`--zero-copy` and `SEND_ZC`.** Zero-copy socket writes (io_uring `SEND_ZC`, Linux 6.0+) are off by default. On a loopback benchmark they made a 2 GiB daemon pull slower, so they stay opt-in. The choice is local to each node and is never forwarded to the peer (#8183). A client opts in with `--zero-copy`. A server opts in with `oc-rsync --daemon --zero-copy`, with `--rsync-path='oc-rsync --zero-copy'`, or with `OC_RSYNC_ZERO_COPY=on|off|auto`. The flag wins over the variable, and the variable over the default. See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md).
 
-**Parallel delta work.** Delta work is single-threaded per file by default. Opt in with `--parallel-delta-scan` and `--checksum-threads=N`.
+**Parallel delta work.** The sender scans each file's delta on one thread unless `--parallel-delta-scan` is given; it applies to local transfers of large, duplicate-free basis files. `--checksum-threads=N` sets the threads that hash basis signatures; the default uses the available cores above a size threshold, and `1` forces sequential hashing.
 
 **SSH stderr.** The remote shell inherits oc-rsync's own stderr, as upstream `piped_child()` arranges (`pipe.c:48-97`): its messages reach the terminal byte for byte, as soon as they are written, and exactly once. Only stdin and stdout are socketpairs. See [`docs/ssh-transport.md`](./docs/ssh-transport.md).
 
@@ -286,8 +300,8 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 | 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
-| 29 | 2.6.4 - 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
-| 28 | 2.6.0 - 2.6.3 | Wire-level support | Golden-byte tests in `crates/protocol/tests/` |
+| 29 | 2.6.4 - 2.6.9 | Full support | Interop matrix against 2.6.9, plus golden-byte tests |
+| 28 | 2.6.1 - 2.6.3 | Full support | Interop matrix against 2.6.3, plus golden-byte tests in `crates/protocol/tests/` |
 | <= 27 | <= 2.5.x | Not supported | |
 
 oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 peer runs at 33. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
@@ -335,7 +349,7 @@ oc-rsync uses threads where upstream forks, while keeping the same protocol. I/O
 
 ## Testing and CI
 
-Branch protection requires ten checks: `fmt + clippy`, `nextest (stable)`, `Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`, `interop / interop with upstream rsync`, and the four Linux [upstream testsuite](#upstream-testsuite) legs (`upstream-testsuite / upstream testsuite`, its `(root)` variant, and the same two under `upstream-testsuite-tcp /`). [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md) has the command that re-derives the list from the ruleset.
+Branch protection requires fourteen checks: `fmt + clippy`, `nextest (stable)`, `Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`, `interop / interop with upstream rsync`, and the eight [upstream testsuite](#upstream-testsuite) legs (`upstream-testsuite / upstream testsuite` and its `(root)` variant, the same two under `upstream-testsuite-tcp /`, and `upstream testsuite (macOS)` and `(macOS, root)` under `upstream-testsuite-macos /` and `upstream-testsuite-macos-tcp /`). [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md) has the command that re-derives the list from the ruleset.
 
 The SSH throughput check (SSR-1) compares a release build of oc-rsync against upstream in its own `SSH throughput (SSR-1, release)` job. It runs on every pull request and reports its result, but it is not a required check. Benchmarks run only when a release is tagged (see [Performance](#performance)). Interop coverage is described under [Protocol and interop](#protocol-and-interop).
 
