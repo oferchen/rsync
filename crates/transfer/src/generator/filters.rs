@@ -300,16 +300,9 @@ impl GeneratorContext {
 
         // upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
         // on top of client filters. Daemon rules take precedence (prepended).
-        let daemon_rules = &self.config.daemon_filter_rules;
-        let mut combined = if daemon_rules.is_empty() {
-            wire_rules
-        } else if wire_rules.is_empty() {
-            daemon_rules.clone()
-        } else {
-            let mut combined = daemon_rules.clone();
-            combined.extend(wire_rules);
-            combined
-        };
+        // upstream: options.c:1620-1656 - rules the client passed in the
+        // server argv (via `-M`) sit in `filter_list` ahead of these.
+        let mut combined = self.config.server_filter_rules(wire_rules);
 
         // upstream: exclude.c:1988-1993 recv_filter_list() - once the client's
         // rules are read, a server that IS the sender (a pull; upstream's
