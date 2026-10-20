@@ -996,10 +996,7 @@ impl ReceiverContext {
                     setup.sandbox.as_ref(),
                     writer,
                     &mut stats,
-                )?;
-                stats.io_error |= ctx.finish_delete_limit(ctx.skipped_deletes);
-                stats.delete_limit_exceeded = ctx.skipped_deletes > 0;
-                Ok(())
+                )
             },
         )?;
         if local_failure {

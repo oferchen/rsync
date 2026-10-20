@@ -385,6 +385,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Honour `--` in server argv, and mirror upstream option parsing for `-M`, repeated options and popt arity (#7402, #7413, #7835, #7846, #7154, #7160)
 - Match upstream `--out-format` codes and `--info` / `--debug` parsing (#6914, #6915, #6916, #7412, #7637)
 - Latch the first error's exit code (#7768, #7871)
+- A transfer error exits 23 even when `--max-delete` also stopped deletions or a file vanished, matching upstream's exit-code precedence (#8218)
 - Print the non-incremental `building file list ... done` banner (#7580)
 - A local copy under `--progress` prints the file-list banner, `created directory` and directory names in upstream order (#7992)
 - Honour `--port` on daemon transfers and take the `rsync://` host verbatim (#7456, #7431)
@@ -420,6 +421,8 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Recorded `--delete-delay` victims run after an I/O error, and the late delete pass runs after the sender's final `NDX_DONE` (#8092, #8093)
 - A server sender echoes `NDX_DEL_STATS` (#8112)
 - A populated directory is kept under `--delete-missing-args` without `--delete` (#8162)
+- A remote `--max-delete=0` transfer no longer exits 12: the server clamps the forwarded `-1` to 0 as upstream does (#8218)
+- `--max-delete` caps the contents of a directory cleared to make room for an incoming file, sharing one run-wide budget and `Deletions stopped` warning with the delete sweeps (#8218)
 
 **Incremental recursion**
 - `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)

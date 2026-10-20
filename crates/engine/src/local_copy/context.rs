@@ -273,6 +273,11 @@ pub(crate) struct CopyContext<'a> {
     /// %s` at `FERROR_XFER`.
     // upstream: delete.c:283-285; log.c:337-338 got_xfer_error
     make_way_error: bool,
+    /// Children of directory obstacles that `--max-delete` refused to delete,
+    /// reported in the run's `Deletions stopped due to --max-delete limit`
+    /// warning.
+    // upstream: delete.c:35 skipped_deletes; generator.c:2904-2907
+    make_room_skipped_deletes: u64,
     /// Set when `atomic_create()` could not make a FIFO, socket, device node,
     /// symlink, or hard link. The entry is skipped and the run continues, but
     /// this flag drives the final `RERR_PARTIAL` (exit 23) exit code.

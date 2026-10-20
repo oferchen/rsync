@@ -913,7 +913,7 @@ mod incremental_mode_tests {
 
         // Call the delete pass the same way `run_pipelined_incremental` does.
         let mut writer = TestDeletionWriter;
-        let (delete_stats, delete_limit_exceeded, _io_error_bits, _) = ctx
+        let (delete_stats, _io_error_bits, _) = ctx
             .delete_extraneous_files(
                 dest,
                 #[cfg(unix)]
@@ -926,7 +926,7 @@ mod incremental_mode_tests {
         // `run_pipelined_incremental`.
         let stats = TransferStats {
             delete_stats,
-            delete_limit_exceeded,
+            delete_limit_exceeded: ctx.skipped_deletes.get() > 0,
             ..Default::default()
         };
 
@@ -997,7 +997,7 @@ mod incremental_mode_tests {
             .push(FileEntry::new_file("subdir/child.txt".into(), 4, 0o644));
 
         let mut writer = TestDeletionWriter;
-        let (_stats, _limit_exceeded, io_bits, _) = ctx
+        let (_stats, io_bits, _) = ctx
             .delete_extraneous_files(
                 dest,
                 #[cfg(unix)]
