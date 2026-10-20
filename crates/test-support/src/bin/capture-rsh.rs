@@ -69,6 +69,9 @@ fn pump(mut from: impl Read, mut to: impl Write, mut log: File, direction: &str)
 
 fn main() {
     #[cfg(unix)]
+    // SAFETY: Querying and setting file status flags via fcntl on standard file
+    // descriptors (STDIN_FILENO, STDOUT_FILENO) is memory-safe. We only clear
+    // O_NONBLOCK so reads/writes block instead of returning EAGAIN.
     unsafe {
         for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO] {
             let flags = libc::fcntl(fd, libc::F_GETFL);
