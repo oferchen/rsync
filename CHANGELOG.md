@@ -369,7 +369,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Mirror upstream atime handling for an up-to-date file (#8089)
 - `--dry-run` deletes nothing on the receiver, and an itemized pull deletion prints locally (#8095, #8099)
 - Name an unreadable local-copy directory by its full path (#8098)
-- A local copy that finishes with exit 23, 24 or 25 still prints its itemize rows, names and `--stats` totals before the exit trailer, as upstream's `cleanup.c` decides the code only after the transfer (#PRNUM)
+- A local copy that finishes with exit 23, 24 or 25 still prints its itemize rows, names and `--stats` totals before the exit trailer, as upstream's `cleanup.c` decides the code only after the transfer (#8222)
 
 **Permissions and metadata**
 - `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
@@ -424,8 +424,8 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - A populated directory is kept under `--delete-missing-args` without `--delete` (#8162)
 - A remote `--max-delete=0` transfer no longer exits 12: the server clamps the forwarded `-1` to 0 as upstream does (#8218)
 - `--max-delete` caps the contents of a directory cleared to make room for an incoming file, sharing one run-wide budget and `Deletions stopped` warning with the delete sweeps (#8218)
-- A local `--max-delete` cap no longer aborts the transfer (under `--delete-before` it stopped the run before anything was copied); the skipped total is reported once, a partial error (23) outranks the limit (25), and the trailer names `the --max-delete limit stopped deletions` (#PRNUM)
-- Under `--one-file-system`, clearing a directory obstacle for an incoming file keeps a mount point inside it instead of deleting into the mounted filesystem (#PRNUM)
+- A local `--max-delete` cap no longer aborts the transfer (under `--delete-before` it stopped the run before anything was copied); the skipped total is reported once, a partial error (23) outranks the limit (25), and the trailer names `the --max-delete limit stopped deletions` (#8222)
+- Under `--one-file-system`, clearing a directory obstacle for an incoming file keeps a mount point inside it instead of deleting into the mounted filesystem (#8222)
 
 **Incremental recursion**
 - `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)
