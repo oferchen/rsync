@@ -278,8 +278,8 @@ fn copy_directory_recursive_inner(
                     full_fname(source)
                 };
                 eprintln!("rsync: [sender] opendir {name} failed: {detail}");
+                context.record_io_error();
             }
-            context.record_io_error();
             first_entry_io_error = Some(error);
             enumeration_failed = true;
             Vec::new()
@@ -674,10 +674,17 @@ fn copy_directory_recursive_inner(
             }
             Err(error) if error.is_vanished_error() => {
                 // upstream: flist.c:1688 / sender.c:715 - vanished files produce
-                // a warning and set IOERR_VANISHED (exit code 24).
+                // a warning and set IOERR_VANISHED (exit code 24). The bit gates
+                // no deletion (generator.c:304 tests only IOERR_GENERAL), and
+                // the warning names the vanished file once: a subdirectory
+                // frame re-raising its child's vanish must not report itself.
                 // full_fname() wraps the path in double quotes (util1.c:1528).
-                eprintln!("file has vanished: \"{}\"", planned.entry.path.display());
-                context.record_io_error();
+                let error = if error.vanished_path() == Some(planned.entry.path.as_path()) {
+                    eprintln!("file has vanished: \"{}\"", planned.entry.path.display());
+                    error.reported()
+                } else {
+                    error
+                };
                 if first_entry_io_error.is_none() {
                     first_entry_io_error = Some(error);
                 }
@@ -685,8 +692,9 @@ fn copy_directory_recursive_inner(
             Err(error) if error.is_io_error() => {
                 // upstream: rsync continues transferring remaining entries when
                 // individual files fail with I/O errors (permission denied, etc.),
-                // regardless of whether --delete is active.
-                context.record_io_error();
+                // regardless of whether --delete is active. The walk already
+                // listed this entry, so its failure is a send-time error.
+                context.record_transfer_io_error();
                 if first_entry_io_error.is_none() {
                     first_entry_io_error = Some(error);
                 }

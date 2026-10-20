@@ -168,3 +168,83 @@ fn make_inplace_backup_still_copies_when_no_backup_basis_is_carried() {
         "the whole-file inplace backup still comes from the disk thread"
     );
 }
+
+/// Opens the sandbox on `dest/`, then swaps `dest/a` for a symlink to
+/// `outside/`, which holds a bait file `f`. Returns the config, `dest/a/f`
+/// and the bait path.
+fn sandboxed_config_then_swap(root: &Path) -> (DiskCommitConfig, PathBuf, PathBuf) {
+    let dest = root.join("dest");
+    let outside = root.join("outside");
+    fs::create_dir_all(dest.join("a")).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("f"), b"bait").unwrap();
+    let sandbox = std::sync::Arc::new(fast_io::DirSandbox::open_root(&dest).unwrap());
+    fs::remove_dir(dest.join("a")).unwrap();
+    std::os::unix::fs::symlink(&outside, dest.join("a")).unwrap();
+    let config = DiskCommitConfig {
+        dest_dir: Some(dest.clone()),
+        sandbox: Some(sandbox),
+        ..DiskCommitConfig::default()
+    };
+    (config, dest.join("a/f"), outside.join("f"))
+}
+
+/// upstream: receiver.c:1212-1235 - the in-place output opens beneath the
+/// destination the receiver entered, so a parent swapped for a symlink after
+/// entry cannot carry the write outside the tree.
+#[test]
+fn inplace_output_under_a_swapped_parent_is_not_opened() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (config, target, bait) = sandboxed_config_then_swap(tmp.path());
+    fs::remove_file(&bait).unwrap();
+    assert!(open_output_file(&inplace_begin(&target), &config).is_err());
+    assert!(
+        fs::symlink_metadata(&bait).is_err(),
+        "the in-place open created a file through the swapped parent"
+    );
+}
+
+/// A `--write-devices` target opens beneath the destination the same way.
+#[test]
+fn device_target_under_a_swapped_parent_is_not_opened() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (config, target, _bait) = sandboxed_config_then_swap(tmp.path());
+    let begin = BeginMessage {
+        is_device_target: true,
+        ..inplace_begin(&target)
+    };
+    assert!(
+        open_output_file(&begin, &config).is_err(),
+        "the device open followed the swapped parent"
+    );
+}
+
+/// upstream: receiver.c:353 set_file_length(fd) - the post-transfer truncate
+/// and hole punch reopen the destination beneath the sandbox.
+#[test]
+fn destination_reopen_under_a_swapped_parent_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (config, target, bait) = sandboxed_config_then_swap(tmp.path());
+    assert!(super::super::commit::open_dest_for_write(config.backup_env(), &target).is_err());
+    assert_eq!(fs::read(bait).unwrap(), b"bait");
+}
+
+/// Non-vacuity: with the parent intact, every routed open reaches the
+/// in-tree destination.
+#[test]
+fn routed_destination_opens_reach_an_intact_nested_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("dest");
+    fs::create_dir_all(dest.join("a")).unwrap();
+    fs::write(dest.join("a/f"), b"live").unwrap();
+    let config = DiskCommitConfig {
+        dest_dir: Some(dest.clone()),
+        sandbox: Some(std::sync::Arc::new(
+            fast_io::DirSandbox::open_root(&dest).unwrap(),
+        )),
+        ..DiskCommitConfig::default()
+    };
+    let target = dest.join("a/f");
+    assert!(open_output_file(&inplace_begin(&target), &config).is_ok());
+    assert!(super::super::commit::open_dest_for_write(config.backup_env(), &target).is_ok());
+}

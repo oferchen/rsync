@@ -46,12 +46,12 @@ mod tests;
 
 pub use clone::{CloneAttempt, CloneFreshTimes, confined_clone_file};
 pub use create::{
-    confined_create_new, confined_link_anonymous, linkat, linkat_via_sandbox_or_fallback, mkdirat,
-    mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat, mknodat_via_sandbox_or_fallback, symlinkat,
-    symlinkat_via_sandbox_or_fallback,
+    confined_create_new, confined_link_anonymous, create_dir_all_via_sandbox_or_fallback, linkat,
+    linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat,
+    mknodat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
 };
 pub(crate) use create::{fake_super_placeholder_at, mknodat_with_retry};
-pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
+pub use lstat::{lstat_via_sandbox_or_fallback, stat_via_sandbox_or_fallback};
 pub use metadata::{AtMetadata, fstatat_follow, fstatat_nofollow};
 pub use metadata_ops::{
     fchmodat, fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback,
@@ -60,7 +60,9 @@ pub use metadata_ops::{
 };
 pub use nested::nested_parent_anchoring_supported;
 pub use open::{
-    openat, openat_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
+    open_basis_via_sandbox_or_fallback, open_inplace_output_via_sandbox_or_fallback,
+    open_write_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback, readlinkat,
+    readlinkat_via_sandbox_or_fallback,
 };
 pub use read_dir::{DirEntryView, EntryKind, ReadDirOutcome, read_dir_via_sandbox_or_fallback};
 pub use rename::{
@@ -68,8 +70,9 @@ pub use rename::{
     renameat_via_sandbox_or_fallback,
 };
 pub use unlink::{
-    UnlinkFlags, UnlinkResidue, recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback,
-    unlink_path, unlink_via_sandbox_or_fallback, unlinkat,
+    UnlinkFailure, UnlinkFlags, UnlinkResidue, recursive_unlinkat,
+    recursive_unlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback,
+    unlinkat,
 };
 
 // Bring the leaf types the `#[cfg(test)]` module references via

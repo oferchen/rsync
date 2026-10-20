@@ -297,7 +297,7 @@ pub(super) fn process_links(
                 ::metadata::apply_file_metadata_if_changed(
                     destination,
                     metadata,
-                    existing,
+                    &fast_io::EntryMetadata::from(existing.clone()),
                     &metadata_options,
                 )
                 .map_err(map_metadata_error)?;

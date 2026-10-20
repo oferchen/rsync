@@ -229,6 +229,29 @@ pub struct ResponseContext<'a> {
 }
 
 impl ResponseContext<'_> {
+    /// Opens the delta basis, anchored beneath the destination sandbox when
+    /// the basis lies inside the destination tree.
+    ///
+    /// upstream: receiver.c:1086-1093 - a basis in the entry's own directory
+    /// opens via `held_dfd_for()` + `do_open_atfd()`, never by path.
+    fn open_basis_map(&self, path: &std::path::Path) -> io::Result<crate::map_file::MapFile> {
+        #[cfg(unix)]
+        if let (Some(sandbox), Some(dest_dir)) = (self.sandbox, self.dest_dir)
+            && let Ok(relative) = path.strip_prefix(dest_dir)
+        {
+            let file = fast_io::open_basis_via_sandbox_or_fallback(
+                Some(sandbox),
+                dest_dir,
+                relative,
+                path,
+            )?;
+            return crate::map_file::MapFile::from_file(file);
+        }
+        crate::map_file::MapFile::open(path)
+    }
+}
+
+impl ResponseContext<'_> {
     /// Names the file being received the way upstream's receiver does.
     ///
     /// Upstream has `chdir`ed into the destination root, so `full_fname()`
@@ -1138,5 +1161,62 @@ mod tests {
             !text.contains("cleared file index"),
             "the ordering fault must not be reported as a cleared entry: {text}"
         );
+    }
+
+    #[cfg(unix)]
+    fn basis_ctx<'a>(
+        config: &'a RequestConfig,
+        sandbox: &'a std::sync::Arc<fast_io::DirSandbox>,
+        dest_dir: &'a std::path::Path,
+    ) -> ResponseContext<'a> {
+        ResponseContext {
+            config,
+            sandbox: Some(sandbox),
+            dest_dir: Some(dest_dir),
+            wire_basis: wire_basis::WireBasis {
+                entry_relative_path: std::path::Path::new(""),
+                basis_dirs: &[],
+                fuzzy_level: 0,
+            },
+        }
+    }
+
+    /// upstream: receiver.c:1086-1093 - the receiver opens the delta basis
+    /// through the held parent descriptor, so a parent swapped for a symlink
+    /// after the generator signed it cannot redirect the read outside.
+    #[cfg(unix)]
+    #[test]
+    fn receiver_basis_under_a_swapped_parent_is_not_opened() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(dest.join("a")).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("f"), b"bait").unwrap();
+        let sandbox = std::sync::Arc::new(fast_io::DirSandbox::open_root(&dest).unwrap());
+        std::fs::remove_dir(dest.join("a")).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("a")).unwrap();
+        let config = iflags_request_config();
+        let ctx = basis_ctx(&config, &sandbox, &dest);
+        assert!(
+            ctx.open_basis_map(&dest.join("a/f")).is_err(),
+            "the receiver read a basis through the swapped parent"
+        );
+    }
+
+    /// Non-vacuity: a nested in-tree basis opens and reads its own bytes.
+    #[cfg(unix)]
+    #[test]
+    fn receiver_basis_in_a_nested_directory_opens_beneath_the_sandbox() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(dest.join("a")).unwrap();
+        std::fs::write(dest.join("a/f"), b"basis").unwrap();
+        let sandbox = std::sync::Arc::new(fast_io::DirSandbox::open_root(&dest).unwrap());
+        let config = iflags_request_config();
+        let ctx = basis_ctx(&config, &sandbox, &dest);
+        let mut map = ctx.open_basis_map(&dest.join("a/f")).unwrap();
+        assert_eq!(map.file_size(), 5);
+        assert_eq!(map.map_ptr(0, 5).unwrap(), b"basis");
     }
 }

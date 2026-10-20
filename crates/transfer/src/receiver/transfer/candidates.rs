@@ -76,10 +76,9 @@ const fn transfer_seed(always_checksum: bool) -> u32 {
 /// A destination whose mtime predates the epoch or cannot be read compares as
 /// `(0, 0)`, which differs from any real sender mtime and therefore reports the
 /// time as changed - the safe direction.
-fn dest_mtime(meta: &fs::Metadata) -> (i64, u32) {
+fn dest_mtime(meta: &fast_io::EntryMetadata) -> (i64, u32) {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
         (meta.mtime(), meta.mtime_nsec() as u32)
     }
     #[cfg(not(unix))]
@@ -108,9 +107,7 @@ fn dest_mtime(meta: &fs::Metadata) -> (i64, u32) {
 ///
 /// - `generator.c:2148` - `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE)))`
 #[cfg(unix)]
-fn dest_blocks_regular_file(meta: &fs::Metadata, write_devices: bool) -> bool {
-    use std::os::unix::fs::FileTypeExt;
-
+fn dest_blocks_regular_file(meta: &fast_io::EntryMetadata, write_devices: bool) -> bool {
     let file_type = meta.file_type();
     if file_type.is_file() {
         return false;
@@ -121,7 +118,7 @@ fn dest_blocks_regular_file(meta: &fs::Metadata, write_devices: bool) -> bool {
 /// Windows variant: there is no device node to write through, so anything that
 /// is not a regular file is an obstacle.
 #[cfg(windows)]
-fn dest_blocks_regular_file(meta: &fs::Metadata, _write_devices: bool) -> bool {
+fn dest_blocks_regular_file(meta: &fast_io::EntryMetadata, _write_devices: bool) -> bool {
     !meta.file_type().is_file()
 }
 
@@ -353,7 +350,9 @@ impl ReceiverContext {
                     // the files the real run would request.
                     if has_existence_gate {
                         let file_path = dest_dir.join(entry.path());
-                        let dest_meta = fs::metadata(&file_path).ok();
+                        let dest_meta = fs::metadata(&file_path)
+                            .ok()
+                            .map(fast_io::EntryMetadata::from);
                         if self.skip_regular_by_existence_gate(
                             writer,
                             entry,
@@ -424,16 +423,41 @@ impl ReceiverContext {
             .map(|&(idx, entry)| (idx, dest_dir.join(entry.path())))
             .collect();
 
-        let stat_results: Vec<(usize, PathBuf, Option<fs::Metadata>)> =
-            crate::parallel_io::map_blocking(
+        // A held destination answers every stat beneath the pinned root
+        // through its held parent, one directory at a time, as upstream's
+        // do_stat_at() does through held_dfd_for() (syscall.c:3858-3871).
+        #[cfg(unix)]
+        let anchored = sandbox.map(|sandbox| {
+            stat_paths
+                .iter()
+                .map(|(idx, file_path)| {
+                    let meta = super::super::directory::dest_lstat(
+                        Some(sandbox),
+                        dest_dir,
+                        file_path,
+                        true,
+                    )
+                    .ok();
+                    (*idx, file_path.clone(), meta)
+                })
+                .collect::<Vec<_>>()
+        });
+        #[cfg(not(unix))]
+        let anchored: Option<Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)>> = None;
+        let stat_results: Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)> = match anchored {
+            Some(results) => results,
+            None => crate::parallel_io::map_blocking(
                 stat_paths,
                 self.parallel_thresholds
                     .for_op(crate::parallel_io::ParallelOp::Stat),
                 move |(idx, file_path)| {
-                    let meta = fs::metadata(&file_path).ok();
+                    let meta = fs::metadata(&file_path)
+                        .ok()
+                        .map(fast_io::EntryMetadata::from);
                     (idx, file_path, meta)
                 },
-            );
+            ),
+        };
 
         // Phase C: Sequential post-processing with stat results.
         // Pre-size for the expected minority that need transfer.
@@ -803,7 +827,7 @@ impl ReceiverContext {
             // and an absent destination arrives with it, so both are
             // ITEM_IS_NEW. Mirror the receiver's create_symlinks classification.
             let base = ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_CHANGE;
-            match fs::symlink_metadata(dest_path) {
+            match fs::symlink_metadata(dest_path).map(fast_io::EntryMetadata::from) {
                 Ok(meta) if meta.file_type().is_symlink() => match fs::read_link(dest_path) {
                     Ok(target) if entry.link_target() == Some(&target) => 0,
                     _ => self.itemize_existing_flags(entry, dest_path, Some(&meta), base),
@@ -822,7 +846,7 @@ impl ReceiverContext {
             // absent -> ITEM_TRANSFER | ITEM_IS_NEW; present and quick-check
             // match -> itemize(...,0,...); present and differing -> ITEM_TRANSFER
             // plus the attribute diff.
-            match fs::symlink_metadata(dest_path) {
+            match fs::symlink_metadata(dest_path).map(fast_io::EntryMetadata::from) {
                 Ok(meta) => {
                     let base = if quick_check_matches(
                         entry,
@@ -866,7 +890,7 @@ impl ReceiverContext {
         &self,
         entry: &FileEntry,
         path: &Path,
-        dest_meta: Option<&fs::Metadata>,
+        dest_meta: Option<&fast_io::EntryMetadata>,
         base: u32,
     ) -> u32 {
         use crate::generator::ItemFlags;
@@ -986,7 +1010,6 @@ impl ReceiverContext {
         }
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
             // upstream: generator.c:537-539 - `atimes_ndx && !S_ISDIR &&
             // !S_ISLNK && !same_time(F_ATIME(file), 0, sxp->st.st_atime, 0)`.
             // Both nsec arguments are literal zeros upstream, but the
@@ -1329,7 +1352,7 @@ impl ReceiverContext {
     /// itemizes it as unchanged.
     fn dry_run_append_skips(&self, dest_dir: &Path, entry: &FileEntry) -> bool {
         let dest_path = dest_dir.join(entry.path());
-        let Ok(meta) = fs::metadata(&dest_path) else {
+        let Ok(meta) = fs::metadata(&dest_path).map(fast_io::EntryMetadata::from) else {
             return false;
         };
         let always_checksum = self
@@ -1362,7 +1385,7 @@ impl ReceiverContext {
         entry: &FileEntry,
         dest_dir: &Path,
         file_path: &Path,
-        dest_meta: Option<&fs::Metadata>,
+        dest_meta: Option<&fast_io::EntryMetadata>,
         metadata_opts: &MetadataOptions,
     ) -> bool {
         if !self.config.file_selection.existing_only && !self.config.file_selection.ignore_existing
@@ -1371,7 +1394,9 @@ impl ReceiverContext {
         }
         // upstream: generator.c:2172 - the gate reads `link_stat()`, so a
         // dangling destination symlink the following stat missed still exists.
-        let lstat = dest_meta.is_none().then(|| fs::symlink_metadata(file_path));
+        let lstat = dest_meta
+            .is_none()
+            .then(|| fs::symlink_metadata(file_path).map(fast_io::EntryMetadata::from));
         let (meta, destination) = match (dest_meta, &lstat) {
             (Some(meta), _) => (Some(meta), DestinationEntry::from_metadata(meta)),
             (None, Some(result)) => (result.as_ref().ok(), DestinationEntry::from_lstat(result)),
@@ -1416,7 +1441,7 @@ impl ReceiverContext {
         &self,
         entry: &FileEntry,
         dest_path: &Path,
-        dest_meta: &fs::Metadata,
+        dest_meta: &fast_io::EntryMetadata,
         ignore_times: bool,
         size_only: bool,
         always_checksum: Option<protocol::ChecksumAlgorithm>,
@@ -1467,7 +1492,7 @@ impl ReceiverContext {
         flist_idx: usize,
         file_path: &Path,
         entry: &FileEntry,
-        stat_meta: &fs::Metadata,
+        stat_meta: &fast_io::EntryMetadata,
         metadata_opts: &MetadataOptions,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         acl_cache: Option<&protocol::acl::AclCache>,
@@ -2130,7 +2155,12 @@ mod itemize_order_tests {
         with_u.flags.times = true;
         with_u.flags.atimes = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_u);
-        let flags = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let flags = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME != 0,
             "atime row missing under -U: {flags:#06x}"
@@ -2144,7 +2174,12 @@ mod itemize_order_tests {
         without_u.flags.times = true;
         without_u.flags.atimes = false;
         let ctx = ReceiverContext::new_for_test(&hs, without_u);
-        let flags = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let flags = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             flags & ItemFlags::ITEM_REPORT_ATIME == 0,
             "atime row must be gated on --atimes: {flags:#06x}"
@@ -2190,21 +2225,34 @@ mod itemize_order_tests {
         no_times.flags.times = false;
         let ctx = ReceiverContext::new_for_test(&hs, no_times);
 
-        let transfer =
-            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        let transfer = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            ItemFlags::ITEM_TRANSFER,
+        );
         assert!(
             transfer & ItemFlags::ITEM_REPORT_TIME != 0,
             "a transfer without --times must report the time as changed: {transfer:#06x}"
         );
 
-        let local =
-            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_LOCAL_CHANGE);
+        let local = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            ItemFlags::ITEM_LOCAL_CHANGE,
+        );
         assert!(
             local & ItemFlags::ITEM_REPORT_TIME != 0,
             "ITEM_LOCAL_CHANGE is the second half of upstream's first conjunct: {local:#06x}"
         );
 
-        let metadata_only = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let metadata_only = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             metadata_only & ItemFlags::ITEM_REPORT_TIME == 0,
             "an attribute-only row is neither a transfer nor a local change: {metadata_only:#06x}"
@@ -2214,7 +2262,12 @@ mod itemize_order_tests {
         let mut with_times = itemize_client_config();
         with_times.flags.times = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_times);
-        let kept = ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        let kept = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            ItemFlags::ITEM_TRANSFER,
+        );
         assert!(
             kept & ItemFlags::ITEM_REPORT_TIME == 0,
             "--times with equal mtimes must leave the time column clear: {kept:#06x}"
@@ -2265,14 +2318,23 @@ mod itemize_order_tests {
         with_x.flags.xattrs = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_x);
 
-        let transfer =
-            ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        let transfer = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            ItemFlags::ITEM_TRANSFER,
+        );
         assert!(
             transfer & ItemFlags::ITEM_REPORT_XATTR != 0,
             "a transferred file with differing xattrs must report `x`: {transfer:#06x}"
         );
 
-        let skipped = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let skipped = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             skipped & ItemFlags::ITEM_REPORT_XATTR != 0,
             "the up-to-date row must keep reporting `x`: {skipped:#06x}"
@@ -2283,7 +2345,12 @@ mod itemize_order_tests {
         without_x.flags.times = true;
         without_x.flags.xattrs = false;
         let ctx = ReceiverContext::new_for_test(&hs, without_x);
-        let off = ctx.itemize_existing_flags(&entry, &path, Some(&meta), ItemFlags::ITEM_TRANSFER);
+        let off = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            ItemFlags::ITEM_TRANSFER,
+        );
         assert!(
             off & ItemFlags::ITEM_REPORT_XATTR == 0,
             "the `x` column is gated on --xattrs: {off:#06x}"
@@ -2319,7 +2386,12 @@ mod itemize_order_tests {
 
         let mut executable = FileEntry::new_file("f.txt".into(), 1, 0o755);
         executable.set_mtime(1_600_000_000, 0);
-        let flipped = ctx.itemize_existing_flags(&executable, &path, Some(&meta), 0);
+        let flipped = ctx.itemize_existing_flags(
+            &executable,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             flipped & ItemFlags::ITEM_REPORT_PERMS != 0,
             "-E reports a change in executability: {flipped:#06x}"
@@ -2328,7 +2400,12 @@ mod itemize_order_tests {
         // Same executability, different other bits: nothing -E would copy.
         let mut same_exec = FileEntry::new_file("f.txt".into(), 1, 0o640);
         same_exec.set_mtime(1_600_000_000, 0);
-        let unchanged = ctx.itemize_existing_flags(&same_exec, &path, Some(&meta), 0);
+        let unchanged = ctx.itemize_existing_flags(
+            &same_exec,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             unchanged & ItemFlags::ITEM_REPORT_PERMS == 0,
             "-E must ignore mode bits it does not copy: {unchanged:#06x}"
@@ -2339,7 +2416,12 @@ mod itemize_order_tests {
         with_p.flags.times = true;
         with_p.flags.perms = true;
         let ctx = ReceiverContext::new_for_test(&hs, with_p);
-        let full = ctx.itemize_existing_flags(&same_exec, &path, Some(&meta), 0);
+        let full = ctx.itemize_existing_flags(
+            &same_exec,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             full & ItemFlags::ITEM_REPORT_PERMS != 0,
             "-p compares every CHMOD bit: {full:#06x}"
@@ -2349,7 +2431,12 @@ mod itemize_order_tests {
         let mut neither = itemize_client_config();
         neither.flags.times = true;
         let ctx = ReceiverContext::new_for_test(&hs, neither);
-        let off = ctx.itemize_existing_flags(&executable, &path, Some(&meta), 0);
+        let off = ctx.itemize_existing_flags(
+            &executable,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             off & ItemFlags::ITEM_REPORT_PERMS == 0,
             "without -p or -E the `p` column stays clear: {off:#06x}"
@@ -2392,7 +2479,12 @@ mod itemize_order_tests {
         settable.set_mtime(1_600_000_000, 0);
         settable.set_gid(dest_gid.wrapping_add(1));
         if metadata::group_is_settable(dest_gid.wrapping_add(1)) {
-            let flags = ctx.itemize_existing_flags(&settable, &path, Some(&meta), 0);
+            let flags = ctx.itemize_existing_flags(
+                &settable,
+                &path,
+                Some(&fast_io::EntryMetadata::from(meta.clone())),
+                0,
+            );
             assert!(
                 flags & ItemFlags::ITEM_REPORT_GROUP != 0,
                 "a settable, differing group reports `g`: {flags:#06x}"
@@ -2407,7 +2499,12 @@ mod itemize_order_tests {
             let mut unsettable = FileEntry::new_file("f.txt".into(), 1, 0o644);
             unsettable.set_mtime(1_600_000_000, 0);
             unsettable.set_gid(0);
-            let flags = ctx.itemize_existing_flags(&unsettable, &path, Some(&meta), 0);
+            let flags = ctx.itemize_existing_flags(
+                &unsettable,
+                &path,
+                Some(&fast_io::EntryMetadata::from(meta.clone())),
+                0,
+            );
             assert!(
                 flags & ItemFlags::ITEM_REPORT_GROUP == 0,
                 "FLAG_SKIP_GROUP suppresses `g` for a group the process cannot \
@@ -2443,7 +2540,12 @@ mod itemize_order_tests {
         let mut plain = itemize_client_config();
         plain.flags.times = true;
         let ctx = ReceiverContext::new_for_test(&hs, plain);
-        let reported = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let reported = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             reported & ItemFlags::ITEM_REPORT_TIME != 0,
             "a directory mtime difference is reported under plain -t: {reported:#06x}"
@@ -2453,7 +2555,12 @@ mod itemize_order_tests {
         omit_dirs.flags.times = true;
         omit_dirs.flags.omit_dir_times = true;
         let ctx = ReceiverContext::new_for_test(&hs, omit_dirs);
-        let omitted = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let omitted = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             omitted & ItemFlags::ITEM_REPORT_TIME == 0,
             "-O drops the directory to the !keep_time branch, and base == 0 \
@@ -2465,7 +2572,12 @@ mod itemize_order_tests {
         omit_links.flags.times = true;
         omit_links.flags.omit_link_times = true;
         let ctx = ReceiverContext::new_for_test(&hs, omit_links);
-        let unaffected = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let unaffected = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             unaffected & ItemFlags::ITEM_REPORT_TIME != 0,
             "-J is symlink-only and must leave the directory comparison alone: {unaffected:#06x}"
@@ -2500,7 +2612,12 @@ mod itemize_order_tests {
         config.flags.times = true;
 
         let ctx = ReceiverContext::new_for_test(&hs, config.clone());
-        let outside = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let outside = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             outside & ItemFlags::ITEM_REPORT_TIME != 0,
             "120s apart with a zero window is a difference: {outside:#06x}"
@@ -2508,7 +2625,12 @@ mod itemize_order_tests {
 
         config.file_selection.modify_window = metadata::ModifyWindow::from_secs(200);
         let ctx = ReceiverContext::new_for_test(&hs, config.clone());
-        let inside = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let inside = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             inside & ItemFlags::ITEM_REPORT_TIME == 0,
             "a 200s window tolerates a 120s difference: {inside:#06x}"
@@ -2519,7 +2641,12 @@ mod itemize_order_tests {
         entry.set_mtime(1_600_000_000, 900);
         config.file_selection.modify_window = metadata::ModifyWindow::from_secs(-1);
         let ctx = ReceiverContext::new_for_test(&hs, config);
-        let nsec = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let nsec = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             nsec & ItemFlags::ITEM_REPORT_TIME != 0,
             "a negative window makes the nsec difference significant: {nsec:#06x}"
@@ -2560,14 +2687,24 @@ mod itemize_order_tests {
 
         entry.set_crtime(created_secs + 86_400);
         let ctx = ReceiverContext::new_for_test(&hs, with_n.clone());
-        let differs = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let differs = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             differs & ItemFlags::ITEM_REPORT_CRTIME != 0,
             "a differing crtime must report `n` under --crtimes: {differs:#06x}"
         );
 
         entry.set_crtime(created_secs);
-        let same = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let same = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             same & ItemFlags::ITEM_REPORT_CRTIME == 0,
             "an equal crtime must leave `n` clear: {same:#06x}"
@@ -2577,7 +2714,12 @@ mod itemize_order_tests {
         let mut without_n = itemize_client_config();
         without_n.flags.crtimes = false;
         let ctx = ReceiverContext::new_for_test(&hs, without_n);
-        let off = ctx.itemize_existing_flags(&entry, &path, Some(&meta), 0);
+        let off = ctx.itemize_existing_flags(
+            &entry,
+            &path,
+            Some(&fast_io::EntryMetadata::from(meta.clone())),
+            0,
+        );
         assert!(
             off & ItemFlags::ITEM_REPORT_CRTIME == 0,
             "the `n` column is gated on --crtimes: {off:#06x}"
@@ -3421,6 +3563,48 @@ mod uptodate_notice_tests {
         writer.lines
     }
 
+    /// upstream: syscall.c:3858-3871 `held_dfd_for()` - the generator stats a
+    /// regular-file destination through the held parent beneath the pinned
+    /// root, so a parent directory swapped for a symlink to a tree outside the
+    /// destination is never followed. A quick-check match out there must not
+    /// make the file look up to date: it is requested from the sender instead.
+    #[cfg(unix)]
+    #[test]
+    fn sandboxed_stat_does_not_quick_check_through_a_symlinked_parent() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path().join("dest");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&dest).expect("create dest");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        let bait = uptodate_entry(&outside, "f", 30);
+        std::os::unix::fs::symlink(&outside, dest.join("sub")).expect("plant parent symlink");
+        let mut entry = FileEntry::new_file("sub/f".into(), 30, 0o644);
+        entry.set_mtime(SEED_MTIME, 0);
+        assert_eq!(bait.size(), entry.size());
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, server_config());
+        ctx.file_list = vec![entry].into();
+        let sandbox = fast_io::DirSandbox::open_root(&dest).expect("open sandbox");
+        let mut errs = Vec::new();
+        let mut stats = TransferStats::default();
+        let requested = ctx.build_files_to_transfer(
+            &mut CaptureWriter::default(),
+            &dest,
+            Some(&sandbox),
+            &MetadataOptions::default(),
+            None,
+            &mut errs,
+            &mut stats,
+            None,
+            None,
+        );
+        assert_eq!(
+            requested.iter().map(|(idx, _, _)| *idx).collect::<Vec<_>>(),
+            vec![0],
+            "the outside match must not satisfy the quick-check"
+        );
+    }
     /// upstream: rsync.c:828 - at NAME2 every quick-check match is reported as
     /// `"%s is uptodate"`, framed as `MSG_INFO` by a server generator so the
     /// client both prints it and counts its bytes. A stale file (mtime

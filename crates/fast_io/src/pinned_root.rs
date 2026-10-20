@@ -62,10 +62,9 @@
 //!
 //! [`std::fs::Metadata`] has no public constructor, so an `fstatat` answer
 //! cannot be spelled as one - the same wall that produced
-//! [`AtMetadata`](crate::dir_sandbox::AtMetadata) and
-//! [`LstatOutcome`](crate::dir_sandbox::LstatOutcome).
-//! [`SourceMetadata`](crate::pinned_root::SourceMetadata)
-//! is that pattern applied to the source-scan lookups: one arm per syscall
+//! [`AtMetadata`](crate::dir_sandbox::AtMetadata).
+//! [`EntryMetadata`](crate::EntryMetadata) is the pattern every anchored
+//! lookup answers with, source scan included: one arm per syscall
 //! shape, one accessor surface over both, named and widened after
 //! [`std::os::unix::fs::MetadataExt`] so a caller reads the same field names
 //! off either.
@@ -81,9 +80,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-mod source_metadata;
-
-pub use source_metadata::{SourceFileType, SourceMetadata};
+use crate::EntryMetadata;
 
 /// `lstat` for a source path, anchored on the pinned root when it applies.
 ///
@@ -93,10 +90,10 @@ pub use source_metadata::{SourceFileType, SourceMetadata};
 /// # Errors
 ///
 /// The underlying `lstat`/`fstatat`/`openat` error.
-pub fn symlink_metadata(path: &Path) -> io::Result<SourceMetadata> {
+pub fn symlink_metadata(path: &Path) -> io::Result<EntryMetadata> {
     match anchored_metadata(path, false) {
         Some(result) => result,
-        None => std::fs::symlink_metadata(path).map(SourceMetadata::Std),
+        None => std::fs::symlink_metadata(path).map(EntryMetadata::Std),
     }
 }
 
@@ -107,10 +104,10 @@ pub fn symlink_metadata(path: &Path) -> io::Result<SourceMetadata> {
 /// # Errors
 ///
 /// The underlying `stat`/`fstatat`/`openat` error.
-pub fn metadata(path: &Path) -> io::Result<SourceMetadata> {
+pub fn metadata(path: &Path) -> io::Result<EntryMetadata> {
     match anchored_metadata(path, true) {
         Some(result) => result,
-        None => std::fs::metadata(path).map(SourceMetadata::Std),
+        None => std::fs::metadata(path).map(EntryMetadata::Std),
     }
 }
 
@@ -255,24 +252,24 @@ impl Iterator for ReadDir {
 /// `O_PATH` + `fstat` on Linux, `fstatat` on every other Unix; see the module
 /// docs for why the two platforms answer with different syscalls.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn anchored_metadata(path: &Path, follow: bool) -> Option<io::Result<SourceMetadata>> {
+fn anchored_metadata(path: &Path, follow: bool) -> Option<io::Result<EntryMetadata>> {
     use std::os::fd::AsFd;
     let (fd, relative) = crate::confinement::pinned_root_relative(path)?;
-    Some(imp::metadata_at(fd.as_fd(), &relative, follow).map(SourceMetadata::Std))
+    Some(imp::metadata_at(fd.as_fd(), &relative, follow).map(EntryMetadata::Std))
 }
 
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-fn anchored_metadata(path: &Path, follow: bool) -> Option<io::Result<SourceMetadata>> {
+fn anchored_metadata(path: &Path, follow: bool) -> Option<io::Result<EntryMetadata>> {
     use std::os::fd::AsFd;
     let (fd, relative) = crate::confinement::pinned_root_relative(path)?;
-    Some(imp::fstatat_relative(fd.as_fd(), &relative, follow).map(SourceMetadata::At))
+    Some(imp::fstatat_relative(fd.as_fd(), &relative, follow).map(EntryMetadata::At))
 }
 
 /// No pinned descriptor to anchor on: Windows has neither the `setuid` drop
 /// this exists to survive nor a dirfd to survive it with, and
 /// [`crate::confinement::pinned_root_relative`] is itself `#[cfg(unix)]`.
 #[cfg(not(unix))]
-fn anchored_metadata(_path: &Path, _follow: bool) -> Option<io::Result<SourceMetadata>> {
+fn anchored_metadata(_path: &Path, _follow: bool) -> Option<io::Result<EntryMetadata>> {
     None
 }
 

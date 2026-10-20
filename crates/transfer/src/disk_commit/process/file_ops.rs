@@ -443,7 +443,7 @@ pub(in crate::disk_commit) fn process_file(
                 // (both of which touch mtime) cannot clobber the timestamp the
                 // metadata step is about to apply.
                 if needs_rename && let Some(ref sparse) = sparse_final {
-                    finalize_sparse(cleanup_guard.path(), sparse)?;
+                    finalize_sparse(config.backup_env(), cleanup_guard.path(), sparse)?;
                 }
 
                 // upstream: rsync.c:937-938 finish_transfer() - "Change
@@ -700,7 +700,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     // set_file_attrs() (see process_file for full rationale). Truncate/punch
     // the temp file before applying metadata so the mtime survives.
     if needs_rename && let Some(ref sparse) = sparse_final {
-        finalize_sparse(cleanup_guard.path(), sparse)?;
+        finalize_sparse(config.backup_env(), cleanup_guard.path(), sparse)?;
     }
 
     // upstream: rsync.c:937-938 finish_transfer() - apply metadata to the
@@ -907,6 +907,32 @@ fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
     fs::symlink_metadata(&begin.file_path).ok()
 }
 
+/// Opens the in-place destination, anchored beneath the destination sandbox
+/// when the destination lies inside the destination tree.
+///
+/// upstream: receiver.c:1212-1241 - never truncates; the destination it opens
+/// is the delta basis.
+#[cfg(unix)]
+fn open_inplace_dest(config: &DiskCommitConfig, path: &std::path::Path) -> io::Result<fs::File> {
+    match config.backup_env().anchor(path) {
+        Some((sandbox, dest_dir, relative)) => {
+            fast_io::open_inplace_output_via_sandbox_or_fallback(
+                Some(sandbox),
+                dest_dir,
+                relative,
+                path,
+                false,
+            )
+        }
+        None => fast_io::open_inplace_output(path, false, fast_io::InplaceResolution::Direct),
+    }
+}
+
+#[cfg(not(unix))]
+fn open_inplace_dest(_config: &DiskCommitConfig, path: &std::path::Path) -> io::Result<fs::File> {
+    fast_io::open_inplace_output(path, false, fast_io::InplaceResolution::Direct)
+}
+
 /// Opens the output file using device write, inplace, or temp+rename strategy.
 ///
 /// # Device targets
@@ -931,7 +957,7 @@ fn open_output_file(
     config: &DiskCommitConfig,
 ) -> io::Result<(fs::File, TempFileGuard, bool)> {
     if begin.is_device_target {
-        let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
+        let file = super::commit::open_dest_for_write(config.backup_env(), &begin.file_path)?;
         // The guard wraps the real device node, not a temp file. A
         // mid-transfer error must NOT unlink it (upstream never unlinks an
         // inplace/device target - receiver.c:1334-1335 gates on !one_inplace), so
@@ -946,11 +972,7 @@ fn open_output_file(
         // `fast_io`. The receiver never truncates: the destination it opens IS
         // the delta basis. `Direct` because this is the destination leaf, whose
         // parents the caller has already anchored - not an operator path.
-        let mut file = fast_io::open_inplace_output(
-            &begin.file_path,
-            false,
-            fast_io::InplaceResolution::Direct,
-        )?;
+        let mut file = open_inplace_dest(config, &begin.file_path)?;
         // upstream: receiver.c:544-549 - in append mode, seek past existing content
         if begin.append_offset > 0 {
             use std::io::Seek;

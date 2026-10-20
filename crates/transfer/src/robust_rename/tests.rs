@@ -287,3 +287,82 @@ fn exdev_copy_refuses_an_interior_symlink_escape() {
     );
     assert!(fx.temp.exists(), "the temp is kept when the copy fails");
 }
+/// A destination root pinned before `sub/` is swapped for a symlink to a
+/// directory outside the tree, plus that outside directory.
+fn swapped_sub(fx: &Fixture) -> (fast_io::DirSandbox, PathBuf) {
+    let outside = fx.dest.parent().unwrap().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let sandbox = fast_io::DirSandbox::open_root(&fx.dest).expect("open sandbox");
+    std::os::unix::fs::symlink(&outside, fx.dest.join("sub")).unwrap();
+    (sandbox, outside)
+}
+/// upstream: util1.c:1617-1627 handle_partial_dir(PDIR_DELETE) runs
+/// `do_rmdir_at`, which resolves beneath the destination, so an emptied
+/// partial dir reached through a swapped parent is never removed out of tree.
+#[test]
+fn partial_dir_removal_under_a_swapped_parent_stays_in_tree() {
+    let fx = fixture(b"payload");
+    let (sandbox, outside) = swapped_sub(&fx);
+    fs::create_dir(outside.join(".~partial")).unwrap();
+    let anchor = CommitAnchor {
+        sandbox: Some(&sandbox),
+        root: &fx.dest,
+    };
+    let staged = fx.dest.join("sub/.~partial/file");
+    remove_partial_dir(anchor, Some(Path::new(".~partial")), &staged);
+    assert!(
+        outside.join(".~partial").is_dir(),
+        "the rmdir must not follow the swapped parent out of the tree"
+    );
+}
+/// Non-vacuity for the swapped-parent cell: an intact emptied partial dir is
+/// removed through the same anchored rmdir.
+#[test]
+fn partial_dir_removal_beneath_the_sandbox_removes_an_intact_dir() {
+    let fx = fixture(b"payload");
+    fs::create_dir_all(fx.dest.join("sub/.~partial")).unwrap();
+    let sandbox = fast_io::DirSandbox::open_root(&fx.dest).expect("open sandbox");
+    let anchor = CommitAnchor {
+        sandbox: Some(&sandbox),
+        root: &fx.dest,
+    };
+    remove_partial_dir(
+        anchor,
+        Some(Path::new(".~partial")),
+        &fx.dest.join("sub/.~partial/file"),
+    );
+    assert!(!fx.dest.join("sub/.~partial").exists());
+}
+/// upstream: util1.c:1609-1615 handle_partial_dir(PDIR_CREATE) - the
+/// obstruction probe and unlink resolve beneath the destination, so a file
+/// reached through a swapped parent is never unlinked.
+#[test]
+fn partial_dir_obstruction_under_a_swapped_parent_is_not_unlinked() {
+    let fx = fixture(b"payload");
+    let (sandbox, outside) = swapped_sub(&fx);
+    fs::write(outside.join(".~partial"), b"operator file").unwrap();
+    let anchor = CommitAnchor {
+        sandbox: Some(&sandbox),
+        root: &fx.dest,
+    };
+    let _ = clear_partial_dir_obstruction(anchor, &fx.dest.join("sub/.~partial"));
+    assert_eq!(
+        fs::read(outside.join(".~partial")).unwrap(),
+        b"operator file",
+        "the unlink must not follow the swapped parent out of the tree"
+    );
+}
+/// Non-vacuity: a non-directory obstruction inside the tree is unlinked.
+#[test]
+fn partial_dir_obstruction_beneath_the_sandbox_is_unlinked() {
+    let fx = fixture(b"payload");
+    fs::create_dir(fx.dest.join("sub")).unwrap();
+    fs::write(fx.dest.join("sub/.~partial"), b"stale").unwrap();
+    let sandbox = fast_io::DirSandbox::open_root(&fx.dest).expect("open sandbox");
+    let anchor = CommitAnchor {
+        sandbox: Some(&sandbox),
+        root: &fx.dest,
+    };
+    clear_partial_dir_obstruction(anchor, &fx.dest.join("sub/.~partial")).expect("cleared");
+    assert!(!fx.dest.join("sub/.~partial").exists());
+}

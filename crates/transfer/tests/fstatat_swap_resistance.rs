@@ -25,7 +25,7 @@
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
-use fast_io::{DirSandbox, LstatOutcome, lstat_via_sandbox_or_fallback};
+use fast_io::{DirSandbox, EntryMetadata, lstat_via_sandbox_or_fallback};
 
 #[test]
 fn sandbox_anchored_lstat_reports_symlink_at_leaf() {
@@ -41,7 +41,7 @@ fn sandbox_anchored_lstat_reports_symlink_at_leaf() {
         .expect("sandbox lstat");
 
     match outcome {
-        LstatOutcome::At(meta) => {
+        EntryMetadata::At(meta) => {
             assert!(
                 meta.is_symlink(),
                 "AT_SYMLINK_NOFOLLOW must report the symlink itself"
@@ -51,7 +51,7 @@ fn sandbox_anchored_lstat_reports_symlink_at_leaf() {
                 "the symlink leaf must not be classified as the regular file it points at"
             );
         }
-        LstatOutcome::Std(_) => {
+        EntryMetadata::Std(_) => {
             panic!("expected the sandbox-anchored fstatat path for a single-component leaf");
         }
     }
@@ -108,12 +108,12 @@ fn multi_component_path_anchors_or_falls_back_lstat() {
 
     if fast_io::nested_parent_anchoring_supported() {
         assert!(
-            matches!(outcome, LstatOutcome::At(_)),
+            matches!(outcome, EntryMetadata::At(_)),
             "multi-component paths must anchor beneath the sandbox root wherever anchoring is available"
         );
     } else {
         assert!(
-            matches!(outcome, LstatOutcome::Std(_)),
+            matches!(outcome, EntryMetadata::Std(_)),
             "multi-component paths degrade to the path-based fallback on a Linux kernel without openat2"
         );
     }

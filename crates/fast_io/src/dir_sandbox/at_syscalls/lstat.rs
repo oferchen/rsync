@@ -1,80 +1,20 @@
 //! lstat-class SEC-1.f adaptor and the shared single-component-leaf
 //! resolver.
 //!
-//! [`LstatOutcome`] unifies the sandbox-anchored
+//! [`EntryMetadata`] unifies the sandbox-anchored
 //! `fstatat(AT_SYMLINK_NOFOLLOW)` result and the path-based
 //! [`std::fs::symlink_metadata`] fallback behind a `dev`/`ino` surface.
 //! [`single_component_leaf`] is the gate every `*_via_sandbox_or_fallback`
 //! helper in this module uses to decide whether the sandbox fast path is
 //! eligible.
 
+use crate::EntryMetadata;
 use std::ffi::OsStr;
 use std::io;
-use std::os::fd::AsFd;
+use std::os::fd::BorrowedFd;
 use std::path::Path;
 
-use super::AtMetadata;
-use super::metadata::fstatat_nofollow;
-use super::nested::{ParentAnchor, anchor_parent};
-
-/// Result of [`lstat_via_sandbox_or_fallback`].
-///
-/// The variant indicates which lstat path satisfied the call. Both
-/// variants expose `dev` / `ino` so the hardlink quick-check can
-/// compare inode identity without caring which syscall produced the
-/// numbers.
-#[derive(Debug)]
-pub enum LstatOutcome {
-    /// Sandbox-anchored `fstatat(AT_SYMLINK_NOFOLLOW)` result.
-    At(AtMetadata),
-    /// Path-based [`std::fs::symlink_metadata`] result used when the
-    /// sandbox was unavailable or the relative path was not a single
-    /// component.
-    Std(std::fs::Metadata),
-}
-
-impl LstatOutcome {
-    /// Device id of the entry.
-    #[must_use]
-    pub fn dev(&self) -> u64 {
-        match self {
-            Self::At(meta) => meta.dev(),
-            Self::Std(meta) => std::os::unix::fs::MetadataExt::dev(meta),
-        }
-    }
-
-    /// Reports whether the entry is a directory.
-    ///
-    /// The receiver's obstacle decision splits on exactly this test, so it has
-    /// to read the type from the same sandbox-anchored `fstatat` that observed
-    /// the entry rather than re-resolving the path: a swap in between would let
-    /// the removal act on a different inode from the one it classified.
-    #[must_use]
-    pub fn is_dir(&self) -> bool {
-        match self {
-            Self::At(meta) => meta.is_dir(),
-            Self::Std(meta) => meta.is_dir(),
-        }
-    }
-
-    /// Inode number of the entry.
-    #[must_use]
-    pub fn ino(&self) -> u64 {
-        match self {
-            Self::At(meta) => meta.ino(),
-            Self::Std(meta) => std::os::unix::fs::MetadataExt::ino(meta),
-        }
-    }
-
-    /// Raw `st_mode` of the entry, type and permission bits included.
-    #[must_use]
-    pub fn mode(&self) -> u32 {
-        match self {
-            Self::At(meta) => meta.mode(),
-            Self::Std(meta) => std::os::unix::fs::MetadataExt::mode(meta),
-        }
-    }
-}
+use super::metadata::{fstatat_follow, fstatat_nofollow};
 
 /// Issue `fstatat(AT_SYMLINK_NOFOLLOW)` against `link_path` when the
 /// `sandbox` root is the immediate parent.
@@ -98,18 +38,60 @@ pub fn lstat_via_sandbox_or_fallback(
     dest_dir: &Path,
     relative_path: &Path,
     link_path: &Path,
-) -> io::Result<LstatOutcome> {
-    if let Some(sandbox) = sandbox
-        && let Some(leaf) = single_component_leaf(dest_dir, relative_path, link_path)
+) -> io::Result<EntryMetadata> {
+    stat_outcome(sandbox, dest_dir, relative_path, link_path, false)
+}
+
+/// [`lstat_via_sandbox_or_fallback`] with the leaf followed: upstream's
+/// `do_stat_at()` beside its `do_lstat_at()`.
+///
+/// Only the leaf may resolve as a symlink; every component above it is
+/// reached through the sandbox exactly as for the `lstat` form.
+///
+/// # Errors
+///
+/// As for [`lstat_via_sandbox_or_fallback`], plus `ELOOP` for a leaf symlink
+/// chain that does not terminate.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/syscall.c:2336-2400` `do_stat_at()` / `do_lstat_at()`
+pub fn stat_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    link_path: &Path,
+) -> io::Result<EntryMetadata> {
+    stat_outcome(sandbox, dest_dir, relative_path, link_path, true)
+}
+
+/// The three arms shared by the `stat` and `lstat` adaptors; `follow` picks
+/// `fstatat` with or without `AT_SYMLINK_NOFOLLOW`.
+fn stat_outcome(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    link_path: &Path,
+    follow: bool,
+) -> io::Result<EntryMetadata> {
+    let stat_at = |dirfd: BorrowedFd<'_>, name: &OsStr| {
+        if follow {
+            fstatat_follow(dirfd, name)
+        } else {
+            fstatat_nofollow(dirfd, name)
+        }
+    };
+    if let Some(meta) =
+        super::nested::at_dest_leaf(sandbox, dest_dir, relative_path, link_path, stat_at)?
     {
-        return fstatat_nofollow(sandbox.current_dirfd(), leaf).map(LstatOutcome::At);
+        return Ok(EntryMetadata::At(meta));
     }
-    if let ParentAnchor::Anchored { dirfd, name } =
-        anchor_parent(sandbox, dest_dir, relative_path, link_path)?
-    {
-        return fstatat_nofollow(dirfd.as_fd(), name).map(LstatOutcome::At);
+    if follow {
+        std::fs::metadata(link_path)
+    } else {
+        std::fs::symlink_metadata(link_path)
     }
-    std::fs::symlink_metadata(link_path).map(LstatOutcome::Std)
+    .map(EntryMetadata::Std)
 }
 
 /// Returns the leaf component of `link_path` when `link_path` is

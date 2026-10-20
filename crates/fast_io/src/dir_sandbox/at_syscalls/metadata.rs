@@ -158,6 +158,12 @@ impl AtMetadata {
     pub fn atime(&self) -> i64 {
         widen_time(self.stat.st_atime)
     }
+    /// Sub-second access time (`st_atime_nsec`), matching
+    /// [`std::os::unix::fs::MetadataExt::atime_nsec`].
+    #[must_use]
+    pub fn atime_nsec(&self) -> i64 {
+        widen_time(self.stat.st_atime_nsec)
+    }
 
     /// Creation ("birth") time, when the platform's `struct stat` carries one.
     ///

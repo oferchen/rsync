@@ -709,6 +709,8 @@ impl ReceiverContext {
                         let whole_file = self.config.flags.whole_file;
                         let block_size = self.config.block_size;
                         let dest_dir = &setup.dest_dir;
+                        #[cfg(unix)]
+                        let sandbox = setup.sandbox.as_deref();
                         let checksum_length = setup.checksum_length;
                         let checksum_algorithm = setup.checksum_algorithm;
                         let sig_threshold = self
@@ -740,6 +742,8 @@ impl ReceiverContext {
                                         return crate::receiver::basis::BasisFileResult::EMPTY;
                                     }
                                     let basis_config = BasisFileConfig {
+                                        #[cfg(unix)]
+                                        sandbox,
                                         ndx,
                                         file_path,
                                         dest_dir,
@@ -770,6 +774,8 @@ impl ReceiverContext {
                                         return crate::receiver::basis::BasisFileResult::EMPTY;
                                     }
                                     let basis_config = BasisFileConfig {
+                                        #[cfg(unix)]
+                                        sandbox,
                                         ndx,
                                         file_path,
                                         dest_dir,
@@ -1465,6 +1471,8 @@ impl ReceiverContext {
             // send a real sum head so the sender can diff against the receiver's
             // basis (empty when no basis exists, driving a whole-file batch).
             let basis_config = BasisFileConfig {
+                #[cfg(unix)]
+                sandbox: setup.sandbox.as_deref(),
                 ndx: self.flat_to_wire_ndx(file_idx),
                 file_path,
                 dest_dir: &setup.dest_dir,

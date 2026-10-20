@@ -51,14 +51,14 @@ impl ReceiverContext {
         {
             return false;
         }
-        let mut stat = fs::symlink_metadata(dest_path);
+        let mut stat = fs::symlink_metadata(dest_path).map(fast_io::EntryMetadata::from);
         if entry.is_dir()
             && self.config.flags.keep_dirlinks
             && stat
                 .as_ref()
                 .is_ok_and(|meta| meta.file_type().is_symlink())
         {
-            stat = fs::metadata(dest_path);
+            stat = fs::metadata(dest_path).map(fast_io::EntryMetadata::from);
         }
         let Some(skip) = self.existence_skip(entry, DestinationEntry::from_lstat(&stat)) else {
             return false;
@@ -134,7 +134,7 @@ fn non_regular_exists_reason(
     context: &ReceiverContext,
     entry: &FileEntry,
     dest_path: &Path,
-    meta: &fs::Metadata,
+    meta: &fast_io::EntryMetadata,
 ) -> &'static str {
     let Some(same_content) = same_class_content(entry, dest_path, meta) else {
         return " (type change)";
@@ -166,7 +166,11 @@ fn non_regular_exists_reason(
 /// Compares `entry` against the destination `meta`: `None` when the `FT_*`
 /// class differs (generator.c:614 get_file_type()), otherwise whether
 /// `quick_check_ok()` (generator.c:630-683) holds.
-fn same_class_content(entry: &FileEntry, dest_path: &Path, meta: &fs::Metadata) -> Option<bool> {
+fn same_class_content(
+    entry: &FileEntry,
+    dest_path: &Path,
+    meta: &fast_io::EntryMetadata,
+) -> Option<bool> {
     let dest = meta.file_type();
     if entry.is_dir() {
         dest.is_dir().then_some(true)
@@ -180,8 +184,7 @@ fn same_class_content(entry: &FileEntry, dest_path: &Path, meta: &fs::Metadata) 
 }
 
 #[cfg(unix)]
-fn special_content_matches(entry: &FileEntry, meta: &fs::Metadata) -> Option<bool> {
-    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+fn special_content_matches(entry: &FileEntry, meta: &fast_io::EntryMetadata) -> Option<bool> {
     const S_IFMT: u32 = 0o170_000;
     let dest = meta.file_type();
     if entry.is_device() {
@@ -198,6 +201,6 @@ fn special_content_matches(entry: &FileEntry, meta: &fs::Metadata) -> Option<boo
 }
 
 #[cfg(not(unix))]
-fn special_content_matches(_entry: &FileEntry, _meta: &fs::Metadata) -> Option<bool> {
+fn special_content_matches(_entry: &FileEntry, _meta: &fast_io::EntryMetadata) -> Option<bool> {
     None
 }

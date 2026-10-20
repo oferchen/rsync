@@ -81,17 +81,20 @@ pub mod at_syscalls;
 mod tests;
 
 pub use at_syscalls::{
-    AtMetadata, CloneAttempt, CloneFreshTimes, DirEntryView, EntryKind, LstatOutcome,
-    ReadDirOutcome, UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new,
-    confined_link_anonymous, confined_rename, copy_then_unlink_via_sandbox_or_fallback, fchmodat,
-    fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback, fstatat_follow,
-    fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback,
-    mkdirat, mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
-    nested_parent_anchoring_supported, openat, openat_via_sandbox_or_fallback,
-    read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
-    recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
-    renameat_via_sandbox_or_fallback, secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at,
-    secure_chown_at_dirfd, secure_utimes_at, secure_utimes_at_dirfd, symlinkat,
+    AtMetadata, CloneAttempt, CloneFreshTimes, DirEntryView, EntryKind, ReadDirOutcome,
+    UnlinkFailure, UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new,
+    confined_link_anonymous, confined_rename, copy_then_unlink_via_sandbox_or_fallback,
+    create_dir_all_via_sandbox_or_fallback, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
+    fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
+    linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
+    mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
+    nested_parent_anchoring_supported, open_basis_via_sandbox_or_fallback,
+    open_inplace_output_via_sandbox_or_fallback, open_write_via_sandbox_or_fallback, openat,
+    openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
+    readlinkat_via_sandbox_or_fallback, recursive_unlinkat,
+    recursive_unlinkat_via_sandbox_or_fallback, renameat, renameat_via_sandbox_or_fallback,
+    secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at, secure_chown_at_dirfd,
+    secure_utimes_at, secure_utimes_at_dirfd, stat_via_sandbox_or_fallback, symlinkat,
     symlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback, unlinkat,
     utimensat, utimensat_via_sandbox_or_fallback,
 };
@@ -127,7 +130,7 @@ pub struct DirSandbox {
     secondaries: DashMap<PathBuf, Arc<OwnedFd>>,
     /// The nested parent directory the current run of entries lives in; see
     /// [`held_parent`](Self::held_parent).
-    held: HeldDir,
+    held: Arc<HeldDir>,
 }
 
 /// One frame of the in-tree descent stack.
@@ -226,7 +229,7 @@ impl DirSandbox {
             root: Arc::new(fd),
             stack: Vec::new(),
             secondaries: DashMap::new(),
-            held: HeldDir::new(),
+            held: Arc::new(HeldDir::new()),
         })
     }
 
@@ -250,7 +253,7 @@ impl DirSandbox {
             root: Arc::new(fd),
             stack: Vec::new(),
             secondaries: DashMap::new(),
-            held: HeldDir::new(),
+            held: Arc::new(HeldDir::new()),
         })
     }
 
@@ -467,6 +470,17 @@ impl DirSandbox {
     /// caller's uncached retry and the next lookup resolve afresh.
     pub fn release_held_parent(&self) {
         self.held.invalidate();
+    }
+
+    /// The cache behind [`held_parent`](Self::held_parent), for a consumer
+    /// that resolves the same root-relative directories beneath the same
+    /// root, so the two share one open per parent instead of one each.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:3858-3871` `held_dfd_for()` - the
+    /// receiver keeps a single held parent for every per-entry operation.
+    #[must_use]
+    pub fn held_dir(&self) -> Arc<HeldDir> {
+        Arc::clone(&self.held)
     }
 }
 
@@ -1051,7 +1065,7 @@ impl DirSandbox {
             root: Arc::new(walk.into_leaf()),
             stack: Vec::new(),
             secondaries: DashMap::new(),
-            held: HeldDir::new(),
+            held: Arc::new(HeldDir::new()),
         })
     }
 

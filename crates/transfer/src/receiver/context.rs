@@ -1071,6 +1071,8 @@ impl ReceiverContext {
         checksum_algorithm: signature::SignatureAlgorithm,
     ) -> BasisFileConfig<'a> {
         BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx,
             file_path,
             dest_dir,

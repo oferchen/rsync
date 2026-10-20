@@ -55,6 +55,8 @@ mod error;
 mod perms;
 #[cfg(target_os = "linux")]
 mod pinned;
+#[cfg(target_os = "macos")]
+mod pinned_extended;
 mod read;
 mod reconstruct;
 mod reset;

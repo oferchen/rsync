@@ -97,6 +97,9 @@ pub struct BasisFileConfig<'a> {
     pub dest_dir: &'a std::path::Path,
     /// Relative path from destination root.
     pub relative_path: &'a std::path::Path,
+    /// Destination sandbox the exact basis opens beneath, when held.
+    #[cfg(unix)]
+    pub sandbox: Option<&'a fast_io::DirSandbox>,
     /// Expected size of the target file.
     pub target_size: u64,
     /// Target file modification time in whole seconds since the Unix epoch,
@@ -295,6 +298,26 @@ fn try_open_file(path: &std::path::Path) -> Option<(fs::File, u64, PathBuf)> {
     let file = fast_io::open_basis_nofollow(path).ok()?;
     let size = file.metadata().ok()?.len();
     Some((file, size, path.to_path_buf()))
+}
+
+/// Opens the exact destination basis, anchored beneath the destination
+/// sandbox when one is held so a swapped parent cannot select a file outside
+/// the tree.
+///
+/// upstream: syscall.c:3858-3871 held_dfd_for() + do_open_atfd()
+fn try_open_dest_basis(config: &BasisFileConfig<'_>) -> Option<(fs::File, u64, PathBuf)> {
+    #[cfg(unix)]
+    let file = fast_io::open_basis_via_sandbox_or_fallback(
+        config.sandbox,
+        config.dest_dir,
+        config.relative_path,
+        config.file_path,
+    )
+    .ok()?;
+    #[cfg(not(unix))]
+    let file = fast_io::open_basis_nofollow(config.file_path).ok()?;
+    let size = file.metadata().ok()?.len();
+    Some((file, size, config.file_path.to_path_buf()))
 }
 
 /// A fuzzy basis the generator selected, ready to be signed and advertised.
@@ -704,7 +727,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
     // Try sources in priority order: exact match -> reference dirs -> fuzzy ->
     // partial-dir. The exact destination basis is reported to the sender as
     // FNAMECMP_FNAME (no basis-type byte).
-    if let Some((file, size, path)) = try_open_file(config.file_path) {
+    if let Some((file, size, path)) = try_open_dest_basis(config) {
         // upstream: generator.c:2328-2356 - on the delta path, once the
         // destination basis has opened (`inplace && make_backups > 0 &&
         // fnamecmp_type == FNAMECMP_FNAME`), the generator creates the backup
@@ -1284,6 +1307,8 @@ mod tests {
         let rel = std::path::Path::new("file.bin");
         let partial_rel = std::path::Path::new(".rsync-partial");
         let config = BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: &dest_file,
             dest_dir,
@@ -1340,6 +1365,8 @@ mod tests {
 
         let dest_file = dest_dir.join("file.bin");
         let config = BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: &dest_file,
             dest_dir,
@@ -1385,6 +1412,8 @@ mod tests {
 
         let dest_file = dest_dir.join("data.txt");
         let config = BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: &dest_file,
             dest_dir,
@@ -1464,6 +1493,8 @@ mod tests {
             ),
         ];
         let config = BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: &dest_file,
             dest_dir: &dest_dir,
@@ -1538,6 +1569,8 @@ mod tests {
             ref_dir.clone(),
         )];
         let config = BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: &dest_file,
             dest_dir: &dest_dir,
@@ -1601,6 +1634,8 @@ mod tests {
 
         let dest_file = dest_dir.join("data.txt");
         let config = BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: &dest_file,
             dest_dir,
@@ -1663,6 +1698,8 @@ mod tests {
 
         let dest_file = dest_dir.join("file.bin");
         let make_config = |checksum_length: NonZeroU8| BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: &dest_file,
             dest_dir,
@@ -1978,6 +2015,8 @@ mod tests {
         inplace_backup: Option<InplaceBackupSpec<'a>>,
     ) -> BasisFileConfig<'a> {
         BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
             ndx: 0,
             file_path: dest_file,
             dest_dir,
@@ -2153,5 +2192,100 @@ mod tests {
             !dest_dir.join("absent.bin~").exists(),
             "nothing to back up when the destination does not exist"
         );
+    }
+
+    /// Opens a sandbox on `dest/`, then replaces `dest/a` with a symlink to
+    /// `outside/`, which holds a bait basis `f`. Returns the sandbox.
+    #[cfg(unix)]
+    fn sandbox_then_swap(root: &std::path::Path) -> fast_io::DirSandbox {
+        let dest = root.join("dest");
+        let outside = root.join("outside");
+        fs::create_dir_all(dest.join("a")).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("f"), vec![7u8; 4096]).unwrap();
+        let sandbox = fast_io::DirSandbox::open_root(&dest).unwrap();
+        fs::remove_dir(dest.join("a")).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("a")).unwrap();
+        sandbox
+    }
+
+    #[cfg(unix)]
+    fn exact_basis_config<'a>(
+        dest_dir: &'a std::path::Path,
+        file_path: &'a std::path::Path,
+        relative_path: &'a std::path::Path,
+        sandbox: Option<&'a fast_io::DirSandbox>,
+    ) -> BasisFileConfig<'a> {
+        BasisFileConfig {
+            sandbox,
+            ndx: 0,
+            file_path,
+            dest_dir,
+            relative_path,
+            target_size: 4096,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: None,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+            block_size: None,
+            inplace_backup: None,
+        }
+    }
+
+    /// upstream: syscall.c:3858-3871 held_dfd_for() - the exact basis opens
+    /// beneath the destination the receiver entered, so a parent swapped for
+    /// a symlink after entry cannot feed an outside file back as delta basis.
+    #[cfg(unix)]
+    #[test]
+    fn exact_basis_under_a_swapped_parent_is_not_opened() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sandbox = sandbox_then_swap(tmp.path());
+        let dest = tmp.path().join("dest");
+        let file_path = dest.join("a/f");
+        let rel = std::path::Path::new("a/f");
+        let result = find_basis_file_with_config(&exact_basis_config(
+            &dest,
+            &file_path,
+            rel,
+            Some(&sandbox),
+        ));
+        assert!(
+            result.basis_path.is_none(),
+            "the generator signed a basis reached through the swapped parent"
+        );
+    }
+
+    /// Non-vacuity: the same nested basis opens when its parent is a real
+    /// in-tree directory, and through an in-tree directory symlink
+    /// (`symlink-dirlink-basis.test` test 1).
+    #[cfg(unix)]
+    #[test]
+    fn exact_basis_opens_beneath_the_sandbox_through_in_tree_parents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        fs::create_dir_all(dest.join("real")).unwrap();
+        fs::write(dest.join("real/f"), vec![7u8; 4096]).unwrap();
+        std::os::unix::fs::symlink("real", dest.join("link")).unwrap();
+        let sandbox = fast_io::DirSandbox::open_root(&dest).unwrap();
+        for rel in ["real/f", "link/f"] {
+            let rel = std::path::Path::new(rel);
+            let file_path = dest.join(rel);
+            let result = find_basis_file_with_config(&exact_basis_config(
+                &dest,
+                &file_path,
+                rel,
+                Some(&sandbox),
+            ));
+            assert_eq!(
+                result.basis_path.as_deref(),
+                Some(file_path.as_path()),
+                "{rel:?}"
+            );
+        }
     }
 }

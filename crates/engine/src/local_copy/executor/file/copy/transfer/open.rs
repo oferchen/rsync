@@ -87,6 +87,30 @@ impl CopyContext<'_> {
     }
 }
 
+/// Turns a failed send-time open of `source` into the error the transfer
+/// propagates, printing upstream's diagnostic first for anything but a vanish.
+///
+/// A missing file is left to the vanished-file arm, which reports it once. Any
+/// other failure is reported here, so the error comes back marked as reported
+/// and the run ends with the `RERR_PARTIAL` summary instead of repeating it.
+///
+/// upstream: sender.c:711-722 - ENOENT warns `file has vanished`; otherwise
+/// `rsyserr(FERROR_XFER, errno, "send_files failed to open %s", full_fname(fname))`.
+pub(in crate::local_copy) fn source_open_error(
+    source: &Path,
+    error: io::Error,
+) -> crate::local_copy::LocalCopyError {
+    if error.kind() == io::ErrorKind::NotFound {
+        return crate::local_copy::LocalCopyError::io("copy file", source, error);
+    }
+    eprintln!(
+        "rsync: [sender] send_files failed to open {}: {}",
+        crate::local_copy::executor::create_failure::full_fname(source),
+        crate::local_copy::upstream_io_error(&error)
+    );
+    crate::local_copy::LocalCopyError::io("copy file", source, error).reported()
+}
+
 /// Opens a source file for reading, optionally with `O_NOATIME`.
 ///
 /// When `use_noatime` is true and the platform supports it, the file is opened

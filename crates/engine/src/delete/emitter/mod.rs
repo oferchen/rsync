@@ -50,7 +50,6 @@ use std::sync::Arc;
 #[cfg(unix)]
 use fast_io::DirSandbox;
 
-use logging::info_log;
 use protocol::DeleteStats;
 
 use super::cohort_index::CohortIndex;
@@ -69,6 +68,16 @@ pub use fs::{DeleteEvent, DeleteFs, RealDeleteFs, RecordingDeleteFs};
 pub use policy::{EMITTER_PARTIAL_EXIT_CODE, EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy};
 
 use policy::{IOERR_GENERAL, IOERR_VANISHED_ONLY};
+/// One entry the delete drain could not remove.
+#[derive(Debug)]
+pub struct DeleteFailure {
+    /// The entry's path, built from the plan directory.
+    pub path: PathBuf,
+    /// The failed call was the `rmdir` of a directory, not an `unlink`.
+    pub is_dir: bool,
+    /// The error the removal returned.
+    pub error: io::Error,
+}
 
 /// Single-threaded drain task that issues deletions for one transfer.
 ///
@@ -104,6 +113,11 @@ pub struct DeleteEmitter<F: DeleteFs> {
     /// `IOERR_GENERAL`; the field is exposed via [`Self::io_error`] for
     /// callers that need to compute the final exit code.
     io_error: i32,
+    /// Every entry the drain could not remove, for the caller to report.
+    failures: Vec<DeleteFailure>,
+    /// Every directory left in place because it still holds entries, for the
+    /// caller to report.
+    not_empty: Vec<PathBuf>,
     /// Directory pulled from `cursor` whose plan was not yet published.
     /// Held across `emit_all` calls so the drain can resume once the plan
     /// arrives. `None` while the cursor is fully drained or not yet
@@ -157,6 +171,8 @@ impl<F: DeleteFs> DeleteEmitter<F> {
             cohort_index: None,
             cohort_log: Vec::new(),
             io_error: 0,
+            failures: Vec::new(),
+            not_empty: Vec::new(),
             pending: None,
             #[cfg(unix)]
             sandbox: None,
@@ -279,6 +295,23 @@ impl<F: DeleteFs> DeleteEmitter<F> {
         self.io_error
     }
 
+    /// Takes the entries the drain could not remove so far, in the order it
+    /// met them.
+    ///
+    /// The emitter only collects them; the caller prints upstream's
+    /// `delete_file: %s(%s) failed` line, since only it knows each entry's
+    /// transfer-relative name (delete.c:264-266).
+    pub fn take_failures(&mut self) -> Vec<DeleteFailure> {
+        std::mem::take(&mut self.failures)
+    }
+    /// Takes the directories left in place so far because they still held
+    /// entries, in the order the drain met them.
+    ///
+    /// The caller prints upstream's `cannot delete non-empty directory: %s`
+    /// notice with the transfer-relative name (delete.c:178-180).
+    pub fn take_not_empty(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.not_empty)
+    }
     /// Maps the current `io_error` state to the upstream exit code the
     /// caller should surface when the drain completed without a fatal
     /// abort. Returns `0` on a clean run, `24` if every failure was a
@@ -433,21 +466,9 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                     // upstream: delete.c:178-180 (delete_dir_contents) and
                     // delete.c:260-262 (delete_item) both
                     // `rprintf(FINFO, "cannot delete non-empty directory: %s\n", ...)`.
-                    // FINFO renders at the default verbosity (log.c:344-347,
-                    // shown unless `--quiet`); oc's only info category present
-                    // at verbose level 0 is `NONREG` (info_verbosity[0]), the
-                    // same channel the sibling "skipping non-regular file"
-                    // notice uses.
-                    // Render with forward slashes so the notice matches
-                    // upstream output on every platform (rsync uses `/`
-                    // universally); the cli frontend applies the same
-                    // normalization when itemizing deletion paths.
-                    info_log!(
-                        Nonreg,
-                        1,
-                        "cannot delete non-empty directory: {}",
-                        path.display().to_string().replace('\\', "/")
-                    );
+                    // The caller prints it, since only it knows the
+                    // transfer-relative name upstream's `fbuf` carries.
+                    self.not_empty.push(path.to_path_buf());
                     return Ok(());
                 }
                 // upstream: delete.c:141-164 `delete_dir_contents` and
@@ -460,6 +481,13 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                 self.record_nonfatal(&err);
                 if !self.policy.continue_on_error {
                     return Err(err);
+                }
+                if err.kind() != io::ErrorKind::NotFound {
+                    self.failures.push(DeleteFailure {
+                        path: path.to_path_buf(),
+                        is_dir: matches!(kind, DeleteEntryKind::Dir),
+                        error: err,
+                    });
                 }
                 Ok(())
             }
@@ -567,6 +595,13 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                 if residue.had_errors && !self.policy.ignore_errors {
                     self.io_error |= IOERR_GENERAL;
                 }
+                let base = path.parent().unwrap_or(Path::new(""));
+                self.failures
+                    .extend(residue.failures.into_iter().map(|failure| DeleteFailure {
+                        path: base.join(failure.path),
+                        is_dir: failure.is_dir,
+                        error: failure.error,
+                    }));
                 if residue.not_empty {
                     Err(io::Error::from(io::ErrorKind::DirectoryNotEmpty))
                 } else {

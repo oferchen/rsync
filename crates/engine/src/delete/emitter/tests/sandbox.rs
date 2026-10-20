@@ -233,6 +233,11 @@ fn peel_stepped_over_child_error_sets_io_error_exit_23() {
         UnlinkResidue {
             not_empty: true,
             had_errors: true,
+            failures: vec![fast_io::UnlinkFailure {
+                path: PathBuf::from("locked/m"),
+                is_dir: true,
+                error: std::io::Error::from(std::io::ErrorKind::ResourceBusy),
+            }],
         },
     );
     let plans = DeletePlanMap::new();
@@ -251,6 +256,12 @@ fn peel_stepped_over_child_error_sets_io_error_exit_23() {
     assert_eq!(emitter.exit_code(), EMITTER_PARTIAL_EXIT_CODE);
     // The surviving directory is not counted as deleted.
     assert_eq!(emitter.stats().dirs, 0);
+    // The stepped-over entry comes back rebuilt under the plan directory, so
+    // the caller can print upstream's delete_file line for it.
+    let failures = emitter.take_failures();
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0].path, PathBuf::from("d/locked/m"));
+    assert!(failures[0].is_dir);
 }
 
 #[test]
@@ -270,6 +281,7 @@ fn peel_non_empty_without_error_stays_exit_0() {
         UnlinkResidue {
             not_empty: true,
             had_errors: false,
+            failures: Vec::new(),
         },
     );
     let plans = DeletePlanMap::new();

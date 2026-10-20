@@ -41,7 +41,7 @@ pub enum DestinationEntry {
 impl DestinationEntry {
     /// Classifies the result of a destination `lstat`.
     #[must_use]
-    pub fn from_lstat(result: &io::Result<fs::Metadata>) -> Self {
+    pub fn from_lstat(result: &io::Result<fast_io::EntryMetadata>) -> Self {
         match result {
             Ok(meta) => Self::from_metadata(meta),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Self::Missing,
@@ -51,18 +51,19 @@ impl DestinationEntry {
 
     /// Classifies an existing destination's metadata.
     #[must_use]
-    pub fn from_metadata(meta: &fs::Metadata) -> Self {
-        if meta.file_type().is_dir() {
-            Self::Directory
-        } else {
-            Self::Other
-        }
+    pub fn from_metadata(meta: &fast_io::EntryMetadata) -> Self {
+        Self::classify(meta.is_dir())
     }
 
     /// Classifies an optional destination, where `None` means absent.
     #[must_use]
     pub fn from_optional(meta: Option<&fs::Metadata>) -> Self {
-        meta.map_or(Self::Missing, Self::from_metadata)
+        meta.map_or(Self::Missing, |meta| Self::classify(meta.is_dir()))
+    }
+
+    /// An existing destination is a directory or it is not.
+    const fn classify(is_dir: bool) -> Self {
+        if is_dir { Self::Directory } else { Self::Other }
     }
 }
 

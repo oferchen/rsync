@@ -44,13 +44,15 @@ use super::special::restore_special_mode_bits;
 /// * `confine_root` - The destination tree `destination` must stay beneath.
 ///   On Linux the ACL is then written through a confined `O_NOFOLLOW` fd
 ///   pinning the leaf, so a parent or leaf raced into a symlink cannot redirect
-///   it; a pin refused on a slashed path skips the ACL. `None` keeps the
-///   path-based apply of a receiver that is not hardened.
+///   it; a pin refused on a slashed path skips the ACL. macOS does the same
+///   through `acl_set_fd_np`. `None` keeps the path-based apply of a receiver
+///   that is not hardened.
 ///
-/// Deviation from upstream: none in behaviour, but the race window stays open
-/// off Linux. On macOS and FreeBSD the ACL is applied by path even with a
-/// `confine_root`, exactly as upstream does there: its race-safe arm is
-/// `SUPPORT_ACL_FD`, which `configure.ac:1512-1514` defines only on Linux.
+/// Deviation from upstream: on macOS the ACL goes through the held fd, where
+/// upstream sets it by path (`acls.c:1315-1322`) because its race-safe arm,
+/// `SUPPORT_ACL_FD`, is defined only on Linux (`configure.ac:1512-1514`).
+/// FreeBSD keeps upstream's path-based set, and its race window, until a
+/// FreeBSD CI job can exercise an fd arm.
 ///
 /// # Errors
 ///
@@ -91,7 +93,29 @@ pub fn apply_acls_from_cache(
             id_map,
         );
     }
-    #[cfg(not(target_os = "linux"))]
+    // Beyond upstream: macOS has no `SUPPORT_ACL_FD`, so upstream sets the
+    // ACL by path there (acls.c:1315-1322); oc writes it through the held fd.
+    #[cfg(target_os = "macos")]
+    if let Some(root) = confine_root {
+        match crate::dest_pin::pin_destination(destination, Some(root)) {
+            crate::dest_pin::DestPin::Pinned(file) => {
+                return super::pinned_extended::apply_access_acl_fd(
+                    &file,
+                    destination,
+                    cache,
+                    access_ndx,
+                    mode,
+                    id_map,
+                );
+            }
+            // upstream: rsync.c:597,800 - `xattr_refuse` skips set_acl_fdat().
+            crate::dest_pin::DestPin::Refused => return Ok(()),
+            // A device or socket leaf, or a path outside the root: upstream's
+            // path-based set below.
+            crate::dest_pin::DestPin::Path | crate::dest_pin::DestPin::Parent { .. } => {}
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let _ = confine_root;
 
     if let Some(acl) = cache.get_access(access_ndx) {

@@ -72,14 +72,8 @@ fn non_empty_dir_after_peel_reports_notice_without_error() {
     // outcome as DR_NOT_EMPTY: the user must learn the directory survived,
     // but the run neither counts it as deleted nor records an I/O error, so
     // the exit code stays 0. The scripted ENOTEMPTY models the post-peel
-    // rmdir failing.
-    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
-
-    // NONREG (info_verbosity[0]) is the only info category present at the
-    // default verbosity, matching upstream's ungated FINFO rendering.
-    init(VerbosityConfig::from_verbose_level(0));
-    let _ = drain_events();
-
+    // rmdir failing. The emitter hands the directory back; its caller prints
+    // the notice with the transfer-relative name.
     let fs = ScriptedDeleteFs::new().fail("d/sub", io::ErrorKind::DirectoryNotEmpty);
     let plans = DeletePlanMap::new();
     plans.insert(plan("d", vec![entry("sub", DeleteEntryKind::Dir)]));
@@ -105,23 +99,7 @@ fn non_empty_dir_after_peel_reports_notice_without_error() {
     assert_eq!(emitter.io_error(), 0);
     assert_eq!(emitter.exit_code(), 0);
 
-    let messages: Vec<String> = drain_events()
-        .into_iter()
-        .filter_map(|event| match event {
-            DiagnosticEvent::Info {
-                flag: InfoFlag::Nonreg,
-                message,
-                ..
-            } => Some(message),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        messages
-            .iter()
-            .any(|m| m == "cannot delete non-empty directory: d/sub"),
-        "expected upstream non-empty-directory notice; got {messages:?}"
-    );
+    assert_eq!(emitter.take_not_empty(), vec![PathBuf::from("d/sub")]);
 }
 
 #[test]
