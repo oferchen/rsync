@@ -349,7 +349,7 @@ fn oc_bin() -> Option<PathBuf> {
 }
 
 /// Starts the daemon and waits for its QUIC listener.
-fn serve(bin: &Path, scratch: &Scratch, setup: &Setup) -> Daemon {
+fn spawn_quic_daemon(bin: &Path, scratch: &Scratch, setup: &Setup) -> Daemon {
     let config = scratch.config(setup);
     let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
         Command::new(bin)
@@ -498,7 +498,7 @@ fn both_directions(
 ) {
     let Some(bin) = oc_bin() else { return };
     let scratch = Scratch::new();
-    let daemon = serve(&bin, &scratch, &setup);
+    let daemon = spawn_quic_daemon(&bin, &scratch, &setup);
     let client = client(&scratch);
     for direction in [Direction::Pull, Direction::Push] {
         let outcome = transfer(&bin, &scratch, &daemon, direction, &client);
