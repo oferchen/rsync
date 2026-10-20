@@ -412,20 +412,9 @@ fn apply_fake_super_mode(
     options: &MetadataOptions,
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    const ACCESSPERMS: u32 = 0o777;
     const S_IFMT: u32 = 0o170000;
-
-    // Recover the S_IFMT type bits (fmode may arrive with or without them).
-    let type_bits = if fmode & S_IFMT != 0 {
-        fmode & S_IFMT
-    } else if is_dir {
-        0o040000
-    } else {
-        0o100000
-    };
-
-    // upstream: xattrs.c:1313-1315 - enable full owner access, dump special bits.
-    let real_mode = type_bits | (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 };
+    let type_bits = fake_super_type_bits(fmode, is_dir);
+    let real_mode = fake_super_real_mode(fmode, is_dir);
 
     #[cfg(feature = "xattr")]
     {
@@ -487,6 +476,84 @@ fn apply_fake_super_mode(
         "preserve permissions",
         None,
     )
+}
+
+/// The `S_IFMT` type bits of a fake-super mode, which may arrive without them.
+#[cfg(unix)]
+const fn fake_super_type_bits(fmode: u32, is_dir: bool) -> u32 {
+    const S_IFMT: u32 = 0o170000;
+    if fmode & S_IFMT != 0 {
+        fmode & S_IFMT
+    } else if is_dir {
+        0o040000
+    } else {
+        0o100000
+    }
+}
+
+/// The real on-disk mode for an intended fake-super mode: the permission bits
+/// with full owner access forced on and the special bits dropped.
+/// upstream: xattrs.c:1313-1315 set_stat_xattr()
+#[cfg(unix)]
+const fn fake_super_real_mode(fmode: u32, is_dir: bool) -> u32 {
+    const ACCESSPERMS: u32 = 0o777;
+    fake_super_type_bits(fmode, is_dir) | (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 }
+}
+
+/// Records an intended fake-super stat on `destination`, as upstream
+/// `set_stat_xattr()` does for the stat it read from the source.
+///
+/// The real mode is set from `intended.mode` with owner access forced on and
+/// the special bits dropped. The `user.rsync.%stat` xattr is then removed when
+/// the real mode, owner and group already represent `intended`, and written
+/// otherwise unless it already matches. Use this when the intended stat comes
+/// from a source's own recorded `%stat`, which the inode-based appliers cannot
+/// see.
+///
+/// # Errors
+///
+/// Returns an error when the destination cannot be re-stat'ed, chmod'ed, or
+/// its xattr cannot be read, written or removed.
+/// upstream: xattrs.c:1304-1356 set_stat_xattr()
+#[cfg(all(unix, feature = "xattr"))]
+pub fn apply_fake_super_stat(
+    destination: &Path,
+    intended: &crate::fake_super::FakeSuperStat,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    use crate::fake_super::{load_fake_super, remove_fake_super, store_fake_super};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    const S_IFMT: u32 = 0o170000;
+    let current = fs::symlink_metadata(destination)
+        .map_err(|error| MetadataError::new("re-stat", destination, error))?;
+    let is_dir = current.is_dir();
+    let real_mode = fake_super_real_mode(intended.mode, is_dir);
+    if current.permissions().mode() & 0o7777 != real_mode & 0o7777 {
+        chmod_path_honoring_keep_dirlinks(
+            destination,
+            real_mode & 0o7777,
+            options,
+            "preserve permissions",
+            None,
+        )?;
+    }
+    // upstream: xattrs.c:1325-1336 - the shim is redundant when the real mode,
+    // owner and group already carry the intended values (rdev 0 off devices).
+    let stored_mode = fake_super_type_bits(intended.mode, is_dir) | (intended.mode & 0o7777);
+    let faithful = real_mode & (S_IFMT | 0o7777) == stored_mode
+        && current.uid() == intended.uid
+        && current.gid() == intended.gid
+        && intended.rdev.is_none();
+    if faithful {
+        return remove_fake_super(destination)
+            .map_err(|error| MetadataError::new("remove fake-super metadata", destination, error));
+    }
+    // upstream: xattrs.c:1338-1354 - rewrite only when the stored stat differs.
+    if load_fake_super(destination).ok().flatten().as_ref() == Some(intended) {
+        return Ok(());
+    }
+    store_fake_super(destination, intended)
+        .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
 }
 
 /// Applies permissions with optional chmod modifiers (path-based).

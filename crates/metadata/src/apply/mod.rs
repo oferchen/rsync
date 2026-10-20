@@ -11,6 +11,8 @@ mod platform_warn;
 mod timestamps;
 
 pub use ownership::group_is_settable;
+#[cfg(all(unix, feature = "xattr"))]
+pub use permissions::apply_fake_super_stat;
 #[cfg(unix)]
 pub use permissions::init_orig_umask;
 #[cfg(any(target_os = "macos", windows))]
