@@ -1,6 +1,6 @@
 //! Server mode execution - orchestrates argument parsing and server startup.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, Write};
 
@@ -14,7 +14,9 @@ use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
-use crate::frontend::execution::{SYNTAX_ERROR, UnsupportedOption, exit_trailer};
+use crate::frontend::execution::{
+    SYNTAX_ERROR, UnsupportedOption, exit_trailer, parse_max_delete_argument,
+};
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
 ///
@@ -1101,8 +1103,11 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
+    // upstream: options.c:3002-3006 - a client asked for `--max-delete=0`
+    // forwards `--max-delete=-1`, and options.c:2308-2311 clamps any negative
+    // value back to 0 ("no deletions") on the receiving side.
     if let Some(max_del_str) = &long_flags.max_delete {
-        match max_del_str.parse::<u64>() {
+        match parse_max_delete_argument(OsStr::new(max_del_str)) {
             Ok(limit) => config.deletion.max_delete = Some(limit),
             Err(_) => {
                 write_server_error(

@@ -495,56 +495,11 @@ fn remove_entry_capped(
     }
 
     if file_type.is_dir() {
-        // Peel the directory's contents depth-first in upstream reverse-sorted
-        // order before considering the directory itself.
-        let mut children: Vec<(OsString, bool)> = Vec::new();
-        match fs::read_dir(path) {
-            Ok(iter) => {
-                for child in iter {
-                    let child = child.map_err(|error| {
-                        LocalCopyError::io("read extraneous directory entry", path, error)
-                    })?;
-                    // `file_type()` uses readdir's d_type (falling back to
-                    // lstat) and does not follow symlinks, so a symlink to a
-                    // directory is classified as a non-directory - matching
-                    // upstream's S_ISDIR test on the lstat mode.
-                    let is_dir = child.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    children.push((child.file_name(), is_dir));
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "read extraneous directory",
-                    path.to_path_buf(),
-                    error,
-                ));
-            }
-        }
-        // Peel contents in upstream's reverse-sorted delete order so the
-        // prefix that survives when `--max-delete` trips matches upstream.
-        children.sort_unstable_by(|a, b| cmp_child_delete_order((&a.0, a.1), (&b.0, b.1)));
-        children.reverse();
-
-        let mut all_children_removed = true;
-        for (child_name, _) in children {
-            let child_path = path.join(&child_name);
-            let child_relative = entry_relative.join(&child_name);
-            // Children are reached via the recursion, mirroring upstream's
-            // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:162; mark them
-            // `nested` so a cap-saturated non-empty subdir is counted.
-            if !remove_entry_capped(
-                context,
-                &child_path,
-                &child_relative,
-                skipped,
-                true,
-                boundary_dev,
-            )? {
-                all_children_removed = false;
-            }
-        }
-
+        let Some(all_children_removed) =
+            remove_children_capped(context, path, entry_relative, skipped, boundary_dev)?
+        else {
+            return Ok(true);
+        };
         if !all_children_removed {
             // Contents survived because the cap was reached, so the directory
             // cannot be removed. upstream: delete.c:179 prints this once per
@@ -596,6 +551,99 @@ fn remove_entry_capped(
     }
     delete_leaf(context, path, entry_relative, file_type)?;
     Ok(true)
+}
+
+/// Peels `path`'s children depth-first under the `--max-delete` cap, in
+/// upstream's reverse-sorted delete order, returning `Some(false)` when any
+/// child survived and `None` when `path` vanished before it could be read.
+///
+/// upstream: delete.c:91-181 `delete_dir_contents()` - each child reaches
+/// `delete_item(..., DEL_DIR_IS_EMPTY)` and so the `delete.c:217` cap.
+fn remove_children_capped(
+    context: &mut CopyContext,
+    path: &Path,
+    entry_relative: &Path,
+    skipped: &mut u64,
+    boundary_dev: Option<u64>,
+) -> Result<Option<bool>, LocalCopyError> {
+    // Peel the directory's contents depth-first in upstream reverse-sorted
+    // order before considering the directory itself.
+    let mut children: Vec<(OsString, bool)> = Vec::new();
+    match fs::read_dir(path) {
+        Ok(iter) => {
+            for child in iter {
+                let child = child.map_err(|error| {
+                    LocalCopyError::io("read extraneous directory entry", path, error)
+                })?;
+                // `file_type()` uses readdir's d_type (falling back to
+                // lstat) and does not follow symlinks, so a symlink to a
+                // directory is classified as a non-directory - matching
+                // upstream's S_ISDIR test on the lstat mode.
+                let is_dir = child.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                children.push((child.file_name(), is_dir));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "read extraneous directory",
+                path.to_path_buf(),
+                error,
+            ));
+        }
+    }
+    // Peel contents in upstream's reverse-sorted delete order so the
+    // prefix that survives when `--max-delete` trips matches upstream.
+    children.sort_unstable_by(|a, b| cmp_child_delete_order((&a.0, a.1), (&b.0, b.1)));
+    children.reverse();
+
+    let mut all_children_removed = true;
+    for (child_name, _) in children {
+        let child_path = path.join(&child_name);
+        let child_relative = entry_relative.join(&child_name);
+        // Children are reached via the recursion, mirroring upstream's
+        // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:162; mark them
+        // `nested` so a cap-saturated non-empty subdir is counted.
+        if !remove_entry_capped(
+            context,
+            &child_path,
+            &child_relative,
+            skipped,
+            true,
+            boundary_dev,
+        )? {
+            all_children_removed = false;
+        }
+    }
+
+    Ok(Some(all_children_removed))
+}
+
+/// Empties a directory obstacle under the `--max-delete` cap so the caller's
+/// make-room `rmdir` can proceed, returning `false` when the cap left a child
+/// standing.
+///
+/// The children are ordinary capped deletions - `delete_dir_contents()` strips
+/// `DEL_MAKE_ROOM` before it recurses (`delete.c:126`) - so they are logged,
+/// counted against the run-wide limit, and every one the cap refuses joins the
+/// run's `skipped_deletes`. The obstacle node itself stays exempt.
+///
+/// # Upstream Reference
+///
+/// - `delete.c:126` - `flags & ~(DEL_RECURSE|DEL_MAKE_ROOM|DEL_NO_UID_WRITE)`
+/// - `delete.c:217-218` - the cap, with `skipped_deletes++`
+pub(crate) fn clear_make_room_contents_capped(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: &Path,
+) -> Result<bool, LocalCopyError> {
+    let boundary_dev = delete_boundary_device(context, destination);
+    let mut skipped = 0u64;
+    let cleared =
+        remove_children_capped(context, destination, relative, &mut skipped, boundary_dev)?
+            .unwrap_or(true);
+    context.record_skipped_deletes(skipped);
+    Ok(cleared)
 }
 
 /// Returns `true` when the running deletion count has reached the configured

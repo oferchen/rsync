@@ -70,7 +70,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::cleanup::is_dir_not_empty;
+use super::cleanup::{clear_make_room_contents_capped, is_dir_not_empty};
 use crate::local_copy::{CopyContext, LocalCopyError};
 
 /// The kind of item the local-copy executor is clearing the way for.
@@ -193,6 +193,21 @@ fn peel_or_probe(
 ) -> Result<bool, LocalCopyError> {
     if !recurse {
         return directory_is_empty(destination);
+    }
+
+    // upstream: delete.c:217 - each child is capped like a delete-pass victim,
+    // so the cap-aware leaf walk empties the obstacle under `--max-delete`.
+    if context.options().max_deletion_limit().is_some() {
+        let display = relative.map_or_else(
+            || {
+                destination
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+            },
+            Path::to_path_buf,
+        );
+        return clear_make_room_contents_capped(context, destination, &display);
     }
 
     // upstream: delete.c:141-163 - the children are reported like delete-pass

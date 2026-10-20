@@ -33,12 +33,13 @@ pub fn record_exit(latch: &ExitCodeLatch, code: i32) -> i32 {
 /// Maps an accumulated `io_error` bitfield plus the `got_xfer_error` flag into
 /// its `RERR_*` exit code, or `None` when the run is clean.
 ///
-/// Single owner of upstream's `cleanup.c:210-218` rule: the three independent
-/// `if`s that order the bits `GENERAL > VANISHED > DEL_LIMIT` (delegated to
-/// [`transfer::io_error_flags::to_exit_code`]), followed by the
-/// `|| got_xfer_error` clause that lifts an otherwise-clean run to
-/// `RERR_PARTIAL`. Both the daemon and SSH stat converters route through here so
-/// the rule cannot drift into two divergent copies.
+/// Single owner of upstream's `cleanup.c:210-218` rule: three sequential
+/// assignments that order the bits `GENERAL > VANISHED > DEL_LIMIT` (delegated to
+/// [`transfer::io_error_flags::to_exit_code`]). `got_xfer_error` joins the LAST
+/// one, `io_error & IOERR_GENERAL || got_xfer_error`, so a transfer error
+/// outranks `RERR_VANISHED` and `RERR_DEL_LIMIT` as well as lifting a clean run.
+/// Both the daemon and SSH stat converters route through here so the rule
+/// cannot drift into two divergent copies.
 ///
 /// `got_xfer_error` is not an `io_error` bit: upstream keeps it as a separate
 /// global and ORs it into the `RERR_PARTIAL` test, which is the only arm a
@@ -46,13 +47,12 @@ pub fn record_exit(latch: &ExitCodeLatch, code: i32) -> i32 {
 /// `ENOENT`).
 #[must_use]
 pub fn io_error_exit_code(io_error: i32, got_xfer_error: bool) -> Option<i32> {
-    let code = transfer::io_error_flags::to_exit_code(io_error);
-    if code != 0 {
-        Some(code)
-    } else if got_xfer_error {
-        Some(ExitCode::PartialTransfer.as_i32())
-    } else {
-        None
+    if got_xfer_error {
+        return Some(ExitCode::PartialTransfer.as_i32());
+    }
+    match transfer::io_error_flags::to_exit_code(io_error) {
+        0 => None,
+        code => Some(code),
     }
 }
 
@@ -138,8 +138,8 @@ mod tests {
     }
 
     /// The single owner of cleanup.c:210-218: the bitfield
-    /// precedence GENERAL > VANISHED > DEL_LIMIT, the `|| got_xfer_error` lift
-    /// to RERR_PARTIAL, and a clean run mapping to `None`.
+    /// precedence GENERAL > VANISHED > DEL_LIMIT, `got_xfer_error` riding the
+    /// last (RERR_PARTIAL) assignment, and a clean run mapping to `None`.
     #[test]
     fn io_error_rule_matches_upstream() {
         assert_eq!(io_error_exit_code(0, false), None);
@@ -152,8 +152,11 @@ mod tests {
             io_error_exit_code(IOERR_DEL_LIMIT | IOERR_GENERAL, false),
             Some(23)
         );
-        // A set bit outranks the got_xfer_error lift (VANISHED, not PARTIAL).
-        assert_eq!(io_error_exit_code(IOERR_VANISHED, true), Some(24));
+        // got_xfer_error is assigned last, so it outranks VANISHED and DEL_LIMIT.
+        // Measured: rsync 3.5.1 exits 23 when a capped make-room both trips
+        // --max-delete and fails `could not make way` over a remote shell.
+        assert_eq!(io_error_exit_code(IOERR_VANISHED, true), Some(PARTIAL));
+        assert_eq!(io_error_exit_code(IOERR_DEL_LIMIT, true), Some(PARTIAL));
     }
 
     /// 433 constraint pin. On abort the funnel disconnects the pipeline rope by

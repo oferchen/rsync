@@ -204,16 +204,49 @@ fn max_delete_budget_spans_segments_and_reports_once() {
         .filter(|dir| exists(dest, &format!("{dir}/x")))
         .collect();
     assert_eq!(survivors, [&"c"], "the cap stops the third deletion");
-    assert_eq!(ctx.skipped_deletes, 1);
+    assert_eq!(ctx.skipped_deletes.get(), 1);
     let warning = "Deletions stopped due to --max-delete limit (1 skipped)";
     assert_eq!(count_info(warning), 0, "nothing is reported mid-walk");
     assert_eq!(stats.io_error & IOERR_DEL_LIMIT, 0);
 
+    let mut writer = WarningCapture::default();
     assert_eq!(
-        ctx.finish_delete_limit(ctx.skipped_deletes),
+        ctx.finish_delete_limit(&mut writer, ctx.skipped_deletes.get()),
         IOERR_DEL_LIMIT
     );
-    assert_eq!(count_info(warning), 1, "one warning for the whole walk");
+    assert_eq!(
+        writer.warnings,
+        [format!("{warning}\n")],
+        "one warning for the whole walk, framed for the client as MSG_WARNING"
+    );
+}
+
+/// Records the `MSG_WARNING` frames a server receiver sends its client.
+#[derive(Default)]
+struct WarningCapture {
+    warnings: Vec<String>,
+}
+
+impl std::io::Write for WarningCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl crate::writer::MsgInfoSender for WarningCapture {
+    fn send_msg_info(&mut self, _data: &[u8]) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn send_msg_warning(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.warnings
+            .push(String::from_utf8_lossy(data).into_owned());
+        Ok(())
+    }
 }
 
 /// A general I/O error folded in before segment 2 stops every later

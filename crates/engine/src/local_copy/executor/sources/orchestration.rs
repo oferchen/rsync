@@ -846,6 +846,13 @@ pub(crate) fn copy_sources(
             // (23). The per-entry diagnostics were already printed at the
             // refusal site, so surface only the summary error here.
             if context.make_way_error_occurred() {
+                // upstream: generator.c:2904-2907 - children of an obstacle that
+                // the cap kept are reported once, ahead of the RERR_PARTIAL that
+                // cleanup.c:217-218 ranks above RERR_DEL_LIMIT.
+                let skipped = context.make_room_skipped_deletes();
+                if skipped > 0 {
+                    eprintln!("Deletions stopped due to --max-delete limit ({skipped} skipped)");
+                }
                 return Err(LocalCopyError::partial_transfer());
             }
             // upstream: generator.c:2490-2522 / hlink.c:486 - a FIFO, device,
