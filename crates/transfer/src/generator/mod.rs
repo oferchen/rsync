@@ -79,6 +79,8 @@
 //! suppresses the bit.
 
 mod context;
+#[cfg(test)]
+mod daemon_log_tests;
 mod delta;
 mod diagnostics;
 mod file_list;

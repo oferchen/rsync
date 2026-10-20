@@ -40,7 +40,7 @@ pub(crate) mod itemize_sink;
 pub(crate) mod operand_split;
 pub(crate) mod operator_file;
 pub(crate) mod output_option;
-/// `OC_RSYNC_PULL_INC_RECURSE` staging flag and the `'i'` advertise decision.
+/// `OC_RSYNC_PULL_INC_RECURSE` override flag and the `'i'` advertise decision.
 pub(crate) mod pull_inc_recurse;
 /// Remote-to-remote transfer via local proxy relay.
 /// SSH transfer orchestration for `ssh://` and `host:path` targets.

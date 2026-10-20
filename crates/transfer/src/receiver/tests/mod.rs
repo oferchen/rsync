@@ -5,6 +5,8 @@
 //!   goodbye handshake, and its absence at protocol 32.
 //! - [`file_list`] - file-list receive, sanitize, incremental, sender-attrs,
 //!   sum-head, ndx-convert, and the delete-pipeline hook.
+//! - [`daemon_log_sink`] - diagnostics reach the daemon log before their
+//!   frame is sent.
 //! - [`delta_apply`] - whole-file delta application, wire-to-script
 //!   conversion, sparse writes, and checksum verifier coverage.
 //! - [`hard_links`] - `create_hardlinks` behaviour and the
@@ -28,6 +30,7 @@
 mod block_stats_goodbye;
 #[cfg(unix)]
 mod create_specials;
+mod daemon_log_sink;
 mod delta_apply;
 mod dry_run_pre29;
 mod errors_and_timeouts;

@@ -339,7 +339,7 @@ fn run_daemon_transfer(
     handshake: HandshakeResult,
     read_stream: &mut dyn Read,
     write_stream: &mut dyn Write,
-    daemon_log: Option<DaemonLog<'_>>,
+    daemon_log: Option<DaemonLog>,
 ) -> ServerResult {
     run_server_with_handshake_adopting(
         config,
@@ -356,13 +356,13 @@ fn run_daemon_transfer(
 /// Renders one per-file daemon transfer-log line into the module's `log format`.
 ///
 /// This is the daemon's own `log_item(FLOG)` write (upstream `log.c:866-874`),
-/// invoked once per processed entry by the transfer engine after the transfer,
-/// in flist-index order. The `%i` string is pre-rendered with the correct
+/// invoked once per processed entry by the transfer engine, in flist-index
+/// order, before the transfer ends. The `%i` string is pre-rendered with the correct
 /// direction glyph by the sending/receiving context; here the row's per-file
 /// fields fill the module format alongside the constant connection fields.
 /// A deletion row is upstream's `log_delete()` write instead (log.c:924-928).
-struct DaemonFileLogWriter<'a> {
-    log: &'a SharedLogSink,
+struct DaemonFileLogWriter {
+    log: SharedLogSink,
     fmt: String,
     /// upstream `logfile_format_has_o_or_i` (clientserver.c:827): whether a
     /// deletion renders through `fmt` or through the fixed `deleting %n`.
@@ -376,8 +376,8 @@ struct DaemonFileLogWriter<'a> {
     pid: u32,
 }
 
-impl DaemonFileLog for DaemonFileLogWriter<'_> {
-    fn on_entry(&mut self, row: &DaemonLogRow) {
+impl DaemonFileLog for DaemonFileLogWriter {
+    fn on_entry(&self, row: &DaemonLogRow) {
         // upstream: log.c:924-928 log_delete() falls back to "deleting %n" when
         // the format has neither %o nor %i; log.c:871 log_item() writes no row
         // for an empty format.
@@ -442,13 +442,13 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             permissions: &permissions,
             checksum: &row.checksum,
         };
-        log_transfer(fmt, &log_ctx, self.log);
+        log_transfer(fmt, &log_ctx, &self.log);
     }
 
-    fn on_message(&mut self, line: &[u8]) {
+    fn on_message(&self, line: &[u8]) {
         // upstream: log.c:136 - logit() writes the message bytes behind the log
         // file's own timestamp and pid prefix.
-        log_raw_line(self.log, line);
+        log_raw_line(&self.log, line);
     }
 }
 
@@ -492,14 +492,14 @@ fn execute_transfer(
     // rwrite() (log.c:312) logs every diagnostic on `am_daemon` whether or not
     // the module has `transfer logging`; the per-file rows stay gated on it.
     let transfer_format = transfer_log_format(module);
-    let mut daemon_log_writer = ctx.log_sink.map(|log| {
+    let daemon_log = ctx.log_sink.map(|log| {
         let fmt = transfer_format.unwrap_or_default();
         let operation = match role {
             ServerRole::Generator => TransferOperation::Send,
             ServerRole::Receiver => TransferOperation::Recv,
         };
-        DaemonFileLogWriter {
-            log,
+        let writer = DaemonFileLogWriter {
+            log: Arc::clone(log),
             fmt: fmt.to_string(),
             fmt_has_o_or_i: log_format_has(fmt, 'i') || log_format_has(fmt, 'o'),
             operation,
@@ -511,12 +511,12 @@ fn execute_transfer(
             // auth_server(), empty for an anonymous module.
             username: auth_user.unwrap_or_default().to_owned(),
             pid: std::process::id(),
+        };
+        DaemonLog {
+            transfer_logging: transfer_format.is_some(),
+            format_has_i: log_format_has(fmt, 'i'),
+            log: SharedDaemonLog::new(writer),
         }
-    });
-    let daemon_log = daemon_log_writer.as_mut().map(|w| DaemonLog {
-        transfer_logging: transfer_format.is_some(),
-        format_has_i: log_format_has(&w.fmt, 'i'),
-        sink: w,
     });
 
     // Use standard buffered I/O for daemon socket communication.

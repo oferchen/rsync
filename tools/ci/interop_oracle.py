@@ -601,7 +601,7 @@ def check_expectations(cell, base: Outcome, got: Outcome) -> dict:
             if o.touched != want:
                 probs[f"{tag}-touched"] = f"want {want}, saw {o.touched}"
         if cell.inc:
-            want_inc = cells_mod.expected_inc(cell, candidate=tag == "candidate")
+            want_inc = cells_mod.expected_inc(cell)
             if o.inc != want_inc:
                 probs[f"{tag}-inc-recurse"] = f"want {want_inc}, saw {o.inc}"
     return probs

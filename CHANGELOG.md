@@ -145,7 +145,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - The daemon accepts `--log-file-format`, as upstream does (#8047)
-- `OC_RSYNC_PULL_INC_RECURSE=1` lets a pulling client advertise incremental recursion, except under `--delete-before` or `--delete-after` as in upstream; off by default (#8062, #8091)
+- A pulling client advertises incremental recursion by default, as upstream does, except under `--delete-before` or `--delete-after`; `OC_RSYNC_PULL_INC_RECURSE=0` opts out (#8062, #8091, #8217)
 - QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195)
 - Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
 - `StrictHostKeyChecking accept-new` works as documented (#7783)
@@ -284,6 +284,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - A remote-shell server sender honours `--copy-unsafe-links` (#8032)
 
 **Daemon**
+- The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)
 - Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
 - Honour a client's `--timeout`, `--partial-dir`, `--backup-dir`, `--max-size` and `--min-size` (#7584, #7498, #7501, #7577, #7449)
 - `rsyncd.conf` parser parity: section names, repeated directives, `%ENV%` expansion, and upstream's copy-at-creation model for module defaults, `&merge` and `&include` (#6924, #6930, #6933, #7088, #7519, #8000, #8013)
@@ -420,6 +421,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - A populated directory is kept under `--delete-missing-args` without `--delete` (#8162)
 
 **Incremental recursion**
+- `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)
 - Skip `--existing`-missing directories without failing, drain hard-link echoes and itemize specials per sub-list, and keep directories when the sender reclaims a segment (#8107, #8129, #8166)
 - A server receiver refuses a sub-list sent after the final file list was freed, exiting 2 with upstream's message; every 3.5.1 testsuite leg now has zero failures (#8193)
 

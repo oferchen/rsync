@@ -1,12 +1,15 @@
-//! `OC_RSYNC_PULL_INC_RECURSE` - staging flag for incremental recursion on pulls.
+//! `OC_RSYNC_PULL_INC_RECURSE` - override flag for incremental recursion on pulls.
 //!
 //! Upstream's client advertises the `'i'` capability whenever
 //! `set_allow_inc_recurse()` leaves `allow_inc_recurse` set, whatever the
-//! transfer direction (`compat.c:162-180`, `options.c:3220`). oc-rsync's client
-//! has so far withheld it whenever it is the receiver, so every pull ran
-//! without INC_RECURSE. This flag stages the receiver's lazy sub-list
-//! consumption: when it is set, a pulling client advertises `'i'` under
-//! upstream's own conditions.
+//! transfer direction (`compat.c:162-180`, `options.c:3220`).
+//!
+//! Pulling clients advertise `'i'` by default whenever
+//! [`ClientConfig::allow_inc_recurse`] permits it. The
+//! `OC_RSYNC_PULL_INC_RECURSE` environment variable acts as an opt-out override:
+//! if explicitly disabled (`0`, `off`, `false`, `no`, case-insensitive),
+//! pulling clients withhold `'i'`. When unset, empty, or enabled, incremental
+//! recursion on pulls is enabled.
 //!
 //! Delete modes follow upstream too: plain `--delete`, `--delete-during`,
 //! `--delete-delay` and `--delete-excluded` pull incrementally, because the
@@ -14,31 +17,32 @@
 //! `--delete-before` and `--delete-after` need the whole list and withhold
 //! `'i'` through upstream's own gate.
 //!
-//! Default OFF keeps the pull wire byte-identical to earlier releases.
-//!
-//! Grammar: `1`, `on`, `true`, `yes` (case-insensitive, surrounding whitespace
-//! ignored) enable it. Unset, empty, `0`, `off`, or any unrecognized value
-//! select the default (OFF).
+//! Grammar: `0`, `off`, `false`, `no` (case-insensitive, surrounding whitespace
+//! ignored) disable it. Unset, empty, `1`, `on`, `true`, `yes`, or any other value
+//! select the default (ON).
 
 use crate::client::config::ClientConfig;
 
-/// Environment variable that lets a pulling client advertise INC_RECURSE.
+/// Environment variable that can opt out of INC_RECURSE on pulls.
 pub(crate) const PULL_INC_RECURSE_ENV: &str = "OC_RSYNC_PULL_INC_RECURSE";
 
-/// Returns `true` when [`PULL_INC_RECURSE_ENV`] enables INC_RECURSE on pulls.
+/// Returns `true` unless [`PULL_INC_RECURSE_ENV`] explicitly disables INC_RECURSE on pulls.
 ///
 /// Read once per invocation when the server argument string is built.
 fn pull_inc_recurse_enabled() -> bool {
     std::env::var(PULL_INC_RECURSE_ENV)
         .ok()
-        .is_some_and(|value| enabled_from_value(&value))
+        .is_none_or(|value| enabled_from_value(&value))
 }
 
 /// Parses one raw environment value into the enable decision.
+///
+/// Returns `false` if explicitly disabled (`0`, `off`, `false`, `no`),
+/// otherwise `true` (default enabled).
 fn enabled_from_value(value: &str) -> bool {
-    matches!(
+    !matches!(
         value.trim().to_ascii_lowercase().as_str(),
-        "1" | "on" | "true" | "yes"
+        "0" | "off" | "false" | "no"
     )
 }
 
@@ -55,13 +59,13 @@ pub(crate) fn advertise_inc_recurse(config: &ClientConfig, am_sender: bool) -> b
     advertise_inc_recurse_with(config, am_sender, pull_inc_recurse_enabled())
 }
 
-/// [`advertise_inc_recurse`] with the staging flag passed in, so tests need not
+/// [`advertise_inc_recurse`] with the pull enable flag passed in, so tests need not
 /// mutate the process environment.
-fn advertise_inc_recurse_with(config: &ClientConfig, am_sender: bool, pull_opt_in: bool) -> bool {
+fn advertise_inc_recurse_with(config: &ClientConfig, am_sender: bool, pull_enabled: bool) -> bool {
     if !config.allow_inc_recurse(am_sender) {
         return false;
     }
-    am_sender || pull_opt_in
+    am_sender || pull_enabled
 }
 
 #[cfg(test)]
@@ -74,16 +78,18 @@ mod tests {
     }
 
     #[test]
-    fn enabling_values_are_recognized_case_insensitively() {
-        for v in ["1", "on", "true", "yes", "ON", "True", " yes\n"] {
-            assert!(enabled_from_value(v), "expected {v:?} to enable");
+    fn disabling_values_are_recognized_case_insensitively() {
+        for v in ["0", "off", "false", "no", "0 ", "OFF", "False", " no\n"] {
+            assert!(!enabled_from_value(v), "expected {v:?} to disable");
         }
     }
 
     #[test]
-    fn default_and_disabling_values_stay_off() {
-        for v in ["", "0", "off", "false", "no", "2", "enable"] {
-            assert!(!enabled_from_value(v), "expected {v:?} to stay off");
+    fn default_and_enabling_values_stay_on() {
+        for v in [
+            "", "1", "on", "true", "yes", "ON", "True", " yes\n", "2", "enable",
+        ] {
+            assert!(enabled_from_value(v), "expected {v:?} to stay on");
         }
     }
 
@@ -95,15 +101,14 @@ mod tests {
     }
 
     #[test]
-    fn pull_advertises_only_when_opted_in() {
-        // Default off: a pull keeps the historical no-inc-recurse wire.
+    fn pull_advertises_by_default_and_withholds_when_disabled() {
         let config = recursive();
-        assert!(!advertise_inc_recurse_with(&config, false, false));
         assert!(advertise_inc_recurse_with(&config, false, true));
+        assert!(!advertise_inc_recurse_with(&config, false, false));
     }
 
     #[test]
-    fn pull_opt_in_still_honours_the_upstream_option_gate() {
+    fn pull_still_honours_the_upstream_option_gate() {
         // upstream: compat.c:172 - `!recurse || use_qsort` clears it, and
         // --no-inc-recursive clears it outright.
         let flat = ClientConfig::builder().recursive(false).build();
@@ -118,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn pull_opt_in_advertises_i_for_the_per_directory_delete_modes() {
+    fn pull_advertises_i_for_the_per_directory_delete_modes() {
         // upstream: compat.c:172-177 - only --delete-before and --delete-after
         // clear allow_inc_recurse on a receiver. Plain --delete (delete_during
         // at protocol 30+), --delete-during, --delete-delay and
@@ -133,17 +138,17 @@ mod tests {
         for (name, config) in cases {
             assert!(
                 advertise_inc_recurse_with(&config, false, true),
-                "{name} must advertise 'i' on an opted-in pull"
+                "{name} must advertise 'i' on an enabled pull"
             );
             assert!(
                 !advertise_inc_recurse_with(&config, false, false),
-                "{name} without the opt-in keeps the historical wire"
+                "{name} with opt-out disabled suppresses 'i'"
             );
         }
     }
 
     #[test]
-    fn pull_opt_in_withholds_i_for_the_whole_list_delete_modes() {
+    fn pull_withholds_i_for_the_whole_list_delete_modes() {
         // upstream: compat.c:174-176 - a receiver with --delete-before or
         // --delete-after needs the complete list up front.
         let base = || ClientConfig::builder().recursive(true);

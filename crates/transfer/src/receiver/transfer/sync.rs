@@ -605,7 +605,7 @@ impl ReceiverContext {
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
 
         Ok(TransferStats {
-            files_listed: file_count,
+            files_listed: self.received_files_total,
             num_dirs,
             num_symlinks,
             num_devices,

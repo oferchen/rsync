@@ -349,8 +349,8 @@ pub(super) fn build_full_daemon_args(
         // upstream: compat.c:162-181 set_allow_inc_recurse() and
         // options.c:3220-3221 maybe_add_e_option() - `allow_inc_recurse` resolves
         // the option state; a pull (`is_sender` = the daemon sends) advertises
-        // 'i' only under the OC_RSYNC_PULL_INC_RECURSE staging flag (see
-        // `pull_inc_recurse`).
+        // 'i' by default unless disabled by the OC_RSYNC_PULL_INC_RECURSE override
+        // (see `pull_inc_recurse`).
         let am_sender = !is_sender;
         let advertise_inc_recurse =
             crate::client::remote::pull_inc_recurse::advertise_inc_recurse(config, am_sender);

@@ -414,6 +414,7 @@ impl ReceiverContext {
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
         self.exchange_phase_done(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;
+        self.flush_daemon_log_rows();
 
         if self.config.connection.client_mode {
             // upstream: main.c:366-373 - the client receiver reads the sender's

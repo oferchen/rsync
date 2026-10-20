@@ -68,6 +68,13 @@ fn pump(mut from: impl Read, mut to: impl Write, mut log: File, direction: &str)
 }
 
 fn main() {
+    // The client may hand this process pipe ends with `O_NONBLOCK` set; the
+    // pumps use blocking `read`/`write_all`, which would otherwise end the
+    // relay early on `EAGAIN` with a truncated transcript.
+    if let Err(e) = fast_io::force_blocking_stdio() {
+        eprintln!("capture-rsh: cannot clear O_NONBLOCK on stdio: {e}");
+        exit(1);
+    }
     let c2s = capture_path(C2S_ENV);
     let s2c = capture_path(S2C_ENV);
 

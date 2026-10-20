@@ -203,7 +203,7 @@ pub use pipeline::{
     PipelineConfig, PipelineState,
 };
 pub use progress::{
-    DaemonFileLog, DaemonLogEntry, DaemonLogRow, ItemizeCallback, ItemizeRow, OwnedItemizeRow,
+    DaemonFileLog, DaemonLogRow, ItemizeCallback, ItemizeRow, OwnedItemizeRow, SharedDaemonLog,
     TransferProgressCallback, TransferProgressEvent,
 };
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
@@ -701,15 +701,14 @@ pub fn run_server_with_handshake<W: Write>(
 /// rows are collected only when `transfer_logging` is set. `format_has_i`
 /// mirrors upstream's `logfile_format_has_i` (`clientserver.c:826`): the daemon
 /// logs non-transfer items (dirs, up-to-date files) only when the `log format`
-/// contains a `%i` escape, while transferred files are always logged. `sink`
-/// receives the queued lines after the transfer.
-pub struct DaemonLog<'d> {
+/// contains a `%i` escape, while transferred files are always logged.
+pub struct DaemonLog {
     /// Whether the module has `transfer logging = yes`.
     pub transfer_logging: bool,
     /// Whether the module's `log format` contains a `%i` escape.
     pub format_has_i: bool,
-    /// Per-entry sink that renders and writes each daemon-log line.
-    pub sink: &'d mut dyn DaemonFileLog,
+    /// Writer that renders each daemon-log line as the transfer reaches it.
+    pub log: SharedDaemonLog,
 }
 
 /// Optional side-channels for a server transfer.
@@ -718,7 +717,7 @@ pub struct DaemonLog<'d> {
 /// a reasonable argument count: live progress, batch recording, the push
 /// itemize callback, and the client-receiver I/O-timeout re-apply hook.
 #[derive(Default)]
-pub struct ServerTransferHooks<'p, 'i, 'd> {
+pub struct ServerTransferHooks<'p, 'i> {
     /// Live per-file progress callback.
     pub progress: Option<&'p mut dyn TransferProgressCallback>,
     /// Batch recording sink for `--write-batch` / `--only-write-batch`.
@@ -731,7 +730,7 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
     pub io_timeout_reapply: Option<IoTimeoutReapply>,
     /// Per-entry daemon transfer-log hook. `Some` only when a daemon module has
     /// `transfer logging = yes`; drives the per-file `log_item(FLOG)` writes.
-    pub daemon_log: Option<DaemonLog<'d>>,
+    pub daemon_log: Option<DaemonLog>,
     /// Caller-owned counter for the raw bytes read once `setup_protocol` is
     /// done, so the caller can name them when the transfer fails.
     /// upstream: io.c:938 counts `stats.total_read` only through perform_io,
@@ -755,7 +754,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
     mut stdout: W,
-    hooks: ServerTransferHooks<'_, '_, '_>,
+    hooks: ServerTransferHooks<'_, '_>,
 ) -> ServerResult {
     let ServerTransferHooks {
         progress,
@@ -1197,7 +1196,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // `maybe_log_item()`/`log_item(FLOG)` for the module log file. Arm
                 // the per-entry FLOG collection before the transfer runs.
                 if let Some(dl) = daemon_log.as_ref() {
-                    ctx.enable_daemon_log_messages();
+                    ctx.set_daemon_log_sink(dl.log.clone());
                     if dl.transfer_logging {
                         ctx.enable_daemon_log(dl.format_has_i);
                     }
@@ -1248,19 +1247,6 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                     }
                 }
 
-                // upstream: the daemon receiver's per-file `log_item(FLOG)` writes
-                // (receiver.c:919 maybe_log_item / receiver.c:1290 log_item). oc
-                // collects them during the run and flushes them here in
-                // flist-index order, which is the order upstream logs them.
-                if let Some(dl) = daemon_log {
-                    for entry in ctx.drain_daemon_log_entries() {
-                        match entry {
-                            DaemonLogEntry::Row(row) => dl.sink.on_entry(&row),
-                            DaemonLogEntry::Message(line) => dl.sink.on_message(&line),
-                        }
-                    }
-                }
-
                 Ok(ServerStats::Receiver(stats))
             }
             ServerRole::Generator => {
@@ -1272,8 +1258,11 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // upstream: sender.c:500/585 - a daemon sender's `itemizing` is
                 // `logfile_format_has_i`, and every processed entry reaches
                 // `maybe_log_item()`/`log_item(FLOG)` for the module log file.
-                if let Some(dl) = daemon_log.as_ref().filter(|dl| dl.transfer_logging) {
-                    ctx.enable_daemon_log(dl.format_has_i);
+                if let Some(dl) = daemon_log.as_ref() {
+                    ctx.set_daemon_log_sink(dl.log.clone());
+                    if dl.transfer_logging {
+                        ctx.enable_daemon_log(dl.format_has_i);
+                    }
                 }
                 // upstream: io.c:938/977 - the sender's handle_stats() reports the raw
                 // descriptor counters. Hand the generator the transport-level wire
@@ -1293,7 +1282,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 if let Some(dl) = daemon_log {
                     for (_idx, rows) in ctx.drain_daemon_log_rows() {
                         for row in rows {
-                            dl.sink.on_entry(&row);
+                            dl.log.write_row(&row);
                         }
                     }
                 }
