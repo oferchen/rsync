@@ -146,9 +146,15 @@ pub(super) fn try_clone(
     // extension that must not weaken that invariant.
     #[cfg(unix)]
     let clone_method = {
-        let reader = context
-            .open_source_content(source)
-            .map_err(|error| super::super::open::source_open_error(source, error))?;
+        let reader = match context.open_source_content(source) {
+            Ok(reader) => reader,
+            Err(error) => {
+                context
+                    .summary_mut()
+                    .record_unopened_source(file_size, !destination_previously_existed);
+                return Err(super::super::open::source_open_error(source, error));
+            }
+        };
         let fresh = fast_io::CloneFreshTimes {
             crtime: !metadata_options.crtimes(),
             mtime: !metadata_options.times(),

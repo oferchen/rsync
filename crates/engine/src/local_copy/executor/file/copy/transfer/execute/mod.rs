@@ -358,9 +358,15 @@ pub(in crate::local_copy) fn execute_transfer_once(
         return Ok(TransferOutcome::Complete);
     }
 
-    let mut reader = context
-        .open_source_content(source)
-        .map_err(|error| source_open_error(source, error))?;
+    let mut reader = match context.open_source_content(source) {
+        Ok(reader) => reader,
+        Err(error) => {
+            context
+                .summary_mut()
+                .record_unopened_source(file_size, !destination_previously_existed);
+            return Err(source_open_error(source, error));
+        }
+    };
 
     // The number of bytes to actually move, as opposed to `file_size`, which is
     // the length the scan recorded and which every decision above is made from.

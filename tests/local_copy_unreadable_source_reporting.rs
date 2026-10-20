@@ -26,7 +26,10 @@ fn oc_rsync_binary() -> PathBuf {
 fn make_unreadable(path: &Path) -> bool {
     fs::set_permissions(path, fs::Permissions::from_mode(0o000)).expect("chmod 000");
     if fs::File::open(path).is_ok() {
-        eprintln!("SKIP: {} is still readable (running privileged)", path.display());
+        eprintln!(
+            "SKIP: {} is still readable (running privileged)",
+            path.display()
+        );
         return false;
     }
     true
@@ -83,4 +86,41 @@ fn each_unreadable_source_is_reported_then_the_run_is_summarised() {
         "no per-file cause is repeated in the summary: {stderr}"
     );
     assert_eq!(fs::read(dest.join("ok")).expect("ok copied"), b"ok");
+}
+
+/// An unreadable source still counts as a created, transferred file.
+///
+/// upstream: sender.c:625-635 bumps `stats.created_files` (for a new entry),
+/// `stats.xferred_files` and `stats.total_transferred_size` before it tries to
+/// open the file, so a failed open is counted like any other attempted send.
+/// Literal data stays at what was actually read.
+#[test]
+fn stats_count_an_unreadable_source_as_attempted() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    let dest = temp.path().join("dst");
+    fs::create_dir_all(source.join("sub")).expect("mkdir src/sub");
+    fs::create_dir_all(&dest).expect("mkdir dst");
+    fs::write(source.join("a.txt"), b"aaaa\n").expect("write a.txt");
+    fs::write(source.join("sub/b.txt"), vec![0u8; 1000]).expect("write b.txt");
+    if !make_unreadable(&source.join("sub/b.txt")) {
+        return;
+    }
+
+    let output = run(&["-a", "--stats"], &source, &dest);
+    let _ = fs::set_permissions(source.join("sub/b.txt"), fs::Permissions::from_mode(0o644));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(23), "stdout: {stdout}");
+    for expected in [
+        "Number of created files: 3 (reg: 2, dir: 1)",
+        "Number of regular files transferred: 2",
+        "Total transferred file size: 1,005 bytes",
+        "Literal data: 5 bytes",
+    ] {
+        assert!(
+            stdout.lines().any(|line| line == expected),
+            "missing `{expected}` (upstream 3.5.1 prints it for this fixture): {stdout}"
+        );
+    }
 }

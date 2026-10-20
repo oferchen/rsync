@@ -936,6 +936,24 @@ impl LocalCopySummary {
     ///
     /// upstream: receiver.c:924-938 / sender.c:587-600 - `stats.created_*++`
     /// under the `iflags & ITEM_IS_NEW` guard, keyed by the entry's mode.
+    /// Counts a regular file whose send was attempted but whose source could
+    /// not be opened.
+    ///
+    /// upstream: sender.c:625-635 - `stats.created_files` (for a new entry),
+    /// `stats.xferred_files` and `stats.total_transferred_size` grow before
+    /// the open, so a failed open still counts. Nothing was read, so literal
+    /// and matched data are left alone.
+    pub(in crate::local_copy) const fn record_unopened_source(
+        &mut self,
+        file_size: u64,
+        created: bool,
+    ) {
+        self.files_copied = self.files_copied.saturating_add(1);
+        self.transferred_file_size = self.transferred_file_size.saturating_add(file_size);
+        if created {
+            self.created_regular_files = self.created_regular_files.saturating_add(1);
+        }
+    }
     pub(in crate::local_copy) const fn record_created_regular_file(&mut self) {
         self.created_regular_files = self.created_regular_files.saturating_add(1);
     }
