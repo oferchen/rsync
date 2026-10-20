@@ -15,10 +15,11 @@ use windows::Win32::Security::Authorization::{
     SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows::Win32::Security::{
-    ACL, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetSecurityDescriptorDacl,
-    GetSecurityDescriptorGroup, GetSecurityDescriptorOwner, GetSecurityDescriptorSacl,
-    OBJECT_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, SACL_SECURITY_INFORMATION,
+    ACL, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetSecurityDescriptorControl,
+    GetSecurityDescriptorDacl, GetSecurityDescriptorGroup, GetSecurityDescriptorOwner,
+    GetSecurityDescriptorSacl, OBJECT_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SACL_SECURITY_INFORMATION,
+    SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -147,10 +148,9 @@ fn read_sddl_internal(path: &Path, include_sacl: bool) -> io::Result<String> {
 /// Parses an SDDL string and writes it to `path` as the security
 /// descriptor for owner, group, and DACL components.
 ///
-/// The DACL is applied with `PROTECTED_DACL_SECURITY_INFORMATION` so the
-/// destination does not silently inherit additional ACEs from its parent,
-/// matching the policy laid out in
-/// `docs/design/windows-ntfs-acl-support.md` section 5.2.
+/// The DACL protection flag follows the descriptor's own `P`/`AI` flags; see
+/// `dacl_protection_flag` and `docs/design/windows-ntfs-acl-support.md`
+/// section 5.2.
 ///
 /// SACL entries present in the SDDL string are applied only when the
 /// calling token holds `SE_SECURITY_NAME`. Without the privilege the OS
@@ -248,7 +248,15 @@ pub fn write_dacl_sddl(path: &Path, sddl: &str) -> io::Result<()> {
         None
     };
     let dacl_arg: Option<*const ACL> = if dacl_present.as_bool() && !pdacl.is_null() {
-        info |= DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+        let mut control: u16 = 0;
+        let mut revision: u32 = 0;
+        // SAFETY: `owned.pd` is non-null and owned; both out-params outlive
+        // the call.
+        unsafe {
+            GetSecurityDescriptorControl(owned.pd, &mut control, &mut revision)
+                .map_err(|e| io::Error::other(format!("GetSecurityDescriptorControl: {e}")))?;
+        }
+        info |= DACL_SECURITY_INFORMATION | dacl_protection_flag(control);
         Some(pdacl as *const ACL)
     } else {
         None
@@ -417,4 +425,23 @@ pub(super) fn parse_aces(dacl: &str) -> Vec<ParsedAce<'_>> {
         rest = &rest[open + 1 + close_rel + 1..];
     }
     out
+}
+
+/// Selects the DACL inheritance flag for `SetNamedSecurityInfoW` from the
+/// parsed descriptor's control bits.
+///
+/// `ConvertStringSecurityDescriptorToSecurityDescriptorW` maps the SDDL `P`
+/// and `AI` DACL flags onto `SE_DACL_PROTECTED` and `SE_DACL_AUTO_INHERITED`.
+/// An auto-inherited, unprotected DACL is written unprotected so the
+/// destination keeps inheriting from its parent. Every other DACL, including
+/// one with neither flag (synthesised from a POSIX ACL), is written protected
+/// so the destination gains no ACEs the source did not carry.
+pub(super) fn dacl_protection_flag(control: u16) -> OBJECT_SECURITY_INFORMATION {
+    let auto_inherited = control & SE_DACL_AUTO_INHERITED.0 != 0;
+    let protected = control & SE_DACL_PROTECTED.0 != 0;
+    if auto_inherited && !protected {
+        UNPROTECTED_DACL_SECURITY_INFORMATION
+    } else {
+        PROTECTED_DACL_SECURITY_INFORMATION
+    }
 }

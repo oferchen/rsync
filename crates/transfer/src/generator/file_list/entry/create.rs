@@ -354,7 +354,7 @@ impl GeneratorContext {
         }
 
         // upstream: flist.c:make_file() -> get_xattr() reads xattrs for -X mode
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.config.flags.xattrs {
             // upstream: xattrs.c:319-352 - get_xattr() only reads for regular files,
             // dirs, symlinks (if preserve_links), specials (if preserve_specials),
@@ -1782,5 +1782,97 @@ mod flist_checksum_tests {
             "without --checksum the flist carries no per-file sum \
              (upstream gates on always_checksum)",
         );
+    }
+}
+
+#[cfg(all(test, target_os = "windows", feature = "xattr"))]
+mod windows_ads_xattr_tests {
+    //! A Windows sender reads NTFS alternate data streams as xattrs only under
+    //! `-X`, the way upstream `flist.c:make_file()` calls `get_xattr()` only
+    //! when `preserve_xattrs` is set.
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    const STREAM: &str = "oc.ads.probe";
+
+    fn generator(xattrs: bool) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.flags.xattrs = xattrs;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    /// Writes a file carrying one named stream, or returns `None` when the
+    /// temp volume cannot hold streams (FAT/exFAT runners).
+    fn file_with_stream(tmp: &TempDir) -> Option<PathBuf> {
+        let path = tmp.path().join("carrier.txt");
+        std::fs::write(&path, b"data").expect("write file");
+        let stream = PathBuf::from(format!("{}:{STREAM}", path.display()));
+        std::fs::write(&stream, b"payload").ok()?;
+        Some(path)
+    }
+
+    fn stream_names(ctx: &GeneratorContext, path: &Path) -> Vec<String> {
+        let meta = std::fs::symlink_metadata(path).expect("symlink_metadata");
+        let entry = ctx
+            .create_entry(
+                path,
+                PathBuf::from("carrier.txt"),
+                &fast_io::pinned_root::SourceMetadata::from(meta),
+                2,
+            )
+            .expect("create_entry");
+        entry
+            .xattr_list()
+            .map(|list| {
+                list.iter()
+                    .map(|x| String::from_utf8_lossy(x.name()).into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn named_stream_is_sent_as_an_xattr_under_xattrs() {
+        let tmp = TempDir::new().expect("tempdir");
+        let Some(path) = file_with_stream(&tmp) else {
+            return;
+        };
+        let names = stream_names(&generator(true), &path);
+        assert!(
+            names.iter().any(|n| n.ends_with(STREAM)),
+            "the stream must reach the file list, got {names:?}"
+        );
+    }
+
+    #[test]
+    fn named_stream_is_not_read_without_xattrs() {
+        let tmp = TempDir::new().expect("tempdir");
+        let Some(path) = file_with_stream(&tmp) else {
+            return;
+        };
+        let names = stream_names(&generator(false), &path);
+        assert!(names.is_empty(), "no xattrs without -X, got {names:?}");
     }
 }
