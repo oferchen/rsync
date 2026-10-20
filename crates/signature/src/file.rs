@@ -90,6 +90,24 @@ mod tests {
         assert_eq!(sig.total_bytes(), 100);
     }
 
+    // WHY: a signature waiting in the pipeline window only needs its layout
+    // once its blocks are on the wire; keeping the blocks pins O(blocks) heap
+    // per in-flight file, while losing the layout breaks reconstruction.
+    #[test]
+    fn release_blocks_drops_blocks_and_keeps_layout() {
+        let layout = test_layout();
+        let rolling = checksums::RollingDigest::from_bytes(b"block");
+        let blocks = vec![
+            SignatureBlock::from_raw_parts(0, rolling, &[1; 16]),
+            SignatureBlock::from_raw_parts(1, rolling, &[2; 16]),
+        ];
+        let mut sig = FileSignature::from_raw_parts(layout, blocks, 1400);
+        sig.release_blocks();
+        assert!(sig.blocks().is_empty());
+        assert_eq!(sig.blocks.capacity(), 0, "the block allocation is freed");
+        assert_eq!(sig.layout(), layout);
+        assert_eq!(sig.total_bytes(), 1400);
+    }
     #[test]
     fn clone_signature() {
         let layout = test_layout();
