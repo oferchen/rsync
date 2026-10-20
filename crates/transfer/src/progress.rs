@@ -115,6 +115,35 @@ pub trait DaemonFileLog {
     fn on_message(&mut self, line: &[u8]);
 }
 
+/// Writes one diagnostic line to the daemon's log file as it is raised.
+///
+/// upstream: log.c:312-332 `rwrite()` hands a daemon's message to `logit()`,
+/// which writes and flushes it (log.c:135-137), before the `am_server` branch
+/// frames it for the peer (log.c:357-366). A shared handle, unlike the borrowed
+/// [`DaemonFileLog`], can be held by the sender for the whole run, so the log
+/// line is on disk before the client can read the frame.
+#[derive(Clone)]
+pub struct DaemonMessageLog(std::sync::Arc<MessageWriter>);
+
+type MessageWriter = dyn Fn(&[u8]) + Send + Sync;
+
+impl DaemonMessageLog {
+    /// Wraps the daemon-side writer for one log line.
+    pub fn new(write: impl Fn(&[u8]) + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(write))
+    }
+
+    /// Writes `line`, raw bytes without its trailing newline, to the log.
+    pub fn write(&self, line: &[u8]) {
+        (self.0)(line);
+    }
+}
+
+impl std::fmt::Debug for DaemonMessageLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DaemonMessageLog")
+    }
+}
 /// One line a server receiver queued for the daemon's module log.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DaemonLogEntry {

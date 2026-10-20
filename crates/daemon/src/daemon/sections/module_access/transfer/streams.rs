@@ -516,6 +516,10 @@ fn execute_transfer(
     let daemon_log = daemon_log_writer.as_mut().map(|w| DaemonLog {
         transfer_logging: transfer_format.is_some(),
         format_has_i: log_format_has(&w.fmt, 'i'),
+        messages: {
+            let log = Arc::clone(w.log);
+            DaemonMessageLog::new(move |line: &[u8]| log_raw_line(&log, line))
+        },
         sink: w,
     });
 

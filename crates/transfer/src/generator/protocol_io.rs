@@ -442,9 +442,10 @@ impl GeneratorContext {
     /// this: a client sender's buffer belongs to its own summary renderer.
     /// `logging::drain_events_for_peer` applies the `--quiet` gate on FINFO.
     ///
-    /// A daemon also logs each line (log.c:312-332 `logit()` before the send):
-    /// the framed text is queued again as `FLOG`, which no peer drain takes,
-    /// so the daemon's end-of-session log drain still writes it.
+    /// A daemon also logs each line, and does so before the frame is written,
+    /// as upstream's `logit()` writes and flushes it ahead of `send_msg()`
+    /// (log.c:312-332, 357-366). Logging first means a client that has read
+    /// the frame can rely on the line already being in the daemon log.
     pub(super) fn flush_thread_local_diagnostics<W: Write>(
         &mut self,
         writer: &mut super::super::writer::ServerWriter<W>,
@@ -452,7 +453,6 @@ impl GeneratorContext {
         if self.config.connection.client_mode || !writer.is_multiplexed() {
             return Ok(());
         }
-        let am_daemon = self.config.connection.served_module_root().is_some();
         for event in logging::drain_events_for_peer() {
             let (code, mut text) = match event {
                 logging::DiagnosticEvent::Info { code, message, .. }
@@ -461,13 +461,8 @@ impl GeneratorContext {
                     (code, String::from_utf8_lossy(&message).into_owned())
                 }
             };
-            if am_daemon {
-                logging::emit_info_coded(
-                    logging::InfoFlag::Misc,
-                    0,
-                    logging::LogCode::Log,
-                    text.clone(),
-                );
+            if let Some(log) = &self.daemon_message_log {
+                log.write(text.as_bytes());
             }
             text.push('\n');
             match code {

@@ -46,9 +46,10 @@ use core::{
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     server::{
-        DaemonFileLog, DaemonLog, DaemonLogRow, HandshakeResult, ReferenceDirectory,
-        ReferenceDirectoryKind, ServerConfig, ServerResult, ServerRole, ServerStats,
-        ServerTransferHooks, config::parse_block_size_arg, run_server_with_handshake_adopting,
+        DaemonFileLog, DaemonLog, DaemonLogRow, DaemonMessageLog, HandshakeResult,
+        ReferenceDirectory, ReferenceDirectoryKind, ServerConfig, ServerResult, ServerRole,
+        ServerStats, ServerTransferHooks, config::parse_block_size_arg,
+        run_server_with_handshake_adopting,
     },
 };
 use logging_sink::MessageSink;

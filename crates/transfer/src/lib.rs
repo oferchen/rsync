@@ -203,8 +203,8 @@ pub use pipeline::{
     PipelineConfig, PipelineState,
 };
 pub use progress::{
-    DaemonFileLog, DaemonLogEntry, DaemonLogRow, ItemizeCallback, ItemizeRow, OwnedItemizeRow,
-    TransferProgressCallback, TransferProgressEvent,
+    DaemonFileLog, DaemonLogEntry, DaemonLogRow, DaemonMessageLog, ItemizeCallback, ItemizeRow,
+    OwnedItemizeRow, TransferProgressCallback, TransferProgressEvent,
 };
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
 
@@ -710,6 +710,8 @@ pub struct DaemonLog<'d> {
     pub format_has_i: bool,
     /// Per-entry sink that renders and writes each daemon-log line.
     pub sink: &'d mut dyn DaemonFileLog,
+    /// Writes a framed diagnostic to the log before the frame is sent.
+    pub messages: DaemonMessageLog,
 }
 
 /// Optional side-channels for a server transfer.
@@ -1272,8 +1274,11 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // upstream: sender.c:500/585 - a daemon sender's `itemizing` is
                 // `logfile_format_has_i`, and every processed entry reaches
                 // `maybe_log_item()`/`log_item(FLOG)` for the module log file.
-                if let Some(dl) = daemon_log.as_ref().filter(|dl| dl.transfer_logging) {
-                    ctx.enable_daemon_log(dl.format_has_i);
+                if let Some(dl) = daemon_log.as_ref() {
+                    ctx.set_daemon_message_log(dl.messages.clone());
+                    if dl.transfer_logging {
+                        ctx.enable_daemon_log(dl.format_has_i);
+                    }
                 }
                 // upstream: io.c:938/977 - the sender's handle_stats() reports the raw
                 // descriptor counters. Hand the generator the transport-level wire
