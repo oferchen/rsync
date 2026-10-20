@@ -24,7 +24,7 @@ for detail.
 |---|---|---|
 | CVE-2026-53784 | Fixed | #7304 |
 | CVE-2026-53785 | Fixed | #7393, #7415, #7565 |
-| CVE-2026-53786 | Fixed | #8223, #PRNUM |
+| CVE-2026-53786 | Fixed | #8223, #8227 |
 | CVE-2026-53788 | Fixed | #7346, #7682 |
 | CVE-2026-53789 | Fixed | #7446 |
 | CVE-2026-53790 | Fixed | #7430, #7445, #7465 |
@@ -109,7 +109,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - Read a name-converter answer strictly, so an empty or non-numeric answer is an unknown name rather than id 0, and open `--motd-file` and the `pid file` the way upstream does (CVE-2026-53798, CVE-2026-53803, #8108)
 - Mirror upstream's auth challenge randomness, rsh peer address, PTR forward-confirmation and auth-user rules (#8190)
 - A client's per-directory merge rule can no longer make the daemon read a file its module filter hides, on a push or a pull; the gate matches the module-relative path as upstream does (CVE-2026-53786, #8223)
-- Filter options a client forwards to a daemon with `-M` (`--filter`, `--exclude`, `--include`, `--exclude-from`, `--include-from`, `-F`) are now applied like upstream instead of being silently dropped: argv rules rank ahead of the client filter list, so a push with `--delete -M--exclude=x` no longer deletes `x`. Every file they name is sanitized to the module, opened only beneath its root and treated as absent when the module hides it, and a hidden `-from` file rejects the options with upstream's message (#PRNUM).
+- Filter options a client forwards to a daemon with `-M` (`--filter`, `--exclude`, `--include`, `--exclude-from`, `--include-from`, `-F`) are now applied like upstream instead of being silently dropped: argv rules rank ahead of the client filter list, so a push with `--delete -M--exclude=x` no longer deletes `x`. Every file they name is sanitized to the module, opened only beneath its root and treated as absent when the module hides it, and a hidden `-from` file rejects the options with upstream's message (#8227).
 
 **Peer-supplied input**
 - Bound the equal-weak-checksum chain in the matcher (CVE-2026-70453, #7293, #7878)
