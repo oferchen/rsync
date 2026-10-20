@@ -111,8 +111,8 @@ fn short_final_block_len(index: &DeltaSignatureIndex, block_len: usize) -> Optio
 /// The sequential scan ([`DeltaGenerator::generate`]) flushes its pending
 /// literal accumulator into one `Literal` token every time it reaches this many
 /// bytes, so a match-free region is framed as a run of fixed-size literal tokens
-/// (the final partial run aside). The parallel merge ([`resegment_literals`])
-/// re-splits its gap literals at exactly this same cadence, so both paths frame
+/// (the final partial run aside). The parallel merge ([`push_split_literal_slice`])
+/// splits its gap literals at exactly this same cadence, so both paths frame
 /// literals identically by construction rather than by coincidence.
 ///
 /// upstream: match.c:372-373 (`backup >= s->blength+CHUNK_SIZE`).
@@ -1185,7 +1185,7 @@ impl DeltaGenerator {
     /// the identical "first match wins, then skip its bytes" rule the sequential
     /// [`Self::generate`] applies. Gaps are literal bytes taken straight from
     /// `source`, so a boundary can never drop or duplicate a byte, and
-    /// `resegment_literals` frames those gaps at the shared
+    /// `push_split_literal_slice` frames those gaps at the shared
     /// `literal_flush_cadence`.
     ///
     /// # Wire transparency
