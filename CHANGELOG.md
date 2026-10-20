@@ -140,6 +140,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - Refuse a negative hard-link reference and bound the live xattr count (CVE-2026-70458, #8173)
 - Step the zstd token decoder through a fixed output buffer (#8172)
 - Write received xattrs through a leaf pinned beneath the destination root, and on Linux ACLs too, special files included; macOS and the BSDs apply ACLs by path, as upstream does (CVE-2026-53799, #8167, #8201)
+- Bump `rustls-webpki` to 0.103.16, which rejects certificate paths through the distrusted emSign intermediates (RUSTSEC-2026-0382, #8228)
 
 ### Added
 
