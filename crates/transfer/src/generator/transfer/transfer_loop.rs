@@ -1250,12 +1250,19 @@ impl GeneratorContext {
                 // scan runs.
                 matching::trace_deltasum::trace_send_files_mapped(&source_path_display, file_size);
                 matching::trace_deltasum::trace_calling_match_sums(&source_path_display);
-                let (delta_script, scan_counters) = match source_mmap.as_ref() {
-                    Some(mmap) => generate_delta_from_signature_chunked(
-                        mmap.as_slice(),
-                        config,
-                        cores.min(PARALLEL_DELTA_MAX_CHUNKS),
-                    )?,
+                let (delta_script, scan_counters) = match source_mmap {
+                    // The map is dropped at the end of this arm: literals are
+                    // detached first so the write phase re-reads matched blocks
+                    // through read(2), where a concurrent truncation is a read
+                    // error, never SIGBUS. upstream: fileio.c map_ptr() reads.
+                    Some(mmap) => {
+                        let (script, counters) = generate_delta_from_signature_chunked(
+                            mmap.as_slice(),
+                            config,
+                            cores.min(PARALLEL_DELTA_MAX_CHUNKS),
+                        )?;
+                        (script.into_owned(), counters)
+                    }
                     None => generate_delta_from_signature(
                         scan_source
                             .as_mut()
@@ -1319,7 +1326,6 @@ impl GeneratorContext {
                         is_zlib,
                         &source_path,
                         &source_open,
-                        source_mmap.as_ref().map(|m| m.as_slice()),
                         checksum_algorithm,
                         self.checksum_seed,
                         self.protocol,

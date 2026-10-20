@@ -40,6 +40,15 @@ impl<'a> DeltaToken<'a> {
         }
     }
 
+    /// Detaches the token from the buffer a borrowed literal points into.
+    #[must_use]
+    pub fn into_owned(self) -> DeltaToken<'static> {
+        match self {
+            DeltaToken::Literal(bytes) => DeltaToken::Literal(Cow::Owned(bytes.into_owned())),
+            DeltaToken::Copy { index, len } => DeltaToken::Copy { index, len },
+        }
+    }
+
     /// Returns `true` when the token is a literal payload.
     #[must_use]
     pub const fn is_literal(&self) -> bool {
@@ -70,6 +79,25 @@ impl<'a> DeltaScript<'a> {
     #[must_use]
     pub fn tokens(&self) -> &[DeltaToken<'a>] {
         &self.tokens
+    }
+
+    /// Detaches every literal from the source buffer it borrows.
+    ///
+    /// A script scanned from a memory map must not outlive the scan with
+    /// borrowed literals: the write phase can block on the network for a long
+    /// time, and a truncation of the mapped file in that window would turn the
+    /// next literal access into SIGBUS instead of a read error.
+    #[must_use]
+    pub fn into_owned(self) -> DeltaScript<'static> {
+        DeltaScript {
+            tokens: self
+                .tokens
+                .into_iter()
+                .map(DeltaToken::into_owned)
+                .collect(),
+            total_bytes: self.total_bytes,
+            literal_bytes: self.literal_bytes,
+        }
     }
 
     /// Consumes the script and returns its token list.
@@ -447,5 +475,27 @@ mod tests {
         let mut output = Vec::new();
         apply_delta(&mut basis, &mut output, &index, &script).expect("apply");
         assert_eq!(output, b"hello world");
+    }
+
+    /// Borrowed literals must come back owned, byte for byte, so the script can
+    /// outlive the buffer it was scanned from.
+    #[test]
+    fn into_owned_detaches_borrowed_literals() {
+        let source = b"borrowed literal".to_vec();
+        let script = DeltaScript::new(
+            vec![
+                DeltaToken::Literal(Cow::Borrowed(&source[..8])),
+                DeltaToken::Copy { index: 3, len: 5 },
+            ],
+            13,
+            8,
+        );
+        let owned = script.clone().into_owned();
+        drop(source);
+        assert!(
+            matches!(&owned.tokens()[0], DeltaToken::Literal(Cow::Owned(b)) if b == b"borrowed")
+        );
+        assert_eq!(owned.tokens()[1], DeltaToken::Copy { index: 3, len: 5 });
+        assert_eq!((owned.total_bytes(), owned.literal_bytes()), (13, 8));
     }
 }

@@ -986,12 +986,10 @@ pub(super) struct InlineChecksumResult {
 /// Supplies the source bytes behind each matched block for the inline checksum
 /// and the compressor dictionary.
 ///
-/// Matched blocks borrow from the source mapping when the parallel scan already
-/// mapped the file; otherwise they are re-read from a lazily opened file whose
-/// position is reused while blocks stay sequential, so a run of adjacent
-/// matches costs no `lseek`.
-struct CopySource<'m> {
-    mmap: Option<&'m [u8]>,
+/// Matched blocks are re-read from a lazily opened file whose position is
+/// reused while blocks stay sequential, so a run of adjacent matches costs no
+/// `lseek`.
+struct CopySource {
     file: Option<io::BufReader<std::fs::File>>,
     /// File position after the last fully read block, when known.
     position: Option<u64>,
@@ -1001,20 +999,18 @@ struct CopySource<'m> {
     read_error: Option<io::Error>,
 }
 
-impl<'m> CopySource<'m> {
+impl CopySource {
     fn open(
         has_copies: bool,
-        mmap: Option<&'m [u8]>,
         path: &Path,
         source_open: &super::open_source::SourceOpen,
     ) -> io::Result<Self> {
-        let file = if has_copies && mmap.is_none() {
+        let file = if has_copies {
             Some(io::BufReader::new(source_open.open(path)?))
         } else {
             None
         };
         Ok(Self {
-            mmap,
             file,
             position: None,
             buf: Vec::new(),
@@ -1024,18 +1020,6 @@ impl<'m> CopySource<'m> {
 
     /// Returns the `len` source bytes at `offset`, zero-filled on a read error.
     fn block(&mut self, offset: u64, len: usize) -> io::Result<&[u8]> {
-        if let Some(mmap) = self.mmap {
-            let range = usize::try_from(offset)
-                .ok()
-                .and_then(|start| Some(start..start.checked_add(len)?))
-                .filter(|range| range.end <= mmap.len());
-            if let Some(range) = range {
-                return Ok(&mmap[range]);
-            }
-            self.read_error.get_or_insert_with(|| {
-                io::Error::new(io::ErrorKind::UnexpectedEof, "source mmap out of bounds")
-            });
-        }
         self.buf.clear();
         self.buf.resize(len, 0);
         if let Some(file) = self.file.as_mut() {
@@ -1078,7 +1062,6 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
     is_zlib: bool,
     source_path: &Path,
     source_open: &super::open_source::SourceOpen,
-    source_mmap: Option<&[u8]>,
     checksum_algorithm: ChecksumAlgorithm,
     checksum_seed: i32,
     protocol: protocol::ProtocolVersion,
@@ -1091,7 +1074,7 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
         ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
     let has_copies = ops.iter().any(|op| matches!(op, WireOp::Copy { .. }));
-    let mut copy_source = CopySource::open(has_copies, source_mmap, source_path, source_open)?;
+    let mut copy_source = CopySource::open(has_copies, source_path, source_open)?;
     let mut source_offset: u64 = 0;
     // upstream: match.c matched()/send_token() accumulate stats.matched_data
     // and stats.literal_data as each token is emitted on the sender.
@@ -1457,7 +1440,6 @@ mod tests {
             false,
             &source_path,
             &crate::generator::open_source::SourceOpen::new(None, None, false, false),
-            None,
             ChecksumAlgorithm::MD5,
             0,
             proto(31),
@@ -1486,57 +1468,6 @@ mod tests {
             &result.checksum_buf[..result.checksum_len],
             &expected_buf[..expected_len],
             "inline checksum must equal checksum of source bytes covered by the script",
-        );
-    }
-
-    #[test]
-    fn write_delta_inline_checksum_with_source_mmap() {
-        let block_a = vec![0x11u8; 64];
-        let lit_b = vec![0x22u8; 32];
-        let block_c = vec![0x33u8; 64];
-        let mut source = Vec::new();
-        source.extend_from_slice(&block_a);
-        source.extend_from_slice(&lit_b);
-        source.extend_from_slice(&block_c);
-
-        let ops = vec![
-            WireOp::Copy {
-                block_index: 0,
-                length: block_a.len() as u32,
-            },
-            WireOp::Literal(&lit_b),
-            WireOp::Copy {
-                block_index: 1,
-                length: block_c.len() as u32,
-            },
-        ];
-
-        let mut wire = Vec::new();
-        // Path does not exist - verifies that no filesystem open occurs when mmap is supplied.
-        let result = write_delta_with_inline_checksum(
-            &mut wire,
-            &ops,
-            None,
-            false,
-            Path::new("/nonexistent/source/mmap/test"),
-            &crate::generator::open_source::SourceOpen::new(None, None, false, false),
-            Some(&source),
-            ChecksumAlgorithm::MD5,
-            0,
-            proto(31),
-        )
-        .expect("write_delta_with_inline_checksum using source_mmap");
-
-        let mut expected = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
-        expected.update(&source);
-        let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-        let expected_len = expected.finalize_into(&mut expected_buf);
-
-        assert!(result.read_error.is_none());
-        assert_eq!(result.checksum_len, expected_len);
-        assert_eq!(
-            &result.checksum_buf[..result.checksum_len],
-            &expected_buf[..expected_len],
         );
     }
 
@@ -2384,7 +2315,6 @@ mod tests {
             false,
             temp.path(),
             &crate::generator::open_source::SourceOpen::new(None, None, false, false),
-            None,
             ChecksumAlgorithm::MD5,
             0,
             proto(31),
