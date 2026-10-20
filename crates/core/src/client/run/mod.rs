@@ -572,7 +572,15 @@ fn run_client_internal(
         adapter.start();
     }
 
-    let summary = if collect_events {
+    // A local copy bypasses the wire protocol; `bytes_sent` holds only the
+    // literal file data. Match upstream's `File list size: 0` for local copies
+    // (mirrors `from_report`) instead of folding the enumerated path lengths
+    // into `sent`. Covers `--stats` without `-v`/`-P`.
+    let summarize_plain = |mut summary: engine::local_copy::LocalCopySummary| {
+        summary.clear_file_list_size();
+        ClientSummary::from_summary(summary)
+    };
+    let outcome = if collect_events {
         plan.execute_with_report_and_handler(
             mode,
             options,
@@ -589,18 +597,19 @@ fn run_client_internal(
                 .as_mut()
                 .map(ClientProgressForwarder::as_handler_mut),
         )
-        .map(|mut summary| {
-            // A local copy bypasses the wire protocol; `bytes_sent` holds only
-            // the literal file data. Match upstream's `File list size: 0` for
-            // local copies (mirrors `from_report`) instead of folding the
-            // enumerated path lengths into `sent`. Covers `--stats` without
-            // `-v`/`-P`.
-            summary.clear_file_list_size();
-            ClientSummary::from_summary(summary)
-        })
+        .map(summarize_plain)
     };
-
-    let mut summary = summary.map_err(map_local_copy_error)?;
+    // A run that processed every entry but still owes an exit code (a failed
+    // file, a vanished source, `--max-delete`) keeps its summary, so its
+    // itemize lines and statistics are rendered before the exit trailer.
+    let (mut summary, exit_error) = match outcome {
+        Ok(summary) => (summary, None),
+        Err(mut error) => match error.take_completed_report() {
+            Some(report) if collect_events => (ClientSummary::from_report(report), Some(error)),
+            Some(report) => (summarize_plain(report.into_summary()), Some(error)),
+            None => return Err(map_local_copy_error(error)),
+        },
+    };
     // upstream: a local copy runs at `--protocol=N` when given (compat.c:629-637),
     // which gates the protocol-dependent --stats lines (main.c:434-448).
     if let Some(protocol) = config.protocol_version() {
@@ -623,8 +632,10 @@ fn run_client_internal(
     {
         batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, true)?;
     }
-
-    Ok(summary)
+    match exit_error {
+        None => Ok(summary),
+        Some(error) => Err(map_local_copy_error(error).with_completed_summary(summary)),
+    }
 }
 
 /// Applies the `--max-alloc` cap from the [`ClientConfig`] to the global

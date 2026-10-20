@@ -269,156 +269,162 @@ where
         run_client_with_observer(config, observer)
     };
 
-    match result {
-        Ok(summary) => {
-            let live_rendered = live_progress
-                .as_ref()
-                .map_or_else(LiveRendered::default, LiveProgress::live_rendered);
-            let suppress_updated_only_totals =
-                itemize_changes && stats_level == 0 && verbosity == 0;
+    // upstream: cleanup.c:210-218 - a run that finished every entry still
+    // writes its itemize lines and statistics before log_exit()'s trailer, even
+    // when io_error makes the exit code non-zero; only an aborted run has none.
+    let (summary, failure) = match result {
+        Ok(summary) => (Some(summary), None),
+        Err(mut error) => (error.take_completed_summary(), Some(error)),
+    };
+    if let Some(summary) = &summary {
+        let live_rendered = live_progress
+            .as_ref()
+            .map_or_else(LiveRendered::default, LiveProgress::live_rendered);
+        let suppress_updated_only_totals = itemize_changes && stats_level == 0 && verbosity == 0;
 
-            if let Some(observer) = live_progress
-                && let Err(error) = observer.finish()
-            {
-                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                    writeln!(writer, "warning: failed to render progress output: {error}")
-                });
-            }
-
-            // upstream: log.c:272-373 rwrite() writes each diagnostic the moment
-            // it is produced, so it lands among the per-file lines rather than
-            // after them. oc buffers the event stream and renders it here, so
-            // the diagnostics have to be merged back in by production order.
-            // This is the only place that holds both streams, so it is where the
-            // stream split has to happen: `emit_transfer_summary` receives one
-            // writer and can only carry the half bound for it.
-            //
-            // `FLOG` events stay queued - the log-file sink below takes those.
-            let (interleaved, other_stream) =
-                partition_by_summary_stream(drain_stamped_events_for_client(), msgs_to_stderr);
-            let mut pending =
-                PendingDiagnostics::new(interleaved, EscapeStyle::terminal(eight_bit_output));
-            if !other_stream.is_empty() {
-                let _ = render_diagnostic_events(
-                    &other_stream,
-                    stdout,
-                    stderr.writer_mut(),
-                    msgs_to_stderr,
-                );
-            }
-            // upstream: log.c:344-345 - rwrite() returns without writing any
-            // FINFO line under --quiet (FCLIENT is rewritten to FINFO first), so
-            // the listing, names, itemize rows and stats never reach the client.
-            // Only the diagnostics interleaved on this stream survive.
-            let quiet = logging::finfo_suppressed();
-            if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                if quiet {
-                    return pending.finish(writer);
-                }
-                emit_transfer_summary(
-                    &summary,
-                    verbosity,
-                    requested_progress_mode,
-                    stats_level,
-                    live_rendered,
-                    list_only,
-                    dry_run,
-                    only_write_batch,
-                    out_format_template,
-                    &out_format_context,
-                    name_level,
-                    name_overridden,
-                    human_readable_mode,
-                    suppress_updated_only_totals,
-                    flist_banner,
-                    delta_notice,
-                    show_copy_method,
-                    show_atimes,
-                    show_crtimes,
-                    EscapeStyle::terminal(eight_bit_output),
-                    writer,
-                    &mut pending,
-                )
-            }) {
-                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                    writeln!(
-                        writer,
-                        "warning: failed to render transfer summary: {error}"
-                    )
-                });
-            }
-
-            if let Some(mut log) = log_file
-                && let Err(error) = emit_log_output(EmitLogOutputParams {
-                    summary: &summary,
-                    log: &mut log,
-                    flog_events: logging::drain_events_coded(LogCode::Log),
-                    verbosity,
-                    stats_level,
-                    list_only,
-                    name_level,
-                    name_overridden,
-                    human_readable_mode,
-                    is_sender,
-                    is_pull,
-                    preserve_owner,
-                    preserve_group,
-                    itemize_repeated,
-                    show_atimes,
-                    show_crtimes,
-                    preserve_links,
-                    full_checksum_algorithm,
-                    always_checksum,
-                })
-            {
-                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                    writeln!(writer, "warning: failed to append to log file: {error}")
-                });
-            }
-            // upstream: log.c:log_exit() maps the accumulated io_error /
-            // got_xfer_error into RERR_* exit codes. A transfer can complete
-            // its summary yet still owe a non-zero code (e.g. a receiver that
-            // discarded a file because its output mkstemp() failed reports exit
-            // 23 via MSG_ERROR_XFER). Honour it here instead of forcing 0.
-            //
-            // 430: latch the decided code at this decision site, mirroring
-            // upstream's `_exit_cleanup(RERR_*)` at the error site
-            // (cleanup.c:113-117). A second interrupt arriving while this code
-            // propagates back to `run`'s tail then finds the latch already set
-            // and cannot substitute RERR_SIGNAL.
-            let code = summary.io_error_exit_code().unwrap_or(0);
-            if code != 0 {
-                emit_exit_diagnostic(code, is_sender, stderr);
-            }
-            core::exit_code::record_exit(core::exit_code::process_latch(), code)
+        if let Some(observer) = live_progress
+            && let Err(error) = observer.finish()
+        {
+            let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                writeln!(writer, "warning: failed to render progress output: {error}")
+            });
         }
-        Err(error) => {
-            if let Some(observer) = live_progress
-                && let Err(err) = observer.finish()
-            {
-                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                    writeln!(writer, "warning: failed to render progress output: {err}")
-                });
-            }
 
-            // upstream: rprintf(FERROR, RSYNC_NAME ": ...") lines that precede
-            // the log_exit() trailer, e.g. io.c:298-303 whine_about_eof().
-            if let Some(line) = error.program_line() {
-                let program = stderr.brand().client_program_name();
-                let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
-            }
-            let message: &Message = error.message();
-            emit_message_with_fallback(
-                message,
-                "rsync error: client functionality is unavailable in this build (code 1)",
-                stderr,
+        // upstream: log.c:272-373 rwrite() writes each diagnostic the moment
+        // it is produced, so it lands among the per-file lines rather than
+        // after them. oc buffers the event stream and renders it here, so
+        // the diagnostics have to be merged back in by production order.
+        // This is the only place that holds both streams, so it is where the
+        // stream split has to happen: `emit_transfer_summary` receives one
+        // writer and can only carry the half bound for it.
+        //
+        // `FLOG` events stay queued - the log-file sink below takes those.
+        let (interleaved, other_stream) =
+            partition_by_summary_stream(drain_stamped_events_for_client(), msgs_to_stderr);
+        let mut pending =
+            PendingDiagnostics::new(interleaved, EscapeStyle::terminal(eight_bit_output));
+        if !other_stream.is_empty() {
+            let _ = render_diagnostic_events(
+                &other_stream,
+                stdout,
+                stderr.writer_mut(),
+                msgs_to_stderr,
             );
-            // 430: latch the decided error code at the site that maps it, so a
-            // second interrupt during unwinding cannot overwrite it with
-            // RERR_SIGNAL (upstream: cleanup.c:113-117).
-            core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
         }
+        // upstream: log.c:344-345 - rwrite() returns without writing any
+        // FINFO line under --quiet (FCLIENT is rewritten to FINFO first), so
+        // the listing, names, itemize rows and stats never reach the client.
+        // Only the diagnostics interleaved on this stream survive.
+        let quiet = logging::finfo_suppressed();
+        if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+            if quiet {
+                return pending.finish(writer);
+            }
+            emit_transfer_summary(
+                summary,
+                verbosity,
+                requested_progress_mode,
+                stats_level,
+                live_rendered,
+                list_only,
+                dry_run,
+                only_write_batch,
+                out_format_template,
+                &out_format_context,
+                name_level,
+                name_overridden,
+                human_readable_mode,
+                suppress_updated_only_totals,
+                flist_banner,
+                delta_notice,
+                show_copy_method,
+                show_atimes,
+                show_crtimes,
+                EscapeStyle::terminal(eight_bit_output),
+                writer,
+                &mut pending,
+            )
+        }) {
+            let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                writeln!(
+                    writer,
+                    "warning: failed to render transfer summary: {error}"
+                )
+            });
+        }
+
+        if let Some(mut log) = log_file
+            && let Err(error) = emit_log_output(EmitLogOutputParams {
+                summary,
+                log: &mut log,
+                flog_events: logging::drain_events_coded(LogCode::Log),
+                verbosity,
+                stats_level,
+                list_only,
+                name_level,
+                name_overridden,
+                human_readable_mode,
+                is_sender,
+                is_pull,
+                preserve_owner,
+                preserve_group,
+                itemize_repeated,
+                show_atimes,
+                show_crtimes,
+                preserve_links,
+                full_checksum_algorithm,
+                always_checksum,
+            })
+        {
+            let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                writeln!(writer, "warning: failed to append to log file: {error}")
+            });
+        }
+    } else if let Some(observer) = live_progress
+        && let Err(err) = observer.finish()
+    {
+        let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+            writeln!(writer, "warning: failed to render progress output: {err}")
+        });
     }
+    let Some(error) = failure else {
+        // upstream: log.c:log_exit() maps the accumulated io_error /
+        // got_xfer_error into RERR_* exit codes. A transfer can complete
+        // its summary yet still owe a non-zero code (e.g. a receiver that
+        // discarded a file because its output mkstemp() failed reports exit
+        // 23 via MSG_ERROR_XFER). Honour it here instead of forcing 0.
+        //
+        // 430: latch the decided code at this decision site, mirroring
+        // upstream's `_exit_cleanup(RERR_*)` at the error site
+        // (cleanup.c:113-117). A second interrupt arriving while this code
+        // propagates back to `run`'s tail then finds the latch already set
+        // and cannot substitute RERR_SIGNAL.
+        let code = summary
+            .as_ref()
+            .and_then(|summary| summary.io_error_exit_code())
+            .unwrap_or(0);
+        if code != 0 {
+            emit_exit_diagnostic(code, is_sender, stderr);
+        }
+        return core::exit_code::record_exit(core::exit_code::process_latch(), code);
+    };
+
+    // upstream: rprintf(FERROR, RSYNC_NAME ": ...") lines that precede
+    // the log_exit() trailer, e.g. io.c:298-303 whine_about_eof().
+    if let Some(line) = error.program_line() {
+        let program = stderr.brand().client_program_name();
+        let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+    }
+    let message: &Message = error.message();
+    emit_message_with_fallback(
+        message,
+        "rsync error: client functionality is unavailable in this build (code 1)",
+        stderr,
+    );
+    // 430: latch the decided error code at the site that maps it, so a
+    // second interrupt during unwinding cannot overwrite it with
+    // RERR_SIGNAL (upstream: cleanup.c:113-117).
+    core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
 }
 
 /// Prints the closing `rsync error: ... (code N)` line a remote transfer owes

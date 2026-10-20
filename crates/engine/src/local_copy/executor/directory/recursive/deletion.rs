@@ -77,15 +77,19 @@ pub(super) fn apply_during_transfer_deletions(
     if !deletion_enabled {
         return Ok(());
     }
-
-    // When I/O errors occurred and --ignore-errors is not set, suppress
-    // deletions to prevent data loss (upstream rsync behavior) and emit the
-    // one-shot skip notice. upstream: generator.c:304-311.
-    if context.delete_pass_blocked_by_io_error() {
+    // upstream: generator.c:304-311 - delete_in_dir() suppresses its sweep
+    // after an I/O error unless --ignore-errors, printing the one-shot skip
+    // notice; a timing that sweeps nothing here never reaches that check.
+    let timing = effective_delete_timing(context, delete_timing);
+    let sweeps_here = match timing {
+        DeleteTiming::During => true,
+        DeleteTiming::Delay => delay_decides_during(context),
+        DeleteTiming::Before | DeleteTiming::After => false,
+    };
+    if !sweeps_here || context.delete_pass_blocked_by_io_error() {
         return Ok(());
     }
-
-    match effective_delete_timing(context, delete_timing) {
+    match timing {
         DeleteTiming::During => {
             // A multi-source transfer can walk the same destination directory
             // once per contributing operand; upstream sweeps each merged-flist
@@ -128,15 +132,19 @@ pub(super) fn handle_post_transfer_deletions(
     if !deletion_enabled {
         return Ok(());
     }
-
-    // When I/O errors occurred and --ignore-errors is not set, suppress
-    // deletions to prevent data loss (upstream rsync behavior) and emit the
-    // one-shot skip notice. upstream: generator.c:304-311.
-    if context.delete_pass_blocked_by_io_error() {
+    // upstream: generator.c:304-311 - delete_in_dir() suppresses its sweep
+    // after an I/O error unless --ignore-errors, printing the one-shot skip
+    // notice; only a timing that still sweeps here reaches that check.
+    let timing = effective_delete_timing(context, delete_timing);
+    let sweeps_here = match timing {
+        DeleteTiming::Before | DeleteTiming::During => false,
+        DeleteTiming::Delay => !delay_decides_during(context),
+        DeleteTiming::After => true,
+    };
+    if !sweeps_here || context.delete_pass_blocked_by_io_error() {
         return Ok(());
     }
-
-    match effective_delete_timing(context, delete_timing) {
+    match timing {
         DeleteTiming::Before | DeleteTiming::During => {
             // Before: already handled by apply_pre_transfer_deletions.
             // During: already handled by apply_during_transfer_deletions.
