@@ -207,15 +207,6 @@ daemon: `off` (default - standard IOCP socket path), `auto` (attempt
 RIO, fall back to IOCP when unavailable), or `on` (require RIO).
 Case-insensitive; unknown values mean `off`. Experimental.
 
-### OC_RSYNC_BWLIMIT_BACKEND
-
-Sleep primitive used by the `--bwlimit` pacing loop. Values
-(case-insensitive): `std` / `thread` for `std::thread::sleep`, `kqueue` /
-`timer` for the macOS kqueue `EVFILT_TIMER` sleeper (sub-millisecond
-resolution). Default: kqueue on macOS, std elsewhere. Unknown values
-fall back to the platform default; the kqueue request is ignored on
-non-macOS hosts.
-
 ### OC_RSYNC_FORCE_ROOTLESS_CONTAINER
 
 Forces the rootless-container detection to report a rootless verdict, so

@@ -1,5 +1,10 @@
 # KQ-1: kqueue capability audit vs transfer pipeline needs
 
+> **Superseded in part (#PRNUM).** The `EVFILT_TIMER` `TimerSleeper` and the
+> bandwidth limiter's kqueue backend were removed: the limiter sleeps with
+> `std::thread::sleep`, as upstream `io.c:sleep_for_bwlimit()` sleeps in
+> `select()` only for delays of 100 ms or more. The timer rows below are history.
+
 Parent: KQ (#4189). Sibling docs:
 
 - `docs/design/macos-kqueue-fast-io.md` - design rationale for the
