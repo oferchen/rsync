@@ -21,6 +21,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::BufReader;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -33,7 +34,7 @@ use rsync_io::ssh::embedded::SshConfig;
 use super::super::config::ClientConfig;
 #[allow(unused_imports)] // REASON: used in tests
 use super::super::config::EmbeddedSshOptions;
-use super::super::error::{ClientError, invalid_argument_error};
+use super::super::error::{ClientError, invalid_argument_error, remote_exit_error};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::{build_batch_context, build_batch_recording};
@@ -44,7 +45,9 @@ use super::invocation::{
 };
 use super::itemize_sink::ItemizeEventSink;
 use super::operand_split::split_transfer_operands;
-use super::ssh_transfer::convert_server_stats_to_summary;
+use super::ssh_transfer::{
+    convert_server_stats_to_summary, local_client_role, map_remote_exit, transfer_failure_error,
+};
 use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole, TransferProgressCallback, TransferProgressEvent};
 
@@ -403,18 +406,28 @@ fn run_transfer_over_embedded_ssh(
         ServerRole::Receiver => render_out_format_locally,
     };
     let mut itemize_sink = ItemizeEventSink::new(render_out_format_locally);
+    // upstream: who_am_i() (rsync.c:987) tags the final error with the local
+    // role, as the subprocess transport does.
+    let local_role = local_client_role(server_config.role);
+    // upstream: io.c:299-301 whine_about_eof() names stats.total_read, the raw
+    // bytes read once buffered input started (io.c:938).
+    let bytes_read = Arc::new(AtomicU64::new(0));
 
-    let transfer_result = crate::server::run_server_with_handshake(
+    let transfer_result = crate::server::run_server_with_handshake_adopting(
         server_config,
         handshake,
         &mut reader,
         &mut writer,
-        progress,
-        batch_recording,
-        if wants_client_output {
-            Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
-        } else {
-            None
+        crate::server::ServerTransferHooks {
+            progress,
+            batch: batch_recording,
+            itemize: if wants_client_output {
+                Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
+            } else {
+                None
+            },
+            bytes_read: Some(Arc::clone(&bytes_read)),
+            ..Default::default()
         },
     );
 
@@ -430,30 +443,71 @@ fn run_transfer_over_embedded_ssh(
     let mut channel_reader = reader.into_inner();
     let goodbye_outcome =
         channel_reader.wait_for_eof_with_timeout(rsync_io::ssh::embedded::SSH_GOODBYE_TIMEOUT);
+    // upstream: main.c:198-226 wait_process_with_flush() reaps the ssh child;
+    // here the server's exit report stands in for its status. After a goodbye
+    // timeout the bridge may still be stuck, so its report is not awaited.
+    let remote_exit = if goodbye_outcome.is_ok() {
+        channel_reader
+            .wait_for_remote_exit(rsync_io::ssh::embedded::SSH_GOODBYE_TIMEOUT)
+            .map(map_remote_exit)
+    } else {
+        None
+    };
     let elapsed = start.elapsed();
 
-    match transfer_result {
-        Ok(stats) => match goodbye_outcome {
-            Ok(()) => {
-                let mut summary = convert_server_stats_to_summary(stats, elapsed);
-                if !collected_events.is_empty() {
-                    summary = summary.with_events(collected_events);
-                }
-                summary.set_protocol_version(negotiated_protocol);
-                Ok(summary)
+    resolve_embedded_outcome(
+        transfer_result.map(|stats| {
+            let mut summary = convert_server_stats_to_summary(stats, elapsed);
+            if !collected_events.is_empty() {
+                summary = summary.with_events(collected_events);
             }
+            summary.set_protocol_version(negotiated_protocol);
+            summary
+        }),
+        goodbye_outcome,
+        remote_exit,
+        local_role,
+        bytes_read.load(Ordering::Relaxed),
+    )
+}
+
+/// Combines the local transfer result, the goodbye phase and the remote exit
+/// report into the run's final outcome.
+///
+/// upstream: main.c:1454-1458 `client_run()` returns the worse of its own
+/// result and the child's, and cleanup.c:146-153 exits with it, so a remote
+/// rsync that fails also fails a run whose local half succeeded. With no exit
+/// report (`remote_exit == None`) the run is judged by the local result alone,
+/// as before the report was read.
+fn resolve_embedded_outcome(
+    transfer: std::io::Result<ClientSummary>,
+    goodbye: Result<(), rsync_io::ssh::embedded::SshError>,
+    remote_exit: Option<ExitCode>,
+    local_role: crate::message::Role,
+    bytes_received: u64,
+) -> Result<ClientSummary, ClientError> {
+    match transfer {
+        Ok(summary) => match goodbye {
+            Ok(()) => match remote_exit {
+                Some(code) if !code.is_success() => Err(remote_exit_error(code, local_role)),
+                _ => Ok(summary),
+            },
             Err(e) => Err(invalid_argument_error(
                 &format!("embedded SSH goodbye phase failed: {e}"),
                 ExitCode::Timeout.as_i32(),
             )),
         },
-        Err(e) => {
-            let exit = ExitCode::from_io_error(&e);
-            Err(invalid_argument_error(
-                &format!("transfer failed: {e}"),
-                exit.as_i32(),
-            ))
-        }
+        // Same worst-wins resolution as the subprocess transport.
+        Err(e) => match remote_exit {
+            Some(code) => Err(transfer_failure_error(e, code, local_role, bytes_received)),
+            None => {
+                let exit = ExitCode::from_io_error(&e);
+                Err(invalid_argument_error(
+                    &format!("transfer failed: {e}"),
+                    exit.as_i32(),
+                ))
+            }
+        },
     }
 }
 
@@ -1657,5 +1711,86 @@ mod tests {
             Duration::from_secs(25),
             "--contimeout should apply when --ssh-connect-timeout is not set"
         );
+    }
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+    use crate::message::Role;
+    use rsync_io::ssh::embedded::RemoteExit;
+
+    fn ok_summary() -> std::io::Result<ClientSummary> {
+        Ok(ClientSummary::default())
+    }
+
+    fn resolve(
+        transfer: std::io::Result<ClientSummary>,
+        remote: Option<RemoteExit>,
+    ) -> Result<ClientSummary, ClientError> {
+        resolve_embedded_outcome(
+            transfer,
+            Ok(()),
+            remote.map(map_remote_exit),
+            Role::Sender,
+            0,
+        )
+    }
+
+    /// upstream: main.c:1454-1458 - a remote rsync exiting 23 fails the run
+    /// with 23 even though the local half succeeded.
+    #[test]
+    fn remote_partial_transfer_fails_a_clean_local_run() {
+        let err = resolve(ok_summary(), Some(RemoteExit::Status(23))).unwrap_err();
+        assert_eq!(err.exit_code(), 23);
+    }
+
+    /// A remote shell that cannot find rsync exits 127 (RERR_CMD_NOTFOUND).
+    #[test]
+    fn remote_command_not_found_is_reported_as_127() {
+        let err = resolve(ok_summary(), Some(RemoteExit::Status(127))).unwrap_err();
+        assert_eq!(err.exit_code(), 127);
+    }
+
+    /// upstream: main.c:215-224 - a signal maps to RERR_TERMINATED (16), or to
+    /// RERR_CRASHED (15) with a core dump.
+    #[test]
+    fn remote_signal_maps_to_terminated_or_crashed() {
+        let killed = resolve(
+            ok_summary(),
+            Some(RemoteExit::Signal { core_dumped: false }),
+        )
+        .unwrap_err();
+        assert_eq!(killed.exit_code(), ExitCode::Terminated.as_i32());
+        let crashed =
+            resolve(ok_summary(), Some(RemoteExit::Signal { core_dumped: true })).unwrap_err();
+        assert_eq!(crashed.exit_code(), ExitCode::Crashed.as_i32());
+    }
+
+    /// A clean remote exit leaves a local failure's own code in place.
+    #[test]
+    fn local_failure_wins_over_a_clean_remote_exit() {
+        let local = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let expected = ExitCode::from_io_error(&local).as_i32();
+        assert_ne!(expected, 0);
+        let err = resolve(Err(local), Some(RemoteExit::Status(0))).unwrap_err();
+        assert_eq!(err.exit_code(), expected);
+    }
+
+    /// upstream: cleanup.c:146-153 - a remote status worse than the local
+    /// failure wins.
+    #[test]
+    fn worse_remote_status_wins_over_a_local_failure() {
+        let local = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe");
+        assert!(ExitCode::from_io_error(&local).as_i32() < 23);
+        let err = resolve(Err(local), Some(RemoteExit::Status(23))).unwrap_err();
+        assert_eq!(err.exit_code(), 23);
+    }
+
+    /// With no exit report the run is judged by the local result alone.
+    #[test]
+    fn missing_exit_report_keeps_the_local_result() {
+        assert!(resolve(ok_summary(), None).is_ok());
+        assert!(resolve(ok_summary(), Some(RemoteExit::Status(0))).is_ok());
     }
 }
