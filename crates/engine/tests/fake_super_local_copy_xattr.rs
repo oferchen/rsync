@@ -144,3 +144,34 @@ fn local_copy_without_fake_super_does_not_write_stat_xattr() {
         "user.rsync.%stat must not appear when --fake-super is off; got {raw:?}"
     );
 }
+/// upstream: xattrs.c:1253-1258 - a source `%stat` that does not parse ends
+/// the run with `RERR_FILEIO` (11) and names the file and the value. oc used
+/// to ignore it and copy the placeholder as a plain file.
+#[test]
+fn local_copy_of_a_corrupt_fake_super_stat_exits_file_io() {
+    let temp = tempdir().expect("tempdir");
+    if !user_xattrs_supported(temp.path()) {
+        eprintln!("skipping: the filesystem rejects user xattrs");
+        return;
+    }
+    let source = temp.path().join("src");
+    let dest = temp.path().join("dst");
+    fs::create_dir_all(&source).expect("create source");
+    let bad = source.join("bad");
+    fs::write(&bad, b"x").expect("write source");
+    xattr::set(&bad, FAKE_SUPER_XATTR, b"garbage").expect("plant a corrupt %stat");
+    let operands = vec![source.into_os_string(), dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().recursive(true).fake_super(true);
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("a corrupt %stat must end the copy");
+    assert_eq!(error.exit_code(), 11);
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Corrupt {FAKE_SUPER_XATTR} xattr attached to \"{}\": \"garbage\"",
+            bad.display()
+        )
+    );
+}

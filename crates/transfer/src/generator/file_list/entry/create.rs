@@ -76,7 +76,7 @@ impl GeneratorContext {
         // override carries POSIX-only fields (uid/gid/rdev), so the Windows
         // path never consults it - we skip the lookup entirely there.
         #[cfg(unix)]
-        let fake_super_override = self.fake_super_override(full_path, metadata);
+        let fake_super_override = self.fake_super_override(full_path, metadata)?;
 
         // Windows reparse-point branch. Run before the regular-file probe so
         // non-symlink reparse points (cloud placeholders, AF_UNIX sockets,
@@ -524,21 +524,34 @@ impl GeneratorContext {
         &self,
         full_path: &Path,
         metadata: &fast_io::EntryMetadata,
-    ) -> Option<metadata::FakeSuperStat> {
+    ) -> io::Result<Option<metadata::FakeSuperStat>> {
         if !self.config.fake_super {
-            return None;
+            return Ok(None);
         }
         // upstream: xattrs.c:1133 - skip when the on-disk file is already a
         // device or special; the xattr only applies to regular placeholders.
         let ft = metadata.file_type();
         if ft.is_block_device() || ft.is_char_device() || ft.is_fifo() || ft.is_socket() {
-            return None;
+            return Ok(None);
         }
-        // Silently swallow read/decode errors: upstream's `get_stat_xattr`
-        // logs but does not abort on ENOTSUP/ENOATTR, and any other error
-        // here is treated like a missing xattr so the stat-derived values
-        // remain in use.
-        metadata::load_fake_super(full_path).ok().flatten()
+        match metadata::load_fake_super(full_path) {
+            Ok(stat) => Ok(stat),
+            // upstream: xattrs.c:1253-1258 - an unparsable value is fatal.
+            Err(error) if metadata::is_corrupt_fake_super(&error) => Err(error),
+            // upstream: xattrs.c:1242-1246 - a symlink whose xattrs cannot be
+            // read keeps its mode and reads as uid/gid 0.
+            Err(error) if ft.is_symlink() && error.raw_os_error() == Some(libc::EPERM) => {
+                Ok(Some(metadata::FakeSuperStat {
+                    mode: metadata.mode(),
+                    uid: 0,
+                    gid: 0,
+                    rdev: None,
+                }))
+            }
+            // upstream: xattrs.c:1240-1250 - ENOTSUP/ENOATTR mean no %stat; any
+            // other read error leaves the lstat values in place.
+            Err(_) => Ok(None),
+        }
     }
 
     // The non-Unix branch deliberately omits `fake_super_override`. The only

@@ -294,6 +294,27 @@ pub(crate) fn store_effective_fake_super_if_requested(
     ::metadata::apply_fake_super_stat(destination, &stat, options, None).map_err(map_metadata_error)
 }
 
+/// Fails the copy when a `--fake-super` source's `%stat` does not parse.
+///
+/// Upstream reads the `%stat` of every entry while it builds the file list and
+/// exits `RERR_FILEIO` on a value it cannot parse.
+// upstream: flist.c make_file() -> x_lstat() -> xattrs.c:1253-1258
+// get_stat_xattr() exit_cleanup(RERR_FILEIO).
+#[cfg(all(unix, feature = "xattr"))]
+pub(crate) fn ensure_fake_super_source_stat(
+    fake_super: bool,
+    source: &Path,
+) -> Result<(), LocalCopyError> {
+    if !fake_super {
+        return Ok(());
+    }
+    match ::metadata::load_fake_super(source) {
+        Err(error) if ::metadata::is_corrupt_fake_super(&error) => {
+            Err(LocalCopyError::file_io(error.to_string()))
+        }
+        _ => Ok(()),
+    }
+}
 /// Converts a [`MetadataError`] into a [`LocalCopyError`].
 pub(crate) fn map_metadata_error(error: MetadataError) -> LocalCopyError {
     let (context, path, source) = error.into_parts();
