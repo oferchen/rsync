@@ -83,6 +83,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A QUIC daemon sends a stateless Retry once 100 handshakes are in flight, so a spoofed handshake flood cannot make it hold state; the `quic retry = auto|always|never` directive selects the policy (#8229)
 - A QUIC daemon bounds the connection attempts it holds before accepting them to `max connections` (128 when unlimited), 64 KiB each, instead of quinn's 65536 attempts and 100 MiB (#8229)
 - A QUIC daemon refuses to start when `quic key file` does not match `quic cert file`, and a Windows daemon refuses QUIC directives instead of ignoring them (#8229)
+- A `fake super = yes` module caps `-XX` at `-X`, so a client cannot plant its own `rsync.%stat` (#PRNUM)
 - `proxy protocol hosts` gates who may send a PROXY header, on TCP and inetd sessions, and fails closed when unset (CVE-2026-53791, #7648, #8077)
 - Resolve the real peer address on the inetd and remote-shell entry points instead of `127.0.0.1` (#7303)
 - `hosts deny` no longer fails open when a hostname does not resolve (CVE-2026-70452, #7314)
@@ -387,6 +388,11 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A local copy that finishes with exit 23, 24 or 25 still prints its itemize rows, names and `--stats` totals before the exit trailer, as upstream's `cleanup.c` decides the code only after the transfer (#8222)
 
 **Permissions and metadata**
+- `--fake-super` records `rsync.%stat` for every received file, as upstream `set_stat_xattr()` does: ids are 0 without `--owner`/`--group`, the mode follows `dest_mode()` without `--perms`, and a redundant `%stat` is removed (#PRNUM)
+- `--fake-super` on Linux stores a symlink as a placeholder file holding its target, and a fake-super sender reads the target back, so a pull no longer drops symlinks (#PRNUM)
+- `--fake-super` re-stats, chmods and writes `%stat` through a held `O_NOFOLLOW` descriptor, and creates device and special placeholders beneath the confined parent (#PRNUM)
+- A `--fake-super` source whose `%stat` does not parse ends the run with code 11 and upstream's `Corrupt ... xattr attached to ...` message (#PRNUM)
+- A `--fake-super -X` receive keeps the receiver's own `%stat` instead of removing it as an extraneous xattr (#PRNUM)
 - `--fake-super` applies a source's recorded `%stat` like upstream: the real mode follows it and a `%stat` equal to the real stat is not stored (#8226)
 - `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
 - Apply timestamps before chmod (#7832, #7087)
