@@ -75,6 +75,7 @@
 /// log-file sink and the CLI keep a single `logging_sink::escape` path while
 /// the implementation lives at a level the transfer engine can also reach.
 pub use logging::escape;
+mod line_atomic;
 mod line_mode;
 pub mod logfile;
 mod sink;
@@ -86,6 +87,7 @@ mod sink;
 #[cfg(unix)]
 pub mod syslog;
 
+pub use line_atomic::LineAtomicWriter;
 pub use line_mode::LineMode;
 pub use sink::{LineModeGuard, MessageSink, TryMapWriterError};
 
