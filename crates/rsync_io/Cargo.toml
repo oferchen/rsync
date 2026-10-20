@@ -40,7 +40,7 @@ rcgen = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 
 [features]
-default = ["ssh-config-parse"]
+default = ["ssh-config-parse", "ssh-socketpair-stderr"]
 embedded-ssh = [
     "dep:russh",
     "dep:url",
@@ -99,15 +99,15 @@ async-ssh = ["dep:tokio"]
 #            any other features you need). Without this feature the
 #            argv-only SSC-1 detection path remains in place.
 ssh-config-parse = []
-# Opt-in: exposes the standalone `socketpair_stderr` primitive
+# Default on: exposes the standalone `socketpair_stderr` primitive
 # (SSE-3, #2372) and, when paired with `async-ssh`, the SSE-4 async
 # drain task (#2373) that funnels stderr into a bounded ring buffer
-# via `tracing::warn!`. Off by default. The production
-# `SshCommand::spawn` path is unchanged by this flag - it already
-# wires stderr through `aux_channel::configure_stderr_channel` on
-# every supported target, with `Stdio::piped()` as the cross-platform
-# fallback. `tests/ssh_stderr_default_path.rs` guards that public
-# contract (`wait_with_stderr` surfaces stderr) when the feature is off.
+# via `tracing::warn!`. The production `SshCommand::spawn` path does
+# not depend on this flag - it always wires stderr through
+# `aux_channel::configure_stderr_channel`, a socketpair on Unix with
+# `Stdio::piped()` as the fallback. `tests/ssh_stderr_default_path.rs`
+# guards that public contract (`wait_with_stderr` surfaces stderr) with
+# and without the feature. Opt out with `--no-default-features`.
 # See `docs/design/socketpair-stderr-channel.md` for the staging plan.
 ssh-socketpair-stderr = ["dep:tracing"]
 

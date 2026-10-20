@@ -142,7 +142,7 @@ cargo build --workspace --release
 | `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` writer. | experimental |
 | `adaptive-basis-dispatch` | `fast_io` | no | Per-file basis-read dispatch between mmap and io_uring by recent throughput; on Windows it also selects the IOCP file reader. | experimental |
 | `async-ssh` | `core`, `rsync_io` | no | Async SSH transport; enable at runtime with `OC_RSYNC_ASYNC_SSH=1`. | experimental |
-| `ssh-socketpair-stderr` | `rsync_io` | no | SSH stderr over a socketpair (see [Performance tuning](#performance-tuning)). | experimental |
+| `ssh-socketpair-stderr` | `rsync_io` | yes | Socketpair stderr primitive and, with `async-ssh`, the event-driven stderr drain (see [Performance tuning](#performance-tuning)). | stable |
 | `async-daemon` | `daemon` | no | tokio accept loop dispatching sync workers. | experimental |
 | `concurrent-sessions` | `daemon` | no | Shared session state for multi-session daemons. | experimental |
 | `tracing` | `core`, `engine`, `transfer`, `daemon` | no | Structured `tracing` instrumentation. | stable |
@@ -267,7 +267,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 **Parallel delta work.** Delta work is single-threaded per file by default. Opt in with `--parallel-delta-scan` and `--checksum-threads=N`.
 
-**SSH stderr socketpair.** The `ssh-socketpair-stderr` feature drains the SSH child's stderr through a `socketpair(AF_UNIX, SOCK_STREAM)` instead of a pipe, with event-driven shutdown. It helps with chatty remote shells and many parallel transfers; Linux is the recommended target. See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md). When the runtime cannot honour the feature, one of these warnings appears once per process:
+**SSH stderr socketpair.** On Unix the SSH child's stderr is drained through a `socketpair(AF_UNIX, SOCK_STREAM)`, with an anonymous pipe as the fallback. The default-on `ssh-socketpair-stderr` feature adds the standalone primitive and, under `async-ssh`, an event-driven drain with bounded shutdown; it helps with chatty remote shells and many parallel transfers. Opt out with `--no-default-features`. See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md). When the runtime cannot set up the socketpair, one of these warnings appears once per process:
 
 - `SSH stderr async drain unavailable on this platform` - `socketpair` failed; the session falls back to a pipe.
 - `SSH stderr socketpair partially set up` - `dup(2)` on the parent half failed; shutdown relies on a 50 ms timeout.

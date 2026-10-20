@@ -15,22 +15,27 @@ historical anchor for why russh is the preferred transport for new
 deployments, are documented in
 [`ssh-transport-decision-matrix.md`](ssh-transport-decision-matrix.md).
 
-The default stderr endpoint is an anonymous pipe created by
-`pipe2(2)`. That is portable and sufficient for typical workloads. For
-long-running sessions with very chatty remote children, an opt-in Cargo
-feature swaps the pipe for a `socketpair(2)` on Unix targets.
+On Unix the SSH child's stderr is one half of a
+`socketpair(AF_UNIX, SOCK_STREAM, 0)` (`aux_channel::configure_stderr_channel`),
+with an anonymous pipe as the fallback when the socketpair cannot be set
+up. This holds for every build: the production `SshCommand::spawn` path
+does not depend on a Cargo feature.
 
-## SSH stderr capture (socketpair, opt-in)
+## SSH stderr capture (socketpair, default)
 
 ### What it does
 
-The `ssh-socketpair-stderr` Cargo feature on the `rsync_io` crate
-changes how the parent process receives the SSH child's stderr stream.
-Instead of the default anonymous pipe, it uses one half of a
-`socketpair(AF_UNIX, SOCK_STREAM, 0)` and hands the other half to the
-child as its stderr file descriptor. Everything downstream (the bounded
-64 KiB ring buffer, real-time forwarding to the parent's own stderr,
-the snapshot accessor used in error messages) is unchanged.
+The parent keeps one half of the socketpair and hands the other half to
+the child as its stderr file descriptor. Everything downstream (the
+bounded 64 KiB ring buffer, real-time forwarding to the parent's own
+stderr, the snapshot accessor used in error messages) is the same as on
+the pipe fallback.
+
+The `ssh-socketpair-stderr` Cargo feature on the `rsync_io` crate is on
+by default. It exposes the standalone `socketpair_stderr` primitive and,
+together with `async-ssh`, the async drain task that registers the
+parent half with the tokio reactor so wake-up and shutdown are
+event-driven instead of timeout-bounded.
 
 ### Why it exists
 
@@ -53,49 +58,34 @@ A `socketpair`-backed endpoint mitigates this in two ways:
 
 The kernel object is otherwise interchangeable: byte semantics,
 `O_NONBLOCK` support, and `epoll`/`kqueue` registration are identical.
+Upstream rsync uses the same primitive for its remote-shell child's
+stdin and stdout: `pipe.c:57` `piped_child()` creates them with
+`util1.c:84` `fd_pair()`, a `socketpair(2)` when `HAVE_SOCKETPAIR` is
+defined. Upstream leaves the child's stderr inherited, so capturing it
+through a socketpair is oc-specific.
 
-### When to enable it
+### Opting out
 
-Enable the feature if you regularly:
-
-- run `oc-rsync` over slow or high-latency links where back-pressure
-  matters,
-- use SSH with `-vvv` or `LogLevel DEBUG3` on either side,
-- have `~/.ssh/rc`, login banners, or `ForceCommand` wrappers that emit
-  large amounts of text on every connection,
-- multiplex many connections through a single `ControlMaster` whose
-  helper processes outlive individual transfers.
-
-For typical interactive use or short-lived scripted transfers, the
-default pipe-backed endpoint is fine and no rebuild is required.
-
-### How to enable it
-
-The feature is selected at compile time on the `rsync_io` crate:
+There is no runtime toggle and no environment variable. To drop the
+primitive, the async drain and the `tracing` dependency, build `rsync_io`
+without default features:
 
 ```sh
-cargo build --release --features rsync_io/ssh-socketpair-stderr
+cargo build --release -p rsync_io --no-default-features
 ```
 
-There is no runtime toggle and no environment variable. A binary built
-without the feature uses anonymous pipes; a binary built with the
-feature uses socketpairs on Unix and silently falls back to pipes on
-file-descriptor exhaustion. To switch back, rebuild without the
-feature.
+The sync spawn path keeps using the socketpair on Unix either way, and
+falls back to a pipe on file-descriptor exhaustion with a one-time
+warning.
 
 ### Platform notes
 
-| Platform                | Backend when feature is on    | Backend when feature is off |
+| Platform                | stderr backend                | Fallback                     |
 |-------------------------|-------------------------------|------------------------------|
-| Linux                   | `socketpair(AF_UNIX)`         | `pipe2(2)`                   |
-| macOS                   | `socketpair(AF_UNIX)`         | `pipe2(2)`                   |
-| FreeBSD and other Unix  | `socketpair(AF_UNIX)`         | `pipe2(2)`                   |
-| Windows                 | anonymous pipe (feature has no effect today) | anonymous pipe |
-
-The Windows TCP-loopback shim sketched in the design doc is not yet
-wired up; on Windows the feature compiles but has no effect at runtime,
-and the child's stderr continues to flow through the anonymous pipe
-that `tokio::process::Command` creates.
+| Linux                   | `socketpair(AF_UNIX)`         | anonymous pipe               |
+| macOS                   | `socketpair(AF_UNIX)`         | anonymous pipe               |
+| FreeBSD and other Unix  | `socketpair(AF_UNIX)`         | anonymous pipe               |
+| Windows                 | anonymous pipe                | -                            |
 
 The user-visible behaviour is the same with either backend: the same
 bytes are surfaced through the same error-reporting code path. Only the

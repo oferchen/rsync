@@ -187,39 +187,32 @@ be combined.
   enable on memory-constrained endpoints.
 - **Build.** `cargo build --release --features thread-slab-pool`.
 
-### `ssh-socketpair-stderr` (`rsync_io`, experimental)
+### `ssh-socketpair-stderr` (`rsync_io`, default)
 
-- **What it does.** Replaces the anonymous-pipe stderr channel of the
-  SSH child with a `socketpair(AF_UNIX, SOCK_STREAM, 0)` constructed
-  via `UnixStream::pair`. The parent end is a bidirectional socket that
-  can be registered with `epoll`/`kqueue` (or tokio `AsyncFd`) and woken
-  out-of-band via `shutdown(2)`, which is the seam SSE-4 uses to drive
-  the drain off a tokio task instead of a dedicated thread per
-  connection. The child still sees a plain stream of bytes on fd 2.
-  Capture semantics, line forwarding to host stderr, and the bounded
-  64 KiB ring buffer used by `stderr_output()` are unchanged.
-- **When to opt in.** Linux endpoints that already build with
-  `async-ssh` and want the SSH stderr drain integrated into the same
-  tokio reactor as the wire path, instead of consuming a per-connection
-  blocking thread; long-running fan-out clients that open many
-  concurrent SSH children where the saved drain threads matter; and
-  any deployment that wants the larger default kernel buffer
-  (~208 KiB on Linux vs 64 KiB for pipes) and `shutdown(SHUT_RD)`
-  as the wake primitive for the drain loop. macOS works too, with
-  the same `UnixStream::pair` construction.
-- **When to stay on the default.** Operators who prefer the simpler
-  pipe semantics for debugging (a pipe is unidirectional and shows up
-  as a single read-only fd in `lsof` / `procfs`); Windows endpoints,
-  where the TCP-loopback shim is still in flight under SSE-5 and
-  falls back to `Stdio::piped()` on any error; sync-only SSH
-  deployments that do not link tokio, since the existing sync
-  transport already uses the socketpair when available and gains
-  nothing from the flag. The default-off ships exactly what `master`
-  shipped before the SSE series.
-- **Build.** `cargo build --release -p rsync_io --features ssh-socketpair-stderr`.
-  Combine with `async-ssh` to actually exercise the async drain path:
-  `cargo build --release --features "async-ssh" -p core` and
-  `cargo build --release --features "ssh-socketpair-stderr" -p rsync_io`.
+- **What it does.** On Unix the sync SSH transport always hands the
+  child a `socketpair(AF_UNIX, SOCK_STREAM, 0)` half as fd 2, built via
+  `UnixStream::pair`, with an anonymous pipe as the fallback. This
+  feature adds the standalone `socketpair_stderr` primitive and, under
+  `async-ssh`, registers the parent end with the tokio reactor and
+  wakes it out-of-band via `shutdown(2)`. That is the seam SSE-4 uses to
+  drive the drain off a tokio task instead of a dedicated thread per
+  connection. Capture semantics, line forwarding to host stderr, and the
+  bounded 64 KiB ring buffer used by `stderr_output()` are unchanged.
+- **When it matters.** Linux endpoints that build with `async-ssh` and
+  want the SSH stderr drain integrated into the same tokio reactor as
+  the wire path, instead of consuming a per-connection blocking thread;
+  long-running fan-out clients that open many concurrent SSH children
+  where the saved drain threads matter. macOS works too, with the same
+  `UnixStream::pair` construction.
+- **When to opt out.** Minimal builds that want to drop the `tracing`
+  dependency and the async drain. Opting out does not change the sync
+  transport, which keeps the socketpair on Unix. On Windows the
+  TCP-loopback shim is not wired up and stderr stays on
+  `Stdio::piped()` either way.
+- **Build.** The feature is on by default. Combine it with `async-ssh`
+  to exercise the async drain path:
+  `cargo build --release --features "async-ssh" -p core`. Opt out with
+  `cargo build --release -p rsync_io --no-default-features`.
 - **Design reference.** Rationale, cross-platform construction, and
   the SSE-3 through SSE-7 staging plan are in
   [`docs/design/socketpair-stderr-channel.md`](design/socketpair-stderr-channel.md)
@@ -435,8 +428,8 @@ targets; on macOS and Windows the platform-native build is used.
   `--delete-during` sweep. The `--delete-strict-order` opt-in flag
   from the prior prerelease becomes available again.
 - The opt-in feature flags from section 4 (`async-ssh`,
-  `async-daemon`, `ssh-socketpair-stderr`,
-  `thread-slab-pool`, `vmsplice`) do not exist in earlier releases.
+  `async-daemon`, `thread-slab-pool`, `vmsplice`) and the default-on
+  `ssh-socketpair-stderr` do not exist in earlier releases.
   Builds that enabled them must drop the flag from the build command
   when downgrading.
 - Wire compatibility is preserved across the rollback. A vNEXT

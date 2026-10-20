@@ -37,4 +37,4 @@ binary protocol negotiation while preserving buffered bytes across handshakes.
 - `embedded-ssh` - in-process SSH via russh (no subprocess)
 - `async-ssh` - tokio-backed async SSH transport
 - `ssh-config-parse` - reads `~/.ssh/config` for compression detection (default)
-- `ssh-socketpair-stderr` - async stderr drain via Unix socketpair
+- `ssh-socketpair-stderr` - socketpair stderr primitive and, with `async-ssh`, the async stderr drain (default)

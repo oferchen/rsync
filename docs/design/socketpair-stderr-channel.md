@@ -151,19 +151,22 @@ Feature flag in `crates/rsync_io/Cargo.toml`:
 
 ```toml
 [features]
-ssh-socketpair-stderr = []  # default off
+default = ["ssh-config-parse", "ssh-socketpair-stderr"]
+ssh-socketpair-stderr = ["dep:tracing"]
 ```
 
-- **Off (default)**: behaviour is exactly what `master` ships today.
-  Sync path keeps its current dual-backend selection. Async path keeps
-  `Stdio::inherit()`.
-- **On**: the async path additionally constructs a
+- **On (default)**: the async path additionally constructs a
   `TokioSocketpairStderrChannel`; the sync path's selection is
   unaffected (it already uses the socketpair when available).
+- **Off (`--no-default-features`)**: the sync path keeps its
+  dual-backend selection and the async path keeps `Stdio::inherit()`.
 
-The flag stays default-off until SSE-7 ships parity tests for the
-async path on Linux, macOS, and the Windows TCP-shim. Promotion to
-default-on is a separate PR with a one-line `Cargo.toml` change.
+The flag is default-on. The sync spawn path never depended on it, so
+promoting it changes the compiled surface (the `socketpair_stderr`
+primitive, the async drain under `async-ssh`, and the `tracing`
+dependency), not the runtime behaviour of default binaries. The Windows
+TCP-shim is still not wired up; on Windows the feature compiles and the
+child's stderr stays on the anonymous pipe.
 
 No public type is renamed, removed, or has its signature changed by
 this design. Adding `AsyncSshTransport::stderr_output()` is purely

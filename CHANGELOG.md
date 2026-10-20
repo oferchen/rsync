@@ -196,6 +196,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Follow rsync 3.5.1 option and startup rules: `--contimeout` needs a daemon connection and bounds a daemon-over-`--rsh` handshake, which now also accepts `rsync://` operands; the daemon enters inetd mode only for an `AF_INET`/`AF_INET6` stream on stdin (#8011)
 - The client no longer sends `@RSYNCD: OPTION` lines, and `--dparam` without `--daemon` is refused with upstream's message (#8002)
 - The spawned SSH child's stdin and stdout are `AF_UNIX` socketpairs, as upstream creates them, with a fallback to pipes; the embedded SSH bridge no longer copies each chunk (#8183)
+- The `rsync_io` `ssh-socketpair-stderr` feature is on by default; it adds the socketpair stderr primitive and the `async-ssh` stderr drain, while the sync SSH path already captured stderr through a socketpair on Unix. Opt out with `--no-default-features` (#PRNUM)
 - The compression choice is forwarded the way rsync 3.5.1 does (#8114)
 - Option parsing follows popt: unknown long options in a server argv or via `-M` are refused, unknown client options are reported in popt's format, a leading `--` ends option parsing, and `--tmp-dir`, `--no-b` and `--no-fake-super` are rejected (#8126, #8133, #8130, #8154, #8113)
 - Dash-led host names and protocol-gated options are refused before the transfer starts, and the server names the unsupported protocol (#8148, #8119, #8125)

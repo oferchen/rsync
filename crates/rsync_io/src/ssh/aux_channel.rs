@@ -85,10 +85,9 @@ pub(super) const STDERR_BUFFER_CAP: usize = 64 * 1024;
 /// double-emit. `OnceLock::set` returns `Err` on the losing side, which
 /// short-circuits the write.
 ///
-/// `tracing` is not a default dependency of this crate (the
-/// `ssh-socketpair-stderr` feature pulls it in), so the sync-path
-/// warnings must stay on `io::Write` / `eprintln!` to compile on the
-/// default build matrix.
+/// `tracing` is optional in this crate (only the `ssh-socketpair-stderr`
+/// feature pulls it in), so the sync-path warnings stay on `io::Write` /
+/// `eprintln!` to compile under `--no-default-features`.
 #[cfg(unix)]
 fn warn_once(lock: &OnceLock<()>, out: &mut dyn Write, message: fmt::Arguments<'_>) -> bool {
     if lock.set(()).is_err() {

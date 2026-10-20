@@ -1336,18 +1336,19 @@ in-binary TLS, matching upstream rsync.
 
 ## SSH stderr socketpair channel
 
-Default builds drain the SSH child's stderr through an anonymous pipe on a
-dedicated reader thread. The **ssh-socketpair-stderr** cargo feature swaps the
-pipe for a **socketpair(AF_UNIX, SOCK_STREAM)** and, when the async transport
-is in use, hands the parent end to an epoll/kqueue-integrated drain. Wake-up
-and shutdown become event-driven instead of timeout-bounded, and the larger
-socket buffer absorbs bursty remote shells without dropping diagnostic lines.
+On Unix the SSH child's stderr is drained through a
+**socketpair(AF_UNIX, SOCK_STREAM)** on a dedicated reader thread, with an
+anonymous pipe as the fallback. The larger socket buffer absorbs bursty remote
+shells without dropping diagnostic lines. The default-on
+**ssh-socketpair-stderr** cargo feature additionally lets the async transport
+hand the parent end to an epoll/kqueue-integrated drain, so wake-up and
+shutdown are event-driven instead of timeout-bounded.
 
-Enable it with:
+Opt out with:
 
-    cargo build --features ssh-socketpair-stderr
+    cargo build -p rsync_io --no-default-features
 
-Linux is the supported target; the Windows shim is pending. See
+On Windows the child's stderr stays on an anonymous pipe. See
 **docs/design/socketpair-stderr-channel.md** in the source distribution.
 
 When the runtime cannot honour the feature, **oc-rsync** emits one of three
