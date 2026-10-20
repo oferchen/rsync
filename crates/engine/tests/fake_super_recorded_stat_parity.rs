@@ -112,3 +112,45 @@ fn recorded_stat_equal_to_the_real_stat_is_not_stored() {
         "a %stat equal to the real stat must not be stored, as upstream"
     );
 }
+
+/// Placeholders for a FIFO, a socket, a char and a block device whose recorded owner is
+/// the copying user. The recorded type differs from the regular placeholder on
+/// disk, so upstream keeps every `%stat` (xattrs.c:1314-1326 compares the
+/// placeholder's own `S_IFMT` against the recorded mode) and the copy still
+/// reads back as the special file.
+#[test]
+fn recorded_special_types_survive_a_same_owner_copy() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    let dest = temp.path().join("dst");
+    fs::create_dir_all(&source).expect("mkdir src");
+    let cases = [
+        ("fifo", 0o010644, "0,0", None),
+        ("socket", 0o140644, "0,0", None),
+        ("char", 0o020644, "41,67", Some((41, 67))),
+        ("block", 0o060644, "42,69", Some((42, 69))),
+    ];
+    for (name, mode, rdev, _) in cases {
+        let file = source.join(name);
+        fs::write(&file, b"").expect("write placeholder");
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).expect("chmod");
+        let meta = fs::metadata(&file).expect("stat src");
+        let recorded = format!("{mode:o} {rdev} {}:{}", meta.uid(), meta.gid());
+        if !record_stat(&file, &recorded) {
+            return;
+        }
+    }
+
+    copy_archive(&source, &dest);
+
+    for (name, mode, _, rdev) in cases {
+        let copied = dest.join("src").join(name);
+        assert!(
+            fs::symlink_metadata(&copied).expect("stat dest").is_file(),
+            "{name}: the placeholder stays a regular file"
+        );
+        let stat = read_stat(&copied).unwrap_or_else(|| panic!("{name}: %stat must be kept"));
+        assert_eq!(stat.mode, mode, "{name}: recorded type and perms");
+        assert_eq!(stat.rdev, rdev, "{name}: recorded device numbers");
+    }
+}

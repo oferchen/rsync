@@ -414,7 +414,12 @@ fn apply_fake_super_mode(
 ) -> Result<(), MetadataError> {
     const S_IFMT: u32 = 0o170000;
     let type_bits = fake_super_type_bits(fmode, is_dir);
-    let real_mode = fake_super_real_mode(fmode, is_dir);
+    let dest_meta = fs::symlink_metadata(destination).ok();
+    let on_disk_mode = {
+        use std::os::unix::fs::MetadataExt;
+        dest_meta.as_ref().map_or(type_bits, MetadataExt::mode)
+    };
+    let real_mode = fake_super_real_mode(on_disk_mode, fmode, is_dir);
 
     #[cfg(feature = "xattr")]
     {
@@ -436,7 +441,6 @@ fn apply_fake_super_mode(
         // (mode & type)==stored mode and the on-disk owner/group already equal
         // the intended values (rdev is 0 for non-devices). Compare against the
         // destination's actual on-disk owner/group.
-        let dest_meta = fs::symlink_metadata(destination).ok();
         let (real_uid, real_gid) = dest_meta
             .as_ref()
             .map(|m| (m.uid(), m.gid()))
@@ -491,13 +495,17 @@ const fn fake_super_type_bits(fmode: u32, is_dir: bool) -> u32 {
     }
 }
 
-/// The real on-disk mode for an intended fake-super mode: the permission bits
-/// with full owner access forced on and the special bits dropped.
+/// The real on-disk mode for an intended fake-super mode: the on-disk file's
+/// own type, the intended permission bits with full owner access forced on,
+/// and no special bits. The type comes from the file on disk, never from the
+/// intended mode, so a regular placeholder for a FIFO, socket or device never
+/// compares equal to its recorded stat.
 /// upstream: xattrs.c:1313-1315 set_stat_xattr()
 #[cfg(unix)]
-const fn fake_super_real_mode(fmode: u32, is_dir: bool) -> u32 {
+const fn fake_super_real_mode(on_disk_mode: u32, fmode: u32, is_dir: bool) -> u32 {
     const ACCESSPERMS: u32 = 0o777;
-    fake_super_type_bits(fmode, is_dir) | (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 }
+    const S_IFMT: u32 = 0o170000;
+    (on_disk_mode & S_IFMT) | (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 }
 }
 
 /// Records an intended fake-super stat on `destination`, as upstream
@@ -527,7 +535,7 @@ pub fn apply_fake_super_stat(
     let current = fs::symlink_metadata(destination)
         .map_err(|error| MetadataError::new("re-stat", destination, error))?;
     let is_dir = current.is_dir();
-    let real_mode = fake_super_real_mode(intended.mode, is_dir);
+    let real_mode = fake_super_real_mode(current.mode(), intended.mode, is_dir);
     if current.permissions().mode() & 0o7777 != real_mode & 0o7777 {
         chmod_path_honoring_keep_dirlinks(
             destination,
@@ -2043,5 +2051,49 @@ mod tests {
             0o700 & dflt,
             "tweak FIRST, dest_mode() collapse SECOND (flist.c:1966-1967)"
         );
+    }
+
+    /// A regular placeholder whose recorded `%stat` names a FIFO, socket or
+    /// device owned by the copier must keep that `%stat`: upstream builds the
+    /// compared mode from the ON-DISK type (xattrs.c:1314), so `S_IFREG` never
+    /// equals the recorded special type. Taking the type from the intended mode
+    /// makes a FIFO or socket look faithful and silently drops its type.
+    #[cfg(all(target_os = "linux", feature = "xattr"))]
+    #[test]
+    fn fake_super_mode_keeps_a_special_type_recorded_on_a_regular_placeholder() {
+        use crate::fake_super::{FakeSuperStat, load_fake_super, store_fake_super};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = test_support::create_tempdir();
+        let options = MetadataOptions::new()
+            .fake_super(true)
+            .preserve_owner(true)
+            .preserve_permissions(true);
+        for (name, mode, rdev) in [
+            ("fifo", 0o010644, None),
+            ("socket", 0o140644, None),
+            ("char", 0o020644, Some((41, 67))),
+            ("block", 0o060644, Some((42, 69))),
+        ] {
+            let dest = dir.path().join(name);
+            std::fs::write(&dest, b"").expect("write placeholder");
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o644))
+                .expect("chmod placeholder");
+            let meta = std::fs::metadata(&dest).expect("stat placeholder");
+            let recorded = FakeSuperStat {
+                mode,
+                uid: meta.uid(),
+                gid: meta.gid(),
+                rdev,
+            };
+            if store_fake_super(&dest, &recorded).is_err() {
+                return;
+            }
+            apply_fake_super_mode(&dest, mode, false, &options, None).expect("apply mode");
+            assert_eq!(
+                load_fake_super(&dest).expect("read %stat"),
+                Some(recorded),
+                "{name}: the recorded special type must survive"
+            );
+        }
     }
 }
