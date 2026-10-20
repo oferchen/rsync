@@ -218,6 +218,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Performance
 
+- Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#PRNUM)
 - Batch network sender writes to match upstream's cadence (#7009)
 - Stop waiting for the `SEND_ZC` notification, and write small batches positionally instead of through io_uring (#7600, #7610)
 - Park the SPSC pipeline and block the daemon accept loop instead of spinning (#7033, #7035)

@@ -9,9 +9,10 @@ use super::openssl_support;
 ///
 /// MD4 produces a 128-bit (16-byte) digest. It is used by rsync protocol
 /// versions below 30 as the default strong checksum for block matching.
-/// When the `openssl` feature is enabled, an OpenSSL-backed implementation
-/// is used for improved throughput; otherwise a pure-Rust implementation
-/// is used.
+/// With the `openssl` feature, the OpenSSL backend is used when OpenSSL can
+/// initialise MD4; OpenSSL 3 provides MD4 only through its legacy provider.
+/// Availability is probed once per process, and otherwise the pure-Rust
+/// implementation is used.
 ///
 /// # Upstream Reference
 ///
