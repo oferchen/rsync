@@ -467,7 +467,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Exit code 6 ("daemon unable to append to log-file"), which upstream does not define; a raw exit 6 renders as upstream's "unexplained error (code 6)" (#8197)
 - The `ssh-socketpair-stderr` build feature and the captured-stderr API (`SshConnection::stderr_output`, `wait_with_stderr`, `AsyncSshTransport::stderr_capture`); builds passing `--features ssh-socketpair-stderr` must drop it (#8224)
 
-- The macOS kqueue bandwidth-limit sleeper and its `OC_RSYNC_BWLIMIT_BACKEND` selector; `--bwlimit` sleeps with `nanosleep` on every platform, matching upstream's `select()` sleep for its 100 ms minimum delay (#PRNUM)
+- The macOS kqueue bandwidth-limit sleeper and its `OC_RSYNC_BWLIMIT_BACKEND` selector; `--bwlimit` sleeps with `nanosleep` on every platform, matching upstream's `select()` sleep for its 100 ms minimum delay (#8229)
 - The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
 ### Internal
 
