@@ -33,7 +33,6 @@ mod linux {
     use std::fs::File;
     use std::io;
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::io::FromRawFd;
     use std::path::Path;
     use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -82,35 +81,11 @@ mod linux {
     }
 
     fn probe_o_tmpfile(dir: &Path) -> bool {
-        let dir_cstr = match CString::new(dir.as_os_str().as_bytes()) {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-
-        // Safety: `dir_cstr` is a valid null-terminated C string pointing to an
-        // existing directory. `O_TMPFILE | O_RDWR` creates an unnamed inode
-        // with no directory entry. Mode 0o600 is used for the probe file.
         // The access mode matches `open_anonymous_tmpfile` so the probe answers
-        // the question the caller actually asks.
-        let fd = unsafe {
-            libc::open(
-                dir_cstr.as_ptr(),
-                libc::O_TMPFILE | libc::O_RDWR,
-                libc::mode_t::from(0o600u32),
-            )
-        };
-
-        if fd < 0 {
-            return false;
-        }
-
-        // Safety: `fd` is a valid open file descriptor returned by `open(2)`.
-        unsafe {
-            libc::close(fd);
-        }
-        true
+        // the question the caller actually asks; dropping the descriptor
+        // discards the unnamed inode.
+        crate::destination_at::open(dir, libc::O_TMPFILE | libc::O_RDWR, 0o600).is_ok()
     }
-
     /// Opens an anonymous temporary file in `dir` using `O_TMPFILE`.
     ///
     /// The returned file has no directory entry - it exists only as an open
@@ -136,35 +111,12 @@ mod linux {
     /// - The directory does not exist (`ENOENT`)
     /// - Permission denied (`EACCES`)
     pub fn open_anonymous_tmpfile(dir: &Path, mode: u32) -> io::Result<File> {
-        let dir_cstr = CString::new(dir.as_os_str().as_bytes()).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "directory path contains interior null byte",
-            )
-        })?;
-
-        // Safety: `dir_cstr` is a valid null-terminated C string. `O_TMPFILE |
-        // O_RDWR` creates an unnamed inode with no directory entry. `mode` is
-        // the permission bits for the new file. The returned fd is valid on
-        // success (>= 0) and is immediately wrapped in a `File` which owns it.
-        let fd = unsafe {
-            libc::open(
-                dir_cstr.as_ptr(),
-                libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
-                libc::mode_t::from(mode),
-            )
-        };
-
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // Safety: `fd` is a valid, open file descriptor just returned by
-        // `open(2)`. We transfer ownership to `File` which will close it on
-        // drop. No other code holds or aliases this fd.
-        Ok(unsafe { File::from_raw_fd(fd) })
+        // Anchored on the pinned destination, so the inode is staged in the
+        // directory the receiver entered even after `dir` was swapped -
+        // upstream's `open_tmpfile()` names it relative to that cwd
+        // (`rsync-3.5.1/receiver.c:413`).
+        crate::destination_at::open(dir, libc::O_TMPFILE | libc::O_RDWR, mode).map(File::from)
     }
-
     /// Materializes an anonymous temporary file at `dest` using `linkat(2)`.
     ///
     /// This creates a directory entry for the anonymous file opened with

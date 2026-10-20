@@ -169,10 +169,10 @@ fn create_new_temp(path: &Path, operator_path: bool) -> io::Result<fs::File> {
         if operator_path {
             return fast_io::operator_open_create_new(path, 0o666);
         }
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
+        // Beside the destination the temp is named relative to the entered
+        // directory, as upstream's `open_tmpfile()` names it relative to the
+        // cwd `change_dir()` entered (`rsync-3.5.1/receiver.c:413`).
+        fast_io::destination_at::create_new(path, 0o666)
     }
 }
 
