@@ -509,7 +509,7 @@ fn ssh_stderr_not_reappended_to_error_message() {
         );
         assert!(
             !err_msg.contains("Connection refused"),
-            "the live drain owns that line; it must not also ride the error: {err_msg}"
+            "ssh writes that line to the inherited stderr; it must not also ride the error: {err_msg}"
         );
     });
 }

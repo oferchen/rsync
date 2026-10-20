@@ -1114,9 +1114,9 @@ mod tests {
             assert!(rendered.contains("[receiver="), "missing role: {rendered}");
         }
 
-        /// The remote/child's stderr is live-forwarded by the SSH aux-channel
-        /// drain, never merged into this error line, so the rendered text is
-        /// exactly the rerr_name and role - no trailing stderr echo.
+        /// The remote child writes its stderr straight to ours, so it is never
+        /// merged into this error line: the rendered text is exactly the
+        /// rerr_name and role, with no trailing stderr echo.
         #[test]
         fn remote_exit_error_never_appends_stderr_context() {
             let error = remote_exit_error(ExitCode::Other(42), Role::Sender);

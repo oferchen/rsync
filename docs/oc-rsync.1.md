@@ -1334,44 +1334,11 @@ it - the same model as upstream **rsync-ssl**. Point the client at the proxy
 with an external wrapper such as **rsync-ssl** or **stunnel**; oc-rsync has no
 in-binary TLS, matching upstream rsync.
 
-## SSH stderr socketpair channel
+## SSH stderr
 
-Default builds drain the SSH child's stderr through an anonymous pipe on a
-dedicated reader thread. The **ssh-socketpair-stderr** cargo feature swaps the
-pipe for a **socketpair(AF_UNIX, SOCK_STREAM)** and, when the async transport
-is in use, hands the parent end to an epoll/kqueue-integrated drain. Wake-up
-and shutdown become event-driven instead of timeout-bounded, and the larger
-socket buffer absorbs bursty remote shells without dropping diagnostic lines.
-
-Enable it with:
-
-    cargo build --features ssh-socketpair-stderr
-
-Linux is the supported target; the Windows shim is pending. See
-**docs/design/socketpair-stderr-channel.md** in the source distribution.
-
-When the runtime cannot honour the feature, **oc-rsync** emits one of three
-one-shot warnings. Each fires at most once per process; the substrings below
-are the operator-grep contract. Sync-path warnings go to stderr; async-path
-warnings go to the **tracing** target **ssh::stderr**.
-
-**SSH stderr async drain unavailable on this platform**
-:   The kernel rejected **socketpair(AF_UNIX, SOCK_STREAM, 0)** - typically
-    **EMFILE**, **ENFILE**, **EPERM**, or **ENOSYS** under seccomp. The session
-    falls back to **Stdio::piped()**. Raise the per-process fd limit or relax
-    the sandbox to restore the socketpair drain.
-
-**SSH stderr socketpair partially set up**
-:   The socketpair allocated but **dup(2)** on the parent half failed, usually
-    **EMFILE**. The drain still reads from the socketpair, but **shutdown_read**
-    becomes a no-op and the drain thread is bounded by a 50 ms timeout at
-    child exit. Investigate fd pressure in the parent process.
-
-**SSH stderr async drain falling back to Stdio::inherit()**
-:   The async transport could not stand up the socketpair, so the SSH child's
-    stderr is wired straight to the parent terminal. **stderr_capture()**
-    returns empty for this session; consume diagnostics from the parent's own
-    stderr instead.
+The remote shell inherits the stderr of **oc-rsync**, as with upstream
+**rsync**: its diagnostics reach the terminal unmodified, unbuffered and
+exactly once. Only the remote shell's stdin and stdout carry the protocol.
 
 ## Interrupt behavior with --partial and --delay-updates
 
