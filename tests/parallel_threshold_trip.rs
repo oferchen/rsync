@@ -1,27 +1,11 @@
-//! PIP-9.c regression test: parallel-threshold-trip with sha256 byte-identity assertion.
+//! Byte-identity regression test for a local copy of 120 small files.
 //!
-//! Reintroduces the `parallel-threshold-trip` interop scenario removed by the
-//! revert that mitigated the PIP-4 (#4720) receiver-corruption surfaced when
-//! the source tree crossed the historical 100-file dispatch threshold.
-//!
-//! Background:
-//! - PIP-4 added an interop scenario with 120 tiny files under
-//!   `parallel_threshold/file_N.txt` that crossed the receiver's parallel
-//!   dispatch threshold for the first time.
-//! - The scenario surfaced receiver-side corruption: under `dist`-profile
-//!   builds (LTO + panic=abort) with `parallel-receive-delta` enabled,
-//!   `parallel_threshold/file_1.txt` ended up with wrong bytes on the
-//!   destination side.
-//! - The revert that mitigated PIP-7 (#4730 follow-up) removed the scenario
-//!   from `tools/ci/run_interop.sh`. PIP-8 (#4731) then tore out the dead
-//!   dispatch scaffolding. PIP-9 (design doc
-//!   `docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`) is the
-//!   plan for the proper wire-up; PIP-9.c is this regression test so a future
-//!   wire-up cannot reopen the corruption silently.
-//!
-//! Today the sequential receiver path is correct, so this test passes on
-//! master HEAD. Once PIP-9.b lands the parallel applier production wire-up,
-//! the same test catches a regression of the original corruption.
+//! The tree crosses the 100-file threshold that once routed the receiver
+//! through a parallel apply path, where `parallel_threshold/file_1.txt`
+//! was corrupted (PIP-4/PIP-7). That path has been removed; the receiver
+//! applies deltas sequentially, as upstream `receiver.c:recv_files()`
+//! does. This test keeps the original corpus as a plain local-copy
+//! byte-identity check.
 //!
 //! Test shape (mirrors the deleted scenario from commit 531e88d97 / PR #4725):
 //! - 120 files named `parallel_threshold/file_N.txt`, N = 1..=120.

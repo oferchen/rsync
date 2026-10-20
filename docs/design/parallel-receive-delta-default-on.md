@@ -1,5 +1,12 @@
 # Parallel receive-side delta apply: default-on decision (#1368 followup)
 
+> **Superseded (2026-10-20).** The parallel receive-delta pipeline described
+> here was removed. It was never wired into the receiver, measured 1.7-3.3x
+> slower than the sequential path in isolation, and could not shorten an
+> end-to-end transfer because the receiver is not on the critical path. The
+> receiver applies deltas sequentially, as upstream `receiver.c:recv_files()`
+> does. Kept for history only.
+
 > **HISTORICAL - superseded by PIP-7 (#4730) + PIP-8 (2026-05-22)**: the
 > default-on flip described below was reverted after the PIP-4 (#4720)
 > interop scenario `parallel-threshold-trip` surfaced receiver-side

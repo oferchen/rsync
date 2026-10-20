@@ -158,19 +158,13 @@ be combined.
   async path.
 - **Build.** `cargo build --release --features async-daemon`.
 
-### Parallel receive-delta (unconditional)
+### Parallel receive-delta (removed)
 
-- **What it does.** Fans out per-chunk strong-checksum verification
-  across rayon workers while serializing writes through a per-file
-  reorder buffer. Verification scales with core count; writes stay
-  deterministic.
-- **Status.** Unconditionally compiled. The `parallel-receive-delta`
-  feature flag was removed in PFF-7 after validation through full
-  upstream interop (PIP-10.a), adversarial stress tests (PIP-10.b),
-  mixed-size correctness (PIP-10.c), RSS overhead measurement
-  (PIP-10.d), error-path parity (PIP-10.e), and a bake window with
-  zero attributable regressions (PIP-9.f). There is no opt-out; the
-  parallel path is the only path.
+- **Status.** Removed. The `parallel-receive-delta` Cargo feature never
+  gated any code, and the parallel apply pipeline it named was never
+  wired into the receiver. Builds that pass
+  `--features parallel-receive-delta` must drop it. The receiver applies
+  deltas sequentially, as upstream `receiver.c:recv_files()` does.
 
 ### `thread-slab-pool` (`engine`)
 
@@ -470,7 +464,7 @@ next.
 | SSH transport async I/O evaluation             | `docs/design/ssh-transport-async-io-eval.md`                            |
 | Daemon async runtime choice                    | `docs/design/daemon-async-runtime-choice.md`                            |
 | Daemon async accept + sync workers             | `docs/design/daemon-async-accept-sync-workers.md`                       |
-| Parallel receive-side delta application        | `docs/design/parallel-receive-delta-application.md`                     |
+| Parallel receive-side delta application (superseded) | `docs/design/parallel-receive-delta-application.md` |
 | SSH stderr socketpair channel                  | `docs/design/socketpair-stderr-channel.md`                              |
 | SSH stderr handling audit                      | `docs/audits/ssh-stderr-handling.md`                                    |
 | Per-thread buffer slab                         | `docs/design/per-thread-buffer-slab.md`                                 |

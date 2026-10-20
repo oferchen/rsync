@@ -68,9 +68,7 @@ pub const MAX_CHUNK_SIZE: usize = 64 * 1024 * 1024;
 /// [`WindowsChunkedReader::open_with_chunk_size`] ignore the env var.
 ///
 /// Read once at process startup via [`OnceLock`]; subsequent `open()` calls
-/// reuse the cached result and never touch the environment again, matching
-/// the pattern documented on
-/// `engine::concurrent_delta::parallel_apply::ring_cap_env::RING_CAP_ENV`.
+/// reuse the cached result and never touch the environment again.
 pub const CHUNK_SIZE_ENV: &str = "OC_RSYNC_WIN_CHUNK_BYTES";
 
 /// Sentinel meaning "no chunk currently loaded".

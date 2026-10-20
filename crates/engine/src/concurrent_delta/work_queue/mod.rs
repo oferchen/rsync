@@ -28,8 +28,7 @@
 //! Work items arrive in wire order from the single producer. Consumers may
 //! process items out of order (determined by rayon work-stealing scheduling).
 //! When sequential output is required, results carry a sequence number and
-//! are fed through [`ReorderBuffer`](super::reorder::ReorderBuffer) to restore
-//! the original wire order before emission.
+//! the consumer restores the original wire order from them before emission.
 //!
 //! ## Multi-Producer Considerations
 //!
@@ -49,10 +48,8 @@
 //! Generator ─► WorkQueue (bounded) ─► drain_parallel(f) ─► Vec<R>
 //!  (single       blocks when full       rayon::scope          |
 //!  producer)                            work-stealing        v
-//!                                       (N consumers)   ReorderBuffer
-//!                                                             |
-//!                                                             v
-//!                                                   consumer (in-order)
+//!                                       (N consumers)  consumer (orders
+//!                                                       by sequence)
 //! ```
 //!
 //! For streaming pipelines, [`WorkQueueReceiver::drain_parallel_into`] sends
@@ -63,10 +60,8 @@
 //! Generator ─► WorkQueue ─► drain_parallel_into(f, tx) ─► Sender<R>
 //!  (single        rayon::scope                                 |
 //!  producer)      work-stealing                                v
-//!                 (N consumers)                       ReorderBuffer (live)
-//!                                                             |
-//!                                                             v
-//!                                                   consumer (incremental)
+//!                 (N consumers)                       consumer (incremental,
+//!                                                     orders by sequence)
 //! ```
 //!
 //! # Usage

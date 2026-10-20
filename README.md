@@ -136,7 +136,6 @@ cargo build --workspace --release
 | `incremental-flist` | `transfer` | yes | Gates tests only. The incremental receiver is chosen at runtime from the negotiated flags (#7968). | stable |
 | `lazy-metadata` | `engine` | yes | Defers `stat()` until metadata is needed. | stable |
 | `mmap-free-basis` | workspace, `engine`, `fast_io` | no | Reads the basis without mmap, through io_uring where available or buffered I/O. | experimental |
-| `parallel-receive-delta` | workspace, `cli`, `core`, `transfer` | no | Reserved build gate for a parallel receive-delta pipeline; compiles no extra receiver code today. | experimental |
 | `multi-producer` | `engine` | no | Relaxes the single-producer invariant on `WorkQueueSender`. | experimental |
 | `thread-slab-pool` | `engine` | no | Per-thread slab in front of `BufferPool`. | experimental |
 | `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` writer. | experimental |

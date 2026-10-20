@@ -10,9 +10,8 @@
 //!
 //! - The general [`IoUringReader`](super::file_reader::IoUringReader) is wired
 //!   into the sender-source path via factories and configuration plumbing.
-//!   The basis-file dispatch in `engine::concurrent_delta::strategy` only needs
-//!   a "give me the whole file" entry point and benefits from a small,
-//!   self-describing API.
+//!   A basis-file read only needs a "give me the whole file" entry point and
+//!   benefits from a small, self-describing API.
 //! - Keeping this wrapper behind the `iouring-data-reads` feature lets ops
 //!   toggle the reader-side experiment independently of the writer-side
 //!   `iouring-data-writes` prototype (#IUD-5) without affecting the always-on

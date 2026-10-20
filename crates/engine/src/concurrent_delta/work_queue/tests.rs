@@ -280,48 +280,6 @@ fn concurrent_producer_consumer_timing() {
 }
 
 #[test]
-fn pipeline_with_reorder_buffer() {
-    use crate::concurrent_delta::reorder::ReorderBuffer;
-    use crate::concurrent_delta::strategy;
-
-    let (tx, rx) = bounded_with_capacity(8);
-    let total = 50u32;
-
-    let producer = thread::spawn(move || {
-        for i in 0..total {
-            let work = DeltaWork::whole_file(i, PathBuf::from("/dst"), 64);
-            tx.send(work).unwrap();
-        }
-    });
-
-    // Parallel workers dispatch and stamp sequence numbers.
-    // In a real pipeline the producer stamps sequences before sending,
-    // but here we use ndx as the sequence for demonstration.
-    let collected = Mutex::new(Vec::new());
-    rayon::scope(|s| {
-        for w in rx.into_iter() {
-            let collected = &collected;
-            s.spawn(move |_| {
-                let seq = u64::from(w.ndx().get());
-                let result = strategy::dispatch(&w).with_sequence(seq);
-                collected.lock().unwrap().push(result);
-            });
-        }
-    });
-    let results: Vec<_> = collected.into_inner().unwrap();
-    producer.join().unwrap();
-
-    let mut reorder = ReorderBuffer::new(total as usize);
-    for r in results {
-        reorder.insert(r.sequence(), r).unwrap();
-    }
-
-    let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
-    let expected: Vec<u64> = (0..u64::from(total)).collect();
-    assert_eq!(ordered, expected);
-}
-
-#[test]
 fn drain_parallel_into_streams_all_items() {
     let (tx, rx) = bounded_with_capacity(8);
     let count = 200u32;
@@ -525,35 +483,6 @@ fn drain_parallel_single_item() {
 
     let results = rx.drain_parallel(|w| (w.ndx().get(), w.target_size()));
     assert_eq!(results, vec![(42, 128)]);
-}
-
-#[test]
-fn drain_parallel_with_reorder_buffer() {
-    use crate::concurrent_delta::reorder::ReorderBuffer;
-    use crate::concurrent_delta::strategy;
-
-    let (tx, rx) = bounded_with_capacity(8);
-    let total = 100u32;
-
-    let producer = thread::spawn(move || {
-        for i in 0..total {
-            tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64))
-                .unwrap();
-        }
-    });
-
-    let results = rx.drain_parallel(|w| {
-        let seq = u64::from(w.ndx().get());
-        strategy::dispatch(&w).with_sequence(seq)
-    });
-    producer.join().unwrap();
-
-    let mut reorder = ReorderBuffer::new(total as usize);
-    for r in results {
-        reorder.insert(r.sequence(), r).unwrap();
-    }
-    let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
-    assert_eq!(ordered, (0..u64::from(total)).collect::<Vec<u64>>());
 }
 
 #[test]
@@ -1171,8 +1100,8 @@ fn dynamic_queue_release_refills_admission_past_initial() {
     );
 }
 
-/// `DeltaConsumer` drains through `drain_parallel_into`, not `drain_parallel`,
-/// so that method carries the release for the whole delta pipeline. Sending
+/// `drain_parallel_into` is the streaming drain and must release each permit
+/// itself, independently of `drain_parallel`. Sending
 /// exactly `INITIAL` items lets the drain run to completion whether or not it
 /// releases, which makes a missing release surface here as a failed assertion
 /// rather than as a producer deadlock.
@@ -1255,7 +1184,7 @@ fn dynamic_queue_drain_into_refills_admission_past_initial() {
 enum DrainPath {
     /// Collects into a `Vec`; releases as each rayon task completes.
     Parallel,
-    /// Streams through a channel; the path `DeltaConsumer` runs.
+    /// Streams through a channel.
     ParallelInto,
     /// Bare iterator; releases on dequeue rather than on completion.
     Iter,
@@ -1365,7 +1294,7 @@ fn dynamic_queue_iter_release_refills_admission() {
 /// End-to-end proof that the adaptive default converges without deadlock: an
 /// `AdaptiveQueueController` drives a `bounded_dynamic` queue while a
 /// deliberately slow consumer holds admission at capacity. The producer ticks
-/// the controller exactly as `ParallelDeltaPipeline` does. Under the sustained
+/// the controller on a fixed window. Under the sustained
 /// admission backpressure the controller must shrink the depth, yet every item
 /// must still drain exactly once and all permits must return - shrinking the
 /// ceiling withholds future admissions but never revokes in-flight work, so the
@@ -1394,7 +1323,7 @@ fn adaptive_controller_shrinks_and_still_drains_to_completion() {
         *processed_thread.lock().unwrap() = out;
     });
 
-    // Producer mirrors ParallelDeltaPipeline: send, and tick the controller on
+    // Producer: send, and tick the controller on
     // a fixed window. If admission never refilled, `send` would block forever
     // after two admissions and this join would hang the test.
     let producer = thread::spawn(move || {

@@ -1,5 +1,12 @@
 # PIP-9.g: parallel vs sequential receive-delta bench close-out
 
+> **Superseded (2026-10-20).** The parallel receive-delta pipeline described
+> here was removed. It was never wired into the receiver, measured 1.7-3.3x
+> slower than the sequential path in isolation, and could not shorten an
+> end-to-end transfer because the receiver is not on the critical path. The
+> receiver applies deltas sequentially, as upstream `receiver.c:recv_files()`
+> does. Kept for history only.
+
 Tracking: PIP-9.g. Parent: PIP-9. Series: PIP-9.a through PIP-9.h.
 Sub-tasks: PIP-9.g.a (PR #5267, merged), PIP-9.g.b (completed).
 

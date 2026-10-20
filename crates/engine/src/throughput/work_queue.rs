@@ -30,8 +30,8 @@
 //!
 //! The rope only resizes the admission ceiling; it never reorders, revokes, or
 //! reclassifies in-flight work. The single-producer / multi-consumer contract
-//! and the [`ReorderBuffer`](crate::concurrent_delta::ReorderBuffer) drain are
-//! exactly as before, so NDX wire ordering is unaffected on both paths.
+//! and the consumer's sequence-based ordering are exactly as before, so NDX
+//! wire ordering is unaffected on both paths.
 
 use std::time::Duration;
 

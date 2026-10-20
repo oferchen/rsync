@@ -150,15 +150,12 @@ pub mod writer;
 
 mod parallel_io;
 
-pub mod delta_pipeline;
-
 pub mod adaptive_buffer;
 pub mod constants;
 pub mod disk_commit;
 pub mod map_file;
 pub mod pipeline;
 pub mod progress;
-pub mod reorder_buffer;
 #[cfg(unix)]
 pub(crate) mod robust_rename;
 pub mod token_buffer;
@@ -190,10 +187,6 @@ pub use self::role::ServerRole;
 pub use self::shared::{ChecksumFactory, TransferDeadline};
 pub use self::temp_cleanup::cleanup_stale_temp_files;
 pub use self::writer::{CountingWriter, MsgInfoSender, ServerWriter, shutdown_send_side};
-pub use delta_pipeline::{
-    DEFAULT_PARALLEL_THRESHOLD, ParallelDeltaPipeline, ReceiverDeltaPipeline,
-    SequentialDeltaPipeline, ThresholdDeltaPipeline,
-};
 pub use parallel_io::{
     DEFAULT_DELETION_THRESHOLD, DEFAULT_METADATA_THRESHOLD, DEFAULT_SIGNATURE_THRESHOLD,
     DEFAULT_STAT_THRESHOLD, ParallelOp, ParallelThresholds,

@@ -1,5 +1,12 @@
 # PIP-4 closure - interop suite exercises parallel-receive-delta via PIP-5 default flip
 
+> **Superseded (2026-10-20).** The parallel receive-delta pipeline described
+> here was removed. It was never wired into the receiver, measured 1.7-3.3x
+> slower than the sequential path in isolation, and could not shorten an
+> end-to-end transfer because the receiver is not on the critical path. The
+> receiver applies deltas sequentially, as upstream `receiver.c:recv_files()`
+> does. Kept for history only.
+
 > **SUPERSEDED by PIP-7 (#4730) + PIP-8 (2026-05-22)**: this closure note
 > is historical. The PIP-4 `parallel-threshold-trip` interop scenario
 > surfaced receiver-side corruption, the PIP-5 default flip was reverted,

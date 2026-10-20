@@ -148,16 +148,6 @@ thread-slab-pool = ["engine/thread-slab-pool"]
 # Incremental file list processing with failed directory tracking
 incremental-flist = []
 
-# ============================================================================
-# Receive Pipeline Features
-# ============================================================================
-
-# Parallel receive-side delta apply (oc extension, off by default). Reserves
-# the build gate for the threshold-selected parallel receiver pipeline that
-# lands in a follow-up; it compiles no additional code today, so a default
-# build and a `--features parallel-receive-delta` build are byte-identical.
-# Forwarded from `core` -> `cli`/`bin`.
-parallel-receive-delta = []
 
 # ============================================================================
 # Debugging Features
@@ -191,14 +181,6 @@ harness = false
 
 [[bench]]
 name = "token_buffer_benchmark"
-harness = false
-
-[[bench]]
-name = "reorder_buffer_benchmark"
-harness = false
-
-[[bench]]
-name = "reorder_buffer_large_scale"
 harness = false
 
 [[bench]]

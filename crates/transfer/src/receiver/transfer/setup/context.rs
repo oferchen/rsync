@@ -112,9 +112,6 @@ impl ReceiverContext {
 
         self.emit_delta_transmission_notice(writer);
 
-        // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
-        debug_log!(Recv, 1, "parallel receive-delta path active");
-
         if self.forwards_peer_log() {
             reader.forward_peer_log();
         }

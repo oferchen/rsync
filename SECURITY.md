@@ -194,7 +194,7 @@ Three cargo-fuzz workspaces hold 36 targets. They are excluded from the main wor
 
 | Workspace | Targets |
 |---|---|
-| `fuzz/` (26) | Protocol parsing: `varint_decode`, `multiplex_frame_parse`, `legacy_greeting`, `daemon_greeting`, `ndx_codec`, `protocol_wire`, `flist_entry_decode`, `incremental_flist`, `capability_flags`, `vstring`, `auth_response`. Files and options: `batch_reader`, `bwlimit`, `acl_xattr_wire`, `filter_list_wire`, `buffered_map`. Compression: `decompressor_zlib`, `decompressor_zstd`, `zlib_token_decode`. SIMD parity: `simd_checksum_parity`. Concurrency: `parallel_receive_delta_adversarial`. Differential against upstream: `filter_rules_vs_upstream`, `filter_differential`, `differential_outcome`, `differential_multiplex`, `differential_flist` |
+| `fuzz/` (25) | Protocol parsing: `varint_decode`, `multiplex_frame_parse`, `legacy_greeting`, `daemon_greeting`, `ndx_codec`, `protocol_wire`, `flist_entry_decode`, `incremental_flist`, `capability_flags`, `vstring`, `auth_response`. Files and options: `batch_reader`, `bwlimit`, `acl_xattr_wire`, `filter_list_wire`, `buffered_map`. Compression: `decompressor_zlib`, `decompressor_zstd`, `zlib_token_decode`. SIMD parity: `simd_checksum_parity`. Differential against upstream: `filter_rules_vs_upstream`, `filter_differential`, `differential_outcome`, `differential_multiplex`, `differential_flist` |
 | `crates/protocol/fuzz/` (8) | `fuzz_varint`, `fuzz_delta`, `fuzz_multiplex_frame`, `fuzz_legacy_greeting`, `file_entry_roundtrip`, `multiplex_frame_roundtrip`, `varint_roundtrip`, `negotiation_prologue` |
 | `crates/filters/fuzz/` (2) | `fuzz_filter_parse`, `fuzz_filter_chain` |
 
