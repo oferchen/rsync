@@ -244,14 +244,16 @@ pub(crate) fn sync_nfsv4_acls_if_requested(
     Ok(())
 }
 
-/// Stores the effective fake-super `user.rsync.%stat` xattr on the destination.
+/// Applies the source's recorded fake-super stat to the destination.
 ///
 /// Under `--fake-super` the source may be a placeholder whose real
 /// mode/uid/gid/rdev live in its own `user.rsync.%stat` xattr (written by an
-/// earlier fake-super receive). The metadata-apply step only saw the
-/// placeholder's raw `fs::Metadata`, so it stored the wrong ownership. Rewrite
-/// the destination xattr from [`::metadata::effective_source_stat`], which
-/// prefers the source's recorded stat and falls back to its `fs::Metadata`.
+/// earlier fake-super receive). Upstream reads the source through `x_lstat()`,
+/// so that recorded stat is the file's stat, but the metadata-apply step only
+/// saw the placeholder's raw `fs::Metadata`. Re-run upstream's
+/// `set_stat_xattr()` against the recorded stat: the real mode follows the
+/// recorded permissions, and the destination `%stat` is written or removed
+/// depending on whether the real mode, owner and group can represent it.
 ///
 /// No-op unless `--fake-super` is active together with ownership preservation,
 /// matching `metadata::apply::ownership::set_owner_like`'s fake-super gate.
@@ -285,23 +287,14 @@ pub(crate) fn store_effective_fake_super_if_requested(
 
     // A `--chmod` tweak makes the destination's deflected mode (written by the
     // permission step) authoritative; keep it rather than the placeholder's.
-    if let Ok(Some(existing)) = ::metadata::load_fake_super(destination) {
-        if options.chmod().is_some() {
-            stat.mode = existing.mode;
-        }
-        if existing == stat {
-            return Ok(());
-        }
+    if options.chmod().is_some()
+        && let Ok(Some(existing)) = ::metadata::load_fake_super(destination)
+    {
+        stat.mode = existing.mode;
     }
-
     let _ = metadata;
-    ::metadata::store_fake_super(destination, &stat).map_err(|error| {
-        LocalCopyError::io(
-            "store fake-super metadata",
-            destination.to_path_buf(),
-            error,
-        )
-    })
+    // upstream: xattrs.c:1304-1356 set_stat_xattr() with the x_lstat() stat.
+    ::metadata::apply_fake_super_stat(destination, &stat, options).map_err(map_metadata_error)
 }
 
 /// Converts a [`MetadataError`] into a [`LocalCopyError`].

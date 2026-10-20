@@ -1313,3 +1313,71 @@ fn refusal_logs_a_non_utf8_name_verbatim() {
         shown.escape_debug()
     );
 }
+
+const DIR_ROW_FORMAT: &str = "%i %n";
+
+/// Seeds a module whose directories carry the same mtime as the source's and
+/// hold one extraneous entry each, so a directory itemizes a time change only
+/// when a deletion inside it ran before the generator stat'ed it.
+fn seed_same_mtime_dirs(src: &Path, module: &Path) {
+    fs::create_dir_all(module.join("d")).expect("module d");
+    fs::write(module.join("extra"), b"").expect("seed extra");
+    fs::write(module.join("d/x"), b"").expect("seed d/x");
+    let stamp = FileTime::from_unix_time(1_262_304_000, 0);
+    for dir in [
+        src.join("d"),
+        src.to_path_buf(),
+        module.join("d"),
+        module.to_path_buf(),
+    ] {
+        set_file_mtime(&dir, stamp).expect("pin directory mtime");
+    }
+}
+
+/// The directory rows a push with `client_args` logs over the seeded module.
+fn directory_rows(client_args: &[&str]) -> Option<Vec<String>> {
+    let text = module_log(
+        DIR_ROW_FORMAT,
+        &[],
+        client_args,
+        true,
+        seed_same_mtime_dirs,
+        "d/f",
+    )?;
+    Some(
+        text.lines()
+            .filter_map(|line| line.find(".d").map(|start| line[start..].to_owned()))
+            .collect(),
+    )
+}
+
+/// `--delete` itemizes each directory before deleting inside it, so a
+/// directory whose mtime matched the source logs no row even though a
+/// deletion then touched it.
+///
+/// Upstream oracle (rsync 3.5.1 daemon, the same fixture): no `.d` row.
+/// upstream: generator.c:1870-1928 recv_generator() itemizes the directory
+/// before `delete_in_dir()`, and generator.c:2780-2801 does the same for each
+/// sub-list's directory under INC_RECURSE.
+#[test]
+fn push_delete_during_itemizes_a_directory_before_deleting_in_it() {
+    let Some(rows) = directory_rows(&["-a", "--delete"]) else {
+        return;
+    };
+    assert!(rows.is_empty(), "unexpected directory rows: {rows:?}");
+}
+
+/// `--delete-before` deletes before the generator walk, so every directory a
+/// deletion touched itemizes the changed mtime.
+///
+/// Upstream oracle (rsync 3.5.1 daemon, the same fixture): `.d..t...... ./`
+/// and `.d..t...... d/`.
+/// upstream: generator.c:2280-2281 `do_delete_pass()` runs before
+/// generate_files() walks the list.
+#[test]
+fn push_delete_before_itemizes_the_directories_its_pass_changed() {
+    let Some(rows) = directory_rows(&["-a", "--delete-before"]) else {
+        return;
+    };
+    assert_eq!(rows, [".d..t...... ./", ".d..t...... d/"]);
+}

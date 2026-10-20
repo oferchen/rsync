@@ -89,6 +89,36 @@ impl ReceiverContext {
             flat_idx += 1;
         }
 
+        // upstream: flist.c:2939-2952 - classify the received file list into the
+        // per-type tallies so the pulling client reconstructs the `--stats`
+        // "Number of files" breakdown (`reg: R, dir: D, link: L, ...`). Without
+        // this the client counted every entry as a regular file.
+        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+        let mut stats = TransferStats {
+            files_listed: self.received_files_total,
+            num_dirs,
+            num_symlinks,
+            num_devices,
+            num_specials,
+            entries_received: self.received_files_total as u64,
+            io_error: self.flist_reader_io_error() | self.flist_io_error,
+            ..Default::default()
+        };
+
+        // upstream: generator.c:2280-2281 - --delete-before runs do_delete_pass()
+        // before generate_files() walks the list, so the walk stats and itemizes
+        // each directory with the mtime the pass left behind.
+        if self.delete_pass_is_early() && self.config.deletion.delete_before {
+            self.run_receiver_delete_pass(
+                super::DeletePassPhase::Early,
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                writer,
+                &mut stats,
+            )?;
+        }
+
         // Decide the plain-`-v` directory NAME lines from the PRE-transfer
         // state, before create_directories applies metadata or child mkdirs
         // bump a parent's mtime. Upstream names a directory only when
@@ -149,28 +179,12 @@ impl ReceiverContext {
         // upstream: receiver.c:685-686 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
-        // upstream: flist.c:2939-2952 - classify the received file list into the
-        // per-type tallies so the pulling client reconstructs the `--stats`
-        // "Number of files" breakdown (`reg: R, dir: D, link: L, ...`). Without
-        // this the client counted every entry as a regular file.
-        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
-        let mut stats = TransferStats {
-            files_listed: self.received_files_total,
-            num_dirs,
-            num_symlinks,
-            num_devices,
-            num_specials,
-            entries_received: self.received_files_total as u64,
-            io_error: self.flist_reader_io_error() | self.flist_io_error,
-            ..Default::default()
-        };
-
-        // upstream: generator.c:2753-2754 - --delete-before / --delete-during
-        // sweep before the per-file loop. --delete-after / --delete-delay defer
-        // the sweep until after the transfer (see the late call below) so the
-        // destination `.rsync-filter` merge files transferred by this run are
-        // present and consulted at delete time.
-        if self.delete_pass_is_early() {
+        // upstream: generator.c:2753-2754 - --delete-during sweeps before the
+        // per-file loop (--delete-before already ran above). --delete-after /
+        // --delete-delay defer the sweep until after the transfer (see the late
+        // call below) so the destination `.rsync-filter` merge files transferred
+        // by this run are present and consulted at delete time.
+        if self.delete_pass_is_early() && !self.config.deletion.delete_before {
             self.run_receiver_delete_pass(
                 super::DeletePassPhase::Early,
                 &setup.dest_dir,
