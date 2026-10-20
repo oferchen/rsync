@@ -78,7 +78,7 @@ impl<'a> CopyContext<'a> {
             unsupported_operation_skipped: false,
             sender_remove_error: false,
             make_way_error: false,
-            make_room_skipped_deletes: 0,
+            skipped_deletes: 0,
             create_error: false,
             delete_io_error: false,
             multi_source: false,
@@ -744,15 +744,16 @@ impl<'a> CopyContext<'a> {
     pub(super) const fn make_way_error_occurred(&self) -> bool {
         self.make_way_error
     }
-    /// Adds the obstacle children `--max-delete` refused to the run's tally.
+    /// Adds deletions `--max-delete` refused to the run's tally.
     ///
-    /// upstream: `delete.c:217-218` - `skipped_deletes++` for every capped entry.
+    /// upstream: `delete.c:217-218` - `skipped_deletes++` for every capped
+    /// entry, whether a delete-pass victim or a make-room obstacle's child.
     pub(crate) const fn record_skipped_deletes(&mut self, skipped: u64) {
-        self.make_room_skipped_deletes = self.make_room_skipped_deletes.saturating_add(skipped);
+        self.skipped_deletes = self.skipped_deletes.saturating_add(skipped);
     }
-    /// The obstacle children `--max-delete` refused across the run.
-    pub(super) const fn make_room_skipped_deletes(&self) -> u64 {
-        self.make_room_skipped_deletes
+    /// The deletions `--max-delete` refused across the run.
+    pub(super) const fn skipped_deletes(&self) -> u64 {
+        self.skipped_deletes
     }
 
     /// Records that `atomic_create()` failed for one entry. The entry is

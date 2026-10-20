@@ -411,19 +411,9 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
         )?;
     }
 
-    if skipped > 0 {
-        // upstream: generator.c:2904-2907 emits one warning after the pass with
-        // the total number of entries skipped because of the limit; the run
-        // then exits RERR_DEL_LIMIT (25).
-        info_log!(
-            Del,
-            1,
-            "max deletions reached, skipping {} remaining",
-            skipped
-        );
-        return Err(LocalCopyError::delete_limit_exceeded(skipped));
-    }
-
+    // upstream: delete.c:217-219 - a capped entry only bumps `skipped_deletes`;
+    // the transfer continues and generator.c:2904-2907 reports the total once.
+    context.record_skipped_deletes(skipped);
     Ok(())
 }
 

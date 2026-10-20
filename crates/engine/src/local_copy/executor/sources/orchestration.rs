@@ -554,7 +554,7 @@ pub(crate) fn copy_sources(
 
     let result = {
         let context = &mut context;
-        (|| -> Result<(), LocalCopyError> {
+        (|| -> Result<Option<LocalCopyError>, LocalCopyError> {
             let multiple_sources = plan.sources().len() > 1;
             let destination_path = plan.destination_spec().path();
             // upstream: main.c:725 get_local_name() returns NULL under list_only,
@@ -803,87 +803,15 @@ pub(crate) fn copy_sources(
             // (no batch writer; falls through to the deferred-ops flush so
             // empty queues drain cleanly without side effects).
             if context.mode().is_dry_run() && context.options().get_batch_writer().is_some() {
-                if let Some(error) = first_io_error {
-                    return Err(error);
-                }
-                if context.flist_io_error_occurred() || context.unsupported_operation_skipped() {
-                    return Err(LocalCopyError::partial_transfer());
-                }
-                return Ok(());
+                return Ok(completed_run_exit_error(context, first_io_error));
             }
-
             flush_deferred_operations(context)?;
-
-            if let Some(error) = first_io_error {
-                return Err(error);
-            }
-            // A platform-unsupported entry (a Windows unprivileged file symlink)
-            // was skipped with a warning; finish RERR_PARTIAL (23) like upstream
-            // FERROR_XFER after a failed do_symlink().
-            if context.unsupported_operation_skipped() {
-                return Err(LocalCopyError::partial_transfer());
-            }
-            // upstream: flist.c:2020 send_file_name() and flist.c:1692-1695
-            // make_file() set io_error |= IOERR_GENERAL when an entry is dropped
-            // from the file list; cleanup.c:217-218 then exits RERR_PARTIAL (23).
-            // The per-entry diagnostic was already printed at the skip site, so
-            // surface only the summary error here.
-            if context.flist_io_error_occurred() {
-                return Err(LocalCopyError::partial_transfer());
-            }
-            // upstream: sender.c:successful_send() - a source refused by a
-            // --remove-source-files safety guard (changed file / destination
-            // inode) or a failed unlink sets got_xfer_error; cleanup.c:217-218 then
-            // exits RERR_PARTIAL (23). The per-entry diagnostic was already
-            // printed at the guard site, so surface only the summary error here.
-            if context.sender_remove_error_occurred() {
-                return Err(LocalCopyError::partial_transfer());
-            }
-            // upstream: delete.c:283-285 - a directory obstacle that survived
-            // its rmdir logs `could not make way for new %s: %s` at
-            // FERROR_XFER, which sets got_xfer_error (log.c:337-338) without
-            // aborting; cleanup.c:217-218 then lifts the exit to RERR_PARTIAL
-            // (23). The per-entry diagnostics were already printed at the
-            // refusal site, so surface only the summary error here.
-            if context.make_way_error_occurred() {
-                // upstream: generator.c:2904-2907 - children of an obstacle that
-                // the cap kept are reported once, ahead of the RERR_PARTIAL that
-                // cleanup.c:217-218 ranks above RERR_DEL_LIMIT.
-                let skipped = context.make_room_skipped_deletes();
-                if skipped > 0 {
-                    eprintln!("Deletions stopped due to --max-delete limit ({skipped} skipped)");
-                }
-                return Err(LocalCopyError::partial_transfer());
-            }
-            // upstream: generator.c:2490-2522 / hlink.c:486 - a FIFO, device,
-            // symlink, or hard link atomic_create() could not make is reported
-            // at FERROR_XFER and skipped; got_xfer_error then lifts the exit to
-            // RERR_PARTIAL (23). The per-entry line was already printed.
-            if context.create_error_occurred() {
-                return Err(LocalCopyError::partial_transfer());
-            }
-            // upstream: sender.c:790-796 - a source that shrank mid-transfer
-            // sets `io_error |= IOERR_GENERAL` and logs one `read errors
-            // mapping %s` at FERROR_XFER without aborting; main.c then exits
-            // RERR_PARTIAL (23). The per-entry diagnostic was already printed
-            // at the copy site, so surface only the summary error here.
-            if context.source_read_error_occurred() {
-                return Err(LocalCopyError::partial_transfer());
-            }
-            // upstream: delete.c:91-288 - the delete pass logs each
-            // un-removable entry via `rsyserr(FERROR_XFER, ...)` and sets
-            // `io_error |= IOERR_GENERAL` without aborting; main.c then exits
-            // RERR_PARTIAL (23). The per-entry notice was already printed by
-            // the emitter, so surface only the summary error here.
-            if context.io_error_requires_partial_exit() {
-                return Err(LocalCopyError::partial_transfer());
-            }
-            Ok(())
+            Ok(completed_run_exit_error(context, first_io_error))
         })()
     };
 
     match result {
-        Ok(()) => {
+        Ok(exit_error) => {
             // upstream main.c:331,426: the transfer rate uses `endtime -
             // starttime`, the integer difference of two whole-second time_t
             // marks - not the sum of per-file copy durations (~0 for CoW) and
@@ -893,7 +821,14 @@ pub(crate) fn copy_sources(
             context
                 .summary_mut()
                 .record_wall_clock_elapsed(Duration::from_secs(elapsed_secs));
-            Ok(context.into_outcome())
+            let outcome = context.into_outcome();
+            match exit_error {
+                None => Ok(outcome),
+                Some(error) => {
+                    let (_summary, report) = outcome.into_summary_and_report();
+                    Err(error.with_completed_report(report))
+                }
+            }
         }
         Err(error) => {
             context.rollback_on_error(&error);
@@ -902,6 +837,49 @@ pub(crate) fn copy_sources(
     }
 }
 
+/// Decides the exit status a run owes once every entry has been processed.
+///
+/// Every flag consulted here marks an entry whose diagnostic was already
+/// printed at its site; this only picks the code, the way upstream does after
+/// the transfer has finished:
+///
+/// - `IOERR_GENERAL` / `got_xfer_error` (23): an entry dropped from the file
+///   list (`flist.c:2020`, `flist.c:1692-1695`), an unsupported entry, a refused
+///   `--remove-source-files` source (`sender.c:successful_send()`), a surviving
+///   make-room obstacle (`delete.c:283-285`), a failed `atomic_create()`
+///   (`generator.c:2490-2522`, `hlink.c:486`), a short source read
+///   (`sender.c:790-796`), a swallowed delete error (`delete.c:264-267`), or
+///   the first per-entry I/O error.
+/// - `IOERR_VANISHED` (24): a source that disappeared mid-transfer.
+/// - `IOERR_DEL_LIMIT` (25): deletions skipped by `--max-delete`, reported once
+///   by `generator.c:2904-2907`.
+///
+/// upstream: `cleanup.c:210-218` applies DEL_LIMIT, then VANISHED, then
+/// PARTIAL, so a later flag overrides an earlier one: 23 beats 24 beats 25.
+fn completed_run_exit_error(
+    context: &CopyContext,
+    first_io_error: Option<LocalCopyError>,
+) -> Option<LocalCopyError> {
+    let skipped = context.skipped_deletes();
+    if skipped > 0 {
+        eprintln!("Deletions stopped due to --max-delete limit ({skipped} skipped)");
+    }
+    let general = context.flist_io_error_occurred()
+        || context.unsupported_operation_skipped()
+        || context.sender_remove_error_occurred()
+        || context.make_way_error_occurred()
+        || context.create_error_occurred()
+        || context.source_read_error_occurred()
+        || context.io_error_requires_partial_exit();
+    match first_io_error {
+        Some(error) if !error.is_vanished_error() => Some(error),
+        Some(_) if general => Some(LocalCopyError::partial_transfer()),
+        Some(vanished) => Some(vanished),
+        None if general => Some(LocalCopyError::partial_transfer()),
+        None if skipped > 0 => Some(LocalCopyError::delete_limit_exceeded(skipped)),
+        None => None,
+    }
+}
 /// Processes a single source entry in the copy operation.
 /// The directory the sender would `chdir` into for `source`, used as the
 /// confinement anchor for that operand's content reads.
@@ -1651,10 +1629,13 @@ pub(super) fn delete_missing_source_entry(
         return Ok(());
     }
 
+    // upstream: delete.c:217-219 - the capped `delete_item()` counts the
+    // refusal in `skipped_deletes` and returns DR_AT_LIMIT; the run goes on.
     if let Some(limit) = context.options().max_deletion_limit()
         && context.summary().items_deleted() >= limit
     {
-        return Err(LocalCopyError::delete_limit_exceeded(1));
+        context.record_skipped_deletes(1);
+        return Ok(());
     }
 
     let record_path = non_empty_path(relative.as_path());

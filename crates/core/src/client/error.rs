@@ -4,6 +4,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
+use super::summary::ClientSummary;
 use crate::auth::supported_daemon_digest_list;
 use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
@@ -45,8 +46,8 @@ pub struct ClientError {
     exit_code: ExitCode,
     message: Message,
     program_line: Option<String>,
+    completed: Option<Box<ClientSummary>>,
 }
-
 impl ClientError {
     /// Creates a new [`ClientError`] from the supplied exit code and message.
     pub(crate) const fn with_code(exit_code: ExitCode, message: Message) -> Self {
@@ -54,9 +55,24 @@ impl ClientError {
             exit_code,
             message,
             program_line: None,
+            completed: None,
         }
     }
-
+    /// Attaches the summary of a transfer that finished every entry but still
+    /// exits non-zero, so the caller renders it before the exit trailer.
+    ///
+    /// upstream: `cleanup.c:210-218` turns `io_error` / `got_xfer_error` into
+    /// the exit code only after the itemize lines and statistics are written.
+    #[must_use]
+    pub(crate) fn with_completed_summary(mut self, summary: ClientSummary) -> Self {
+        self.completed = Some(Box::new(summary));
+        self
+    }
+    /// Detaches the summary of the completed transfer this error is the exit
+    /// status of; `None` when the error aborted the transfer.
+    pub fn take_completed_summary(&mut self) -> Option<ClientSummary> {
+        self.completed.take().map(|summary| *summary)
+    }
     /// Creates a new [`ClientError`] from an i32 exit code and message.
     ///
     /// If the exit code doesn't map to a known `ExitCode` variant,
@@ -297,14 +313,15 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
             ClientError::with_code(code, message)
         }
-        LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
-            // upstream: generator.c:2905-2906 - the generator emits
-            // `Deletions stopped due to --max-delete limit (%d skipped)` via
-            // rprintf(FWARNING, ...) with no pluralized noun, so who_am_i()
-            // yields the `generator` role.
+        LocalCopyErrorKind::DeleteLimitExceeded { .. } => {
+            // The engine already printed generator.c:2904-2907's `Deletions
+            // stopped due to --max-delete limit (%d skipped)` warning. What is
+            // left is log_exit()'s trailer: log.c:100 names RERR_DEL_LIMIT `the
+            // --max-delete limit stopped deletions`, and a local copy's client
+            // is the sending half (main.c:1412), so who_am_i() is `sender`.
             let code = ExitCode::DeleteLimit;
-            let text = format!("Deletions stopped due to --max-delete limit ({skipped} skipped)");
-            let message = rsync_error!(code.as_i32(), text).with_role(Role::Generator);
+            let message = rsync_error!(code.as_i32(), "the --max-delete limit stopped deletions")
+                .with_role(Role::Sender);
             ClientError::with_code(code, message)
         }
         LocalCopyErrorKind::StopAtReached { .. } => {

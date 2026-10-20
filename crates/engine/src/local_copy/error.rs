@@ -1,9 +1,11 @@
+use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use thiserror::Error;
 
+use super::LocalCopyReport;
 use super::filter_program::{
     INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, SIGNAL_EXIT_CODE,
     TIMEOUT_EXIT_CODE, VANISHED_EXIT_CODE,
@@ -52,16 +54,60 @@ pub fn upstream_io_error(error: &io::Error) -> String {
 /// | 24        | RERR_VANISHED | `Vanished`                |
 /// | 25        | RERR_DEL_LIMIT| `DeleteLimit`             |
 /// | 30        | RERR_TIMEOUT  | `Timeout`                 |
-#[derive(Debug, Error)]
-#[error(transparent)]
+#[derive(Debug)]
 pub struct LocalCopyError {
-    #[from]
     kind: LocalCopyErrorKind,
+    completed: Option<Box<LocalCopyReport>>,
+}
+
+impl fmt::Display for LocalCopyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.kind, f)
+    }
+}
+
+impl std::error::Error for LocalCopyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        std::error::Error::source(&self.kind)
+    }
+}
+
+impl From<LocalCopyErrorKind> for LocalCopyError {
+    fn from(kind: LocalCopyErrorKind) -> Self {
+        Self::new(kind)
+    }
 }
 
 impl LocalCopyError {
     const fn new(kind: LocalCopyErrorKind) -> Self {
-        Self { kind }
+        Self {
+            kind,
+            completed: None,
+        }
+    }
+
+    /// Attaches the report of a run that finished every entry but still owes a
+    /// non-zero exit code.
+    ///
+    /// upstream: `cleanup.c:210-218` derives the exit code from `io_error` and
+    /// `got_xfer_error` only after the transfer, its itemize lines and its
+    /// statistics are complete, so the caller must still render this report.
+    #[must_use]
+    pub(crate) fn with_completed_report(mut self, report: LocalCopyReport) -> Self {
+        self.completed = Some(Box::new(report));
+        self
+    }
+
+    /// Returns the report of the completed run this error is the exit status
+    /// of, or `None` when the error aborted the transfer.
+    #[must_use]
+    pub fn completed_report(&self) -> Option<&LocalCopyReport> {
+        self.completed.as_deref()
+    }
+
+    /// Detaches the completed-run report, leaving only the exit status.
+    pub fn take_completed_report(&mut self) -> Option<LocalCopyReport> {
+        self.completed.take().map(|report| *report)
     }
 
     /// Constructs an error representing missing operands.
@@ -272,8 +318,8 @@ impl LocalCopyError {
     /// Upstream rsync does not abort the transfer when the limit is hit: it
     /// stops performing further deletions, finishes the transfer, and only
     /// reports the limit at cleanup (`cleanup.c:213-214`, exit code 25). The
-    /// delete-during path defers this error to the end of the directory so a
-    /// mid-transfer `--delete-during` sweep does not skip pending copies.
+    /// engine therefore raises this error only once the run has finished, with
+    /// the completed report attached.
     #[must_use]
     pub const fn is_delete_limit_error(&self) -> bool {
         matches!(self.kind, LocalCopyErrorKind::DeleteLimitExceeded { .. })
