@@ -192,6 +192,7 @@ enum RemoteEnd {
     /// Exited normally with this status.
     Exited(i32),
     /// Killed by a signal.
+    #[cfg(any(unix, feature = "embedded-ssh"))]
     Signaled { core_dumped: bool },
     /// The status could not be determined.
     Unknown,
@@ -207,7 +208,9 @@ fn map_remote_end(end: RemoteEnd) -> ExitCode {
         RemoteEnd::Exited(code) => ExitCode::from_raw(code),
         // upstream: main.c:215-224 - a child that did not exit normally maps to
         // RERR_CRASHED (core dump) or RERR_TERMINATED (killed by signal).
+        #[cfg(any(unix, feature = "embedded-ssh"))]
         RemoteEnd::Signaled { core_dumped: true } => ExitCode::Crashed,
+        #[cfg(any(unix, feature = "embedded-ssh"))]
         RemoteEnd::Signaled { core_dumped: false } => ExitCode::Terminated,
         // upstream: main.c:212-214/224 - a failed waitpid() maps to RERR_WAITCHILD.
         RemoteEnd::Unknown => ExitCode::WaitChild,
