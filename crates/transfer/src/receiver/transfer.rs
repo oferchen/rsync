@@ -585,8 +585,24 @@ impl ReceiverContext {
                 stats,
             )?;
         }
+        self.settle_delete_limit(writer, stats);
         self.touch_up_dirs(dest_dir, writer);
         Ok(())
+    }
+
+    /// Reports the run's `--max-delete` refusals once and folds the outcome
+    /// into `stats`.
+    ///
+    /// upstream: generator.c:2904-2909 - after the `--delete-after` sweep and
+    /// before `touch_up_dirs()`, one warning carries every sweep's and every
+    /// make-room's `skipped_deletes`.
+    fn settle_delete_limit<W>(&self, writer: &mut W, stats: &mut TransferStats)
+    where
+        W: crate::writer::MsgInfoSender + ?Sized,
+    {
+        let skipped = self.skipped_deletes.get();
+        stats.io_error |= self.finish_delete_limit(writer, skipped);
+        stats.delete_limit_exceeded = skipped > 0;
     }
 
     /// True when a general I/O error withholds deletion, printing the notice
@@ -745,7 +761,7 @@ impl ReceiverContext {
         // upstream: delete.c:241-256 - one global stats.deleted_* tally feeds
         // the single NDX_DEL_STATS frame (main.c:228-240).
         self.pending_del_stats.merge(&delete_stats);
-        self.skipped_deletes += skipped;
+        self.add_skipped_deletes(skipped);
         Ok(())
     }
 
@@ -763,7 +779,7 @@ impl ReceiverContext {
     where
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     {
-        let (delete_stats, limit_exceeded, io_bits, deleted) = self.delete_extraneous_files(
+        let (delete_stats, io_bits, deleted) = self.delete_extraneous_files(
             dest_dir,
             #[cfg(unix)]
             sandbox,
@@ -772,7 +788,6 @@ impl ReceiverContext {
         self.record_daemon_log_deletions(phase, &deleted);
         stats.io_error |= io_bits;
         stats.delete_stats = delete_stats;
-        stats.delete_limit_exceeded = limit_exceeded;
         // Carry the per-type counters into the receiver context so the goodbye
         // handshake can emit NDX_DEL_STATS to the peer sender.
         // upstream: generator.c:2393-2398 - write_del_stats() emission.

@@ -488,17 +488,21 @@ impl ReceiverContext {
     /// `--delete-during`, and `--delete-after` (and a capped/`--one-file-system`
     /// `--delete-delay`, which cannot defer through the serial executor).
     ///
-    /// A whole-list sweep is the only deletion of its run, so it settles the
-    /// `--max-delete` outcome itself through
+    /// The sweep's cap continues from the deletions already made to make room,
+    /// and the entries it refuses join the run-wide `skipped_deletes`, which the
+    /// end of the generator reports through
     /// [`finish_delete_limit`](Self::finish_delete_limit).
     ///
-    /// Returns `(stats, limit_exceeded, io_error_bits)`.
+    /// Returns `(stats, io_error_bits, victims)`.
     pub(in crate::receiver) fn delete_extraneous_files<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
-    ) -> io::Result<(DeleteStats, bool, i32, Vec<DeletedEntry>)> {
+    ) -> io::Result<(DeleteStats, i32, Vec<DeletedEntry>)> {
+        // upstream: delete.c:217 - one global `stats.deleted_files`, so the
+        // entries already cleared to make room count against the cap.
+        let budget_used = u64::from(self.make_room_delete_stats.get().total());
         let (stats, skipped, io_bits, victims) = self.run_delete_scan(
             dest_dir,
             #[cfg(unix)]
@@ -506,14 +510,18 @@ impl ReceiverContext {
             writer,
             false,
             &DeleteScope::WholeList,
-            0,
+            budget_used,
         )?;
-        Ok((
-            stats,
-            skipped > 0,
-            io_bits | self.finish_delete_limit(skipped),
-            victims,
-        ))
+        self.add_skipped_deletes(skipped);
+        Ok((stats, io_bits, victims))
+    }
+
+    /// Adds deletions the cap refused to the run-wide `skipped_deletes`.
+    ///
+    /// upstream: delete.c:217-218 - `skipped_deletes++`.
+    pub(in crate::receiver) fn add_skipped_deletes(&self, skipped: u64) {
+        self.skipped_deletes
+            .set(self.skipped_deletes.get() + skipped);
     }
 
     /// Reports the deletions `--max-delete` refused, once, after the last
@@ -521,16 +529,21 @@ impl ReceiverContext {
     ///
     /// upstream: generator.c:2904-2909 - one `FWARNING` for the run's total
     /// `skipped_deletes`, then `io_error |= IOERR_DEL_LIMIT` so the run exits
-    /// `RERR_DEL_LIMIT` (25). Nonreg renders at the default verbosity
-    /// (info_verbosity[0]), the same channel the sibling delete notices use.
-    pub(in crate::receiver) fn finish_delete_limit(&self, skipped: u64) -> i32 {
+    /// `RERR_DEL_LIMIT` (25). `rwrite()` prints it on a client and frames it as
+    /// `MSG_WARNING` on a server (log.c:357-366), so a push reports it too.
+    pub(in crate::receiver) fn finish_delete_limit<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        skipped: u64,
+    ) -> i32 {
         if skipped == 0 {
             return 0;
         }
-        info_log!(
-            Nonreg,
-            1,
-            "Deletions stopped due to --max-delete limit ({skipped} skipped)"
+        // upstream: rwrite() ignores the write result, as the sibling
+        // FWARNING sites here do.
+        let _ = self.emit_warning_line(
+            writer,
+            &format!("Deletions stopped due to --max-delete limit ({skipped} skipped)\n"),
         );
         crate::generator::io_error_flags::IOERR_DEL_LIMIT
     }
@@ -1635,12 +1648,12 @@ impl ReceiverContext {
     /// node itself stays silent and uncounted because the caller's `rmdir` keeps
     /// `DEL_MAKE_ROOM` set (`delete.c:241`).
     ///
-    /// Two deliberate narrowings against `delete_dir_contents()`: the
-    /// `--max-delete` counter starts at zero per obstacle rather than
-    /// continuing upstream's global `stats.deleted_files`, and a failed scan
-    /// raises no `io_error` bit of its own - the caller's `rmdir` then fails
-    /// `ENOTEMPTY` and reports the refusal at `FERROR_XFER`, which is what
-    /// lifts the exit code.
+    /// The `--max-delete` counter continues upstream's global
+    /// `stats.deleted_files`, and each child the cap refuses joins the run-wide
+    /// `skipped_deletes`. One deliberate narrowing against
+    /// `delete_dir_contents()`: a failed scan raises no `io_error` bit of its
+    /// own - the caller's `rmdir` then fails `ENOTEMPTY` and reports the refusal
+    /// at `FERROR_XFER`, which is what lifts the exit code.
     ///
     /// # Upstream Reference
     ///
@@ -1676,7 +1689,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             boundary_dev,
             limit: self.config.deletion.max_delete.unwrap_or(u64::MAX),
-            deleted: 0,
+            deleted: u64::from(self.effective_del_stats().total()),
             skipped: 0,
             combined: DeleteStats::new(),
             io_err_bits: 0,
@@ -1693,6 +1706,9 @@ impl ReceiverContext {
             writer,
         };
         let emptied = state.remove_dir_contents(relative, path)?;
+        // upstream: delete.c:217-218 - a capped child bumps the same
+        // `skipped_deletes` the delete sweeps do.
+        self.add_skipped_deletes(state.skipped);
         if let Some(logged) = state.logged.take() {
             self.record_daemon_log_make_room_deletions(&logged);
         }

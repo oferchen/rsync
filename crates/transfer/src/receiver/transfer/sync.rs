@@ -578,6 +578,9 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_hardlinks(&dest_dir, writer)?;
 
+        // upstream: generator.c:2904-2909 - no sweep runs here, but a directory
+        // emptied to make room can still have had children capped.
+        let delete_limit_bits = self.finish_delete_limit(writer, self.skipped_deletes.get());
         // upstream: generator.c:2565-2618 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&dest_dir, writer);
@@ -620,7 +623,10 @@ impl ReceiverContext {
             flist_buildtime_ms: 0,
             flist_xfertime_ms: 0,
             metadata_errors,
-            io_error: self.flist_reader_io_error() | self.flist_io_error | sender_io_error,
+            io_error: self.flist_reader_io_error()
+                | self.flist_io_error
+                | sender_io_error
+                | delete_limit_bits,
             // upstream: log.c:337-338 - every MSG_ERROR_XFER the sender framed
             // sets got_xfer_error on receipt, which is what reports a source
             // that failed to be listed (flist.c:3208 leaves io_error clear).
@@ -636,7 +642,7 @@ impl ReceiverContext {
             // the client renders the "Number of created files" breakdown.
             // upstream: receiver.c:925-938.
             created_stats: self.created_stats.get(),
-            delete_limit_exceeded: false,
+            delete_limit_exceeded: self.skipped_deletes.get() > 0,
             literal_data: 0,
             matched_data: 0,
             touched_blocks_4k: 0,
