@@ -284,6 +284,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - A remote-shell server sender honours `--copy-unsafe-links` (#8032)
 
 **Daemon**
+- Itemize a directory before deleting in it under `--delete`, and after the `--delete-before` pass, so the log carries upstream's `.d..t......` rows (#PRNUM)
 - The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)
 - Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
 - Honour a client's `--timeout`, `--partial-dir`, `--backup-dir`, `--max-size` and `--min-size` (#7584, #7498, #7501, #7577, #7449)
@@ -371,6 +372,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Name an unreadable local-copy directory by its full path (#8098)
 
 **Permissions and metadata**
+- `--fake-super` applies a source's recorded `%stat` like upstream: the real mode follows it and a `%stat` equal to the real stat is not stored (#PRNUM)
 - `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
 - Apply timestamps before chmod (#7832, #7087)
 - Answer `am_root` from the process identity (#7574, #7562)
