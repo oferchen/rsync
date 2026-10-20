@@ -282,6 +282,11 @@ pub struct ReceiverContext {
     ///
     /// - `flist.c:3236-3249` - `recv_file_list()` bumps `stats.num_dirs` /
     ///   `num_symlinks` / `num_devices` / `num_specials` in its read loop.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:3236` - `stats.num_files++` in `recv_file_list()` read loop.
+    pub(in crate::receiver) received_files_total: usize,
     pub(in crate::receiver) received_type_counts: (u64, u64, u64, u64),
     /// Sum of `F_LENGTH` over every received regular file and symlink, bumped
     /// at the same point as [`Self::received_type_counts`].
@@ -742,6 +747,7 @@ impl ReceiverContext {
             peer_flist_io_error: 0,
             raw_read_counter: None,
             flist_size: 0,
+            received_files_total: 0,
             received_type_counts: (0, 0, 0, 0),
             received_total_size: 0,
             sender_stats: None,

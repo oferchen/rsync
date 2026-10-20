@@ -445,6 +445,8 @@ impl ReceiverContext {
         // after completed segments are reclaimed. Read after the loop because
         // incremental recursion keeps appending sub-list segments until then.
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+        stats.files_listed = self.received_files_total;
+        stats.entries_received = self.received_files_total as u64;
         stats.num_dirs = num_dirs;
         stats.num_symlinks = num_symlinks;
         stats.num_devices = num_devices;
@@ -971,6 +973,8 @@ impl ReceiverContext {
         stats.touched_blocks_4k = self.touched_blocks_4k;
         stats.total_source_bytes = self.total_source_size();
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+        stats.files_listed = self.received_files_total;
+        stats.entries_received = self.received_files_total as u64;
         stats.num_dirs = num_dirs;
         stats.num_symlinks = num_symlinks;
         stats.num_devices = num_devices;

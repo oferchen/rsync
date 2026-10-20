@@ -55,6 +55,7 @@ impl ReceiverContext {
     /// - `flist.c:1613-1614` - `recv_file_entry()` adds the length of a regular
     ///   file or symlink to `stats.total_size`.
     pub(in crate::receiver) fn count_received_entry(&mut self, entry: &protocol::flist::FileEntry) {
+        self.received_files_total += 1;
         let (dirs, symlinks, devices, specials) = &mut self.received_type_counts;
         // upstream: flist.c:3236-3249 - the final `else` counts every other
         // mode as special, including the mode-0 placeholder a

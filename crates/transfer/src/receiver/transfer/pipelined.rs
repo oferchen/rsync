@@ -155,12 +155,12 @@ impl ReceiverContext {
         // this the client counted every entry as a regular file.
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
         let mut stats = TransferStats {
-            files_listed: file_count,
+            files_listed: self.received_files_total.max(file_count),
             num_dirs,
             num_symlinks,
             num_devices,
             num_specials,
-            entries_received: file_count as u64,
+            entries_received: self.received_files_total.max(file_count) as u64,
             io_error: self.flist_reader_io_error() | self.flist_io_error,
             ..Default::default()
         };
