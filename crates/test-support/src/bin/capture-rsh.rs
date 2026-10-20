@@ -68,6 +68,16 @@ fn pump(mut from: impl Read, mut to: impl Write, mut log: File, direction: &str)
 }
 
 fn main() {
+    #[cfg(unix)]
+    unsafe {
+        for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO] {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags >= 0 {
+                libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
+            }
+        }
+    }
+
     let c2s = capture_path(C2S_ENV);
     let s2c = capture_path(S2C_ENV);
 

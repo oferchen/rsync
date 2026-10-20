@@ -31,7 +31,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
 | **Compression** | zlib, zstd, lz4 with level control and negotiation |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Negotiated whenever oc-rsync sends, and when an oc-rsync server or daemon receives a push (#8169). An oc-rsync client that pulls does not advertise it by default, so pulls use a full up-front file list. `OC_RSYNC_PULL_INC_RECURSE=1` opts a pull in, except under `--delete-before` or `--delete-after`, which need the whole list as in upstream (#8062, #8091) |
+| **Incremental recursion** | Negotiated whenever oc-rsync sends, when an oc-rsync server or daemon receives a push (#8169), and on client pulls by default (#8062, #8091). `OC_RSYNC_PULL_INC_RECURSE=0` opts a pull out. `--delete-before` and `--delete-after` need the whole list and withhold it as in upstream. |
 | **Batch** | `--write-batch` / `--read-batch` round trip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
 | **Host names** | Internationalized host names converted to IDNA A-labels, as upstream 3.5.1 does (#8104) |

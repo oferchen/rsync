@@ -315,15 +315,18 @@ executable name. Intended for testing and development.
 
 ### OC_RSYNC_PULL_INC_RECURSE
 
-Staging flag for incremental recursion on pulls. Truthy values (`1`, `true`,
-`yes`, `on`) let a pulling client advertise the `i` capability under
-upstream's own conditions (`compat.c:162-181`), so the remote sender ships the
-tree as per-directory sub-lists and the local receiver consumes them one at a
-time. Works against upstream rsync and oc-rsync servers alike. `--no-inc-recursive`
-still disables it. Delete modes follow upstream: `--delete`, `--delete-during`,
-`--delete-delay` and `--delete-excluded` delete per directory as each sub-list
-is walked, while `--delete-before` and `--delete-after` keep `i` withheld.
-Default: off - pulls run without incremental recursion, as in earlier releases.
+Override flag for incremental recursion on pulls. By default, pulling clients
+advertise the `i` capability under upstream's own conditions
+(`compat.c:162-181`), so the remote sender ships the tree as per-directory
+sub-lists and the local receiver consumes them one at a time. Explicitly
+disabling values (`0`, `off`, `false`, `no`, case-insensitive) withhold `i`,
+restoring the whole-list pull behavior. Works against upstream rsync and
+oc-rsync servers alike. `--no-inc-recursive` still disables it. Delete modes
+follow upstream: `--delete`, `--delete-during`, `--delete-delay` and
+`--delete-excluded` delete per directory as each sub-list is walked, while
+`--delete-before` and `--delete-after` keep `i` withheld.
+Default: on (stabilized).
+
 ## Negotiated oc-to-oc optimizations
 
 Unlike every tuning knob above, the variable in this section is **not**

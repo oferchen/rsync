@@ -285,7 +285,7 @@ fn pull_receiver_outbound_stream_is_substantive_and_scales_with_entries() {
     );
 }
 
-/// Staging flag that lets a pulling client advertise INC_RECURSE (`'i'`).
+/// Override flag that can opt out of INC_RECURSE (`'i'`) on pulls.
 const PULL_INC_RECURSE_ENV: &str = "OC_RSYNC_PULL_INC_RECURSE";
 
 /// Like [`capture`], but writes into `dest_root/dest` so a cell can check the
@@ -307,7 +307,12 @@ fn capture_into(
         .arg(format!("transcripthost:{}/", src.display()))
         .arg(&dest);
     configure(&mut cmd);
+    println!("capture_into: starting {label}");
     let output = cmd.output().expect("run oc-rsync client");
+    println!(
+        "capture_into: finished {label} with status {}",
+        output.status
+    );
     assert!(
         output.status.success(),
         "transfer failed ({label}): {}\nstderr: {}",
@@ -318,6 +323,11 @@ fn capture_into(
     transcript
         .mask_pull_flist_times()
         .expect("mask pull flist times");
+    println!(
+        "transcript[{label}]: client->server {} bytes, server->client {} bytes",
+        transcript.client_to_server.len(),
+        transcript.server_to_client.len()
+    );
     transcript
 }
 
@@ -346,40 +356,54 @@ fn tree_listing(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     out
 }
 
-/// Cell 4: the staging flag engages INC_RECURSE on a pull, and the
-/// incremental receiver still reproduces the source tree.
+/// Cell 4: incremental recursion is enabled by default on pulls, and an
+/// explicit opt-out (`0`) switches to whole-list mode.
 ///
-/// With the flag set the client advertises `'i'`, the oc server sender answers
-/// with `CF_INC_RECURSE` and ships the tree as per-directory sub-lists, so the
-/// server->client stream must differ from the flag-off run. A flag that
-/// silently failed to engage would leave it byte-identical and fail here.
+/// By default the pulling client advertises `'i'`, the oc server sender answers
+/// with `CF_INC_RECURSE` and ships the tree as per-directory sub-lists. An explicit
+/// `OC_RSYNC_PULL_INC_RECURSE=0` disables `'i'`, so the server->client stream must
+/// differ from the default run. An explicit `OC_RSYNC_PULL_INC_RECURSE=1` matches the
+/// default run byte-for-byte. Both modes accurately reproduce the source tree.
 #[test]
 fn pull_inc_recurse_flag_engages_and_transfers_the_tree() {
     let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
 
-    let off_dir = test_support::create_tempdir();
-    let off = capture_into(src.path(), off_dir.path(), "flag off", |_| {});
+    let default_dir = test_support::create_tempdir();
+    let default_run = capture_into(src.path(), default_dir.path(), "default on", |_| {});
     let on_dir = test_support::create_tempdir();
-    let on = capture_into(src.path(), on_dir.path(), "flag on", |cmd| {
+    let on = capture_into(src.path(), on_dir.path(), "explicit on", |cmd| {
         cmd.env(PULL_INC_RECURSE_ENV, "1");
     });
+    let off_dir = test_support::create_tempdir();
+    let off = capture_into(src.path(), off_dir.path(), "opt out", |cmd| {
+        cmd.env(PULL_INC_RECURSE_ENV, "0");
+    });
 
+    assert_transcripts_eq(
+        &default_run,
+        &on,
+        "default pull must match explicit enabled override byte-for-byte",
+    );
     assert!(
-        off.server_to_client != on.server_to_client,
-        "{PULL_INC_RECURSE_ENV}=1 must switch the pull to INC_RECURSE sub-lists"
+        off.server_to_client != default_run.server_to_client,
+        "{PULL_INC_RECURSE_ENV}=0 opt-out must switch the pull to whole-list flist"
     );
     let expected = tree_listing(src.path());
-    assert_eq!(tree_listing(&off_dir.path().join("dest")), expected);
     assert_eq!(
-        tree_listing(&on_dir.path().join("dest")),
+        tree_listing(&default_dir.path().join("dest")),
         expected,
         "the incremental receiver must reproduce the source tree"
+    );
+    assert_eq!(
+        tree_listing(&off_dir.path().join("dest")),
+        expected,
+        "the whole-list receiver must reproduce the source tree"
     );
 }
 
 /// Cell 5: options that must keep the whole-list pull leave the
-/// wire byte-identical to the flag-off run even with the flag set.
+/// wire byte-identical whether running by default, explicitly enabled, or opted out.
 ///
 /// `--no-inc-recursive` is the user's explicit opt-out, and `--delete-before`
 /// / `--delete-after` need the complete list up front, so upstream's own gate
@@ -390,20 +414,33 @@ fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes(
     let src = test_support::create_tempdir();
     build_fixture(src.path(), false);
     for extra in ["--no-inc-recursive", "--delete-before", "--delete-after"] {
-        let off_dir = test_support::create_tempdir();
-        let off = capture_into(src.path(), off_dir.path(), extra, |cmd| {
+        let default_dir = test_support::create_tempdir();
+        let default_run = capture_into(src.path(), default_dir.path(), extra, |cmd| {
             cmd.arg(extra);
+        });
+        let opt_out_dir = test_support::create_tempdir();
+        let opt_out = capture_into(src.path(), opt_out_dir.path(), extra, |cmd| {
+            cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "0");
         });
         let on_dir = test_support::create_tempdir();
         let on = capture_into(src.path(), on_dir.path(), extra, |cmd| {
             cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "1");
         });
-        assert_transcripts_eq(&off, &on, &format!("{extra} with the flag set"));
+        assert_transcripts_eq(
+            &default_run,
+            &opt_out,
+            &format!("{extra} default vs opt-out"),
+        );
+        assert_transcripts_eq(
+            &default_run,
+            &on,
+            &format!("{extra} default vs explicit on"),
+        );
     }
 }
 
-/// Cell 6: the per-directory delete modes pull incrementally under
-/// the flag and still delete exactly the extraneous entries.
+/// Cell 6: the per-directory delete modes pull incrementally by default
+/// and still delete exactly the extraneous entries.
 ///
 /// upstream: generator.c:2780-2798 generate_files() deletes in each sub-list's parent as the
 /// sub-list is walked, so a `--delete` pull keeps INC_RECURSE.
@@ -421,27 +458,27 @@ fn pull_inc_recurse_flag_engages_under_per_directory_deletes() {
     };
     let expected = tree_listing(src.path());
     for extra in ["--delete", "--delete-during", "--delete-delay"] {
-        let off_dir = test_support::create_tempdir();
-        seed(off_dir.path());
-        let off = capture_into(src.path(), off_dir.path(), extra, |cmd| {
+        let default_dir = test_support::create_tempdir();
+        seed(default_dir.path());
+        let default_run = capture_into(src.path(), default_dir.path(), extra, |cmd| {
             cmd.arg(extra);
         });
-        let on_dir = test_support::create_tempdir();
-        seed(on_dir.path());
-        let on = capture_into(src.path(), on_dir.path(), extra, |cmd| {
-            cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "1");
+        let opt_out_dir = test_support::create_tempdir();
+        seed(opt_out_dir.path());
+        let opt_out = capture_into(src.path(), opt_out_dir.path(), extra, |cmd| {
+            cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "0");
         });
         assert!(
-            off.server_to_client != on.server_to_client,
-            "{extra}: {PULL_INC_RECURSE_ENV}=1 must switch the pull to INC_RECURSE sub-lists"
+            default_run.server_to_client != opt_out.server_to_client,
+            "{extra}: default pull must use INC_RECURSE sub-lists and differ from opt-out"
         );
         assert_eq!(
-            tree_listing(&off_dir.path().join("dest")),
+            tree_listing(&opt_out_dir.path().join("dest")),
             expected,
-            "{extra} flag off"
+            "{extra} opt out"
         );
         assert_eq!(
-            tree_listing(&on_dir.path().join("dest")),
+            tree_listing(&default_dir.path().join("dest")),
             expected,
             "{extra}: the incremental pull must delete exactly the extraneous entries"
         );

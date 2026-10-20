@@ -211,8 +211,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // only the first short-flag argument as the compact flag string.
         // upstream: compat.c:162-180 set_allow_inc_recurse(),
         // options.c:3220-3221 maybe_add_e_option() - `allow_inc_recurse` resolves
-        // the option state; a pull advertises 'i' only under the
-        // OC_RSYNC_PULL_INC_RECURSE staging flag (see `pull_inc_recurse`).
+        // the option state; a pull advertises 'i' by default unless disabled
+        // by the OC_RSYNC_PULL_INC_RECURSE override (see `pull_inc_recurse`).
         //
         // upstream: options.c:3206-3209 maybe_add_e_option() - the whole `e.xxx`
         // suffix is emitted ONLY when the pre-negotiated `protocol_version` is
