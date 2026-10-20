@@ -547,6 +547,7 @@ impl ReceiverContext {
                     Some(&file_path),
                     filter_ref,
                     Some(dest_dir.as_path()),
+                    self.config.fake_super,
                 ) {
                     metadata_errors.push((file_path.clone(), e.to_string()));
                 }
