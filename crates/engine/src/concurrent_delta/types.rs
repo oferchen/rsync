@@ -68,8 +68,8 @@ pub struct DeltaWork {
     /// Pipeline sequence number for reordering after parallel dispatch.
     ///
     /// Assigned by the producer before sending into the work queue so that
-    /// the consumer can reconstruct the original submission order via
-    /// [`ReorderBuffer`](super::reorder::ReorderBuffer). Defaults to 0;
+    /// the consumer can reconstruct the original submission order. Defaults
+    /// to 0;
     /// the producer stamps monotonically increasing values.
     sequence: u64,
     /// Destination path where the reconstructed file will be placed.
@@ -78,10 +78,10 @@ pub struct DeltaWork {
     basis_path: Option<PathBuf>,
     /// Optional source path for self-contained delta computation.
     ///
-    /// When `Some` together with `basis_path`, `DeltaTransferStrategy::process`
-    /// runs the full `DeltaGenerator` pipeline (signature build, block matching,
-    /// script application) and reports actual stats. When `None`, the strategy
-    /// reports the pre-computed `literal_bytes`/`matched_bytes` set by the
+    /// When `Some` together with `basis_path`, the item describes a
+    /// self-contained delta (signature build, block matching, script
+    /// application) against a local source. When `None`, the item carries the
+    /// pre-computed `literal_bytes`/`matched_bytes` set by the
     /// receiver pipeline that already applied the wire delta.
     source_path: Option<PathBuf>,
     /// Expected target file size from the file list entry.
@@ -150,8 +150,8 @@ impl DeltaWork {
     /// block matching against a local source file.
     ///
     /// Unlike [`DeltaWork::delta`], this stores both basis and source paths,
-    /// enabling [`DeltaTransferStrategy`](super::strategy::DeltaTransferStrategy)
-    /// to run the full signature/block-matching/delta-apply pipeline.
+    /// so a consumer can run the full signature/block-matching/delta-apply
+    /// pipeline.
     /// Returned stats reflect the actual matching outcome.
     #[must_use]
     pub fn delta_with_source(
@@ -239,8 +239,7 @@ impl DeltaWork {
     /// Sets the pipeline sequence number.
     ///
     /// Called by the producer before dispatching to the work queue so that
-    /// the consumer can reconstruct the original submission order via
-    /// [`ReorderBuffer`](super::reorder::ReorderBuffer).
+    /// the consumer can reconstruct the original submission order.
     pub fn set_sequence(&mut self, seq: u64) {
         self.sequence = seq;
     }
@@ -364,9 +363,7 @@ impl DeltaResult {
     /// Sets the pipeline sequence number.
     ///
     /// Typically called by the producer before dispatching the work item so
-    /// the consumer can reorder results via [`ReorderBuffer`].
-    ///
-    /// [`ReorderBuffer`]: super::reorder::ReorderBuffer
+    /// the consumer can restore submission order.
     #[must_use]
     pub const fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = sequence;

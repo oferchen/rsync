@@ -191,11 +191,8 @@ pub use delta::{
     generate_delta,
 };
 
-/// Concurrent delta pipeline work-item, result, and strategy types.
-pub use concurrent_delta::{
-    ConcurrentDeltaConfig, DeltaConsumerStats, DeltaResult, DeltaResultStatus, DeltaStrategy,
-    DeltaTransferStrategy, DeltaWork, DeltaWorkKind, FileNdx, ReorderBuffer, WholeFileStrategy,
-};
+/// Per-file delta work-item and result types.
+pub use concurrent_delta::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind, FileNdx};
 
 /// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};

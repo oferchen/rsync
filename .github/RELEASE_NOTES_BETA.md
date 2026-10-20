@@ -54,16 +54,10 @@ new since v0.6.2.
   rejected by the kernel. Linux 5.13+ required; daemons on older kernels
   run with the `*at` chain alone. See `SECURITY.md` and the SEC-1.p design
   note.
-- **parallel-receive-delta is now the default execution path (PIP-5).**
-  The receiver's delta-apply pipeline parallelises `verify_chunk` across
-  cores by default; the legacy sequential path remains opt-in for the
-  beta soak. Interop coverage exercises the new default end-to-end against
-  the full upstream matrix.
-- **DashMap-backed slot map removes the ParallelDeltaApplier outer Mutex
-  (BR-3j).** The per-file lookup that previously serialised registration
-  and finish under a single `Mutex<HashMap<...>>` is now sharded via
-  DashMap, so per-file fan-out scales with cores rather than collapsing
-  to a single lock owner.
+- **Receiver delta apply is sequential.** The parallel receive-delta
+  default flip (PIP-5) was reverted after the PIP-7 receiver corruption,
+  and the never-wired parallel pipeline was later removed. The receiver
+  applies deltas sequentially, as upstream `receiver.c:recv_files()` does.
 
 ---
 
@@ -176,9 +170,9 @@ so the rendered release matches the GitHub-generated changelog.
 
 #### Performance
 
-- `perf(transfer)`: enable parallel receive-delta by default via the Path
-  B heuristic - the parallel `verify_chunk` apply path is now the default
-  execution path for the receiver (PIP-3 + PIP-5, #4666).
+- `perf(transfer)`: parallel receive-delta default flip (PIP-3 + PIP-5,
+  #4666); reverted after the PIP-7 receiver corruption, and the pipeline
+  was later removed.
 - `perf(engine)`: DashMap-backed slot map for `ParallelDeltaApplier`
   removes the outer `Mutex<HashMap<...>>` that serialised per-file
   registration and finish (BR-3j.c / .d / .e, #4634, #4635, #4636).
@@ -240,8 +234,8 @@ so the rendered release matches the GitHub-generated changelog.
 - `docs(design)`: BR-6 beta-readiness sign-off check-in (#4692).
 - `docs`: close WPG-1 as deferred to post-beta Windows hardware capture
   (#4688).
-- `docs(design)`: close PIP-4 - interop suite exercises
-  parallel-receive-delta path via PIP-5 default flip (#4689).
+- `docs(design)`: close PIP-4 against the PIP-5 default flip (#4689);
+  the flip was later reverted.
 - `docs(design)`: close FFB-3 / FFB-4 / PIP-2 as satisfied by FFB-1
   design + PIP-3 + PIP-5 wire-up (#4677).
 - `docs(design)`: close ABW-3 as N/A pending per-file `Mutex` refactor
@@ -445,10 +439,9 @@ chasing down `README.md` and individual closure docs.
   not a beta gate.
 - **RJN-4 bench.** Closed as N/A (RJN-3 was a rename-only change, no
   bench needed; #4686).
-- **PIP-4** (interop matrix re-run after PIP-5). Closed retroactively -
-  parallel-receive-delta interop coverage is satisfied by the PIP-5
-  default flip (#4666) exercising the existing interop suite under the
-  new default path (#4689).
+- **PIP-4** (interop matrix re-run after PIP-5). Closed retroactively
+  against the PIP-5 default flip (#4666, #4689), which was later reverted;
+  the receiver path the interop suite exercises is sequential.
 - **SEC-1.i / SEC-1.j receiver wiring.** Deferred follow-ups for the
   `disk_commit`, `transfer_ops/response`, and `local_copy/executor`
   callers; the `*at` helpers themselves ship and are the live mitigation
@@ -504,14 +497,10 @@ chasing down `README.md` and individual closure docs.
 
 Most operators upgrading from v0.6.2 will not need to change anything.
 The wire-protocol fixes only activate when the corresponding flags
-(`--iconv`, `--fake-super`, `-X --fake-super`) are in use, and the
-default-path change for parallel-receive-delta (PIP-5) preserves byte
-equivalence with the legacy sequential path.
+(`--iconv`, `--fake-super`, `-X --fake-super`) are in use.
 
-- **Flag defaults:** the receiver's delta-apply path is now parallel by
-  default (PIP-5). Operators who hit a regression during the beta soak
-  can opt out via the legacy sequential path. No other flag default
-  changed between v0.6.2 and this beta. The full default set is
+- **Flag defaults:** no flag default changed between v0.6.2 and this
+  beta. The full default set is
   documented in `oc-rsync --help` and `docs/oc-rsync.1.md`.
 - **New env vars:** none introduced this cycle.
 - **New Cargo features:**

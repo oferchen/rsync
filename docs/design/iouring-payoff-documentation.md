@@ -191,7 +191,7 @@ detailed tuning.
 
 The user guide entry should be a standalone document at
 `docs/user/iouring-performance.md` following the established pattern
-(see `docs/user/checksum-performance.md`, `docs/user/parallel-receive-delta.md`).
+(see `docs/user/checksum-performance.md`).
 
 ### Proposed structure
 

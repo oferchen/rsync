@@ -20,7 +20,7 @@ impl WorkQueueReceiver {
     /// producer blocks when the queue is full.
     ///
     /// Results are collected in arbitrary order (determined by worker completion
-    /// timing). Use [`ReorderBuffer`] on the returned `Vec` if sequential
+    /// timing). Sort the returned `Vec` by sequence number if sequential
     /// ordering is required.
     ///
     /// Internally, results are sharded across one mutex-guarded `Vec` per rayon
@@ -43,8 +43,6 @@ impl WorkQueueReceiver {
     ///
     /// This method consumes the receiver. It returns once the sender is dropped
     /// and all queued items have been processed.
-    ///
-    /// [`ReorderBuffer`]: crate::concurrent_delta::reorder::ReorderBuffer
     ///
     /// # Example
     ///

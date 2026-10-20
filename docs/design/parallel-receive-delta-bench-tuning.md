@@ -1,5 +1,12 @@
 # PIP-9.h.c - Bench-driven default tuning for parallel-receive-delta
 
+> **Superseded (2026-10-20).** The parallel receive-delta pipeline described
+> here was removed. It was never wired into the receiver, measured 1.7-3.3x
+> slower than the sequential path in isolation, and could not shorten an
+> end-to-end transfer because the receiver is not on the critical path. The
+> receiver applies deltas sequentially, as upstream `receiver.c:recv_files()`
+> does. Kept for history only.
+
 Status: Design
 Date: 2026-06-01
 Tracker: PIP-9.h.c (#3018)

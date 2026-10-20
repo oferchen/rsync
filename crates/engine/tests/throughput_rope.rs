@@ -6,7 +6,7 @@
 //!    computed admission ceiling stays inside the configured `[min, max]`. A
 //!    controller arithmetic slip can never push the semaphore out of range.
 //! 2. **Balanced permits.** Driving the rope's resizes concurrently with a live
-//!    producer/consumer transfer never leaks or double-returns an admission
+//!    producer/drain transfer never leaks or double-returns an admission
 //!    permit: at quiescence every item has been delivered and the semaphore's
 //!    in-flight count is exactly zero, whatever the resize interleaving.
 //!
@@ -19,9 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use engine::ConcurrentDeltaConfig;
-use engine::concurrent_delta::consumer::DeltaConsumer;
-use engine::concurrent_delta::work_queue::{self, bounded_dynamic};
+use engine::concurrent_delta::work_queue::{self, WorkQueueReceiver, bounded_dynamic};
 use engine::concurrent_delta::{DeltaResult, DeltaWork};
 use engine::throughput::{Rope, RopeConfig};
 
@@ -76,6 +74,17 @@ proptest! {
 
 // --- property 2: permits acquired == released at quiescence ------------------
 
+/// Drains `receiver` on the rayon pool, mapping each admitted item to a
+/// result that echoes its sequence, then restores submission order.
+fn drain_in_order(receiver: WorkQueueReceiver) -> Vec<DeltaResult> {
+    let mut results = receiver.drain_parallel(|work| {
+        DeltaResult::success(work.ndx(), work.target_size(), work.target_size(), 0)
+            .with_sequence(work.sequence())
+    });
+    results.sort_by_key(DeltaResult::sequence);
+    results
+}
+
 /// Runs `count` items through a rope-resized dynamic queue while a background
 /// thread hammers the ceiling with pseudo-random resizes, then asserts the
 /// admission semaphore is fully drained (in_flight == 0) and every item was
@@ -115,8 +124,7 @@ fn run_dynamic_with_resizes(count: u32, min: usize, max: usize) -> Vec<DeltaResu
         // Dropping the sender closes the queue so the consumer can finish.
     });
 
-    let consumer = DeltaConsumer::spawn_with_config(receiver, 64, ConcurrentDeltaConfig::default());
-    let results: Vec<DeltaResult> = consumer.into_iter().collect();
+    let results = drain_in_order(receiver);
     producer.join().expect("producer join");
     stop.store(true, Ordering::Relaxed);
     resizer.join().expect("resizer join");
@@ -139,7 +147,7 @@ fn permits_balance_under_concurrent_resizes() {
             count as usize,
             "every item must be delivered"
         );
-        // Delivered strictly in submission order (the reorder buffer restores it).
+        // Exactly once per sequence number, in submission order once sorted.
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64, "out-of-order delivery at {i}");
         }
@@ -159,8 +167,7 @@ fn run_fixed(count: u32) -> Vec<DeltaResult> {
             tx.send(work).expect("send work");
         }
     });
-    let consumer = DeltaConsumer::spawn_with_config(rx, 64, ConcurrentDeltaConfig::default());
-    let results: Vec<DeltaResult> = consumer.into_iter().collect();
+    let results = drain_in_order(rx);
     producer.join().expect("producer join");
     results
 }

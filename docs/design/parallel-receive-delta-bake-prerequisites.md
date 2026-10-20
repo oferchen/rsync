@@ -1,5 +1,12 @@
 # Parallel receive-delta bake prerequisites (PFF-5)
 
+> **Superseded (2026-10-20).** The parallel receive-delta pipeline described
+> here was removed. It was never wired into the receiver, measured 1.7-3.3x
+> slower than the sequential path in isolation, and could not shorten an
+> end-to-end transfer because the receiver is not on the critical path. The
+> receiver applies deltas sequentially, as upstream `receiver.c:recv_files()`
+> does. Kept for history only.
+
 Tracking: PFF-5. Parent series: PIP-9 (parallel-receive-delta production
 wire-up). Related: PIP-10 (end-to-end validation), PIP-9.f (default-on
 flip series).

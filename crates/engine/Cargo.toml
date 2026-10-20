@@ -107,23 +107,14 @@ parallel = []
 # receiver call site.
 parallel-delete-consumer = []
 
-# DG-3.e: high-iteration stress test for `concurrent_register_and_dispatch`
-# under the DG-3 SlotData/BarrierState split (#2694). Gated behind its own
-# feature so the 1000-thread x 10K-iter cycle does not run in every PR's
-# nextest cell; a dedicated non-required CI cell runs it on Linux + Windows
-# + macOS. See `project_concurrent_dispatch_test_flake` and
-# `project_slothandle_decrementguard_release_race` memory notes for the
-# race the stress targets.
-dg-stress = []
-
 # Multi-producer work queue - enables Clone for WorkQueueSender
 # Benefits: Multiple producer threads can feed the concurrent delta pipeline
 # Trade-offs: Relaxes the single-producer compile-time invariant
 multi-producer = []
 
-# EXPERIMENTAL: SMR-3a Option 1 (#2288) - forward to `fast_io/mmap-free-basis`
-# so the basis-read dispatch in `concurrent_delta::strategy` skips the mmap
-# branch and forces io_uring (or a buffered fallback) for every basis read.
+# EXPERIMENTAL: SMR-3a Option 1 (#2288) - forwards to `fast_io/mmap-free-basis`,
+# which skips the mmap branch and forces io_uring (or a buffered fallback) for
+# basis reads. engine itself gates no code on it.
 # Default off; do not enable until SMR-1 hardware numbers validate Option 1.
 # See `docs/design/mmap-vs-sqpoll-conflict-resolution.md` for the rationale.
 mmap-free-basis = ["fast_io/mmap-free-basis"]
@@ -138,9 +129,8 @@ mmap-free-basis = ["fast_io/mmap-free-basis"]
 thread-slab-pool = []
 
 # Opt-in passthrough for the sender/reader io_uring slurp prototype
-# (IUD-6 #2366). Activates `fast_io/iouring-data-reads` and the single
-# basis-file dispatch in `concurrent_delta::strategy`. Default off so
-# production builds remain byte-identical to today.
+# (IUD-6 #2366). Activates `fast_io/iouring-data-reads`; engine itself gates
+# no code on it. Default off so production builds remain byte-identical.
 iouring-data-reads = ["fast_io/iouring-data-reads"]
 
 # Opt-in passthrough for the receiver io_uring write path. Activates
@@ -210,22 +200,6 @@ name = "adaptive_bufferpool"
 harness = false
 
 [[bench]]
-name = "reorder_buffer_scaling"
-harness = false
-
-[[bench]]
-name = "reorder_buffer_cache"
-harness = false
-
-[[bench]]
-name = "reorderbuffer_memory"
-harness = false
-
-[[bench]]
-name = "parallel_dispatch_overhead"
-harness = false
-
-[[bench]]
 name = "sp_vs_mp_workqueue"
 harness = false
 
@@ -251,18 +225,6 @@ harness = false
 
 [[bench]]
 name = "per_op_thresholds"
-harness = false
-
-[[bench]]
-name = "parallel_receive_delta_perf"
-harness = false
-
-[[bench]]
-name = "parallel_verify_chunk"
-harness = false
-
-[[bench]]
-name = "br_3j_f_dashmap_cores_vs_throughput"
 harness = false
 
 [[bench]]
