@@ -378,6 +378,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Local copy and receiver**
 - A local `--relative` operand such as `src/./f` no longer overwrites the destination root timestamp, and no longer fails with `EPERM` when the receiver does not own that root; only a remainder beginning with `./` stamps it, as upstream does (#PRNUM)
+- A destination swapped for a symlink after the receiver entered it no longer redirects the rest of the transfer: temp-file creates, stats, directory touch-ups and the default-ACL read all resolve beneath the entered directory, as upstream's `fchdir()` guarantees, so the run exits 0 instead of reporting the source as vanished (24) or failing to inspect its temp files (23) (#PRNUM)
 - Honour `--force` when a directory stands where a file must go, and remove obstacles before creating nodes (#7625, #7602, #7701)
 - Never block opening a FIFO as a delta basis (#7594)
 - Apply ownership, timestamps, mode and ACLs to copy-tier backups (#7622, #7825)
