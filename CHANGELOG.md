@@ -407,7 +407,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 **Embedded SSH**
 - `Host` pattern matching, `IdentitiesOnly`, `IdentityAgent`, tilde expansion, tokenising and first-obtained-wins precedence match OpenSSH (#7803, #7791, #7205, #7792, #7814, #7836, #7856)
 - Forward remote stderr and itemize rows over embedded SSH (#7951, #7952)
-- Read the remote exit status over embedded SSH and exit with the worse of the local and remote codes, so a remote rsync that is missing (127), partial (23) or killed fails the run as it does over the ssh binary (#PRNUM)
+- Read the remote exit status over embedded SSH and exit with the worse of the local and remote codes, so a remote rsync that is missing (127), partial (23) or killed fails the run as it does over the ssh binary (#8225)
 
 **Windows**
 - Compare the read-only bit, open directories for `--fsync`, honour `--one-file-system` across volumes, and warn when metadata cannot be applied (#7163, #7164, #7210, #7054)
