@@ -305,3 +305,44 @@ fn classify_clone_error(error: io::Error) -> io::Result<CloneAttempt> {
         _ => Err(error),
     }
 }
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests {
+    use super::{CloneAttempt, classify_clone_error};
+    use std::io;
+
+    /// "This filesystem will not reflink" is the only outcome allowed to fall
+    /// back to a data copy, so each such errno must map to `Unsupported`.
+    #[test]
+    fn no_reflink_errnos_fall_back_to_a_copy() {
+        for code in [
+            libc::ENOTSUP,
+            libc::EOPNOTSUPP,
+            libc::EXDEV,
+            libc::EINVAL,
+            libc::ENOSYS,
+        ] {
+            let outcome = classify_clone_error(io::Error::from_raw_os_error(code))
+                .unwrap_or_else(|e| panic!("errno {code} must not be an error: {e}"));
+            assert_eq!(outcome, CloneAttempt::Unsupported, "errno {code}");
+        }
+    }
+
+    /// A confinement refusal or a real failure must propagate with its errno:
+    /// degrading it to `Unsupported` would let the caller retry the write
+    /// through the unconfined copy path.
+    #[test]
+    fn refusals_and_real_failures_propagate() {
+        for code in [
+            libc::ELOOP,
+            libc::EEXIST,
+            libc::EACCES,
+            libc::ENOENT,
+            libc::ENOSPC,
+        ] {
+            let error = classify_clone_error(io::Error::from_raw_os_error(code))
+                .expect_err("a refusal must not be reported as Unsupported");
+            assert_eq!(error.raw_os_error(), Some(code));
+        }
+    }
+}

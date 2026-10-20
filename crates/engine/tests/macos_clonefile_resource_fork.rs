@@ -10,7 +10,10 @@
 
 use std::ffi::OsString;
 use std::fs;
+use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use apple_fs::{
@@ -21,6 +24,7 @@ use engine::local_copy::{
     FilterProgram, FilterProgramEntry, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
     LocalCopySummary,
 };
+use fast_io::{CopyMethod, CopyResult, PlatformCopy};
 use filters::FilterRule;
 use tempfile::tempdir;
 
@@ -330,5 +334,98 @@ fn test_clonefile_defers_to_the_copy_path_under_an_xattr_filter() {
         xattr::get(&dest, "com.example.drop").expect("read drop"),
         None,
         "the filtered xattr must not reach the destination"
+    );
+}
+
+/// Reports no reflink support so the copy takes the portable path, which is
+/// the reference a clone must reproduce.
+#[derive(Debug)]
+struct PortableCopyOnly;
+
+impl PlatformCopy for PortableCopyOnly {
+    fn copy_file(&self, _src: &Path, _dst: &Path, _size_hint: u64) -> io::Result<CopyResult> {
+        Ok(CopyResult::new(0, CopyMethod::StandardCopy))
+    }
+
+    fn supports_reflink(&self) -> bool {
+        false
+    }
+
+    fn preferred_method(&self, _size: u64) -> CopyMethod {
+        CopyMethod::StandardCopy
+    }
+}
+
+fn fake_super_archive() -> LocalCopyOptions {
+    LocalCopyOptions::new()
+        .permissions(true)
+        .times(true)
+        .owner(true)
+        .group(true)
+        .fake_super(true)
+}
+
+/// Under `--fake-super` the receiver records the sender's view of the file in
+/// `rsync.%stat`, and the clone must end exactly as the portable copy does.
+///
+/// The source carries its own `%stat` (mode 0600, owner 77:77), which the
+/// sender reads as the file's identity. Upstream 3.5.1 writes
+/// `rsync.%stat="100600 0,0 77:77"` on the destination (measured with
+/// `rsync -a --fake-super`), because that identity differs from the
+/// destination's real owner. The clone copied the source's `%stat` verbatim
+/// and the post-clone strip removes it, so the value checked here must come
+/// from finalize's fake-super write, not from the clone.
+///
+/// The destination's real mode is compared against the portable copy rather
+/// than against upstream: upstream also chmods the real file to 0600, while
+/// oc's portable path keeps the source mode. That is a separate, pre-existing
+/// divergence; this test pins clone/portable parity.
+///
+/// upstream: `rsync.c:713-714` `set_file_attrs()` calls `set_stat_xattr()`
+/// under `am_root < 0`; `xattrs.c:1273-1357` `set_stat_xattr()` formats
+/// `"%o %u,%u %u:%u"` from the file-list entry.
+#[test]
+fn test_clonefile_matches_the_portable_copy_under_fake_super() {
+    let temp = tempdir().expect("tempdir");
+    if !apfs_clonefile_supported(temp.path()) {
+        eprintln!("APFS clonefile not supported on this volume, skipping test");
+        return;
+    }
+    let source = temp.path().join("src_fake_super.txt");
+    let cloned = temp.path().join("dst_fake_super_clone.txt");
+    let portable = temp.path().join("dst_fake_super_portable.txt");
+    fs::write(&source, b"fake super data").expect("write source");
+    xattr::set(&source, metadata::FAKE_SUPER_XATTR, b"100600 0,0 77:77").expect("write %stat");
+
+    clone_file(&source, &cloned, fake_super_archive());
+    let summary = copy_file(
+        &source,
+        &portable,
+        fake_super_archive().with_platform_copy(Arc::new(PortableCopyOnly)),
+    );
+    assert!(
+        summary
+            .copy_method_breakdown()
+            .iter()
+            .all(|&(label, _)| label != CLONEFILE_LABEL),
+        "the reference copy must take the portable path"
+    );
+
+    let cloned_stat = xattr::get(&cloned, metadata::FAKE_SUPER_XATTR).expect("read clone %stat");
+    assert_eq!(
+        cloned_stat,
+        Some(b"100600 0,0 77:77".to_vec()),
+        "the clone must carry the sender's identity, as upstream writes it"
+    );
+    assert_eq!(
+        cloned_stat,
+        xattr::get(&portable, metadata::FAKE_SUPER_XATTR).expect("read portable %stat"),
+        "the clone and the portable copy must record the same identity"
+    );
+    let mode = |path: &Path| fs::metadata(path).expect("stat").permissions().mode() & 0o7777;
+    assert_eq!(
+        mode(&cloned),
+        mode(&portable),
+        "the clone and the portable copy must end with the same real mode"
     );
 }
