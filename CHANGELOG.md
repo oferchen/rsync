@@ -288,6 +288,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
+- A remote shell killed by a signal before the handshake exits 12 like upstream, not 16 (#PRNUM)
 - Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)
 - Remote output fidelity: `--progress`, `-v` / `-vi` names, banners, `--stats` breakdown and dry-run itemize (#6786, #6789, #6791, #6793, #6802, #6814, #7062, #7172)
 - Preserve mtime on remote `--sparse`, and apply `dest_mode` without `-p` (#6803, #6804)
@@ -299,6 +300,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The server sets its stderr blocking after protocol setup, as upstream `start_server()` does (`main.c:1356-1364`) (#8224)
 
 **Daemon**
+- A fatal `-M` filter option - an `--exclude-from`, `--include-from` or `merge` file the daemon cannot open, or a malformed rule - ends the daemon session without a message, logging the reason, so the client exits 12 like upstream instead of 4 (#PRNUM)
 - Itemize a directory before deleting in it under `--delete`, and after the `--delete-before` pass, so the log carries upstream's `.d..t......` rows (#8226)
 - The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)
 - Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
