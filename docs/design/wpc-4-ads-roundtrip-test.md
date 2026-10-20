@@ -1,4 +1,9 @@
 # WPC-4: ADS round-trip regression test
+> **Superseded in part (2026-10-20, #8214).** References below to the
+> `ads_detect` probe and its stub tests are historical: the probe was removed,
+> and the once-per-process warning is now derived from
+> `metadata::strip_source_xattrs` returning `Result<bool>` (see
+> `ads_dropped_warning` tests in `engine` `wincopy.rs`).
 
 Tracks parent #2869 (Windows real-world parity series). Validates the
 WPC-3 implementation (`docs/design/wpc-3-ads-implementation.md`) by
