@@ -180,7 +180,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape (#8080)
 - rsync 3.5.0 and 3.5.1 join the interop matrix as gating peers, with an upstream-baseline oracle in the harness (#7290, #7337, #8033)
 - Release benchmarks compare against rsync 3.5.1, 3.5.0 and 3.4.4 on Linux and macOS, and report peak RSS for every mode (#7595, #8106)
-- The remote shell's stderr is inherited, as upstream `piped_child()` leaves it (`pipe.c:48-97`): ssh's messages reach the terminal unmodified instead of being captured and re-printed by oc-rsync (#PRNUM)
+- The remote shell's stderr is inherited, as upstream `piped_child()` leaves it (`pipe.c:48-97`): ssh's messages reach the terminal unmodified instead of being captured and re-printed by oc-rsync (#8224)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
 - `--safe-links` is evaluated on the receiver only, as upstream does (#7763, #7777)
 - Module filter rules follow upstream parsing: `merge`, `dir-merge`, `!`, `-C`, short prefixes and provenance (#7729, #7732, #7747, #7757, #7795, #7804, #7807, #7813, #7826, #7833, #7850, #7862)
@@ -283,8 +283,8 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - Honour `--modify-window` in the `--update` skip (#7112)
 - A remote push names each entry once, lists its directories, and reports module-relative `created directory` lines and per-file progress sizes like upstream (#8008)
 - A remote-shell server sender honours `--copy-unsafe-links` (#8032)
-- Remote-shell stderr keeps its exact bytes (non-UTF-8 is no longer rewritten to U+FFFD), shows output without a trailing newline immediately, and prints a failed ssh's error once instead of twice (#PRNUM)
-- The server sets its stderr blocking after protocol setup, as upstream `start_server()` does (`main.c:1356-1364`) (#PRNUM)
+- Remote-shell stderr keeps its exact bytes (non-UTF-8 is no longer rewritten to U+FFFD), shows output without a trailing newline immediately, and prints a failed ssh's error once instead of twice (#8224)
+- The server sets its stderr blocking after protocol setup, as upstream `start_server()` does (`main.c:1356-1364`) (#8224)
 
 **Daemon**
 - The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)
@@ -448,7 +448,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - The unreachable reorder-buffer spill layer: the `OC_RSYNC_SPILL_*` environment variables, the `--spill-dir`, `--spill-threshold-bytes` and `--no-spill` options and the `spill-compression` build feature (#8197)
 - The `RSYNC_SKIP_COMPRESS` environment fallback; like upstream, only `--skip-compress` sets the list (#8197)
 - Exit code 6 ("daemon unable to append to log-file"), which upstream does not define; a raw exit 6 renders as upstream's "unexplained error (code 6)" (#8197)
-- The `ssh-socketpair-stderr` build feature and the captured-stderr API (`SshConnection::stderr_output`, `wait_with_stderr`, `AsyncSshTransport::stderr_capture`); builds passing `--features ssh-socketpair-stderr` must drop it (#PRNUM)
+- The `ssh-socketpair-stderr` build feature and the captured-stderr API (`SshConnection::stderr_output`, `wait_with_stderr`, `AsyncSshTransport::stderr_capture`); builds passing `--features ssh-socketpair-stderr` must drop it (#8224)
 
 - The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
 ### Internal

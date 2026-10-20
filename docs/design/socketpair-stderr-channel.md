@@ -1,6 +1,6 @@
 # Socketpair stderr channel design (SSE-2, #2371)
 
-> **Superseded (#PRNUM).** oc-rsync no longer captures the ssh child's stderr: the child inherits it, as upstream `piped_child()` does (`pipe.c:48-97`), and the `ssh-socketpair-stderr` feature is removed. Kept for history.
+> **Superseded (#8224).** oc-rsync no longer captures the ssh child's stderr: the child inherits it, as upstream `piped_child()` does (`pipe.c:48-97`), and the `ssh-socketpair-stderr` feature is removed. Kept for history.
 
 Tracker: #2371. Companion to `docs/audits/ssh-stderr-handling.md`
 (SSE-1, #2370). No code changes in this PR.
