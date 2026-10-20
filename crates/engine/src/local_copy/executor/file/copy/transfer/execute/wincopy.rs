@@ -317,7 +317,7 @@ fn warn_ads_dropped_once(source: &Path) {
     static WARNED: AtomicBool = AtomicBool::new(false);
     if !WARNED.swap(true, Ordering::Relaxed) {
         logging::emit_warning(format!(
-            "alternate data streams on {} were not preserved; use --xattrs (-X) to keep them",
+            "alternate data streams were not preserved (first seen on {}); use --xattrs (-X) to keep them",
             source.display()
         ));
     }
