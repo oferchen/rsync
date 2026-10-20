@@ -21,11 +21,19 @@ QUIC applies only to daemon targets. It never changes an SSH or TCP transfer.
 
 ## 2. Build and availability
 
-The cargo feature is `quic`. It is not in the default feature set.
+The cargo feature is `quic`, and it is in the default feature set, so a plain
+`cargo build --release` includes it. Being compiled in changes nothing at
+runtime: the client uses QUIC only for a `quic://` operand or `--quic`, and the
+daemon opens its UDP listener only when `quic cert file` and `quic key file`
+are set. To build without QUIC, turn the defaults off and name the features you
+need:
 
 ```sh
-cargo build --release --features quic
+cargo build --release --no-default-features --features zstd,lz4,acl,xattr,iconv,parallel
 ```
+
+Such a build refuses `quic://` and `--quic` with a "not compiled into this
+build" error.
 
 It pulls in `quinn-proto` (the QUIC state machine), `quinn-udp`, and `rustls`
 with the `ring` provider for TLS 1.3. `rcgen` is also linked, for the library's
@@ -45,7 +53,7 @@ v0.6.4 predate this and do not carry it. Check a binary with
 
 ## 3. Server setup
 
-The QUIC listener runs beside the TCP listener. Four global directives in
+The QUIC listener runs beside the TCP listener. Five global directives in
 `oc-rsyncd.conf` configure it:
 
 | Directive | Default | Meaning |
@@ -54,12 +62,13 @@ The QUIC listener runs beside the TCP listener. Four global directives in
 | `quic key file` | unset | PEM private key for that certificate (PKCS#8, PKCS#1 or SEC1) |
 | `quic client ca file` | unset (no client certificate requested) | PEM CA bundle. When set, every client must present a certificate that chains to it (mutual TLS) |
 | `quic port` | the daemon `port` (873) | UDP port of the QUIC listener. `quic port = 0` means 873, as `port = 0` does |
+| `quic retry` | `auto` | When the listener answers a new client with a stateless Retry: `auto` once 100 handshakes are in flight, `always` for every client, `never` for none. Any other value fails to parse |
 
 Rules:
 
-- Setting any of the four turns the listener on. A config without them stays
+- Setting any of the five turns the listener on. A config without them stays
   TCP-only.
-- All four are global-only. A module section that sets one fails to parse.
+- All five are global-only. A module section that sets one fails to parse.
 - Paths resolve relative to the config file, like `pid file`.
 - `quic cert file` and `quic key file` go together. Naming only one fails at
   startup.
@@ -72,6 +81,18 @@ Rules:
 - The listener binds the same addresses as the TCP listener, IPv4 and IPv6.
 - `quic client ca file` gates only the QUIC listener. The TCP listener still
   serves the same modules without a certificate.
+
+**Retry and connection limits.** A Retry (RFC 9000 section 8.1.2) makes a
+client prove it can receive at its source address before the daemon keeps any
+state for it, at the cost of one extra round trip. The client follows it
+without any flag. With `quic retry = auto` an idle daemon never sends one, so
+normal transfers pay nothing; under a handshake flood every new client is
+validated first. A client accepted after a Retry is logged as `QUIC client
+<address> validated by Retry`. Retry tokens are valid for 15 seconds and are
+signed with a key generated at startup, so they never outlive the daemon
+process. The daemon also bounds what it holds for connection attempts it has not
+yet accepted: at most `max connections` attempts (128 when unlimited, the
+listener's accept backlog), each buffering at most 64 KiB.
 
 **Firewall.** QUIC uses UDP. Open `873/udp` (or your `quic port`) as well as
 `873/tcp`.
@@ -137,6 +158,11 @@ unencrypted QUIC mode.
   certificate must name the dialled host in its SAN (DNS name, or IP address
   when you dial an IP), it must be inside its validity period, and the leaf must
   be `CA:FALSE`. Any failure ends the handshake with exit 5.
+- **Address validation.** QUIC limits a daemon's replies to an unvalidated
+  address to three times what it received, so it cannot be used to amplify a
+  spoofed flood. Under load the daemon also sends a stateless Retry, so a
+  flood of spoofed handshakes cannot make it hold state (`quic retry`, section
+  3).
 
 **Trusting a private CA.** Issue the daemon certificate from your CA and give
 clients the CA certificate:

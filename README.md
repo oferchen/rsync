@@ -134,7 +134,7 @@ cargo build --workspace --release
 | `openssl` | workspace, `checksums` | no | MD4/MD5 through system OpenSSL. | stable |
 | `openssl-vendored` | workspace, `checksums` | no | As `openssl`, statically linked. | stable |
 | `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` for the daemon. | stable |
-| `quic` | workspace, `cli`, `core`, `daemon`, `rsync_io`, `transfer`, `test-support` | no | QUIC transport (see [QUIC transport](#quic-transport)). | opt-in |
+| `quic` | workspace, `cli`, `core`, `daemon`, `rsync_io`, `transfer`, `test-support` | yes | QUIC transport (see [QUIC transport](#quic-transport)). | stable |
 | `iouring-send-zc` | workspace, `fast_io` | yes | io_uring `SEND_ZC` socket writes (Linux 6.0+). Built in, but used only when the local node asks for zero-copy (see [Performance tuning](#performance-tuning)). | stable |
 | `daemon-zero-copy` | `daemon` | yes | Lets a daemon sender use `SEND_ZC` when zero-copy is requested. | stable |
 | `daemon-seccomp` | workspace, `daemon` | no | seccomp allowlist for daemon workers. Once compiled in, it is on at runtime; opt out with `OC_RSYNC_NO_SECCOMP=1`. | opt-in |
@@ -205,10 +205,10 @@ Some SSH features (for example certificate-based auth) may be missing; please op
 
 ### QUIC transport
 
-oc-rsync can carry the rsync daemon protocol over QUIC (TLS 1.3 over UDP) instead of a plain TCP socket. Upstream rsync has no QUIC transport, so both ends must be oc-rsync. It needs the `quic` cargo feature, which is not a default; release artifacts for Linux, macOS and Windows enable it from the first release after v0.6.4. Windows builds run the QUIC client only: a Windows daemon with a QUIC directive refuses to start.
+oc-rsync can carry the rsync daemon protocol over QUIC (TLS 1.3 over UDP) instead of a plain TCP socket. Upstream rsync has no QUIC transport, so both ends must be oc-rsync. The `quic` cargo feature is in the default build, and release artifacts for Linux, macOS and Windows carry it from the first release after v0.6.4. Being compiled in changes nothing at runtime: the client uses QUIC only for a `quic://` operand or `--quic`, and the daemon listens on UDP only when `quic cert file` and `quic key file` are set. Windows builds run the QUIC client only: a Windows daemon with a QUIC directive refuses to start. To build without QUIC, pass `--no-default-features` plus the features you need:
 
 ```sh
-cargo build --release --features quic
+cargo build --release --no-default-features --features zstd,lz4,acl,xattr,iconv,parallel
 ```
 
 The daemon needs a certificate and key in the global section of `oc-rsyncd.conf`, and UDP open on its port (873 unless `quic port` says otherwise):
