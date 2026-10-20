@@ -16,6 +16,8 @@
 
 use std::fs;
 use std::path::Path;
+#[cfg(feature = "xattr")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use metadata::MetadataOptions;
@@ -312,15 +314,23 @@ fn reconcile_copied_ads(
 /// ADS-free tree pays no extra syscall.
 #[cfg(feature = "xattr")]
 fn warn_ads_dropped_once(source: &Path) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     static WARNED: AtomicBool = AtomicBool::new(false);
-    if !WARNED.swap(true, Ordering::Relaxed) {
-        logging::emit_warning(format!(
-            "alternate data streams were not preserved (first seen on {}); use --xattrs (-X) to keep them",
-            source.display()
-        ));
+    if let Some(message) = ads_dropped_warning(source, &WARNED) {
+        logging::emit_warning(message);
     }
+}
+
+/// Returns the ADS-dropped warning the first time `warned` is claimed, and
+/// `None` on every later call.
+#[cfg(feature = "xattr")]
+fn ads_dropped_warning(source: &Path, warned: &AtomicBool) -> Option<String> {
+    if warned.swap(true, Ordering::Relaxed) {
+        return None;
+    }
+    Some(format!(
+        "alternate data streams were not preserved (first seen on {}); use --xattrs (-X) to keep them",
+        source.display()
+    ))
 }
 
 #[cfg(test)]
@@ -329,6 +339,23 @@ mod tests {
     use std::io;
     use std::sync::Mutex;
     use tempfile::TempDir;
+
+    #[cfg(feature = "xattr")]
+    #[test]
+    fn ads_dropped_warning_fires_once_and_names_the_option() {
+        use std::path::Path;
+        use std::sync::atomic::AtomicBool;
+
+        let warned = AtomicBool::new(false);
+        let first = super::ads_dropped_warning(Path::new(r"C:\src\a.txt"), &warned)
+            .expect("the first dropped stream must warn");
+        assert!(first.contains(r"C:\src\a.txt"), "got {first:?}");
+        assert!(first.contains("--xattrs (-X)"), "got {first:?}");
+        assert!(
+            super::ads_dropped_warning(Path::new(r"C:\src\b.txt"), &warned).is_none(),
+            "the warning is once per process, not once per file"
+        );
+    }
 
     /// Test double that records the size hint and returns a chosen method.
     #[derive(Debug)]
