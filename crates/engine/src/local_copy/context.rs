@@ -277,7 +277,7 @@ pub(crate) struct CopyContext<'a> {
     /// reported in the run's `Deletions stopped due to --max-delete limit`
     /// warning.
     // upstream: delete.c:35 skipped_deletes; generator.c:2904-2907
-    make_room_skipped_deletes: u64,
+    skipped_deletes: u64,
     /// Set when `atomic_create()` could not make a FIFO, socket, device node,
     /// symlink, or hard link. The entry is skipped and the run continues, but
     /// this flag drives the final `RERR_PARTIAL` (exit 23) exit code.

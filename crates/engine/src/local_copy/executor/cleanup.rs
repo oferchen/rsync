@@ -411,19 +411,9 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
         )?;
     }
 
-    if skipped > 0 {
-        // upstream: generator.c:2904-2907 emits one warning after the pass with
-        // the total number of entries skipped because of the limit; the run
-        // then exits RERR_DEL_LIMIT (25).
-        info_log!(
-            Del,
-            1,
-            "max deletions reached, skipping {} remaining",
-            skipped
-        );
-        return Err(LocalCopyError::delete_limit_exceeded(skipped));
-    }
-
+    // upstream: delete.c:217-219 - a capped entry only bumps `skipped_deletes`;
+    // the transfer continues and generator.c:2904-2907 reports the total once.
+    context.record_skipped_deletes(skipped);
     Ok(())
 }
 
@@ -485,12 +475,25 @@ fn remove_entry_capped(
     // leaves the parent in place. The check runs at every recursion level, so a
     // mount nested inside a doomed subtree pins the whole ancestor chain.
     if is_delete_mount_point(boundary_dev, path, file_type) {
-        info_log!(
-            Mount,
-            1,
-            "cannot delete mount point: {}",
-            entry_relative.display()
-        );
+        if nested {
+            // upstream: delete.c:144-149 - inside delete_dir_contents() the
+            // mount point is only a DEBUG_GTE(DEL, 1) note.
+            debug_log!(
+                Del,
+                1,
+                "mount point, {}, pins parent directory",
+                entry_relative.display()
+            );
+        } else {
+            // upstream: generator.c:336-340 - delete_in_dir() reports a
+            // top-level one at INFO_GTE(MOUNT, 1).
+            info_log!(
+                Mount,
+                1,
+                "cannot delete mount point: {}",
+                entry_relative.display()
+            );
+        }
         return Ok(false);
     }
 
