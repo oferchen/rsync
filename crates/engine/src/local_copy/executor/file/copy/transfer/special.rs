@@ -34,7 +34,7 @@ pub(in crate::local_copy) fn copy_special_as_regular_file(
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     record_path: &Path,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     file_type: fs::FileType,
     relative: Option<&Path>,

@@ -37,7 +37,7 @@ pub(super) fn try_skip_up_to_date(
     metadata: &fs::Metadata,
     metadata_options: &MetadataOptions,
     record_path: &Path,
-    existing: &fs::Metadata,
+    existing: &fast_io::EntryMetadata,
     flags: &TransferFlags,
     #[allow(unused_variables)] // REASON: used on unix with feature "xattr"
     mode: LocalCopyExecution,
@@ -125,7 +125,7 @@ pub(super) fn record_metadata_only_skip(
     metadata: &fs::Metadata,
     metadata_options: &MetadataOptions,
     record_path: &Path,
-    existing: &fs::Metadata,
+    existing: &fast_io::EntryMetadata,
     flags: &TransferFlags,
     #[allow(unused_variables)] // REASON: used on unix with feature "xattr"
     mode: LocalCopyExecution,
@@ -139,13 +139,8 @@ pub(super) fn record_metadata_only_skip(
     // drains after the summary, so emitting via info_log! here would race the
     // banner+totals ordering. Keep the record-based render as the single
     // source of truth.
-    ::metadata::apply_file_metadata_if_changed(
-        destination,
-        metadata,
-        &fast_io::EntryMetadata::from(existing.clone()),
-        metadata_options,
-    )
-    .map_err(crate::local_copy::map_metadata_error)?;
+    ::metadata::apply_file_metadata_if_changed(destination, metadata, existing, metadata_options)
+        .map_err(crate::local_copy::map_metadata_error)?;
 
     #[cfg(all(unix, feature = "xattr"))]
     sync_xattrs_if_requested(

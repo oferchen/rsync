@@ -184,7 +184,7 @@ fn copy_directory_recursive_inner(
     // inline `fs::Metadata` (~80 bytes on Windows) multiplied across a deep
     // tree overflows Windows's 1 MB default thread stack. The boxed pointer is
     // 8 bytes per frame instead.
-    let existing_destination_metadata: Option<Box<fs::Metadata>> =
+    let existing_destination_metadata: Option<Box<fast_io::EntryMetadata>> =
         destination_state.existing_metadata().cloned().map(Box::new);
 
     // upstream: generator.c:1858-1871 - when a directory is freshly created in
@@ -198,21 +198,22 @@ fn copy_directory_recursive_inner(
     let root_just_created = relative.is_none() && context.summary().destination_root_created();
     // Boxed for the same reason as `existing_destination_metadata` above: keep
     // the owned `fs::Metadata` off the per-directory recursion frame.
-    let copy_dest_basis: Option<Box<fs::Metadata>> = if destination_missing || root_just_created {
-        // The transfer root has `relative == None`; use an empty path so the
-        // basis lookup resolves the copy-dest directory itself.
-        let lookup_relative = relative.unwrap_or_else(|| Path::new(""));
-        super::super::find_copy_dest_basis(context, destination, lookup_relative)?.map(Box::new)
-    } else {
-        None
-    };
+    let copy_dest_basis: Option<Box<fast_io::EntryMetadata>> =
+        if destination_missing || root_just_created {
+            // The transfer root has `relative == None`; use an empty path so the
+            // basis lookup resolves the copy-dest directory itself.
+            let lookup_relative = relative.unwrap_or_else(|| Path::new(""));
+            super::super::find_copy_dest_basis(context, destination, lookup_relative)?.map(Box::new)
+        } else {
+            None
+        };
 
     // The `dest_mode()` exists input for this directory: its stat from before
     // the transfer materialised it. A root the orchestrator just created
     // (`root_just_created`) and a replaced non-directory obstacle both count
     // as fresh - upstream generator.c:1841-1856 resets `statret` to -1 for a
     // deleted obstacle and judges `exists` before its own mkdir.
-    let dir_pre_transfer: Option<&fs::Metadata> = if root_just_created {
+    let dir_pre_transfer: Option<&fast_io::EntryMetadata> = if root_just_created {
         None
     } else {
         existing_destination_metadata

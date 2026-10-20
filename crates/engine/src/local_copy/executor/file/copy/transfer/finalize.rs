@@ -46,7 +46,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
     destination_previously_existed: bool,
     delay_updates_enabled: bool,
     writer_for_metadata: &mut Option<fs::File>,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
     #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {

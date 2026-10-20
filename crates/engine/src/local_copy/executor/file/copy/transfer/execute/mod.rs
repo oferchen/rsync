@@ -65,7 +65,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     record_path: &Path,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     file_type: fs::FileType,
     relative: Option<&Path>,
@@ -144,8 +144,9 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // upstream: generator.c:2172-2179 + 2270-2274, receiver.c:1153-1155.
     let one_inplace_partial_file =
         super::write_strategy::one_inplace_partial_file(context, destination);
-    let partial_dir_basis: Option<(&Path, fs::Metadata)> = match one_inplace_partial_file {
-        Some(ref leaf) if !whole_file_enabled => fs::symlink_metadata(leaf)
+    let partial_dir_basis: Option<(&Path, fast_io::EntryMetadata)> = match one_inplace_partial_file
+    {
+        Some(ref leaf) if !whole_file_enabled => fast_io::destination_at::symlink_metadata(leaf)
             .ok()
             .map(|meta| (leaf.as_path(), meta)),
         _ => None,
@@ -184,9 +185,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
                     build_delta_signature(destination, existing, context.block_size_override())?
                 }
                 _ => match fuzzy_basis {
-                    Some((ref path, ref meta)) => {
-                        build_delta_signature(path, meta, context.block_size_override())?
-                    }
+                    Some((ref path, ref meta)) => build_delta_signature(
+                        path,
+                        &fast_io::EntryMetadata::from(meta.clone()),
+                        context.block_size_override(),
+                    )?,
                     None => None,
                 },
             },
@@ -831,7 +834,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // size/time/perm slots blank when the source already matched the basis.
     let basis_metadata = match reference_basis.as_deref() {
         Some(path) => match fs::symlink_metadata(path) {
-            Ok(meta) => Some(meta),
+            Ok(meta) => Some(fast_io::EntryMetadata::from(meta)),
             Err(error) => {
                 return Err(LocalCopyError::io(
                     "inspect reference basis",

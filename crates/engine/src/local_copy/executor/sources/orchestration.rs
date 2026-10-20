@@ -489,7 +489,7 @@ fn emit_merged_transfer_root(
         // Existing root: itemize the source "." against the on-disk destination
         // root so an unchanged pair yields an all-dot `.d` row (shown only under
         // -vv / --list-only), exactly as the recursive root frame does.
-        let dest_meta = fs::symlink_metadata(destination_path)
+        let dest_meta = fast_io::destination_at::symlink_metadata(destination_path)
             .map_err(|error| LocalCopyError::io("inspect destination", destination_path, error))?;
         let change_set = LocalCopyChangeSet::for_existing_directory(
             &source_meta,
@@ -1274,7 +1274,8 @@ fn emit_relative_implied_parents(
                             )
                             .with_creation(true),
                         )
-                    } else if let Ok(existing) = fs::symlink_metadata(destination_path)
+                    } else if let Ok(existing) =
+                        fast_io::destination_at::symlink_metadata(destination_path)
                         && existing.file_type().is_dir()
                     {
                         // Pre-existing transfer root: upstream still placed the
@@ -1357,7 +1358,7 @@ fn emit_relative_implied_parents(
             _ => continue,
         };
         let destination_dir = destination_root.join(&accumulated);
-        let existing_meta = match fs::symlink_metadata(&destination_dir) {
+        let existing_meta = match fast_io::destination_at::symlink_metadata(&destination_dir) {
             Ok(meta) if meta.file_type().is_dir() => Some(meta),
             _ => None,
         };
@@ -1513,7 +1514,7 @@ fn stamp_directory_from_source(
         Ok(meta) if meta.file_type().is_dir() => meta,
         _ => return Ok(()),
     };
-    let dest_meta = match fs::symlink_metadata(dest_dir) {
+    let dest_meta = match fast_io::destination_at::symlink_metadata(dest_dir) {
         Ok(meta) if meta.file_type().is_dir() => meta,
         _ => return Ok(()),
     };
@@ -1524,7 +1525,7 @@ fn stamp_directory_from_source(
         dest_dir,
         &source_meta,
         metadata_options.clone(),
-        Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
+        Some(&dest_meta),
     )
     .map_err(crate::local_copy::map_metadata_error)?;
     Ok(())

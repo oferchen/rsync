@@ -37,11 +37,11 @@ use super::{
     MergeFileRegistry, NestedDirMerge, ReferenceDirectory, SparseWriteState, compute_backup_path,
     copy_entry_to_backup, copy_pre_image_to_backup, create_backup_parents,
     delete_extraneous_entries, dir_merge_file_present, filter_program_local_error,
-    follow_symlink_metadata, load_dir_merge_rules_recursive, map_metadata_error,
-    record_directory_subtree, remove_source_entry_if_requested, resolve_dir_merge_path,
-    should_skip_copy, skip_matched_sparse, symlink_target_is_safe, trace_make_backup_copy,
-    trace_make_backup_device, trace_make_backup_hlink, trace_make_backup_rename,
-    trace_make_backup_symlink, write_sparse_chunk,
+    load_dir_merge_rules_recursive, map_metadata_error, record_directory_subtree,
+    remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy,
+    skip_matched_sparse, symlink_target_is_safe, trace_make_backup_copy, trace_make_backup_device,
+    trace_make_backup_hlink, trace_make_backup_rename, trace_make_backup_symlink,
+    write_sparse_chunk,
 };
 use super::{ScanRoot, SourceSpec};
 use crate::block_touch::BlockTouchTracker;
@@ -218,7 +218,7 @@ pub(crate) struct CopyContext<'a> {
     /// here lets `copy_file` reuse that lstat instead of issuing a second one,
     /// matching upstream's single generator `link_stat` per destination. Empty
     /// outside checksum mode, so the non-checksum path keeps its own lstat.
-    destination_metadata_cache: HashMap<PathBuf, fs::Metadata>,
+    destination_metadata_cache: HashMap<PathBuf, fast_io::EntryMetadata>,
     /// Set by a general I/O error found while walking the source (the
     /// file-list phase). It gates every delete pass, because upstream's
     /// generator sees file-list errors as each list arrives.
@@ -494,7 +494,7 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     /// `None` for a brand-new destination. Used by
     /// [`::metadata::apply_dest_mode_pre_transfer`] to reproduce the
     /// upstream `receiver.c:1208` + `rsync.c:504` `set_file_attrs()` chmod-on-rename loop.
-    pre_transfer_meta: Option<&'a fs::Metadata>,
+    pre_transfer_meta: Option<&'a fast_io::EntryMetadata>,
 
     #[cfg(unix)]
     fd: Option<std::os::fd::BorrowedFd<'a>>,
@@ -542,7 +542,7 @@ impl<'a> FinalizeMetadataParams<'a> {
     /// loop.
     pub(crate) const fn with_pre_transfer_meta(
         mut self,
-        pre_transfer_meta: Option<&'a fs::Metadata>,
+        pre_transfer_meta: Option<&'a fast_io::EntryMetadata>,
     ) -> Self {
         self.pre_transfer_meta = pre_transfer_meta;
         self

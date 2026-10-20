@@ -35,7 +35,7 @@ pub(super) struct DirectoryFinalize<'a> {
     /// The destination's stat from BEFORE this transfer materialised it (`None`
     /// when this run created it), feeding the `dest_mode()` exists split -
     /// upstream generator.c:1856 judges `exists` by the pre-mkdir `statret`.
-    pub pre_transfer_meta: Option<&'a fs::Metadata>,
+    pub pre_transfer_meta: Option<&'a fast_io::EntryMetadata>,
 }
 
 /// Applies final metadata to a directory after all contents have been processed.
@@ -72,10 +72,7 @@ pub(super) fn apply_final_directory_metadata(
         destination,
         metadata,
         metadata_options.clone(),
-        pre_transfer_meta
-            .cloned()
-            .map(fast_io::EntryMetadata::from)
-            .as_ref(),
+        pre_transfer_meta,
     )
     .map_err(map_metadata_error)?;
 
@@ -216,7 +213,7 @@ pub(super) fn keep_preexisting_directory_writable(
     context: &mut CopyContext,
     destination: &Path,
     metadata: &fs::Metadata,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -232,7 +229,7 @@ pub(super) fn keep_preexisting_directory_writable(
         destination,
         metadata.permissions().mode(),
         &metadata_options,
-        Some(&fast_io::EntryMetadata::from(pre_transfer.clone())),
+        Some(pre_transfer),
     );
     // upstream: generator.c:1904-1906 - raise to mode | S_IRWXU when the
     // target lacks full owner rwx; otherwise the first-visit chmod lands the
@@ -242,7 +239,7 @@ pub(super) fn keep_preexisting_directory_writable(
     } else {
         target | 0o700
     };
-    if pre_transfer.permissions().mode() & 0o7777 == during {
+    if pre_transfer.mode() & 0o7777 == during {
         return;
     }
     if let Err(error) = fs::set_permissions(destination, fs::Permissions::from_mode(during)) {
@@ -263,7 +260,7 @@ pub(super) fn keep_preexisting_directory_writable(
     _context: &mut CopyContext,
     _destination: &Path,
     _metadata: &fs::Metadata,
-    _pre_transfer_meta: Option<&fs::Metadata>,
+    _pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) {
 }
 
@@ -295,7 +292,7 @@ pub(super) fn enforce_transfer_root_self_lock(
     context: &mut CopyContext,
     destination: &Path,
     metadata: &fs::Metadata,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -324,10 +321,7 @@ pub(super) fn enforce_transfer_root_self_lock(
         destination,
         metadata,
         &options,
-        pre_transfer_meta
-            .cloned()
-            .map(fast_io::EntryMetadata::from)
-            .as_ref(),
+        pre_transfer_meta,
     )
     .map_err(map_metadata_error)?
     else {
@@ -365,7 +359,7 @@ pub(super) fn enforce_transfer_root_self_lock(
     _context: &mut CopyContext,
     _destination: &Path,
     _metadata: &fs::Metadata,
-    _pre_transfer_meta: Option<&fs::Metadata>,
+    _pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
     Ok(None)
 }

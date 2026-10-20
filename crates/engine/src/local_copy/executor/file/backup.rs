@@ -438,11 +438,12 @@ fn apply_backup_dir_attrs(
 pub(crate) fn copy_entry_to_backup(
     source: &Path,
     backup_path: &Path,
-    file_type: fs::FileType,
+    file_type: impl Into<fast_io::EntryFileType>,
     devices_enabled: bool,
     specials_enabled: bool,
     fake_super: bool,
 ) -> Result<Option<BackupStrategy>, LocalCopyError> {
+    let file_type: fast_io::EntryFileType = file_type.into();
     if file_type.is_file() {
         // upstream: backup.c:401 `copy_file(fname, buf, -1, file->mode)`, whose
         // destination open is `do_open_at()` via `unlink_and_reopen()`

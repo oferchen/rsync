@@ -440,10 +440,7 @@ impl<'a> CopyContext<'a> {
             destination,
             metadata,
             &metadata_options,
-            pre_transfer_meta
-                .cloned()
-                .map(fast_io::EntryMetadata::from)
-                .as_ref(),
+            pre_transfer_meta,
         )
         .map_err(map_metadata_error)?;
 
@@ -454,11 +451,11 @@ impl<'a> CopyContext<'a> {
         #[cfg(unix)]
         {
             if let Some(fd) = fd {
-                if let Ok(existing) = std::fs::metadata(destination) {
+                if let Ok(existing) = fast_io::destination_at::metadata(destination) {
                     ::metadata::apply_file_metadata_with_fd_if_changed(
                         destination,
                         metadata,
-                        &fast_io::EntryMetadata::from(existing.clone()),
+                        &existing,
                         &metadata_options,
                         fd,
                     )
@@ -472,7 +469,7 @@ impl<'a> CopyContext<'a> {
                     )
                     .map_err(map_metadata_error)?;
                 }
-            } else if let Ok(existing) = std::fs::metadata(destination) {
+            } else if let Ok(existing) = fast_io::destination_at::metadata(destination) {
                 // Mirror the fd branch: hand the chain the destination's
                 // current stat. The `--chmod` dest_mode() composition (which
                 // `apply_dest_mode_pre_transfer` above already stamped) then
@@ -482,7 +479,7 @@ impl<'a> CopyContext<'a> {
                 ::metadata::apply_file_metadata_if_changed(
                     destination,
                     metadata,
-                    &fast_io::EntryMetadata::from(existing.clone()),
+                    &existing,
                     &metadata_options,
                 )
                 .map_err(map_metadata_error)?;
@@ -584,7 +581,10 @@ impl<'a> CopyContext<'a> {
 
     /// Stores destination `lstat` metadata gathered during checksum-mode
     /// prefetch so `copy_file` can reuse it instead of re-lstat'ing.
-    pub(super) fn set_destination_metadata_cache(&mut self, cache: HashMap<PathBuf, fs::Metadata>) {
+    pub(super) fn set_destination_metadata_cache(
+        &mut self,
+        cache: HashMap<PathBuf, fast_io::EntryMetadata>,
+    ) {
         self.destination_metadata_cache = cache;
     }
 
@@ -592,7 +592,10 @@ impl<'a> CopyContext<'a> {
     /// if the checksum-mode prefetch recorded it. Returns `None` when absent
     /// (non-checksum mode, a non-regular destination, or already consumed), in
     /// which case the caller performs its own `lstat`.
-    pub(super) fn take_cached_destination_metadata(&mut self, dest: &Path) -> Option<fs::Metadata> {
+    pub(super) fn take_cached_destination_metadata(
+        &mut self,
+        dest: &Path,
+    ) -> Option<fast_io::EntryMetadata> {
         self.destination_metadata_cache.remove(dest)
     }
 

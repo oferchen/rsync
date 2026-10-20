@@ -53,7 +53,9 @@ impl<'a> CopyContext<'a> {
             // missing or is not a directory has already been reported once by
             // check_alt_basis_dirs(); aborting the transfer on the resulting
             // ENOTDIR would fail a run upstream completes normally.
-            let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+            let Ok(candidate_metadata) =
+                fs::symlink_metadata(&candidate).map(fast_io::EntryMetadata::from)
+            else {
                 continue;
             };
 
@@ -128,7 +130,9 @@ impl<'a> CopyContext<'a> {
             let candidate = entry.resolve(self.destination_root(), relative);
             // upstream: generator.c:1227 - any basis_link_stat() failure skips
             // this basis dir. See the note at the head of `link_dest_target`.
-            let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+            let Ok(candidate_metadata) =
+                fs::symlink_metadata(&candidate).map(fast_io::EntryMetadata::from)
+            else {
                 continue;
             };
 
@@ -189,7 +193,9 @@ impl<'a> CopyContext<'a> {
             let candidate = entry.resolve(self.destination_root(), relative);
             // upstream: generator.c:1254 - any basis_link_stat() failure skips
             // this basis dir. See the note at the head of `link_dest_target`.
-            let Ok(candidate_metadata) = fs::symlink_metadata(&candidate) else {
+            let Ok(candidate_metadata) =
+                fs::symlink_metadata(&candidate).map(fast_io::EntryMetadata::from)
+            else {
                 continue;
             };
 
@@ -262,7 +268,7 @@ impl<'a> CopyContext<'a> {
 #[cfg(unix)]
 fn mtimes_within_window(
     source: &fs::Metadata,
-    candidate: &fs::Metadata,
+    candidate: &fast_io::EntryMetadata,
     modify_window: ModifyWindow,
 ) -> bool {
     use std::os::unix::fs::MetadataExt;

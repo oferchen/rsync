@@ -617,10 +617,13 @@ fn delta_copy_outcome_with(
     write_source(&source, source_len);
 
     let basis_metadata = fs::metadata(&basis).expect("stat basis");
-    let index =
-        super::super::super::comparison::build_delta_signature(&basis, &basis_metadata, None)
-            .expect("build the basis signature")
-            .expect("a non-empty basis always yields an index");
+    let index = super::super::super::comparison::build_delta_signature(
+        &basis,
+        &fast_io::EntryMetadata::from(basis_metadata.clone()),
+        None,
+    )
+    .expect("build the basis signature")
+    .expect("a non-empty basis always yields an index");
 
     let mut reader = File::open(&source).expect("open source");
     let mut writer = File::create(&staging).expect("create staging file");

@@ -71,13 +71,12 @@ impl<'a> CopyContext<'a> {
     /// destination-root symlink keeps the pre-existing `--keep-dirlinks`-only
     /// behaviour rather than being followed on no evidence.
     #[cfg(unix)]
-    fn operator_owns_symlink(metadata: &fs::Metadata) -> bool {
-        use std::os::unix::fs::MetadataExt;
+    fn operator_owns_symlink(metadata: &fast_io::EntryMetadata) -> bool {
         fast_io::symlink_owner_is_trusted(metadata.uid())
     }
 
     #[cfg(not(unix))]
-    fn operator_owns_symlink(_metadata: &fs::Metadata) -> bool {
+    fn operator_owns_symlink(_metadata: &fast_io::EntryMetadata) -> bool {
         false
     }
 
@@ -115,7 +114,11 @@ impl<'a> CopyContext<'a> {
     /// directory. That is the same code path as a plain non-relative copy, so
     /// widening this predicate to all of `--relative` would silently convert
     /// both into follows.
-    fn follows_existing_parent_symlink(&self, parent: &Path, existing: &fs::Metadata) -> bool {
+    fn follows_existing_parent_symlink(
+        &self,
+        parent: &Path,
+        existing: &fast_io::EntryMetadata,
+    ) -> bool {
         self.keep_dirlinks_enabled()
             || (parent == self.destination_root()
                 && (Self::operator_owns_symlink(existing)
@@ -161,7 +164,7 @@ impl<'a> CopyContext<'a> {
     fn clear_obstructing_non_directory(
         &mut self,
         parent: &Path,
-        existing: &fs::Metadata,
+        existing: &fast_io::EntryMetadata,
     ) -> Result<(), LocalCopyError> {
         let relative = self.parent_relative_to_destination(parent);
         self.force_remove_destination(parent, relative, existing)
@@ -172,7 +175,7 @@ impl<'a> CopyContext<'a> {
     fn replace_parent_entry_dry_run(
         &mut self,
         parent: &Path,
-        existing: &fs::Metadata,
+        existing: &fast_io::EntryMetadata,
         allow_creation: bool,
     ) -> Result<(), LocalCopyError> {
         if allow_creation {
@@ -187,7 +190,7 @@ impl<'a> CopyContext<'a> {
     fn replace_parent_entry_create(
         &mut self,
         parent: &Path,
-        existing: &fs::Metadata,
+        existing: &fast_io::EntryMetadata,
     ) -> Result<(), LocalCopyError> {
         self.clear_obstructing_non_directory(parent, existing)?;
         fs::create_dir_all(parent)
@@ -201,7 +204,7 @@ impl<'a> CopyContext<'a> {
     fn replace_parent_entry_forbidden(
         &mut self,
         parent: &Path,
-        existing: &fs::Metadata,
+        existing: &fast_io::EntryMetadata,
     ) -> Result<(), LocalCopyError> {
         if self.force_replacements_enabled() {
             let relative = self.parent_relative_to_destination(parent);
@@ -289,7 +292,7 @@ impl<'a> CopyContext<'a> {
         let allow_creation =
             self.mkpath_enabled() || (self.implied_dirs_enabled() && parent_within_root);
         let result = if self.mode.is_dry_run() {
-            match fs::symlink_metadata(parent) {
+            match fast_io::destination_at::symlink_metadata(parent) {
                 Ok(existing) => {
                     let ty = existing.file_type();
                     if ty.is_dir() {
@@ -297,13 +300,21 @@ impl<'a> CopyContext<'a> {
                     } else if ty.is_symlink()
                         && self.follows_existing_parent_symlink(parent, &existing)
                     {
-                        follow_symlink_metadata(parent).and_then(|metadata| {
-                            if metadata.file_type().is_dir() {
-                                Ok(())
-                            } else {
-                                self.replace_parent_entry_dry_run(parent, &existing, allow_creation)
-                            }
-                        })
+                        fast_io::destination_at::metadata(parent)
+                            .map_err(|error| {
+                                LocalCopyError::io("inspect symlink target", parent, error)
+                            })
+                            .and_then(|metadata| {
+                                if metadata.file_type().is_dir() {
+                                    Ok(())
+                                } else {
+                                    self.replace_parent_entry_dry_run(
+                                        parent,
+                                        &existing,
+                                        allow_creation,
+                                    )
+                                }
+                            })
                     } else {
                         self.replace_parent_entry_dry_run(parent, &existing, allow_creation)
                     }
@@ -336,7 +347,7 @@ impl<'a> CopyContext<'a> {
                 )),
             }
         } else if allow_creation {
-            match fs::symlink_metadata(parent) {
+            match fast_io::destination_at::symlink_metadata(parent) {
                 Ok(existing) => {
                     let ty = existing.file_type();
                     if ty.is_dir() {
@@ -344,7 +355,10 @@ impl<'a> CopyContext<'a> {
                     } else if ty.is_symlink()
                         && self.follows_existing_parent_symlink(parent, &existing)
                     {
-                        let metadata = follow_symlink_metadata(parent)?;
+                        let metadata =
+                            fast_io::destination_at::metadata(parent).map_err(|error| {
+                                LocalCopyError::io("inspect symlink target", parent, error)
+                            })?;
                         if metadata.file_type().is_dir() {
                             Ok(())
                         } else {
@@ -368,7 +382,7 @@ impl<'a> CopyContext<'a> {
                 )),
             }
         } else {
-            match fs::symlink_metadata(parent) {
+            match fast_io::destination_at::symlink_metadata(parent) {
                 Ok(existing) => {
                     let ty = existing.file_type();
                     if ty.is_dir() {
@@ -376,7 +390,10 @@ impl<'a> CopyContext<'a> {
                     } else if ty.is_symlink()
                         && self.follows_existing_parent_symlink(parent, &existing)
                     {
-                        let metadata = follow_symlink_metadata(parent)?;
+                        let metadata =
+                            fast_io::destination_at::metadata(parent).map_err(|error| {
+                                LocalCopyError::io("inspect symlink target", parent, error)
+                            })?;
                         if metadata.file_type().is_dir() {
                             Ok(())
                         } else {

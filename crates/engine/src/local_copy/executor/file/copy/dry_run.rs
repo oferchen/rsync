@@ -23,7 +23,7 @@ pub(super) struct DryRunRequest<'a> {
     pub destination: &'a Path,
     pub metadata: &'a fs::Metadata,
     pub record_path: &'a Path,
-    pub existing_metadata: Option<&'a fs::Metadata>,
+    pub existing_metadata: Option<&'a fast_io::EntryMetadata>,
 }
 
 /// Processes a file copy in dry-run mode without writing any data.
@@ -253,7 +253,7 @@ fn record_dry_run_skip(
     source: &Path,
     destination: &Path,
     record_path: &Path,
-    existing: &fs::Metadata,
+    existing: &fast_io::EntryMetadata,
 ) {
     let metadata_options = context.metadata_options();
     // upstream: generator.c:2246-2247 -> itemize() with iflags=0. An up-to-date file
@@ -406,7 +406,7 @@ fn simulate_reference_match(
     context.summary_mut().record_regular_file_matched();
     // Itemize against the basis (compare/copy/link) so identical files stay
     // blank, matching generator.c:1299 and the real-run change set.
-    let basis_metadata = fs::symlink_metadata(&basis)
+    let basis_metadata = fast_io::destination_at::symlink_metadata(&basis)
         .map_err(|error| LocalCopyError::io("inspect reference basis", basis, error))?;
     let change_set = LocalCopyChangeSet::for_file(
         metadata,

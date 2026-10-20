@@ -137,18 +137,18 @@ impl EntryMetadata {
 
     /// Modification time, matching [`std::fs::Metadata::modified`].
     ///
-    /// Unix callers read [`mtime`](Self::mtime) and
-    /// [`mtime_nsec`](Self::mtime_nsec) instead, which is what upstream's
-    /// `make_file()` puts on the wire; this is the non-Unix shape of the same
-    /// field.
+    /// The wire encoder reads [`mtime`](Self::mtime) and
+    /// [`mtime_nsec`](Self::mtime_nsec), which is what upstream's `make_file()`
+    /// sends; this is the same field as a [`SystemTime`] for comparisons.
     ///
     /// # Errors
     ///
     /// The underlying [`std::fs::Metadata::modified`] error.
-    #[cfg(not(unix))]
     pub fn modified(&self) -> io::Result<SystemTime> {
         match self {
             Self::Std(metadata) => metadata.modified(),
+            #[cfg(unix)]
+            Self::At(metadata) => Ok(system_time(metadata.mtime(), metadata.mtime_nsec())),
         }
     }
 
@@ -335,6 +335,12 @@ pub enum EntryFileType {
     /// Type bits read out of a `struct stat`.
     #[cfg(unix)]
     At(AtMetadata),
+}
+
+impl From<std::fs::FileType> for EntryFileType {
+    fn from(file_type: std::fs::FileType) -> Self {
+        Self::Std(file_type)
+    }
 }
 
 impl EntryFileType {
