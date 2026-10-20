@@ -20,22 +20,30 @@ use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 use metadata::{FAKE_SUPER_XATTR, FakeSuperStat};
 use tempfile::tempdir;
 
-/// Reads the fake-super xattr from a destination path.
-///
-/// Returns `None` when the filesystem does not support the `user.rsync.*`
-/// namespace (e.g. tmpfs mounted without `user_xattr`). Callers treat that
-/// as a skip rather than a failure.
-fn read_fake_super(path: &std::path::Path) -> Option<FakeSuperStat> {
-    let raw = xattr::get(path, FAKE_SUPER_XATTR).ok().flatten()?;
-    let text = std::str::from_utf8(&raw).ok()?;
-    FakeSuperStat::decode(text).ok()
+/// Reports whether the filesystem under `dir` accepts user xattrs (tmpfs
+/// mounted without `user_xattr` does not). The test skips when it does not,
+/// and only then.
+fn user_xattrs_supported(dir: &std::path::Path) -> bool {
+    let probe = dir.join(".probe");
+    fs::write(&probe, b"").expect("write probe");
+    let supported = xattr::set(&probe, "user.probe", b"1").is_ok();
+    fs::remove_file(&probe).expect("remove probe");
+    supported
 }
-
 /// End-to-end check: `--fake-super --owner --group --perms` on a local-copy
 /// pulls source uid/gid/mode into `user.rsync.%stat` on the destination.
+///
+/// The source is 0444 so the real mode, which gains owner rw, cannot carry
+/// it and the `%stat` must be present. A same-owner 0644 file carries none
+/// (xattrs.c:1325-1336), so it cannot show whether the xattr was written.
 #[test]
 fn local_copy_writes_fake_super_xattr_for_regular_file() {
+    use std::os::unix::fs::PermissionsExt;
     let temp = tempdir().expect("tempdir");
+    if !user_xattrs_supported(temp.path()) {
+        eprintln!("skipping: the filesystem rejects user xattrs");
+        return;
+    }
     let source = temp.path().join("src");
     let dest = temp.path().join("dst");
     fs::create_dir_all(&source).expect("create source");
@@ -43,7 +51,7 @@ fn local_copy_writes_fake_super_xattr_for_regular_file() {
 
     let source_file = source.join("payload.bin");
     fs::write(&source_file, b"fake-super payload").expect("write source");
-
+    fs::set_permissions(&source_file, fs::Permissions::from_mode(0o444)).expect("chmod source");
     let source_meta = fs::metadata(&source_file).expect("stat source");
     let expected_uid = source_meta.uid();
     let expected_gid = source_meta.gid();
@@ -64,12 +72,20 @@ fn local_copy_writes_fake_super_xattr_for_regular_file() {
     let dest_file = dest.join("src").join("payload.bin");
     assert!(dest_file.exists(), "destination payload must exist");
 
-    let Some(stat) = read_fake_super(&dest_file) else {
-        // Filesystem rejected the xattr (e.g. tmpfs without user_xattr).
-        // The local-copy plumbing still ran without error; nothing else to
-        // verify on this host.
-        return;
-    };
+    assert_eq!(
+        fs::metadata(&dest_file)
+            .expect("stat dest")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644,
+        "the real mode gains owner rw, so only the %stat records 0444"
+    );
+    let raw = xattr::get(&dest_file, FAKE_SUPER_XATTR)
+        .expect("xattr get after fake-super copy")
+        .expect("a 0444 file must carry user.rsync.%stat");
+    let stat = FakeSuperStat::decode(std::str::from_utf8(&raw).expect("utf-8 xattr"))
+        .expect("decode %stat");
 
     assert_eq!(
         stat.mode, expected_mode,
@@ -90,9 +106,6 @@ fn local_copy_writes_fake_super_xattr_for_regular_file() {
 
     // Confirm the raw bytes match upstream's encoding so wire compatibility
     // with `xattrs.c:set_stat_xattr()` does not regress.
-    let raw = xattr::get(&dest_file, FAKE_SUPER_XATTR)
-        .expect("xattr get after fake-super copy")
-        .expect("xattr present after fake-super copy");
     let encoded = std::str::from_utf8(&raw).expect("utf-8 xattr").to_owned();
     assert_eq!(encoded, stat.encode(), "raw xattr bytes must match encoder");
 }
