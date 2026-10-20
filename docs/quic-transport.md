@@ -344,8 +344,8 @@ longer links, and confirm a value by measuring on the real path.
 - No certificate fingerprint pinning flag. Pin by passing the certificate as
   `--quic-ca` (section 5).
 
-ALPN is `rsync` today. Additional performance-oriented ALPNs and congestion
-control protocols will follow.
+ALPN is `rsync` today. Today's congestion controller is BBR (section 9).
+Additional performance-oriented ALPNs and congestion control algorithms will follow.
 
 ## See also
 
