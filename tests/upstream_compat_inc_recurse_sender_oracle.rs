@@ -20,7 +20,7 @@
 //! are stronger because they count actual wire segments:
 //!
 //! - the capability string oc sends carries `i`
-//!   (`-re.iLsfxCIvu`; upstream compat.c:162-181 `set_allow_inc_recurse()`,
+//!   (`-re.iLsfxCIvu`; upstream compat.c:162-180 `set_allow_inc_recurse()`,
 //!   options.c:3046 `maybe_add_e_option()`) - captured from the wrapper's
 //!   argv log on the remote-shell leg;
 //! - with `-M--debug=flist2` delivering the debug level to the receiver
@@ -251,7 +251,7 @@ fn rsh_push_negotiates_inc_recurse_and_segments_flist() {
     assert_success(&output, "oc-rsync push via rsh wrapper to upstream 3.5.1");
 
     // Negotiation evidence, sender side: oc must advertise INC_RECURSE.
-    // upstream: compat.c:162-181, options.c:3046 maybe_add_e_option().
+    // upstream: compat.c:162-180, options.c:3046 maybe_add_e_option().
     let caps = server_capabilities(&argv_log);
     assert!(
         caps.contains('i'),
