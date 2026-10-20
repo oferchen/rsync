@@ -64,29 +64,6 @@ use windows::core::PCWSTR;
 /// `FindFirstStreamW`/`FindNextStreamW`.
 const STREAM_SUFFIX: &str = ":$DATA";
 
-/// Namespace prefix prepended to ADS stream names when they cross
-/// the wire to non-Windows receivers.
-pub const ADS_XATTR_PREFIX: &str = "user.windows.ads.";
-
-/// Bare namespace prefix for ADS stream names when stripped of `user.` by `wire_to_local`.
-pub const ADS_XATTR_PREFIX_BARE: &str = "windows.ads.";
-
-/// Strips the `user.windows.ads.` or `windows.ads.` prefix from `name` before
-/// passing it to `stream_path_wide`, so a Linux/macOS-sourced xattr entry
-/// reconstitutes the correct bare ADS name on a Windows receiver.
-///
-/// Returns the original name unchanged if no prefix is present
-/// (Windows-to-Windows transfer where names are already bare).
-pub fn strip_ads_prefix(name: &[u8]) -> &[u8] {
-    if let Some(stripped) = name.strip_prefix(ADS_XATTR_PREFIX.as_bytes()) {
-        stripped
-    } else if let Some(stripped) = name.strip_prefix(ADS_XATTR_PREFIX_BARE.as_bytes()) {
-        stripped
-    } else {
-        name
-    }
-}
-
 /// Converts an [`OsStr`] (a UTF-16 wide string on Windows) into the UTF-8
 /// byte sequence used by the cross-platform xattr layer.
 ///
@@ -293,8 +270,7 @@ pub fn read_attribute(
     name: &[u8],
     _follow_symlinks: bool,
 ) -> io::Result<Option<Vec<u8>>> {
-    let stripped = strip_ads_prefix(name);
-    let wide = stream_path_wide(path, stripped)?;
+    let wide = stream_path_wide(path, name)?;
 
     // SAFETY: `wide` is NUL-terminated; the security and template handles
     // are null which is the documented "use defaults" pattern.
@@ -338,8 +314,7 @@ pub fn write_attribute(
     value: &[u8],
     _follow_symlinks: bool,
 ) -> io::Result<()> {
-    let stripped = strip_ads_prefix(name);
-    let wide = stream_path_wide(path, stripped)?;
+    let wide = stream_path_wide(path, name)?;
 
     // SAFETY: `wide` is NUL-terminated; defaults are documented for null
     // security and template handle arguments.
@@ -378,8 +353,7 @@ pub fn write_attribute(
 /// `_follow_symlinks` is ignored on Windows; reparse-point traversal is
 /// the default behaviour of `DeleteFileW`.
 pub fn remove_attribute(path: &Path, name: &[u8], _follow_symlinks: bool) -> io::Result<()> {
-    let stripped = strip_ads_prefix(name);
-    let wide = stream_path_wide(path, stripped)?;
+    let wide = stream_path_wide(path, name)?;
     // SAFETY: `wide` is NUL-terminated.
     let res = unsafe { DeleteFileW(PCWSTR(wide.as_ptr())) };
     match res {
@@ -591,31 +565,5 @@ mod tests {
         let s = OsString::from("user.test");
         let bytes = os_name_to_bytes(&s);
         assert_eq!(bytes, b"user.test");
-    }
-
-    #[test]
-    fn strip_ads_prefix_removes_user_windows_ads_prefix() {
-        assert_eq!(
-            strip_ads_prefix(b"user.windows.ads.Zone.Identifier"),
-            b"Zone.Identifier"
-        );
-    }
-
-    #[test]
-    fn strip_ads_prefix_removes_windows_ads_prefix() {
-        assert_eq!(
-            strip_ads_prefix(b"windows.ads.Zone.Identifier"),
-            b"Zone.Identifier"
-        );
-    }
-
-    #[test]
-    fn strip_ads_prefix_leaves_bare_name() {
-        assert_eq!(strip_ads_prefix(b"Zone.Identifier"), b"Zone.Identifier");
-    }
-
-    #[test]
-    fn strip_ads_prefix_leaves_other_prefix() {
-        assert_eq!(strip_ads_prefix(b"user.something"), b"user.something");
     }
 }

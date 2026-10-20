@@ -398,11 +398,6 @@ impl GeneratorContext {
             }
         }
 
-        #[cfg(windows)]
-        if !self.config.flags.xattrs && file_type.is_file() {
-            fast_io::ads_detect::warn_ads_without_xattrs_once(full_path);
-        }
-
         // Windows ACL collection: when --acls is on (and on Windows the
         // `acl` feature is compiled in) read the full SDDL security
         // descriptor and attach it to the entry under the reserved

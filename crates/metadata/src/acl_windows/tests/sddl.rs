@@ -67,40 +67,27 @@ fn parse_aces_skips_malformed_entries() {
 }
 
 #[test]
-fn parse_dacl_flags_extracts_protected_and_auto_inherited() {
-    use crate::acl_windows::sddl::parse_dacl_flags;
-
-    assert_eq!(parse_dacl_flags("D:P(A;;FA;;;BA)"), (true, false));
-    assert_eq!(parse_dacl_flags("D:AI(A;;FA;;;BA)"), (false, true));
-    assert_eq!(parse_dacl_flags("D:PAI(A;;FA;;;BA)"), (true, true));
-    assert_eq!(parse_dacl_flags("D:(A;;FA;;;BA)"), (false, false));
-    assert_eq!(parse_dacl_flags("O:BAG:SYD:AI(A;;FA;;;BA)"), (false, true));
-    assert_eq!(parse_dacl_flags("O:BAG:SY"), (false, false));
-}
-
-#[test]
-fn dacl_protection_flags_selects_unprotected_only_when_ai_and_not_p() {
-    use crate::acl_windows::sddl::dacl_protection_flags;
+fn dacl_protection_flag_is_unprotected_only_for_auto_inherited_unprotected_dacls() {
+    use crate::acl_windows::sddl::dacl_protection_flag;
     use windows::Win32::Security::{
-        PROTECTED_DACL_SECURITY_INFORMATION, UNPROTECTED_DACL_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED,
+        UNPROTECTED_DACL_SECURITY_INFORMATION,
     };
 
+    let ai = SE_DACL_AUTO_INHERITED.0;
+    let p = SE_DACL_PROTECTED.0;
     assert_eq!(
-        dacl_protection_flags("D:AI(A;;FA;;;BA)"),
+        dacl_protection_flag(ai),
         UNPROTECTED_DACL_SECURITY_INFORMATION
     );
+    assert_eq!(dacl_protection_flag(p), PROTECTED_DACL_SECURITY_INFORMATION);
     assert_eq!(
-        dacl_protection_flags("D:P(A;;FA;;;BA)"),
+        dacl_protection_flag(p | ai),
         PROTECTED_DACL_SECURITY_INFORMATION
     );
-    assert_eq!(
-        dacl_protection_flags("D:PAI(A;;FA;;;BA)"),
-        PROTECTED_DACL_SECURITY_INFORMATION
-    );
-    assert_eq!(
-        dacl_protection_flags("D:(A;;FA;;;BA)"),
-        PROTECTED_DACL_SECURITY_INFORMATION
-    );
+    // A synthesised DACL carries neither flag and must not pick up the
+    // destination parent's inheritable ACEs.
+    assert_eq!(dacl_protection_flag(0), PROTECTED_DACL_SECURITY_INFORMATION);
 }
 
 #[cfg(windows)]
@@ -146,6 +133,36 @@ fn write_dacl_sddl_round_trips_known_descriptor() {
         read_back.contains("(A;;FA;;;WD)"),
         "Everyone ACE missing in {read_back:?}"
     );
+}
+
+/// The `P`/`AI` DACL flags must survive the SDDL conversion and the write, so
+/// an auto-inherited source stays inheritable and a protected one stays
+/// protected.
+#[cfg(windows)]
+#[test]
+fn write_dacl_sddl_keeps_the_source_dacl_inheritance_flags() {
+    use crate::acl_windows::sddl::{read_dacl_sddl, write_dacl_sddl};
+
+    let dacl_flags = |sddl: &str| -> String {
+        let rest = &sddl[sddl.find("D:").expect("DACL section") + 2..];
+        rest[..rest.find('(').unwrap_or(rest.len())].to_owned()
+    };
+    let dir = test_support::create_tempdir();
+
+    let inherited = dir.path().join("inherited");
+    File::create(&inherited).expect("file");
+    write_dacl_sddl(&inherited, "D:AI(A;;FA;;;WD)").expect("write AI");
+    let flags = dacl_flags(&read_dacl_sddl(&inherited).expect("read AI"));
+    assert!(
+        flags.contains("AI") && !flags.contains('P'),
+        "got {flags:?}"
+    );
+
+    let protected = dir.path().join("protected");
+    File::create(&protected).expect("file");
+    write_dacl_sddl(&protected, "D:P(A;;FA;;;WD)").expect("write P");
+    let flags = dacl_flags(&read_dacl_sddl(&protected).expect("read P"));
+    assert!(flags.contains('P'), "got {flags:?}");
 }
 
 #[cfg(windows)]

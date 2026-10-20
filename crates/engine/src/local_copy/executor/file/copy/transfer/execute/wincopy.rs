@@ -265,9 +265,11 @@ fn reconcile_copied_ads(
     let (source, destination) = (source.as_path(), destination.as_path());
 
     if !flags.xattrs_enabled() {
-        fast_io::ads_detect::warn_ads_without_xattrs_once(source);
-        ::metadata::strip_source_xattrs(source, destination, false, None)
+        let stripped = ::metadata::strip_source_xattrs(source, destination, false, None)
             .map_err(map_metadata_error)?;
+        if stripped {
+            warn_ads_dropped_once(source);
+        }
         return Ok(());
     }
 
@@ -300,6 +302,25 @@ fn reconcile_copied_ads(
     )
     .map_err(map_metadata_error)?;
     Ok(())
+}
+
+/// Warns once per process that named NTFS streams were dropped because
+/// `--xattrs` is off.
+///
+/// oc-only: upstream has no ADS concept and drops xattrs silently without
+/// `-X`. The signal comes from the strip the copy already performs, so an
+/// ADS-free tree pays no extra syscall.
+#[cfg(feature = "xattr")]
+fn warn_ads_dropped_once(source: &Path) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        logging::emit_warning(format!(
+            "alternate data streams on {} were not preserved; use --xattrs (-X) to keep them",
+            source.display()
+        ));
+    }
 }
 
 #[cfg(test)]
