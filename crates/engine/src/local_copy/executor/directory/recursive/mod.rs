@@ -685,8 +685,9 @@ fn copy_directory_recursive_inner(
             Err(error) if error.is_io_error() => {
                 // upstream: rsync continues transferring remaining entries when
                 // individual files fail with I/O errors (permission denied, etc.),
-                // regardless of whether --delete is active.
-                context.record_io_error();
+                // regardless of whether --delete is active. The walk already
+                // listed this entry, so its failure is a send-time error.
+                context.record_transfer_io_error();
                 if first_entry_io_error.is_none() {
                     first_entry_io_error = Some(error);
                 }

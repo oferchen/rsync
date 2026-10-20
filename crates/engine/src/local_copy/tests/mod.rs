@@ -1053,6 +1053,7 @@ include!("execute_block_size.rs");
 include!("execute_super.rs");
 include!("execute_archive.rs");
 include!("execute_ignore_errors.rs");
+include!("execute_io_error_timing.rs");
 include!("unreadable_source_directory.rs");
 include!("timeout_handling.rs");
 include!("execute_contimeout.rs");

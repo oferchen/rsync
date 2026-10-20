@@ -430,6 +430,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - `--max-delete` caps the contents of a directory cleared to make room for an incoming file, sharing one run-wide budget and `Deletions stopped` warning with the delete sweeps (#8218)
 - A local `--max-delete` cap no longer aborts the transfer (under `--delete-before` it stopped the run before anything was copied); the skipped total is reported once, a partial error (23) outranks the limit (25), and the trailer names `the --max-delete limit stopped deletions` (#8222)
 - Under `--one-file-system`, clearing a directory obstacle for an incoming file keeps a mount point inside it instead of deleting into the mounted filesystem (#8222)
+- A local copy whose source file cannot be opened no longer skips deletions already decided during the walk (`--delete`, `--delete-delay`), and `--delete-after` now honours a send error from any directory, matching upstream, where the sender reports it only after the send loop (#PRNUM)
 
 **Incremental recursion**
 - `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)

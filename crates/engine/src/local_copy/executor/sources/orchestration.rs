@@ -768,8 +768,9 @@ pub(crate) fn copy_sources(
                     } else if error.is_io_error() {
                         // upstream: rsync continues transferring remaining sources
                         // when individual entries fail with I/O errors, regardless
-                        // of whether --delete is active.
-                        context.record_io_error();
+                        // of whether --delete is active. A walk-time failure was
+                        // already recorded where the walk found it.
+                        context.record_transfer_io_error();
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
                         }
