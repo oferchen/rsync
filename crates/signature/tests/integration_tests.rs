@@ -610,6 +610,54 @@ mod round_trip {
         }
     }
 
+    // WHY: blocks are batched 16 at a time into one contiguous strided buffer
+    // before hashing. A stride, slice-length or batch-boundary slip would hash
+    // the wrong bytes while the parallel path (which delegates here) still
+    // agrees with itself, so every block must be checked against a digest
+    // computed directly over its own source bytes, across several batches and
+    // with a short final block.
+    #[test]
+    fn every_block_matches_direct_digests_across_batch_boundaries() {
+        let block = 700usize;
+        let len = 2 * 16 * block + 3 * block + 123;
+        let mut state = 0x9e37_79b9_u32;
+        let data: Vec<u8> = (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect();
+        let params = layout_params_with_block(len as u64, block as u32, 16);
+        let layout = calculate_signature_layout(params).expect("layout");
+        assert_eq!(layout.block_count(), 36, "fixture must span three batches");
+        assert_eq!(layout.remainder(), 123, "fixture must end on a short block");
+        let strong_len = usize::from(layout.strong_sum_length().get());
+
+        for algorithm in [
+            SignatureAlgorithm::Md4,
+            SignatureAlgorithm::Xxh3_128 { seed: 7 },
+        ] {
+            let signature = generate_file_signature(Cursor::new(data.clone()), layout, algorithm)
+                .expect("signature");
+            assert_eq!(signature.blocks().len(), 36);
+            for (i, sig_block) in signature.blocks().iter().enumerate() {
+                let start = i * block;
+                let end = (start + block).min(len);
+                let bytes = &data[start..end];
+                assert_eq!(sig_block.len(), bytes.len(), "block {i} length");
+                assert_eq!(
+                    sig_block.rolling(),
+                    RollingDigest::from_bytes(bytes),
+                    "block {i} rolling digest ({algorithm:?})"
+                );
+                assert_eq!(
+                    sig_block.strong(),
+                    algorithm.compute_truncated(bytes, strong_len).as_slice(),
+                    "block {i} strong digest ({algorithm:?})"
+                );
+            }
+        }
+    }
     /// Layout preserved through FileSignature.
     #[test]
     fn layout_preservation() {
