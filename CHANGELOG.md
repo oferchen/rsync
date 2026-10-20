@@ -33,7 +33,7 @@ for detail.
 | CVE-2026-53793 | Fixed | #7585, #8010 |
 | CVE-2026-53794 | Fixed | #7285, #7693, #8011 |
 | CVE-2026-53795 | Fixed | #7393, #7398, #7404, #7415, #7419, #7421-#7426, #7439, #7441-#7443, #7459, #7463 |
-| CVE-2026-53796 | Partially fixed | #8071, #8201, #PRNUM |
+| CVE-2026-53796 | Partially fixed | #8071, #8201, #8228 |
 | CVE-2026-53797 | Fixed | #8120 |
 | CVE-2026-53798 | Fixed | #8108 |
 | CVE-2026-53799 | Fixed | #8167, #8201 |
@@ -75,7 +75,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - Let the walk run under Landlock and seccomp, falling back to confined wrappers (#7541, #7545, #7548)
 - Never follow a leaf symlink on the `--partial-dir` basis and staging opens (#8072)
 - Every non-daemon receiver walks its destination, refuses an untrusted destination symlink with exit 3 and upstream's diagnostic, and keeps the walked directory pinned for data writes. Metadata calls after a swap are still path-based, so CVE-2026-53796 stays partially fixed (#8071, #8201)
-- Anchor the receiver's directory, link and special probes, basis and destination opens, backup, listing and partial-dir cleanup, and destination stats through the held destination parent, with one held parent shared by the sandbox and metadata apply (CVE-2026-53796, #PRNUM)
+- Anchor the receiver's directory, link and special probes, basis and destination opens, backup, listing and partial-dir cleanup, and destination stats through the held destination parent, with one held parent shared by the sandbox and metadata apply (CVE-2026-53796, #8228)
 - Open sender file content beneath the held source root, and refuse a replaced root with `ELOOP` (CVE-2026-53797, #8120)
 
 **Daemon**
