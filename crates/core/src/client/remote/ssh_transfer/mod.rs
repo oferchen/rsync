@@ -239,7 +239,7 @@ mod tests {
 
     #[cfg(unix)]
     mod child_exit_status_tests {
-        use super::super::exit_status::map_child_exit_status;
+        use super::super::exit_status::{map_child_exit_status, map_cleanup_child_exit_status};
         use crate::exit_code::ExitCode;
 
         #[cfg(unix)]
@@ -322,6 +322,32 @@ mod tests {
                 .expect("spawn");
             let status = child.wait().expect("wait");
             assert_eq!(map_child_exit_status(status), ExitCode::Terminated);
+        }
+
+        #[test]
+        fn cleanup_ignores_a_signal_killed_child() {
+            // upstream: cleanup.c:146-152 - an aborting client folds in
+            // WEXITSTATUS(status), which is 0 for a signalled child, so the
+            // local failure code (e.g. RERR_STREAMIO) stands instead of
+            // RERR_TERMINATED.
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("kill -TERM $$")
+                .status()
+                .expect("spawn");
+            assert_eq!(map_cleanup_child_exit_status(status), ExitCode::Ok);
+        }
+
+        #[test]
+        fn cleanup_keeps_a_normal_exit_status_raw() {
+            // upstream: cleanup.c:148-152 - a normal exit still competes
+            // worst-wins with its raw status.
+            for code in [12, 23, 255] {
+                assert_eq!(
+                    map_cleanup_child_exit_status(exit_status_for_code(code)).as_i32(),
+                    code
+                );
+            }
         }
     }
 }
