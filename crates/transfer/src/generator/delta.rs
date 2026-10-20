@@ -989,8 +989,8 @@ pub(super) struct InlineChecksumResult {
 /// Matched blocks are re-read from a lazily opened file whose position is
 /// reused while blocks stay sequential, so a run of adjacent matches costs no
 /// `lseek`.
-struct CopySource {
-    file: Option<io::BufReader<std::fs::File>>,
+struct CopySource<R = io::BufReader<std::fs::File>> {
+    file: Option<R>,
     /// File position after the last fully read block, when known.
     position: Option<u64>,
     buf: Vec<u8>,
@@ -1010,12 +1010,18 @@ impl CopySource {
         } else {
             None
         };
-        Ok(Self {
+        Ok(Self::from_reader(file))
+    }
+}
+
+impl<R: Read + Seek> CopySource<R> {
+    fn from_reader(file: Option<R>) -> Self {
+        Self {
             file,
             position: None,
             buf: Vec::new(),
             read_error: None,
-        })
+        }
     }
 
     /// Returns the `len` source bytes at `offset`, zero-filled on a read error.
@@ -2337,5 +2343,65 @@ mod tests {
             poisoned[..result.checksum_len].iter().all(|&b| b == 0),
             "the receiver must be handed a checksum that cannot verify"
         );
+    }
+
+    /// Counts `seek` calls so a test can observe `CopySource`'s seek-skip.
+    struct SeekCounter {
+        inner: io::Cursor<Vec<u8>>,
+        seeks: usize,
+    }
+
+    impl Read for SeekCounter {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Seek for SeekCounter {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.seeks += 1;
+            self.inner.seek(pos)
+        }
+    }
+
+    fn counting_source(len: usize) -> CopySource<SeekCounter> {
+        let data = (0..len).map(|i| i as u8).collect();
+        CopySource::from_reader(Some(SeekCounter {
+            inner: io::Cursor::new(data),
+            seeks: 0,
+        }))
+    }
+
+    fn seeks(source: &CopySource<SeekCounter>) -> usize {
+        source.file.as_ref().expect("reader present").seeks
+    }
+
+    // WHY: re-reading matched blocks in order is the common delta shape, and
+    // skipping the redundant lseek per adjacent block is the syscall win this
+    // path exists for. A source that always seeks still produces correct bytes,
+    // so only a seek count can catch that regression.
+    #[test]
+    fn copy_source_skips_seek_for_adjacent_blocks_and_reseeks_otherwise() {
+        let mut source = counting_source(64);
+
+        for (i, offset) in [0u64, 8, 16, 24].into_iter().enumerate() {
+            let block = source.block(offset, 8).expect("in-bounds block");
+            assert_eq!(block[0], offset as u8, "block {i} read the wrong bytes");
+        }
+        assert_eq!(seeks(&source), 1, "adjacent blocks must share one seek");
+
+        // A literal gap leaves the file position behind the next block.
+        source.block(40, 8).expect("block after a gap");
+        assert_eq!(seeks(&source), 2, "a gap must re-seek");
+        source.block(48, 8).expect("adjacent to the gap block");
+        assert_eq!(seeks(&source), 2, "adjacency resumes after a gap");
+
+        // An adjacent block that runs past EOF needs no seek, but its short read
+        // leaves the position unknown, so the following adjacent block re-seeks.
+        source.block(56, 16).expect("short read is tolerated");
+        assert_eq!(seeks(&source), 2, "the short-read block itself is adjacent");
+        assert!(source.read_error.is_some(), "short read must be recorded");
+        source.block(72, 4).expect("block after a short read");
+        assert_eq!(seeks(&source), 3, "a short read must force a re-seek");
     }
 }
