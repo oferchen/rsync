@@ -574,7 +574,7 @@ pub(crate) fn reorder_hardlink_group_holders(
     _has_reference_directories: bool,
     _fake_super_enabled: bool,
     _destination: &Path,
-    _planned: &mut Vec<PlannedEntry<'_>>,
+    _planned: &mut [PlannedEntry<'_>],
 ) {
 }
 

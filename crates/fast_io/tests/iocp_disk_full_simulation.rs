@@ -81,7 +81,7 @@ fn open_writable(path: &Path) -> File {
     // SAFETY: `handle` is fresh and exclusively owned.
     #[allow(unsafe_code)]
     unsafe {
-        File::from_raw_handle(handle as *mut std::ffi::c_void)
+        File::from_raw_handle(handle)
     }
 }
 

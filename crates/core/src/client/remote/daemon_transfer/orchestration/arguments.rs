@@ -346,7 +346,7 @@ pub(super) fn build_full_daemon_args(
     }
 
     if protocol.as_u8() >= 30 {
-        // upstream: compat.c:162-181 set_allow_inc_recurse() and
+        // upstream: compat.c:162-180 set_allow_inc_recurse() and
         // options.c:3220-3221 maybe_add_e_option() - `allow_inc_recurse` resolves
         // the option state; a pull (`is_sender` = the daemon sends) advertises
         // 'i' by default unless disabled by the OC_RSYNC_PULL_INC_RECURSE override

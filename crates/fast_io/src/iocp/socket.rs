@@ -358,8 +358,15 @@ impl IocpSocketWriter {
     /// This method is only available when the crate is built with the
     /// `transmitfile` feature; without it the daemon TCP send path
     /// continues to use the plain [`Self::send_async`] entry point.
+    ///
+    /// # Safety
+    ///
+    /// `file` must be a valid, open file `HANDLE` that stays open for the
+    /// duration of the call. The fallback path borrows it as a `File`
+    /// without taking ownership.
     #[cfg(feature = "transmitfile")]
-    pub fn try_transmit_file_path(
+    #[allow(unsafe_code)]
+    pub unsafe fn try_transmit_file_path(
         &mut self,
         file: std::os::windows::io::RawHandle,
         length: u64,
@@ -531,7 +538,6 @@ mod tests {
         drop(reader);
         drop(client);
         Arc::try_unwrap(pump)
-            .ok()
             .expect("pump must be uniquely owned for shutdown")
             .shutdown()
             .unwrap();
@@ -573,7 +579,6 @@ mod tests {
         assert_eq!(received, payload);
 
         Arc::try_unwrap(pump)
-            .ok()
             .expect("pump must be uniquely owned")
             .shutdown()
             .unwrap();
@@ -606,7 +611,6 @@ mod tests {
         drop(reader);
         drop(client);
         Arc::try_unwrap(pump)
-            .ok()
             .expect("pump uniquely owned")
             .shutdown()
             .unwrap();
@@ -633,7 +637,6 @@ mod tests {
         drop(client);
         server.join().unwrap();
         Arc::try_unwrap(pump)
-            .ok()
             .expect("pump uniquely owned")
             .shutdown()
             .unwrap();
@@ -660,7 +663,6 @@ mod tests {
         drop(client);
         server.join().unwrap();
         Arc::try_unwrap(pump)
-            .ok()
             .expect("pump uniquely owned")
             .shutdown()
             .unwrap();
@@ -696,9 +698,12 @@ mod tests {
             IocpSocketWriter::associate(client.as_raw_socket(), Arc::clone(&pump)).unwrap();
 
         let mut fallback = vec![0u8; 64 * 1024];
-        let sent = writer
-            .try_transmit_file_path(file.as_raw_handle(), payload.len() as u64, &mut fallback)
-            .unwrap();
+        // SAFETY: `file` is an open handle owned by this test and outlives the call.
+        #[allow(unsafe_code)]
+        let sent = unsafe {
+            writer.try_transmit_file_path(file.as_raw_handle(), payload.len() as u64, &mut fallback)
+        }
+        .unwrap();
         assert_eq!(sent, payload.len());
 
         drop(writer);

@@ -389,6 +389,9 @@ fn push_logs_name_link_owner_group_mtime_and_perms() {
     fs::set_permissions(src.join("d/f"), fs::Permissions::from_mode(0o640)).expect("chmod f");
     fs::set_permissions(src.join("d"), fs::Permissions::from_mode(0o750)).expect("chmod d");
     fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).expect("chmod src");
+    // The module root receives `./`; matching the source mode keeps the `.d..t`
+    // row free of a `p` flag that a group-writable umask would otherwise add.
+    fs::set_permissions(&module_dir, fs::Permissions::from_mode(0o755)).expect("chmod mod");
     // 2001-09-09 01:46:40 UTC; the daemon runs with TZ=UTC so `%M` is fixed.
     let stamp = FileTime::from_unix_time(1_000_000_000, 0);
     filetime::set_symlink_file_times(src.join("lnk"), stamp, stamp).expect("stamp lnk");

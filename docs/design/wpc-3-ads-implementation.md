@@ -1,4 +1,9 @@
 # WPC-3: ADS implementation spec
+> **Superseded (2026-10-20, #8214).** The `fast_io::ads_detect` probe described
+> here was removed before release. `metadata::strip_source_xattrs` now returns
+> `Result<bool>` (true when it removed a stream), and the local Windows copy
+> (`engine` `wincopy.rs`, `warn_ads_dropped_once`) warns once per process from
+> that result, so ADS-free trees pay no extra probe syscall. Kept for history.
 
 Tracks parent #2869 (Windows real-world parity series). Implements the
 WPC-2 decision (`docs/design/windows-ads-strategy.md`). Feeds WPC-4

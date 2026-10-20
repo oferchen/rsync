@@ -128,6 +128,9 @@ impl WorkQueueSender {
     /// send. For a dynamic queue, admission is first gated by the backing
     /// [`AdaptiveSemaphore`] before the item enters the (over-provisioned)
     /// channel.
+    // `SendError` hands the unsent item back by value, as channel send errors
+    // do, so the caller can recover it without an extra allocation.
+    #[allow(clippy::result_large_err)]
     pub fn send(&self, work: DeltaWork) -> Result<(), SendError> {
         self.capacity.acquire();
         self.tx.send(work).map_err(|e| SendError(e.0))

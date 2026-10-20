@@ -113,7 +113,7 @@ fn open_writable(path: &Path) -> File {
     // SAFETY: `handle` is a fresh, exclusively-owned kernel handle.
     #[allow(unsafe_code)]
     unsafe {
-        File::from_raw_handle(handle as *mut std::ffi::c_void)
+        File::from_raw_handle(handle)
     }
 }
 
@@ -145,7 +145,7 @@ fn open_readonly(path: &Path) -> File {
     // SAFETY: handle is freshly opened and exclusively owned here.
     #[allow(unsafe_code)]
     unsafe {
-        File::from_raw_handle(handle as *mut std::ffi::c_void)
+        File::from_raw_handle(handle)
     }
 }
 

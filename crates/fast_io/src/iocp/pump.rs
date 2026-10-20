@@ -347,7 +347,7 @@ impl Drop for CompletionPump {
 // Manual impls are not needed because Arc<PumpInner> is auto-Send/Sync.
 
 fn drain_loop(inner: Arc<PumpInner>) -> io::Result<()> {
-    let initial_batch_size = inner.config.batch_size.max(1).min(MAX_BATCH_SIZE);
+    let initial_batch_size = inner.config.batch_size.clamp(1, MAX_BATCH_SIZE);
     // The batch buffer can grow at runtime if the kernel reports
     // ERROR_INSUFFICIENT_BUFFER. It never shrinks; a single
     // burst of completions warrants keeping the larger buffer alive for the
@@ -512,13 +512,15 @@ fn zeroed_entry() -> OVERLAPPED_ENTRY {
 /// `bytes_transferred`, `key`, and `overlapped_ptr` are passed through to
 /// the worker exactly as the kernel would deliver them.
 ///
-/// # Safety considerations
+/// # Safety
 ///
 /// `overlapped_ptr` must either be `null` (in which case the worker drops
-/// the entry) or point to an `OVERLAPPED` whose handler is registered with
-/// the pump. Posting an unregistered non-null overlapped is benign but
-/// wastes a wakeup.
-pub fn post_completion(
+/// the entry) or point to an `OVERLAPPED` that stays valid until its
+/// registered handler runs, because the worker reads its `Internal` status
+/// field before invoking that handler. Posting an unregistered non-null
+/// overlapped is benign but wastes a wakeup.
+#[allow(unsafe_code)]
+pub unsafe fn post_completion(
     pump: &CompletionPump,
     bytes_transferred: u32,
     key: usize,
@@ -702,7 +704,12 @@ mod tests {
         let (handler, rx) = oneshot_handler();
         pump.register(raw_ptr, handler);
 
-        post_completion(&pump, 42, 7, raw_ptr).unwrap();
+        // SAFETY: the pointer is registered above and freed only after its
+        // handler has delivered the completion.
+        #[allow(unsafe_code)]
+        unsafe {
+            post_completion(&pump, 42, 7, raw_ptr).unwrap();
+        }
 
         let result = rx
             .recv_timeout(Duration::from_secs(5))
@@ -748,7 +755,12 @@ mod tests {
             pump.register(raw, handler);
             allocations.push(raw);
             receivers.push(rx);
-            post_completion(&pump, 1, 5, raw).unwrap();
+            // SAFETY: the pointer is registered above and freed only after its
+            // handler has delivered the completion.
+            #[allow(unsafe_code)]
+            unsafe {
+                post_completion(&pump, 1, 5, raw).unwrap();
+            }
         }
 
         for rx in receivers {
