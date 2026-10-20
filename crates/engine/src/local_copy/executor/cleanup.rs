@@ -301,6 +301,24 @@ where
         if outcome.exit_code == EMITTER_PARTIAL_EXIT_CODE {
             context.record_delete_io_error();
         }
+        for failure in &outcome.failures {
+            let name = transfer_name(destination, relative, &failure.path);
+            report_delete_failure(failure.is_dir, &name, &failure.error);
+        }
+        for directory in &outcome.not_empty {
+            // upstream: delete.c:178-180 / delete.c:260-262 - FINFO, shown at
+            // the default verbosity; NONREG is oc's info category present at
+            // verbose level 0.
+            info_log!(
+                Nonreg,
+                1,
+                "cannot delete non-empty directory: {}",
+                transfer_name(destination, relative, directory)
+                    .display()
+                    .to_string()
+                    .replace('\\', "/")
+            );
+        }
     }
 
     Ok(())
@@ -543,8 +561,7 @@ fn remove_entry_capped(
             *skipped = skipped.saturating_add(1);
             return Ok(false);
         }
-        delete_leaf(context, path, entry_relative, file_type)?;
-        return Ok(true);
+        return delete_leaf(context, path, entry_relative, file_type);
     }
 
     // Regular file, symlink, device, or special: a single deletion.
@@ -552,8 +569,40 @@ fn remove_entry_capped(
         *skipped = skipped.saturating_add(1);
         return Ok(false);
     }
-    delete_leaf(context, path, entry_relative, file_type)?;
-    Ok(true)
+    delete_leaf(context, path, entry_relative, file_type)
+}
+/// Reports a removal the capped delete pass could not make and records it
+/// for the exit code; the pass keeps deleting siblings and the transfer goes
+/// on (upstream: delete.c:264-267, `DR_FAILURE` never aborts the pass).
+/// Returns `false`, the entry's "not removed" result.
+fn step_over_delete_failure(
+    context: &mut CopyContext,
+    is_dir: bool,
+    entry_relative: &Path,
+    error: &io::Error,
+) -> bool {
+    report_delete_failure(is_dir, entry_relative, error);
+    context.record_delete_io_error();
+    false
+}
+/// Rebuilds the transfer-relative name of `path`, an entry under the cleaned
+/// `destination` whose own transfer-relative name is `relative`.
+fn transfer_name(destination: &Path, relative: Option<&Path>, path: &Path) -> PathBuf {
+    let name = path.strip_prefix(destination).unwrap_or(path);
+    relative.map_or_else(|| name.to_path_buf(), |base| base.join(name))
+}
+/// Prints upstream's diagnostic for an entry the delete pass could not remove.
+///
+/// upstream: delete.c:264-266 - `rsyserr(FERROR_XFER, errno, "delete_file:
+/// %s(%s) failed", what, fbuf)`, from the generator, with the
+/// transfer-relative name.
+fn report_delete_failure(is_dir: bool, name: &Path, error: &io::Error) {
+    eprintln!(
+        "rsync: [generator] delete_file: {}({}) failed: {}",
+        if is_dir { "rmdir" } else { "unlink" },
+        name.display().to_string().replace('\\', "/"),
+        crate::local_copy::upstream_io_error(error),
+    );
 }
 
 /// Peels `path`'s children depth-first under the `--max-delete` cap, in
@@ -665,12 +714,15 @@ fn cap_reached(context: &CopyContext) -> bool {
 /// Kept in lockstep with [`apply_delete_side_effects`] for a single entry; the
 /// recursion in [`remove_entry_capped`] supplies the per-leaf walk that
 /// [`record_directory_subtree`] provides on the uncapped path.
+///
+/// Returns `false` when the removal failed: the failure is reported and the
+/// pass goes on, so the caller leaves the parent in place.
 fn delete_leaf(
     context: &mut CopyContext,
     path: &Path,
     entry_relative: &Path,
     file_type: fs::FileType,
-) -> Result<(), LocalCopyError> {
+) -> Result<bool, LocalCopyError> {
     let is_dir = file_type.is_dir();
 
     // upstream: delete.c:228 - back up an extraneous file before deletion only
@@ -707,13 +759,14 @@ fn delete_leaf(
                         "cannot delete non-empty directory: {}",
                         entry_relative.display().to_string().replace('\\', "/")
                     );
-                    return Ok(());
+                    return Ok(true);
                 }
                 Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "delete extraneous destination entry",
-                        path.to_path_buf(),
-                        error,
+                    return Ok(step_over_delete_failure(
+                        context,
+                        true,
+                        entry_relative,
+                        &error,
                     ));
                 }
             }
@@ -725,16 +778,16 @@ fn delete_leaf(
         } else {
             fs.unlink_file(path)
         };
-        if let Err(error) = result {
-            // A vanished entry is a benign no-op (upstream ENOENT path); any
-            // other failure surfaces so the exit code reflects it.
-            if error.kind() != io::ErrorKind::NotFound {
-                return Err(LocalCopyError::io(
-                    "delete extraneous destination entry",
-                    path.to_path_buf(),
-                    error,
-                ));
-            }
+        // A vanished entry is a benign no-op (upstream ENOENT path).
+        if let Err(error) = result
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            return Ok(step_over_delete_failure(
+                context,
+                false,
+                entry_relative,
+                &error,
+            ));
         }
     }
 
@@ -751,7 +804,7 @@ fn delete_leaf(
         .with_directory(is_dir),
     );
     context.register_progress();
-    Ok(())
+    Ok(true)
 }
 
 /// Whether an `rmdir` error means the directory was left non-empty (upstream

@@ -15,7 +15,7 @@ use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
 use std::os::fd::BorrowedFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use super::errno_location;
@@ -82,15 +82,34 @@ impl UnlinkFlags {
 ///   caller deliberately left in place). On its own this is benign (exit 0).
 /// - `had_errors` mirrors `rsyserr(FERROR_XFER, ...)` + `io_error |=
 ///   IOERR_GENERAL`: the descent stepped over at least one genuine child
-///   unlink/rmdir error (`EACCES` and friends). The pass still deletes the
-///   remaining siblings, but the run must finish `RERR_PARTIAL` (23).
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+///   unlink/rmdir error (`EACCES`, `EBUSY` on a nested mount point, and
+///   friends). The pass still deletes the remaining siblings, but the run
+///   must finish `RERR_PARTIAL` (23). `failures` names each such entry so
+///   the caller can print upstream's per-entry diagnostic.
+#[derive(Debug, Default)]
 pub struct UnlinkResidue {
     /// The final `rmdir` on the descent root reported `ENOTEMPTY`: entries
     /// survived the peel.
     pub not_empty: bool,
     /// A genuine child unlink/rmdir error was logged and stepped over.
     pub had_errors: bool,
+    /// Every stepped-over entry, in the order the descent met it.
+    pub failures: Vec<UnlinkFailure>,
+}
+
+/// One entry a recursive descent could not remove and stepped over.
+///
+/// upstream: delete.c:264-266 - `delete_item()` reports each one as
+/// `delete_file: %s(%s) failed` and lets `delete_dir_contents()` go on.
+#[derive(Debug)]
+pub struct UnlinkFailure {
+    /// The entry, relative to the directory the descent started from, so it
+    /// begins with the descent root's own name.
+    pub path: PathBuf,
+    /// The failed call was the `rmdir` of a directory, not an `unlink`.
+    pub is_dir: bool,
+    /// The errno the kernel returned.
+    pub error: io::Error,
 }
 
 /// Issue `unlinkat(dirfd, name, flags)`.
@@ -416,7 +435,7 @@ fn fix_uid_write_recursive(path: &Path) {
 /// [`UnlinkResidue::not_empty`] rather than as an error.
 pub fn recursive_unlinkat(parent_dirfd: BorrowedFd<'_>, leaf: &OsStr) -> io::Result<UnlinkResidue> {
     let mut visited: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
-    recursive_unlinkat_inner(parent_dirfd, leaf, &mut visited)
+    recursive_unlinkat_inner(parent_dirfd, leaf, &mut visited, false)
 }
 
 /// Caches the process effective uid (`geteuid(2)` never changes for the
@@ -450,11 +469,13 @@ fn needs_uid_write_fix(meta: &AtMetadata) -> bool {
 /// Inner recursive walker shared by the public entry point and the
 /// per-entry subdir recursion. Threads the cycle-detection set through
 /// each descent level so a `(dev, ino)` we have already entered aborts
-/// the recursion with `ELOOP`.
+/// the recursion with `ELOOP`. `nested` is set for every level below the
+/// public entry point, whose own final `rmdir` failure the caller reports.
 fn recursive_unlinkat_inner(
     parent_dirfd: BorrowedFd<'_>,
     leaf: &OsStr,
     visited: &mut std::collections::HashSet<(u64, u64)>,
+    nested: bool,
 ) -> io::Result<UnlinkResidue> {
     // Step 1: open the descent root with O_DIRECTORY | O_NOFOLLOW so a
     // symlink at the leaf is refused (`ELOOP`) rather than followed.
@@ -518,6 +539,7 @@ fn recursive_unlinkat_inner(
     )?;
     let dirfd = std::os::fd::AsFd::as_fd(&dir_handle);
     let mut had_errors = false;
+    let mut failures = Vec::new();
     for name in entries {
         if name.as_bytes() == b"." || name.as_bytes() == b".." {
             continue;
@@ -528,9 +550,19 @@ fn recursive_unlinkat_inner(
             Err(err) => return Err(err),
         };
         if child_meta.is_dir() {
-            had_errors |= recursive_unlinkat_inner(dirfd, &name, visited)?.had_errors;
-        } else {
-            had_errors |= unlink_child_entry(dirfd, &name)?;
+            let child = recursive_unlinkat_inner(dirfd, &name, visited, true)?;
+            had_errors |= child.had_errors;
+            failures.extend(child.failures.into_iter().map(|failure| UnlinkFailure {
+                path: Path::new(leaf).join(failure.path),
+                ..failure
+            }));
+        } else if let Some(error) = unlink_child_entry(dirfd, &name)? {
+            had_errors = true;
+            failures.push(UnlinkFailure {
+                path: Path::new(leaf).join(&name),
+                is_dir: false,
+                error,
+            });
         }
     }
 
@@ -544,16 +576,29 @@ fn recursive_unlinkat_inner(
     // entry survived the peel - a stepped-over `EACCES`, a concurrent
     // writer, or filtered content - and is reported via
     // `UnlinkResidue::not_empty` (upstream `DR_NOT_EMPTY`) rather than as an
-    // error; any other errno aborts the descent verbatim.
+    // error. Any other errno on a nested directory (`EBUSY` on a mount point,
+    // say) is recorded and stepped over so the parent keeps peeling its
+    // siblings (upstream: delete.c:160-161 marks the parent DR_NOT_EMPTY and
+    // moves on); on the descent root it is returned to the caller verbatim.
     let not_empty = match unlinkat(parent_dirfd, leaf, UnlinkFlags::Dir) {
         Ok(()) => false,
         Err(err) if err.raw_os_error() == Some(libc::ENOENT) => false,
         Err(err) if matches!(err.raw_os_error(), Some(libc::ENOTEMPTY | libc::EEXIST)) => true,
+        Err(err) if nested => {
+            had_errors = true;
+            failures.push(UnlinkFailure {
+                path: PathBuf::from(leaf),
+                is_dir: true,
+                error: err,
+            });
+            false
+        }
         Err(err) => return Err(err),
     };
     Ok(UnlinkResidue {
         not_empty,
         had_errors,
+        failures,
     })
 }
 
@@ -564,18 +609,18 @@ fn recursive_unlinkat_inner(
 /// `delete.c:48-176`; `ENOENT` is treated as idempotent success since
 /// the entry already vanished.
 ///
-/// Returns `Ok(true)` when a genuine child error (`EACCES`) was logged and
-/// stepped over, so the caller can raise [`UnlinkResidue::had_errors`] and
-/// mirror upstream's `FERROR_XFER` + `io_error |= IOERR_GENERAL` while the
-/// descent keeps deleting siblings. `Ok(false)` covers a clean unlink, an
-/// already-vanished entry, and the benign classify-vs-act TOCTOU race.
-fn unlink_child_entry(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<bool> {
+/// Returns `Ok(Some(error))` when a genuine child error (`EACCES`) was
+/// stepped over, so the caller can raise [`UnlinkResidue::had_errors`],
+/// record the entry for upstream's `FERROR_XFER` diagnostic and keep deleting
+/// siblings. `Ok(None)` covers a clean unlink, an already-vanished entry, and
+/// the benign classify-vs-act TOCTOU race.
+fn unlink_child_entry(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<Option<io::Error>> {
     match unlinkat(dirfd, name, UnlinkFlags::File) {
-        Ok(()) => Ok(false),
+        Ok(()) => Ok(None),
         Err(err) => match err.raw_os_error() {
-            Some(libc::ENOENT) => Ok(false),
+            Some(libc::ENOENT) => Ok(None),
             Some(libc::EISDIR | libc::EPERM) => match unlinkat(dirfd, name, UnlinkFlags::Dir) {
-                Ok(()) => Ok(false),
+                Ok(()) => Ok(None),
                 Err(retry) => match retry.raw_os_error() {
                     Some(libc::ENOENT | libc::ENOTEMPTY) => {
                         tracing::debug!(
@@ -584,19 +629,12 @@ fn unlink_child_entry(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<bool> {
                             os_error = retry.raw_os_error(),
                             "recursive_unlinkat: classify-vs-act race left entry unremovable, stepping over"
                         );
-                        Ok(false)
+                        Ok(None)
                     }
                     _ => Err(retry),
                 },
             },
-            Some(libc::EACCES) => {
-                tracing::debug!(
-                    target: "fast_io::dir_sandbox",
-                    name = ?name,
-                    "recursive_unlinkat: EACCES on child entry, stepping over per upstream"
-                );
-                Ok(true)
-            }
+            Some(libc::EACCES) => Ok(Some(err)),
             _ => Err(err),
         },
     }

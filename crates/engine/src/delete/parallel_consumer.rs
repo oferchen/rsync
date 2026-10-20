@@ -54,7 +54,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use super::cohort_batcher::{CohortBatch, CohortBatcher};
-use super::emitter::{DeleteFs, EmitterErrorPolicy};
+use super::emitter::{DeleteFailure, DeleteFs, EmitterErrorPolicy};
 use super::plan::DeleteEntryKind;
 use super::reorder_buffer::{DeleteCohortKey, DeleteOperation, ReorderBufferError};
 use protocol::DeleteStats;
@@ -85,6 +85,9 @@ pub struct ParallelDrainOutcome<F: DeleteFs> {
     pub io_error: i32,
     /// Mapped exit code (`0`, `23`, or `24`).
     pub exit_code: i32,
+    /// Entries the run could not remove, in cohort order, for the caller to
+    /// report.
+    pub failures: Vec<DeleteFailure>,
 }
 
 /// Cohort-coordinated parallel `DeleteEmitter` consumer.
@@ -343,6 +346,7 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
             stats: summary.stats,
             io_error: summary.io_error,
             exit_code,
+            failures: summary.failures,
         })
     }
 }
@@ -360,6 +364,7 @@ impl<F: DeleteFs + std::fmt::Debug> std::fmt::Debug for ParallelDeleteEmitter<F>
 struct ConsumerSummary {
     stats: DeleteStats,
     io_error: i32,
+    failures: Vec<DeleteFailure>,
 }
 
 fn consumer_loop<F: DeleteFs + Sync + Send>(
@@ -466,18 +471,19 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
     let parent_fd = parent_handle.as_ref().map(std::os::fd::AsFd::as_fd);
 
     #[cfg(unix)]
-    let results: Vec<io::Result<(DeleteEntryKind, bool)>> = ops
+    let results: Vec<io::Result<Dispatched>> = ops
         .par_iter()
         .map(|op| dispatch_one(fs.as_ref(), op, parent_fd))
         .collect();
     #[cfg(not(unix))]
-    let results: Vec<io::Result<(DeleteEntryKind, bool)>> = ops
+    let results: Vec<io::Result<Dispatched>> = ops
         .par_iter()
         .map(|op| dispatch_one(fs.as_ref(), op))
         .collect();
-    for result in results {
+    for (result, op) in results.into_iter().zip(ops) {
         match result {
-            Ok((kind, had_errors)) => {
+            Ok((kind, had_errors, failures)) => {
+                summary.failures.extend(failures);
                 increment_stat(&mut summary.stats, kind);
                 if had_errors && !policy.ignore_errors {
                     // A recursive peel stepped over a genuine child error
@@ -495,6 +501,13 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
                 if !policy.continue_on_error {
                     return Err(err);
                 }
+                if err.kind() != io::ErrorKind::NotFound {
+                    summary.failures.push(DeleteFailure {
+                        path: op.path.clone(),
+                        is_dir: matches!(op.kind, DeleteEntryKind::Dir),
+                        error: err,
+                    });
+                }
             }
         }
     }
@@ -507,33 +520,36 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
 /// `parent_fd`; `op.path` is the absolute reconstruction used by the
 /// fallback.
 ///
-/// Returns the op's kind paired with whether a recursive peel stepped over
-/// a genuine child error (`had_errors`). Only the directory path can raise
-/// the flag; every other kind reports `false`.
+/// One dispatched op: its kind, whether a recursive peel stepped over a
+/// genuine child error, and the entries that peel could not remove.
+type Dispatched = (DeleteEntryKind, bool, Vec<DeleteFailure>);
+/// Only the directory path can raise the stepped-over flag or report
+/// failures; every other kind reports `false` and none.
 #[cfg(unix)]
 fn dispatch_one<F: DeleteFs>(
     fs: &F,
     op: &DeleteOperation,
     parent_fd: Option<std::os::fd::BorrowedFd<'_>>,
-) -> io::Result<(DeleteEntryKind, bool)> {
+) -> io::Result<Dispatched> {
     let leaf = op.leaf.as_os_str();
-    let had_errors = match (op.kind, parent_fd) {
-        (DeleteEntryKind::File, Some(fd)) => fs.unlink_file_at(fd, leaf).map(|()| false),
-        (DeleteEntryKind::Symlink, Some(fd)) => fs.unlink_symlink_at(fd, leaf).map(|()| false),
-        (DeleteEntryKind::Device, Some(fd)) => fs.unlink_device_at(fd, leaf).map(|()| false),
-        (DeleteEntryKind::Special, Some(fd)) => fs.unlink_special_at(fd, leaf).map(|()| false),
-        (DeleteEntryKind::Dir, Some(fd)) => dispatch_dir_at(fs, fd, leaf),
-        (DeleteEntryKind::File, None) => fs.unlink_file(&op.path).map(|()| false),
-        (DeleteEntryKind::Symlink, None) => fs.unlink_symlink(&op.path).map(|()| false),
-        (DeleteEntryKind::Device, None) => fs.unlink_device(&op.path).map(|()| false),
-        (DeleteEntryKind::Special, None) => fs.unlink_special(&op.path).map(|()| false),
-        (DeleteEntryKind::Dir, None) => dispatch_dir(fs, &op.path).map(|()| false),
+    let clean = |()| (false, Vec::new());
+    let (had_errors, failures) = match (op.kind, parent_fd) {
+        (DeleteEntryKind::File, Some(fd)) => fs.unlink_file_at(fd, leaf).map(clean),
+        (DeleteEntryKind::Symlink, Some(fd)) => fs.unlink_symlink_at(fd, leaf).map(clean),
+        (DeleteEntryKind::Device, Some(fd)) => fs.unlink_device_at(fd, leaf).map(clean),
+        (DeleteEntryKind::Special, Some(fd)) => fs.unlink_special_at(fd, leaf).map(clean),
+        (DeleteEntryKind::Dir, Some(fd)) => dispatch_dir_at(fs, fd, leaf, &op.path),
+        (DeleteEntryKind::File, None) => fs.unlink_file(&op.path).map(clean),
+        (DeleteEntryKind::Symlink, None) => fs.unlink_symlink(&op.path).map(clean),
+        (DeleteEntryKind::Device, None) => fs.unlink_device(&op.path).map(clean),
+        (DeleteEntryKind::Special, None) => fs.unlink_special(&op.path).map(clean),
+        (DeleteEntryKind::Dir, None) => dispatch_dir(fs, &op.path).map(clean),
     }?;
-    Ok((op.kind, had_errors))
+    Ok((op.kind, had_errors, failures))
 }
 
 #[cfg(not(unix))]
-fn dispatch_one<F: DeleteFs>(fs: &F, op: &DeleteOperation) -> io::Result<(DeleteEntryKind, bool)> {
+fn dispatch_one<F: DeleteFs>(fs: &F, op: &DeleteOperation) -> io::Result<Dispatched> {
     match op.kind {
         DeleteEntryKind::File => fs.unlink_file(&op.path)?,
         DeleteEntryKind::Dir => dispatch_dir(fs, &op.path)?,
@@ -541,7 +557,7 @@ fn dispatch_one<F: DeleteFs>(fs: &F, op: &DeleteOperation) -> io::Result<(Delete
         DeleteEntryKind::Device => fs.unlink_device(&op.path)?,
         DeleteEntryKind::Special => fs.unlink_special(&op.path)?,
     };
-    Ok((op.kind, false))
+    Ok((op.kind, false, Vec::new()))
 }
 
 /// Empties the directory before removing it, mirroring upstream
@@ -553,15 +569,28 @@ fn dispatch_dir<F: DeleteFs>(fs: &F, path: &std::path::Path) -> io::Result<()> {
 }
 
 /// Dirfd-anchored sibling of [`dispatch_dir`]. Returns whether the peel
-/// stepped over a genuine child error; a residual non-empty root without
-/// such an error stays benign (upstream `DR_NOT_EMPTY`).
+/// stepped over a genuine child error, with each entry it could not remove
+/// rebuilt under `path`'s parent; a residual non-empty root without such an
+/// error stays benign (upstream `DR_NOT_EMPTY`).
 #[cfg(unix)]
 fn dispatch_dir_at<F: DeleteFs>(
     fs: &F,
     parent_fd: std::os::fd::BorrowedFd<'_>,
     leaf: &std::ffi::OsStr,
-) -> io::Result<bool> {
-    Ok(fs.remove_dir_all_at(parent_fd, leaf)?.had_errors)
+    path: &std::path::Path,
+) -> io::Result<(bool, Vec<DeleteFailure>)> {
+    let residue = fs.remove_dir_all_at(parent_fd, leaf)?;
+    let base = path.parent().unwrap_or(std::path::Path::new(""));
+    let failures = residue
+        .failures
+        .into_iter()
+        .map(|failure| DeleteFailure {
+            path: base.join(failure.path),
+            is_dir: failure.is_dir,
+            error: failure.error,
+        })
+        .collect();
+    Ok((residue.had_errors, failures))
 }
 
 // The delete pass shares the wire bits with the file-list decoders; taking them
@@ -1136,8 +1165,13 @@ mod tests {
             use std::os::fd::AsFd;
             let fs = DirCallFs::default();
             let parent = std::fs::File::open(".").expect("open parent dir");
-            dispatch_dir_at(&fs, parent.as_fd(), std::ffi::OsStr::new("sub"))
-                .expect("dirfd dispatch");
+            dispatch_dir_at(
+                &fs,
+                parent.as_fd(),
+                std::ffi::OsStr::new("sub"),
+                std::path::Path::new("/dst/sub"),
+            )
+            .expect("dirfd dispatch");
             assert_eq!(fs.calls(), vec!["peel"]);
         }
     }

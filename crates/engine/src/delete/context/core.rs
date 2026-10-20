@@ -521,6 +521,9 @@ impl DeleteContext {
             stats: outcome.stats,
             io_error: outcome.io_error,
             exit_code: outcome.exit_code,
+            failures: outcome.failures,
+            // The parallel consumer's peel does not surface DR_NOT_EMPTY.
+            not_empty: Vec::new(),
         })
     }
 
@@ -550,6 +553,8 @@ impl DeleteContext {
         let mut emitter = emitter;
         emitter.emit_all()?;
         Ok(DrainOutcome {
+            failures: emitter.take_failures(),
+            not_empty: emitter.take_not_empty(),
             stats: emitter.stats(),
             io_error: emitter.io_error(),
             exit_code: emitter.exit_code(),

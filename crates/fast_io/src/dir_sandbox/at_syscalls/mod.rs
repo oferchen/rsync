@@ -70,8 +70,9 @@ pub use rename::{
     renameat_via_sandbox_or_fallback,
 };
 pub use unlink::{
-    UnlinkFlags, UnlinkResidue, recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback,
-    unlink_path, unlink_via_sandbox_or_fallback, unlinkat,
+    UnlinkFailure, UnlinkFlags, UnlinkResidue, recursive_unlinkat,
+    recursive_unlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback,
+    unlinkat,
 };
 
 // Bring the leaf types the `#[cfg(test)]` module references via

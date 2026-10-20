@@ -434,6 +434,7 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - Under `--one-file-system`, clearing a directory obstacle for an incoming file keeps a mount point inside it instead of deleting into the mounted filesystem (#8222)
 - A local copy whose source file cannot be opened no longer skips deletions already decided during the walk (`--delete`, `--delete-delay`), and `--delete-after` now honours a send error from any directory, matching upstream, where the sender reports it only after the send loop (#PRNUM)
 - A local source file or directory that vanishes mid-transfer no longer suppresses deletions at any `--delete` timing, and it is reported once instead of once per enclosing directory (#PRNUM)
+- A local `--delete` that cannot remove an entry inside a doomed directory (such as a busy mount point without `-x`) now prints `delete_file: rmdir(<name>) failed`, still deletes the entry's siblings and, under `--max-delete`, no longer aborts the transfer; `cannot delete non-empty directory` names the directory relative to the transfer, as upstream does (#PRNUM)
 
 **Incremental recursion**
 - `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)

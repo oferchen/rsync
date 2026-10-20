@@ -5,7 +5,7 @@
 
 #[cfg(not(feature = "parallel-delete-consumer"))]
 use super::super::emitter::DeleteEmitter;
-use super::super::emitter::DeleteFs;
+use super::super::emitter::{DeleteFailure, DeleteFs};
 
 /// Result of draining one or more directories through the emitter.
 ///
@@ -23,6 +23,11 @@ pub struct DrainOutcome<F: DeleteFs> {
     pub io_error: i32,
     /// Mapped exit code (`0`, `23`, or `24`) for the run.
     pub exit_code: i32,
+    /// Entries the drain could not remove, for the caller to report.
+    pub failures: Vec<DeleteFailure>,
+    /// Directories left in place because they still held entries, for the
+    /// caller to report.
+    pub not_empty: Vec<std::path::PathBuf>,
 }
 
 impl<F: DeleteFs> DrainOutcome<F> {
@@ -31,7 +36,9 @@ impl<F: DeleteFs> DrainOutcome<F> {
     /// underlying [`DeleteFs`]. Used by `DeleteContext::emit_one` once
     /// `DeleteEmitter::emit_all` returns.
     #[cfg(not(feature = "parallel-delete-consumer"))]
-    pub(super) fn from_emitter(emitter: DeleteEmitter<F>) -> Self {
+    pub(super) fn from_emitter(mut emitter: DeleteEmitter<F>) -> Self {
+        let failures = emitter.take_failures();
+        let not_empty = emitter.take_not_empty();
         let stats = emitter.stats();
         let io_error = emitter.io_error();
         let exit_code = emitter.exit_code();
@@ -41,6 +48,8 @@ impl<F: DeleteFs> DrainOutcome<F> {
             stats,
             io_error,
             exit_code,
+            failures,
+            not_empty,
         }
     }
 }
