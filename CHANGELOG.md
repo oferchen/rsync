@@ -407,8 +407,8 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - `--list-only` no longer consults the destination (#8040)
 - Count `--delete-missing-args` entries in `--stats` as upstream does (#8043)
 - Show changed directories in local `-v` and `--out-format` output (#7946)
-- A local copy reports every source it cannot open as `send_files failed to open`, then ends with upstream's `some files/attrs were not transferred (see previous errors)` or `some files vanished before they could be transferred` summary; before, only the first failure was printed and later ones were lost (#PRNUM)
-- A local copy whose source file cannot be opened still counts it in `--stats` as created and transferred, as upstream does (#PRNUM)
+- A local copy reports every source it cannot open as `send_files failed to open`, then ends with upstream's `some files/attrs were not transferred (see previous errors)` or `some files vanished before they could be transferred` summary; before, only the first failure was printed and later ones were lost (#8228)
+- A local copy whose source file cannot be opened still counts it in `--stats` as created and transferred, as upstream does (#8228)
 
 **Embedded SSH**
 - `Host` pattern matching, `IdentitiesOnly`, `IdentityAgent`, tilde expansion, tokenising and first-obtained-wins precedence match OpenSSH (#7803, #7791, #7205, #7792, #7814, #7836, #7856)
@@ -432,9 +432,9 @@ SECURITY.md names no PR for the other seven: CVE-2026-53801, 70455, 70457 and 70
 - `--max-delete` caps the contents of a directory cleared to make room for an incoming file, sharing one run-wide budget and `Deletions stopped` warning with the delete sweeps (#8218)
 - A local `--max-delete` cap no longer aborts the transfer (under `--delete-before` it stopped the run before anything was copied); the skipped total is reported once, a partial error (23) outranks the limit (25), and the trailer names `the --max-delete limit stopped deletions` (#8222)
 - Under `--one-file-system`, clearing a directory obstacle for an incoming file keeps a mount point inside it instead of deleting into the mounted filesystem (#8222)
-- A local copy whose source file cannot be opened no longer skips deletions already decided during the walk (`--delete`, `--delete-delay`), and `--delete-after` now honours a send error from any directory, matching upstream, where the sender reports it only after the send loop (#PRNUM)
-- A local source file or directory that vanishes mid-transfer no longer suppresses deletions at any `--delete` timing, and it is reported once instead of once per enclosing directory (#PRNUM)
-- A local `--delete` that cannot remove an entry inside a doomed directory (such as a busy mount point without `-x`) now prints `delete_file: rmdir(<name>) failed`, still deletes the entry's siblings and, under `--max-delete`, no longer aborts the transfer; `cannot delete non-empty directory` names the directory relative to the transfer, as upstream does (#PRNUM)
+- A local copy whose source file cannot be opened no longer skips deletions already decided during the walk (`--delete`, `--delete-delay`), and `--delete-after` now honours a send error from any directory, matching upstream, where the sender reports it only after the send loop (#8228)
+- A local source file or directory that vanishes mid-transfer no longer suppresses deletions at any `--delete` timing, and it is reported once instead of once per enclosing directory (#8228)
+- A local `--delete` that cannot remove an entry inside a doomed directory (such as a busy mount point without `-x`) now prints `delete_file: rmdir(<name>) failed`, still deletes the entry's siblings and, under `--max-delete`, no longer aborts the transfer; `cannot delete non-empty directory` names the directory relative to the transfer, as upstream does (#8228)
 
 **Incremental recursion**
 - `--stats` "Number of files" on a pull counts every incremental-recursion sub-list (#8217)
