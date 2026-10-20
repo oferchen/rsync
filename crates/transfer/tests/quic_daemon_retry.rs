@@ -9,6 +9,9 @@
 //! same pull against a `quic retry = never` daemon must not produce it, so the
 //! line is caused by the directive and not by the transfer itself.
 //!
+//! The daemon logs to stderr and the test blocks on those lines as events, so
+//! no wait depends on how fast the host is.
+//!
 //! `#![cfg(all(unix, feature = "quic"))]` - the daemon QUIC listener is
 //! Unix-only. The test skips loudly only when the binary lacks QUIC or no
 //! daemon can be started.
@@ -18,10 +21,8 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
-
 use tempfile::tempdir;
-use test_support::{DirDiff, DirDiffOptions};
+use test_support::{DirDiff, DirDiffOptions, LogLines};
 
 /// The daemon log line written for a connection validated by a Retry.
 const RETRY_LINE: &str = "validated by Retry";
@@ -45,29 +46,19 @@ fn binary_supports_quic(oc_bin: &Path) -> bool {
         .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("quic://"))
 }
 
-/// Blocks until the daemon log contains `needle`, or the timeout elapses.
-fn wait_for_log(log_path: &Path, needle: &str, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if fs::read_to_string(log_path).is_ok_and(|text| text.contains(needle)) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-}
-
 /// Pulls a small module over QUIC from a daemon with `quic retry = {retry}`
-/// and returns the daemon log after the pull succeeded and the destination
-/// matched the source.
-fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<String> {
+/// and returns the daemon log up to the session's `connect from` line, after
+/// the pull succeeded and the destination matched the source.
+///
+/// The daemon logs to stderr, read as events: the QUIC front writes the Retry
+/// line before it hands the connection to the parent, and the session child
+/// forked for that connection writes `connect from` after, so every Retry line
+/// for the pull is in the log once `connect from` is.
+fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<Vec<String>> {
     let tmp = tempdir().expect("tempdir");
     let root = tmp.path();
-    let (config, log, cert, key) = (
+    let (config, cert, key) = (
         root.join("rsyncd.conf"),
-        root.join("rsyncd.log"),
         root.join("cert.pem"),
         root.join("key.pem"),
     );
@@ -83,12 +74,11 @@ fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<String> {
     fs::write(
         &config,
         format!(
-            "pid file = {pid}\nlock file = {lock}\nlog file = {log}\nuse chroot = false\n\
+            "pid file = {pid}\nlock file = {lock}\nlog file = /dev/stderr\nuse chroot = false\n\
              quic cert file = {cert}\nquic key file = {key}\nquic retry = {retry}\n\
              [mod]\npath = {src}\nread only = true\n",
             pid = root.join("rsyncd.pid").display(),
             lock = root.join("rsyncd.lock").display(),
-            log = log.display(),
             cert = cert.display(),
             key = key.display(),
             src = source.display(),
@@ -96,7 +86,7 @@ fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<String> {
     )
     .expect("write config");
 
-    let (child, port) = match test_support::spawn_daemon_on_free_port(|port| {
+    let (mut child, port) = match test_support::spawn_daemon_on_free_port(|port| {
         Command::new(oc_bin)
             .args([
                 "--daemon",
@@ -107,7 +97,7 @@ fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<String> {
             ])
             .arg(&config)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
     }) {
@@ -117,12 +107,11 @@ fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<String> {
             return None;
         }
     };
+    let mut log = LogLines::spawn(child.stderr.take().expect("daemon stderr"));
     let _daemon = DaemonGuard(child);
-    assert!(
-        wait_for_log(&log, "QUIC listener serving on", Duration::from_secs(10)),
-        "QUIC listener never came up:\n{}",
-        fs::read_to_string(&log).unwrap_or_default()
-    );
+    // The client dials 127.0.0.1, which the IPv4 wildcard socket serves.
+    log.wait_for(&format!("QUIC listener serving on 0.0.0.0:{port}"))
+        .expect("QUIC listener never served IPv4");
 
     let mut dest_arg = dest.clone().into_os_string();
     dest_arg.push("/");
@@ -139,14 +128,15 @@ fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<String> {
         "QUIC pull with quic retry = {retry} failed: {:?}\nstderr:\n{}\ndaemon log:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stderr),
-        fs::read_to_string(&log).unwrap_or_default()
+        log.transcript()
     );
     match DirDiff::compare(&source, &dest, DirDiffOptions::structural()) {
         Ok(Ok(())) => {}
         Ok(Err(mismatch)) => panic!("destination differs:\n{}", mismatch.into_panic_message()),
         Err(e) => panic!("DirDiff infrastructure error: {e}"),
     }
-    Some(fs::read_to_string(&log).unwrap_or_default())
+    log.wait_for("connect from").expect("session never logged");
+    Some(log.seen().to_vec())
 }
 
 /// `quic retry = always` sends every client a Retry, the client follows it,
@@ -158,18 +148,21 @@ fn quic_retry_always_completes_a_pull_through_a_real_retry() {
         eprintln!("skipping: {} was built without QUIC", oc_bin.display());
         return;
     }
+    let retried = |log: &[String]| log.iter().any(|line| line.contains(RETRY_LINE));
     let Some(always) = pull_with_retry_policy(&oc_bin, "always") else {
         return;
     };
     assert!(
-        always.contains(RETRY_LINE),
-        "quic retry = always completed without a Retry:\n{always}"
+        retried(&always),
+        "quic retry = always completed without a Retry:\n{}",
+        always.join("\n")
     );
     let Some(never) = pull_with_retry_policy(&oc_bin, "never") else {
         return;
     };
     assert!(
-        !never.contains(RETRY_LINE),
-        "quic retry = never still sent a Retry:\n{never}"
+        !retried(&never),
+        "quic retry = never still sent a Retry:\n{}",
+        never.join("\n")
     );
 }
