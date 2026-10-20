@@ -15,8 +15,7 @@
 //!
 //! No behaviour change in the receiver is asserted here - that is
 //! covered by the existing receiver integration tests in
-//! `crates/transfer/tests/` and by the parallel-receive-delta and
-//! incremental-flist test suites the workspace CI already runs. This
+//! `crates/transfer/tests/` and by the incremental-flist test suites the workspace CI already runs. This
 //! test exists to prove the carrier shape the receiver consumes is
 //! correct end-to-end against a real filesystem layout.
 

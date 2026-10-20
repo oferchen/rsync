@@ -1,5 +1,12 @@
 # PIP-9.f.1 - Bake criterion for the parallel-receive-delta default-on flip
 
+> **Superseded (2026-10-20).** The parallel receive-delta pipeline described
+> here was removed. It was never wired into the receiver, measured 1.7-3.3x
+> slower than the sequential path in isolation, and could not shorten an
+> end-to-end transfer because the receiver is not on the critical path. The
+> receiver applies deltas sequentially, as upstream `receiver.c:recv_files()`
+> does. Kept for history only.
+
 Tracking: PIP-9.f.1 (#2643). Parent: PIP-9.f (#2598). Series parent:
 PIP-9. Follow-ups: PIP-9.f.2 (Cargo.toml flip PR), PIP-9.f.3
 (post-flip bake monitor), PIP-9.f.4 (PIP-9.e closure + memory-note

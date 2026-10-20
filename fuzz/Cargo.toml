@@ -224,13 +224,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "parallel_receive_delta_adversarial"
-path = "fuzz_targets/parallel_receive_delta_adversarial.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "buffered_map"
 path = "fuzz_targets/buffered_map.rs"
 test = false

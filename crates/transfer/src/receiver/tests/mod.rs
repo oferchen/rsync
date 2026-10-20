@@ -43,7 +43,6 @@ mod incremental_flist_banner;
 mod mode_dispatch;
 #[cfg(unix)]
 mod munge_symlinks;
-mod parallel_delta_notice;
 mod partial_resume;
 mod post_decision_name_emission;
 mod push_metadata_itemize;

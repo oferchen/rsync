@@ -85,11 +85,6 @@ iconv = ["protocol/iconv", "transfer/iconv", "engine/iconv"]
 # IDNA A-label conversion of internationalized host names (upstream SUPPORT_IDN)
 idn = ["dep:idna"]
 
-# Parallel receive-side delta apply (oc extension, off by default). Forwards to
-# `transfer/parallel-receive-delta`; behavior-neutral until the receiver
-# pipeline lands.
-parallel-receive-delta = ["transfer/parallel-receive-delta"]
-
 # ============================================================================
 # Runtime Features
 # ============================================================================
@@ -133,6 +128,3 @@ criterion = { workspace = true }
 name = "transfer_benchmark"
 harness = false
 
-[[bench]]
-name = "pip_6_end_to_end_parallel_vs_sequential"
-harness = false

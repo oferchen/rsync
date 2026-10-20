@@ -35,9 +35,9 @@
 //!   drains via `take()`; the phases overlap. Modelled by two workload
 //!   shapes - `insert_heavy` (phase-1 producers, disjoint keys) and
 //!   `mixed_insert_take` (steady-state producer/consumer overlap).
-//! - **Target B - `ParallelDeltaApplier`**
-//!   (`crates/engine/src/concurrent_delta/parallel_apply/`, migrated to
-//!   `DashMap<FileNdx, SlotEntry>` in BR-3j). Symmetric register / lookup /
+//! - **Target B - a per-file slot store** (the shape of the since-removed
+//!   parallel delta applier's `DashMap<FileNdx, SlotEntry>`). Symmetric
+//!   register / lookup /
 //!   finish (section 4.2): every worker inserts a slot, looks it up, then
 //!   removes it, all interleaved. Modelled by the
 //!   `register_lookup_finish` shape keyed by sequential `FileNdx` values.

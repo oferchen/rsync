@@ -1519,9 +1519,6 @@ comp_run_scenario() {
       # transfer. Verified in the xattrs) case below via getfattr src-vs-dst.
       setfattr -n user.interop_test -v verifyme "$sdir/hello.txt" 2>/dev/null || true
       ;;
-    # parallel-threshold setup removed pending PIP-7 fix of parallel-receive-delta
-    # receiver corruption (tracking #4720 follow-up). Re-add when the receiver
-    # corruption fix lands and parallel-receive-delta returns to default features.
   esac
 
   # shellcheck disable=SC2086
@@ -2140,8 +2137,6 @@ comp_run_scenario() {
       fi
       return 0
       ;;
-    # parallel-threshold verify removed pending PIP-7 fix of parallel-receive-delta
-    # receiver corruption (tracking #4720 follow-up).
   esac
 }
 
@@ -11951,10 +11946,6 @@ run_comprehensive_interop_case() {
     # advertised capability and the host filesystem actually supporting the
     # feature (detect_host_acl_xattr_support). When unsupported the leg is
     # honestly skipped rather than run as a no-op tree compare.
-    # parallel-threshold-trip matrix entry removed pending PIP-7 fix of
-    # parallel-receive-delta receiver corruption (tracking #4720 follow-up).
-    # Re-add when the receiver corruption fix lands and parallel-receive-delta
-    # returns to default features.
   )
 
   # Extended scenarios for the newest upstream releases (see

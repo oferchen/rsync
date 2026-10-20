@@ -1,5 +1,12 @@
 # PIP-9 - parallel-receive-delta production wire-up
 
+> **Superseded (2026-10-20).** The parallel receive-delta pipeline described
+> here was removed. It was never wired into the receiver, measured 1.7-3.3x
+> slower than the sequential path in isolation, and could not shorten an
+> end-to-end transfer because the receiver is not on the critical path. The
+> receiver applies deltas sequentially, as upstream `receiver.c:recv_files()`
+> does. Kept for history only.
+
 Date: 2026-05-22
 Status: **OPEN** - design pass that follows the PIP-8 dead-scaffolding
 teardown (#4731). Implementation is split across the sub-tasks listed in
