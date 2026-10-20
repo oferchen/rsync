@@ -654,12 +654,8 @@ fn test_remote_invocation_with_multiple_paths() {
     let flags_idx = 3;
     let flags = args[flags_idx].to_string_lossy();
     assert!(flags.starts_with('-'));
-    // upstream: options.c:2720 - capability string is embedded in the compact
-    // flag string (e.g. `-re.LsfxCIvu`), not a separate argument.
-    // upstream: compat.c:162-181 set_allow_inc_recurse(),
-    // options.c:3046 maybe_add_e_option() - 'i' is omitted when the local role
-    // is Receiver because the receiver path strips CF_INC_RECURSE after read.
-    let expected_suffix = build_capability_string_suffix(false);
+    // upstream: options.c:2720, compat.c:162-181, options.c:3220.
+    let expected_suffix = build_capability_string_suffix(true);
     assert!(
         flags.ends_with(&expected_suffix),
         "capability suffix '{expected_suffix}' must be embedded in flag string: {flags}"
