@@ -442,7 +442,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - The `RSYNC_SKIP_COMPRESS` environment fallback; like upstream, only `--skip-compress` sets the list (#8197)
 - Exit code 6 ("daemon unable to append to log-file"), which upstream does not define; a raw exit 6 renders as upstream's "unexplained error (code 6)" (#8197)
 
-- The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#PRNUM)
+- The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
 ### Internal
 
 - CI: the 3.5.1 testsuite on macOS and over a TCP daemon, per-leg results and badges, old-rsync oracles and a skip oracle, re-baselined manifests and a canonical scratch path (#7638, #7636, #7855, #7837, #8019, #8024, #8017, #8023, #8045, #8096, #8102)
