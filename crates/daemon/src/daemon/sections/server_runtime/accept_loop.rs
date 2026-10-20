@@ -65,7 +65,9 @@ fn serve_connections(
         match options.resolve_quic_identity() {
             Some(identity) => Some((
                 options.effective_quic_port(),
-                load_quic_setup(&identity).map_err(fatal)?,
+                load_quic_setup(&identity)
+                    .map_err(fatal)?
+                    .with_admission(options.quic_retry_policy(), options.quic_incoming_limits()),
             )),
             None => None,
         }

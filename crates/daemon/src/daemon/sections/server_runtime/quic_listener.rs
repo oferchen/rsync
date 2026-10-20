@@ -303,6 +303,12 @@ fn accept_and_hand_off(
                 let Some(peer) = stream.peer_addr() else {
                     continue;
                 };
+                if stream.retry_validated()
+                    && let Some(log) = log_sink
+                {
+                    let text = format!("QUIC client {peer} validated by Retry");
+                    log_message(log, &rsync_info!(text).with_role(Role::Daemon));
+                }
                 let record = platform::fd_pass::RelayRecord {
                     peer,
                     local,

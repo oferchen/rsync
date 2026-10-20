@@ -84,6 +84,11 @@ impl RuntimeOptions {
         if let Some((port, _origin)) = startup.quic_port {
             self.quic_port = Some(port);
         }
+        // QUIC Retry policy (oc extension). Unset keeps Retry under load.
+        #[cfg(feature = "quic")]
+        if let Some((retry, _origin)) = startup.quic_retry {
+            self.quic_retry = Some(retry);
+        }
 
         if let Some((secrets, origin)) = parsed.global_secrets_file {
             self.set_global_secrets_file(secrets, &origin)?;

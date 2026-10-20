@@ -5,7 +5,7 @@
 // applies its own checks.
 
 /// Every QUIC directive alone, as an operator would write it.
-const QUIC_DIRECTIVE_LINES: [(&str, &str); 4] = [
+const QUIC_DIRECTIVE_LINES: [(&str, &str); 5] = [
     ("quic cert file", "quic cert file = quic/server.pem\n"),
     ("quic key file", "quic key file = quic/server.key\n"),
     (
@@ -13,6 +13,7 @@ const QUIC_DIRECTIVE_LINES: [(&str, &str); 4] = [
         "quic client ca file = quic/clients.pem\n",
     ),
     ("quic port", "quic port = 8730\n"),
+    ("quic retry", "quic retry = always\n"),
 ];
 
 fn parse_quic_config(line: &str) -> Result<RuntimeOptions, DaemonError> {

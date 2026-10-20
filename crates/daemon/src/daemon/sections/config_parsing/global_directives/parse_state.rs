@@ -51,6 +51,10 @@ struct GlobalParseState {
     /// coerced to 873 at parse time, mirroring the TCP `port = 0` handling.
     #[cfg(feature = "quic")]
     quic_port: Option<(u16, ConfigDirectiveOrigin)>,
+    /// When the QUIC listener answers a new client with a stateless Retry,
+    /// from the `quic retry` global directive (oc extension, feature-gated).
+    #[cfg(feature = "quic")]
+    quic_retry: Option<(rsync_io::quic::RetryPolicy, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
@@ -92,6 +96,8 @@ impl GlobalParseState {
             quic_key_file: None,
             #[cfg(feature = "quic")]
             quic_port: None,
+            #[cfg(feature = "quic")]
+            quic_retry: None,
             global_secrets_file: None,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
@@ -159,6 +165,8 @@ impl GlobalParseState {
             quic_key_file: self.quic_key_file,
             #[cfg(feature = "quic")]
             quic_port: self.quic_port,
+            #[cfg(feature = "quic")]
+            quic_retry: self.quic_retry,
             global_secrets_file: self.global_secrets_file,
             global_incoming_chmod: self.global_incoming_chmod,
             global_outgoing_chmod: self.global_outgoing_chmod,

@@ -87,6 +87,11 @@ pub(crate) struct RuntimeOptions {
     /// directives. See docs/design/quic-transport-policy.md.
     #[cfg(feature = "quic")]
     quic_port: Option<u16>,
+    /// QUIC Retry policy from the `quic retry` global directive (oc
+    /// extension). `None` means unset: the listener uses the default, Retry
+    /// under load. Global-only, like the other QUIC directives.
+    #[cfg(feature = "quic")]
+    quic_retry: Option<rsync_io::quic::RetryPolicy>,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
     syslog_facility: Option<String>,
@@ -203,6 +208,8 @@ impl Default for RuntimeOptions {
             quic_client_ca_file: None,
             #[cfg(feature = "quic")]
             quic_port: None,
+            #[cfg(feature = "quic")]
+            quic_retry: None,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
             syslog_facility: None,

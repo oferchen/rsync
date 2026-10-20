@@ -27,6 +27,20 @@ fn store_global_directive<T>(
     ));
 }
 
+/// Parses a `quic retry` value: `auto`, `always` or `never`, in any case.
+#[cfg(feature = "quic")]
+fn parse_quic_retry(value: &str) -> Option<rsync_io::quic::RetryPolicy> {
+    use rsync_io::quic::RetryPolicy;
+    let value = value.trim();
+    [
+        ("auto", RetryPolicy::default()),
+        ("always", RetryPolicy::Always),
+        ("never", RetryPolicy::Never),
+    ]
+    .into_iter()
+    .find_map(|(name, policy)| value.eq_ignore_ascii_case(name).then_some(policy))
+}
+
 /// Applies a single global-section directive, updating `state` accordingly.
 fn apply_global_directive(
     state: &mut GlobalParseState,
@@ -233,6 +247,29 @@ fn apply_global_directive(
             }
 
             store_global_directive(&mut state.quic_port, parsed, canonical, line_number);
+        }
+        // oc extension (no upstream counterpart). `quic retry` selects when the
+        // QUIC listener answers a new client with a stateless Retry (RFC 9000
+        // section 8.1.2), making it prove its source address before any
+        // connection state exists: `auto` (the default) only while the
+        // listener is under load, `always` for every client, `never` for none.
+        // Values compare case-insensitively like upstream's P_ENUM labels
+        // (loadparm.c:575-586), but an unknown value is a hard error rather
+        // than ignored, so an operator never believes a policy is in force that
+        // is not. Global-only like the other QUIC directives.
+        #[cfg(feature = "quic")]
+        "quicretry" => {
+            let parsed = parse_quic_retry(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!(
+                        "invalid 'quic retry' value '{}': expected auto, always or never",
+                        value.trim()
+                    ),
+                )
+            })?;
+            store_global_directive(&mut state.quic_retry, parsed, canonical, line_number);
         }
         // upstream: daemon-parm.txt:71 - `use chroot` is a P_LOCAL BOOL3, so a
         // global-section value is the default for every module that does not
