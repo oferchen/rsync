@@ -119,3 +119,83 @@ pub fn create_new(path: &Path, mode: u32) -> io::Result<std::fs::File> {
 pub fn open_dir(path: &Path) -> io::Result<std::os::fd::OwnedFd> {
     open(path, libc::O_RDONLY | libc::O_DIRECTORY, 0)
 }
+
+/// `chmod(2)` of a destination path, anchored on the pinned destination. The
+/// leaf is followed, as `chmod` follows it.
+///
+/// # Errors
+///
+/// The underlying `fchmodat`/`chmod` error.
+pub fn set_permissions(path: &Path, mode: u32) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        at_call(path, |dirfd, name| {
+            // SAFETY: `name` is a valid NUL-terminated string and `dirfd` is
+            // `AT_FDCWD` or the pinned descriptor kept alive by the caller.
+            unsafe { libc::fchmodat(dirfd, name, mode as libc::mode_t, 0) }
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = std::fs::metadata(path)?.permissions();
+        permissions.set_readonly(mode & 0o200 == 0);
+        std::fs::set_permissions(path, permissions)
+    }
+}
+
+/// Sets a destination path's modification time, leaving its access time,
+/// anchored on the pinned destination. The leaf is followed, as
+/// `filetime::set_file_mtime` follows it.
+///
+/// # Errors
+///
+/// The underlying `utimensat` error.
+pub fn set_mtime(path: &Path, mtime: filetime::FileTime) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let times = [
+            libc::timespec {
+                tv_sec: 0,
+                tv_nsec: libc::UTIME_OMIT,
+            },
+            libc::timespec {
+                tv_sec: mtime.unix_seconds() as libc::time_t,
+                tv_nsec: libc::c_long::from(mtime.nanoseconds() as i32),
+            },
+        ];
+        at_call(path, |dirfd, name| {
+            // SAFETY: `name` is a valid NUL-terminated string, `dirfd` is
+            // `AT_FDCWD` or the pinned descriptor kept alive by the caller, and
+            // `times` is a two-element array as `utimensat` requires.
+            unsafe { libc::utimensat(dirfd, name, times.as_ptr(), 0) }
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        filetime::set_file_mtime(path, mtime)
+    }
+}
+
+/// Runs one `*at` call for `path`: on the pinned destination descriptor with
+/// the remainder beneath it, or on `AT_FDCWD` with the path itself.
+#[cfg(unix)]
+fn at_call(
+    path: &Path,
+    call: impl FnOnce(libc::c_int, *const libc::c_char) -> libc::c_int,
+) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let anchored = crate::confinement::pinned_destination_relative(path);
+    let (dirfd, name) = match &anchored {
+        Some((fd, relative)) => (fd.as_raw_fd(), relative.as_path()),
+        None => (libc::AT_FDCWD, path),
+    };
+    let c_name = CString::new(name.as_os_str().as_bytes())
+        .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    if call(dirfd, c_name.as_ptr()) == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
