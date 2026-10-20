@@ -1,11 +1,10 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::time::Duration;
 
-use super::aux_channel::{build_stderr_channel, configure_stderr_channel};
 use super::connection::SshConnection;
 use super::parse::{RemoteShellParseError, parse_remote_shell};
 use super::wire::{WireIoPolicy, configure_wire};
@@ -430,10 +429,11 @@ impl SshCommand {
     /// Spawns the configured command and returns a [`SshConnection`].
     ///
     /// On Unix the child's stdin and stdout are two `socketpair(2)`s, as
-    /// upstream `piped_child()` creates them, and its stderr is a third. If
-    /// socketpair creation fails for any reason (e.g., file-descriptor
-    /// exhaustion), the spawn falls back to `Stdio::piped()` anonymous pipes
-    /// and traces the reason at `--debug=connect`. Windows always uses pipes.
+    /// upstream `piped_child()` creates them. If socketpair creation fails for
+    /// any reason (e.g., file-descriptor exhaustion), the spawn falls back to
+    /// `Stdio::piped()` anonymous pipes and traces the reason at
+    /// `--debug=connect`. Windows always uses pipes. The child inherits our
+    /// stderr, so its diagnostics reach the user unmodified.
     pub fn spawn(&self) -> io::Result<SshConnection> {
         let (program, args) = self.command_parts();
 
@@ -473,11 +473,9 @@ impl SshCommand {
             command.env(key, value);
         }
 
-        // Attempt to install a socketpair-based stderr channel before
-        // spawning. On success, we hold the parent end and configure the
-        // command to inherit the child end as its stderr. On failure (or on
-        // Windows) we fall back to the conventional anonymous pipe path.
-        let parent_socketpair_end = configure_stderr_channel(&mut command);
+        // upstream: pipe.c:68-83 piped_child() redirects only STDIN/STDOUT, so
+        // the child writes its diagnostics straight to our stderr.
+        command.stderr(Stdio::inherit());
 
         let mut child = command.spawn()?;
         // upstream: pipe.c:85-88 - the parent closes the child's ends. They
@@ -489,13 +487,10 @@ impl SshCommand {
 
         let wire = wire.into_parent_ends(&mut child)?;
 
-        let stderr_channel = build_stderr_channel(parent_socketpair_end, child.stderr.take());
-
         Ok(SshConnection::new(
             child,
             wire,
             self.wire_io,
-            stderr_channel,
             self.connect_timeout,
             self.io_timeout,
         ))

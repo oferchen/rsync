@@ -42,6 +42,22 @@ pub fn force_blocking_stdio() -> io::Result<()> {
     Ok(())
 }
 
+/// Clear `O_NONBLOCK` on the inherited stderr file descriptor.
+///
+/// upstream: main.c:1356-1364 `start_server()` sets fd 2 blocking once
+/// `setup_protocol()` is done, because ssh may have made it non-blocking (and
+/// when stderr is a clone of stdout that would lose print output). Idempotent
+/// like [`force_blocking_stdio`]; on non-Unix platforms it returns `Ok(())`.
+///
+/// # Errors
+///
+/// Returns the OS error from `fcntl(2)`, typically `EBADF` when fd 2 is closed.
+pub fn force_blocking_stderr() -> io::Result<()> {
+    #[cfg(unix)]
+    clear_nonblock(libc::STDERR_FILENO)?;
+    Ok(())
+}
+
 #[cfg(unix)]
 fn clear_nonblock(fd: libc::c_int) -> io::Result<()> {
     // SAFETY: `libc::fcntl` with `F_GETFL` takes a file descriptor and
@@ -81,6 +97,45 @@ mod tests {
         // now-blocking descriptors and report Ok.
         force_blocking_stdio().expect("first call succeeds on inherited stdio");
         force_blocking_stdio().expect("second call is idempotent");
+    }
+
+    /// The server's post-setup call must leave fd 2 blocking even when a
+    /// parent (ssh) handed it over non-blocking. Runs in a forked child so
+    /// toggling the test process's own stderr flags cannot leak into other tests.
+    #[test]
+    fn force_blocking_stderr_clears_nonblock_on_fd2() {
+        // SAFETY: fork(2) in a test; the child only issues async-signal-safe
+        // fcntl/_exit calls before exiting, and the parent reaps it with waitpid.
+        #[allow(unsafe_code)]
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed: {}", io::Error::last_os_error());
+        if pid == 0 {
+            // SAFETY: flag reads/writes on the child's own fd 2, then _exit.
+            #[allow(unsafe_code)]
+            unsafe {
+                let flags = libc::fcntl(libc::STDERR_FILENO, libc::F_GETFL);
+                libc::fcntl(libc::STDERR_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                let code = match force_blocking_stderr() {
+                    Ok(())
+                        if libc::fcntl(libc::STDERR_FILENO, libc::F_GETFL) & libc::O_NONBLOCK
+                            == 0 =>
+                    {
+                        0
+                    }
+                    _ => 1,
+                };
+                libc::_exit(code);
+            }
+        }
+        let mut status = 0;
+        // SAFETY: waitpid on the child we just forked, writing into a local int.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert_eq!(rc, pid);
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "force_blocking_stderr must clear O_NONBLOCK on fd 2 (status {status})"
+        );
     }
 
     #[test]
