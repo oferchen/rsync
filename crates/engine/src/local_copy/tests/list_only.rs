@@ -120,14 +120,9 @@ fn list_only_provides_file_metadata() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn list_only_shows_symlinks_correctly() {
-    #[cfg(not(unix))]
-    {
-        // Skip on non-Unix platforms
-        return;
-    }
-
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
@@ -332,14 +327,9 @@ fn list_only_with_include_filter() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn list_only_shows_special_permission_bits() {
-    #[cfg(not(unix))]
-    {
-        // Skip on non-Unix platforms
-        return;
-    }
-
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

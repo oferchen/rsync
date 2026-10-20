@@ -782,7 +782,7 @@ fn refs_reflink_range_fails_gracefully_on_ntfs() {
     let content = b"partial reflink test data on NTFS";
     let (src, dst) = setup_test_files(temp.path(), "refs_range_ntfs", content);
     // Pre-create destination so OPEN_EXISTING succeeds
-    std::fs::write(&dst, &vec![0u8; content.len()]).expect("write dst");
+    std::fs::write(&dst, vec![0u8; content.len()]).expect("write dst");
 
     let result = try_refs_reflink_range(&src, &dst, 0, 0, content.len() as u64);
     assert!(

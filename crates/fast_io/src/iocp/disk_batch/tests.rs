@@ -48,7 +48,7 @@ fn open_writable(path: &std::path::Path) -> File {
     #[allow(unsafe_code)]
     unsafe {
         use std::os::windows::io::FromRawHandle;
-        File::from_raw_handle(handle as *mut std::ffi::c_void)
+        File::from_raw_handle(handle)
     }
 }
 
@@ -292,7 +292,7 @@ fn error_propagates_when_reopen_overlapped_fails() {
     #[allow(unsafe_code)]
     let file = unsafe {
         use std::os::windows::io::FromRawHandle;
-        File::from_raw_handle(handle as *mut std::ffi::c_void)
+        File::from_raw_handle(handle)
     };
 
     let result = batch.begin_file(file);
@@ -385,7 +385,7 @@ fn completion_ordering_independent_of_submission_order() {
     // can verify positional correctness regardless of completion order.
     let mut data = Vec::with_capacity(8 * 4096);
     for chunk_idx in 0..8u8 {
-        data.extend(std::iter::repeat(chunk_idx).take(4096));
+        data.extend(std::iter::repeat_n(chunk_idx, 4096));
     }
     batch.write_data(&data).unwrap();
     let (_returned, written) = batch.commit_file(false).unwrap();

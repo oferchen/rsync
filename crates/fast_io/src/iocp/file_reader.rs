@@ -67,7 +67,7 @@ impl IocpReader {
             #[allow(unsafe_code)]
             let file = unsafe {
                 use std::os::windows::io::FromRawHandle;
-                File::from_raw_handle(handle as *mut std::ffi::c_void)
+                File::from_raw_handle(handle)
             };
             let metadata = file.metadata()?;
             let len = metadata.len();
@@ -174,10 +174,8 @@ impl IocpReader {
         let mut offset: usize = 0;
 
         while offset < file_size {
-            let batch_count = std::cmp::min(
-                max_concurrent,
-                (file_size - offset + buf_size - 1) / buf_size,
-            );
+            let batch_count =
+                std::cmp::min(max_concurrent, (file_size - offset).div_ceil(buf_size));
 
             let mut ops: Vec<_> = (0..batch_count)
                 .map(|i| {
@@ -215,7 +213,7 @@ impl IocpReader {
                 }
             }
 
-            for i in 0..batch_count {
+            for (i, op) in ops.iter().enumerate() {
                 let mut transferred: u32 = 0;
                 let mut key: usize = 0;
                 let mut overlapped_out: *mut windows_sys::Win32::System::IO::OVERLAPPED =
@@ -246,7 +244,7 @@ impl IocpReader {
                 let op_offset = offset + i * buf_size;
                 let n = transferred as usize;
                 let dest_end = std::cmp::min(op_offset + n, file_size);
-                result[op_offset..dest_end].copy_from_slice(&ops[i].buffer[..dest_end - op_offset]);
+                result[op_offset..dest_end].copy_from_slice(&op.buffer[..dest_end - op_offset]);
             }
 
             offset += batch_count * buf_size;

@@ -23,8 +23,6 @@
 //! calls reuse the same allocation. All other call sites should use the
 //! `Read + Seek` interface, which never grows the cache beyond `chunk_size`.
 
-#![cfg(windows)]
-
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
@@ -113,7 +111,7 @@ fn validate_chunk_size(chunk_size: usize) -> io::Result<()> {
 /// Returns `true` when `chunk_size` satisfies the env-var contract: a power
 /// of two within `MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE`.
 fn is_valid_env_chunk_size(chunk_size: usize) -> bool {
-    chunk_size >= MIN_CHUNK_SIZE && chunk_size <= MAX_CHUNK_SIZE && chunk_size.is_power_of_two()
+    (MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&chunk_size) && chunk_size.is_power_of_two()
 }
 
 /// Returns the cached env override, loading it from the environment on first

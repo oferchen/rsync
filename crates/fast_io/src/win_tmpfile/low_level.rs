@@ -113,7 +113,7 @@ mod windows {
             #[allow(unsafe_code)]
             let file = unsafe {
                 use std::os::windows::io::FromRawHandle;
-                File::from_raw_handle(handle as *mut std::ffi::c_void)
+                File::from_raw_handle(handle)
             };
 
             // Set delete-on-close disposition post-creation for crash safety.
