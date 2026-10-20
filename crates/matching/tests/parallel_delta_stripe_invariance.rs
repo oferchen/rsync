@@ -106,7 +106,7 @@ fn canonical(script: &DeltaScript, block_len: usize) -> Vec<CanonToken> {
     let mut out = Vec::new();
     for token in script.tokens() {
         match token {
-            DeltaToken::Literal(bytes) => out.push(CanonToken::Literal(bytes.clone())),
+            DeltaToken::Literal(bytes) => out.push(CanonToken::Literal(bytes.to_vec())),
             DeltaToken::Copy { index, len } => {
                 if block_len > 0 && *len > block_len {
                     let mut covered = 0usize;

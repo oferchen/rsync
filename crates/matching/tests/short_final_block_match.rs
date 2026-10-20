@@ -67,7 +67,7 @@ fn build_index(data: &[u8]) -> DeltaSignatureIndex {
     DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index")
 }
 
-fn scan(source: &[u8], index: &DeltaSignatureIndex) -> DeltaScript {
+fn scan(source: &[u8], index: &DeltaSignatureIndex) -> DeltaScript<'static> {
     DeltaGenerator::new()
         .generate(Cursor::new(source.to_vec()), index)
         .expect("scan")

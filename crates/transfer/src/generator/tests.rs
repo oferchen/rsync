@@ -3,7 +3,7 @@
 use super::super::flags::{NumericIds, ParsedServerFlags};
 use super::super::role::ServerRole;
 use super::delta::{
-    LARGE_FILE_WARNING_THRESHOLD, script_to_wire_delta, stream_whole_file_transfer,
+    LARGE_FILE_WARNING_THRESHOLD, WireOp, script_to_wire_delta, stream_whole_file_transfer,
     write_delta_with_compression,
 };
 use super::file_list::apply_permutation_in_place;
@@ -1087,20 +1087,35 @@ fn filter_application_no_filters_includes_all() {
 #[test]
 fn script_to_wire_delta_converts_literals() {
     let tokens = vec![
-        DeltaToken::Literal(vec![1, 2, 3]),
-        DeltaToken::Literal(vec![4, 5, 6]),
+        DeltaToken::Literal(vec![1, 2, 3].into()),
+        DeltaToken::Literal(vec![4, 5, 6].into()),
     ];
     let script = DeltaScript::new(tokens, 6, 6);
 
-    let wire_ops = script_to_wire_delta(script, 1024);
+    let wire_ops = script_to_wire_delta(&script, 1024);
 
     assert_eq!(wire_ops.len(), 2);
     match &wire_ops[0] {
-        DeltaOp::Literal(data) => assert_eq!(data, &vec![1, 2, 3]),
+        WireOp::Literal(data) => assert_eq!(*data, &[1, 2, 3]),
         _ => panic!("expected literal op"),
     }
     match &wire_ops[1] {
-        DeltaOp::Literal(data) => assert_eq!(data, &vec![4, 5, 6]),
+        WireOp::Literal(data) => assert_eq!(*data, &[4, 5, 6]),
+        _ => panic!("expected literal op"),
+    }
+}
+
+#[test]
+fn script_to_wire_delta_converts_literal_slices() {
+    let slice: &[u8] = &[7, 8, 9];
+    let tokens = vec![DeltaToken::Literal(std::borrow::Cow::Borrowed(slice))];
+    let script = DeltaScript::new(tokens, 3, 3);
+
+    let wire_ops = script_to_wire_delta(&script, 1024);
+
+    assert_eq!(wire_ops.len(), 1);
+    match &wire_ops[0] {
+        WireOp::Literal(data) => assert_eq!(*data, &[7, 8, 9]),
         _ => panic!("expected literal op"),
     }
 }
@@ -1112,16 +1127,16 @@ fn script_to_wire_delta_converts_copy_operations() {
             index: 0,
             len: 1024,
         },
-        DeltaToken::Literal(vec![99]),
+        DeltaToken::Literal(vec![99].into()),
         DeltaToken::Copy { index: 1, len: 512 },
     ];
     let script = DeltaScript::new(tokens, 1537, 1);
 
-    let wire_ops = script_to_wire_delta(script, 1024);
+    let wire_ops = script_to_wire_delta(&script, 1024);
 
     assert_eq!(wire_ops.len(), 3);
     match &wire_ops[0] {
-        DeltaOp::Copy {
+        WireOp::Copy {
             block_index,
             length,
         } => {
@@ -1131,11 +1146,11 @@ fn script_to_wire_delta_converts_copy_operations() {
         _ => panic!("expected copy op"),
     }
     match &wire_ops[1] {
-        DeltaOp::Literal(data) => assert_eq!(data, &vec![99]),
+        WireOp::Literal(data) => assert_eq!(*data, &[99]),
         _ => panic!("expected literal op"),
     }
     match &wire_ops[2] {
-        DeltaOp::Copy {
+        WireOp::Copy {
             block_index,
             length,
         } => {

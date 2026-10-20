@@ -133,7 +133,7 @@ fn script_to_ops(script: &DeltaScript, block_len: usize) -> Vec<DeltaOp> {
     let mut ops = Vec::with_capacity(script.tokens().len());
     for token in script.tokens() {
         match token {
-            DeltaToken::Literal(data) => ops.push(DeltaOp::Literal(data.clone())),
+            DeltaToken::Literal(data) => ops.push(DeltaOp::Literal(data.to_vec())),
             DeltaToken::Copy { index, len } => {
                 if block_len > 0 && *len > block_len && *len % block_len == 0 {
                     let run = *len / block_len;
@@ -170,7 +170,7 @@ fn script_to_wire_bytes(script: &DeltaScript, block_len: usize) -> Vec<u8> {
 /// Runs `generate_delta` end-to-end and returns both the script and its
 /// wire-byte serialisation. Used by every ZSO test as the single entry
 /// point so the active and ignored tests share an identical pipeline.
-fn run_pipeline(basis: &[u8], source: &[u8], block_len: u32) -> (DeltaScript, Vec<u8>) {
+fn run_pipeline(basis: &[u8], source: &[u8], block_len: u32) -> (DeltaScript<'static>, Vec<u8>) {
     let index = build_index(basis, block_len);
     let script = generate_delta(Cursor::new(source.to_vec()), &index).expect("delta generated");
     let wire = script_to_wire_bytes(&script, index.block_length());

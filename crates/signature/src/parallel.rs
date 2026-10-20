@@ -82,82 +82,11 @@ use crate::layout::SignatureLayout;
 /// ```
 #[cfg_attr(feature = "tracing", instrument(skip(reader), fields(algorithm = ?algorithm, block_count = layout.block_count()), name = "generate_signature_parallel"))]
 pub fn generate_file_signature_parallel<R: Read>(
-    mut reader: R,
+    reader: R,
     layout: SignatureLayout,
     algorithm: SignatureAlgorithm,
 ) -> Result<FileSignature, SignatureError> {
-    let strong_len = usize::from(layout.strong_sum_length().get());
-    if strong_len > algorithm.digest_len() {
-        return Err(SignatureError::DigestLengthMismatch {
-            algorithm,
-            requested: NonZeroUsize::new(strong_len)
-                .expect("strong digest length requested by layout must be non-zero"),
-        });
-    }
-
-    let block_len = layout.block_length().get() as usize;
-    let expected_blocks = layout.block_count();
-    let expected_blocks_usize = usize::try_from(expected_blocks)
-        .map_err(|_| SignatureError::TooManyBlocks(expected_blocks))?;
-
-    if expected_blocks_usize == 0 {
-        return Ok(FileSignature::new(layout, Vec::new(), 0));
-    }
-
-    let mut block_data: Vec<Vec<u8>> = Vec::with_capacity(expected_blocks_usize);
-    let mut total_bytes: u64 = 0;
-
-    for index in 0..expected_blocks_usize {
-        let is_last = index + 1 == expected_blocks_usize;
-        let target_len = if is_last && layout.remainder() != 0 {
-            layout.remainder() as usize
-        } else {
-            block_len
-        };
-
-        let mut buffer = vec![0u8; target_len];
-        reader.read_exact(&mut buffer)?;
-        total_bytes = total_bytes.saturating_add(target_len as u64);
-        block_data.push(buffer);
-    }
-
-    let mut extra = [0u8; 1];
-    if reader.read(&mut extra)? != 0 {
-        return Err(SignatureError::TrailingData { bytes: 1 });
-    }
-
-    // Rayon distributes chunks of blocks across threads. Within each chunk, the SIMD
-    // batch API processes multiple blocks through multi-lane hashing (e.g., 4-16 lanes
-    // for MD4/MD5 on AVX2/AVX-512). This combines thread-level parallelism with
-    // data-level parallelism for maximum throughput.
-    const BATCH_SIZE: usize = 16;
-
-    // Ordering: block indices must match sequential file offsets for delta reconstruction.
-    // Preserved by par_chunks() + enumerate() assigning base_index from chunk position.
-    // Violation produces wrong block indices, causing corrupted file reconstruction.
-    let blocks: Vec<SignatureBlock> = block_data
-        .par_chunks(BATCH_SIZE)
-        .enumerate()
-        .flat_map_iter(|(chunk_idx, chunk)| {
-            let base_index = chunk_idx * BATCH_SIZE;
-            let rolling_digests: Vec<RollingDigest> = chunk
-                .iter()
-                .map(|data| RollingDigest::from_bytes(data))
-                .collect();
-            let batch_slices: Vec<&[u8]> = chunk.iter().map(|v| v.as_slice()).collect();
-            let strong_digests = algorithm.compute_truncated_batch(&batch_slices, strong_len);
-
-            rolling_digests
-                .into_iter()
-                .zip(strong_digests)
-                .enumerate()
-                .map(move |(i, (rolling, strong))| {
-                    SignatureBlock::new((base_index + i) as u64, rolling, strong)
-                })
-        })
-        .collect();
-
-    Ok(FileSignature::new(layout, blocks, total_bytes))
+    generate_file_signature_windowed(reader, layout, algorithm)
 }
 
 /// Minimum file size (in bytes) where parallel signature generation is beneficial.
@@ -287,39 +216,40 @@ pub fn generate_file_signature_windowed<R: Read>(
 
     let mut blocks: Vec<SignatureBlock> = Vec::with_capacity(expected_blocks_usize);
     let mut total_bytes: u64 = 0;
-    let mut window_data: Vec<Vec<u8>> = Vec::with_capacity(window_blocks);
+    let mut window_buf: Vec<u8> = vec![0u8; window_blocks * block_len.max(1)];
+    let batch_byte_stride = BATCH_SIZE * block_len.max(1);
     let mut base_index = 0usize;
 
     while base_index < expected_blocks_usize {
         let window_end = (base_index + window_blocks).min(expected_blocks_usize);
-        window_data.clear();
-        for block_index in base_index..window_end {
-            let is_last = block_index + 1 == expected_blocks_usize;
-            let target_len = if is_last && layout.remainder() != 0 {
-                layout.remainder() as usize
-            } else {
-                block_len
-            };
-            let mut buf = vec![0u8; target_len];
-            reader.read_exact(&mut buf)?;
-            total_bytes = total_bytes.saturating_add(target_len as u64);
-            window_data.push(buf);
-        }
+        let window_count = window_end - base_index;
+        let last_block_len = if window_end == expected_blocks_usize && layout.remainder() != 0 {
+            layout.remainder() as usize
+        } else {
+            block_len
+        };
+        let window_byte_len = (window_count - 1) * block_len + last_block_len;
+        reader.read_exact(&mut window_buf[..window_byte_len])?;
+        total_bytes = total_bytes.saturating_add(window_byte_len as u64);
 
-        // Compute the window's blocks across cores; chunk position assigns the
-        // global block index, so collect() yields them in order (mirrors
-        // generate_file_signature_parallel).
-        let window_out: Vec<SignatureBlock> = window_data
-            .par_chunks(BATCH_SIZE)
+        let window_slice = &window_buf[..window_byte_len];
+        let window_out: Vec<SignatureBlock> = window_slice
+            .par_chunks(batch_byte_stride)
             .enumerate()
-            .flat_map_iter(|(chunk_idx, chunk)| {
+            .flat_map_iter(|(chunk_idx, batch_bytes)| {
                 let chunk_base = base_index + chunk_idx * BATCH_SIZE;
-                let rolling: Vec<RollingDigest> =
-                    chunk.iter().map(|d| RollingDigest::from_bytes(d)).collect();
-                let slices: Vec<&[u8]> = chunk.iter().map(|v| v.as_slice()).collect();
-                let strong = algorithm.compute_truncated_batch(&slices, strong_len);
+                let mut rolling = [RollingDigest::new(0, 0, 0); BATCH_SIZE];
+                let mut slices: [&[u8]; BATCH_SIZE] = [&[]; BATCH_SIZE];
+                let mut count = 0usize;
+                for (i, block_slice) in batch_bytes.chunks(block_len.max(1)).enumerate() {
+                    rolling[i] = RollingDigest::from_bytes(block_slice);
+                    slices[i] = block_slice;
+                    count += 1;
+                }
+                let strong = algorithm.compute_truncated_batch(&slices[..count], strong_len);
                 rolling
                     .into_iter()
+                    .take(count)
                     .zip(strong)
                     .enumerate()
                     .map(move |(i, (r, s))| SignatureBlock::new((chunk_base + i) as u64, r, s))
