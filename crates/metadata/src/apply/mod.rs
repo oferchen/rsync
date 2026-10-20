@@ -13,6 +13,8 @@ mod timestamps;
 pub use ownership::group_is_settable;
 #[cfg(unix)]
 pub use permissions::init_orig_umask;
+#[cfg(any(target_os = "macos", windows))]
+pub use timestamps::set_crtime;
 
 #[cfg(test)]
 mod tests;

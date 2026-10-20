@@ -30,6 +30,7 @@
 //! every public item is re-exported here so external callers can keep
 //! using `at_syscalls::fstatat_nofollow()` etc. unchanged.
 
+mod clone;
 mod create;
 mod lstat;
 mod metadata;
@@ -43,10 +44,11 @@ mod unlink;
 #[cfg(test)]
 mod tests;
 
+pub use clone::{CloneAttempt, CloneFreshTimes, confined_clone_file};
 pub use create::{
-    CloneAttempt, confined_clone_file, confined_create_new, confined_link_anonymous, linkat,
-    linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat,
-    mknodat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
+    confined_create_new, confined_link_anonymous, linkat, linkat_via_sandbox_or_fallback, mkdirat,
+    mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat, mknodat_via_sandbox_or_fallback, symlinkat,
+    symlinkat_via_sandbox_or_fallback,
 };
 pub(crate) use create::{fake_super_placeholder_at, mknodat_with_retry};
 pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
