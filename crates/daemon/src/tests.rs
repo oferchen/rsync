@@ -444,6 +444,7 @@ include!("tests/chunks/daemon_xattr_push.rs");
 include!("tests/chunks/daemon_fake_super_module_push.rs");
 include!("tests/chunks/daemon_fake_super_symlink_round_trip.rs");
 include!("tests/chunks/daemon_fake_super_corrupt_stat.rs");
+include!("tests/chunks/daemon_fake_super_caps_xx.rs");
 // Daemon ACL push end-to-end test
 include!("tests/chunks/daemon_acl_push.rs");
 // Daemon INC_RECURSE push end-to-end test
