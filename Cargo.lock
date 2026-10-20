@@ -3948,11 +3948,11 @@ name = "test-support"
 version = "0.6.4"
 dependencies = [
  "base64",
+ "fast_io",
  "filetime",
  "libc",
  "platform",
  "rcgen",
- "rustix",
  "tempfile",
 ]
 

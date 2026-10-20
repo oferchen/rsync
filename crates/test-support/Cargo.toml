@@ -15,6 +15,9 @@ tempfile = { workspace = true }
 # `sigterm-flag-stub` installs the production daemon signal handlers so the
 # reap contract is measured against the real SIGTERM disposition.
 platform = { path = "../platform" }
+# `capture-rsh` clears inherited `O_NONBLOCK` on stdio through the safe
+# `fast_io::force_blocking_stdio` rather than its own fcntl FFI.
+fast_io = { path = "../fast_io" }
 
 # Self-signed certificate generation for the QUIC e2e helpers. Optional and
 # pulled only by the `quic` feature so the common (non-QUIC) test build never
@@ -40,7 +43,6 @@ filetime = { workspace = true }
 # tests asserting mode bits do not silently inherit the caller's umask.
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
-rustix = { workspace = true, features = ["fs"] }
 
 # Rust port of upstream `support/lsh.sh`. Built as a workspace binary so tests
 # can resolve its path via `CARGO_BIN_EXE_lsh-stub` and drive oc-rsync's
