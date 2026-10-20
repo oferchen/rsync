@@ -119,6 +119,10 @@ fn test_clonefile_crtimes_normalized_when_crtimes_off() {
 
 /// Without `-A` the clone keeps only what an `open()`ed file inherits from its
 /// directory; with `-A` finalize applies the source ACL.
+///
+/// The no-`-A` assertion expects an empty ACL, which holds only while the
+/// temp dir has no inheritable entries; that fixture assumption is asserted
+/// up front so a host with an inheriting temp dir fails loudly.
 #[cfg(feature = "acl")]
 #[test]
 fn test_clonefile_acls_follow_the_acl_option() {
@@ -127,6 +131,11 @@ fn test_clonefile_acls_follow_the_acl_option() {
         eprintln!("APFS clonefile not supported on this volume, skipping test");
         return;
     }
+    let dir_acl = exacl::getfacl(temp.path(), None).expect("getfacl temp dir");
+    assert!(
+        dir_acl.is_empty(),
+        "fixture assumes a temp dir with no inheritable ACL entries: {dir_acl:?}"
+    );
 
     let source = temp.path().join("src_acl.txt");
     let dest_no_acl = temp.path().join("dst_no_acl.txt");

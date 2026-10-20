@@ -684,7 +684,7 @@ fn crtime_needs_update(
 /// Skips the write when the destination already carries `secs` or is the HFS+
 /// volume root. Seconds only, as upstream stores `F_CRTIME` as a `time_t`.
 ///
-/// upstream: `rsync.c:751-765` `set_file_attrs()` and `syscall.c:2465-2487`
+/// upstream: `rsync.c:751-765` `set_file_attrs()` and `syscall.c:2465-2488`
 /// `do_setattrlist_crtime()`
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
