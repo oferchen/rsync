@@ -33,8 +33,9 @@ mod tests;
 /// Default window size for the bounded reorder buffer.
 pub const DEFAULT_WINDOW_SIZE: u64 = 64;
 
-/// Maximum ring buffer pre-allocation cap to guard against pathological window sizes.
-pub(crate) const MAX_RING_CAPACITY: usize = 1 << 20;
+/// Ring slots allocated on the first out-of-order arrival; the ring doubles
+/// from here as deeper gaps are observed, never past the window.
+const MIN_RING_CAPACITY: usize = 16;
 
 /// Snapshot of reorder buffer stall and depth metrics.
 ///
@@ -90,7 +91,7 @@ pub(crate) type ClockFn = Box<dyn Fn() -> Instant + Send>;
 /// receive a backpressure signal to throttle submission.
 ///
 /// Backed by a flat circular ring buffer (`Vec<Option<T>>`) allocated lazily
-/// on the first out-of-order arrival. In-order arrivals bypass the ring
+/// on the first out-of-order arrival and grown only as far as the deepest gap. In-order arrivals bypass the ring
 /// entirely and return [`DrainedItems::Single`] on the stack with zero heap
 /// allocations.
 ///

@@ -1,6 +1,6 @@
 //! Insertion path: window admission, bypass shortcut, and stall accounting.
 
-use super::{BackpressureError, BoundedReorderBuffer, DrainedItems, MAX_RING_CAPACITY};
+use super::{BackpressureError, BoundedReorderBuffer, DrainedItems, MIN_RING_CAPACITY};
 
 impl<T> BoundedReorderBuffer<T> {
     /// Inserts an item and returns any consecutive items ready for delivery.
@@ -72,18 +72,15 @@ impl<T> BoundedReorderBuffer<T> {
             self.stall_count += 1;
         }
 
-        if self.slots.is_empty() {
-            let cap = (self.window_size as usize).clamp(1, MAX_RING_CAPACITY);
-            self.slots.resize_with(cap, || None);
-        }
-
+        // The window check above bounds the offset by `window_size`, so it fits
+        // whenever the ring could ever hold it.
+        let offset = usize::try_from(seq - self.next_expected).map_err(|_| BackpressureError {
+            sequence: seq,
+            window_start: self.next_expected,
+            window_end,
+        })?;
+        self.reserve_offset(offset);
         let cap = self.slots.len();
-        let offset = (seq - self.next_expected) as usize;
-        debug_assert!(
-            offset < cap,
-            "offset {offset} exceeds ring capacity {cap} (window_size={})",
-            self.window_size
-        );
         let idx = (self.head + offset) % cap;
         if self.slots[idx].is_none() {
             self.buffered += 1;
@@ -96,5 +93,27 @@ impl<T> BoundedReorderBuffer<T> {
         }
 
         Ok(DrainedItems::Empty)
+    }
+
+    /// Grows the ring so `offset` slots past `head` are addressable.
+    ///
+    /// Capacity doubles from [`MIN_RING_CAPACITY`], so memory follows the
+    /// deepest reorder gap actually seen rather than the configured window.
+    /// Occupied slots are re-laid out in sequence order starting at index 0.
+    fn reserve_offset(&mut self, offset: usize) {
+        let cap = self.slots.len();
+        if offset < cap {
+            return;
+        }
+        let new_cap = offset
+            .checked_add(1)
+            .and_then(usize::checked_next_power_of_two)
+            .unwrap_or(offset + 1)
+            .max(MIN_RING_CAPACITY);
+        let mut slots = Vec::with_capacity(new_cap);
+        slots.extend((0..cap).map(|i| self.slots[(self.head + i) % cap].take()));
+        slots.resize_with(new_cap, || None);
+        self.slots = slots;
+        self.head = 0;
     }
 }

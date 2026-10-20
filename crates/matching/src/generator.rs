@@ -130,7 +130,9 @@ fn push_split_literal_slice<'a>(out: &mut Vec<DeltaToken<'a>>, slice: &'a [u8], 
     }
     let mut start = 0usize;
     while slice.len() - start > cadence {
-        out.push(DeltaToken::Literal(Cow::Borrowed(&slice[start..start + cadence])));
+        out.push(DeltaToken::Literal(Cow::Borrowed(
+            &slice[start..start + cadence],
+        )));
         start += cadence;
     }
     out.push(DeltaToken::Literal(Cow::Borrowed(&slice[start..])));
@@ -1485,7 +1487,9 @@ mod tests {
 
         let script = generate_delta(&input[..], &index).expect("script");
         assert!(matches!(script.tokens()[0], DeltaToken::Copy { .. }));
-        assert!(matches!(script.tokens()[1], DeltaToken::Literal(ref bytes) if bytes.as_ref() == b"extra"));
+        assert!(
+            matches!(script.tokens()[1], DeltaToken::Literal(ref bytes) if bytes.as_ref() == b"extra")
+        );
 
         let mut basis_cursor = Cursor::new(basis);
         let mut output = Vec::new();
@@ -1561,7 +1565,9 @@ mod tests {
 
         let script = generate_delta(&input[..], &index).expect("script");
         assert_eq!(script.tokens().len(), 1);
-        assert!(matches!(script.tokens()[0], DeltaToken::Literal(ref bytes) if bytes.as_ref() == [42]));
+        assert!(
+            matches!(script.tokens()[0], DeltaToken::Literal(ref bytes) if bytes.as_ref() == [42])
+        );
         assert_eq!(script.literal_bytes(), 1);
     }
 

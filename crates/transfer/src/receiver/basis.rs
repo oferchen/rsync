@@ -556,7 +556,8 @@ fn generate_basis_signature(
     );
 
     // A basis smaller than the map window needs no more buffer than its own size.
-    let capacity = usize::try_from(basis_size).map_or(MAX_MAP_SIZE, |n| n.clamp(8 * 1024, MAX_MAP_SIZE));
+    let capacity =
+        usize::try_from(basis_size).map_or(MAX_MAP_SIZE, |n| n.clamp(8 * 1024, MAX_MAP_SIZE));
     let reader = std::io::BufReader::with_capacity(capacity, basis_file);
     let signature = compute_basis_signature(
         reader,

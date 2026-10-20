@@ -839,27 +839,24 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
     })
 }
 
-/// A delta operation to be emitted over the wire.
-///
-/// Borrows literal slices directly from [`DeltaScript`] (and thus from `source_mmap` or
-/// mapped buffers) without copying or allocating byte vectors.
+/// One delta operation as the sender emits it, borrowing literal bytes from
+/// the [`DeltaScript`] instead of moving them into an owned wire op.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum WireOp<'a> {
     Literal(&'a [u8]),
     Copy { block_index: u32, length: u32 },
 }
 
-/// Converts a [`DeltaScript`] into a sequence of wire-level [`WireOp`] tokens.
+/// Converts a [`DeltaScript`] into the wire-level [`WireOp`] sequence.
 ///
-/// Expands coalesced `DeltaToken::Copy` operations that span multiple blocks
-/// into individual single-block wire tokens (as required by the rsync wire
-/// protocol), while passing literal operations through directly as borrowed slices.
+/// Multi-block Copy tokens emitted by the seq-match optimization (one
+/// `DeltaToken::Copy` covering `N` adjacent basis blocks) are expanded into `N`
+/// consecutive single-block copies of `block_length`. This keeps the wire byte
+/// stream byte-identical to the no-coalesce baseline: each basis block is still
+/// emitted as one `write_int(-(block_index + 1))` token.
 ///
-/// Literal tokens can be up to 32KB (`CHUNK_SIZE`); the delta generator
-/// already ensures literal tokens do not exceed this limit.
-///
-/// When `block_length == 0` (e.g. for whole-file transfers or degenerate
-/// empty-basis cases), Copy tokens are passed through without splitting.
+/// Tokens whose `len` is not a multiple of `block_length` (the short last block
+/// of a basis) and every Copy when `block_length == 0` pass through unchanged.
 ///
 /// # Upstream Reference
 ///
@@ -986,6 +983,79 @@ pub(super) struct InlineChecksumResult {
     pub read_error: Option<io::Error>,
 }
 
+/// Supplies the source bytes behind each matched block for the inline checksum
+/// and the compressor dictionary.
+///
+/// Matched blocks borrow from the source mapping when the parallel scan already
+/// mapped the file; otherwise they are re-read from a lazily opened file whose
+/// position is reused while blocks stay sequential, so a run of adjacent
+/// matches costs no `lseek`.
+struct CopySource<'m> {
+    mmap: Option<&'m [u8]>,
+    file: Option<io::BufReader<std::fs::File>>,
+    /// File position after the last fully read block, when known.
+    position: Option<u64>,
+    buf: Vec<u8>,
+    /// upstream: fileio.c:403-410 - a failed source read zeroes the window and
+    /// token emission continues; the file checksum is poisoned by the caller.
+    read_error: Option<io::Error>,
+}
+
+impl<'m> CopySource<'m> {
+    fn open(
+        has_copies: bool,
+        mmap: Option<&'m [u8]>,
+        path: &Path,
+        source_open: &super::open_source::SourceOpen,
+    ) -> io::Result<Self> {
+        let file = if has_copies && mmap.is_none() {
+            Some(io::BufReader::new(source_open.open(path)?))
+        } else {
+            None
+        };
+        Ok(Self {
+            mmap,
+            file,
+            position: None,
+            buf: Vec::new(),
+            read_error: None,
+        })
+    }
+
+    /// Returns the `len` source bytes at `offset`, zero-filled on a read error.
+    fn block(&mut self, offset: u64, len: usize) -> io::Result<&[u8]> {
+        if let Some(mmap) = self.mmap {
+            let range = usize::try_from(offset)
+                .ok()
+                .and_then(|start| Some(start..start.checked_add(len)?))
+                .filter(|range| range.end <= mmap.len());
+            if let Some(range) = range {
+                return Ok(&mmap[range]);
+            }
+            self.read_error.get_or_insert_with(|| {
+                io::Error::new(io::ErrorKind::UnexpectedEof, "source mmap out of bounds")
+            });
+        }
+        self.buf.clear();
+        self.buf.resize(len, 0);
+        if let Some(file) = self.file.as_mut() {
+            if self.position != Some(offset) {
+                // upstream: fileio.c:330-336 - an lseek failure is still fatal
+                // (exit_cleanup(RERR_FILEIO)); only the read is tolerated.
+                file.seek(SeekFrom::Start(offset))?;
+            }
+            match read_window(file, &mut self.buf) {
+                None => self.position = Some(offset + len as u64),
+                Some(e) => {
+                    self.position = None;
+                    self.read_error.get_or_insert(e);
+                }
+            }
+        }
+        Ok(&self.buf)
+    }
+}
+
 /// Writes delta tokens to the wire and computes the file checksum in a single pass.
 ///
 /// Merges the work of `write_delta_with_compression` and `compute_file_checksum`
@@ -1020,29 +1090,16 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
     let mut verifier =
         ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
-    // Lazily open source file only when Copy tokens are present and no mmap is provided.
-    // When mmap is available, slices are referenced directly with zero file re-opens.
     let has_copies = ops.iter().any(|op| matches!(op, WireOp::Copy { .. }));
-    let mut source_file = if has_copies && source_mmap.is_none() {
-        Some(io::BufReader::new(source_open.open(source_path)?))
-    } else {
-        None
-    };
+    let mut copy_source = CopySource::open(has_copies, source_mmap, source_path, source_open)?;
     let mut source_offset: u64 = 0;
-    let mut last_seek_offset: Option<u64> = None;
-    let mut read_buf = Vec::new();
     // upstream: match.c matched()/send_token() accumulate stats.matched_data
     // and stats.literal_data as each token is emitted on the sender.
     let mut matched_data: u64 = 0;
     let mut literal_data: u64 = 0;
-    // upstream: fileio.c:403-410 - a failed source read zeroes the window and
-    // token emission continues; the file checksum is poisoned by the caller.
-    let mut read_error: Option<io::Error> = None;
-
     match encoder {
         Some(encoder) => {
             let needs_dict_sync = is_zlib && has_copies;
-
             for op in ops {
                 match op {
                     WireOp::Literal(bytes) => {
@@ -1056,63 +1113,27 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
                         length,
                     } => {
                         encoder.send_block_match(writer, *block_index)?;
-
-                        // Read block data once, feed to both checksum and dict sync.
-                        let len = *length as usize;
-                        let offset = source_offset as usize;
-                        if let Some(mmap) = source_mmap {
-                            if offset.checked_add(len).is_some_and(|end| end <= mmap.len()) {
-                                let slice = &mmap[offset..offset + len];
-                                verifier.update(slice);
-                                if needs_dict_sync {
-                                    encoder.see_token(slice)?;
-                                }
-                            } else {
-                                read_error.get_or_insert_with(|| {
-                                    io::Error::new(
-                                        io::ErrorKind::UnexpectedEof,
-                                        "source mmap out of bounds",
-                                    )
-                                });
-                                read_buf.clear();
-                                read_buf.resize(len, 0);
-                                verifier.update(&read_buf);
-                                if needs_dict_sync {
-                                    encoder.see_token(&read_buf)?;
-                                }
-                            }
-                        } else {
-                            read_buf.clear();
-                            read_buf.resize(len, 0);
-                            if let Some(ref mut file) = source_file {
-                                if last_seek_offset != Some(source_offset) {
-                                    file.seek(SeekFrom::Start(source_offset))?;
-                                }
-                                if let Some(e) = read_window(file, &mut read_buf) {
-                                    read_error.get_or_insert(e);
-                                }
-                                last_seek_offset = Some(source_offset + u64::from(*length));
-                            }
-                            verifier.update(&read_buf);
-                            if needs_dict_sync {
-                                encoder.see_token(&read_buf)?;
-                            }
+                        let block = copy_source.block(source_offset, *length as usize)?;
+                        verifier.update(block);
+                        if needs_dict_sync {
+                            encoder.see_token(block)?;
                         }
                         source_offset += u64::from(*length);
                         matched_data += u64::from(*length);
                     }
                 }
             }
-
             encoder.finish(writer)?;
         }
         None => {
-            // Uncompressed path: write tokens and compute checksum in one pass.
             for op in ops {
                 match op {
                     WireOp::Literal(bytes) => {
                         verifier.update(bytes);
                         write_token_literal(writer, bytes)?;
+                        // upstream: match.c:matched() interleaves literal and
+                        // block-match tokens against a single advancing file
+                        // cursor, so a literal moves the Copy read offset too.
                         source_offset += bytes.len() as u64;
                         literal_data += bytes.len() as u64;
                     }
@@ -1121,39 +1142,7 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
                         length,
                     } => {
                         write_token_block_match(writer, *block_index)?;
-
-                        // Read block data for checksum computation.
-                        let len = *length as usize;
-                        let offset = source_offset as usize;
-                        if let Some(mmap) = source_mmap {
-                            if offset.checked_add(len).is_some_and(|end| end <= mmap.len()) {
-                                let slice = &mmap[offset..offset + len];
-                                verifier.update(slice);
-                            } else {
-                                read_error.get_or_insert_with(|| {
-                                    io::Error::new(
-                                        io::ErrorKind::UnexpectedEof,
-                                        "source mmap out of bounds",
-                                    )
-                                });
-                                read_buf.clear();
-                                read_buf.resize(len, 0);
-                                verifier.update(&read_buf);
-                            }
-                        } else {
-                            read_buf.clear();
-                            read_buf.resize(len, 0);
-                            if let Some(ref mut file) = source_file {
-                                if last_seek_offset != Some(source_offset) {
-                                    file.seek(SeekFrom::Start(source_offset))?;
-                                }
-                                if let Some(e) = read_window(file, &mut read_buf) {
-                                    read_error.get_or_insert(e);
-                                }
-                                last_seek_offset = Some(source_offset + u64::from(*length));
-                            }
-                            verifier.update(&read_buf);
-                        }
+                        verifier.update(copy_source.block(source_offset, *length as usize)?);
                         source_offset += u64::from(*length);
                         matched_data += u64::from(*length);
                     }
@@ -1162,7 +1151,7 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
             write_token_end(writer)?;
         }
     }
-
+    let read_error = copy_source.read_error;
     let mut checksum_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     let checksum_len = verifier.finalize_into(&mut checksum_buf);
 
