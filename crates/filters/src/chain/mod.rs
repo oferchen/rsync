@@ -115,6 +115,13 @@ pub struct FilterChain {
     /// file is treated as non-existent: its rules are never read. `None` on
     /// non-daemon transfers, where no such list exists.
     daemon_gate: Option<FilterSet>,
+    /// Absolute module root the gate's merge-file paths are made relative to.
+    ///
+    /// upstream: exclude.c:1640-1647 - the checked name is the merge file's
+    /// path with `module_dir` stripped, so an anchored daemon rule such as
+    /// `/sub/secret` matches whichever module subdirectory the transfer is
+    /// rooted at. When `None`, paths are taken relative to the transfer root.
+    daemon_gate_root: Option<PathBuf>,
 }
 
 impl FilterChain {
@@ -133,6 +140,7 @@ impl FilterChain {
             delete_excluded: false,
             transfer_root: None,
             daemon_gate: None,
+            daemon_gate_root: None,
         }
     }
 
@@ -213,19 +221,34 @@ impl FilterChain {
         self.daemon_gate = Some(gate);
     }
 
+    /// Records the daemon module's absolute root so the gate installed by
+    /// [`set_daemon_filter_gate`](Self::set_daemon_filter_gate) judges each
+    /// merge file by its module-relative path, as upstream does.
+    ///
+    /// upstream: exclude.c:1640-1647 - `dir = line + module_dirlen` strips the
+    /// module directory before `check_filter(&daemon_filter_list, ...)`.
+    pub fn set_daemon_gate_root(&mut self, root: impl Into<PathBuf>) {
+        self.daemon_gate_root = Some(root.into());
+    }
+
     /// Returns `true` when the daemon gate hides the merge file `filename`
     /// inside the directory whose transfer-relative prefix is `rel_dir`.
     ///
     /// upstream: exclude.c:1640-1649 - the checked name is the merge file's
     /// path relative to the module root (`dirbuf` + pattern with `module_dir`
     /// stripped), matched with `name_flags == 0` (never as a directory).
-    fn daemon_gate_hides(&self, rel_dir: Option<&str>, filename: &str) -> bool {
+    fn daemon_gate_hides(&self, directory: &Path, rel_dir: Option<&str>, filename: &str) -> bool {
         let Some(gate) = &self.daemon_gate else {
             return false;
         };
-        let joined = match rel_dir {
-            Some(dir) => format!("{dir}/{filename}"),
-            None => filename.to_owned(),
+        let module_rel_dir = self
+            .daemon_gate_root
+            .as_ref()
+            .and_then(|root| directory.strip_prefix(root).ok())
+            .map(path_to_forward_slash);
+        let joined = match module_rel_dir.as_deref().or(rel_dir) {
+            Some(dir) if !dir.is_empty() => format!("{dir}/{filename}"),
+            _ => filename.to_owned(),
         };
         // upstream: exclude.c:1644-1647 strips module_dir off an absolute
         // spelling so the anchored daemon rule still matches; the relative
@@ -437,7 +460,7 @@ impl FilterChain {
             // daemon's own filter list is treated as non-existent, so a
             // daemon-excluded (or `:e` self-excluded) merge file contributes
             // no rules at all.
-            if self.daemon_gate_hides(rel_dir_prefix.as_deref(), config.filename()) {
+            if self.daemon_gate_hides(directory, rel_dir_prefix.as_deref(), config.filename()) {
                 continue;
             }
 
@@ -687,6 +710,7 @@ impl FilterChain {
         // parse_filter_file() open, so a dir-merge declared inside another
         // merge file is refused the same way a top-level one is.
         if self.daemon_gate_hides(
+            directory,
             self.merge_rel_dir(directory).as_deref(),
             &descriptor.filename,
         ) {

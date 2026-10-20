@@ -344,6 +344,9 @@ impl GeneratorContext {
                 let (daemon_set, _) =
                     self.parse_received_filters(&self.config.daemon_filter_rules)?;
                 self.filter_chain.set_daemon_filter_gate(daemon_set);
+                if let Some(root) = self.config.connection.daemon_module_root.as_deref() {
+                    self.filter_chain.set_daemon_gate_root(root);
+                }
             }
         }
 
