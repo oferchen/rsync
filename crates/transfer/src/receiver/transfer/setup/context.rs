@@ -1049,6 +1049,29 @@ impl ReceiverContext {
         self.compile_receiver_filter_chains(&rules)
     }
 
+    /// Installs the daemon module's own rules as the merge-file open gate.
+    ///
+    /// No-op outside a daemon server or when the module carries no rules.
+    /// The module root is recorded so each merge file is judged by its
+    /// module-relative path, whichever module subdirectory the client pushed
+    /// into.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `exclude.c:1638-1659` - `check_filter(&daemon_filter_list, ...)` on
+    ///   the merge file's path with `module_dirlen` stripped, before the open.
+    fn install_daemon_merge_gate(&self, chain: &mut FilterChain) -> io::Result<()> {
+        let daemon_rules = &self.config.daemon_filter_rules;
+        if daemon_rules.is_empty() {
+            return Ok(());
+        }
+        let (gate, _merge_configs) = parse_wire_filters_for_receiver(daemon_rules)?;
+        chain.set_daemon_filter_gate(gate);
+        if let Some(root) = self.config.connection.daemon_module_root.as_deref() {
+            chain.set_daemon_gate_root(root);
+        }
+        Ok(())
+    }
     /// Compiles the receiver's own filter rules into both the transfer-facing
     /// `filter_chain` (consulted by the `--prune-empty-dirs` pass) and the
     /// dedicated `deletion_filter_chain` (consulted by the `--delete` pass, with
@@ -1090,6 +1113,12 @@ impl ReceiverContext {
         for config in merge_configs {
             chain.add_merge_config(config);
         }
+        // upstream: exclude.c:1638-1659 parse_filter_file() - every merge-file
+        // open, including a dir-merge file the client named, is checked
+        // against `daemon_filter_list` on the receiving side too; a hidden file
+        // is treated as non-existent. The gate is the module's rules ALONE, and
+        // `deletion_filter_chain` below inherits it through the clone.
+        self.install_daemon_merge_gate(&mut chain)?;
         self.filter_chain = chain;
         self.deletion_filter_chain = self
             .filter_chain

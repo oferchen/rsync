@@ -1260,3 +1260,41 @@ fn daemon_gate_matches_the_transfer_relative_merge_path() {
     );
     chain.leave_directory(other_guard);
 }
+
+/// With the module root recorded, the gate judges a merge file by its
+/// MODULE-relative path even when the transfer is rooted in a module
+/// subdirectory, so an anchored daemon rule written against the module still
+/// matches.
+///
+/// upstream: exclude.c:1640-1647 - `dir = line + module_dirlen` strips the
+/// module directory, not the transfer root, before `check_filter()`.
+#[test]
+fn daemon_gate_root_matches_the_module_relative_merge_path() {
+    let module = test_support::create_tempdir();
+    let target = module.path().join("sub");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join(".rules"), "- bait\n").unwrap();
+    let gate = || FilterSet::from_rules([FilterRule::exclude("/sub/.rules")]).unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.set_transfer_root(&target);
+    chain.add_merge_config(DirMergeConfig::new(".rules"));
+    chain.set_daemon_filter_gate(gate());
+    chain.set_daemon_gate_root(module.path());
+    let guard = chain.enter_directory(&target).unwrap();
+    assert!(
+        chain.allows(Path::new("bait"), false),
+        "the module-anchored rule must gate sub/.rules when the transfer is rooted at sub"
+    );
+    chain.leave_directory(guard);
+
+    // NON-VACUITY: without the module root the same chain judges `.rules`
+    // transfer-relative, the anchored rule misses, and the file is read.
+    let mut ungated = FilterChain::empty();
+    ungated.set_transfer_root(&target);
+    ungated.add_merge_config(DirMergeConfig::new(".rules"));
+    ungated.set_daemon_filter_gate(gate());
+    let guard = ungated.enter_directory(&target).unwrap();
+    assert!(!ungated.allows(Path::new("bait"), false));
+    ungated.leave_directory(guard);
+}
