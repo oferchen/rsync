@@ -240,6 +240,5 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         _ => PendingTransfer::new_full_transfer(ndx, file_path, target_size),
     };
 
-    let is_new = (base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW) != 0;
-    Ok(pending.with_is_new(is_new))
+    Ok(pending)
 }

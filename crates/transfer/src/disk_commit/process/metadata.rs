@@ -61,9 +61,7 @@ pub(super) fn apply_file_metadata(
         // leaves `exists = fd1 != -1` false and dest_mode() takes the
         // new-destination arm (its lstat mode - 0o755 for a symlink on some
         // platforms - must never become the file's permissions).
-        let pre_transfer_meta = if begin.is_new {
-            None
-        } else if target_path != begin.file_path {
+        let pre_transfer_meta = if target_path != begin.file_path {
             std::fs::symlink_metadata(&begin.file_path).ok()
         } else {
             inplace_pre_transfer.cloned()
@@ -255,7 +253,6 @@ mod tests {
             xattr_list: None,
             xattr_basis: None,
             file_entry: entry,
-            is_new: false,
         }
     }
 

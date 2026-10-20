@@ -8,8 +8,13 @@ fn clap_parse_error_is_reported_via_message() {
         .try_get_matches_from(vec!["rsync", "--version=extra"])
         .unwrap_err();
 
-    let (status, stdout, stderr) =
-        run_with_args([OsString::from(RSYNC), OsString::from("--version=extra")]);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let status = run(
+        [OsString::from(RSYNC), OsString::from("--version=extra")],
+        &mut stdout,
+        &mut stderr,
+    );
 
     assert_eq!(status, 1);
     assert!(stdout.is_empty());

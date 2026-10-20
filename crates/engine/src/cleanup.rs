@@ -9,13 +9,12 @@
 //!
 //! All methods are thread-safe. The internal state is protected by a mutex.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use dashmap::DashSet;
-
 /// Global cleanup manager instance.
-static CLEANUP_MANAGER: OnceLock<CleanupManagerState> = OnceLock::new();
+static CLEANUP_MANAGER: OnceLock<Mutex<CleanupManagerState>> = OnceLock::new();
 
 /// Singleton instance returned by [`CleanupManager::global`].
 static CLEANUP_MANAGER_INSTANCE: CleanupManager = CleanupManager;
@@ -47,7 +46,7 @@ impl CleanupManager {
     /// Returns a reference to the global cleanup manager.
     #[must_use]
     pub fn global() -> &'static Self {
-        let _ = CLEANUP_MANAGER.get_or_init(CleanupManagerState::new);
+        let _ = CLEANUP_MANAGER.get_or_init(|| Mutex::new(CleanupManagerState::new()));
         &CLEANUP_MANAGER_INSTANCE
     }
 
@@ -57,7 +56,9 @@ impl CleanupManager {
     /// [`cleanup_temp_files`](Self::cleanup_temp_files) is called,
     /// unless it is unregistered first.
     pub fn register_temp_file(&self, path: PathBuf) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
             state.temp_files.insert(path);
         }
     }
@@ -67,7 +68,9 @@ impl CleanupManager {
     /// Call this after a successful commit so the file is not deleted
     /// during shutdown cleanup.
     pub fn unregister_temp_file(&self, path: &Path) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
             state.temp_files.remove(path);
         }
     }
@@ -77,9 +80,9 @@ impl CleanupManager {
     /// Callbacks execute in reverse registration order (LIFO).
     pub fn register_cleanup(&self, callback: Box<dyn FnOnce() + Send>) {
         if let Some(state) = CLEANUP_MANAGER.get()
-            && let Ok(mut callbacks) = state.cleanup_callbacks.lock()
+            && let Ok(mut state) = state.lock()
         {
-            callbacks.push(callback);
+            state.cleanup_callbacks.push(callback);
         }
     }
 
@@ -89,14 +92,18 @@ impl CleanupManager {
     /// temporary files. Errors are silently ignored to avoid cascading
     /// failures during shutdown.
     pub fn cleanup(&self) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
             state.cleanup();
         }
     }
 
     /// Cleans up only the registered temporary files.
     pub fn cleanup_temp_files(&self) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
             state.cleanup_temp_files();
         }
     }
@@ -104,7 +111,9 @@ impl CleanupManager {
     /// Returns the number of registered temporary files.
     #[must_use]
     pub fn temp_file_count(&self) -> usize {
-        if let Some(state) = CLEANUP_MANAGER.get() {
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(state) = state.lock()
+        {
             return state.temp_files.len();
         }
         0
@@ -115,44 +124,41 @@ impl CleanupManager {
     /// Intended for test isolation only.
     #[doc(hidden)]
     pub fn reset_for_testing(&self) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
             state.temp_files.clear();
-            if let Ok(mut callbacks) = state.cleanup_callbacks.lock() {
-                callbacks.clear();
-            }
+            state.cleanup_callbacks.clear();
         }
     }
 }
 
 /// Internal state for the cleanup manager.
 struct CleanupManagerState {
-    temp_files: DashSet<PathBuf>,
-    cleanup_callbacks: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+    temp_files: HashSet<PathBuf>,
+    cleanup_callbacks: Vec<Box<dyn FnOnce() + Send>>,
 }
 
 impl CleanupManagerState {
     fn new() -> Self {
         Self {
-            temp_files: DashSet::new(),
-            cleanup_callbacks: Mutex::new(Vec::new()),
+            temp_files: HashSet::new(),
+            cleanup_callbacks: Vec::new(),
         }
     }
 
-    fn cleanup(&self) {
-        if let Ok(mut callbacks) = self.cleanup_callbacks.lock() {
-            while let Some(callback) = callbacks.pop() {
-                callback();
-            }
+    fn cleanup(&mut self) {
+        while let Some(callback) = self.cleanup_callbacks.pop() {
+            callback();
         }
         self.cleanup_temp_files();
     }
 
-    fn cleanup_temp_files(&self) {
-        let files: Vec<PathBuf> = self.temp_files.iter().map(|p| p.clone()).collect();
-        for path in files {
-            let _ = std::fs::remove_file(&path);
-            self.temp_files.remove(&path);
+    fn cleanup_temp_files(&mut self) {
+        for path in &self.temp_files {
+            let _ = std::fs::remove_file(path);
         }
+        self.temp_files.clear();
     }
 }
 

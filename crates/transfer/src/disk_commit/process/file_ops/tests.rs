@@ -26,7 +26,6 @@ fn inplace_begin(path: &Path) -> BeginMessage {
         xattr_list: None,
         xattr_basis: None,
         file_entry: None,
-        is_new: false,
     }
 }
 

@@ -739,15 +739,6 @@ impl ReceiverContext {
                                     {
                                         return crate::receiver::basis::BasisFileResult::EMPTY;
                                     }
-                                    let is_new =
-                                        base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0;
-                                    if is_new
-                                        && ref_dirs.is_empty()
-                                        && fuzzy_level == 0
-                                        && partial_dir.is_none()
-                                    {
-                                        return crate::receiver::basis::BasisFileResult::EMPTY;
-                                    }
                                     let basis_config = BasisFileConfig {
                                         ndx,
                                         file_path,
@@ -764,7 +755,6 @@ impl ReceiverContext {
                                         whole_file,
                                         compat_flags,
                                         block_size,
-                                        is_new,
                                         inplace_backup,
                                     };
                                     find_basis_file_with_config(&basis_config)
@@ -779,15 +769,6 @@ impl ReceiverContext {
                                     {
                                         return crate::receiver::basis::BasisFileResult::EMPTY;
                                     }
-                                    let is_new =
-                                        base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0;
-                                    if is_new
-                                        && ref_dirs.is_empty()
-                                        && fuzzy_level == 0
-                                        && partial_dir.is_none()
-                                    {
-                                        return crate::receiver::basis::BasisFileResult::EMPTY;
-                                    }
                                     let basis_config = BasisFileConfig {
                                         ndx,
                                         file_path,
@@ -804,7 +785,6 @@ impl ReceiverContext {
                                         whole_file,
                                         compat_flags,
                                         block_size,
-                                        is_new,
                                         inplace_backup,
                                     };
                                     find_basis_file_with_config(&basis_config)
@@ -1500,7 +1480,6 @@ impl ReceiverContext {
                 whole_file: self.config.flags.whole_file,
                 compat_flags: self.compat_flags,
                 block_size: self.config.block_size,
-                is_new: (base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW) != 0,
                 // upstream: `--only-write-batch` clears do_xfers, so the
                 // generator bails to notify_others before the delta-path
                 // backup branch (generator.c:2277 vs :2328) - no pre-image

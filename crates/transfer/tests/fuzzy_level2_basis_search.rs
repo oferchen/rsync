@@ -78,7 +78,6 @@ fn fuzzy_level2_finds_basis_in_reference_directory() {
         whole_file: false,
         compat_flags: None,
         block_size: None,
-        is_new: false,
         inplace_backup: None,
     };
 
@@ -142,7 +141,6 @@ fn fuzzy_level1_does_not_search_reference_directories() {
         whole_file: false,
         compat_flags: None,
         block_size: None,
-        is_new: false,
         inplace_backup: None,
     };
 
@@ -203,7 +201,6 @@ fn fuzzy_level2_selects_best_match_across_reference_dirs() {
         whole_file: false,
         compat_flags: None,
         block_size: None,
-        is_new: false,
         inplace_backup: None,
     };
 
@@ -263,7 +260,6 @@ fn fuzzy_level2_generates_valid_signature_from_basis() {
         whole_file: false,
         compat_flags: None,
         block_size: None,
-        is_new: false,
         inplace_backup: None,
     };
 
@@ -326,7 +322,6 @@ fn fuzzy_level0_skips_search() {
         whole_file: false,
         compat_flags: None,
         block_size: None,
-        is_new: false,
         inplace_backup: None,
     };
 
@@ -379,7 +374,6 @@ fn whole_file_bypasses_fuzzy_search() {
         whole_file: true,
         compat_flags: None,
         block_size: None,
-        is_new: false,
         inplace_backup: None,
     };
 
@@ -434,7 +428,6 @@ fn fuzzy_basis_selection_emits_debug_fuzzy_line() {
         whole_file: false,
         compat_flags: None,
         block_size: None,
-        is_new: false,
         inplace_backup: None,
     };
 

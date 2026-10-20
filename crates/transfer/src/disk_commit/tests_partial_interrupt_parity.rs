@@ -40,7 +40,6 @@ fn begin_msg(file_path: std::path::PathBuf, target_size: u64) -> FileMessage {
         xattr_list: None,
         xattr_basis: None,
         file_entry: None,
-        is_new: false,
     }))
 }
 
@@ -57,7 +56,6 @@ fn begin_msg_inplace(file_path: std::path::PathBuf, target_size: u64) -> FileMes
         xattr_list: None,
         xattr_basis: None,
         file_entry: None,
-        is_new: false,
     }))
 }
 

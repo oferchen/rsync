@@ -139,11 +139,6 @@ pub struct BasisFileConfig<'a> {
     /// the heuristic. The receiving side owns it: the generator sizes the
     /// blocks it checksums, so the sender never consults the value.
     pub block_size: Option<NonZeroU32>,
-    /// When true, the target destination does not exist (`ITEM_IS_NEW`).
-    ///
-    /// Skips trying to open `file_path` as a basis file, avoiding a guaranteed
-    /// `ENOENT` syscall. upstream: `generator.c:2378` checks `statret == -1`.
-    pub is_new: bool,
     /// `--inplace --backup` delta-path backup inputs. `Some` exactly when
     /// upstream's `inplace && make_backups > 0` holds (generator.c:2328) - the
     /// caller passes `None` on the redo pass, mirroring the
@@ -749,25 +744,12 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         return BasisFileResult::EMPTY;
     }
 
-    // upstream: generator.c:2378 - when destination is absent (statret == -1) and
-    // there are no reference directories, fuzzy matching, or partial-dir to check,
-    // skip the basis search entirely and return EMPTY.
-    if config.is_new
-        && config.reference_directories.is_empty()
-        && config.fuzzy_level == 0
-        && config.partial_dir.is_none()
-    {
-        return BasisFileResult::EMPTY;
-    }
-
     let sig_config = SignatureGenerationConfig::from_basis_config(config);
 
     // Try sources in priority order: exact match -> reference dirs -> fuzzy ->
     // partial-dir. The exact destination basis is reported to the sender as
     // FNAMECMP_FNAME (no basis-type byte).
-    if !config.is_new
-        && let Some((file, size, path)) = try_open_file(config.file_path)
-    {
+    if let Some((file, size, path)) = try_open_file(config.file_path) {
         // upstream: generator.c:2328-2356 - on the delta path, once the
         // destination basis has opened (`inplace && make_backups > 0 &&
         // fnamecmp_type == FNAMECMP_FNAME`), the generator creates the backup
@@ -1337,7 +1319,6 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
-            is_new: true,
             inplace_backup: None,
         };
 
@@ -1394,7 +1375,6 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
-            is_new: false,
             inplace_backup: None,
         };
 
@@ -1440,7 +1420,6 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
-            is_new: true,
             inplace_backup: None,
         };
 
@@ -1520,7 +1499,6 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
-            is_new: true,
             inplace_backup: None,
         };
 
@@ -1595,7 +1573,6 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
-            is_new: true,
             inplace_backup: None,
         };
 
@@ -1659,7 +1636,6 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
-            is_new: true,
             inplace_backup: None,
         };
 
@@ -1723,7 +1699,6 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
-            is_new: false,
             inplace_backup: None,
         };
 
@@ -2038,7 +2013,6 @@ mod tests {
             whole_file,
             compat_flags: None,
             block_size: None,
-            is_new: false,
             inplace_backup,
         }
     }

@@ -755,20 +755,7 @@ pub(super) fn apply_ownership_from_entry(
                 let desired_gid = group.map(|g| g.as_raw()).unwrap_or(current_gid);
                 current_uid != desired_uid || current_gid != desired_gid
             }
-            None => {
-                #[cfg(unix)]
-                {
-                    let current_uid = crate::identity::effective_uid();
-                    let current_gid = crate::identity::effective_gid();
-                    let desired_uid = owner.map(|o| o.as_raw()).unwrap_or(current_uid);
-                    let desired_gid = group.map(|g| g.as_raw()).unwrap_or(current_gid);
-                    current_uid != desired_uid || current_gid != desired_gid
-                }
-                #[cfg(not(unix))]
-                {
-                    false
-                }
-            }
+            None => true,
         };
 
         if needs_chown {

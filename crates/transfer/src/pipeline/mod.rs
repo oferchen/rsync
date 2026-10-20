@@ -68,11 +68,9 @@ pub use state::PipelineState;
 
 /// Default pipeline window size.
 ///
-/// 32 concurrent requests matches upstream rsync's internal circular I/O
-/// buffer budget (`IOBUF_SIZE = 32 KiB`, `io.c`), eliminating sender-side
-/// socket write stalls and TCP cork deadlocks while providing optimal latency
-/// hiding across the network. Each pending transfer is ~500 bytes.
-pub const DEFAULT_PIPELINE_WINDOW: usize = 32;
+/// 64 concurrent requests provides good latency hiding without
+/// excessive memory usage. Each pending transfer is ~500 bytes.
+pub const DEFAULT_PIPELINE_WINDOW: usize = 64;
 
 /// Minimum pipeline window size.
 ///
@@ -162,9 +160,9 @@ mod tests {
     #[test]
     fn env_window_valid_value_applied() {
         let _lock = ENV_LOCK.lock().unwrap();
-        let _guard = EnvGuard::set(ENV_PIPELINE_WINDOW, OsStr::new("16"));
+        let _guard = EnvGuard::set(ENV_PIPELINE_WINDOW, OsStr::new("32"));
         let config = PipelineConfig::default();
-        assert_eq!(config.window_size, 16);
+        assert_eq!(config.window_size, 32);
     }
 
     #[test]

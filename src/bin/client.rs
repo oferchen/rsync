@@ -28,9 +28,6 @@ mod tests {
     use core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME, RUST_VERSION};
     use std::ffi::OsString;
     use std::process::ExitCode;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn client_program_names() -> Vec<&'static str> {
         if LEGACY_PROGRAM_NAME == PROGRAM_NAME {
@@ -42,7 +39,6 @@ mod tests {
 
     #[test]
     fn version_flag_reports_success_for_all_binaries() {
-        let _guard = TEST_LOCK.lock().unwrap();
         for name in client_program_names() {
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
@@ -62,7 +58,6 @@ mod tests {
 
     #[test]
     fn unknown_flag_reports_failure_for_all_binaries() {
-        let _guard = TEST_LOCK.lock().unwrap();
         for name in client_program_names() {
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
@@ -87,7 +82,6 @@ mod tests {
 
     #[test]
     fn empty_argument_list_defaults_to_usage_error() {
-        let _guard = TEST_LOCK.lock().unwrap();
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let exit = run_with(std::iter::empty::<OsString>(), &mut stdout, &mut stderr);
@@ -143,7 +137,6 @@ mod tests {
             return;
         }
 
-        let _guard = TEST_LOCK.lock().unwrap();
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let exit = run_with(
