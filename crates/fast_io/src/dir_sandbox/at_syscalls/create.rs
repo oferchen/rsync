@@ -728,6 +728,26 @@ pub enum CloneAttempt {
     Unsupported,
 }
 
+/// Timestamps a clone takes from its own creation instead of the source.
+///
+/// A newly written file carries creation-time stamps, and upstream replaces
+/// each one from the source only under its option: mtime under `--times`,
+/// atime under `--atimes`, crtime under `--crtimes`. macOS `clonefile(2)`
+/// copies all three from the source, so every stamp the transfer does not
+/// preserve is reset to "now" before the clone is handed back.
+///
+/// upstream: `rsync.c:723-765` `set_file_attrs()` - each timestamp is taken
+/// from the source only under its option.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CloneFreshTimes {
+    /// Reset the creation time.
+    pub crtime: bool,
+    /// Reset the modification time.
+    pub mtime: bool,
+    /// Reset the access time.
+    pub atime: bool,
+}
+
 /// Clone `src` to `dest` with `dest`'s parent confined beneath `root`.
 ///
 /// The copy-on-write fast path is the one destination sink that cannot be
@@ -754,9 +774,18 @@ pub enum CloneAttempt {
 /// - `EEXIST` when `dest` already exists - the same race semantics `O_EXCL`
 ///   gives the plain create.
 /// - Any other error from anchoring `dest`'s parent.
+/// - Any error resetting a `fresh` stamp. The clone is removed first, so an
+///   error never leaves a destination carrying the source's timestamps.
 ///
 /// A filesystem that simply cannot reflink reports `Ok(CloneAttempt::Unsupported)`,
 /// never an error.
+///
+/// # Timestamps
+///
+/// Each stamp `fresh` selects is reset through the same anchored parent the
+/// clone was published under, so the reset cannot be redirected either. On
+/// Linux `FICLONE` fills an inode this call has just created, whose stamps are
+/// already the creation's, so there is nothing to reset.
 ///
 /// # Source confinement
 ///
@@ -772,6 +801,7 @@ pub fn confined_clone_file(
     root: &Path,
     source: &std::fs::File,
     dest: &Path,
+    fresh: CloneFreshTimes,
 ) -> io::Result<CloneAttempt> {
     use super::rename::anchor_confined_endpoint;
 
@@ -780,7 +810,7 @@ pub fn confined_clone_file(
     let c_name =
         CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
 
-    clone_at(source, dirfd, &c_name)
+    clone_at(source, dirfd, &c_name, fresh)
 }
 
 /// macOS: `fclonefileat(2)` publishes the clone under the anchored dirfd.
@@ -789,32 +819,103 @@ pub fn confined_clone_file(
 /// controls source-symlink following (`CLONE_NOFOLLOW`) is not applicable;
 /// whether the source may be a symlink is the source-confinement decision made
 /// by the caller before it opens the file.
+///
+/// No `CLONE_ACL`: without it the clone takes the target directory's
+/// inheritable ACLs, as an `openat(2)`-created file does, and `-A` applies the
+/// source ACL afterwards. xnu: `bsd/vfs/vfs_syscalls.c` `clonefile_internal()`
+/// requests the source `va_acl` only under `CLONE_ACL`.
 #[cfg(target_os = "macos")]
 fn clone_at(
     source: &std::fs::File,
     dirfd: BorrowedFd<'_>,
     name: &CString,
+    fresh: CloneFreshTimes,
 ) -> io::Result<CloneAttempt> {
-    // sys/clonefile.h: CLONE_ACL = 0x0004 (copy access control lists from source).
-    const CLONE_ACL: u32 = 0x0004;
-
     // SAFETY: `source` is borrowed for the call and outlives it; `dirfd` is the
     // walked parent held by the caller's endpoint; `name` is a valid
     // NUL-terminated string borrowed for the duration of the call.
     #[allow(unsafe_code)]
+    let rc = unsafe { libc::fclonefileat(source.as_raw_fd(), dirfd.as_raw_fd(), name.as_ptr(), 0) };
+    if rc != 0 {
+        return classify_clone_error(io::Error::last_os_error());
+    }
+    if let Err(error) = stamp_fresh_times(dirfd, name, fresh) {
+        // SAFETY: `dirfd` and `name` are still valid; an unlink failure is
+        // ignored because the stamp error is the one worth reporting.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::unlinkat(dirfd.as_raw_fd(), name.as_ptr(), 0);
+        }
+        return Err(error);
+    }
+    Ok(CloneAttempt::Cloned)
+}
+
+/// Resets each `fresh` stamp on the clone `name` under `dirfd` to the current
+/// time with one `setattrlistat(2)`.
+///
+/// `FSOPT_NOFOLLOW` keeps the update on the clone itself. Upstream's
+/// `do_setattrlist_crtime()` is path-based and accepts the parent-symlink race
+/// as a residual (`syscall.c:2465-2487`); resolving through the walked parent
+/// closes it without an extra syscall.
+#[cfg(target_os = "macos")]
+fn stamp_fresh_times(
+    dirfd: BorrowedFd<'_>,
+    name: &CString,
+    fresh: CloneFreshTimes,
+) -> io::Result<()> {
+    let commonattr = [
+        (fresh.crtime, libc::ATTR_CMN_CRTIME),
+        (fresh.mtime, libc::ATTR_CMN_MODTIME),
+        (fresh.atime, libc::ATTR_CMN_ACCTIME),
+    ]
+    .into_iter()
+    .filter(|&(wanted, _)| wanted)
+    .fold(0, |bits, (_, bit)| bits | bit);
+    if commonattr == 0 {
+        return Ok(());
+    }
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(io::Error::other)?;
+    let now = libc::timespec {
+        tv_sec: libc::time_t::try_from(since_epoch.as_secs())
+            .map_err(|_| io::Error::from_raw_os_error(libc::EOVERFLOW))?,
+        tv_nsec: libc::c_long::from(since_epoch.subsec_nanos()),
+    };
+    // setattrlist(2) reads one timespec per requested attribute. Every slot
+    // carries the same instant, so the packing order does not matter.
+    let mut values = [now; 3];
+    let size = commonattr.count_ones() as usize * std::mem::size_of::<libc::timespec>();
+    let mut attrlist = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr,
+        volattr: 0,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    // SAFETY: `dirfd` is the walked parent held by the caller's endpoint and
+    // `name` a valid NUL-terminated string, both borrowed for the call;
+    // `attrlist` is a fully initialised `repr(C)` value and `values` holds at
+    // least `size` bytes of `timespec`s, both live for the call.
+    #[allow(unsafe_code)]
     let rc = unsafe {
-        libc::fclonefileat(
-            source.as_raw_fd(),
+        libc::setattrlistat(
             dirfd.as_raw_fd(),
             name.as_ptr(),
-            CLONE_ACL,
+            (&raw mut attrlist).cast(),
+            values.as_mut_ptr().cast(),
+            size,
+            libc::FSOPT_NOFOLLOW,
         )
     };
     if rc == 0 {
-        return Ok(CloneAttempt::Cloned);
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
-    let error = io::Error::last_os_error();
-    classify_clone_error(error)
 }
 
 /// Linux: create the destination confined, then reflink into it with `FICLONE`.
@@ -829,6 +930,7 @@ fn clone_at(
     source: &std::fs::File,
     dirfd: BorrowedFd<'_>,
     name: &CString,
+    _fresh: CloneFreshTimes,
 ) -> io::Result<CloneAttempt> {
     use std::os::fd::FromRawFd;
 
@@ -872,8 +974,13 @@ fn clone_at(
 
 /// Platforms with no anchored reflink primitive never take the fast path.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn clone_at(src: &Path, dirfd: BorrowedFd<'_>, name: &CString) -> io::Result<CloneAttempt> {
-    let _ = (src, dirfd, name);
+fn clone_at(
+    source: &std::fs::File,
+    dirfd: BorrowedFd<'_>,
+    name: &CString,
+    _fresh: CloneFreshTimes,
+) -> io::Result<CloneAttempt> {
+    let _ = (source, dirfd, name);
     Ok(CloneAttempt::Unsupported)
 }
 

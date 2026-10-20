@@ -2,7 +2,8 @@
 //!
 //! `clonefile(2)` creates a copy-on-write clone on APFS, avoiding all
 //! read/write I/O. It is only safe when all metadata will either be
-//! preserved by finalize or corrected by [`normalize_cloned_metadata`].
+//! preserved by finalize, reset by the clone itself (`fast_io::CloneFreshTimes`),
+//! or corrected by [`normalize_cloned_metadata`].
 //!
 //! The fast-path dispatcher and metadata normalizer live here together so
 //! the eligibility checks, dispatch, and post-clone bookkeeping all evolve
@@ -70,10 +71,9 @@ pub(super) fn eligible(
     // (see try_clone). The one case we cannot reproduce with a blanket strip
     // is a selective xattr `--filter`, so keep the slow path there.
     //
-    // The ACL dimension (`-A`) is intentionally unchanged here: clonefile
-    // already copies source ACLs on the existing `-X`-on fast path regardless
-    // of `-A`, so relaxing `-X` does not introduce a new ACL behavior. The
-    // pre-existing ACL-leak-when-`-A`-off is tracked separately.
+    // ACLs (`-A`) need no gate: without `CLONE_ACL` the clone takes the target
+    // directory's inheritable ACLs exactly as an `open()`ed file does, and
+    // finalize applies the source ACL under `-A`.
     let xattr_ok = {
         #[cfg(all(unix, feature = "xattr"))]
         {
@@ -149,7 +149,13 @@ pub(super) fn try_clone(
         let reader = context
             .open_source_content(source)
             .map_err(|error| LocalCopyError::io("copy file", source, error))?;
-        match fast_io::confined_clone_file(context.destination_root(), &reader, destination) {
+        let fresh = fast_io::CloneFreshTimes {
+            crtime: !metadata_options.crtimes(),
+            mtime: !metadata_options.times(),
+            atime: !metadata_options.atimes(),
+        };
+        match fast_io::confined_clone_file(context.destination_root(), &reader, destination, fresh)
+        {
             Ok(fast_io::CloneAttempt::Cloned) => Some(
                 context
                     .options()
@@ -251,43 +257,30 @@ pub(super) fn try_clone(
     // Normalize cloned metadata to match what open()-created files have.
     // clonefile() preserves source metadata verbatim. Without this,
     // finalize_guard_and_metadata skips corrections when preservation is
-    // disabled (e.g. --no-perms, --no-times), leaving source metadata
-    // instead of umask/current-time defaults.
+    // disabled (e.g. --no-perms), leaving source metadata instead of the
+    // umask default. Timestamps were already reset by the clone itself (see
+    // `CloneFreshTimes` above).
     // upstream: rsync creates files via open() then applies metadata -
     // clonefile must produce identical results.
     normalize_cloned_metadata(destination, metadata, &metadata_options)?;
 
-    // clonefile() copies the source's extended attributes verbatim. When the
-    // user did not request xattr preservation (`-a` without `-X`), upstream
-    // rsync writes a fresh destination that carries none of them, so strip the
-    // source-originated attributes the clone introduced. finalize's sync_xattrs
-    // only runs when preservation is on, so this is the off-case correction.
-    // upstream: rsync's receiver open()s a new file and never copies xattrs
-    // without --xattrs.
+    // clonefile() copies the source's extended attributes verbatim, but
+    // upstream's receiver open()s a fresh file that carries none of them. Under
+    // `-X` finalize's sync_xattrs reconciles the ordinary names; it never
+    // deletes rsync's own `rsync.%` channel, which the sender never transmits,
+    // so that channel is stripped here. Without `-X` every source-originated
+    // name goes.
     #[cfg(all(unix, feature = "xattr"))]
-    if !flags.preserve_xattrs {
-        ::metadata::strip_source_xattrs(
-            source,
-            destination,
-            false,
-            Some(context.destination_root()),
-        )
-        .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
-    }
-
-    // clonefile() copies the source's ACLs verbatim. When the user did not
-    // request ACL preservation (`-a` without `-A`), strip the cloned source ACLs
-    // by resetting the destination ACL to its base permission bits, preventing
-    // ACL leakage.
-    #[cfg(all(any(unix, windows), feature = "acl"))]
-    if !flags.preserve_acls {
-        ::metadata::reset_acl_from_mode(destination)
+    {
+        let strip = if flags.preserve_xattrs {
+            ::metadata::strip_source_internal_xattrs
+        } else {
+            ::metadata::strip_source_xattrs
+        };
+        strip(source, destination, false, Some(context.destination_root()))
             .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
     }
 
-    // clonefile(2) already cloned xattrs (including com.apple.ResourceFork and
-    // FinderInfo) and ACLs verbatim into the new inode. Passing preserve_xattrs: false
-    // and preserve_acls: false avoids redundant multi-megabyte re-reads and re-writes.
     finalize_guard_and_metadata(
         context,
         None,
@@ -304,27 +297,22 @@ pub(super) fn try_clone(
         &mut None,
         existing_metadata,
         #[cfg(all(unix, feature = "xattr"))]
-        false,
+        flags.preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]
-        false,
+        flags.preserve_acls,
     )?;
 
     Ok(true)
 }
 
-/// Normalizes a clonefile'd destination to match open()-created file defaults.
+/// Normalizes a clonefile'd destination's permissions to the `open()` default.
 ///
-/// `clonefile()` preserves the source's exact metadata (permissions, mtime).
-/// When the user has not requested preservation of these attributes (e.g.
-/// `--no-perms`, `--no-times`), `finalize_guard_and_metadata` will skip
-/// corrections because it assumes the file already has process-default metadata.
-/// This function bridges that gap by resetting metadata to what `open()` would
-/// produce, so the finalize step works identically for both paths.
-///
-/// - Permissions: reset to `source_mode & ~umask` (matching `open()` behavior)
-/// - Timestamps: reset mtime to current time when `--times` is off, and atime to
-///   current time when `--atimes`/`-U` is off (matching newly created files)
-/// - Creation time: reset crtime to current time on macOS when `--crtimes` is off
+/// `clonefile()` preserves the source's exact mode. When the user has not
+/// requested permission preservation (`--no-perms`),
+/// `finalize_guard_and_metadata` skips the correction because it assumes the
+/// file already has the process default, so this resets the mode to
+/// `source_mode & ~umask` as `open()` would. Timestamps are not handled here:
+/// the clone resets them through its anchored parent before returning.
 fn normalize_cloned_metadata(
     destination: &Path,
     source_metadata: &fs::Metadata,
@@ -347,71 +335,6 @@ fn normalize_cloned_metadata(
         let default_mode = source_mode & !umask_bits;
         fs::set_permissions(destination, PermissionsExt::from_mode(default_mode))
             .map_err(|e| LocalCopyError::io("normalize cloned permissions", destination, e))?;
-    }
-
-    // clonefile() copies the source's mtime AND atime verbatim, but an
-    // open()-created file carries fresh (current-time) timestamps that upstream
-    // only overwrites from the source when the matching flag is set: mtime under
-    // --times, atime under --atimes/-U. Reset each timestamp the corresponding
-    // flag leaves alone to "now" so a clone never leaks the source value; the
-    // subsequent finalize metadata apply re-sets the source mtime (under --times)
-    // and source atime (under --atimes) as needed.
-    //
-    // Without the atime reset, a `--no-atimes` copy (the default, including `-a`)
-    // would keep the clonefile-inherited source atime instead of the fresh
-    // access time upstream produces (rsync opens a new file; atime is the write
-    // time). upstream: rsync.c:725-726 - atime is written from source only when
-    // atimes_ndx is set; otherwise the destination keeps its own (fresh) atime.
-    //
-    // Use utimensat via rustix so a read-only clone (e.g. source mode 0o444)
-    // still accepts the timestamp update without needing write access.
-    let reset_mtime = !options.times();
-    let reset_atime = !options.atimes();
-    if reset_mtime || reset_atime {
-        let now = rustix::fs::Timestamps {
-            last_access: rustix::fs::Timespec {
-                tv_sec: 0,
-                tv_nsec: if reset_atime {
-                    rustix::fs::UTIME_NOW
-                } else {
-                    rustix::fs::UTIME_OMIT
-                },
-            },
-            last_modification: rustix::fs::Timespec {
-                tv_sec: 0,
-                tv_nsec: if reset_mtime {
-                    rustix::fs::UTIME_NOW
-                } else {
-                    rustix::fs::UTIME_OMIT
-                },
-            },
-        };
-        rustix::fs::utimensat(
-            rustix::fs::CWD,
-            destination,
-            &now,
-            rustix::fs::AtFlags::empty(),
-        )
-        .map_err(|e| {
-            LocalCopyError::io(
-                "normalize cloned timestamps",
-                destination,
-                std::io::Error::from_raw_os_error(e.raw_os_error()),
-            )
-        })?;
-    }
-    // clonefile() also preserves the source's creation time (btime) verbatim.
-    // When creation time preservation (--crtimes/-N) is not requested, normalize
-    // the destination birth time to current time so the cloned file does not retain
-    // the source's historical creation timestamp.
-    #[cfg(target_os = "macos")]
-    if !options.crtimes() {
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        ::metadata::set_crtime(destination, now_secs)
-            .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
     }
 
     Ok(())

@@ -19,7 +19,7 @@
 
 use std::fs;
 
-use fast_io::CloneAttempt;
+use fast_io::{CloneAttempt, CloneFreshTimes};
 
 /// `confined_clone_file` takes an already-OPEN source descriptor, so the caller
 /// owns the source-side confinement decision and cannot have it re-resolved by
@@ -40,8 +40,13 @@ fn confined_clone_file_reaches_the_platform_for_a_plain_destination() {
     fs::write(&src, b"payload").expect("write source");
     let dest = root.path().join("sub").join("f0");
 
-    match fast_io::confined_clone_file(root.path(), &open_source(&src), &dest)
-        .expect("no confinement refusal")
+    match fast_io::confined_clone_file(
+        root.path(),
+        &open_source(&src),
+        &dest,
+        CloneFreshTimes::default(),
+    )
+    .expect("no confinement refusal")
     {
         CloneAttempt::Cloned => {
             assert_eq!(fs::read(&dest).expect("read clone"), b"payload");
@@ -67,9 +72,13 @@ fn confined_clone_file_follows_a_relative_in_tree_parent_symlink() {
     let src = root.path().join("src.bin");
     fs::write(&src, b"payload").expect("write source");
 
-    let outcome =
-        fast_io::confined_clone_file(root.path(), &open_source(&src), &root.path().join("sub/f0"))
-            .expect("a relative in-tree parent symlink must not be refused");
+    let outcome = fast_io::confined_clone_file(
+        root.path(),
+        &open_source(&src),
+        &root.path().join("sub/f0"),
+        CloneFreshTimes::default(),
+    )
+    .expect("a relative in-tree parent symlink must not be refused");
 
     if outcome == CloneAttempt::Cloned {
         assert_eq!(
@@ -95,8 +104,13 @@ fn confined_clone_file_refuses_a_parent_symlinked_outside() {
     let src = base.path().join("src.bin");
     fs::write(&src, b"payload").expect("write source");
 
-    let err = fast_io::confined_clone_file(&root, &open_source(&src), &root.join("sub").join("f0"))
-        .expect_err("a symlinked destination parent must be refused, not reported Unsupported");
+    let err = fast_io::confined_clone_file(
+        &root,
+        &open_source(&src),
+        &root.join("sub").join("f0"),
+        CloneFreshTimes::default(),
+    )
+    .expect_err("a symlinked destination parent must be refused, not reported Unsupported");
 
     assert!(
         !outside.join("f0").exists(),
@@ -146,7 +160,9 @@ fn confined_clone_file_clones_the_handed_descriptor_not_the_path() {
     );
 
     let dest = root.join("f0");
-    match fast_io::confined_clone_file(&root, &source, &dest).expect("no confinement refusal") {
+    match fast_io::confined_clone_file(&root, &source, &dest, CloneFreshTimes::default())
+        .expect("no confinement refusal")
+    {
         CloneAttempt::Cloned => assert_eq!(
             fs::read(&dest).expect("read clone"),
             b"IN-TREE",
@@ -170,7 +186,12 @@ fn confined_clone_file_refuses_an_existing_destination() {
     let dest = root.path().join("f0");
     fs::write(&dest, b"original").expect("seed destination");
 
-    let result = fast_io::confined_clone_file(root.path(), &open_source(&src), &dest);
+    let result = fast_io::confined_clone_file(
+        root.path(),
+        &open_source(&src),
+        &dest,
+        CloneFreshTimes::default(),
+    );
 
     assert!(
         !matches!(result, Ok(CloneAttempt::Cloned)),

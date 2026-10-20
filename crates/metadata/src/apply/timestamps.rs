@@ -680,7 +680,12 @@ fn crtime_needs_update(
 }
 
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
-/// upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
+///
+/// Skips the write when the destination already carries `secs` or is the HFS+
+/// volume root. Seconds only, as upstream stores `F_CRTIME` as a `time_t`.
+///
+/// upstream: `rsync.c:751-765` `set_file_attrs()` and `syscall.c:2465-2487`
+/// `do_setattrlist_crtime()`
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 pub fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
@@ -850,7 +855,7 @@ pub fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
 /// No-op stub for platforms where creation time cannot be set (Linux birthtime
 /// is generally not settable; other non-macOS, non-Windows targets lack an API).
 #[cfg(not(any(target_os = "macos", windows)))]
-pub fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
+fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
     Ok(())
 }
 

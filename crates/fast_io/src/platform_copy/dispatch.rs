@@ -166,13 +166,10 @@ pub(super) fn clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
         )
     })?;
 
-    // sys/clonefile.h: CLONE_ACL = 0x0004 (copy access control lists from source).
-    const CLONE_ACL: u32 = 0x0004;
-
     // SAFETY: Both pointers are valid, null-terminated C strings derived from
     // OsStr. The clonefile syscall is safe to call with valid path arguments.
     // Errors are returned via errno and converted to io::Error.
-    let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), CLONE_ACL) };
+    let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
 
     if ret == 0 {
         Ok(())

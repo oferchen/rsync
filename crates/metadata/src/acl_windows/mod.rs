@@ -65,8 +65,3 @@ pub use sync::{sync_acls, sync_acls_via_fake_super};
 pub use xattr::{
     WINDOWS_SDDL_XATTR_NAME, apply_sddl_from_xattrs, find_sddl_in_xattrs, sddl_xattr_entry,
 };
-
-/// Stub for resetting ACLs from mode on Windows.
-pub fn reset_acl_from_mode(_path: &std::path::Path) -> Result<(), crate::MetadataError> {
-    Ok(())
-}
