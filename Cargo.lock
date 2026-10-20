@@ -3952,6 +3952,7 @@ dependencies = [
  "libc",
  "platform",
  "rcgen",
+ "rustix",
  "tempfile",
 ]
 

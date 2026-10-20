@@ -67,20 +67,28 @@ fn pump(mut from: impl Read, mut to: impl Write, mut log: File, direction: &str)
     }
 }
 
-fn main() {
-    #[cfg(unix)]
-    // SAFETY: Querying and setting file status flags via fcntl on standard file
-    // descriptors (STDIN_FILENO, STDOUT_FILENO) is memory-safe. We only clear
-    // O_NONBLOCK so reads/writes block instead of returning EAGAIN.
-    unsafe {
-        for fd in [libc::STDIN_FILENO, libc::STDOUT_FILENO] {
-            let flags = libc::fcntl(fd, libc::F_GETFL);
-            if flags >= 0 {
-                libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
-            }
+/// Puts stdin and stdout back into blocking mode.
+///
+/// The client may hand this process pipe ends with `O_NONBLOCK` set; the
+/// pumps use plain blocking `read`/`write_all`, which would otherwise fail
+/// with `EAGAIN` and end the relay early with a truncated transcript.
+#[cfg(unix)]
+fn clear_stdio_nonblock() {
+    use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
+    use std::os::fd::AsFd;
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    for (name, fd) in [("stdin", stdin.as_fd()), ("stdout", stdout.as_fd())] {
+        let cleared = fcntl_getfl(fd).and_then(|flags| fcntl_setfl(fd, flags - OFlags::NONBLOCK));
+        if let Err(e) = cleared {
+            eprintln!("capture-rsh: cannot clear O_NONBLOCK on {name}: {e}");
+            exit(1);
         }
     }
-
+}
+fn main() {
+    #[cfg(unix)]
+    clear_stdio_nonblock();
     let c2s = capture_path(C2S_ENV);
     let s2c = capture_path(S2C_ENV);
 

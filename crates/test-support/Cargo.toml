@@ -40,6 +40,7 @@ filetime = { workspace = true }
 # tests asserting mode bits do not silently inherit the caller's umask.
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+rustix = { workspace = true, features = ["fs"] }
 
 # Rust port of upstream `support/lsh.sh`. Built as a workspace binary so tests
 # can resolve its path via `CARGO_BIN_EXE_lsh-stub` and drive oc-rsync's

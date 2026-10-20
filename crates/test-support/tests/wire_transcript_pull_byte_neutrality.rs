@@ -307,12 +307,7 @@ fn capture_into(
         .arg(format!("transcripthost:{}/", src.display()))
         .arg(&dest);
     configure(&mut cmd);
-    println!("capture_into: starting {label}");
     let output = cmd.output().expect("run oc-rsync client");
-    println!(
-        "capture_into: finished {label} with status {}",
-        output.status
-    );
     assert!(
         output.status.success(),
         "transfer failed ({label}): {}\nstderr: {}",
@@ -323,11 +318,6 @@ fn capture_into(
     transcript
         .mask_pull_flist_times()
         .expect("mask pull flist times");
-    println!(
-        "transcript[{label}]: client->server {} bytes, server->client {} bytes",
-        transcript.client_to_server.len(),
-        transcript.server_to_client.len()
-    );
     transcript
 }
 
