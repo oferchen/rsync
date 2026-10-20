@@ -555,7 +555,7 @@ fn generate_basis_signature(
         basis_size,
     );
 
-    let reader = std::io::BufReader::with_capacity(MAX_MAP_SIZE, basis_file);
+    let reader = std::io::BufReader::with_capacity(basis_reader_capacity(basis_size), basis_file);
     let signature = compute_basis_signature(
         reader,
         basis_size,
@@ -834,10 +834,35 @@ fn try_inplace_backup_basis(
     Some(result)
 }
 
+/// Smallest read buffer the basis signature reader is given.
+const MIN_BASIS_READER_CAPACITY: usize = 8 * 1024;
+
+/// Read-buffer size for hashing a basis of `basis_size` bytes.
+///
+/// A basis smaller than the `MAX_MAP_SIZE` window needs no more buffer than
+/// its own size, so many small files do not each pin a full window; the floor
+/// keeps tiny files from degenerating into one read per block.
+fn basis_reader_capacity(basis_size: u64) -> usize {
+    usize::try_from(basis_size).map_or(MAX_MAP_SIZE, |n| {
+        n.clamp(MIN_BASIS_READER_CAPACITY, MAX_MAP_SIZE)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Read;
+
+    // WHY: every in-flight basis holds this buffer, so sizing it to the file
+    // is the memory win; the floor and ceiling keep syscall counts bounded.
+    #[test]
+    fn basis_reader_capacity_tracks_the_file_within_bounds() {
+        assert_eq!(basis_reader_capacity(0), MIN_BASIS_READER_CAPACITY);
+        assert_eq!(basis_reader_capacity(100), MIN_BASIS_READER_CAPACITY);
+        assert_eq!(basis_reader_capacity(100_000), 100_000);
+        assert_eq!(basis_reader_capacity(MAX_MAP_SIZE as u64), MAX_MAP_SIZE);
+        assert_eq!(basis_reader_capacity(u64::MAX), MAX_MAP_SIZE);
+    }
 
     #[test]
     fn parallel_basis_signature_matches_sequential() {

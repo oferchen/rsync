@@ -16,12 +16,12 @@ use std::path::Path;
 
 use compress::zlib::CompressionLevel;
 use logging::debug_log;
-#[cfg(test)]
-use protocol::wire::write_token_stream;
 use protocol::wire::{
-    CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, write_token_block_match, write_token_end,
+    CHUNK_SIZE, CompressedTokenEncoder, write_token_block_match, write_token_end,
     write_token_literal,
 };
+#[cfg(test)]
+use protocol::wire::{DeltaOp, write_token_stream};
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm};
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
@@ -334,7 +334,7 @@ pub fn generate_delta_from_signature<R: Read>(
     source: R,
     config: DeltaGeneratorConfig<'_>,
     source_len: u64,
-) -> io::Result<(DeltaScript, matching::ScanCounters)> {
+) -> io::Result<(DeltaScript<'static>, matching::ScanCounters)> {
     let needed = consecutive_match_needed(&config);
     let updating_basis_file = config.updating_basis_file;
     let index = build_signature_index(config)?;
@@ -393,11 +393,11 @@ pub fn generate_delta_from_signature<R: Read>(
 /// The sender-side matching contract is unchanged from
 /// [`generate_delta_from_signature`]; this only parallelizes the scan of a
 /// single large file. See `match.c:hash_search()`.
-pub fn generate_delta_from_signature_chunked(
-    source: &[u8],
+pub fn generate_delta_from_signature_chunked<'a>(
+    source: &'a [u8],
     config: DeltaGeneratorConfig<'_>,
     max_chunks: usize,
-) -> io::Result<(DeltaScript, matching::ScanCounters)> {
+) -> io::Result<(DeltaScript<'a>, matching::ScanCounters)> {
     // Carry the negotiated consecutive-match threshold onto the parallel path:
     // when the mutual CAP_CONSECUTIVE_MATCH bit is set the receiver has halved
     // the strong-sum length, so the sender must apply seq_matches=2 gating here
@@ -839,42 +839,51 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
     })
 }
 
-/// Converts engine delta script to wire protocol delta operations.
+/// One delta operation as the sender emits it, borrowing literal bytes from
+/// the [`DeltaScript`] instead of moving them into an owned wire op.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum WireOp<'a> {
+    Literal(&'a [u8]),
+    Copy { block_index: u32, length: u32 },
+}
+
+/// Converts a [`DeltaScript`] into the wire-level [`WireOp`] sequence.
 ///
-/// Takes ownership of the script to avoid cloning literal data. Multi-block
-/// Copy tokens emitted by the seq-match optimization (where a single
-/// `DeltaToken::Copy` covers a run of `N` adjacent basis blocks) are expanded
-/// here into `N` consecutive `DeltaOp::Copy` entries with `length =
-/// block_length`. This keeps the wire byte stream byte-identical to the
-/// no-coalesce baseline: each basis block is still emitted as one
-/// `write_int(-(block_index + 1))` token by the wire layer.
+/// Multi-block Copy tokens emitted by the seq-match optimization (one
+/// `DeltaToken::Copy` covering `N` adjacent basis blocks) are expanded into `N`
+/// consecutive single-block copies of `block_length`. This keeps the wire byte
+/// stream byte-identical to the no-coalesce baseline: each basis block is still
+/// emitted as one `write_int(-(block_index + 1))` token.
 ///
-/// `block_length` is the canonical length of a full basis block. Tokens whose
-/// stored `len` is not a multiple of `block_length` are emitted unchanged so
-/// last-block tail copies (when the basis ends with a short block) round-trip
-/// cleanly.
+/// Tokens whose `len` is not a multiple of `block_length` (the short last block
+/// of a basis) and every Copy when `block_length == 0` pass through unchanged.
 ///
 /// # Upstream Reference
 ///
 /// - `match.c:matched()` - emits tokens as they are generated
 /// - `token.c:send_token()` - writes tokens to the wire
-pub(super) fn script_to_wire_delta(script: DeltaScript, block_length: u32) -> Vec<DeltaOp> {
+pub(super) fn script_to_wire_delta<'a>(
+    script: &'a DeltaScript<'_>,
+    block_length: u32,
+) -> Vec<WireOp<'a>> {
     let block_len = block_length as usize;
     let mut ops = Vec::with_capacity(script.tokens().len());
-    for token in script.into_tokens() {
+    for token in script.tokens() {
         match token {
-            DeltaToken::Literal(data) => ops.push(DeltaOp::Literal(data)),
+            DeltaToken::Literal(data) => ops.push(WireOp::Literal(data)),
             DeltaToken::Copy { index, len } => {
+                let len = *len;
+                let index = *index;
                 if block_len > 0 && len > block_len && len % block_len == 0 {
                     let run = len / block_len;
                     for k in 0..run {
-                        ops.push(DeltaOp::Copy {
+                        ops.push(WireOp::Copy {
                             block_index: (index + k as u64) as u32,
                             length: block_length,
                         });
                     }
                 } else {
-                    ops.push(DeltaOp::Copy {
+                    ops.push(WireOp::Copy {
                         block_index: index as u32,
                         length: len as u32,
                     });
@@ -974,6 +983,69 @@ pub(super) struct InlineChecksumResult {
     pub read_error: Option<io::Error>,
 }
 
+/// Supplies the source bytes behind each matched block for the inline checksum
+/// and the compressor dictionary.
+///
+/// Matched blocks are re-read from a lazily opened file whose position is
+/// reused while blocks stay sequential, so a run of adjacent matches costs no
+/// `lseek`.
+struct CopySource<R = io::BufReader<std::fs::File>> {
+    file: Option<R>,
+    /// File position after the last fully read block, when known.
+    position: Option<u64>,
+    buf: Vec<u8>,
+    /// upstream: fileio.c:403-410 - a failed source read zeroes the window and
+    /// token emission continues; the file checksum is poisoned by the caller.
+    read_error: Option<io::Error>,
+}
+
+impl CopySource {
+    fn open(
+        has_copies: bool,
+        path: &Path,
+        source_open: &super::open_source::SourceOpen,
+    ) -> io::Result<Self> {
+        let file = if has_copies {
+            Some(io::BufReader::new(source_open.open(path)?))
+        } else {
+            None
+        };
+        Ok(Self::from_reader(file))
+    }
+}
+
+impl<R: Read + Seek> CopySource<R> {
+    fn from_reader(file: Option<R>) -> Self {
+        Self {
+            file,
+            position: None,
+            buf: Vec::new(),
+            read_error: None,
+        }
+    }
+
+    /// Returns the `len` source bytes at `offset`, zero-filled on a read error.
+    fn block(&mut self, offset: u64, len: usize) -> io::Result<&[u8]> {
+        self.buf.clear();
+        self.buf.resize(len, 0);
+        if let Some(file) = self.file.as_mut() {
+            if self.position != Some(offset) {
+                // upstream: fileio.c:330-336 - an lseek failure is still fatal
+                // (exit_cleanup(RERR_FILEIO)); only the read is tolerated.
+                file.seek(SeekFrom::Start(offset))?;
+            }
+            match read_window(file, &mut self.buf) {
+                None => self.position = Some(offset + len as u64),
+                Some(e) => {
+                    self.position = None;
+                    self.read_error.get_or_insert(e);
+                }
+            }
+        }
+        Ok(&self.buf)
+    }
+}
+
 /// Writes delta tokens to the wire and computes the file checksum in a single pass.
 ///
 /// Merges the work of `write_delta_with_compression` and `compute_file_checksum`
@@ -989,9 +1061,9 @@ pub(super) struct InlineChecksumResult {
 /// `token.c:send_deflated_token()` feeds the same data to the compressor
 /// dictionary.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn write_delta_with_inline_checksum<W: Write>(
+pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
     writer: &mut W,
-    ops: &[DeltaOp],
+    ops: &[WireOp<'a>],
     encoder: Option<&mut CompressedTokenEncoder>,
     is_zlib: bool,
     source_path: &Path,
@@ -1007,102 +1079,59 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     let mut verifier =
         ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
-    // Lazily open source file only when Copy tokens are present.
-    // A single file handle serves both checksum and dictionary sync.
-    let has_copies = ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
-    let mut source_file = if has_copies {
-        Some(io::BufReader::new(source_open.open(source_path)?))
-    } else {
-        None
-    };
+    let has_copies = ops.iter().any(|op| matches!(op, WireOp::Copy { .. }));
+    let mut copy_source = CopySource::open(has_copies, source_path, source_open)?;
     let mut source_offset: u64 = 0;
-    let mut read_buf = Vec::new();
     // upstream: match.c matched()/send_token() accumulate stats.matched_data
     // and stats.literal_data as each token is emitted on the sender.
     let mut matched_data: u64 = 0;
     let mut literal_data: u64 = 0;
-    // upstream: fileio.c:403-410 - a failed source read zeroes the window and
-    // token emission continues; the file checksum is poisoned by the caller.
-    let mut read_error: Option<io::Error> = None;
-
     match encoder {
         Some(encoder) => {
             let needs_dict_sync = is_zlib && has_copies;
-
             for op in ops {
                 match op {
-                    DeltaOp::Literal(data) => {
-                        verifier.update(data);
-                        encoder.send_literal(writer, data)?;
-                        source_offset += data.len() as u64;
-                        literal_data += data.len() as u64;
+                    WireOp::Literal(bytes) => {
+                        verifier.update(bytes);
+                        encoder.send_literal(writer, bytes)?;
+                        source_offset += bytes.len() as u64;
+                        literal_data += bytes.len() as u64;
                     }
-                    DeltaOp::Copy {
+                    WireOp::Copy {
                         block_index,
                         length,
                     } => {
                         encoder.send_block_match(writer, *block_index)?;
-
-                        // Read block data once, feed to both checksum and dict sync.
-                        let len = *length as usize;
-                        read_buf.clear();
-                        read_buf.resize(len, 0);
-                        if let Some(ref mut file) = source_file {
-                            // upstream: fileio.c:330-336 - an lseek failure is
-                            // still fatal (exit_cleanup(RERR_FILEIO)); only the
-                            // read is tolerated.
-                            file.seek(SeekFrom::Start(source_offset))?;
-                            if let Some(e) = read_window(file, &mut read_buf) {
-                                read_error.get_or_insert(e);
-                            }
-                        }
-                        verifier.update(&read_buf);
+                        let block = copy_source.block(source_offset, *length as usize)?;
+                        verifier.update(block);
                         if needs_dict_sync {
-                            encoder.see_token(&read_buf)?;
+                            encoder.see_token(block)?;
                         }
                         source_offset += u64::from(*length);
                         matched_data += u64::from(*length);
                     }
                 }
             }
-
             encoder.finish(writer)?;
         }
         None => {
-            // Uncompressed path: write tokens and compute checksum in one pass.
             for op in ops {
                 match op {
-                    DeltaOp::Literal(data) => {
-                        verifier.update(data);
-                        write_token_literal(writer, data)?;
-                        // Advance source cursor past the literal so subsequent
-                        // Copy tokens read source bytes from the correct offset
-                        // for inline checksum computation. upstream:
-                        // match.c:matched() interleaves literal and block-match
-                        // tokens against a single advancing file cursor.
-                        source_offset += data.len() as u64;
-                        literal_data += data.len() as u64;
+                    WireOp::Literal(bytes) => {
+                        verifier.update(bytes);
+                        write_token_literal(writer, bytes)?;
+                        // upstream: match.c:matched() interleaves literal and
+                        // block-match tokens against a single advancing file
+                        // cursor, so a literal moves the Copy read offset too.
+                        source_offset += bytes.len() as u64;
+                        literal_data += bytes.len() as u64;
                     }
-                    DeltaOp::Copy {
+                    WireOp::Copy {
                         block_index,
                         length,
                     } => {
                         write_token_block_match(writer, *block_index)?;
-
-                        // Read block data for checksum computation.
-                        let len = *length as usize;
-                        read_buf.clear();
-                        read_buf.resize(len, 0);
-                        if let Some(ref mut file) = source_file {
-                            // upstream: fileio.c:330-336 - an lseek failure is
-                            // still fatal (exit_cleanup(RERR_FILEIO)); only the
-                            // read is tolerated.
-                            file.seek(SeekFrom::Start(source_offset))?;
-                            if let Some(e) = read_window(file, &mut read_buf) {
-                                read_error.get_or_insert(e);
-                            }
-                        }
-                        verifier.update(&read_buf);
+                        verifier.update(copy_source.block(source_offset, *length as usize)?);
                         source_offset += u64::from(*length);
                         matched_data += u64::from(*length);
                     }
@@ -1111,7 +1140,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
             write_token_end(writer)?;
         }
     }
-
+    let read_error = copy_source.read_error;
     let mut checksum_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     let checksum_len = verifier.finalize_into(&mut checksum_buf);
 
@@ -1398,12 +1427,12 @@ mod tests {
         // wire token indices only; the Copy reads the LOCAL source file for
         // checksum purposes, which is what this regression exercises.
         let ops = vec![
-            DeltaOp::Copy {
+            WireOp::Copy {
                 block_index: 0,
                 length: block_a.len() as u32,
             },
-            DeltaOp::Literal(lit_b.clone()),
-            DeltaOp::Copy {
+            WireOp::Literal(&lit_b),
+            WireOp::Copy {
                 block_index: 1,
                 length: block_c.len() as u32,
             },
@@ -2280,7 +2309,7 @@ mod tests {
         temp.write_all(&[9u8; 32]).expect("write source");
         temp.flush().expect("flush");
 
-        let ops = vec![DeltaOp::Copy {
+        let ops = vec![WireOp::Copy {
             block_index: 0,
             length: 64,
         }];
@@ -2314,5 +2343,65 @@ mod tests {
             poisoned[..result.checksum_len].iter().all(|&b| b == 0),
             "the receiver must be handed a checksum that cannot verify"
         );
+    }
+
+    /// Counts `seek` calls so a test can observe `CopySource`'s seek-skip.
+    struct SeekCounter {
+        inner: io::Cursor<Vec<u8>>,
+        seeks: usize,
+    }
+
+    impl Read for SeekCounter {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Seek for SeekCounter {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.seeks += 1;
+            self.inner.seek(pos)
+        }
+    }
+
+    fn counting_source(len: usize) -> CopySource<SeekCounter> {
+        let data = (0..len).map(|i| i as u8).collect();
+        CopySource::from_reader(Some(SeekCounter {
+            inner: io::Cursor::new(data),
+            seeks: 0,
+        }))
+    }
+
+    fn seeks(source: &CopySource<SeekCounter>) -> usize {
+        source.file.as_ref().expect("reader present").seeks
+    }
+
+    // WHY: re-reading matched blocks in order is the common delta shape, and
+    // skipping the redundant lseek per adjacent block is the syscall win this
+    // path exists for. A source that always seeks still produces correct bytes,
+    // so only a seek count can catch that regression.
+    #[test]
+    fn copy_source_skips_seek_for_adjacent_blocks_and_reseeks_otherwise() {
+        let mut source = counting_source(64);
+
+        for (i, offset) in [0u64, 8, 16, 24].into_iter().enumerate() {
+            let block = source.block(offset, 8).expect("in-bounds block");
+            assert_eq!(block[0], offset as u8, "block {i} read the wrong bytes");
+        }
+        assert_eq!(seeks(&source), 1, "adjacent blocks must share one seek");
+
+        // A literal gap leaves the file position behind the next block.
+        source.block(40, 8).expect("block after a gap");
+        assert_eq!(seeks(&source), 2, "a gap must re-seek");
+        source.block(48, 8).expect("adjacent to the gap block");
+        assert_eq!(seeks(&source), 2, "adjacency resumes after a gap");
+
+        // An adjacent block that runs past EOF needs no seek, but its short read
+        // leaves the position unknown, so the following adjacent block re-seeks.
+        source.block(56, 16).expect("short read is tolerated");
+        assert_eq!(seeks(&source), 2, "the short-read block itself is adjacent");
+        assert!(source.read_error.is_some(), "short read must be recorded");
+        source.block(72, 4).expect("block after a short read");
+        assert_eq!(seeks(&source), 3, "a short read must force a re-seek");
     }
 }

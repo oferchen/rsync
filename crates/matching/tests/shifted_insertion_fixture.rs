@@ -112,7 +112,7 @@ fn run_pipeline(
     source: &[u8],
     block_len: u32,
     algorithm: SignatureAlgorithm,
-) -> (DeltaSignatureIndex, DeltaScript) {
+) -> (DeltaSignatureIndex, DeltaScript<'static>) {
     let index = build_index(basis, block_len, algorithm).expect("index built");
     let script = generate_delta(Cursor::new(source), &index).expect("delta generated");
     (index, script)
