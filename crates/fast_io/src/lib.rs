@@ -106,6 +106,8 @@ pub mod confined_readdir;
 pub mod confinement;
 /// Rootless container / user-namespace detection for SQPOLL gating.
 pub mod container;
+/// Destination-side calls anchored on the pinned destination root.
+pub mod destination_at;
 /// Parent-dirfd carrier (`DirSandbox`) for the SEC-1 sandbox.
 ///
 /// Threads an in-tree dirfd stack plus a `DashMap<PathBuf, Arc<OwnedFd>>`
