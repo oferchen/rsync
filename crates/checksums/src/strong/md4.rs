@@ -388,4 +388,49 @@ mod tests {
             );
         }
     }
+
+    /// Forces the OpenSSL backend by loading the legacy provider before the
+    /// first MD4 probe, then checks it against the pure-Rust crate on random
+    /// streaming inputs. nextest runs each test in its own process, so the
+    /// provider load and the once-per-process probe stay local to this test.
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn openssl_md4_matches_pure_rust_on_random_streams() {
+        use md4::Md4 as Md4Reference;
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let _legacy = match openssl::provider::Provider::try_load(None, "legacy", true) {
+            Ok(provider) => provider,
+            Err(error) => {
+                eprintln!("SKIP: OpenSSL legacy provider unavailable ({error}); MD4 parity not run");
+                return;
+            }
+        };
+        assert_eq!(
+            format!("{:?}", Md4::new().inner),
+            "OpenSsl",
+            "the legacy provider is loaded, so MD4 must select the OpenSSL backend"
+        );
+
+        let mut rng = StdRng::seed_from_u64(0x6d64_345f_7061_7269);
+        for case in 0..256 {
+            let len = rng.random_range(0..4096);
+            let data: Vec<u8> = (0..len).map(|_| rng.random()).collect();
+            let split = if len == 0 { 0 } else { rng.random_range(0..=len) };
+
+            let mut active = Md4::new();
+            active.update(&data[..split]);
+            active.update(&data[split..]);
+
+            let mut reference = Md4Reference::new();
+            reference.update(&data);
+            let reference: [u8; 16] = reference.finalize().into();
+
+            assert_eq!(
+                active.finalize(),
+                reference,
+                "OpenSSL MD4 diverged from the pure-Rust reference at case {case} (len {len}, split {split})"
+            );
+        }
+    }
 }
