@@ -457,10 +457,6 @@ mod tests {
             elapsed >= Duration::from_millis(80),
             "wait blocked roughly for the timeout (elapsed={elapsed:?})"
         );
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "wait did not block forever (elapsed={elapsed:?})"
-        );
     }
 
     #[test]

@@ -115,12 +115,11 @@ mod tests {
         let (_silent_peer, silent) = UnixStream::pair().expect("socketpair");
         let (mut waker, woken) = UnixStream::pair().expect("socketpair");
         waker.write_all(b"w").expect("write");
-        let start = Instant::now();
+        // `true` is the readiness verdict; a timeout would have returned `false`.
         assert!(
             wait_any_readable([silent.as_fd(), woken.as_fd()], Duration::from_secs(5))
                 .expect("poll")
         );
-        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

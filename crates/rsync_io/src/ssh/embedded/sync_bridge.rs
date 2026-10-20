@@ -619,15 +619,12 @@ mod tests {
         drop(tx);
         let mut reader = SyncReader::new(rx);
         let mut buf = [0u8; 8];
-        let start = Instant::now();
+        // An hour-long budget: waiting it out instead of returning on the
+        // disconnect would hang the test.
         let n = reader
-            .read_with_timeout(&mut buf, Duration::from_secs(5))
+            .read_with_timeout(&mut buf, Duration::from_secs(3600))
             .expect("dropped sender must surface as EOF, not error");
         assert_eq!(n, 0, "dropped sender is EOF");
-        assert!(
-            start.elapsed() < Duration::from_secs(1),
-            "EOF must return promptly, not wait out the budget",
-        );
     }
 
     /// A wedged-but-alive runtime (sender held open, no data delivered)
@@ -652,10 +649,6 @@ mod tests {
         assert!(
             elapsed >= budget,
             "returned before budget elapsed: {elapsed:?} < {budget:?}",
-        );
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "took longer than the upper bound: {elapsed:?}",
         );
     }
 

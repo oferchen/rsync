@@ -262,10 +262,10 @@ mod tests {
 
     #[test]
     fn time_since_last_io_tracking() {
-        let config = TimeoutConfig::new();
-        let tracker = TimeoutTracker::new(config);
-        let elapsed = tracker.time_since_last_io();
-        assert!(elapsed < Duration::from_secs(1));
+        let before = std::time::Instant::now();
+        let tracker = TimeoutTracker::new(TimeoutConfig::new());
+        // The I/O timer starts at construction, never earlier.
+        assert!(tracker.time_since_last_io() <= before.elapsed());
     }
 
     #[test]

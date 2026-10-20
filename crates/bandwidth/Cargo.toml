@@ -28,7 +28,7 @@ tokio = { workspace = true, optional = true, features = ["time"] }
 
 [dev-dependencies]
 proptest = { workspace = true }
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
 
 [[test]]
 name = "bwlimit_rate_limiting"
