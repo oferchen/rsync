@@ -522,27 +522,16 @@ pub struct ReceiverContext {
     /// logged.
     pub(in crate::receiver) daemon_logfile_format_has_i: bool,
     /// Per-file daemon-log rows collected during the transfer, keyed by flist
-    /// index so they flush in the order upstream logs them. Each row is
-    /// `(transfer-relative name, file length, rendered %i string)`. Drained by
-    /// the daemon driver after the transfer into the module's `log format`.
+    /// index. Receive passes record them out of flist order (directory
+    /// creation, candidate selection, hard-link followers, commits), so they
+    /// are written in flist order once every entry is processed, which is the
+    /// order upstream's receiver logs them as it reads each index.
     pub(in crate::receiver) daemon_log_rows: RefCell<crate::progress::DaemonLogRows>,
-    /// Daemon-log `del.` rows from a delete pass that ran before the transfer
-    /// loop (`--delete-before`/`--delete-during`). Upstream's generator logs
-    /// them as it deletes, ahead of the rows the receiver logs per file.
-    pub(in crate::receiver) daemon_log_early_deletions: Vec<crate::progress::DaemonLogRow>,
-    /// Daemon-log `del.` rows from a delete pass that ran after the transfer
-    /// loop (`--delete-after`/`--delete-delay`), logged after the file rows.
-    pub(in crate::receiver) daemon_log_late_deletions: Vec<crate::progress::DaemonLogRow>,
-    /// Whether the daemon's module log receives this receiver's diagnostics.
-    /// Set for every daemon receiver with a log sink, independent of
-    /// `transfer logging` (upstream log.c:312 logs on `am_daemon` alone).
-    pub(in crate::receiver) daemon_log_messages: bool,
-    /// Module-log lines raised while the generator walks the file list, in
-    /// emission order: the `del.` rows for directories cleared to make room
-    /// for an incoming entry and every diagnostic sent to the client. Logged
-    /// ahead of the per-file rows.
-    pub(in crate::receiver) daemon_log_generator_entries:
-        RefCell<Vec<crate::progress::DaemonLogEntry>>,
+    /// The daemon's module log, set for every daemon receiver with a log sink
+    /// whether or not the module has `transfer logging` (upstream log.c:312
+    /// logs on `am_daemon` alone). Diagnostics and `del.` rows are written
+    /// through it as they are raised.
+    pub(in crate::receiver) daemon_log_sink: Option<crate::progress::SharedDaemonLog>,
     /// The destination directory relative to the daemon module root, which
     /// `%f` joins in front of every logged name (upstream's receiver
     /// `curr_dir + module_dirlen`, log.c `case 'f'`). Empty at the root.
@@ -782,10 +771,7 @@ impl ReceiverContext {
             daemon_log_active: false,
             daemon_logfile_format_has_i: false,
             daemon_log_rows: RefCell::new(BTreeMap::new()),
-            daemon_log_early_deletions: Vec::new(),
-            daemon_log_late_deletions: Vec::new(),
-            daemon_log_messages: false,
-            daemon_log_generator_entries: RefCell::new(Vec::new()),
+            daemon_log_sink: None,
             daemon_log_dir: std::path::PathBuf::new(),
             daemon_log_renamed_from: None,
             sender_file_sum: std::cell::Cell::new([0; crate::progress::MAX_FILE_SUM_LEN]),

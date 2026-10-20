@@ -461,7 +461,7 @@ impl GeneratorContext {
                     (code, String::from_utf8_lossy(&message).into_owned())
                 }
             };
-            if let Some(log) = &self.daemon_message_log {
+            if let Some(log) = &self.daemon_log_sink {
                 log.write(text.as_bytes());
             }
             text.push('\n');

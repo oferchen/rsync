@@ -526,18 +526,16 @@ impl ReceiverContext {
         }
     }
 
-    /// Queues a server-side diagnostic for the daemon's module log.
+    /// Writes a server-side diagnostic to the daemon's module log before the
+    /// caller frames it for the peer.
     ///
     /// upstream: log.c:312-331 - `rwrite()` hands the message to `logit()` on
     /// `am_daemon` before the `am_server` branch frames it for the peer, so the
-    /// daemon's log and the client both receive it. The bytes are kept as
-    /// sent, so a file name that is not valid UTF-8 is logged verbatim.
+    /// line is in the daemon's log before the client can read it. The bytes are
+    /// kept as sent, so a file name that is not valid UTF-8 is logged verbatim.
     fn log_daemon_message(&self, line: &[u8]) {
-        if self.daemon_log_messages {
-            let body = line.strip_suffix(b"\n").unwrap_or(line);
-            self.daemon_log_generator_entries
-                .borrow_mut()
-                .push(crate::progress::DaemonLogEntry::Message(body.to_vec()));
+        if let Some(log) = &self.daemon_log_sink {
+            log.write(line.strip_suffix(b"\n").unwrap_or(line));
         }
     }
 
@@ -1313,13 +1311,13 @@ impl ReceiverContext {
         self.daemon_logfile_format_has_i = format_has_i;
     }
 
-    /// Routes this server receiver's diagnostics to the daemon's module log as
-    /// well as to the client.
+    /// Routes this server receiver's diagnostics and `del.` rows to the
+    /// daemon's module log as well as to the client.
     ///
     /// upstream: log.c:312 - `rwrite()` logs on `am_daemon` whether or not the
     /// module has `transfer logging`.
-    pub(crate) fn enable_daemon_log_messages(&mut self) {
-        self.daemon_log_messages = true;
+    pub(crate) fn set_daemon_log_sink(&mut self, log: crate::progress::SharedDaemonLog) {
+        self.daemon_log_sink = Some(log);
     }
 
     /// Collects one per-file daemon-log row when daemon transfer logging is armed.
@@ -1417,28 +1415,25 @@ impl ReceiverContext {
         self.daemon_log_active && !self.config.flags.dry_run
     }
 
-    /// Collects the daemon-log `del.` rows for the entries one delete pass
+    /// Writes the daemon-log `del.` rows for the entries one delete pass
     /// removed, in the order it removed them.
     ///
     /// upstream: log.c:924-928 `log_delete()` - the FLOG write is skipped under
     /// `dry_run` and otherwise always made once `logfile_format` is set; the
-    /// daemon picks the line's format when it renders the row.
+    /// daemon picks the line's format when it renders the row. Upstream's
+    /// generator writes each row as `delete_item()` removes the entry.
     pub(in crate::receiver) fn record_daemon_log_deletions<'a>(
-        &mut self,
-        phase: super::transfer::DeletePassPhase,
+        &self,
         deleted: impl IntoIterator<Item = &'a super::directory::deletion::DeletedEntry>,
     ) {
-        if !self.captures_victim_modes() {
-            return;
-        }
-        let rows = self.daemon_log_deletion_rows(deleted);
-        match phase {
-            super::transfer::DeletePassPhase::Early => self.daemon_log_early_deletions.extend(rows),
-            super::transfer::DeletePassPhase::Late => self.daemon_log_late_deletions.extend(rows),
+        if self.captures_victim_modes() {
+            for row in self.daemon_log_deletion_rows(deleted) {
+                self.write_daemon_log_row(row);
+            }
         }
     }
 
-    /// Collects the daemon-log `del.` rows for the contents of a directory
+    /// Writes the daemon-log `del.` rows for the contents of a directory
     /// cleared to make room for an incoming entry.
     ///
     /// upstream: delete.c:126 - delete_dir_contents() strips `DEL_MAKE_ROOM`
@@ -1448,12 +1443,7 @@ impl ReceiverContext {
         &self,
         deleted: impl IntoIterator<Item = &'a super::directory::deletion::DeletedEntry>,
     ) {
-        if self.captures_victim_modes() {
-            let rows = self.daemon_log_deletion_rows(deleted);
-            self.daemon_log_generator_entries
-                .borrow_mut()
-                .extend(rows.into_iter().map(crate::progress::DaemonLogEntry::Row));
-        }
+        self.record_daemon_log_deletions(deleted);
     }
 
     /// Builds one `del.` row per removed entry.
@@ -1480,47 +1470,42 @@ impl ReceiverContext {
             .collect()
     }
 
-    /// Drains the collected daemon-log lines in the order upstream writes them
-    /// to the module log file: an early delete pass's `del.` rows, the lines
-    /// raised while the generator walked the file list (make-room `del.` rows
-    /// and diagnostics, in emission order), the per-file rows in ascending
-    /// flist-index order, then a late delete pass's `del.` rows.
+    /// Writes the collected per-file daemon-log rows in ascending flist-index
+    /// order.
     ///
-    /// A diagnostic raised by the receiver half after the walk (a failed
-    /// commit, say) still lands with the generator's lines: upstream orders
-    /// those by process timing, and the generator normally runs ahead.
-    pub fn drain_daemon_log_entries(&mut self) -> Vec<crate::progress::DaemonLogEntry> {
-        use crate::progress::DaemonLogEntry;
-        let mut entries: Vec<DaemonLogEntry> = std::mem::take(&mut self.daemon_log_early_deletions)
-            .into_iter()
-            .map(DaemonLogEntry::Row)
-            .collect();
-        entries.append(self.daemon_log_generator_entries.get_mut());
-        entries.extend(
-            std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
-                .into_values()
-                .flatten()
-                .map(DaemonLogEntry::Row),
-        );
-        entries.extend(
-            std::mem::take(&mut self.daemon_log_late_deletions)
-                .into_iter()
-                .map(DaemonLogEntry::Row),
-        );
-        for entry in &mut entries {
-            let DaemonLogEntry::Row(row) = entry else {
-                continue;
-            };
-            row.dir.clone_from(&self.daemon_log_dir);
-            if let Some(name) = self
-                .daemon_log_renamed_from
-                .as_ref()
-                .filter(|_| !row.deleted)
-            {
-                row.name.clone_from(name);
-            }
+    /// Called once every entry has been processed and before the late delete
+    /// pass and the goodbye, so the module log reads early `del.` rows, the
+    /// lines raised during the walk, the per-file rows, then late `del.` rows,
+    /// and is complete before the client can see the transfer end.
+    ///
+    /// upstream: receiver.c:919 `maybe_log_item()` / receiver.c:1290
+    /// `log_item()` - the receiver logs each entry as it reads its index, in
+    /// file-list order, before `main.c:1111` reports `recv_files()` done.
+    pub(in crate::receiver) fn flush_daemon_log_rows(&self) {
+        let rows = std::mem::take(&mut *self.daemon_log_rows.borrow_mut());
+        for row in rows.into_values().flatten() {
+            self.write_daemon_log_row(row);
         }
-        entries
+    }
+
+    /// Places `row` under the logged destination directory and writes it.
+    ///
+    /// upstream: log.c `case 'f'` joins the receiver's `curr_dir` below the
+    /// module root; `log_item()` renders `f_name(file)`, so a renamed lone
+    /// entry is logged under its file-list name.
+    fn write_daemon_log_row(&self, mut row: crate::progress::DaemonLogRow) {
+        let Some(log) = &self.daemon_log_sink else {
+            return;
+        };
+        row.dir.clone_from(&self.daemon_log_dir);
+        if let Some(name) = self
+            .daemon_log_renamed_from
+            .as_ref()
+            .filter(|_| !row.deleted)
+        {
+            row.name.clone_from(name);
+        }
+        log.write_row(&row);
     }
 
     /// Drains every buffered itemize row in generator walk order, routing each
