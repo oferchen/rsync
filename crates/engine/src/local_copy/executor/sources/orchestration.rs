@@ -748,10 +748,13 @@ pub(crate) fn copy_sources(
                 if let Err(error) = result {
                     if error.is_vanished_error() {
                         // upstream: flist.c:1688 - vanished files produce a warning
-                        // and set IOERR_VANISHED, but transfer continues.
+                        // and set IOERR_VANISHED, but transfer continues and no
+                        // deletion is suppressed. A directory operand re-raising a
+                        // vanish from inside its tree already reported it.
                         // full_fname() wraps the path in double quotes (util1.c:1528).
-                        eprintln!("file has vanished: \"{}\"", source.path().display());
-                        context.record_io_error();
+                        if error.vanished_path() == Some(source.path()) {
+                            eprintln!("file has vanished: \"{}\"", source.path().display());
+                        }
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
                         }

@@ -313,6 +313,18 @@ impl LocalCopyError {
         )
     }
 
+    /// The path a vanished-file error names, or `None` for any other error.
+    pub(crate) fn vanished_path(&self) -> Option<&Path> {
+        match &self.kind {
+            LocalCopyErrorKind::Io { path, source, .. }
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
+                Some(path.as_path())
+            }
+            _ => None,
+        }
+    }
+
     /// Reports whether this is a failed initial `link_stat` of a source
     /// argument (a missing command-line operand or `--files-from` entry).
     ///
