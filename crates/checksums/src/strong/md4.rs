@@ -403,7 +403,9 @@ mod tests {
         let _legacy = match openssl::provider::Provider::try_load(None, "legacy", true) {
             Ok(provider) => provider,
             Err(error) => {
-                eprintln!("SKIP: OpenSSL legacy provider unavailable ({error}); MD4 parity not run");
+                eprintln!(
+                    "SKIP: OpenSSL legacy provider unavailable ({error}); MD4 parity not run"
+                );
                 return;
             }
         };
@@ -417,7 +419,11 @@ mod tests {
         for case in 0..256 {
             let len = rng.random_range(0..4096);
             let data: Vec<u8> = (0..len).map(|_| rng.random()).collect();
-            let split = if len == 0 { 0 } else { rng.random_range(0..=len) };
+            let split = if len == 0 {
+                0
+            } else {
+                rng.random_range(0..=len)
+            };
 
             let mut active = Md4::new();
             active.update(&data[..split]);
