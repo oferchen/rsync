@@ -244,39 +244,6 @@ fn zstd_round_trip_every_level_every_shape() {
     }
 }
 
-/// Representative zstd compression levels for the streaming sweep.
-///
-/// Sweeping every numeric level (`1..=22`) across every chunk layout, flush
-/// cadence, and shape is intractable under CI load because zstd context
-/// initialization at high levels allocates large search structures. Full
-/// numeric level coverage is already asserted by
-/// [`zstd_round_trip_every_level_every_shape`]. This representative set covers
-/// the presets (`None`, `Fast`, `Default`, `Best`), low and mid numeric
-/// levels (`1`, `9`), and signed fast levels (`-1`) to thoroughly exercise the
-/// streaming framing and flush contracts across all compression tiers while
-/// keeping execution well within CI time budgets.
-#[cfg(feature = "zstd")]
-fn zstd_streaming_levels() -> Vec<(String, CompressionLevel)> {
-    vec![
-        ("None".to_string(), CompressionLevel::None),
-        ("Fast".to_string(), CompressionLevel::Fast),
-        ("Default".to_string(), CompressionLevel::Default),
-        ("Best".to_string(), CompressionLevel::Best),
-        (
-            "Numeric(1)".to_string(),
-            CompressionLevel::Precise(NonZeroU8::new(1).expect("1")),
-        ),
-        (
-            "Numeric(9)".to_string(),
-            CompressionLevel::Precise(NonZeroU8::new(9).expect("9")),
-        ),
-        (
-            "Signed(-1)".to_string(),
-            CompressionLevel::PreciseSigned(-1),
-        ),
-    ]
-}
-
 #[cfg(feature = "zstd")]
 #[test]
 fn zstd_streaming_flush_boundaries_round_trip() {
@@ -284,7 +251,7 @@ fn zstd_streaming_flush_boundaries_round_trip() {
     // streaming contract requires the decoder to recover the original bytes
     // regardless of how the encoder partitioned its writes or where flushes
     // landed in the stream.
-    for (level_name, level) in zstd_streaming_levels() {
+    for (level_name, level) in zstd_levels() {
         for &size in &[0usize, 1, 17, 256, 1024, 4096, 16_384, 65_536] {
             for (shape_name, input) in shaped_inputs(size) {
                 for layout in streaming_layouts(size) {

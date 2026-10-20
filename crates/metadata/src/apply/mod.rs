@@ -210,13 +210,7 @@ pub fn apply_directory_metadata_with_options(
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, &options, None)?;
     if options.times() {
-        timestamps::set_timestamp_like(
-            metadata,
-            destination,
-            true,
-            pre_transfer_meta,
-            Some(&options),
-        )?;
+        timestamps::set_timestamp_like(metadata, destination, true, None, Some(&options))?;
     }
     // upstream: rsync.c:725-726 - directories skip atime (`ATTRS_SKIP_ATIME`)
     // regardless of `--atimes`; only files get atime preservation.
