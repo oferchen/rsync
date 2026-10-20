@@ -205,55 +205,30 @@ Some SSH features (for example certificate-based auth) may be missing; please op
 
 ### QUIC transport
 
-oc-rsync can carry the rsync protocol over QUIC (RFC 9000/9001, TLS 1.3 over UDP) instead of a plain `rsync://` TCP socket. Upstream rsync has no QUIC transport. It is behind the `quic` cargo feature and is **off by default**; release builds do not carry it.
+oc-rsync can carry the rsync daemon protocol over QUIC (TLS 1.3 over UDP) instead of a plain TCP socket. Upstream rsync has no QUIC transport, so both ends must be oc-rsync. It needs the `quic` cargo feature, which is not a default; release artifacts for Linux, macOS and Windows enable it from the first release after v0.6.4. Windows builds run the QUIC client only: a Windows daemon with a QUIC directive refuses to start.
 
 ```sh
-cargo build --release --features quic -p cli -p daemon
+cargo build --release --features quic
 ```
 
-QUIC always runs TLS 1.3 with the ALPN token `rsync`. The client verifies the daemon certificate against the CA bundle given by `--quic-ca`, which is required: nothing is trusted by default, not even the system trust store, so a client without `--quic-ca` refuses to connect (exit 5). Mutual TLS is optional. Selecting QUIC is hard-fail: if the feature or listener is unavailable, the transfer errors out rather than falling back to TCP. The cipher defaults to AES-GCM with hardware AES and ChaCha20-Poly1305 without; `--quic-cipher aes|chacha20` overrides it.
-
-Create a self-signed daemon certificate (the SubjectAltName must match the host clients connect to). Clients pass this same certificate as `--quic-ca`; a certificate issued by an internal CA works the same way with the CA certificate as `--quic-ca`:
-
-```sh
-openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout quic-key.pem -out quic-cert.pem -days 365 \
-  -subj "/CN=rsync.example.com" \
-  -addext "subjectAltName=DNS:rsync.example.com"
-```
-
-For mutual TLS, also create a client CA and sign a client certificate:
-
-```sh
-openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-  -keyout ca-key.pem -out ca-cert.pem -subj "/CN=oc-rsync client CA"
-openssl req -newkey rsa:2048 -nodes \
-  -keyout client-key.pem -out client.csr -subj "/CN=alice"
-openssl x509 -req -in client.csr -CA ca-cert.pem -CAkey ca-key.pem \
-  -CAcreateserial -out client-cert.pem -days 365
-```
-
-Daemon configuration (`oc-rsyncd.conf`, global section):
+The daemon needs a certificate and key in the global section of `oc-rsyncd.conf`, and UDP open on its port (873 unless `quic port` says otherwise):
 
 ```ini
-quic cert file = /etc/oc-rsync/quic-cert.pem
-quic key file  = /etc/oc-rsync/quic-key.pem
-# quic port defaults to the module `port` (873):
-# quic port = 1873
-# For mutual TLS:
-quic client ca file = /etc/oc-rsync/ca-cert.pem
+quic cert file = /etc/oc-rsync/server-cert.pem
+quic key file  = /etc/oc-rsync/server-key.pem
+# Optional: require client certificates (mutual TLS)
+# quic client ca file = /etc/oc-rsync/client-ca.pem
 ```
 
-Client usage:
+Clients must name the CA that signed the daemon certificate. There is no default trust and no trust-on-first-use, and the system trust store is not consulted. A failed QUIC connection exits 5 and never falls back to TCP.
 
 ```sh
-oc-rsync -a --quic-ca quic-cert.pem quic://host/module/ dest/
-oc-rsync -a --quic --quic-ca quic-cert.pem host::module/ dest/
-oc-rsync -a --quic --quic-ca quic-cert.pem --quic-cert client-cert.pem --quic-key client-key.pem host::module/ dest/
-oc-rsync -a --quic-ca quic-cert.pem --quic-cipher chacha20 quic://host/module/ dest/
+oc-rsync -av --quic-ca ca-cert.pem quic://host/module/ dest/
+oc-rsync -av --quic --quic-ca ca-cert.pem host::module/ dest/
+oc-rsync -av --quic-ca ca-cert.pem --quic-cert client-cert.pem --quic-key client-key.pem quic://host/module/ dest/
 ```
 
-`--quic-cc` selects the congestion controller and `--quic-window` the flow-control window. Full guide: [`docs/quic-transport.md`](./docs/quic-transport.md).
+The ALPN identifier is `rsync`. The congestion controller defaults to BBR; `--quic-cc` selects `cubic` or `newreno`, and `--quic-window` sizes the flow-control window. The daemon leaf certificate must be `CA:FALSE`, which a plain `openssl req -x509` does not produce. [`docs/quic-transport.md`](./docs/quic-transport.md) has the full guide: certificate generation, every directive, flag and environment variable, a walkthrough, error messages and limitations.
 
 ### Linux io_uring
 
