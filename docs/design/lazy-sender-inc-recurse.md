@@ -241,7 +241,7 @@ listed once.
 
 ### 2.9 Gating predicate
 
-`set_allow_inc_recurse` (`compat.c:162-181`, clauses `:172-180`): cleared
+`set_allow_inc_recurse` (`compat.c:162-180`, clauses `:172-180`): cleared
 when `!recurse || use_qsort`, when a receiving side uses
 `delete_before/delete_after/delay_updates/prune_empty_dirs`, or when a server
 peer did not advertise `i`. The server folds it into CF_INC_RECURSE
@@ -403,7 +403,7 @@ there.
   (`stats.flist_size`, file counts).
 - The non-inc sender path is unchanged in every stage.
 - The INC_RECURSE gate stays exactly upstream's predicate
-  (`compat.c:162-181` == `crates/transfer/src/lib.rs:549`), including the
+  (`compat.c:162-180` == `crates/transfer/src/lib.rs:549`), including the
   oc receiver-role restriction until tasks 309-313 lift it; no new
   negotiation, no new capability advertisement.
 - FLAG_DUPLICATE coalescing (Section 2.8) is part of the specification, not
@@ -521,7 +521,7 @@ comment cites them.
 | `read_ndx_and_attrs` flist lookup | `rsync.c:394` | |
 | `perform_io` idle production (MAX gate; `-1` call) | `io.c:854-862`, `:853-856` | was `:753-758,771-775` |
 | generator half-window (flush hint; hardlink pre-wait) | `generator.c:2703`, `:2775` | was `:2231,2302` |
-| `set_allow_inc_recurse` | `compat.c:162-181` (clauses `:172-180`) | unchanged |
+| `set_allow_inc_recurse` | `compat.c:162-180` (clauses `:172-180`) | unchanged |
 | CF_INC_RECURSE fold / mismatch error | `compat.c:724`, `:780` | was `:713`, `:746` |
 | `change_local_filter_dir` | `exclude.c:974` | |
 | pool primitives | `lib/pool_alloc.c:300` (`pool_free_old`), `:353` (`pool_boundary`) | |

@@ -327,6 +327,9 @@ fn readonly_attribute_blocks_writes() {
 
     // Clear read-only and verify write succeeds.
     let mut perms = fs::metadata(&path).unwrap().permissions();
+    // On Windows this clears FILE_ATTRIBUTE_READONLY, the attribute under test;
+    // the lint guards the Unix meaning (world-writable), which does not apply.
+    #[allow(clippy::permissions_set_readonly_false)]
     perms.set_readonly(false);
     fs::set_permissions(&path, perms).unwrap();
 

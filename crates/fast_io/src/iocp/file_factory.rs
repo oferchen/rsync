@@ -146,19 +146,10 @@ impl FileWriter for IocpOrStdWriter {
 /// When IOCP is available and the file is large enough to benefit from
 /// async I/O, returns an IOCP reader. Otherwise, returns a standard
 /// buffered reader.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IocpReaderFactory {
     config: IocpConfig,
     force_fallback: bool,
-}
-
-impl Default for IocpReaderFactory {
-    fn default() -> Self {
-        Self {
-            config: IocpConfig::default(),
-            force_fallback: false,
-        }
-    }
 }
 
 impl IocpReaderFactory {
@@ -204,19 +195,10 @@ impl FileReaderFactory for IocpReaderFactory {
 }
 
 /// Factory that creates IOCP writers with automatic fallback.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IocpWriterFactory {
     config: IocpConfig,
     force_fallback: bool,
-}
-
-impl Default for IocpWriterFactory {
-    fn default() -> Self {
-        Self {
-            config: IocpConfig::default(),
-            force_fallback: false,
-        }
-    }
 }
 
 impl IocpWriterFactory {
@@ -622,7 +604,7 @@ mod tests {
         #[allow(unsafe_code)]
         let file = unsafe {
             use std::os::windows::io::FromRawHandle;
-            std::fs::File::from_raw_handle(write_handle as *mut std::ffi::c_void)
+            std::fs::File::from_raw_handle(write_handle)
         };
         // Close the read end so we don't leak it.
         // SAFETY: read_handle came from CreatePipe and is still owned by us.

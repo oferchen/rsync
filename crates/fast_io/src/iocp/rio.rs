@@ -952,7 +952,7 @@ mod tests {
 
     #[test]
     fn default_pool_dimensions_are_sane() {
-        assert!(DEFAULT_RIO_POOL_BYTES >= DEFAULT_RIO_SLOT_BYTES);
+        const { assert!(DEFAULT_RIO_POOL_BYTES >= DEFAULT_RIO_SLOT_BYTES) };
         assert_eq!(DEFAULT_RIO_POOL_BYTES % DEFAULT_RIO_SLOT_BYTES, 0);
         let slot_count = DEFAULT_RIO_POOL_BYTES / DEFAULT_RIO_SLOT_BYTES;
         assert!(slot_count >= 2, "pool must provide at least 2 slots");

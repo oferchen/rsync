@@ -84,10 +84,10 @@ mod platform {
 
         {
             let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(map) = guard.as_ref() {
-                if let Some(&cached) = map.get(&volume_root) {
-                    return Ok(cached);
-                }
+            if let Some(map) = guard.as_ref()
+                && let Some(&cached) = map.get(&volume_root)
+            {
+                return Ok(cached);
             }
         }
 
