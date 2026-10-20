@@ -218,6 +218,8 @@ quic cert file = /etc/oc-rsync/server-cert.pem
 quic key file  = /etc/oc-rsync/server-key.pem
 # Optional: require client certificates (mutual TLS)
 # quic client ca file = /etc/oc-rsync/client-ca.pem
+# Optional: QUIC on loopback only (default: the TCP addresses, dual-stack)
+# quic address = 127.0.0.1 ::1
 ```
 
 Clients must name the CA that signed the daemon certificate. There is no default trust and no trust-on-first-use, and the system trust store is not consulted. A failed QUIC connection exits 5 and never falls back to TCP.

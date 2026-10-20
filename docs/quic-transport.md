@@ -38,7 +38,9 @@ build" error.
 It pulls in `quinn-proto` (the QUIC state machine), `quinn-udp`, and `rustls`
 with the `ring` provider for TLS 1.3. `rcgen` is also linked, for the library's
 ephemeral test identity. The daemon and the client never generate a
-certificate at runtime.
+certificate at runtime. Measured on a Linux x86_64 release build, `quic` grows
+the binary from 15,355,480 to 17,165,920 bytes (+1.81 MB, +11.8%) and the
+normal dependency graph from 406 to 420 unique crates (+14).
 
 Release artifacts built by `.github/workflows/release-cross.yml` enable `quic`
 for Linux (glibc and musl), macOS and Windows. Releases up to and including
@@ -53,7 +55,7 @@ v0.6.4 predate this and do not carry it. Check a binary with
 
 ## 3. Server setup
 
-The QUIC listener runs beside the TCP listener. Five global directives in
+The QUIC listener runs beside the TCP listener. Six global directives in
 `oc-rsyncd.conf` configure it:
 
 | Directive | Default | Meaning |
@@ -62,13 +64,14 @@ The QUIC listener runs beside the TCP listener. Five global directives in
 | `quic key file` | unset | PEM private key for that certificate (PKCS#8, PKCS#1 or SEC1) |
 | `quic client ca file` | unset (no client certificate requested) | PEM CA bundle. When set, every client must present a certificate that chains to it (mutual TLS) |
 | `quic port` | the daemon `port` (873) | UDP port of the QUIC listener. `quic port = 0` means 873, as `port = 0` does |
+| `quic address` | the TCP listener's addresses (`[::]` and `0.0.0.0`) | Literal IPv4/IPv6 addresses the QUIC listener binds, separated by spaces, independent of the TCP `address`. Hostnames, invalid and repeated addresses fail to parse |
 | `quic retry` | `auto` | When the listener answers a new client with a stateless Retry: `auto` once 100 handshakes are in flight, `always` for every client, `never` for none. Any other value fails to parse |
 
 Rules:
 
-- Setting any of the five turns the listener on. A config without them stays
+- Setting any of the six turns the listener on. A config without them stays
   TCP-only.
-- All five are global-only. A module section that sets one fails to parse.
+- All six are global-only. A module section that sets one fails to parse.
 - Paths resolve relative to the config file, like `pid file`.
 - `quic cert file` and `quic key file` go together. Naming only one fails at
   startup.
@@ -78,9 +81,25 @@ Rules:
   listener. An unreadable or malformed file, or a key that does not match the
   certificate, stops the daemon with exit 1. It never serves TCP alone while
   QUIC is silently down.
-- The listener binds the same addresses as the TCP listener, IPv4 and IPv6.
+- The listener is dual-stack by default: without `quic address` it binds the
+  same addresses as the TCP listener, `[::]` and `0.0.0.0` unless `address`,
+  `--ipv4` or `--ipv6` narrow them. If one family cannot bind, it serves on the
+  other and logs a warning.
+- With `quic address`, the listener binds exactly the listed addresses on the
+  `quic port`, whatever the TCP `address` is. Every listed address must bind,
+  or the daemon refuses to start.
+- The daemon log line `QUIC listener bound on ...` names every bound address.
 - `quic client ca file` gates only the QUIC listener. The TCP listener still
   serves the same modules without a certificate.
+
+**Loopback-only QUIC.** To accept QUIC only from the local host, for example
+behind a local relay, while TCP keeps listening on every address:
+
+```
+quic cert file = /etc/oc-rsync/server-cert.pem
+quic key file  = /etc/oc-rsync/server-key.pem
+quic address   = 127.0.0.1 ::1
+```
 
 **Retry and connection limits.** A Retry (RFC 9000 section 8.1.2) makes a
 client prove it can receive at its source address before the daemon keeps any
@@ -344,11 +363,12 @@ means the front process could not start the listener on that socket.
 
 ## 9. Congestion control
 
-QUIC uses `quinn-proto`'s congestion controllers. The default is **BBR**
-(`BbrConfig`), a model-based controller suited to high bandwidth-delay links.
-CUBIC and NewReno, both loss-based, can be selected with `--quic-cc` or
-`OC_RSYNC_QUIC_CC`. Prefer them where fairness with competing loss-based
-flows matters.
+QUIC uses `quinn-proto`'s congestion controllers. BBR is the default; CUBIC
+and NewReno are selectable. Fairness to competing TCP traffic is not
+guaranteed. BBR (`BbrConfig`) is a model-based controller suited to high
+bandwidth-delay links. CUBIC and NewReno, both loss-based, are selected with
+`--quic-cc` or `OC_RSYNC_QUIC_CC`. Prefer them where fairness with competing
+loss-based flows matters.
 
 The flow-control window must cover the link's bandwidth-delay product
 (`bandwidth * round-trip time`), or the sender stalls waiting for

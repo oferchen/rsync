@@ -155,6 +155,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - The daemon accepts `--log-file-format`, as upstream does (#8047)
 - A pulling client advertises incremental recursion by default, as upstream does, except under `--delete-before` or `--delete-after`; `OC_RSYNC_PULL_INC_RECURSE=0` opts out (#8062, #8091, #8217)
+- `quic address = <ip> [<ip> ...]` binds the QUIC listener on literal IPv4/IPv6 addresses independent of the TCP `address`, for example `127.0.0.1 ::1` for loopback only; unset, QUIC stays dual-stack on the TCP addresses (#8229)
 - QUIC transport behind the `quic` feature, on by default (#8229): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195)
 - Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
 - `StrictHostKeyChecking accept-new` works as documented (#7783)
