@@ -10,6 +10,7 @@ use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
 use protocol::effective_max_alloc;
 use protocol::read_varint;
+use protocol::wire::MAX_STRONG_SUM_LEN;
 use protocol::xattr::{MAX_XATTR_VALUE_BYTES, XattrList};
 
 /// Upstream `MAXPATHLEN` ceiling for an xname vstring (`rsync.c:409` -
@@ -627,9 +628,17 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
     signature: &FileSignature,
     s2length: u32,
 ) -> io::Result<()> {
-    let s2len = (s2length as usize).min(64);
+    // upstream: io.c:2279 - a sum_head never advertises more than the widest
+    // transfer digest, so a larger width is a caller bug, not something to clamp.
+    if s2length > MAX_STRONG_SUM_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("strong sum length {s2length} exceeds {MAX_STRONG_SUM_LEN}"),
+        ));
+    }
+    let s2len = s2length as usize;
     let entry_len = 4 + s2len;
-    let mut entry_buf = [0u8; 68];
+    let mut entry_buf = [0u8; 4 + MAX_STRONG_SUM_LEN as usize];
     for block in signature.blocks() {
         entry_buf[..4].copy_from_slice(&(block.rolling().value() as i32).to_le_bytes());
         entry_buf[4..entry_len].fill(0);
@@ -1000,5 +1009,29 @@ mod xattr_abbrev_guard_tests {
         assert_eq!(values.len(), 1);
         assert_eq!(values[0].0, 3);
         assert_eq!(values[0].1, b"abcd");
+    }
+}
+
+#[cfg(test)]
+mod write_signature_blocks_width_tests {
+    use super::*;
+
+    /// A width beyond any negotiable digest must be refused, never truncated:
+    /// silently clamping would put a shorter sum on the wire than the
+    /// sum_head the peer already read announced, desyncing the stream.
+    #[test]
+    fn oversized_strong_sum_length_is_refused() {
+        let layout = engine::SignatureLayout::from_raw_parts(
+            std::num::NonZeroU32::new(700).unwrap(),
+            0,
+            0,
+            std::num::NonZeroU8::new(16).unwrap(),
+        );
+        let signature = FileSignature::from_raw_parts(layout, vec![], 0);
+        let mut out = Vec::new();
+        let err = write_signature_blocks(&mut out, &signature, MAX_STRONG_SUM_LEN + 1)
+            .expect_err("oversized s2length must fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(out.is_empty());
     }
 }

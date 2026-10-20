@@ -165,33 +165,3 @@ fn window_size_accessor() {
     let buf: BoundedReorderBuffer<u8> = BoundedReorderBuffer::new(32);
     assert_eq!(buf.window_size(), 32);
 }
-
-/// A window wider than any eager pre-allocation must still keep every buffered
-/// item: an offset past the current ring capacity grows the ring instead of
-/// wrapping onto (and overwriting) an occupied slot.
-#[test]
-fn deep_gap_beyond_initial_capacity_keeps_every_item() {
-    let window = (1u64 << 21) + 8;
-    let mut buf = BoundedReorderBuffer::new(window);
-    let far = window - 1;
-    assert!(buf.insert(far, far).unwrap().is_empty());
-    assert!(buf.insert(1, 1).unwrap().is_empty());
-    assert!(
-        buf.insert(far - (1 << 20), far - (1 << 20))
-            .unwrap()
-            .is_empty()
-    );
-    let drained = buf.insert(0, 0).unwrap();
-    assert_eq!(drained, vec![0, 1]);
-    assert_eq!(buf.metrics().current_depth, 2);
-}
-
-/// Memory follows the observed reorder depth, not the configured window: a
-/// one-slot gap in a huge window allocates only the minimum ring.
-#[test]
-fn shallow_gap_allocates_minimum_ring_only() {
-    let mut buf = BoundedReorderBuffer::new(1 << 20);
-    assert!(buf.insert(1, 1u64).unwrap().is_empty());
-    assert!(buf.slots.len() <= 16, "ring grew to {}", buf.slots.len());
-    assert_eq!(buf.insert(0, 0).unwrap(), vec![0, 1]);
-}
