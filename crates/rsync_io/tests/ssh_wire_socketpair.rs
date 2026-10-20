@@ -35,7 +35,7 @@ fn child_stdin_and_stdout_are_sockets() {
     drop(writer);
     let mut seen = String::new();
     reader.read_to_string(&mut seen).expect("read child report");
-    let (status, _) = handle.wait_with_stderr().expect("reap child");
+    let status = handle.wait().expect("reap child");
     assert!(status.success());
     assert_eq!(seen, "sock0 sock1 ", "child stdio must be socketpair ends");
 }
@@ -71,7 +71,7 @@ fn split_halves_round_trip_through_the_child() {
         let mut echoed = Vec::with_capacity(expected.len());
         reader.read_to_end(&mut echoed).expect("read echo");
         feeder.join().expect("feeder thread");
-        let (status, _) = handle.wait_with_stderr().expect("reap child");
+        let status = handle.wait().expect("reap child");
         assert!(status.success());
         assert_eq!(echoed.len(), expected.len(), "{policy:?}");
         assert!(echoed == expected, "echoed stream differs under {policy:?}");

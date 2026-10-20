@@ -484,7 +484,7 @@ pub use splice::DEFAULT_PIPE_CAPACITY;
 pub use splice::{
     SplicePipe, is_splice_available, is_splice_enabled, try_splice_to_file, try_vmsplice_to_file,
 };
-pub use stdio_blocking::force_blocking_stdio;
+pub use stdio_blocking::{force_blocking_stderr, force_blocking_stdio};
 pub use stdio_shutdown::shutdown_stdio_write;
 // Non-unix `recv_fd_to_file` stub returns `Unsupported`; gate the public
 // re-export on unix to remove the dead surface area (see WIN-S.LAND.1.a).

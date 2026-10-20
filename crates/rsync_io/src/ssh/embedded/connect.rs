@@ -249,9 +249,8 @@ pub fn connect_and_exec(
 /// verification` warning, which upstream routes to fd2 (`log.c:341` maps
 /// `FWARNING` to stderr) rather than sending a `MSG_WARNING` - to its stderr,
 /// which arrives on the channel as extended data. Forwarding the stderr stream
-/// verbatim mirrors the subprocess transport's drain
-/// (`aux_channel.rs::drain_loop`) and native ssh's inherited fd2 passthrough,
-/// so a push over the embedded transport surfaces remote warnings identically.
+/// verbatim mirrors the subprocess transport, whose ssh child inherits our
+/// fd2 (upstream: pipe.c:68-83 `piped_child()`), so a push over the embedded transport surfaces remote warnings identically.
 ///
 /// Returns `true` when the chunk was the stderr stream (and was written),
 /// `false` for any other extended-data type, which has no rsync meaning and is

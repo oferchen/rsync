@@ -236,8 +236,23 @@ fn daemon_mode_arguments_for_alias(args: &[OsString], brand: Brand) -> Option<Ve
 /// Returns the process exit code that should be used by the caller. On success
 /// `0` is returned. All diagnostics are rendered using the central
 /// [`core::message`] utilities to preserve formatting and trailers.
+///
+/// `stderr` is written one whole line per `write` call, as upstream `rwrite()`
+/// does (log.c:269-427): the remote shell inherits the same descriptor, so a
+/// line split across several writes could be torn by the remote's output.
 #[allow(clippy::module_name_repetitions)]
 pub fn run<I, S, Out, Err>(arguments: I, stdout: &mut Out, stderr: &mut Err) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+    Out: Write,
+    Err: Write,
+{
+    let mut stderr = logging_sink::LineAtomicWriter::new(stderr);
+    run_with_line_stderr(arguments, stdout, &mut stderr)
+}
+
+fn run_with_line_stderr<I, S, Out, Err>(arguments: I, stdout: &mut Out, stderr: &mut Err) -> i32
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,

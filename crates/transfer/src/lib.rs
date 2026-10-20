@@ -913,6 +913,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     )?;
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
+    // upstream: main.c:1356-1364 start_server() - fd 2 is set blocking only
+    // after setup_protocol(), once ssh is done twiddling its descriptors. Like
+    // upstream's void set_blocking(), a failure here is not an error.
+    if is_server {
+        let _ = fast_io::force_blocking_stderr();
+    }
+
     // FSM: Handshake complete (setup_protocol exchanged compat flags, checksum
     // seed, and capability negotiation). Advance to FilterExchange.
     pipeline

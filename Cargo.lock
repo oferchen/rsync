@@ -3214,8 +3214,6 @@ dependencies = [
  "test-support",
  "thiserror",
  "tokio",
- "tracing",
- "tracing-subscriber",
  "url",
 ]
 

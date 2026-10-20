@@ -320,13 +320,10 @@ fn run_server_over_ssh_connection(
             // failure exiting 255) must survive rather than be masked by the
             // handshake error.
             drop(writer);
-            // Genuine ssh-transport diagnostics on the child's stderr (auth
-            // failures, "connection refused", "command not found") are already
-            // streamed to our stderr in real time by the aux-channel drain
-            // thread (rsync_io::ssh drain_loop), mirroring upstream's inherited
-            // ssh fd2 passthrough. `wait()` joins that drain so the output is
-            // flushed before we build the error; re-appending the captured
-            // bytes here would print every line a second time.
+            // Genuine ssh-transport diagnostics (auth failures, "connection
+            // refused", "command not found") already reached the user: the
+            // child inherits our stderr (upstream: pipe.c:68-83 piped_child()),
+            // so the error built here carries only the exit status.
             let child_exit = match child_handle.wait() {
                 Ok(status) => map_child_exit_status(status),
                 Err(_) => ExitCode::WaitChild,
@@ -434,10 +431,8 @@ fn run_server_over_ssh_connection(
     let collected_events = itemize_sink.take_events();
 
     // upstream: main.c wait_process_with_flush() - wait for child and map
-    // status. The child's stderr was live-forwarded by the aux-channel drain
-    // thread (see the handshake-failure path above); `wait()` joins that drain
-    // so it is flushed before we build the final error. We take only the exit
-    // status - re-appending the captured stderr would double-print it.
+    // status. The child wrote its stderr straight to ours (see the
+    // handshake-failure path above), so only the exit status is taken here.
     let child_exit_code = match child_handle.wait() {
         Ok(status) => map_child_exit_status(status),
         Err(_) => ExitCode::WaitChild,

@@ -62,8 +62,8 @@
 //! kernel refuses either pair the spawn falls back to anonymous pipes; the
 //! chosen primitive and any fallback reason are traced at `--debug=connect`
 //! and reported by [`SshConnection::wire_primitive`]. Windows has no
-//! `socketpair(2)` and always uses pipes. The stderr channel is a separate
-//! socketpair on Unix; see `aux_channel.rs`.
+//! `socketpair(2)` and always uses pipes. The child inherits our stderr, as
+//! upstream `piped_child()` leaves fd 2 untouched (upstream: pipe.c:68-83).
 //!
 //! The 2026-10-13 change to socketpairs supersedes the pipe disposition
 //! recorded in `docs/audits/ssh-socketpair-vs-pipes.md` and
@@ -83,11 +83,8 @@
 /// The single ssh_config tokeniser, shared by both config readers.
 #[cfg(any(feature = "ssh-config-parse", feature = "embedded-ssh"))]
 mod argv_split;
-#[cfg(all(feature = "async-ssh", feature = "ssh-socketpair-stderr"))]
-mod async_stderr_drain;
 #[cfg(feature = "async-ssh")]
 mod async_transport;
-mod aux_channel;
 mod builder;
 /// The ssh_config file load order, shared by both config readers.
 #[cfg(any(feature = "ssh-config-parse", feature = "embedded-ssh"))]
@@ -103,14 +100,9 @@ mod connection;
 pub mod embedded;
 mod operand;
 mod parse;
-/// Cross-platform stderr aux-channel between the parent process and a spawned `ssh` child.
-#[cfg(feature = "ssh-socketpair-stderr")]
-pub mod socketpair_stderr;
 mod stall;
 mod wire;
 
-#[cfg(all(feature = "async-ssh", feature = "ssh-socketpair-stderr"))]
-pub use async_stderr_drain::{ASYNC_STDERR_BUFFER_CAP, AsyncStderrDrain, RingBuffer};
 #[cfg(feature = "async-ssh")]
 pub use async_transport::AsyncSshTransport;
 pub use builder::{SshAddressFamily, SshCommand};

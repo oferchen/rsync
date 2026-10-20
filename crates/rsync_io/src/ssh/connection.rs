@@ -2,9 +2,9 @@
 //!
 //! This module provides [`SshConnection`] for managing SSH subprocess I/O,
 //! with support for splitting into separate read/write halves for bidirectional
-//! protocol communication. A background thread drains stderr from the child
-//! process via a `StderrAuxChannel` to prevent pipe-buffer deadlocks when the
-//! remote rsync writes error messages.
+//! protocol communication. The child inherits our stderr, so its diagnostics
+//! reach the user directly (upstream: pipe.c:48-97 `piped_child()` redirects
+//! only stdin and stdout).
 
 use std::io::{self, Read, Write};
 use std::process::{Child, ExitStatus};
@@ -15,7 +15,6 @@ use std::time::Duration;
 
 use logging::debug_log;
 
-use super::aux_channel::BoxedStderrChannel;
 use super::stall::{IoStallWatchdog, StallHandle, effective_io_timeout};
 use super::wire::{
     WireEnds, WireIoPolicy, WirePrimitive, WireReadEnd, WireReader, WireWriteEnd, WireWriter,
@@ -75,11 +74,7 @@ fn arm_io_stall(
 /// The connection can be used directly via the [`Read`] and [`Write`] traits,
 /// or split into separate [`SshReader`] and [`SshWriter`] halves using [`split`](Self::split).
 ///
-/// When stderr is available, a background thread is spawned at construction
-/// time to drain it via the configured `StderrAuxChannel`. This prevents
-/// deadlocks when the remote process writes more than the OS pipe buffer
-/// capacity to stderr. The collected output is retrievable via
-/// [`stderr_output`](Self::stderr_output).
+/// The child's stderr is inherited, so nothing in this process reads it.
 pub struct SshConnection {
     /// Child process handle shared with the connect watchdog thread.
     /// The watchdog needs access to call `Child::kill()` on timeout,
@@ -91,7 +86,6 @@ pub struct SshConnection {
     wire_primitive: WirePrimitive,
     /// io_uring / zero-copy preferences applied to the halves at split time.
     wire_io: WireIoPolicy,
-    stderr_drain: Option<BoxedStderrChannel>,
     connect_watchdog: Option<ConnectWatchdog>,
     /// Data-phase stall watchdog enforcing the negotiated `--timeout`. `None`
     /// when the timeout is disabled (`0`/absent), matching upstream's off state.
@@ -104,10 +98,7 @@ pub struct SshConnection {
 impl SshConnection {
     /// Constructs a new connection from the spawned child process.
     ///
-    /// `stderr_channel` carries the auxiliary stderr drain (pipe- or
-    /// socketpair-backed). When `Some`, the drain thread is already running
-    /// and will continuously consume the child's stderr until EOF. If
-    /// `connect_timeout` is `Some`, a watchdog thread is armed that will kill
+    /// If `connect_timeout` is `Some`, a watchdog thread is armed that will kill
     /// the child process if the connection is not established within the
     /// given duration. Call
     /// [`cancel_connect_watchdog`](Self::cancel_connect_watchdog) after
@@ -122,7 +113,6 @@ impl SshConnection {
         child: Child,
         wire: WireEnds,
         wire_io: WireIoPolicy,
-        stderr_channel: Option<BoxedStderrChannel>,
         connect_timeout: Option<Duration>,
         io_timeout: Option<Duration>,
     ) -> Self {
@@ -136,7 +126,6 @@ impl SshConnection {
             stdout: Some(wire.stdout),
             wire_primitive: wire.primitive,
             wire_io,
-            stderr_drain: stderr_channel,
             connect_watchdog,
             io_stall_watchdog,
             stall,
@@ -167,17 +156,6 @@ impl SshConnection {
         self.wire_primitive
     }
 
-    /// Returns the stderr output collected so far by the background drain thread.
-    ///
-    /// The returned bytes are bounded to the most recent 64 KiB. Returns an
-    /// empty `Vec` if no stderr handle was available.
-    #[must_use]
-    pub fn stderr_output(&self) -> Vec<u8> {
-        self.stderr_drain
-            .as_ref()
-            .map_or_else(Vec::new, |drain| drain.collected())
-    }
-
     /// Flushes and closes the stdin pipe, signalling EOF to the subprocess.
     ///
     /// # Errors
@@ -202,54 +180,7 @@ impl SshConnection {
         match guard.take() {
             Some(mut child) => {
                 drop(guard);
-                let status = child.wait();
-                // The child has exited; wake the stderr drain before joining
-                // so we don't block waiting for an EOF that may never arrive
-                // (an ssh helper subprocess can inherit the write end).
-                if let Some(ref drain) = self.stderr_drain {
-                    drain.shutdown_read();
-                }
-                if let Some(ref mut drain) = self.stderr_drain {
-                    drain.join();
-                }
-                status
-            }
-            None => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "child process already taken",
-            )),
-        }
-    }
-
-    /// Waits for the subprocess to exit and returns the collected stderr output.
-    ///
-    /// This combines [`wait`](Self::wait) and [`stderr_output`](Self::stderr_output)
-    /// into a single call, ensuring the drain thread is joined and all stderr is
-    /// captured before the connection is consumed. This is the preferred method
-    /// when callers need to surface SSH error messages to the user on failure.
-    ///
-    /// # Errors
-    ///
-    /// Returns the wait error, or `io::ErrorKind::InvalidInput` when the child was already
-    /// reaped.
-    pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
-        let _ = self.close_stdin();
-        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
-        match guard.take() {
-            Some(mut child) => {
-                drop(guard);
-                let status = child.wait();
-                if let Some(ref drain) = self.stderr_drain {
-                    drain.shutdown_read();
-                }
-                if let Some(ref mut drain) = self.stderr_drain {
-                    drain.join();
-                }
-                let stderr = self
-                    .stderr_drain
-                    .as_ref()
-                    .map_or_else(Vec::new, |drain| drain.collected());
-                status.map(|s| (s, stderr))
+                child.wait()
             }
             None => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -282,7 +213,6 @@ impl SshConnection {
     /// - A writer (stdin) for sending data to the remote process
     /// - An owned handle for waiting on the child process
     ///
-    /// The stderr drain thread (if running) is transferred to the child handle.
     /// On a socketpair wire the halves are driven through io_uring only under
     /// an explicit `--io-uring` (`IoUringPolicy::Enabled`); otherwise they use
     /// plain `read`/`write`.
@@ -319,7 +249,6 @@ impl SshConnection {
         let stdout = WireReader::new(stdout, self.wire_primitive, self.wire_io)?;
         let stdin = WireWriter::new(stdin, self.wire_primitive, self.wire_io)?;
 
-        let stderr_drain = self.stderr_drain.take();
         let connect_watchdog = self.connect_watchdog.take();
         let io_stall_watchdog = self.io_stall_watchdog.take();
         let stall = self.stall.take();
@@ -332,7 +261,6 @@ impl SshConnection {
             SshWriter { stdin, stall },
             SshChildHandle {
                 child,
-                stderr_drain,
                 connect_watchdog,
                 io_stall_watchdog,
             },
@@ -519,18 +447,12 @@ impl Drop for ConnectWatchdog {
     }
 }
 
-/// Handle to wait for SSH subprocess completion.
-///
-/// When the connection is split, the stderr drain (spawned at connection
-/// creation time) is transferred to this handle. The drain thread prevents
-/// pipe-buffer deadlocks by continuously reading stderr and forwarding lines
-/// to process stderr. Collected output is retrievable via
-/// [`stderr_output`](Self::stderr_output).
+/// Handle to wait for SSH subprocess completion, produced by
+/// [`SshConnection::split`].
 pub struct SshChildHandle {
     /// Shared with the stall watchdog so both can reach the child; the watchdog
     /// kills it on an I/O timeout, while `wait`/`Drop` reap it normally.
     child: Arc<Mutex<Option<Child>>>,
-    stderr_drain: Option<BoxedStderrChannel>,
     connect_watchdog: Option<ConnectWatchdog>,
     /// Data-phase stall watchdog transferred here on `split`. Dropped/cancelled
     /// before the child is reaped so it cannot fire during teardown.
@@ -541,13 +463,6 @@ impl std::fmt::Debug for SshChildHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshChildHandle")
             .field("child", &self.child)
-            .field(
-                "stderr_drain",
-                &self
-                    .stderr_drain
-                    .as_ref()
-                    .map(|_| "StderrAuxChannel(active)"),
-            )
             .field(
                 "connect_watchdog",
                 &self
@@ -585,20 +500,6 @@ impl SshChildHandle {
         }
     }
 
-    /// Returns the stderr output collected so far by the background drain thread.
-    ///
-    /// The returned bytes are bounded to the most recent 64 KiB. Returns an
-    /// empty `Vec` if no stderr drain is active.
-    ///
-    /// This method can be called while the drain thread is still running to
-    /// get a snapshot of the output collected up to that point.
-    #[must_use]
-    pub fn stderr_output(&self) -> Vec<u8> {
-        self.stderr_drain
-            .as_ref()
-            .map_or_else(Vec::new, |drain| drain.collected())
-    }
-
     /// Reaps the shared child handle, waiting for it to exit.
     ///
     /// Returns an error if the child was already taken by a prior wait/drop.
@@ -618,9 +519,6 @@ impl SshChildHandle {
 
     /// Waits for the subprocess to exit.
     ///
-    /// Joins the stderr drain thread after the child exits to ensure all
-    /// error output has been forwarded.
-    ///
     /// # Errors
     ///
     /// Returns the wait error.
@@ -628,42 +526,7 @@ impl SshChildHandle {
         // Cancel stall detection before reaping so it cannot kill the child
         // during a legitimate final lull.
         drop(self.io_stall_watchdog.take());
-        let status = self.take_and_wait_child();
-        if let Some(ref drain) = self.stderr_drain {
-            drain.shutdown_read();
-        }
-        if let Some(ref mut drain) = self.stderr_drain {
-            drain.join();
-        }
-        status
-    }
-
-    /// Waits for the subprocess to exit and returns the collected stderr output.
-    ///
-    /// This combines [`wait`](Self::wait) and [`stderr_output`](Self::stderr_output)
-    /// into a single call, ensuring all stderr is captured before the handle
-    /// is consumed.
-    ///
-    /// # Errors
-    ///
-    /// Returns the wait error.
-    pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
-        drop(self.io_stall_watchdog.take());
-        let status = self.take_and_wait_child();
-        // Wake the drain thread now that the child is reaped; a re-execed
-        // ssh helper may still hold the write end open so EOF cannot be
-        // relied on by itself.
-        if let Some(ref drain) = self.stderr_drain {
-            drain.shutdown_read();
-        }
-        if let Some(ref mut drain) = self.stderr_drain {
-            drain.join();
-        }
-        let stderr = self
-            .stderr_drain
-            .as_ref()
-            .map_or_else(Vec::new, |drain| drain.collected());
-        status.map(|s| (s, stderr))
+        self.take_and_wait_child()
     }
 }
 
@@ -683,15 +546,7 @@ impl Drop for SshChildHandle {
             if let Ok(None) = child.try_wait() {
                 let _ = child.kill();
             }
-            let status = child.wait();
-
-            // Surface collected stderr when the child exited with an error,
-            // ensuring SSH diagnostics are visible even on abnormal control
-            // flow (panic, early return) where the caller never calls
-            // wait_with_stderr().
-            if let Some(ref mut drain) = self.stderr_drain {
-                drain.join_and_surface_on_error(&status);
-            }
+            let _ = child.wait();
         }
     }
 }
@@ -758,14 +613,7 @@ impl Drop for SshConnection {
             if let Ok(None) = child.try_wait() {
                 let _ = child.kill();
             }
-            let status = child.wait();
-
-            // Surface collected stderr when the child exited with an error,
-            // ensuring SSH diagnostics are visible even when the connection
-            // is dropped without an explicit wait() call.
-            if let Some(ref mut drain) = self.stderr_drain {
-                drain.join_and_surface_on_error(&status);
-            }
+            let _ = child.wait();
         }
     }
 }

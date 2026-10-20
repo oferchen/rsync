@@ -4,8 +4,8 @@
 //! These helpers translate the outcome of an SSH transfer (the server stats and
 //! the remote child's exit status) into the client-facing summary and error
 //! surfaces, mirroring upstream `main.c:wait_process_with_flush()` and
-//! `log.c:log_exit()`. The remote child's stderr is streamed to our stderr in
-//! real time by the SSH aux-channel drain, not formatted here.
+//! `log.c:log_exit()`. The remote child inherits our stderr, so its output is
+//! never formatted here.
 
 use std::time::Duration;
 
