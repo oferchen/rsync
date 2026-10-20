@@ -194,6 +194,7 @@ protocol = { path = "crates/protocol" }
 test-support = { path = "crates/test-support" }
 
 [target.'cfg(unix)'.dev-dependencies]
+nix = { workspace = true, features = ["event", "inotify", "poll"] }
 xattr = { workspace = true }
 
 # High-performance global allocator, selected per platform. Unix uses jemalloc
