@@ -1038,13 +1038,30 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     #[cfg(not(unix))]
     let parent_dirfd: ParentDirFd<'_> = None;
 
-    let restat_after_chown = ownership::apply_ownership_from_entry(
-        destination,
-        entry,
-        options,
-        cached_meta.as_ref(),
-        parent_dirfd,
-    )?;
+    // upstream: rsync.c:713-714 - under --fake-super set_stat_xattr() takes
+    // the place of both the chown and the chmod (rsync.c:808).
+    #[cfg(all(unix, feature = "xattr"))]
+    let fake_super = options.fake_super_enabled();
+    #[cfg(not(all(unix, feature = "xattr")))]
+    let fake_super = false;
+    #[cfg(all(unix, feature = "xattr"))]
+    if fake_super {
+        permissions::apply_fake_super_from_entry(
+            destination,
+            entry,
+            options,
+            cached_meta.as_ref(),
+            pre_transfer_meta.as_ref(),
+        )?;
+    }
+    let restat_after_chown = !fake_super
+        && ownership::apply_ownership_from_entry(
+            destination,
+            entry,
+            options,
+            cached_meta.as_ref(),
+            parent_dirfd,
+        )?;
 
     // upstream: rsync.c:694-704 - the chown may have cleared setuid/setgid bits,
     // so refresh the cached stat before the chmod compare re-applies them.
@@ -1117,14 +1134,16 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
 
     // upstream: rsync.c:812 - `do_chmod_at()` is the last attribute upstream
     // applies, after times (and after ACLs, which oc applies in the caller).
-    permissions::apply_permissions_from_entry(
-        destination,
-        entry,
-        options,
-        cached_meta.as_ref(),
-        pre_transfer_meta.as_ref(),
-        parent_dirfd,
-    )?;
+    if !fake_super {
+        permissions::apply_permissions_from_entry(
+            destination,
+            entry,
+            options,
+            cached_meta.as_ref(),
+            pre_transfer_meta.as_ref(),
+            parent_dirfd,
+        )?;
+    }
 
     Ok(())
 }

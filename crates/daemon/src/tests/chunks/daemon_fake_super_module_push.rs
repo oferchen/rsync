@@ -1,16 +1,17 @@
 /// End-to-end test for the `fake super = yes` daemon module directive.
 ///
 /// Verifies that the daemon honours its module-config `fake super = yes`
-/// directive end-to-end: a non-root client pushes a file with `--owner`
-/// and `--group`, and the daemon receiver stores the ownership metadata
-/// in the fake-super `%stat` xattr (`user.rsync.%stat` on Linux, bare
-/// `rsync.%stat` elsewhere) instead of calling `chown` (which would fail
-/// without privileges).
+/// directive end-to-end: a non-root client pushes files with `--owner`,
+/// `--group` and `--perms`, and the daemon receiver records the stat in the
+/// fake-super `%stat` xattr (`user.rsync.%stat` on Linux, bare `rsync.%stat`
+/// elsewhere) instead of calling `chown`. As upstream does, it records the
+/// stat only where the real file cannot carry it: a 0444 file keeps a
+/// `%stat`, while a 0644 file owned by the copier carries none.
 ///
 /// # Wiring under test
 ///
 /// `ModuleConfig.fake_super` -> `ServerConfig.fake_super` ->
-/// `MetadataOptions.fake_super` -> `apply_ownership_via_fake_super`.
+/// `MetadataOptions.fake_super` -> `apply_fake_super_from_entry`.
 ///
 /// Without the wire-up, the directive is parsed but never reaches the
 /// receiver, so a non-root daemon pushing with `-og` either fails the
@@ -29,7 +30,8 @@
 /// - `loadparm.c` - `fake super` module parameter.
 /// - `rsync.c:set_file_attrs()` - fake-super stores ownership in xattrs.
 /// - `xattrs.c:set_stat_xattr()` - encodes mode/uid/gid into the
-///   `user.rsync.%stat` xattr.
+///   `user.rsync.%stat` xattr, and removes it when redundant
+///   (`xattrs.c:1325-1336`).
 #[cfg(unix)]
 #[test]
 fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
@@ -58,6 +60,15 @@ fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
 
     let payload_path = source_dir.join("ledger.txt");
     fs::write(&payload_path, b"fake-super module payload\n").expect("write source payload");
+    let readonly_path = source_dir.join("readonly.txt");
+    fs::write(&readonly_path, b"read-only payload\n").expect("write read-only payload");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&payload_path, fs::Permissions::from_mode(0o644))
+            .expect("chmod payload");
+        fs::set_permissions(&readonly_path, fs::Permissions::from_mode(0o444))
+            .expect("chmod read-only payload");
+    }
 
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
@@ -102,6 +113,7 @@ fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
         .transfer_args([source_arg, OsString::from(&rsync_url)])
         .owner(true)
         .group(true)
+        .permissions(true)
         .build();
 
     let result = core::client::run_client(client_config);
@@ -132,50 +144,55 @@ fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
     );
 
     // The wire-up assertion: with `fake super = yes` on the module, the
-    // receiver must have stored ownership in the fake-super `%stat` xattr.
-    // The on-disk attribute name is platform-dependent - `user.rsync.%stat`
-    // on Linux, bare `rsync.%stat` elsewhere - so read it via the same
-    // platform constant the receiver wrote through, not a hard-coded Linux
-    // name (upstream: xattrs.c:64-76 RSYNC_PREFIX under HAVE_LINUX_XATTRS).
-    use std::os::unix::fs::MetadataExt;
+    // receiver records the stat in the fake-super `%stat` xattr. The on-disk
+    // attribute name is platform-dependent - `user.rsync.%stat` on Linux, bare
+    // `rsync.%stat` elsewhere - so read it via the same platform constant the
+    // receiver wrote through (upstream: xattrs.c:64-76 RSYNC_PREFIX).
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let source_meta = fs::metadata(&payload_path).expect("read source metadata");
-
-    let stat_xattr = xattr::get(&dest_payload, metadata::FAKE_SUPER_XATTR)
-        .unwrap_or_else(|e| panic!("read {} from destination: {e}", metadata::FAKE_SUPER_XATTR))
-        .unwrap_or_else(|| {
+    let read_stat = |path: &Path| {
+        xattr::get(path, metadata::FAKE_SUPER_XATTR).unwrap_or_else(|e| {
             panic!(
-                "{} must be present on the destination when `fake super = yes` \
-                 is configured on the daemon module",
-                metadata::FAKE_SUPER_XATTR
+                "read {} from {}: {e}",
+                metadata::FAKE_SUPER_XATTR,
+                path.display()
             )
-        });
-
-    // upstream: xattrs.c:set_stat_xattr() format is
-    // "<mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>". Decode it and
-    // confirm the ownership round-trips back to the source's real uid/gid
-    // and that a regular file's type bits survived - the metadata a
-    // `--fake-super` restore would replay onto the inode.
-    let stat_text = String::from_utf8(stat_xattr).expect("%stat must be UTF-8");
-    let decoded = metadata::FakeSuperStat::decode(&stat_text)
-        .unwrap_or_else(|e| panic!("%stat {stat_text:?} must decode: {e}"));
+        })
+    };
+    // upstream: xattrs.c:1325-1336 - a 0644 file owned by the copier is
+    // represented by its real stat, so set_stat_xattr() writes no %stat.
     assert_eq!(
-        decoded.uid,
-        source_meta.uid(),
-        "%stat must record the source uid (got {stat_text:?})"
+        read_stat(&dest_payload),
+        None,
+        "a same-owner 0644 file must carry no redundant %stat"
     );
+    // A 0444 file is written 0644 so the copier keeps access; only the
+    // %stat can carry the real mode, and it records the source owner.
+    let dest_readonly = dest_dir.join("readonly.txt");
     assert_eq!(
-        decoded.gid,
-        source_meta.gid(),
-        "%stat must record the source gid (got {stat_text:?})"
+        fs::metadata(&dest_readonly)
+            .expect("stat read-only dest")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644,
+        "the real mode gains owner rw (xattrs.c:1314-1315)"
     );
-    assert!(
-        decoded.is_regular_file(),
-        "%stat mode must record a regular file (got {stat_text:?})"
-    );
+    let stat_text = String::from_utf8(
+        read_stat(&dest_readonly)
+            .unwrap_or_else(|| panic!("{} must record the 0444 mode", metadata::FAKE_SUPER_XATTR)),
+    )
+    .expect("%stat must be UTF-8");
     assert_eq!(
-        decoded.rdev, None,
-        "a regular file carries no rdev (got {stat_text:?})"
+        metadata::FakeSuperStat::decode(&stat_text)
+            .unwrap_or_else(|e| panic!("%stat {stat_text:?} must decode: {e}")),
+        metadata::FakeSuperStat {
+            mode: 0o100444,
+            uid: source_meta.uid(),
+            gid: source_meta.gid(),
+            rdev: None,
+        },
+        "%stat must record the mode and the source owner (got {stat_text:?})"
     );
-
     let _ = finish_daemon(daemon_handle);
 }

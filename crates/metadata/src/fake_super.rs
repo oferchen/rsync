@@ -230,6 +230,25 @@ impl FakeSuperStat {
     }
 }
 
+/// The uid and gid a fake-super receiver records for a transferred file.
+///
+/// An `--chown` override wins. Otherwise an id is recorded only when
+/// `--owner` or `--group` preserves it, and is 0 when it does not.
+// upstream: rsync.c:713-714 - set_stat_xattr() records F_OWNER(file) and
+// F_GROUP(file), which hold 0 for an id the transfer does not preserve.
+pub fn fake_super_ids(
+    options: &crate::MetadataOptions,
+    uid: Option<u32>,
+    gid: Option<u32>,
+) -> (u32, u32) {
+    let recorded_id = |override_id: Option<u32>, preserve: bool, id: Option<u32>| {
+        override_id.or(id.filter(|_| preserve)).unwrap_or(0)
+    };
+    (
+        recorded_id(options.owner_override(), options.owner(), uid),
+        recorded_id(options.group_override(), options.group(), gid),
+    )
+}
 /// Stores metadata as fake-super xattr on a file.
 ///
 /// This is called when `--fake-super` is enabled and we need to preserve

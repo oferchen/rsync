@@ -3862,3 +3862,137 @@ fn apply_file_metadata_if_changed_sets_times_before_readonly_chmod() {
     );
     assert_eq!(current_mode(&dest) & 0o777, 0o444);
 }
+
+/// Reports whether the filesystem under `dir` accepts user xattrs; the
+/// fake-super tests skip when it does not.
+#[cfg(all(unix, feature = "xattr"))]
+fn fake_super_xattrs_supported(dir: &Path) -> bool {
+    let probe = dir.join(".fake_super_probe");
+    fs::write(&probe, b"").expect("write probe");
+    let supported = xattr::set(&probe, "user.probe", b"1").is_ok();
+    fs::remove_file(&probe).expect("remove probe");
+    supported
+}
+
+// upstream: rsync.c:713-714 - set_file_attrs() calls set_stat_xattr() for
+// every file under am_root < 0, so a receive without --owner or --group
+// still records the mode, with ids of 0. A receiver that records nothing
+// loses the 0444 mode, which only the %stat can carry.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_entry_records_the_stat_without_owner_or_group() {
+    use crate::fake_super::{FakeSuperStat, load_fake_super};
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+    let temp = test_support::create_tempdir();
+    if !fake_super_xattrs_supported(temp.path()) {
+        return;
+    }
+    let dest = temp.path().join("ro.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    let mut entry = FileEntry::new_file("ro.txt".into(), 4, 0o100_444);
+    entry.set_uid(4242);
+    entry.set_gid(4343);
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(false)
+        .preserve_group(false)
+        .preserve_permissions(true);
+    apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply with fake-super");
+    assert_eq!(
+        fs::metadata(&dest).expect("stat dest").permissions().mode() & 0o7777,
+        0o644,
+        "the real mode gains owner rw (xattrs.c:1314-1315)"
+    );
+    assert_eq!(
+        load_fake_super(&dest).expect("read %stat"),
+        Some(FakeSuperStat {
+            mode: 0o100_444,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        }),
+        "an unpreserved id is recorded as 0"
+    );
+}
+
+// upstream: xattrs.c:1325-1336 - when the real mode, owner and group already
+// carry the intended stat, set_stat_xattr() writes none and removes a stale
+// one. A daemon `fake super = yes` module used to keep `100644 0,0 uid:gid`
+// on every same-owner 0644 file.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_entry_removes_a_redundant_stat() {
+    use crate::fake_super::{FakeSuperStat, load_fake_super, store_fake_super};
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+    let temp = test_support::create_tempdir();
+    if !fake_super_xattrs_supported(temp.path()) {
+        return;
+    }
+    let dest = temp.path().join("plain.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&dest, fs::Permissions::from_mode(0o644)).expect("chmod dest");
+    let owner = fs::metadata(&dest).expect("stat dest");
+    let stale = FakeSuperStat {
+        mode: 0o100_600,
+        uid: owner.uid(),
+        gid: owner.gid(),
+        rdev: None,
+    };
+    store_fake_super(&dest, &stale).expect("plant a stale %stat");
+    let mut entry = FileEntry::new_file("plain.txt".into(), 4, 0o100_644);
+    entry.set_uid(owner.uid());
+    entry.set_gid(owner.gid());
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true)
+        .preserve_permissions(true);
+    apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply with fake-super");
+    assert_eq!(
+        load_fake_super(&dest).expect("read %stat"),
+        None,
+        "a same-owner 0644 file is represented by its real stat"
+    );
+}
+
+// The local-copy path records the stat after forcing owner rw, as
+// set_stat_xattr() does, so a 0444 destination does not refuse the xattr
+// write, and an unpreserved id is recorded as 0.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_local_copy_records_the_stat_of_a_read_only_file() {
+    use crate::fake_super::{FakeSuperStat, load_fake_super};
+    use std::os::unix::fs::PermissionsExt;
+    let temp = test_support::create_tempdir();
+    if !fake_super_xattrs_supported(temp.path()) {
+        return;
+    }
+    let src = temp.path().join("src.txt");
+    let dst = temp.path().join("dst.txt");
+    fs::write(&src, b"data").expect("write src");
+    fs::write(&dst, b"data").expect("write dst");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o444)).expect("chmod src");
+    fs::set_permissions(&dst, fs::Permissions::from_mode(0o444)).expect("chmod dst");
+    let src_meta = fs::metadata(&src).expect("stat src");
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(false)
+        .preserve_group(false)
+        .preserve_permissions(true);
+    apply_file_metadata_with_options(&dst, &src_meta, &opts).expect("apply file metadata");
+    assert_eq!(
+        fs::metadata(&dst).expect("stat dst").permissions().mode() & 0o7777,
+        0o644
+    );
+    assert_eq!(
+        load_fake_super(&dst).expect("read %stat"),
+        Some(FakeSuperStat {
+            mode: 0o100_444,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        })
+    );
+}
