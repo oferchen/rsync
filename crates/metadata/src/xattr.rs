@@ -299,12 +299,48 @@ pub fn strip_source_xattrs(
     follow_symlinks: bool,
     confine_root: Option<&Path>,
 ) -> Result<bool, MetadataError> {
-    let source_attrs = list_attributes(source, follow_symlinks, receiver_screen())?;
-    if source_attrs.is_empty() {
+    strip_source_xattrs_where(source, destination, follow_symlinks, confine_root, |_| true)
+}
+
+/// Removes from `destination` every rsync-internal attribute (`rsync.%stat`,
+/// `rsync.%aacl`, ...) that also exists on `source`.
+///
+/// The post-clone correction for the `-X` case. A local copy's sender never
+/// transmits rsync's own metadata channel, so a freshly written destination
+/// starts without the source's copy of it; [`sync_xattrs`] deliberately never
+/// deletes those names, so a clone that copied them would keep them. Ordinary
+/// names are left for [`sync_xattrs`] to reconcile.
+///
+/// upstream: `xattrs.c:272-280` `rsync_xal_get()` - the sender drops the
+/// `rsync.%` names unless `-XX` is given.
+///
+/// Returns `true` when at least one attribute was removed.
+pub fn strip_source_internal_xattrs(
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+    confine_root: Option<&Path>,
+) -> Result<bool, MetadataError> {
+    strip_source_xattrs_where(source, destination, follow_symlinks, confine_root, |name| {
+        protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(name))
+    })
+}
+
+fn strip_source_xattrs_where(
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+    confine_root: Option<&Path>,
+    strip: impl Fn(&[u8]) -> bool,
+) -> Result<bool, MetadataError> {
+    let source_names: HashSet<Vec<u8>> =
+        list_attributes(source, follow_symlinks, receiver_screen())?
+            .into_iter()
+            .filter(|name| strip(name))
+            .collect();
+    if source_names.is_empty() {
         return Ok(false);
     }
-    let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
-
     let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
     let mut removed = false;
     for name in dest.list(receiver_screen())? {
@@ -992,6 +1028,49 @@ mod tests {
         assert!(
             dest_attrs.contains(&dest_only),
             "with no source attributes the destination is left untouched"
+        );
+    }
+
+    /// A clone copies the source's rsync-internal names, which a fresh
+    /// destination never has and `sync_xattrs` never deletes: only those may be
+    /// stripped, while an ordinary source name stays for `sync_xattrs`.
+    #[test]
+    fn strip_source_internal_xattrs_removes_only_the_rsync_channel() {
+        let dir = test_support::create_tempdir();
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&source, "src").expect("write source");
+        fs::write(&dest, "dst").expect("write dest");
+
+        if !xattrs_supported(&source) || !xattrs_supported(&dest) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let internal = crate::FAKE_SUPER_XATTR.as_bytes().to_vec();
+        let ordinary = test_xattr_name("ordinary");
+        for path in [&source, &dest] {
+            write_attribute(path, &internal, b"100644 0,0 0:0", false).expect("write internal");
+            write_attribute(path, &ordinary, b"v", false).expect("write ordinary");
+        }
+
+        assert!(
+            strip_source_internal_xattrs(&source, &dest, false, None).expect("strip internal"),
+            "a removed rsync-internal attribute must be reported"
+        );
+        assert!(
+            !strip_source_internal_xattrs(&source, &dest, false, None).expect("strip again"),
+            "nothing left to remove must report false"
+        );
+
+        let dest_attrs = list_attributes(&dest, false, receiver_screen()).expect("list dest");
+        assert!(
+            !dest_attrs.contains(&internal),
+            "the source-originated rsync channel must be stripped"
+        );
+        assert!(
+            dest_attrs.contains(&ordinary),
+            "an ordinary source name is left for sync_xattrs"
         );
     }
 

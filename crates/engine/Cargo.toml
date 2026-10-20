@@ -177,6 +177,9 @@ libc = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+exacl = { workspace = true }
+
 [[bench]]
 name = "optimizations_benchmark"
 harness = false

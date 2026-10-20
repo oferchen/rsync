@@ -59,6 +59,20 @@ pub fn strip_source_xattrs(
     Ok(false)
 }
 
+/// Removes from `destination` every rsync-internal attribute that also exists
+/// on `source`.
+///
+/// On platforms without xattr support there are no attributes to strip, so
+/// this returns `Ok(false)`.
+pub fn strip_source_internal_xattrs(
+    _source: &Path,
+    _destination: &Path,
+    _follow_symlinks: bool,
+    _confine_root: Option<&Path>,
+) -> Result<bool, MetadataError> {
+    Ok(false)
+}
+
 /// Reads xattr data from a file and returns it as a wire-format `XattrList`.
 ///
 /// On platforms without xattr support, returns an empty list.

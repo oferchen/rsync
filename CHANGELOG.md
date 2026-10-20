@@ -379,6 +379,7 @@ SECURITY.md names no PR for the other eight: CVE-2026-53786, 53801, 70455, 70457
 - An installed name converter replaces the host database (#7360)
 - Store the fake-super access ACL in upstream's condensed form (#7502)
 - Record the `dest_mode()` mode, not the raw source mode, in the fake-super `%stat` xattr without `-p` (#7937)
+- A macOS `clonefile` copy ends like a fresh write: unpreserved crtime, mtime and atime are reset through the pinned parent, `-X` drops the source's `rsync.%` names, and only `-A` brings the source ACL (#8215)
 
 **CLI and output**
 - Honour `--` in server argv, and mirror upstream option parsing for `-M`, repeated options and popt arity (#7402, #7413, #7835, #7846, #7154, #7160)

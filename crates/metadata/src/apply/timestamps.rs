@@ -680,10 +680,15 @@ fn crtime_needs_update(
 }
 
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
-/// upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
+///
+/// Skips the write when the destination already carries `secs` or is the HFS+
+/// volume root. Seconds only, as upstream stores `F_CRTIME` as a `time_t`.
+///
+/// upstream: `rsync.c:751-765` `set_file_attrs()` and `syscall.c:2465-2488`
+/// `do_setattrlist_crtime()`
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
-fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
+pub fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
@@ -773,7 +778,7 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
 /// upstream: rsync.c uses utimensat for mtime/atime; crtime uses SetFileTime on Windows
 #[cfg(windows)]
 #[allow(unsafe_code)]
-fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
+pub fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     use std::os::windows::ffi::OsStrExt;
 
     use fast_io::to_extended_path;
