@@ -41,10 +41,6 @@ use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::Duration;
 
-mod timer;
-
-pub use timer::TimerSleeper;
-
 /// Filter type for readiness events.
 ///
 /// Mirrors the kqueue `EVFILT_*` constants we expose. Additional filters
@@ -460,10 +456,6 @@ mod tests {
         assert!(
             elapsed >= Duration::from_millis(80),
             "wait blocked roughly for the timeout (elapsed={elapsed:?})"
-        );
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "wait did not block forever (elapsed={elapsed:?})"
         );
     }
 

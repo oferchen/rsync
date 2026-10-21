@@ -80,6 +80,9 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Open sender file content beneath the held source root, and refuse a replaced root with `ELOOP` (CVE-2026-53797, #8120)
 
 **Daemon**
+- A QUIC daemon sends a stateless Retry once 100 handshakes are in flight, so a spoofed handshake flood cannot make it hold state; the `quic retry = auto|always|never` directive selects the policy (#8229)
+- A QUIC daemon bounds the connection attempts it holds before accepting them to `max connections` (128 when unlimited), 64 KiB each, instead of quinn's 65536 attempts and 100 MiB (#8229)
+- A QUIC daemon refuses to start when `quic key file` does not match `quic cert file`, and a Windows daemon refuses QUIC directives instead of ignoring them (#8229)
 - `proxy protocol hosts` gates who may send a PROXY header, on TCP and inetd sessions, and fails closed when unset (CVE-2026-53791, #7648, #8077)
 - Resolve the real peer address on the inetd and remote-shell entry points instead of `127.0.0.1` (#7303)
 - `hosts deny` no longer fails open when a hostname does not resolve (CVE-2026-70452, #7314)
@@ -152,7 +155,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - The daemon accepts `--log-file-format`, as upstream does (#8047)
 - A pulling client advertises incremental recursion by default, as upstream does, except under `--delete-before` or `--delete-after`; `OC_RSYNC_PULL_INC_RECURSE=0` opts out (#8062, #8091, #8217)
-- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195)
+- `quic address = <ip> [<ip> ...]` binds the QUIC listener on literal IPv4/IPv6 addresses independent of the TCP `address`, for example `127.0.0.1 ::1` for loopback only; unset, QUIC stays dual-stack on the TCP addresses (#8229)
+- QUIC transport behind the `quic` feature, on by default (#8229): `quic://` and `--quic`, daemon listener, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing. `--quic-ca` is required and is the only trust anchor: no trust on first use and no system trust store, and a client without it refuses with exit 5 (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #8195)
 - Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
 - `StrictHostKeyChecking accept-new` works as documented (#7783)
 - `--out-format` on SSH and daemon transfers (#6917, #6918, #6919, #6921, #6923)
@@ -234,6 +238,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Fixed
 
 **Data integrity**
+- A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--inplace --sparse` local copies could write wrong content after a block ending in zeros (#7983); a related io_uring relative-seek defect is fixed and the network receiver is pinned unaffected (#7984)
 - Multi-source `--delete` no longer removes files an earlier source just copied (#7765)
 - A local copy whose source shrinks or grows mid-read is diagnosed or redone, never committed short (#7403, #7472, #7706, #7751, #7710)
@@ -394,6 +399,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A macOS `clonefile` copy ends like a fresh write: unpreserved crtime, mtime and atime are reset through the pinned parent, `-X` drops the source's `rsync.%` names, and only `-A` brings the source ACL (#8215)
 
 **CLI and output**
+- `--help` lists `--quic-cert` and `--quic-key`, and the environment reference documents `OC_RSYNC_QUIC_CC` and `OC_RSYNC_QUIC_WINDOW` (#8229)
 - Honour `--` in server argv, and mirror upstream option parsing for `-M`, repeated options and popt arity (#7402, #7413, #7835, #7846, #7154, #7160)
 - Match upstream `--out-format` codes and `--info` / `--debug` parsing (#6914, #6915, #6916, #7412, #7637)
 - Latch the first error's exit code (#7768, #7871)
@@ -467,6 +473,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Exit code 6 ("daemon unable to append to log-file"), which upstream does not define; a raw exit 6 renders as upstream's "unexplained error (code 6)" (#8197)
 - The `ssh-socketpair-stderr` build feature and the captured-stderr API (`SshConnection::stderr_output`, `wait_with_stderr`, `AsyncSshTransport::stderr_capture`); builds passing `--features ssh-socketpair-stderr` must drop it (#8224)
 
+- The macOS kqueue bandwidth-limit sleeper and its `OC_RSYNC_BWLIMIT_BACKEND` selector; `--bwlimit` sleeps with `nanosleep` on every platform, matching upstream's `select()` sleep for its 100 ms minimum delay (#8229)
 - The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
 ### Internal
 

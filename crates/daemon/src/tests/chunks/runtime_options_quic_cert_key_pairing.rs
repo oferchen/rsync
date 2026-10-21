@@ -39,6 +39,9 @@ fn runtime_options_quic_key_without_cert_is_config_error() {
     );
 }
 
+// A Windows daemon refuses every QUIC directive; that refusal is pinned by
+// runtime_options_quic_directive_is_refused_on_windows.
+#[cfg(unix)]
 #[test]
 fn runtime_options_quic_cert_and_key_pair_loads() {
     let dir = tempdir().expect("config dir");

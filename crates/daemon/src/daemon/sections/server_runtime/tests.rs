@@ -1536,9 +1536,13 @@ fn poll_ready_times_out_on_idle_listener() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
     assert!(
-        poll_ready(&[(listener, local)], None, 10)
-            .expect("poll(2)")
-            .is_empty(),
+        poll_ready(
+            &[(listener, local)],
+            None,
+            nix::poll::PollTimeout::from(10u16)
+        )
+        .expect("poll(2)")
+        .is_empty(),
         "an idle listener must time out with no listener reported ready"
     );
 }
@@ -1546,32 +1550,20 @@ fn poll_ready_times_out_on_idle_listener() {
 #[test]
 #[cfg(unix)]
 fn poll_ready_wakes_on_connection_while_parked() {
-    // The park must wake on real readiness, not run its timeout to completion:
-    // with a generous 5s timeout and a client connecting shortly after the
-    // wait begins, the call must return readable well before the timeout. A
-    // sleep-then-probe implementation (the pre-fix busy-poll shape, or the
-    // non-unix stub) would burn the full interval before reporting readiness.
+    // The park must wake on real readiness: with no timeout at all, only the
+    // client's connection can end the wait. A sleep-then-probe implementation
+    // (the pre-fix busy-poll shape, or the non-unix stub) never returns.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
 
-    let client = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(50));
-        TcpStream::connect(local).expect("connect")
-    });
-
-    let start = std::time::Instant::now();
-    let ready = poll_ready(&[(listener, local)], None, 5000).expect("poll(2)");
-    let elapsed = start.elapsed();
+    let client = thread::spawn(move || TcpStream::connect(local).expect("connect"));
+    let ready =
+        poll_ready(&[(listener, local)], None, nix::poll::PollTimeout::NONE).expect("poll(2)");
 
     assert_eq!(
         ready,
         vec![0],
         "a pending connection must report its listener ready"
-    );
-    assert!(
-        elapsed < Duration::from_secs(4),
-        "the park must wake on readiness, not run the 5s timeout down \
-         (took {elapsed:?})"
     );
     let _ = client.join();
 }
@@ -1838,8 +1830,13 @@ fn kqueue_engine_poll_idle_when_no_connection() {
     // re-check signal flags. Also exercises the real kqueue registration path.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
-    let mut engine =
-        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+    let mut engine = KqueueAcceptEngine::new(
+        vec![listener],
+        &[local],
+        None,
+        Some(KqueueAcceptEngine::WAIT_TIMEOUT),
+    )
+    .expect("kqueue engine");
 
     let start = std::time::Instant::now();
     assert!(
@@ -1866,8 +1863,13 @@ fn kqueue_engine_poll_returns_connection_with_blocking_reset() {
     // so this discriminates blocking vs non-blocking.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
-    let mut engine =
-        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+    let mut engine = KqueueAcceptEngine::new(
+        vec![listener],
+        &[local],
+        None,
+        Some(KqueueAcceptEngine::WAIT_TIMEOUT),
+    )
+    .expect("kqueue engine");
 
     let client = thread::spawn(move || {
         let mut stream = TcpStream::connect(local).expect("connect");
@@ -1923,8 +1925,13 @@ fn kqueue_engine_level_triggered_backlog_is_not_stranded() {
     // Give the kernel a moment to enqueue all three on the listen backlog.
     thread::sleep(Duration::from_millis(50));
 
-    let mut engine =
-        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+    let mut engine = KqueueAcceptEngine::new(
+        vec![listener],
+        &[local],
+        None,
+        Some(KqueueAcceptEngine::WAIT_TIMEOUT),
+    )
+    .expect("kqueue engine");
 
     let mut accepted = 0;
     for _ in 0..40 {
@@ -1975,8 +1982,13 @@ fn kqueue_engine_needs_one_poll_per_queued_connection() {
     }
     thread::sleep(Duration::from_millis(50));
 
-    let mut engine =
-        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+    let mut engine = KqueueAcceptEngine::new(
+        vec![listener],
+        &[local],
+        None,
+        Some(KqueueAcceptEngine::WAIT_TIMEOUT),
+    )
+    .expect("kqueue engine");
 
     // Count how many polls returned a Connection. Each poll returns at most one
     // (the engine returns on the first successful accept), so three queued
@@ -2015,8 +2027,13 @@ fn kqueue_engine_shutdown_is_idempotent() {
     // listeners already cleared and must not panic.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
-    let mut engine =
-        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+    let mut engine = KqueueAcceptEngine::new(
+        vec![listener],
+        &[local],
+        None,
+        Some(KqueueAcceptEngine::WAIT_TIMEOUT),
+    )
+    .expect("kqueue engine");
 
     engine.shutdown();
     engine.shutdown();
@@ -2027,36 +2044,24 @@ fn kqueue_engine_shutdown_is_idempotent() {
 
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 #[test]
-fn kqueue_engine_delivers_queued_connection_without_sleep_floor() {
+fn kqueue_engine_delivers_queued_connection_on_readiness() {
     // The whole point of the readiness engine: a connection already queued on
-    // the listen backlog must be delivered by an `EVFILT_READ` wake, not after
-    // the portable engine's 50ms `WouldBlock` sleep floor. Connect a client and
-    // let the kernel enqueue it, then assert the very first poll returns the
-    // Connection and does so well under the 50ms busy-poll interval this engine
-    // replaces. A regression to the sleep-then-retry shape would push the first
-    // delivering poll to >= 50ms and trip this bound.
+    // the listen backlog is delivered by an `EVFILT_READ` wake on the very
+    // first poll, never reported as `Idle`.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
 
     let client = TcpStream::connect(local).expect("connect");
-    // Give the kernel a moment to place the connection on the backlog so the
-    // EVFILT_READ registration sees it ready on the first wait.
-    thread::sleep(Duration::from_millis(20));
 
+    // No wait bound: only `EVFILT_READ` readiness can end the first poll, so
+    // it must deliver the connection rather than report `Idle`.
     let mut engine =
-        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
-
-    let start = std::time::Instant::now();
+        KqueueAcceptEngine::new(vec![listener], &[local], None, None).expect("kqueue engine");
     let outcome = engine.poll().expect("poll");
-    let elapsed = start.elapsed();
 
     assert!(
         matches!(outcome, AcceptOutcome::Connection(_, _)),
         "an already-queued connection must be delivered on the first poll"
-    );
-    assert!(
-        elapsed < Duration::from_millis(50),
-        "readiness wake must beat the 50ms busy-poll floor, took {elapsed:?}"
     );
 
     engine.shutdown();
@@ -2098,7 +2103,8 @@ fn bind_quic_listeners_binds_dual_stack_loopback() {
     ];
 
     let sockets =
-        bind_quic_sockets_per_family(&bind_addresses, 0, None).expect("dual-stack QUIC bind");
+        bind_quic_sockets_per_family(&resolve_quic_bind_addresses(None, &bind_addresses), 0, None)
+            .expect("dual-stack QUIC bind");
 
     assert_eq!(sockets.len(), 2, "both families must bind a QUIC socket");
     let bound: Vec<SocketAddr> = sockets
@@ -2124,8 +2130,9 @@ fn bind_quic_listeners_falls_back_from_ipv6_to_ipv4() {
     let reachable_v4 = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
     let bind_addresses = vec![unreachable_v6, reachable_v4];
 
-    let sockets = bind_quic_sockets_per_family(&bind_addresses, 0, None)
-        .expect("IPv4 fallback must bind when IPv6 is unreachable");
+    let sockets =
+        bind_quic_sockets_per_family(&resolve_quic_bind_addresses(None, &bind_addresses), 0, None)
+            .expect("IPv4 fallback must bind when IPv6 is unreachable");
 
     assert_eq!(sockets.len(), 1, "only the reachable IPv4 family binds");
     let bound = sockets[0].local_addr().expect("local addr");
@@ -2142,8 +2149,69 @@ fn bind_quic_listeners_single_family_propagates_error() {
         0x2001, 0x0db8, 0, 0, 0, 0, 0, 1,
     ))];
 
-    bind_quic_sockets_per_family(&bind_addresses, 0, None)
+    bind_quic_sockets_per_family(&resolve_quic_bind_addresses(None, &bind_addresses), 0, None)
         .expect_err("the single unreachable address must fail the QUIC bind");
+}
+
+/// The default dual-stack wildcard the TCP listener resolves when nothing
+/// overrides it.
+#[cfg(all(unix, feature = "quic"))]
+fn default_dual_stack() -> Vec<IpAddr> {
+    resolve_bind_addresses(DEFAULT_BIND_ADDRESS, false, None, false, None)
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_bind_addresses_unset_follow_the_dual_stack_tcp_set() {
+    // Without `quic address` the QUIC listener stays dual-stack like TCP and
+    // keeps the per-family fallback.
+    let tcp = default_dual_stack();
+    assert_eq!(
+        tcp,
+        vec![
+            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        ]
+    );
+    assert_eq!(
+        resolve_quic_bind_addresses(None, &tcp),
+        QuicBindPlan {
+            addresses: tcp.clone(),
+            tolerate_family_failure: true,
+        }
+    );
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_bind_addresses_set_replace_the_tcp_set_exactly() {
+    // `quic address` wins over the TCP addresses, keeps its own order, and
+    // every entry must bind, even a dual-stack pair.
+    let loopback = [
+        IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+    ];
+    assert_eq!(
+        resolve_quic_bind_addresses(Some(&loopback), &default_dual_stack()),
+        QuicBindPlan {
+            addresses: loopback.to_vec(),
+            tolerate_family_failure: false,
+        }
+    );
+}
+
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_bind_explicit_address_that_fails_is_fatal_and_named() {
+    // An operator-named address that cannot bind stops the daemon instead of
+    // being skipped, and the error names that address. The same pair without
+    // `quic address` would fall back (see the test above).
+    let unreachable_v6 = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1));
+    let explicit = [IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), unreachable_v6];
+    let plan = resolve_quic_bind_addresses(Some(&explicit), &default_dual_stack());
+    let (failed, _error) = bind_quic_sockets_per_family(&plan, 0, None)
+        .expect_err("an explicit address that cannot bind must be fatal");
+    assert_eq!(failed.ip(), unreachable_v6);
 }
 
 /// The shared, transport-agnostic per-connection context used by the parity

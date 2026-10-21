@@ -16,6 +16,7 @@ pub mod daemon_port;
 pub mod daemon_process;
 pub mod deadline;
 pub mod dir_diff;
+pub mod log_lines;
 pub mod lsh;
 #[cfg(feature = "quic")]
 pub mod quic_cert;
@@ -35,6 +36,7 @@ pub use daemon_port::{BIND_FAILURE_EXIT_CODE, daemon_listen_port, spawn_daemon_o
 pub use daemon_process::{CLIENT_IO_TIMEOUT, DaemonProcess};
 pub use deadline::{Deadlined, run_deadlined, run_deadlined_with_stdin};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};
+pub use log_lines::LogLines;
 pub use lsh::{LSH_STUB_BIN, LshError, LshRunnerStub};
 pub use reap::ReapOnDrop;
 pub use skip::{

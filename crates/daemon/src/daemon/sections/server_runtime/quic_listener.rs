@@ -55,14 +55,45 @@ fn bind_quic_socket(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
     Ok(socket.into())
 }
 
-/// Binds one QUIC/UDP socket per entry in `bind_addresses`, tolerating
-/// per-family failures while at least one family binds.
+/// The addresses the QUIC listener binds, and whether one that fails to bind
+/// may be skipped while another binds.
+#[derive(Debug, PartialEq, Eq)]
+struct QuicBindPlan {
+    addresses: Vec<IpAddr>,
+    tolerate_family_failure: bool,
+}
+
+/// Resolves where the QUIC listener binds. The single owner of that rule.
 ///
-/// The datagram counterpart of [`bind_listeners_per_family`]: it walks the same
-/// `resolve_bind_addresses` list in the same order, warns via
-/// [`warn_per_family_bind_failure`] when a family fails in dual-stack mode, and
-/// only returns `Err` when every family failed (callers map that to a
-/// `DaemonError`). `quic_port` is the resolved `effective_quic_port()`.
+/// Precedence: a `quic address` list, when set, wins outright and is bound
+/// exactly, independent of the TCP `address`; every entry must bind, because
+/// the operator named each one. Unset, QUIC binds the TCP listener's
+/// `resolve_bind_addresses` set (dual-stack `[::]` and `0.0.0.0` by default)
+/// and, like TCP, skips a family that fails while another binds.
+fn resolve_quic_bind_addresses(
+    quic_address: Option<&[IpAddr]>,
+    tcp_bind_addresses: &[IpAddr],
+) -> QuicBindPlan {
+    match quic_address {
+        Some(addresses) => QuicBindPlan {
+            addresses: addresses.to_vec(),
+            tolerate_family_failure: false,
+        },
+        None => QuicBindPlan {
+            addresses: tcp_bind_addresses.to_vec(),
+            tolerate_family_failure: tcp_bind_addresses.len() > 1,
+        },
+    }
+}
+
+/// Binds one QUIC/UDP socket per address in `plan`.
+///
+/// The datagram counterpart of [`bind_listeners_per_family`]. When the plan
+/// tolerates family failures (the default dual-stack wildcard), a failed
+/// family is warned via [`warn_per_family_bind_failure`] and `Err` is returned
+/// only when every family failed; otherwise the first failure is returned.
+/// The error carries the address that failed. `quic_port` is the resolved
+/// `effective_quic_port()`.
 ///
 /// This binds only the raw UDP sockets - the privileged step, which must run
 /// while `CAP_NET_BIND_SERVICE` is still held because `effective_quic_port()`
@@ -71,40 +102,36 @@ fn bind_quic_socket(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
 /// ([`start_quic_front`]), because an acceptor spawns I/O driver threads and
 /// the daemon parent must stay single-threaded to fork its session children.
 fn bind_quic_sockets_per_family(
-    bind_addresses: &[IpAddr],
+    plan: &QuicBindPlan,
     quic_port: u16,
     log_sink: Option<&SharedLogSink>,
-) -> Result<Vec<std::net::UdpSocket>, io::Error> {
-    let dual_stack = bind_addresses.len() > 1;
-    let mut sockets = Vec::with_capacity(bind_addresses.len());
-    let mut last_error: Option<io::Error> = None;
+) -> Result<Vec<std::net::UdpSocket>, (SocketAddr, io::Error)> {
+    let mut sockets = Vec::with_capacity(plan.addresses.len());
+    let mut last_error: Option<(SocketAddr, io::Error)> = None;
 
-    for addr in bind_addresses {
+    for addr in &plan.addresses {
         let requested_addr = SocketAddr::new(*addr, quic_port);
         match bind_quic_socket(requested_addr) {
             Ok(socket) => sockets.push(socket),
-            Err(error) => {
-                if dual_stack {
-                    warn_per_family_bind_failure(log_sink, requested_addr, &error);
-                    last_error = Some(error);
-                    continue;
-                }
-                return Err(error);
+            Err(error) if plan.tolerate_family_failure => {
+                warn_per_family_bind_failure(log_sink, requested_addr, &error);
+                last_error = Some((requested_addr, error));
             }
+            Err(error) => return Err((requested_addr, error)),
         }
     }
 
-    if sockets.is_empty() {
-        let error = last_error.unwrap_or_else(|| {
+    match last_error {
+        Some(failure) if sockets.is_empty() => Err(failure),
+        _ if sockets.is_empty() => Err((
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), quic_port),
             io::Error::new(
                 io::ErrorKind::AddrNotAvailable,
                 "no addresses available to bind the QUIC listener",
-            )
-        });
-        return Err(error);
+            ),
+        )),
+        _ => Ok(sockets),
     }
-
-    Ok(sockets)
 }
 
 /// The daemon parent's handle on its QUIC front process.
@@ -123,26 +150,19 @@ struct QuicFront {
 /// Forks the QUIC front process and hands it the bound UDP sockets.
 ///
 /// Must run while the daemon parent is single-threaded: it forks. The TLS
-/// identity (certificate, key and client CA) is loaded here, before the fork,
-/// so the front process can give up filesystem access before it starts any
-/// thread. `listener_fds` are the parent's TCP listeners, which the front
+/// identity (certificate, key and client CA) arrives already loaded, at daemon
+/// startup, so the front process can give up filesystem access before it
+/// starts any thread. `listener_fds` are the parent's TCP listeners, which the front
 /// process closes at once.
 ///
-/// Returns `None` (after logging why) when the QUIC listener cannot start; the
+/// Returns `None` (after logging why) when the front process cannot start; the
 /// TCP listeners keep serving either way.
 fn start_quic_front(
     sockets: Vec<std::net::UdpSocket>,
-    identity: &QuicIdentity,
+    setup: &QuicServerSetup,
     listener_fds: &[std::os::fd::RawFd],
     log_sink: Option<&SharedLogSink>,
 ) -> Option<QuicFront> {
-    let setup = match load_quic_setup(identity) {
-        Ok(setup) => setup,
-        Err(text) => {
-            log_quic_front_error(log_sink, text);
-            return None;
-        }
-    };
     let (parent_end, front_end) = match platform::fd_pass::fd_channel_pair() {
         Ok(pair) => pair,
         Err(error) => {
@@ -158,7 +178,7 @@ fn start_quic_front(
         Ok(platform::session_fork::ForkSide::Child) => {
             drop(parent_end);
             platform::session_fork::close_inherited_listeners(listener_fds);
-            let code = run_quic_front(sockets, &setup, front_end, parent_pid, log_sink);
+            let code = run_quic_front(sockets, setup, front_end, parent_pid, log_sink);
             platform::session_fork::exit_child(code);
         }
         Ok(platform::session_fork::ForkSide::Parent { child_pid }) => {
@@ -310,6 +330,12 @@ fn accept_and_hand_off(
                 let Some(peer) = stream.peer_addr() else {
                     continue;
                 };
+                if stream.retry_validated()
+                    && let Some(log) = log_sink
+                {
+                    let text = format!("QUIC client {peer} validated by Retry");
+                    log_message(log, &rsync_info!(text).with_role(Role::Daemon));
+                }
                 let record = platform::fd_pass::RelayRecord {
                     peer,
                     local,

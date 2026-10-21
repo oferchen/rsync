@@ -47,6 +47,14 @@ pub(crate) struct ParsedConfigModules {
     /// to 873 at parse time, mirroring the TCP `port = 0` handling.
     #[cfg(feature = "quic")]
     quic_port: Option<(u16, ConfigDirectiveOrigin)>,
+    /// QUIC Retry policy from the `quic retry` global directive (oc extension,
+    /// feature-gated). `None` keeps the default, Retry under load.
+    #[cfg(feature = "quic")]
+    quic_retry: Option<(rsync_io::quic::RetryPolicy, ConfigDirectiveOrigin)>,
+    /// QUIC listener addresses from the `quic address` global directive (oc
+    /// extension, feature-gated). `None` follows the TCP listener's addresses.
+    #[cfg(feature = "quic")]
+    quic_address: Option<(Vec<IpAddr>, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,

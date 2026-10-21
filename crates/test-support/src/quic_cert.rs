@@ -14,6 +14,9 @@
 //! `--quic-ca` trust anchor - a self-signed leaf is its own root, the shape
 //! `rsync_io`'s `round_trip_via_roots_trust` loopback test already relies on.
 
+/// `rcgen`, re-exported so a QUIC test can mint certificate shapes the fixed
+/// fixtures here do not cover (expired, wrong EKU, CA leaf, other key types).
+pub use rcgen;
 /// A PEM-encoded self-signed certificate and its private key, both carrying a
 /// `localhost` subject-alternative name.
 pub struct SelfSignedPem {
@@ -95,7 +98,7 @@ pub fn localhost_ca_signed() -> CaSignedPem {
 /// Wraps DER bytes in a PEM block with `label` (e.g. `CERTIFICATE`,
 /// `PRIVATE KEY`), 64-character base64 lines. `serialize_der` emits a PKCS#8
 /// key, so `PRIVATE KEY` is the correct label for the key block.
-fn pem_block(label: &str, der: &[u8]) -> String {
+pub fn pem_block(label: &str, der: &[u8]) -> String {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
 

@@ -110,6 +110,7 @@ platform = { path = "../platform" }
 # env-mutating tests on every target. Declare it as an all-target dev
 # dependency so those cross-platform tests compile on Windows too.
 [dev-dependencies]
+bandwidth = { path = "../bandwidth", features = ["test-support"] }
 base64 = { workspace = true }
 test-support = { path = "../test-support" }
 platform = { path = "../platform" }

@@ -498,11 +498,12 @@ mod draining_reader_tests {
         let addr = listener.local_addr().expect("local addr");
         // Accept and then sit silent, holding the connection open (no data,
         // no FIN) until the test drops it.
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let silent_peer = thread::spawn(move || {
             let (server, _) = listener.accept().expect("accept");
-            // Park the accepted socket alive; the reader must not depend on a
-            // FIN to stop its drain thread.
-            thread::sleep(std::time::Duration::from_secs(2));
+            // Hold the accepted socket open until `stop()` has returned: a
+            // stop that waited for the peer's FIN would never return.
+            let _ = release_rx.recv();
             drop(server);
         });
         // Left with no read timeout on purpose: the drain thread arms it
@@ -510,12 +511,8 @@ mod draining_reader_tests {
         let sock = TcpStream::connect(addr).expect("connect loopback");
         let (reader, handle) = DrainingReader::new(sock, None);
 
-        let start = std::time::Instant::now();
         handle.stop();
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(1),
-            "stop() must join the drain thread promptly even with a silent peer"
-        );
+        release_tx.send(()).expect("release peer");
         drop(reader);
         let _ = silent_peer.join();
     }

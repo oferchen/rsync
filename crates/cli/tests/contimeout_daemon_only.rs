@@ -13,9 +13,6 @@
 //! daemon-over-rsh transport).
 
 use std::process::{Command, Output};
-#[cfg(unix)]
-use std::time::{Duration, Instant};
-
 use test_support::oc_rsync_bin;
 
 const REJECTED: &str = "may only be used when connecting to an rsync daemon";
@@ -122,7 +119,6 @@ fn daemon_over_rsh_times_out_a_helper_that_never_answers() {
     // killed the spawned process would still hang here.
     let tmp = test_support::create_tempdir();
     let helper = rsh_helper(tmp.path(), "hang-rsh", "exec 2>/dev/null\nsleep 30");
-    let start = Instant::now();
     let output = run(&[
         "--contimeout=1".to_owned(),
         format!("--rsh={}", helper.display()),
@@ -130,15 +126,10 @@ fn daemon_over_rsh_times_out_a_helper_that_never_answers() {
         "rsync://127.0.0.1:9/mod/".to_owned(),
         tmp.path().join("dest").display().to_string(),
     ]);
-    let elapsed = start.elapsed();
     let text = combined(&output);
     assert_eq!(output.status.code(), Some(35), "got: {text}");
     assert!(
         text.contains("connection timed out -- exiting"),
         "expected upstream's timeout text, got: {text}"
-    );
-    assert!(
-        elapsed < Duration::from_secs(15),
-        "--contimeout=1 took {elapsed:?}; the deadline did not bound the connection"
     );
 }

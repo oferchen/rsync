@@ -28,14 +28,14 @@ use std::time::{Duration, Instant};
 /// let mut tracker = TimeoutTracker::new(config);
 ///
 /// // Reset timer before I/O
+/// let before = std::time::Instant::now();
 /// tracker.reset_io_timer();
 ///
 /// // Check if timeout exceeded
 /// assert!(tracker.check_io_timeout().is_ok());
 ///
-/// // Time since last I/O
-/// let elapsed = tracker.time_since_last_io();
-/// assert!(elapsed < Duration::from_secs(1));
+/// // Time since last I/O: never more than since the reset
+/// assert!(tracker.time_since_last_io() <= before.elapsed());
 /// ```
 #[derive(Debug)]
 pub struct TimeoutTracker {
@@ -178,11 +178,11 @@ impl TimeoutTracker {
     /// use core::timeout::{TimeoutConfig, TimeoutTracker};
     /// use std::time::Duration;
     ///
-    /// let config = TimeoutConfig::new();
-    /// let tracker = TimeoutTracker::new(config);
+    /// let before = std::time::Instant::now();
+    /// let tracker = TimeoutTracker::new(TimeoutConfig::new());
     ///
-    /// let elapsed = tracker.time_since_last_io();
-    /// assert!(elapsed < Duration::from_secs(1));
+    /// // The I/O timer starts at construction, never earlier.
+    /// assert!(tracker.time_since_last_io() <= before.elapsed());
     /// ```
     #[must_use]
     pub fn time_since_last_io(&self) -> Duration {

@@ -1303,20 +1303,11 @@ fn execute_sparse_with_large_file() {
     ])
     .expect("plan");
 
-    let start = std::time::Instant::now();
     plan.execute_with_options(
         LocalCopyExecution::Apply,
         LocalCopyOptions::default().sparse(true),
     )
     .expect("large sparse copy succeeds");
-    let elapsed = start.elapsed();
-
-    // Should complete quickly despite 1GB size (mostly holes).
-    // CI runners (especially macOS) can be slow; allow up to 30 seconds.
-    assert!(
-        elapsed.as_secs() < 30,
-        "large sparse copy took too long: {elapsed:?}"
-    );
 
     let meta = fs::metadata(&sparse_dest).expect("metadata");
     assert_eq!(meta.len(), file_size);

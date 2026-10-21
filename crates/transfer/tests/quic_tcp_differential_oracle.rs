@@ -34,10 +34,9 @@
 //! the destination, so the receiver runs the block-matching delta path rather
 //! than a full send - the delta case the transport must carry faithfully.
 //!
-//! The daemon's QUIC listener is one-shot per endpoint (it serves exactly one
-//! session), so the QUIC leg dials exactly once, gated on the daemon log's
-//! "QUIC listener serving on" line rather than a blind retry that could waste
-//! the single connection.
+//! The QUIC leg dials exactly once, gated on the daemon logging "QUIC listener
+//! serving on" for its IPv4 socket. The daemon logs to stderr and the test
+//! blocks on that line as an event, so the gate never depends on host speed.
 //!
 //! # Non-vacuity
 //!
@@ -64,10 +63,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
-
 use tempfile::{TempDir, tempdir};
-use test_support::{DirDiff, DirDiffOptions};
+use test_support::{DirDiff, DirDiffOptions, LogLines};
 
 /// The delta target's size. Large enough that a single perturbed region leaves
 /// most blocks matchable, so the receiver exercises real block matching.
@@ -135,7 +132,6 @@ fn seed_delta_basis(dest: &Path) -> io::Result<()> {
 fn write_daemon_config(
     config_path: &Path,
     pid_path: &Path,
-    log_path: &Path,
     module_name: &str,
     module_root: &Path,
     cert_path: &Path,
@@ -144,7 +140,7 @@ fn write_daemon_config(
     let body = format!(
         "pid file = {pid}\n\
          lock file = {lock}\n\
-         log file = {log}\n\
+         log file = /dev/stderr\n\
          use chroot = false\n\
          max connections = 4\n\
          quic cert file = {cert}\n\
@@ -157,7 +153,6 @@ fn write_daemon_config(
          list = true\n",
         pid = pid_path.display(),
         lock = config_path.with_file_name("rsyncd.lock").display(),
-        log = log_path.display(),
         cert = cert_path.display(),
         key = key_path.display(),
         module = module_name,
@@ -192,7 +187,7 @@ fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard
             .arg("--config")
             .arg(config_path)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
     })?;
@@ -215,25 +210,6 @@ fn binary_supports_quic(oc_bin: &Path) -> bool {
             text.contains("quic://")
         })
         .unwrap_or(false)
-}
-
-/// Blocks until the daemon log records the QUIC listener as serving, or the
-/// timeout elapses. This is the readiness signal for the one-shot QUIC dial:
-/// the line is logged immediately before `accept()`, after the acceptor's I/O
-/// driver thread is running.
-fn wait_for_quic_serving(log_path: &Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Ok(text) = fs::read_to_string(log_path)
-            && text.contains("QUIC listener serving on")
-        {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
 }
 
 /// The single transfer-and-capture driver, parameterized only by transport.
@@ -302,7 +278,6 @@ struct Scratch {
     _tmp: TempDir,
     root: PathBuf,
     config: PathBuf,
-    log: PathBuf,
     pid: PathBuf,
     cert: PathBuf,
     key: PathBuf,
@@ -314,7 +289,6 @@ impl Scratch {
         let root = tmp.path().to_path_buf();
         Some(Self {
             config: root.join("rsyncd.conf"),
-            log: root.join("rsyncd.log"),
             pid: root.join("rsyncd.pid"),
             cert: root.join("quic-cert.pem"),
             key: root.join("quic-key.pem"),
@@ -362,7 +336,6 @@ fn quic_daemon_pull_matches_tcp_daemon_pull() {
     write_daemon_config(
         &scratch.config,
         &scratch.pid,
-        &scratch.log,
         "oracle",
         &module_root,
         &scratch.cert,
@@ -370,13 +343,14 @@ fn quic_daemon_pull_matches_tcp_daemon_pull() {
     )
     .expect("write daemon config");
 
-    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+    let (mut daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
         Ok(daemon) => daemon,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");
             return;
         }
     };
+    let mut log = LogLines::spawn(daemon.child.stderr.take().expect("daemon stderr"));
 
     // TCP leg. A success here also proves the daemon is fully serving.
     let (tcp_status, tcp_out, tcp_err) =
@@ -387,14 +361,10 @@ fn quic_daemon_pull_matches_tcp_daemon_pull() {
         "TCP daemon pull failed: status={tcp_status:?}\nstderr:\n{tcp_err}"
     );
 
-    // The QUIC listener is one-shot per endpoint, so gate the single dial on the
-    // daemon logging that it is serving rather than risk wasting it on a race.
-    assert!(
-        wait_for_quic_serving(&scratch.log, Duration::from_secs(10)),
-        "daemon never logged 'QUIC listener serving on'; the QUIC listener did not \
-         come up. daemon log:\n{}",
-        fs::read_to_string(&scratch.log).unwrap_or_default()
-    );
+    // Gate the single QUIC dial on the daemon logging that its IPv4 socket,
+    // which serves the client's 127.0.0.1, is serving.
+    log.wait_for(&format!("QUIC listener serving on 0.0.0.0:{port}"))
+        .expect("the QUIC listener did not come up");
 
     // QUIC leg - byte-identical transfer, only the transport differs.
     let (quic_status, quic_out, quic_err) =
@@ -404,7 +374,7 @@ fn quic_daemon_pull_matches_tcp_daemon_pull() {
         quic_status.success(),
         "QUIC daemon pull failed: status={quic_status:?}\nstderr:\n{quic_err}\n\
          daemon log:\n{}",
-        fs::read_to_string(&scratch.log).unwrap_or_default()
+        log.transcript()
     );
 
     // Axis 1: exit codes agree (and both succeeded).

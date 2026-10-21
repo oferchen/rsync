@@ -17,8 +17,6 @@ use std::time::Duration;
 
 #[cfg(any(test, feature = "test-support"))]
 use super::append_recorded_sleeps;
-#[cfg(not(test))]
-use super::sleep_with_backend;
 
 /// Result returned by [`crate::limiter::BandwidthLimiter::register`] describing how long the limiter slept.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -70,7 +68,10 @@ pub(crate) const fn duration_from_microseconds(us: u128) -> Duration {
 }
 
 /// Sleeps for the given duration, chunking into `MAX_SLEEP_DURATION` segments.
-/// upstream: io.c:2349-2351 sleep_for_bwlimit() - `select()` performs the actual sleep
+///
+/// upstream: io.c:2349-2351 sleep_for_bwlimit() blocks in `select()`; a plain
+/// `nanosleep` via [`std::thread::sleep`] is equivalent for the >= 100 ms
+/// delays the limiter requests (`MINIMUM_SLEEP_MICROS`).
 pub(crate) fn sleep_for(duration: Duration) {
     let mut remaining = duration;
 
@@ -91,7 +92,7 @@ pub(crate) fn sleep_for(duration: Duration) {
 
         #[cfg(not(test))]
         {
-            sleep_with_backend(chunk);
+            std::thread::sleep(chunk);
         }
 
         remaining = remaining.saturating_sub(chunk);

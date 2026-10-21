@@ -50,6 +50,7 @@
 //! surface. The acceptor generates a fresh self-signed certificate at bind
 //! time and exposes its DER encoding so a connector can pin it.
 
+mod admission;
 mod cipher;
 mod driver;
 mod error;
@@ -74,6 +75,10 @@ use quinn_proto::{ClientConfig, ServerConfig};
 pub use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
+pub use admission::{
+    INCOMING_BUFFER_PER_ATTEMPT, IncomingLimits, RETRY_TOKEN_LIFETIME, RETRY_UNDER_LOAD_THRESHOLD,
+    RetryPolicy,
+};
 pub use cipher::QuicCipher;
 use cipher::client_provider;
 use driver::{Role, bind_endpoint, spawn_io};
@@ -104,6 +109,18 @@ const DATAGRAM_BUF: usize = 65535;
 
 fn io_err(err: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> io::Error {
     io::Error::other(err)
+}
+
+/// Maps a `with_single_cert` failure, naming the operator mistake rustls
+/// reports only as `KeyMismatch`.
+fn identity_err(err: rustls::Error) -> io::Error {
+    match err {
+        rustls::Error::InconsistentKeys(_) => io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the private key does not match the certificate",
+        ),
+        other => io_err(other),
+    }
 }
 
 fn ring_provider() -> Arc<rustls::crypto::CryptoProvider> {
@@ -174,6 +191,9 @@ struct State {
     /// server's [`QuicAcceptor::accept`] handed it out. A server connection
     /// that is not yet accepted when its acceptor is dropped is closed.
     accepted: bool,
+    /// The client's address was validated by a stateless Retry before the
+    /// server accepted the connection.
+    retry_validated: bool,
     /// How the connection ended, if it has.
     terminal: Option<Terminal>,
     /// The connection has drained, or the driver thread exited.
@@ -450,6 +470,7 @@ pub struct QuicServerSetup {
     certificate: CertificateDer<'static>,
     config: Arc<ServerConfig>,
     opens_stream: bool,
+    retry: RetryPolicy,
 }
 
 impl QuicServerSetup {
@@ -487,7 +508,7 @@ impl QuicServerSetup {
             None => versions
                 .with_no_client_auth()
                 .with_single_cert(chain, key)
-                .map_err(io_err)?,
+                .map_err(identity_err)?,
             Some(roots) => {
                 let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
                     Arc::new(roots),
@@ -498,7 +519,7 @@ impl QuicServerSetup {
                 versions
                     .with_client_cert_verifier(verifier)
                     .with_single_cert(chain, key)
-                    .map_err(io_err)?
+                    .map_err(identity_err)?
             }
         };
         server_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
@@ -509,11 +530,25 @@ impl QuicServerSetup {
         // The daemon's own endpoint takes env/default tuning; client `--quic-*`
         // flags configure the client endpoint, never the server's.
         server_config.transport_config(build_transport_config(QuicTransportTuning::default())?);
+        IncomingLimits::default().apply(&mut server_config);
         Ok(Self {
             certificate,
             config: Arc::new(server_config),
             opens_stream,
+            retry: RetryPolicy::default(),
         })
+    }
+
+    /// Replaces the default admission settings: when a new connection is
+    /// answered with a stateless Retry, and how much quinn may hold for
+    /// connection attempts not yet disposed of.
+    #[must_use]
+    pub fn with_admission(mut self, retry: RetryPolicy, limits: IncomingLimits) -> Self {
+        let mut config = (*self.config).clone();
+        limits.apply(&mut config);
+        self.config = Arc::new(config);
+        self.retry = retry;
+        self
     }
 
     /// DER encoding of the certificate the endpoint presents.
@@ -526,6 +561,7 @@ impl std::fmt::Debug for QuicServerSetup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuicServerSetup")
             .field("opens_stream", &self.opens_stream)
+            .field("retry", &self.retry)
             .finish_non_exhaustive()
     }
 }
@@ -651,7 +687,7 @@ impl QuicAcceptor {
     pub fn from_setup(socket: UdpSocket, setup: &QuicServerSetup) -> io::Result<Self> {
         let local = socket.local_addr()?;
         let bound = bind_endpoint(socket, Some(Arc::clone(&setup.config)))?;
-        let hub = spawn_io(bound, Role::Server, setup.opens_stream, None)?;
+        let hub = spawn_io(bound, Role::Server, setup.opens_stream, setup.retry, None)?;
         Ok(Self {
             hub,
             certificate: setup.certificate.clone(),
@@ -925,6 +961,7 @@ impl QuicConnector {
             (endpoint, udp, waker),
             Role::Client,
             opens_stream,
+            RetryPolicy::Never,
             Some((handle, conn, Arc::clone(&shared))),
         )?;
         wait_stream(&Arc::new(Io { shared, hub }))
@@ -1014,6 +1051,14 @@ impl QuicStream {
     /// not observe its suite.
     pub fn negotiated_cipher_suite(&self) -> Option<rustls::CipherSuite> {
         self.io.shared.lock().negotiated_suite
+    }
+
+    /// Whether the server sent this connection's client a stateless Retry and
+    /// accepted it only once the client echoed the token. Always `false` on a
+    /// stream a [`QuicConnector`] dialled.
+    #[must_use]
+    pub fn retry_validated(&self) -> bool {
+        self.io.shared.lock().retry_validated
     }
 
     /// Wraps this stream's write half in the shared bandwidth-pacing decorator
@@ -1708,5 +1753,77 @@ mod tests {
         assert_eq!(&buf, b"ok");
         stream.close();
         server.join().expect("server thread");
+    }
+
+    /// Runs one server-first exchange against a daemon-shaped acceptor with
+    /// `retry`, returning whether the server saw the connection validated by a
+    /// Retry. A completed exchange proves the client followed any Retry.
+    fn server_saw_retry(retry: RetryPolicy) -> bool {
+        let setup = QuicServerSetup::server_first(&QuicServerIdentity::Ephemeral, None)
+            .expect("server setup")
+            .with_admission(retry, IncomingLimits::default());
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+        let acceptor = QuicAcceptor::from_setup(socket, &setup).expect("bind acceptor");
+        let addr = acceptor.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            stream.write_all(b"ok").expect("write");
+            stream.finish().expect("finish");
+            stream.retry_validated()
+        });
+        let connector = QuicConnector::new(setup.certificate()).expect("connector");
+        let mut stream = connector
+            .connect_server_first(addr, "localhost")
+            .expect("connect");
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).expect("read");
+        assert_eq!(&buf, b"ok");
+        assert!(
+            !stream.retry_validated(),
+            "a dialled stream never reports Retry"
+        );
+        stream.close();
+        server.join().expect("server thread")
+    }
+
+    /// `quic retry = always` must make the server Retry every new client, and
+    /// the client must follow it to a working stream; `never` must not.
+    #[test]
+    fn retry_policy_decides_whether_the_server_sends_retry() {
+        assert!(server_saw_retry(RetryPolicy::Always));
+        assert!(!server_saw_retry(RetryPolicy::Never));
+        assert!(
+            !server_saw_retry(RetryPolicy::default()),
+            "an idle endpoint is below the under-load threshold"
+        );
+    }
+
+    /// The bounded incoming limits must reach the quinn `ServerConfig`, by
+    /// default and when the daemon sizes them, replacing quinn's 65536-attempt
+    /// and 100 MiB defaults. quinn exposes the fields only through `Debug`.
+    #[test]
+    fn incoming_limits_reach_the_server_config() {
+        let default = QuicServerSetup::server_first(&QuicServerIdentity::Ephemeral, None)
+            .expect("server setup");
+        let text = format!("{:?}", default.config);
+        assert!(text.contains("max_incoming: 128,"), "{text}");
+        assert!(text.contains("incoming_buffer_size: 65536,"), "{text}");
+        assert!(
+            text.contains("incoming_buffer_size_total: 8388608"),
+            "{text}"
+        );
+        assert!(text.contains("retry_token_lifetime: 15s"), "{text}");
+
+        let sized = default.with_admission(
+            RetryPolicy::Always,
+            IncomingLimits::for_max_connections(std::num::NonZeroUsize::new(4)),
+        );
+        let text = format!("{:?}", sized.config);
+        assert!(text.contains("max_incoming: 4,"), "{text}");
+        assert!(
+            text.contains("incoming_buffer_size_total: 262144"),
+            "{text}"
+        );
+        assert_eq!(sized.retry, RetryPolicy::Always);
     }
 }

@@ -1,315 +1,402 @@
 # QUIC transport (operator guide)
 
-`oc-rsync` can carry the rsync daemon protocol over QUIC instead of a plain
-TCP connection. QUIC replaces only the transport: the bytes inside the tunnel
-are the unmodified daemon protocol, so a QUIC session and a TCP session move
-the same wire format and negotiate the same protocol version. QUIC adds a
-mandatory TLS 1.3 layer, a UDP substrate, and modern congestion control on top
-of that stream.
+`oc-rsync` can carry the rsync daemon protocol over QUIC (RFC 9000/9001, TLS 1.3
+over UDP) instead of a plain TCP socket. QUIC replaces only the transport. The
+bytes inside the tunnel are the unmodified daemon protocol, so a QUIC session
+and a TCP session move the same wire format and negotiate the same protocol
+version.
 
-## Status and support tier
+## 1. What it is and when to use it
 
-QUIC is an **oc-rsync extension** with no counterpart in upstream `rsync`, and
-it is **Tier 2**: opt-in, **off by default**, and compiled only when the `quic`
-Cargo feature is enabled. A default build does not link the QUIC stack and does
-not understand `quic://` operands or the `--quic` family of flags. Every flag,
-directive, and behaviour in this guide requires a build produced with the
-feature turned on.
+QUIC is an **oc-rsync extension**. Upstream `rsync` has no QUIC transport, so
+it works only between two oc-rsync builds that both carry the `quic` feature.
 
-Because it is an extension, QUIC only works oc-rsync-to-oc-rsync: an upstream
-`rsync` peer speaks neither QUIC nor the daemon protocol over UDP. Nothing in
-this guide changes the behaviour of a TCP or SSH transfer.
+| Transport | Encryption | Authentication | Use it when |
+|---|---|---|---|
+| `rsync://` / `host::module` (TCP) | none, like upstream | daemon `auth users` | trusted networks, or behind a TLS proxy |
+| SSH (`host:path`, `ssh://`) | SSH | SSH keys or passwords | you already have shell access to the remote host |
+| QUIC (`quic://`, `--quic`) | TLS 1.3, always | daemon certificate, plus optional client certificate | you run an oc-rsync daemon and want it encrypted without shell accounts, or on high-latency links where a tunable congestion controller helps |
 
-## Building with QUIC
+QUIC applies only to daemon targets. It never changes an SSH or TCP transfer.
 
-Enable the `quic` feature at build time:
+## 2. Build and availability
 
-```sh
-cargo build --release --features quic
-```
-
-The feature propagates through the crate graph (`cli` -> `core` ->
-`rsync_io`, and `daemon` for the listener side), pulling in the QUIC stack
-(`quinn-proto` for the sans-I/O QUIC state machine, `rustls` with the ring
-crypto provider for TLS 1.3; `rcgen` generates self-signed certificates for the QUIC test suite
-only, not at runtime). A build without the feature is byte-for-byte unaffected
-on every other transport.
-
-## Invoking QUIC (client)
-
-There are two ways to ask a client to use QUIC, and both target an rsync
-**daemon** endpoint (QUIC does not apply to SSH `host:path` transfers):
-
-- **The `quic://` URI scheme** — the QUIC analogue of `rsync://`:
-
-  ```sh
-  oc-rsync -a --quic-ca ca.pem quic://host/module/path/ /local/dest/
-  oc-rsync -a --quic-ca ca.pem quic://user@host:8730/module/path/ /local/dest/
-  ```
-
-- **The `--quic` modifier** — upgrades an ordinary daemon target to QUIC
-  without changing the operand spelling:
-
-  ```sh
-  oc-rsync -a --quic --quic-ca ca.pem host::module/path/ /local/dest/
-  oc-rsync -a --quic --quic-ca ca.pem rsync://host/module/path/ /local/dest/
-  ```
-
-Both select `Transport::Quic` for the connection. The default port is **873**,
-shared with the TCP daemon port (`--port` overrides it); a `quic://` URI may
-name its own port after the host. QUIC dials over **UDP**, so the daemon must be
-listening on `873/udp` (or the chosen port).
-
-### No silent fallback
-
-When QUIC is requested but the connection cannot be established, the client
-**hard-fails**. It never silently downgrades to plaintext TCP. This is a
-deliberate security property: an operator who asked for the encrypted transport
-gets an error rather than an unnoticed cleartext transfer.
-
-If a `quic://` operand is given to a build that lacks the `quic` feature, the
-client fails fast with an actionable diagnostic ("quic:// URLs require the QUIC
-transport, which is not compiled into this build") rather than misparsing the
-URL as a host named `quic`.
-
-## Trust model (TLS 1.3)
-
-Every QUIC connection runs TLS 1.3 with the ALPN protocol identifier `rsync`;
-there is no unencrypted QUIC mode. The client verifies the daemon's
-certificate against exactly one trust source: the PEM CA bundle named by
-`--quic-ca <PATH>`.
+The cargo feature is `quic`, and it is in the default feature set, so a plain
+`cargo build --release` includes it. Being compiled in changes nothing at
+runtime: the client uses QUIC only for a `quic://` operand or `--quic`, and the
+daemon opens its UDP listener only when `quic cert file` and `quic key file`
+are set. To build without QUIC, turn the defaults off and name the features you
+need:
 
 ```sh
-oc-rsync -a --quic-ca /etc/oc-rsync/corp-ca.pem quic://host/module/ dest/
+cargo build --release --no-default-features --features zstd,lz4,acl,xattr,iconv,parallel
 ```
 
-- **`--quic-ca` is required.** There is no default trust. Without it the
-  client refuses before sending a packet, exits 5, and names the flag in the
-  error.
-- **`--quic-ca` is strict.** The daemon's chain must verify against the
-  bundle: a certificate issued by another CA, one whose SAN does not name the
-  host being dialed, or one outside its validity period fails the handshake
-  (exit 5). There is no fallback.
-- **No trust-on-first-use, no platform trust store.** The client keeps no
-  known-hosts file and does not consult the operating system's CA store.
+Such a build refuses `quic://` and `--quic` with a "not compiled into this
+build" error.
 
-For a daemon with a self-signed certificate, pass that certificate itself as
-`--quic-ca` (a self-signed certificate is its own trust anchor). For a daemon
-whose certificate is issued by an internal CA, pass the CA certificate.
-Rotating a daemon certificate under the same CA needs no client change.
+It pulls in `quinn-proto` (the QUIC state machine), `quinn-udp`, and `rustls`
+with the `ring` provider for TLS 1.3. `rcgen` is also linked, for the library's
+ephemeral test identity. The daemon and the client never generate a
+certificate at runtime. Measured on a Linux x86_64 release build, `quic` grows
+the binary from 15,355,480 to 17,165,920 bytes (+1.81 MB, +11.8%) and the
+normal dependency graph from 406 to 420 unique crates (+14).
 
-### Mutual TLS (client certificate)
+Release artifacts built by `.github/workflows/release-cross.yml` enable `quic`
+for Linux (glibc and musl), macOS and Windows. Releases up to and including
+v0.6.4 predate this and do not carry it. Check a binary with
+`oc-rsync --help | grep quic://`.
 
-The client can additionally present its own certificate so the daemon can
-authenticate it (mutual TLS), the reverse direction of the server verification
-above. It is opt-in and off by default: with neither flag set the client
-presents no certificate and the handshake is unchanged.
+| Platform | Client | Daemon listener |
+|---|---|---|
+| Linux | yes | yes |
+| macOS | yes | yes |
+| Windows | yes | **no**: any QUIC directive in the config refuses to start (see [Troubleshooting](#8-troubleshooting)) |
+
+## 3. Server setup
+
+The QUIC listener runs beside the TCP listener. Six global directives in
+`oc-rsyncd.conf` configure it:
+
+| Directive | Default | Meaning |
+|---|---|---|
+| `quic cert file` | unset | PEM certificate chain the daemon presents, leaf first |
+| `quic key file` | unset | PEM private key for that certificate (PKCS#8, PKCS#1 or SEC1) |
+| `quic client ca file` | unset (no client certificate requested) | PEM CA bundle. When set, every client must present a certificate that chains to it (mutual TLS) |
+| `quic port` | the daemon `port` (873) | UDP port of the QUIC listener. `quic port = 0` means 873, as `port = 0` does |
+| `quic address` | the TCP listener's addresses (`[::]` and `0.0.0.0`) | Literal IPv4/IPv6 addresses the QUIC listener binds, separated by spaces, independent of the TCP `address`. Hostnames, invalid and repeated addresses fail to parse |
+| `quic retry` | `auto` | When the listener answers a new client with a stateless Retry: `auto` once 100 handshakes are in flight, `always` for every client, `never` for none. Any other value fails to parse |
+
+Rules:
+
+- Setting any of the six turns the listener on. A config without them stays
+  TCP-only.
+- All six are global-only. A module section that sets one fails to parse.
+- Paths resolve relative to the config file, like `pid file`.
+- `quic cert file` and `quic key file` go together. Naming only one fails at
+  startup.
+- There is no auto-generated certificate. A listener with no certificate and key
+  refuses to start.
+- The daemon loads the certificate and key at startup, before it binds any
+  listener. An unreadable or malformed file, or a key that does not match the
+  certificate, stops the daemon with exit 1. It never serves TCP alone while
+  QUIC is silently down.
+- The listener is dual-stack by default: without `quic address` it binds the
+  same addresses as the TCP listener, `[::]` and `0.0.0.0` unless `address`,
+  `--ipv4` or `--ipv6` narrow them. If one family cannot bind, it serves on the
+  other and logs a warning.
+- With `quic address`, the listener binds exactly the listed addresses on the
+  `quic port`, whatever the TCP `address` is. Every listed address must bind,
+  or the daemon refuses to start.
+- The daemon log line `QUIC listener bound on ...` names every bound address.
+- `quic client ca file` gates only the QUIC listener. The TCP listener still
+  serves the same modules without a certificate.
+
+**Loopback-only QUIC.** To accept QUIC only from the local host, for example
+behind a local relay, while TCP keeps listening on every address:
+
+```
+quic cert file = /etc/oc-rsync/server-cert.pem
+quic key file  = /etc/oc-rsync/server-key.pem
+quic address   = 127.0.0.1 ::1
+```
+
+**Retry and connection limits.** A Retry (RFC 9000 section 8.1.2) makes a
+client prove it can receive at its source address before the daemon keeps any
+state for it, at the cost of one extra round trip. The client follows it
+without any flag. With `quic retry = auto` an idle daemon never sends one, so
+normal transfers pay nothing; under a handshake flood every new client is
+validated first. A client accepted after a Retry is logged as `QUIC client
+<address> validated by Retry`. Retry tokens are valid for 15 seconds and are
+signed with a key generated at startup, so they never outlive the daemon
+process. The daemon also bounds what it holds for connection attempts it has not
+yet accepted: at most `max connections` attempts (128 when unlimited, the
+listener's accept backlog), each buffering at most 64 KiB.
+
+**Firewall.** QUIC uses UDP. Open `873/udp` (or your `quic port`) as well as
+`873/tcp`.
+
+**Process model.** Each QUIC session runs in its own forked child, as a TCP
+session does. The daemon binds the UDP sockets while it holds its startup
+privileges, then forks one QUIC front process. The front process drops to
+`nobody` if it is still root. On Linux it also sets `no_new_privs` and applies
+a Landlock ruleset with no filesystem access. It terminates TLS and hands each stream to the parent. The
+parent applies `hosts allow` / `hosts deny` and `max connections` (counted
+across TCP and QUIC), then forks the session child, which applies `use chroot`,
+`uid` and `gid` as it would for TCP. If the front process exits, the daemon
+keeps serving TCP and logs it.
+
+## 4. Client usage
+
+Two forms reach a QUIC daemon:
 
 ```sh
-oc-rsync -a --quic-ca /etc/oc-rsync/ca.pem \
-            --quic-cert /etc/oc-rsync/client.pem \
-            --quic-key  /etc/oc-rsync/client.key \
-            quic://host/module/ dest/
+# The quic:// scheme (port 873 unless the URL names one)
+oc-rsync -av --quic-ca ca-cert.pem quic://host/module/path/ dest/
+oc-rsync -av --quic-ca ca-cert.pem quic://user@host:8873/module/path/ dest/
+
+# --quic upgrades an rsync:// or host::module target
+oc-rsync -av --quic --quic-ca ca-cert.pem host::module/path/ dest/
+oc-rsync -av --quic --quic-ca ca-cert.pem rsync://host/module/path/ dest/
 ```
 
-- `--quic-cert <PATH>` is the PEM certificate chain (leaf first) the client
-  presents; `--quic-key <PATH>` is its PEM private key (PKCS#8, PKCS#1, or SEC1).
-- The pair is **all-or-nothing**: naming only one of the two is an error, since a
-  client certificate needs its private key (and vice versa).
-- Whether a client certificate is *required* is the daemon's decision (see
-  `quic client ca file` below); a daemon that does not request one ignores a
-  presented certificate.
+| Flag | Meaning |
+|---|---|
+| `--quic` | Use QUIC for a daemon target |
+| `--quic-ca=PATH` | PEM CA bundle that must sign the daemon certificate. **Required** |
+| `--quic-cert=PATH` | Client certificate chain (PEM) for mutual TLS. Needs `--quic-key` |
+| `--quic-key=PATH` | Private key for `--quic-cert`. Needs `--quic-cert` |
+| `--quic-cc=ALGORITHM` | Client congestion controller: `bbr` (default), `cubic` or `newreno` |
+| `--quic-window=SIZE` | Client flow-control window in bytes, with an optional `K`/`M`/`G` (1024-based) suffix. Default 64 MiB |
+| `--quic-cipher=CIPHER` | `aes` or `chacha20`. Default: AES-GCM on CPUs with hardware AES, otherwise ChaCha20-Poly1305 |
 
-## Daemon configuration
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `OC_RSYNC_QUIC_CC` | `bbr` | Congestion controller when `--quic-cc` is not given. An unknown name is an error |
+| `OC_RSYNC_QUIC_WINDOW` | 64 MiB | Flow-control window when `--quic-window` is not given |
 
-The QUIC listener runs alongside the daemon's TCP listener and is configured
-with global directives in `oc-rsyncd.conf`. Setting **any** QUIC directive
-(`quic cert file`, `quic key file`, `quic client ca file`, or `quic port`) marks
-QUIC as requested; a config with no QUIC directives leaves the listener off, so a
-default `--features quic` daemon stays TCP-only until you configure it.
+The flags tune the client endpoint only. A daemon's endpoint takes
+`OC_RSYNC_QUIC_CC` and `OC_RSYNC_QUIC_WINDOW` from the daemon's own
+environment, or the defaults. A mismatch between the two ends changes only
+throughput, never compatibility.
 
-The QUIC daemon listener is **Unix-only**. On other platforms a `quic`-feature
-build can still dial a QUIC daemon as a client, but cannot open a local QUIC
-listener.
+**No fallback.** If QUIC cannot be established, the client exits 5. It never
+retries over plaintext TCP.
 
-"Requested" is not "serviceable". Because there is no ephemeral fallback (see
-below), a QUIC request without **both** a certificate and a key is a fatal
-misconfiguration: the daemon fails loudly at startup with
+## 5. Trust model
 
-```
-QUIC listener requested but no certificate configured: set both
-`quic cert file` and `quic key file` (there is no ephemeral fallback)
-```
+Every connection runs TLS 1.3 with the ALPN identifier `rsync`. There is no
+unencrypted QUIC mode.
 
-rather than synthesizing an identity or silently skipping the listener.
+- **No default trust.** The client trusts only the bundle named by `--quic-ca`.
+  It does not consult the system trust store. Without `--quic-ca` it refuses
+  before sending a packet, with exit 5.
+- **No trust-on-first-use.** There is no known-hosts file, and an unknown
+  certificate is never accepted or remembered.
+- **Strict verification.** The daemon chain must verify against the bundle, the
+  certificate must name the dialled host in its SAN (DNS name, or IP address
+  when you dial an IP), it must be inside its validity period, and the leaf must
+  be `CA:FALSE`. Any failure ends the handshake with exit 5.
+- **Address validation.** QUIC limits a daemon's replies to an unvalidated
+  address to three times what it received, so it cannot be used to amplify a
+  spoofed flood. Under load the daemon also sends a stateless Retry, so a
+  flood of spoofed handshakes cannot make it hold state (`quic retry`, section
+  3).
 
-### Process model
-
-A QUIC session runs in its own forked child, exactly like a TCP session. The
-daemon parent never serves one itself:
-
-1. The parent binds the UDP sockets while it still holds its startup
-   privileges, then forks a QUIC front process before it starts any thread.
-2. The front process drops to `nobody` if it is still root. On Linux it also
-   dies with the parent, sets `no_new_privs`, and installs a Landlock ruleset
-   that grants no filesystem access. Only then does it start the QUIC threads.
-   It terminates TLS for every QUIC connection and never forks or runs a
-   session.
-3. For each accepted stream, the front process hands the parent one end of a
-   socket pair together with the peer and local addresses.
-4. The parent admits the relayed stream through the same path as a TCP
-   connection: `hosts allow` / `hosts deny`, `max connections` (counted across
-   TCP and QUIC together), then a forked per-session child. That child applies
-   `use chroot`, `uid` and `gid` for its module, as upstream does for TCP.
-
-So stock modules with `use chroot = yes` and `uid = nobody` work over QUIC, and
-a QUIC session can no longer chroot or drop privileges for the whole daemon.
-If the front process exits, the parent logs it and keeps serving TCP; QUIC
-stays down until the daemon restarts.
-
-### Certificate identity
-
-```
-quic cert file = /etc/oc-rsync/quic/server.pem
-quic key file  = /etc/oc-rsync/quic/server.key
-```
-
-- `quic cert file` / `quic key file` name the PEM certificate and private key
-  the daemon presents. These sit naturally beside `pid file` / `secrets file`;
-  like those directives they only resolve and store a path — the files are read
-  when the listener is built, not at parse time.
-- The pair is **all-or-nothing**: naming only `quic cert file` or only
-  `quic key file` leaves QUIC requested but unserviceable, and the daemon
-  refuses to start (see the startup error above). The listener needs both to
-  present an identity.
-
-Both directives are **global-only** and their paths resolve relative to the
-config file (the same handling as `pid file` / `lock file`), with any `%`
-tokens left verbatim for expansion at listener-bind time. A module section
-that sets either one is rejected.
-
-### Requiring a client certificate (mutual TLS)
-
-```
-quic client ca file = /etc/oc-rsync/quic/clients-ca.pem
-```
-
-- `quic client ca file` names a PEM CA bundle. When set, the QUIC listener
-  **requires** every connecting client to present a certificate and verifies its
-  chain against this bundle; a client that presents no certificate, or one not
-  anchored by this CA, is refused in the TLS handshake before any `@RSYNCD:`
-  byte is exchanged. This is the daemon-side mirror of the client's `--quic-ca`
-  server verification.
-- It is **off by default**: unset, the listener requests no client certificate,
-  so existing configurations behave exactly as before.
-- Global-only and path-handled exactly like `quic cert file` / `quic key file`
-  (a per-module use is a configuration error). It requires a configured
-  `quic cert file` / `quic key file`, since the listener still needs its own
-  identity to present.
-
-### No ephemeral fallback
-
-QUIC has **no auto-generated or in-memory certificate**. The listener presents
-only the operator-supplied `quic cert file` / `quic key file` pair; if that
-pair is absent the daemon fails loudly at startup rather than minting a
-throwaway self-signed identity. (Auto-generating a daemon certificate was
-considered and dropped: clients could not name an identity that changes on
-every restart as their `--quic-ca`.)
-
-A bad or unreadable certificate does not take the whole daemon down: the
-affected QUIC socket is logged and skipped while the TCP listener keeps
-serving, degrading to TCP-only rather than a total outage.
-
-### Port selection
-
-```
-quic port = 8873
-```
-
-- The `quic port` global directive selects the UDP port the QUIC listener
-  binds. When unset, the QUIC listener **shares the daemon `port`** (873 by
-  default, or whatever `port` is set to) — the same port number, on UDP.
-- `quic port = 0` coerces to the well-known rsync port **873** (matching the
-  `port = 0` / `--port 0` coercion), not a kernel-assigned ephemeral port.
-- `quic port` is a **global** directive: the QUIC listener is shared across all
-  modules, so a per-module `quic port` is a configuration error.
-
-## Tuning: congestion control and flow-control window
-
-Two client-side flags tune QUIC's pacing and back-pressure. They are pure
-performance knobs: they change only how fast bytes leave and how many may be in
-flight before an acknowledgement, never a wire byte or a protocol semantic. A
-peer running any setting interoperates with a peer running any other, so a
-mismatch is only ever a throughput difference, never a compatibility problem.
-Both flags live in the oc-rsync extensions help group and require the `quic`
-feature.
-
-### `--quic-cc` — congestion controller
-
-Selects the client endpoint's congestion-control algorithm:
-
-| Value     | Algorithm | Character                                             |
-|-----------|-----------|-------------------------------------------------------|
-| `bbr`     | BBR       | Model-based; the **default**, the high-BDP fit.       |
-| `cubic`   | CUBIC     | Loss-based; the modern TCP default.                   |
-| `newreno` | NewReno   | Loss-based; the QUIC baseline.                        |
+**Trusting a private CA.** Issue the daemon certificate from your CA and give
+clients the CA certificate:
 
 ```sh
-oc-rsync -a --quic-ca ca.pem --quic-cc cubic quic://host/module/ dest/
+oc-rsync -av --quic-ca /etc/oc-rsync/ca-cert.pem quic://host/module/ dest/
 ```
 
-- **Resolution order:** `--quic-cc` (CLI) > `OC_RSYNC_QUIC_CC` (environment) >
-  the built-in default, **BBR**.
-- An unrecognised controller name is a **hard error**, not a silent fallback —
-  on the flag and on the environment variable alike.
+Rotating the daemon certificate under the same CA needs no client change.
 
-**When to pick which:** BBR (the default) is the right choice on high
-bandwidth-delay-product links (long fat networks — high throughput and high
-latency), where it fills the pipe without waiting on loss signals. CUBIC or
-NewReno are loss-based and behave like traditional TCP; prefer them on links
-where BBR is undesirable, e.g. where fairness with competing loss-based flows
-matters.
+**Pinning one certificate.** Give a client the daemon's own self-signed
+certificate as `--quic-ca`. It then trusts exactly that certificate. The
+certificate must still be `CA:FALSE` and name the host. Replacing it means
+redistributing the new file. There is no fingerprint flag.
 
-### `--quic-window` — flow-control window
+The rows below are pinned by
+`crates/transfer/tests/quic_certificate_validation_matrix.rs`, which mints every
+certificate at test time and runs the real daemon and client in both
+directions. If this table and the test disagree, the test wins.
 
-Sizes the client endpoint's QUIC flow-control window in bytes, with an optional
-`K`/`M`/`G` binary (1024-based) suffix:
+| Server certificate or client setup | Result | Exit |
+|---|---|---|
+| Leaf signed by the `--quic-ca` CA: CA:FALSE, `serverAuth`, DNS SAN of the dialled name | accepted | 0 |
+| IP SAN, dialled by that IP address | accepted | 0 |
+| Leaf plus intermediate in `quic cert file`, root in `--quic-ca` | accepted | 0 |
+| Leaf key P-256, P-384, Ed25519 or RSA-2048 | accepted | 0 |
+| Leaf with no extended key usage extension | accepted | 0 |
+| Self-signed CA:FALSE leaf named directly as `--quic-ca` | accepted | 0 |
+| Leaf marked CA:TRUE | refused, `CaUsedAsEndEntity` | 5 |
+| SAN does not name the dialled host (including an IP-only SAN dialled by name) | refused, `certificate not valid for name` | 5 |
+| Leaf whose extended key usage lacks `serverAuth` | refused | 5 |
+| Expired, or not yet valid | refused, `certificate expired` / `certificate not valid yet` | 5 |
+| Self-signed leaf, or a leaf from another CA, not anchored by `--quic-ca` | refused, `UnknownIssuer` | 5 |
+| No `--quic-ca` | refused before dialling, names `--quic-ca` | 5 |
+| `--quic-ca` empty, not a certificate, or unreadable | refused before dialling, names the file | 5 |
+| `--quic-cert` without `--quic-key` | refused before dialling | 5 |
+
+With `quic client ca file` set on the daemon (mutual TLS):
+
+| Client certificate | Result | Exit |
+|---|---|---|
+| Signed by the client CA, `clientAuth` | accepted | 0 |
+| None presented | refused, `peer sent no certificates` | 5 |
+| Signed by another CA | refused, `UnknownIssuer` | 5 |
+| Expired | refused, `certificate expired` | 5 |
+| Extended key usage lacks `clientAuth` | refused | 5 |
+
+A client certificate offered to a daemon without `quic client ca file` is
+ignored, and the transfer succeeds.
+
+## 6. Generating test certificates
+
+This creates a CA, a daemon certificate for `localhost` and `127.0.0.1`, and a
+client certificate for mutual TLS. `openssl req -x509` marks its output
+`CA:TRUE`, which is right for the CA and wrong for a leaf, so the leaves are
+signed from CSRs with explicit extensions.
 
 ```sh
-oc-rsync -a --quic-ca ca.pem --quic-window 128M quic://host/module/ dest/
+mkdir -p pki && cd pki
+
+# CA
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout ca-key.pem -out ca-cert.pem -days 3650 -subj "/CN=oc-rsync test CA"
+
+# Daemon certificate. The SAN must name the host clients dial.
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout server-key.pem -out server.csr -subj "/CN=localhost"
+printf 'basicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost,IP:127.0.0.1\n' > server.ext
+openssl x509 -req -in server.csr -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
+  -out server-cert.pem -days 365 -extfile server.ext
+
+# Client certificate for mutual TLS
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout client-key.pem -out client.csr -subj "/CN=alice"
+printf 'basicConstraints=critical,CA:FALSE\nextendedKeyUsage=clientAuth\n' > client.ext
+openssl x509 -req -in client.csr -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial \
+  -out client-cert.pem -days 365 -extfile client.ext
+
+openssl verify -CAfile ca-cert.pem server-cert.pem client-cert.pem
 ```
 
-- **Resolution order:** `--quic-window` (CLI) > `OC_RSYNC_QUIC_WINDOW`
-  (environment) > the built-in default of **64 MiB**.
-- The window must cover the link's bandwidth-delay product (BDP =
-  `bandwidth * round-trip-time`), or the sender stalls waiting for
-  acknowledgements before the pipe is full. The 64 MiB default saturates a
-  single stream up to roughly 5 Gbit/s at a 100 ms RTT — a generous envelope
-  that still bounds per-connection receive memory. It deliberately overshoots
-  the QUIC library's own ~1.25 MiB default, which would cap a 100 ms-RTT stream
-  near 100 Mbit/s.
+For a single pinned certificate instead of a CA, keep the leaf `CA:FALSE`:
 
-**When to size the window:** raise it on high-BDP links (high bandwidth *and*
-high latency) where the 64 MiB default is smaller than `bandwidth * RTT`; the
-ideal value is the BDP of the target link. On ordinary LAN or low-latency links
-the default is already ample. The default is a defensible starting point, not a
-per-link optimum — confirm any specific value with a real throughput
-measurement on the target path before treating it as tuned.
+```sh
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout server-key.pem -out server-cert.pem -days 365 -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost" \
+  -addext "basicConstraints=critical,CA:FALSE" \
+  -addext "extendedKeyUsage=serverAuth"
+```
 
-## Environment variable reference
+Clients then pass `--quic-ca server-cert.pem`.
 
-| Variable              | Flag equivalent  | Default | Notes                                         |
-|-----------------------|------------------|---------|-----------------------------------------------|
-| `OC_RSYNC_QUIC_CC`    | `--quic-cc`      | `bbr`   | `bbr` \| `cubic` \| `newreno`; unknown = error |
-| `OC_RSYNC_QUIC_WINDOW`| `--quic-window`  | 64 MiB  | Byte count, optional `K`/`M`/`G` suffix        |
+## 7. Walkthrough
 
-The CLI flag takes precedence over the environment variable, which takes
-precedence over the built-in default, resolved at one site so the order is
-consistent between the client and the daemon endpoints.
+Run from the directory that holds `pki/`. Port 18873 avoids needing root.
+
+```sh
+mkdir -p mod src dst && echo hello > src/a.txt && echo world > mod/m.txt
+
+cat > oc-rsyncd.conf <<EOF
+port = 18873
+pid file = $PWD/oc-rsyncd.pid
+log file = $PWD/oc-rsyncd.log
+use chroot = no
+quic cert file = $PWD/pki/server-cert.pem
+quic key file = $PWD/pki/server-key.pem
+
+[data]
+    path = $PWD/mod
+    read only = no
+EOF
+
+oc-rsync --daemon --config=$PWD/oc-rsyncd.conf
+grep QUIC oc-rsyncd.log        # QUIC listener bound on [::]:18873 and 0.0.0.0:18873
+
+# Pull
+oc-rsync -av --quic-ca pki/ca-cert.pem quic://localhost:18873/data/ dst/
+
+# Push
+oc-rsync -av --quic-ca pki/ca-cert.pem src/ quic://localhost:18873/data/pushed/
+```
+
+For mutual TLS, add this line to the global section and restart the daemon:
+
+```ini
+quic client ca file = /full/path/to/pki/ca-cert.pem
+```
+
+```sh
+# Refused: no client certificate (exit 5, "peer sent no certificates")
+oc-rsync -av --quic-ca pki/ca-cert.pem quic://localhost:18873/data/ dst/
+
+# Accepted
+oc-rsync -av --quic-ca pki/ca-cert.pem \
+  --quic-cert pki/client-cert.pem --quic-key pki/client-key.pem \
+  quic://localhost:18873/data/ dst/
+```
+
+Stop the daemon with `kill $(cat oc-rsyncd.pid)`.
+
+## 8. Troubleshooting
+
+Client messages. All exit 5 unless noted.
+
+| Message | Meaning |
+|---|---|
+| `quic: no trust anchor configured; pass --quic-ca <PATH> naming the CA that signed the daemon certificate (QUIC has no default trust)` | Add `--quic-ca` |
+| `quic: reading --quic-ca file PATH: ...` | The bundle cannot be read |
+| `quic: no certificates found in --quic-ca file PATH` | The file holds no PEM certificate |
+| `quic: parsing certificate #N in --quic-ca file PATH: ...` / `... is not a usable trust anchor: ...` | A certificate in the bundle is malformed |
+| `--quic-cert requires --quic-key (client certificate needs its private key)` | Pass both flags, or neither. The reverse message names `--quic-cert` |
+| `QUIC connection to HOST:PORT failed: DETAIL; refusing to fall back to plaintext TCP` | The handshake failed. DETAIL says why, below |
+| DETAIL `timed out` | No QUIC listener answered: wrong port, UDP blocked, or the daemon has no QUIC directives |
+| DETAIL `... UnknownIssuer` | The daemon certificate does not chain to `--quic-ca` |
+| DETAIL `... certificate not valid for name ...` | The SAN does not name the host you dialled |
+| DETAIL `... CaUsedAsEndEntity` | The daemon leaf is marked CA:TRUE. Reissue it as CA:FALSE (section 6) |
+| DETAIL `... certificate expired` / `certificate not valid yet` | Check the certificate dates and both clocks |
+| DETAIL `... peer sent no certificates` | The daemon requires a client certificate. Add `--quic-cert` and `--quic-key` |
+| `unrecognized QUIC congestion controller "X"; expected one of: bbr, cubic, newreno` | Bad `--quic-cc` or `OC_RSYNC_QUIC_CC` |
+| `invalid OC_RSYNC_QUIC_WINDOW value "X"; expected a byte count with an optional K, M, or G suffix` | Bad window size |
+| `quic:// URLs require the QUIC transport, which is not compiled into this build (rebuild with the 'quic' feature)...` | This binary has no `quic` feature. `--quic` reports `--quic requires the QUIC transport, ...` |
+
+Daemon startup messages. All exit 1.
+
+| Message | Meaning |
+|---|---|
+| ``QUIC listener requested but no certificate configured: set both `quic cert file` and `quic key file` (there is no ephemeral fallback)`` | `quic port` or `quic client ca file` is set without a certificate and key |
+| `'quic cert file' requires 'quic key file' to be set as well` | Only half the pair is set. The reverse message names `quic key file` |
+| `'quic cert file' directive must not be empty` | Empty value. Same for the other path directives |
+| `'quic port' is a global-only directive and cannot appear in a module section` | Move it to the global section. Same for the other three |
+| `failed to load the QUIC server identity: the private key does not match the certificate` | `quic key file` belongs to another certificate |
+| `failed to load the QUIC server identity: ...` | The certificate or key cannot be read or parsed |
+| `'quic cert file' is set, but the QUIC daemon is not supported on Windows` | Windows daemons cannot serve QUIC. Remove the QUIC directives |
+
+Log lines: `QUIC listener bound on ADDR and ADDR` and `QUIC listener serving on
+ADDR` mean the listener is up. `failed to start QUIC listener on ADDR: ...`
+means the front process could not start the listener on that socket.
+
+## 9. Congestion control
+
+QUIC uses `quinn-proto`'s congestion controllers. BBR is the default; CUBIC
+and NewReno are selectable. Fairness to competing TCP traffic is not
+guaranteed. BBR (`BbrConfig`) is a model-based controller suited to high
+bandwidth-delay links. CUBIC and NewReno, both loss-based, are selected with
+`--quic-cc` or `OC_RSYNC_QUIC_CC`. Prefer them where fairness with competing
+loss-based flows matters.
+
+The flow-control window must cover the link's bandwidth-delay product
+(`bandwidth * round-trip time`), or the sender stalls waiting for
+acknowledgements. The 64 MiB default fills a single stream up to roughly
+5 Gbit/s at a 100 ms round trip. Raise it with `--quic-window` on faster or
+longer links, and confirm a value by measuring on the real path.
+
+## 10. Limitations
+
+- oc-rsync to oc-rsync only, and daemon targets only.
+- No Windows daemon listener (the client works).
+- No multipath congestion control. This is a known, noted gap.
+- No per-module client CA. `quic client ca file` is global, and the TCP
+  listener serves the same modules without a certificate.
+- An unreachable QUIC daemon exits 5, where TCP exits 10. `--contimeout`,
+  `RSYNC_PROXY` and `RSYNC_CONNECT_PROG` do not apply to a QUIC connection.
+- No permission check on `quic key file` or `--quic-key`. Protect the key files
+  yourself.
+- No certificate fingerprint pinning flag. Pin by passing the certificate as
+  `--quic-ca` (section 5).
+
+ALPN is `rsync` today. Today's congestion controller is BBR (section 9).
+Additional performance-oriented ALPNs and congestion control algorithms will follow.
 
 ## See also
 
-- [`ssh-transport.md`](ssh-transport.md) — the SSH transport.
-- Design notes: [`design/quic-transport-policy.md`](design/quic-transport-policy.md)
-  (certificate/ALPN/scheme policy) and
+- [`ssh-transport.md`](ssh-transport.md): the SSH transport.
+- [`oc-extension-env-reference.md`](oc-extension-env-reference.md): every oc-only environment variable.
+- Design notes: [`design/quic-transport-policy.md`](design/quic-transport-policy.md),
+  [`design/quic-security-model.md`](design/quic-security-model.md) and
   [`design/quic-transport-concurrency-model.md`](design/quic-transport-concurrency-model.md).

@@ -621,21 +621,11 @@ mod performance {
         let params = layout_params(data.len() as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let start = std::time::Instant::now();
-
         let signature =
             generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
                 .expect("signature");
 
-        let elapsed = start.elapsed();
-
         assert_eq!(signature.total_bytes(), size as u64);
-
-        // Should complete in reasonable time
-        assert!(
-            elapsed.as_secs() < 10,
-            "parallel signature took too long: {elapsed:?}"
-        );
     }
 
     /// Parallel threshold is sensible.

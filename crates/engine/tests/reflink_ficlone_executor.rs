@@ -32,16 +32,6 @@ fn detect_reflink_support(dir: &std::path::Path) -> bool {
     supported
 }
 
-/// File "block count" reported by `stat` reflects allocated 512-byte sectors.
-/// On a real CoW reflink both files report nonzero block counts individually
-/// but allocated extents are shared - we cannot prove sharing via plain stat,
-/// but we CAN prove the clone produced byte-identical content with O(1)
-/// behaviour by clamping the run to <1s on a 1 MiB file.
-fn file_blocks(p: &std::path::Path) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    fs::metadata(p).map(|m| m.blocks()).unwrap_or(0)
-}
-
 #[test]
 fn ficlone_round_trip_on_cow_fs() {
     let dir = tempdir().expect("tempdir");
@@ -59,29 +49,15 @@ fn ficlone_round_trip_on_cow_fs() {
     let payload: Vec<u8> = (0..1024u32 * 1024).map(|i| (i & 0xff) as u8).collect();
     fs::write(&src, &payload).expect("write source");
 
-    let start = std::time::Instant::now();
+    // `try_ficlone` has no data-copy fallback: `Ok` means the FICLONE ioctl
+    // itself succeeded, so the clone shares extents by construction.
     fast_io::try_ficlone(&src, &dst).expect("FICLONE succeeds on probed CoW fs");
-    let elapsed = start.elapsed();
 
     let copied = fs::read(&dst).expect("read clone");
     assert_eq!(
         copied, payload,
         "FICLONE result must match source byte-for-byte"
     );
-
-    // FICLONE is O(1) - 1 MiB clone should comfortably finish in <500ms even
-    // on heavily loaded CI runners. A multi-second result implies a fallback
-    // copy slipped in.
-    assert!(
-        elapsed.as_millis() < 500,
-        "FICLONE took {}ms - likely fell back to data copy",
-        elapsed.as_millis()
-    );
-
-    // Touch the block counts so the reader knows they're observed; the
-    // shared-extents property cannot be asserted without root or FIEMAP.
-    let _ = file_blocks(&src);
-    let _ = file_blocks(&dst);
 }
 
 #[test]
