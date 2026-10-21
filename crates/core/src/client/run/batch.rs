@@ -67,7 +67,10 @@ pub(crate) fn create_batch_writer(
 ) -> Result<Arc<Mutex<BatchWriter>>, ClientError> {
     let writer_cfg = batch_cfg
         .clone()
-        .with_filter_rules(batch_filter_lines(config.filter_rules())?)
+        .with_filter_rules(batch_filter_lines(
+            config.filter_rules(),
+            config.delete_excluded(),
+        )?)
         // upstream: batch.c:217,219-220 - the filter heredoc honors eol_nulls
         // (--from0), NUL-terminating rules and appending ";\n".
         .with_eol_nulls(config.from0());
@@ -266,14 +269,17 @@ pub(crate) fn finalize_batch(
 ///
 /// - `batch.c:213-240`: `write_filter_rules()`.
 /// - `exclude.c:1824-1885`: `get_rule_prefix()` with `for_xfer` clear.
-fn batch_filter_lines(rules: &[FilterRuleSpec]) -> Result<Vec<Vec<u8>>, ClientError> {
+fn batch_filter_lines(
+    rules: &[FilterRuleSpec],
+    delete_excluded: bool,
+) -> Result<Vec<Vec<u8>>, ClientError> {
     let listed: Vec<FilterRuleSpec> = rules
         .iter()
         .filter(|rule| !rule.is_cvs_origin())
         .cloned()
         .collect();
     let mut filter_list = Vec::new();
-    for rule in remote::flags::build_wire_format_rules(&listed, false)? {
+    for rule in remote::flags::build_wire_format_rules(&listed, delete_excluded)? {
         match rule.rule_type {
             RuleType::Clear => filter_list.clear(),
             RuleType::DirMerge if rule.exclude_from_merge => {
@@ -1340,7 +1346,7 @@ mod tests {
 
     /// [`batch_filter_lines`] as text for comparison.
     fn listed(rules: &[FilterRuleSpec]) -> Vec<String> {
-        batch_filter_lines(rules)
+        batch_filter_lines(rules, false)
             .expect("rules must serialize")
             .into_iter()
             .map(|line| String::from_utf8(line).expect("ascii test rules"))
@@ -1381,6 +1387,19 @@ mod tests {
     }
 
     /// The here-doc lists upstream's `filter_list` at script time, not the
+    /// upstream: exclude.c:1478-1481 parse_rule_tok() - under
+    /// --delete-excluded the `.sh` lists `s` only on the rules given after the
+    /// option, as 3.5.1 writes `- a` then `-s b` for
+    /// `--exclude=a --delete-excluded --exclude=b`.
+    #[test]
+    fn batch_filter_lines_mark_only_rules_after_delete_excluded() {
+        let mut before = FilterRuleSpec::exclude("a");
+        before.mark_parsed_before_delete_excluded();
+        let rules = [before, FilterRuleSpec::exclude("b")];
+        let lines: Vec<Vec<u8>> = batch_filter_lines(&rules, true).expect("rules must serialize");
+        assert_eq!(lines, [b"- a".to_vec(), b"-s b".to_vec()]);
+    }
+
     /// option list: a clear empties it, `-C` rules join only later, and a
     /// merge's `e` modifier is an exclude of the file ahead of the merge.
     ///
@@ -1425,7 +1444,7 @@ mod tests {
             FilterRuleSpec::include("*.txt"),
             FilterRuleSpec::exclude("*"),
         ];
-        let filter_text: Vec<u8> = batch_filter_lines(&rules)
+        let filter_text: Vec<u8> = batch_filter_lines(&rules, false)
             .expect("rules must serialize")
             .into_iter()
             .flat_map(|mut line| {

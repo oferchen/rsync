@@ -211,7 +211,7 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
     // forced for Protect/Risk because their wire encoding relies on
     // FILTRULE_RECEIVER_SIDE on a plain `-`/`+`.
     if protocol.supports_sender_receiver_modifiers() {
-        if rule.sender_side {
+        if rule.sender_side && !rule.sender_side_by_elision {
             prefix.push('s');
         }
         let force_receiver = matches!(rule.rule_type, RuleType::Protect | RuleType::Risk);
@@ -341,6 +341,21 @@ mod tests {
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
         assert_eq!(prefix, "-s ");
+    }
+
+    /// upstream: exclude.c:1864-1866 get_rule_prefix() writes `s` from
+    /// FILTRULE_SENDER_SIDE alone; a rule that is sender-only through
+    /// --delete-excluded elision never had the flag.
+    #[test]
+    fn sender_side_by_elision_writes_no_s() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            sender_side_by_elision: true,
+            ..FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, false)
+        };
+
+        assert_eq!(build_rule_prefix(&rule, protocol).unwrap(), "- ");
+        assert_eq!(build_local_rule_prefix(&rule), "- ");
     }
 
     #[test]

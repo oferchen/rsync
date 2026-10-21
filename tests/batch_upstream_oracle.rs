@@ -710,3 +710,23 @@ fn read_batch_inplace_rewrites_the_destination_inode() {
         }
     }
 }
+
+/// upstream: exclude.c:1478-1481 parse_rule_tok() adds the implicit
+/// FILTRULE_SENDER_SIDE only while `delete_excluded` is already set, so the
+/// here-doc lists `s` on the rules after `--delete-excluded` and not on those
+/// before it (get_rule_prefix(for_xfer = 0), exclude.c:1864-1866).
+#[test]
+fn delete_excluded_marks_only_later_rules_in_heredoc() {
+    assert_script_matches_upstream(
+        &[
+            "-r",
+            "--exclude=a",
+            "--delete-excluded",
+            "--exclude=b",
+            "--write-batch=bf",
+            "src/",
+            "dst/",
+        ],
+        b"ARGV0 --filter='._-' '-r' '--delete-excluded' --read-batch='bf' ${1:-'dst/'} <<'#E#'\n- a\n-s b\n#E#\n",
+    );
+}

@@ -100,6 +100,18 @@ pub struct FilterRuleWireFormat {
     /// `FILTRULE_PERISHABLE` on it only when `!am_sender || protocol_version
     /// >= 30` (compat.c:803-807).
     pub implied_partial_dir: bool,
+    /// Marks a sender-side rule whose side comes from `--delete-excluded`
+    /// elision rather than from `FILTRULE_SENDER_SIDE`, so its prefix carries
+    /// no `s`.
+    ///
+    /// Transfer-decision metadata like [`Self::cvs_origin`]: never serialized,
+    /// always parses back as `false`.
+    ///
+    /// upstream: exclude.c:1478-1481 parse_rule_tok() sets the flag only on a
+    /// rule parsed once `delete_excluded` is already set, while
+    /// exclude.c:1908-1911 send_rules() elides every unsided rule as
+    /// sender-only, wherever it sat on the command line.
+    pub sender_side_by_elision: bool,
     /// Directory-only pattern (trailing `/`).
     pub directory_only: bool,
     /// No-inherit modifier (`n` flag).
@@ -168,6 +180,7 @@ impl FilterRuleWireFormat {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            sender_side_by_elision: false,
         }
     }
 
@@ -192,6 +205,7 @@ impl FilterRuleWireFormat {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            sender_side_by_elision: false,
         }
     }
 

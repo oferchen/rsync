@@ -415,6 +415,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `--read-batch` reconciles options as upstream `check_batch_flags()` does: options a protocol-29/28 header cannot record keep the invocation's value, `-d` follows `-r` below 29, notices print under `--info=misc`, only the destination is checked for a host; `--write-batch` with `--only-write-batch` is accepted (the later wins) and either with `--read-batch` is refused with upstream's text (#PRNUM)
 - `--write-batch` creates the `.sh` and batch file up front and writes the script at protocol setup, so a failed run keeps it (open errors exit 3 and 11 as upstream); the `.sh` argv is byte-exact (non-UTF-8 kept, `--files-from` operands elided); remote batches record `--iconv` in the header (#PRNUM)
 - A batch filter rule containing a newline is refused as upstream does, leaving its partial `.sh`; batch open errors name the file through upstream's `full_fname()`; local batches record CF_ID0_NAMES; `--read-batch --inplace` rewrites the destination in place (#PRNUM)
+- Under `--delete-excluded`, only filter rules given after the option carry the `s` modifier on the wire and in the batch `.sh`, as upstream parses them (#PRNUM)
 - Resolve a relative `--temp-dir` against the destination (#7397)
 - Keep an absolute `--partial-dir` through the delayed sweep, clear a non-directory at its name, reuse its leaf as a basis, and stage a resume in place (#7499, #7500, #7556, #7557, #7599, #7868)
 - Recover a read-only in-place destination (#7485)
