@@ -83,6 +83,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A QUIC daemon sends a stateless Retry once 100 handshakes are in flight, so a spoofed handshake flood cannot make it hold state; the `quic retry = auto|always|never` directive selects the policy (#8229)
 - A QUIC daemon bounds the connection attempts it holds before accepting them to `max connections` (128 when unlimited), 64 KiB each, instead of quinn's 65536 attempts and 100 MiB (#8229)
 - A QUIC daemon refuses to start when `quic key file` does not match `quic cert file`, and a Windows daemon refuses QUIC directives instead of ignoring them (#8229)
+- A `fake super = yes` module caps `-XX` at `-X`, so a client cannot plant its own `rsync.%stat` (#8231)
 - `proxy protocol hosts` gates who may send a PROXY header, on TCP and inetd sessions, and fails closed when unset (CVE-2026-53791, #7648, #8077)
 - Resolve the real peer address on the inetd and remote-shell entry points instead of `127.0.0.1` (#7303)
 - `hosts deny` no longer fails open when a hostname does not resolve (CVE-2026-70452, #7314)
@@ -217,6 +218,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Performance
 
+- Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
 - Batch network sender writes to match upstream's cadence (#7009)
 - Stop waiting for the `SEND_ZC` notification, and write small batches positionally instead of through io_uring (#7600, #7610)
 - Park the SPSC pipeline and block the daemon accept loop instead of spinning (#7033, #7035)
@@ -291,6 +293,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
+- A remote shell killed by a signal before the handshake exits 12 like upstream, not 16 (#8231)
 - A peer text or `MSG_DELETED` frame of `BIGPATHBUFLEN` (5120) bytes or more ends the transfer with `multiplexing overflow` and exit 12, as upstream does, instead of being accepted up to the 16 MiB frame limit (#PRNUM)
 - A peer `MSG_LOG`, `MSG_CLIENT`, `MSG_ERROR_SOCKET` or `MSG_ERROR_UTF8` frame is an `invalid multi-message` ending the transfer with exit 12, as upstream `read_a_msg()` treats sibling-logging tags off the generator, instead of being printed (#PRNUM)
 - An rsh `--server` receiver or sender forwards a peer `MSG_INFO`, `MSG_ERROR`, `MSG_ERROR_XFER` or `MSG_WARNING` to the client as a frame, instead of writing it raw to stdout, which is the protocol stream (#PRNUM)
@@ -305,6 +308,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The server sets its stderr blocking after protocol setup, as upstream `start_server()` does (`main.c:1356-1364`) (#8224)
 
 **Daemon**
+- A fatal `-M` filter option - an `--exclude-from`, `--include-from` or `merge` file the daemon cannot open, or a malformed rule - ends the daemon session without a message, logging the reason, so the client exits 12 like upstream instead of 4 (#8231)
 - Itemize a directory before deleting in it under `--delete`, and after the `--delete-before` pass, so the log carries upstream's `.d..t......` rows (#8226)
 - The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)
 - Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
@@ -394,6 +398,11 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A local copy that finishes with exit 23, 24 or 25 still prints its itemize rows, names and `--stats` totals before the exit trailer, as upstream's `cleanup.c` decides the code only after the transfer (#8222)
 
 **Permissions and metadata**
+- `--fake-super` records `rsync.%stat` for every received file, as upstream `set_stat_xattr()` does: ids are 0 without `--owner`/`--group`, the mode follows `dest_mode()` without `--perms`, and a redundant `%stat` is removed (#8231)
+- `--fake-super` on Linux stores a symlink as a placeholder file holding its target, and a fake-super sender reads the target back, so a pull no longer drops symlinks (#8231)
+- `--fake-super` re-stats, chmods and writes `%stat` through a held `O_NOFOLLOW` descriptor, and creates device and special placeholders beneath the confined parent (#8231)
+- A `--fake-super` source whose `%stat` does not parse ends the run with code 11 and upstream's `Corrupt ... xattr attached to ...` message (#8231)
+- A `--fake-super -X` receive keeps the receiver's own `%stat` instead of removing it as an extraneous xattr (#8231)
 - `--fake-super` applies a source's recorded `%stat` like upstream: the real mode follows it and a `%stat` equal to the real stat is not stored (#8226)
 - `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
 - Apply timestamps before chmod (#7832, #7087)

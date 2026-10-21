@@ -230,6 +230,52 @@ impl FakeSuperStat {
     }
 }
 
+/// The uid and gid a fake-super receiver records for a transferred file.
+///
+/// An `--chown` override wins. Otherwise an id is recorded only when
+/// `--owner` or `--group` preserves it, and is 0 when it does not.
+// upstream: rsync.c:713-714 - set_stat_xattr() records F_OWNER(file) and
+// F_GROUP(file), which hold 0 for an id the transfer does not preserve.
+pub fn fake_super_ids(
+    options: &crate::MetadataOptions,
+    uid: Option<u32>,
+    gid: Option<u32>,
+) -> (u32, u32) {
+    let recorded_id = |override_id: Option<u32>, preserve: bool, id: Option<u32>| {
+        override_id.or(id.filter(|_| preserve)).unwrap_or(0)
+    };
+    (
+        recorded_id(options.owner_override(), options.owner(), uid),
+        recorded_id(options.group_override(), options.group(), gid),
+    )
+}
+/// A `%stat` value that does not parse.
+///
+/// Upstream prints this message and exits `RERR_FILEIO` (11). It travels as
+/// an [`io::ErrorKind::Other`] error, which every caller grades as 11.
+// upstream: xattrs.c:1253-1258 get_stat_xattr()
+#[derive(Debug)]
+pub struct CorruptFakeSuperStat {
+    path: std::path::PathBuf,
+    value: String,
+}
+impl std::fmt::Display for CorruptFakeSuperStat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Corrupt {FAKE_SUPER_XATTR} xattr attached to \"{}\": \"{}\"",
+            self.path.display(),
+            self.value
+        )
+    }
+}
+impl std::error::Error for CorruptFakeSuperStat {}
+/// Reports whether `error` is a [`CorruptFakeSuperStat`].
+pub fn is_corrupt_fake_super(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<CorruptFakeSuperStat>())
+}
 /// Stores metadata as fake-super xattr on a file.
 ///
 /// This is called when `--fake-super` is enabled and we need to preserve
@@ -243,17 +289,62 @@ pub fn store_fake_super(path: &Path, stat: &FakeSuperStat) -> io::Result<()> {
 /// Retrieves fake-super metadata from a file's xattr.
 ///
 /// Returns `None` if the xattr doesn't exist.
+///
+/// # Errors
+///
+/// Returns the read error. A value that does not parse is a
+/// [`CorruptFakeSuperStat`], which upstream treats as fatal.
 #[cfg(all(unix, feature = "xattr"))]
 pub fn load_fake_super(path: &Path) -> io::Result<Option<FakeSuperStat>> {
-    match xattr::get(path, FAKE_SUPER_XATTR) {
+    decode_stat_xattr(xattr::get(path, FAKE_SUPER_XATTR), path)
+}
+/// [`load_fake_super`] through an open descriptor (`fgetxattr`).
+///
+/// # Errors
+///
+/// Returns the read error, or `InvalidData` for a value that does not decode.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn load_fake_super_fd(file: &std::fs::File) -> io::Result<Option<FakeSuperStat>> {
+    use xattr::FileExt;
+    // upstream: xattrs.c:1232 - a descriptor read names the file "fd".
+    decode_stat_xattr(file.get_xattr(FAKE_SUPER_XATTR), Path::new("fd"))
+}
+/// [`store_fake_super`] through an open descriptor (`fsetxattr`).
+///
+/// # Errors
+///
+/// Returns the write error.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn store_fake_super_fd(file: &std::fs::File, stat: &FakeSuperStat) -> io::Result<()> {
+    use xattr::FileExt;
+    file.set_xattr(FAKE_SUPER_XATTR, stat.encode().as_bytes())
+}
+/// [`remove_fake_super`] through an open descriptor (`fremovexattr`).
+///
+/// # Errors
+///
+/// Returns the removal error; an absent `%stat` is not one.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn remove_fake_super_fd(file: &std::fs::File) -> io::Result<()> {
+    use xattr::FileExt;
+    tolerate_absent_xattr(file.remove_xattr(FAKE_SUPER_XATTR))
+}
+#[cfg(all(unix, feature = "xattr"))]
+fn decode_stat_xattr(
+    read: io::Result<Option<Vec<u8>>>,
+    path: &Path,
+) -> io::Result<Option<FakeSuperStat>> {
+    match read {
         Ok(Some(value)) => {
-            let s = String::from_utf8(value).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid UTF-8 in fake-super xattr: {e}"),
-                )
-            })?;
-            Ok(Some(FakeSuperStat::decode(&s)?))
+            let decoded = std::str::from_utf8(&value)
+                .ok()
+                .and_then(|text| FakeSuperStat::decode(text).ok());
+            decoded.map(Some).ok_or_else(|| {
+                io::Error::other(CorruptFakeSuperStat {
+                    path: path.to_path_buf(),
+                    value: String::from_utf8_lossy(&value).into_owned(),
+                })
+            })
         }
         Ok(None) => Ok(None),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -280,7 +371,11 @@ fn is_absent_xattr(err: &io::Error) -> bool {
 /// Removes fake-super metadata from a file.
 #[cfg(all(unix, feature = "xattr"))]
 pub fn remove_fake_super(path: &Path) -> io::Result<()> {
-    match xattr::remove(path, FAKE_SUPER_XATTR) {
+    tolerate_absent_xattr(xattr::remove(path, FAKE_SUPER_XATTR))
+}
+#[cfg(all(unix, feature = "xattr"))]
+fn tolerate_absent_xattr(removal: io::Result<()>) -> io::Result<()> {
+    match removal {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) if is_absent_xattr(&e) => Ok(()),
@@ -495,6 +590,12 @@ pub fn store_fake_super(_path: &Path, _stat: &FakeSuperStat) -> io::Result<()> {
 /// Always returns `Ok(None)` on platforms without xattr support.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn load_fake_super(_path: &Path) -> io::Result<Option<FakeSuperStat>> {
+    Ok(None)
+}
+
+/// Always returns `Ok(None)` on Unix builds without xattr support.
+#[cfg(all(unix, not(feature = "xattr")))]
+pub fn load_fake_super_fd(_file: &std::fs::File) -> io::Result<Option<FakeSuperStat>> {
     Ok(None)
 }
 
@@ -982,5 +1083,29 @@ mod tests {
         assert_eq!(stat.uid, 0);
         assert_eq!(stat.gid, 0);
         assert_eq!(stat.rdev, None);
+    }
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn an_unparsable_stat_is_a_fatal_corrupt_error_with_upstreams_message() {
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("bad");
+        std::fs::write(&path, b"").expect("write file");
+        if xattr::set(&path, FAKE_SUPER_XATTR, b"garbage").is_err() {
+            return;
+        }
+        let error = load_fake_super(&path).expect_err("garbage must not decode");
+        assert!(is_corrupt_fake_super(&error));
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::Other,
+            "graded RERR_FILEIO, not 12"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Corrupt {FAKE_SUPER_XATTR} xattr attached to \"{}\": \"garbage\"",
+                path.display()
+            )
+        );
     }
 }

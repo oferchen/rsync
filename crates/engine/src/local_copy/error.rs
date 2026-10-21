@@ -7,8 +7,8 @@ use thiserror::Error;
 
 use super::LocalCopyReport;
 use super::filter_program::{
-    INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, SIGNAL_EXIT_CODE,
-    TIMEOUT_EXIT_CODE, VANISHED_EXIT_CODE,
+    FILE_IO_EXIT_CODE, INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE,
+    SIGNAL_EXIT_CODE, TIMEOUT_EXIT_CODE, VANISHED_EXIT_CODE,
 };
 
 /// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
@@ -244,6 +244,14 @@ impl LocalCopyError {
         Self::new(LocalCopyErrorKind::StopAtReached { target })
     }
 
+    /// Constructs a fatal file I/O error (exit code 11, `RERR_FILEIO`) whose
+    /// `message` is already worded as upstream prints it.
+    #[must_use]
+    pub fn file_io(message: impl Into<String>) -> Self {
+        Self::new(LocalCopyErrorKind::FileIo {
+            message: message.into(),
+        })
+    }
     /// Constructs a filter syntax error (exit code 1, `RERR_SYNTAX`).
     ///
     /// upstream: exclude.c:133-137 `filter_rule_err()` - unrecognised filter rules exit with
@@ -284,6 +292,7 @@ impl LocalCopyError {
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
             LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
+            LocalCopyErrorKind::FileIo { .. } => FILE_IO_EXIT_CODE,
             LocalCopyErrorKind::PartialTransfer => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Vanished => VANISHED_EXIT_CODE,
             LocalCopyErrorKind::Interrupted => SIGNAL_EXIT_CODE,
@@ -312,6 +321,7 @@ impl LocalCopyError {
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => "RERR_DEL_LIMIT",
             LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
+            LocalCopyErrorKind::FileIo { .. } => "RERR_FILEIO",
             LocalCopyErrorKind::PartialTransfer => "RERR_PARTIAL",
             LocalCopyErrorKind::Vanished => "RERR_VANISHED",
             LocalCopyErrorKind::Interrupted => "RERR_SIGNAL",
@@ -453,6 +463,15 @@ pub enum LocalCopyErrorKind {
     /// `RERR_SYNTAX` (1).
     #[error("{message}")]
     FilterSyntax {
+        /// Human-readable error message (already formatted to match upstream).
+        message: String,
+    },
+    /// A file I/O step aborted the transfer with `RERR_FILEIO` (exit 11), such
+    /// as a `--fake-super` source whose `%stat` does not parse.
+    ///
+    /// upstream: xattrs.c:1253-1258 - `exit_cleanup(RERR_FILEIO)`.
+    #[error("{message}")]
+    FileIo {
         /// Human-readable error message (already formatted to match upstream).
         message: String,
     },

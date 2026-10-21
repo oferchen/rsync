@@ -9,9 +9,10 @@ use super::openssl_support;
 ///
 /// MD4 produces a 128-bit (16-byte) digest. It is used by rsync protocol
 /// versions below 30 as the default strong checksum for block matching.
-/// When the `openssl` feature is enabled, an OpenSSL-backed implementation
-/// is used for improved throughput; otherwise a pure-Rust implementation
-/// is used.
+/// With the `openssl` feature, the OpenSSL backend is used when OpenSSL can
+/// initialise MD4; OpenSSL 3 provides MD4 only through its legacy provider.
+/// Availability is probed once per process, and otherwise the pure-Rust
+/// implementation is used.
 ///
 /// # Upstream Reference
 ///
@@ -146,6 +147,15 @@ impl Md4 {
     /// ```
     ///
     /// upstream: checksum.c:376-412 `get_checksum2()` MD4 branch.
+    ///
+    /// Upstream is not consistent here. Its OpenSSL path (checksum.c:324-336)
+    /// feeds the seed to `EVP_DigestUpdate()` BEFORE the data whenever
+    /// `EVP_DigestInit_ex()` succeeds for MD4, while the built-in `mdfour` path
+    /// above appends it AFTER. The two digests differ, so an upstream peer whose
+    /// OpenSSL MD4 works matches no blocks against an upstream or oc peer using
+    /// the built-in order; files still arrive intact, only the delta saving is
+    /// lost. oc keeps the built-in order: it is what upstream uses without
+    /// OpenSSL and with stock OpenSSL 3, whose default provider lacks MD4.
     ///
     /// # Examples
     ///
@@ -385,6 +395,57 @@ mod tests {
                 to_hex(&active),
                 to_hex(&reference),
                 "backend digest diverged from md4 reference at input #{i}"
+            );
+        }
+    }
+
+    /// Forces the OpenSSL backend by loading the legacy provider before the
+    /// first MD4 probe, then checks it against the pure-Rust crate on random
+    /// streaming inputs. nextest runs each test in its own process, so the
+    /// provider load and the once-per-process probe stay local to this test.
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn openssl_md4_matches_pure_rust_on_random_streams() {
+        use md4::Md4 as Md4Reference;
+        use rand::{RngExt, SeedableRng, rngs::StdRng};
+
+        let _legacy = match openssl::provider::Provider::try_load(None, "legacy", true) {
+            Ok(provider) => provider,
+            Err(error) => {
+                eprintln!(
+                    "SKIP: OpenSSL legacy provider unavailable ({error}); MD4 parity not run"
+                );
+                return;
+            }
+        };
+        assert_eq!(
+            format!("{:?}", Md4::new().inner),
+            "OpenSsl",
+            "the legacy provider is loaded, so MD4 must select the OpenSSL backend"
+        );
+
+        let mut rng = StdRng::seed_from_u64(0x6d64_345f_7061_7269);
+        for case in 0..256 {
+            let len = rng.random_range(0..4096);
+            let data: Vec<u8> = (0..len).map(|_| rng.random()).collect();
+            let split = if len == 0 {
+                0
+            } else {
+                rng.random_range(0..=len)
+            };
+
+            let mut active = Md4::new();
+            active.update(&data[..split]);
+            active.update(&data[split..]);
+
+            let mut reference = Md4Reference::new();
+            reference.update(&data);
+            let reference: [u8; 16] = reference.finalize().into();
+
+            assert_eq!(
+                active.finalize(),
+                reference,
+                "OpenSSL MD4 diverged from the pure-Rust reference at case {case} (len {len}, split {split})"
             );
         }
     }

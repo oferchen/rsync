@@ -380,105 +380,55 @@ pub(super) fn permissions_match(target_mode: u32, existing: &fast_io::EntryMetad
     (existing.mode() & 0o7777) == (target_mode & 0o7777)
 }
 
-/// Applies the fake-super permission deflection for a computed mode.
+/// Records a local copy's fake-super stat, as upstream `set_stat_xattr()`
+/// does under `am_root < 0`.
 ///
-/// Mirrors upstream `xattrs.c:set_stat_xattr()` under `am_root < 0`: the file's
-/// intended mode (`fmode`, the full `S_IFMT` + chmod-applied mode) is compared
-/// against the *real* on-disk mode forced to a self-accessible value -
-/// `(fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)` - so the destination stays
-/// readable/writable during and after the transfer. Special bits
-/// (setuid/setgid/sticky) are dropped from the real mode; they survive only in
-/// the xattr. The normal chmod-to-`fmode` is skipped (upstream `rsync.c:808`).
+/// `fmode` is the intended mode after `--chmod` and `dest_mode()`. The real
+/// mode becomes `(fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)`, so special
+/// bits survive only in the `%stat`, and the ids follow [`fake_super_ids`].
+/// The `%stat` is removed when the real attributes already represent the
+/// intended ones, and written otherwise. See [`apply_fake_super_stat`].
 ///
-/// The `user.rsync.%stat` xattr is only written when the real
-/// mode/uid/gid/rdev cannot faithfully represent the intended values - i.e.
-/// when `real_mode != fmode` (special bits or perms were dropped) or the
-/// destination's on-disk owner/group differ from the intended ones. When the
-/// real attributes already match, upstream writes no shim and removes any stale
-/// `%stat` (`xattrs.c:1325-1336`), so an unprivileged same-owner copy of a
-/// plain 0755 dir / 0644 file leaves no `%stat` behind.
-/// upstream: xattrs.c:1273-1357 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
-///           | (S_ISDIR ? 0700 : 0600); write-or-remove based on faithfulness.
+/// [`fake_super_ids`]: crate::fake_super::fake_super_ids
+/// upstream: xattrs.c:1273-1357 set_stat_xattr()
 #[cfg(unix)]
 fn apply_fake_super_mode(
     destination: &Path,
+    metadata: &fs::Metadata,
     fmode: u32,
-    is_dir: bool,
     options: &MetadataOptions,
-    existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
-    const S_IFMT: u32 = 0o170000;
-    let type_bits = fake_super_type_bits(fmode, is_dir);
-    let dest_meta = fs::symlink_metadata(destination).ok();
-    let on_disk_mode = {
-        use std::os::unix::fs::MetadataExt;
-        dest_meta.as_ref().map_or(type_bits, MetadataExt::mode)
-    };
-    let real_mode = fake_super_real_mode(on_disk_mode, fmode, is_dir);
-
+    let is_dir = metadata.file_type().is_dir();
     #[cfg(feature = "xattr")]
     {
-        use crate::fake_super::{load_fake_super, remove_fake_super, store_fake_super};
+        use crate::fake_super::{FakeSuperStat, fake_super_ids};
         use std::os::unix::fs::MetadataExt;
-
-        // The intended stored mode carries the S_IFMT type bits so a later
-        // fake-super read can rebuild both the type and the full perms.
-        let stored_mode = type_bits | (fmode & 0o7777);
-
-        // The ownership step recorded the intended uid/gid/rdev; reload them.
-        let recorded = load_fake_super(destination).ok().flatten();
-        let (want_uid, want_gid, want_rdev) = recorded
-            .as_ref()
-            .map(|s| (s.uid, s.gid, s.rdev))
-            .unwrap_or((0, 0, None));
-
-        // upstream: xattrs.c:1325-1326 - the shim is redundant when the real
-        // (mode & type)==stored mode and the on-disk owner/group already equal
-        // the intended values (rdev is 0 for non-devices). Compare against the
-        // destination's actual on-disk owner/group.
-        let (real_uid, real_gid) = dest_meta
-            .as_ref()
-            .map(|m| (m.uid(), m.gid()))
-            .unwrap_or((want_uid, want_gid));
-
-        let faithful = (real_mode & (S_IFMT | 0o7777)) == stored_mode
-            && real_uid == want_uid
-            && real_gid == want_gid
-            && want_rdev.is_none();
-
-        if faithful {
-            // upstream: xattrs.c:1327-1335 - drop any stale %stat and skip write.
-            remove_fake_super(destination).map_err(|error| {
-                MetadataError::new("remove fake-super metadata", destination, error)
-            })?;
-        } else if let Some(mut stat) = recorded
-            && stat.mode != stored_mode
-        {
-            stat.mode = stored_mode;
-            store_fake_super(destination, &stat).map_err(|error| {
-                MetadataError::new("store fake-super metadata", destination, error)
-            })?;
-        }
+        let (uid, gid) = fake_super_ids(options, Some(metadata.uid()), Some(metadata.gid()));
+        let intended = FakeSuperStat {
+            mode: fake_super_type_bits(fmode, is_dir) | (fmode & 0o7777),
+            uid,
+            gid,
+            ..FakeSuperStat::from_metadata(metadata)
+        };
+        apply_fake_super_stat(destination, &intended, options, None)
     }
-
-    if let Some(existing) = existing
-        && permissions_match(real_mode, existing)
+    #[cfg(not(feature = "xattr"))]
     {
-        return Ok(());
+        use std::os::unix::fs::MetadataExt;
+        let on_disk_mode = fs::symlink_metadata(destination)
+            .map_err(|error| MetadataError::new("re-stat", destination, error))?
+            .mode();
+        chmod_path_honoring_keep_dirlinks(
+            destination,
+            fake_super_real_mode(on_disk_mode, fmode, is_dir) & 0o7777,
+            options,
+            "preserve permissions",
+            None,
+        )
     }
-
-    // upstream: syscall.c:do_chmod_at() applied to the deflected real mode.
-    chmod_path_honoring_keep_dirlinks(
-        destination,
-        real_mode & 0o7777,
-        options,
-        "preserve permissions",
-        None,
-    )
 }
-
 /// The `S_IFMT` type bits of a fake-super mode, which may arrive without them.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "xattr"))]
 const fn fake_super_type_bits(fmode: u32, is_dir: bool) -> u32 {
     const S_IFMT: u32 = 0o170000;
     if fmode & S_IFMT != 0 {
@@ -523,42 +473,305 @@ pub fn apply_fake_super_stat(
     destination: &Path,
     intended: &crate::fake_super::FakeSuperStat,
     options: &MetadataOptions,
+    current: Option<&fast_io::EntryMetadata>,
+) -> Result<(), MetadataError> {
+    let re_stat = |error| MetadataError::new("re-stat", destination, error);
+    // upstream: rsync.c:563-570 - a regular file, directory or FIFO is pinned
+    // with openat(O_NOFOLLOW|O_NONBLOCK) and every %stat op goes through it.
+    let pinnable = current.is_none_or(|current| {
+        current.is_file() || current.is_dir() || current.file_type().is_fifo()
+    });
+    if pinnable {
+        let refused = match open_held_stat_target(destination, options) {
+            Ok(file) => {
+                let held = fast_io::EntryMetadata::from(file.metadata().map_err(re_stat)?);
+                return StatPlan::new(&held, intended).apply_held(&file, destination, intended);
+            }
+            Err(error) => error,
+        };
+        // With no stat in hand, the open finds a symlink (ELOOP) or socket
+        // (ENXIO) leaf; an lstat beneath the same confined parent tells it
+        // from a refused parent, and a leaf that is neither takes the path
+        // arm, as upstream's fd < 0 case does.
+        let found = match (current, refused.raw_os_error()) {
+            (None, Some(libc::ELOOP | libc::ENXIO)) => lstat_held_leaf(destination, options)
+                .ok()
+                .filter(|leaf| !(leaf.is_file() || leaf.is_dir() || leaf.file_type().is_fifo())),
+            _ => None,
+        };
+        let Some(found) = found else {
+            // upstream: rsync.c:581-596 - when neither the held pin nor the
+            // secure re-pin opens the leaf, xattr_refuse skips the %stat ops
+            // rather than re-resolving the path; the chmod keeps its secure
+            // path wrapper.
+            let Some(current) = current else {
+                return Ok(());
+            };
+            let plan = StatPlan::new(current, intended);
+            return if plan.chmod {
+                chmod_path_honoring_keep_dirlinks(
+                    destination,
+                    plan.real_mode & 0o7777,
+                    options,
+                    "preserve permissions",
+                    None,
+                )
+            } else {
+                Ok(())
+            };
+        };
+        return apply_fake_super_stat_by_path(destination, intended, options, Some(&found));
+    }
+    apply_fake_super_stat_by_path(destination, intended, options, current)
+}
+/// The `fd < 0` arm of set_stat_xattr(): a symlink, device or socket, whose
+/// `%stat` ops go through the l-variant calls.
+// upstream: xattrs.c:1298-1302,1316-1350 - x_lstat(), do_chmod_at() and
+// sys_l{set,remove}xattr().
+#[cfg(all(unix, feature = "xattr"))]
+fn apply_fake_super_stat_by_path(
+    destination: &Path,
+    intended: &crate::fake_super::FakeSuperStat,
+    options: &MetadataOptions,
+    current: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
     use crate::fake_super::{load_fake_super, remove_fake_super, store_fake_super};
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    const S_IFMT: u32 = 0o170000;
-    let current = fs::symlink_metadata(destination)
-        .map_err(|error| MetadataError::new("re-stat", destination, error))?;
-    let is_dir = current.is_dir();
-    let real_mode = fake_super_real_mode(current.mode(), intended.mode, is_dir);
-    if current.permissions().mode() & 0o7777 != real_mode & 0o7777 {
-        chmod_path_honoring_keep_dirlinks(
-            destination,
-            real_mode & 0o7777,
-            options,
-            "preserve permissions",
-            None,
-        )?;
+    let looked_up;
+    let current = match current {
+        Some(current) => current,
+        None => {
+            looked_up = fs::symlink_metadata(destination)
+                .map(fast_io::EntryMetadata::from)
+                .map_err(|error| MetadataError::new("re-stat", destination, error))?;
+            &looked_up
+        }
+    };
+    let plan = StatPlan::new(current, intended);
+    if plan.chmod {
+        // upstream: syscall.c:1909 do_chmod_at() - a symlink goes to
+        // do_chmod(), which uses lchmod() where it exists and never follows
+        // the link.
+        if current.is_symlink() {
+            if crate::CAN_CHMOD_SYMLINK {
+                chmod_symlink_leaf(destination, plan.real_mode & 0o7777, options).map_err(
+                    |error| MetadataError::new("preserve permissions", destination, error),
+                )?;
+            }
+        } else {
+            chmod_path_honoring_keep_dirlinks(
+                destination,
+                plan.real_mode & 0o7777,
+                options,
+                "preserve permissions",
+                None,
+            )?;
+        }
     }
-    // upstream: xattrs.c:1325-1336 - the shim is redundant when the real mode,
-    // owner and group already carry the intended values (rdev 0 off devices).
-    let stored_mode = fake_super_type_bits(intended.mode, is_dir) | (intended.mode & 0o7777);
-    let faithful = real_mode & (S_IFMT | 0o7777) == stored_mode
-        && current.uid() == intended.uid
-        && current.gid() == intended.gid
-        && intended.rdev.is_none();
-    if faithful {
-        return remove_fake_super(destination)
-            .map_err(|error| MetadataError::new("remove fake-super metadata", destination, error));
+    let recorded = load_fake_super(destination).ok().flatten();
+    if plan.faithful {
+        if recorded.is_some() {
+            remove_fake_super(destination).map_err(|error| {
+                MetadataError::new("remove fake-super metadata", destination, error)
+            })?;
+        }
+        return Ok(());
     }
-    // upstream: xattrs.c:1338-1354 - rewrite only when the stored stat differs.
-    if load_fake_super(destination).ok().flatten().as_ref() == Some(intended) {
+    if recorded.as_ref() == Some(intended) {
         return Ok(());
     }
     store_fake_super(destination, intended)
         .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
 }
+/// The write-or-remove decision set_stat_xattr() makes for one inode.
+#[cfg(all(unix, feature = "xattr"))]
+struct StatPlan {
+    /// `(type) | (fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)`.
+    real_mode: u32,
+    /// The real mode must change.
+    chmod: bool,
+    /// The real mode, owner and group carry the intended stat, so no
+    /// `%stat` is kept.
+    faithful: bool,
+}
+#[cfg(all(unix, feature = "xattr"))]
+impl StatPlan {
+    // upstream: xattrs.c:1313-1326 set_stat_xattr()
+    fn new(current: &fast_io::EntryMetadata, intended: &crate::fake_super::FakeSuperStat) -> Self {
+        const S_IFMT: u32 = 0o170000;
+        let is_dir = current.is_dir();
+        let real_mode = fake_super_real_mode(current.mode(), intended.mode, is_dir);
+        let stored_mode = fake_super_type_bits(intended.mode, is_dir) | (intended.mode & 0o7777);
+        Self {
+            real_mode,
+            chmod: current.mode() & 0o7777 != real_mode & 0o7777,
+            faithful: real_mode & (S_IFMT | 0o7777) == stored_mode
+                && current.uid() == intended.uid
+                && current.gid() == intended.gid
+                && intended.rdev.is_none(),
+        }
+    }
 
+    /// Applies the plan through `file`, a held `O_NOFOLLOW` descriptor:
+    /// fgetxattr, then fchmod and fsetxattr or fremovexattr as needed.
+    // upstream: xattrs.c:1288-1350 set_stat_xattr() with fd >= 0.
+    fn apply_held(
+        &self,
+        file: &fs::File,
+        destination: &Path,
+        intended: &crate::fake_super::FakeSuperStat,
+    ) -> Result<(), MetadataError> {
+        use crate::fake_super::{load_fake_super_fd, remove_fake_super_fd, store_fake_super_fd};
+        use std::os::unix::fs::PermissionsExt;
+        let recorded = load_fake_super_fd(file).ok().flatten();
+        if self.chmod {
+            file.set_permissions(fs::Permissions::from_mode(self.real_mode & 0o7777))
+                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+        }
+        if self.faithful {
+            if recorded.is_some() {
+                remove_fake_super_fd(file).map_err(|error| {
+                    MetadataError::new("remove fake-super metadata", destination, error)
+                })?;
+            }
+            return Ok(());
+        }
+        if recorded.as_ref() == Some(intended) {
+            return Ok(());
+        }
+        store_fake_super_fd(file, intended)
+            .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
+    }
+}
+/// Stats `destination` without following it, beneath its confined parent,
+/// so a symlink in a parent component is refused rather than followed.
+#[cfg(all(unix, feature = "xattr"))]
+fn lstat_held_leaf(
+    destination: &Path,
+    options: &MetadataOptions,
+) -> io::Result<fast_io::EntryMetadata> {
+    if options.parent_walk().follows() {
+        return fs::symlink_metadata(destination).map(fast_io::EntryMetadata::from);
+    }
+    let found = std::cell::RefCell::new(None);
+    super::at_confined_parent(
+        destination,
+        None,
+        options.parent_walk().root(),
+        |parent, leaf| {
+            *found.borrow_mut() = Some(fast_io::EntryMetadata::At(fast_io::fstatat_nofollow(
+                parent, leaf,
+            )?));
+            Ok(())
+        },
+        || {
+            *found.borrow_mut() = Some(fs::symlink_metadata(destination)?.into());
+            Ok(())
+        },
+    )?;
+    found
+        .into_inner()
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+}
+/// Opens `destination` with `O_NOFOLLOW|O_NONBLOCK|O_NOCTTY` beneath its
+/// confined parent, so the `%stat` re-stat, chmod and xattr ops act on that
+/// inode and a symlink swapped into its path cannot redirect them.
+///
+/// # Errors
+///
+/// Returns the open error: `ELOOP` for a symlink leaf, or the confined
+/// walk's refusal of a parent.
+// upstream: rsync.c:563-596 set_file_attrs() - the held pin, then the secure
+// re-pin, of a regular file, directory or FIFO.
+#[cfg(all(unix, feature = "xattr"))]
+fn open_held_stat_target(destination: &Path, options: &MetadataOptions) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    const FLAGS: i32 =
+        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_CLOEXEC;
+    let open_leaf = || {
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
+            .open(destination)
+    };
+    if options.parent_walk().follows() {
+        return open_leaf();
+    }
+    let held = std::cell::RefCell::new(None);
+    super::at_confined_parent(
+        destination,
+        None,
+        options.parent_walk().root(),
+        |parent, leaf| {
+            *held.borrow_mut() = Some(fast_io::openat(parent, leaf, FLAGS, 0)?);
+            Ok(())
+        },
+        || {
+            *held.borrow_mut() = Some(open_leaf()?);
+            Ok(())
+        },
+    )?;
+    held.into_inner()
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+}
+/// Records a received entry's mode, owner and device under `--fake-super`,
+/// as upstream `set_file_attrs()` does through `set_stat_xattr()`.
+///
+/// The stat is recorded whether or not `--owner`, `--group` or `--perms` is
+/// on. Without `--owner` or `--group` the id is 0, and without `--perms` the
+/// mode is the `dest_mode()` result. An existing destination that was not
+/// replaced contributes the mode its `%stat` records, as upstream's
+/// generator reads it through `x_lstat()`.
+///
+/// # Errors
+///
+/// Returns an error when [`apply_fake_super_stat`] fails.
+// upstream: rsync.c:713-714 set_file_attrs() - `am_root < 0` always calls
+// set_stat_xattr() with the dest_mode()'d `new_mode` and F_OWNER/F_GROUP.
+#[cfg(all(unix, feature = "xattr"))]
+pub(super) fn apply_fake_super_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<&fast_io::EntryMetadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
+) -> Result<(), MetadataError> {
+    use crate::fake_super::{FakeSuperStat, load_fake_super};
+    let file_type = entry.file_type();
+    let existing_mode = match (pre_transfer_meta, cached_meta) {
+        (Some(pre), _) => Some(pre.mode()),
+        (None, Some(current)) => Some(
+            load_fake_super(destination)
+                .ok()
+                .flatten()
+                .map_or(current.mode(), |stat| stat.mode),
+        ),
+        (None, None) => None,
+    };
+    // upstream: generator.c:1937-1940, receiver.c:1197-1208 - dest_mode()
+    // runs only without --perms, after flist.c:1221 applied --chmod.
+    let mode = chmod_tweaked_dest_mode_from(
+        options.chmod(),
+        destination,
+        entry.mode(),
+        file_type.is_dir(),
+        file_type.is_regular(),
+        options,
+        existing_mode,
+    );
+    let rdev = if file_type.is_device() {
+        entry.rdev_major().zip(entry.rdev_minor())
+    } else {
+        None
+    };
+    let (uid, gid) = crate::fake_super::fake_super_ids(options, entry.uid(), entry.gid());
+    let intended = FakeSuperStat {
+        mode,
+        uid,
+        gid,
+        rdev,
+    };
+    apply_fake_super_stat(destination, &intended, options, cached_meta)
+}
 /// Applies permissions with optional chmod modifiers (path-based).
 ///
 /// When chmod modifiers are configured, applies them on top of the base mode.
@@ -577,13 +790,7 @@ pub(super) fn apply_permissions_with_chmod(
     #[cfg(unix)]
     if options.fake_super_enabled() {
         let fmode = intended_fake_super_mode(destination, metadata, options, existing)?;
-        return apply_fake_super_mode(
-            destination,
-            fmode,
-            metadata.file_type().is_dir(),
-            options,
-            existing,
-        );
+        return apply_fake_super_mode(destination, metadata, fmode, options);
     }
 
     #[cfg(unix)]
@@ -713,13 +920,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
     if options.fake_super_enabled() {
         let _ = fd;
         let fmode = intended_fake_super_mode(destination, metadata, options, existing)?;
-        return apply_fake_super_mode(
-            destination,
-            fmode,
-            metadata.file_type().is_dir(),
-            options,
-            existing,
-        );
+        return apply_fake_super_mode(destination, metadata, fmode, options);
     }
 
     if let Some(modifiers) = options.chmod() {
@@ -1090,12 +1291,10 @@ fn intended_fake_super_mode(
         )
     } else {
         let source_mode = metadata.permissions().mode();
-        match compute_dest_mode(
-            source_mode,
-            options.destination_is_new(),
-            existing,
-            destination.parent(),
-        ) {
+        // The directory appliers pass the pre-mkdir stat, so `None` marks a
+        // new directory (generator.c:1856 judges `exists` by that statret).
+        let is_new = options.destination_is_new() || (metadata.is_dir() && existing.is_none());
+        match compute_dest_mode(source_mode, is_new, existing, destination.parent()) {
             Some(new_mode) => new_mode,
             // `compute_dest_mode` returns `None` when no chmod is needed: the
             // destination already carries the `dest_mode()` result (or none is
@@ -1106,15 +1305,35 @@ fn intended_fake_super_mode(
             // read the on-disk mode here. Falling back to `source_mode` would
             // record the source's special/permission bits that `!preserve_perms`
             // drops, diverging from upstream on every non-`-p` fake-super update.
+            // The type bits stay the source's, and the destination's bits are
+            // the ones its `%stat` records, as upstream's generator reads
+            // them through x_lstat().
             // upstream: rsync.c:469-471 dest_mode() existing-file branch.
-            None => fs::symlink_metadata(destination)
-                .map(|current| current.permissions().mode())
-                .unwrap_or(source_mode),
+            None => {
+                (source_mode & !0o7777)
+                    | (existing_fake_super_mode(destination).unwrap_or(source_mode) & 0o7777)
+            }
         }
     };
     Ok(mode)
 }
 
+/// The mode an existing fake-super destination has: its `%stat` mode when one
+/// is recorded, else its real mode, or `None` when it cannot be read.
+// upstream: xattrs.c:x_lstat() overlays get_stat_xattr() on the lstat.
+#[cfg(unix)]
+fn existing_fake_super_mode(destination: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    crate::fake_super::load_fake_super(destination)
+        .ok()
+        .flatten()
+        .map(|stat| stat.mode)
+        .or_else(|| {
+            fs::symlink_metadata(destination)
+                .ok()
+                .map(|current| current.permissions().mode())
+        })
+}
 /// Computes the permission bits (`0o7777`) a directory would receive under
 /// `--chmod` - the tweak composed with the `dest_mode()` collapse when
 /// `!preserve_perms` - BEFORE upstream's during-transfer owner-`rwx` fixup.
@@ -1219,6 +1438,28 @@ fn chmod_tweaked_dest_mode(
     options: &MetadataOptions,
     pre_transfer: Option<&fast_io::EntryMetadata>,
 ) -> u32 {
+    chmod_tweaked_dest_mode_from(
+        modifiers,
+        destination,
+        source_mode,
+        source_is_dir,
+        source_is_regular,
+        options,
+        pre_transfer.map(fast_io::EntryMetadata::mode),
+    )
+}
+/// [`chmod_tweaked_dest_mode`] for a caller that has the existing
+/// destination's mode rather than its stat.
+#[cfg(unix)]
+fn chmod_tweaked_dest_mode_from(
+    modifiers: Option<&crate::ChmodModifiers>,
+    destination: &Path,
+    source_mode: u32,
+    source_is_dir: bool,
+    source_is_regular: bool,
+    options: &MetadataOptions,
+    existing_mode: Option<u32>,
+) -> u32 {
     let tweaked = match modifiers {
         Some(modifiers) => modifiers.apply(source_mode, source_is_dir),
         None => source_mode,
@@ -1230,10 +1471,10 @@ fn chmod_tweaked_dest_mode(
         return tweaked;
     }
 
-    if let Some(existing) = pre_transfer {
+    if let Some(existing_mode) = existing_mode {
         // upstream: rsync.c:470-480 - an existing destination keeps its own
         // permission bits with the type bits from the (tweaked) flist mode.
-        let mut new_mode = (tweaked & !0o7777) | (existing.mode() & 0o7777);
+        let mut new_mode = (tweaked & !0o7777) | (existing_mode & 0o7777);
         if options.executability() && source_is_regular {
             // upstream: rsync.c:472-480 dest_mode() - for existing regular
             // files only, copy the (tweaked) source's exec presence: if it
@@ -2095,7 +2336,7 @@ mod tests {
             if store_fake_super(&dest, &recorded).is_err() {
                 return;
             }
-            apply_fake_super_mode(&dest, mode, false, &options, None).expect("apply mode");
+            apply_fake_super_stat(&dest, &recorded, &options, None).expect("apply stat");
             assert_eq!(
                 load_fake_super(&dest).expect("read %stat"),
                 Some(recorded),

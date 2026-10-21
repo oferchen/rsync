@@ -255,8 +255,8 @@ pub(crate) fn sync_nfsv4_acls_if_requested(
 /// recorded permissions, and the destination `%stat` is written or removed
 /// depending on whether the real mode, owner and group can represent it.
 ///
-/// No-op unless `--fake-super` is active together with ownership preservation,
-/// matching `metadata::apply::ownership::set_owner_like`'s fake-super gate.
+/// No-op unless `--fake-super` is active. Without `--owner` or `--group` the
+/// recorded id is 0, as for any other fake-super receive.
 /// upstream: xattrs.c:set_stat_xattr() driven by x_lstat()/get_stat_xattr()
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) fn store_effective_fake_super_if_requested(
@@ -265,11 +265,7 @@ pub(crate) fn store_effective_fake_super_if_requested(
     destination: &Path,
     metadata: &std::fs::Metadata,
 ) -> Result<(), LocalCopyError> {
-    let ownership_requested = options.owner()
-        || options.group()
-        || options.owner_override().is_some()
-        || options.group_override().is_some();
-    if !options.fake_super_enabled() || !ownership_requested {
+    if !options.fake_super_enabled() {
         return Ok(());
     }
 
@@ -292,11 +288,33 @@ pub(crate) fn store_effective_fake_super_if_requested(
     {
         stat.mode = existing.mode;
     }
+    (stat.uid, stat.gid) = ::metadata::fake_super_ids(options, Some(stat.uid), Some(stat.gid));
     let _ = metadata;
     // upstream: xattrs.c:1304-1356 set_stat_xattr() with the x_lstat() stat.
-    ::metadata::apply_fake_super_stat(destination, &stat, options).map_err(map_metadata_error)
+    ::metadata::apply_fake_super_stat(destination, &stat, options, None).map_err(map_metadata_error)
 }
 
+/// Fails the copy when a `--fake-super` source's `%stat` does not parse.
+///
+/// Upstream reads the `%stat` of every entry while it builds the file list and
+/// exits `RERR_FILEIO` on a value it cannot parse.
+// upstream: flist.c make_file() -> x_lstat() -> xattrs.c:1253-1258
+// get_stat_xattr() exit_cleanup(RERR_FILEIO).
+#[cfg(all(unix, feature = "xattr"))]
+pub(crate) fn ensure_fake_super_source_stat(
+    fake_super: bool,
+    source: &Path,
+) -> Result<(), LocalCopyError> {
+    if !fake_super {
+        return Ok(());
+    }
+    match ::metadata::load_fake_super(source) {
+        Err(error) if ::metadata::is_corrupt_fake_super(&error) => {
+            Err(LocalCopyError::file_io(error.to_string()))
+        }
+        _ => Ok(()),
+    }
+}
 /// Converts a [`MetadataError`] into a [`LocalCopyError`].
 pub(crate) fn map_metadata_error(error: MetadataError) -> LocalCopyError {
     let (context, path, source) = error.into_parts();

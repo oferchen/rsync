@@ -32,7 +32,9 @@ use super::super::invocation::{RemoteRole, TransferSpec, determine_transfer_role
 use super::super::itemize_sink::ItemizeEventSink;
 use super::super::operand_split::split_transfer_operands;
 use super::connection::build_ssh_connection;
-use super::exit_status::{convert_server_stats_to_summary, map_child_exit_status};
+use super::exit_status::{
+    convert_server_stats_to_summary, map_child_exit_status, map_cleanup_child_exit_status,
+};
 use super::parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 use super::progress::ServerProgressAdapter;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
@@ -325,7 +327,7 @@ fn run_server_over_ssh_connection(
             // child inherits our stderr (upstream: pipe.c:68-83 piped_child()),
             // so the error built here carries only the exit status.
             let child_exit = match child_handle.wait() {
-                Ok(status) => map_child_exit_status(status),
+                Ok(status) => map_cleanup_child_exit_status(status),
                 Err(_) => ExitCode::WaitChild,
             };
 
@@ -433,13 +435,11 @@ fn run_server_over_ssh_connection(
     // upstream: main.c wait_process_with_flush() - wait for child and map
     // status. The child wrote its stderr straight to ours (see the
     // handshake-failure path above), so only the exit status is taken here.
-    let child_exit_code = match child_handle.wait() {
-        Ok(status) => map_child_exit_status(status),
-        Err(_) => ExitCode::WaitChild,
-    };
+    let child_status = child_handle.wait();
 
     match transfer_result {
         Ok(stats) => {
+            let child_exit_code = child_status.map_or(ExitCode::WaitChild, map_child_exit_status);
             // upstream: take MAX of transfer and child exit codes.
             if child_exit_code.is_success() {
                 Ok((stats, negotiated_protocol, collected_events))
@@ -451,7 +451,7 @@ fn run_server_over_ssh_connection(
         }
         Err(transfer_error) => Err(transfer_failure_error(
             transfer_error,
-            child_exit_code,
+            child_status.map_or(ExitCode::WaitChild, map_cleanup_child_exit_status),
             local_role,
             bytes_read.load(Ordering::Relaxed),
         )),

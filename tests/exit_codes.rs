@@ -343,6 +343,38 @@ mod exit_code_12_stream_io {
     // difficult to trigger in normal integration tests.
     // This exit code is typically seen when the multiplexed data stream
     // becomes corrupted during transfer.
+    #[cfg(unix)]
+    use super::*;
+
+    /// upstream: io.c:299-303 whine_about_eof() exits RERR_STREAMIO when the
+    /// remote shell dies before the handshake, and cleanup.c:146-152 folds in
+    /// only `WEXITSTATUS(status)` - 0 for a signalled child - so the signal
+    /// never outranks the stream error. RERR_TERMINATED (16) belongs to the
+    /// clean-finish reap (main.c:198-226 wait_process_with_flush()) alone.
+    /// Upstream 3.5.1 exits 12 in both directions.
+    #[cfg(unix)]
+    #[test]
+    fn remote_shell_killed_by_signal_before_handshake_returns_stream_io() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let src = temp.path().join("src");
+        fs::create_dir(&src).expect("mkdir src");
+        fs::write(src.join("a"), b"a").expect("write");
+        let src_arg = format!("{}/", src.display());
+        let dest_arg = format!("{}/", temp.path().join("dest").display());
+        let rsh = "sh -c 'kill -TERM $$'";
+        for (args, context) in [
+            (["-a", "-e", rsh, &src_arg, "host:dest/"], "push"),
+            (["-a", "-e", rsh, "host:src/", &dest_arg], "pull"),
+        ] {
+            let output = run_rsync(&args);
+            assert_exit_code(&output, ExitCode::StreamIo, context);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("connection unexpectedly closed (0 bytes received so far)"),
+                "{context}: {stderr}"
+            );
+        }
+    }
 
     #[test]
     #[ignore = "Data stream errors require protocol corruption simulation"]

@@ -177,6 +177,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
+        let store = super::link_store::LinkStore::new(self.config.fake_super);
         let start = range.start;
         for (i, entry) in self.file_list[range].iter().enumerate() {
             let flist_idx = start + i;
@@ -235,12 +236,7 @@ impl ReceiverContext {
             let mut pre_replace_meta: Option<fast_io::EntryMetadata> = None;
 
             // upstream: generator.c:1965 - quick_check_ok(FT_SYMLINK, ...)
-            if let Ok(existing_target) = fast_io::readlinkat_via_sandbox_or_fallback(
-                sandbox,
-                dest_dir,
-                relative_path,
-                &link_path,
-            ) {
+            if let Ok(existing_target) = store.read(sandbox, dest_dir, relative_path, &link_path) {
                 if existing_target == *target {
                     // upstream: generator.c:1965-1969 - the up-to-date branch
                     // still calls `itemize(fname, file, ndx, 0, &sx, 0, 0, NULL)`.
@@ -369,19 +365,10 @@ impl ReceiverContext {
 
             // upstream: generator.c:2002 - atomic_create() -> do_symlink()
             //
-            // When the sandbox is plumbed and the destination
-            // parent is the sandbox root, the create goes through
-            // `symlinkat(target, dirfd, leaf)` so a TOCTOU swap on a
-            // mid-path component cannot redirect the create to an
-            // attacker-chosen parent. Falls back to path-based
-            // `std::os::unix::fs::symlink` otherwise.
-            if let Err(e) = fast_io::symlinkat_via_sandbox_or_fallback(
-                sandbox,
-                dest_dir,
-                relative_path,
-                &link_path,
-                target,
-            ) {
+            // The create is anchored at the sandbox dirfd or the verified
+            // parent, so a TOCTOU swap on a mid-path component cannot
+            // redirect it to an attacker-chosen parent.
+            if let Err(e) = store.create(sandbox, dest_dir, relative_path, &link_path, target) {
                 debug_log!(
                     Recv,
                     1,
