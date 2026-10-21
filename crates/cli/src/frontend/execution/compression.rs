@@ -167,17 +167,15 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     } else {
         trimmed
     };
-    #[allow(unused_mut)] // REASON: mutated when lz4 or zstd features are enabled
-    let mut supported = vec!["zlib", "zlibx"];
-    #[cfg(feature = "lz4")]
-    {
-        supported.push("lz4");
-    }
-    #[cfg(feature = "zstd")]
-    {
-        supported.push("zstd");
-    }
-    let supported_list = supported.join(", ");
+    let supported_list = [
+        "zlib",
+        "zlibx",
+        #[cfg(feature = "lz4")]
+        "lz4",
+        #[cfg(feature = "zstd")]
+        "zstd",
+    ]
+    .join(", ");
     let rendered = format!(
         "invalid compression algorithm '{display}': supported values include {supported_list}"
     );
