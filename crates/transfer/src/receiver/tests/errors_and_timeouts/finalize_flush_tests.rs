@@ -258,6 +258,15 @@ fn finalize_transfer_decodes_follower_echo_against_the_transfer_loop_state() {
     let mut ctx = receiver_server_mode(30);
     ctx.advance_pipeline_to_delta_transfer_for_test();
     ctx.hardlink_follower_echoes.set(1);
+    // Indices 0..=2 must be live, or flist_for_ndx() refuses the echo
+    // (rsync.c:394) before the NDX state this test is about matters.
+    for name in ["a", "b", "fifo"] {
+        ctx.file_list.push(protocol::flist::FileEntry::new_file(
+            std::path::PathBuf::from(name),
+            0,
+            0o100644,
+        ));
+    }
 
     // The sender's echoes of index 1 and 2, read by the transfer loop.
     let mut sender = create_ndx_codec(30);

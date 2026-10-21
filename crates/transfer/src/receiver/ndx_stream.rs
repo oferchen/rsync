@@ -125,6 +125,19 @@ pub(crate) trait FlistMarkerSink {
     /// on rejection (`rsync.c:345-352`).
     fn last_file_ndx(&self) -> i32;
 
+    /// The lowest index a live file list still owns: the oldest live list's
+    /// gap slot, `first_flist->ndx_start - 1`.
+    ///
+    /// Together with [`Self::last_file_ndx`] it bounds the per-file indices
+    /// [`read_ndx_and_attrs`] accepts. Not defaulted for the same reason as
+    /// [`Self::ndx_is_active`]: a list released under INC_RECURSE moves the
+    /// bound, and only the sink that owns the lists can say where it is.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:972-975` - `flist_for_ndx()` computes `first` this way.
+    fn first_file_ndx(&self) -> i32;
+
     /// Whether `ndx` names a *live* entry - upstream's `F_IS_ACTIVE(file)`
     /// test.
     ///
@@ -240,19 +253,29 @@ pub(crate) trait FlistMarkerSink {
 /// from `pending_del_stats`, so a peer-supplied echo carries no new information.
 pub(crate) struct NoLazyFlist {
     role: StreamRole,
+    first_file_ndx: i32,
     last_file_ndx: i32,
     all_flists_freed: bool,
 }
 
 impl NoLazyFlist {
     /// Builds the rejecting sink for `role`, whose highest valid file index is
-    /// `last_file_ndx`.
+    /// `last_file_ndx`. The lowest is `-1`, a single list's gap slot, until
+    /// [`Self::with_first_file_ndx`] says otherwise.
     pub(crate) const fn new(role: StreamRole, last_file_ndx: i32) -> Self {
         Self {
             role,
+            first_file_ndx: -1,
             last_file_ndx,
             all_flists_freed: false,
         }
+    }
+
+    /// Carries the reader's [`FlistMarkerSink::first_file_ndx`], so a released
+    /// INC_RECURSE list stays out of range here too.
+    pub(crate) const fn with_first_file_ndx(mut self, first: i32) -> Self {
+        self.first_file_ndx = first;
+        self
     }
 
     /// Carries the reader's [`FlistMarkerSink::all_flists_freed`] state, so a
@@ -273,6 +296,10 @@ impl FlistMarkerSink for NoLazyFlist {
 
     fn last_file_ndx(&self) -> i32 {
         self.last_file_ndx
+    }
+
+    fn first_file_ndx(&self) -> i32 {
+        self.first_file_ndx
     }
 
     fn ndx_is_active(&self, _ndx: i32) -> bool {
@@ -337,6 +364,29 @@ pub(crate) enum NdxFrame {
 pub(crate) fn invalid_file_index(ndx: i32, last: i32, role: StreamRole) -> io::Error {
     protocol::protocol_violation(format!(
         "Invalid file index: {ndx} ({NDX_DONE} - {last}) {}{}",
+        crate::role_trailer::error_location!(),
+        role.trailer()
+    ))
+}
+
+/// Builds upstream's `flist_for_ndx()` rejection of an index no live list
+/// owns.
+///
+/// Keeps upstream's wording - `File-list index %d not in %d - %d (%s)` - with
+/// oc's source location and `[role=VERSION]` trailer standing in for
+/// `who_am_i()`. Tagged as a protocol violation for `RERR_PROTOCOL` (2).
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:976-981` - `flist_for_ndx(ndx, "read_ndx_and_attrs")`.
+pub(crate) fn file_list_index_not_live(
+    ndx: i32,
+    first: i32,
+    last: i32,
+    role: StreamRole,
+) -> io::Error {
+    protocol::protocol_violation(format!(
+        "File-list index {ndx} not in {first} - {last} (read_ndx_and_attrs) {}{}",
         crate::role_trailer::error_location!(),
         role.trailer()
     ))
@@ -571,6 +621,14 @@ where
             continue;
         }
 
+        // upstream: rsync.c:394 - flist_for_ndx(ndx, "read_ndx_and_attrs")
+        // refuses an index outside every live list, including one the
+        // receiver's NDX_DONEs have already freed (receiver.c:858-864).
+        let (first, last) = (sink.first_file_ndx(), sink.last_file_ndx());
+        if ndx < first || ndx > last {
+            return Err(file_list_index_not_live(ndx, first, last, sink.role()));
+        }
+
         // upstream: rsync.c:436-444 - an ITEM_TRANSFER frame must name a
         // regular file: `i = ndx - cur_flist->ndx_start; if (i < 0 ||
         // !S_ISREG(cur_flist->files[i]->mode))` is a hard protocol error on
@@ -608,6 +666,14 @@ impl FlistMarkerSink for ReceiverContext {
             .expect("initial segment always exists");
         let used = self.file_list.len().saturating_sub(flat_start) as i32;
         ndx_start + used - 1
+    }
+
+    fn first_file_ndx(&self) -> i32 {
+        // upstream: rsync.c:972-975 - `first_flist->ndx_start - 1`. Segments
+        // below `first_segment_idx` were freed in lockstep with the sender.
+        self.ndx_segments
+            .get(self.first_segment_idx)
+            .map_or(0, |&(_, ndx_start)| ndx_start - 1)
     }
 
     fn ndx_is_active(&self, ndx: i32) -> bool {

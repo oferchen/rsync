@@ -62,6 +62,11 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
         self.0.file_list().len() as i32 - 1
     }
 
+    fn first_file_ndx(&self) -> i32 {
+        // upstream: rsync.c:972-975 - the oldest list's gap slot.
+        self.0.incremental.ndx_map.first_ndx_start() - 1
+    }
+
     fn ndx_is_active(&self, ndx: i32) -> bool {
         // upstream: sender.c:559-564 - `send_files()` tests F_IS_ACTIVE on the
         // entry the peer named. An out-of-range index is a different fault and

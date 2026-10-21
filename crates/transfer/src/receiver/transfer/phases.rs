@@ -217,6 +217,7 @@ impl ReceiverContext {
     /// upstream's `(%d - %d)` span (`rsync.c:344-350`).
     fn no_lazy_flist_sink(&self) -> NoLazyFlist {
         NoLazyFlist::new(StreamRole::Receiver, FlistMarkerSink::last_file_ndx(self))
+            .with_first_file_ndx(FlistMarkerSink::first_file_ndx(self))
             .with_all_flists_freed(FlistMarkerSink::all_flists_freed(self))
     }
 

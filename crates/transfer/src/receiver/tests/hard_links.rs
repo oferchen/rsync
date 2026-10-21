@@ -1046,14 +1046,14 @@ fn phase_done_read_drains_pending_follower_echoes() {
     use crate::generator::ItemFlags;
     use protocol::codec::{NdxCodec, create_ndx_codec};
 
-    // Sender echo stream: two non-transfer follower records (NDX + iflags +
-    // xname vstring) then the phase NDX_DONE.
+    // Sender echo stream: the two followers' non-transfer records (NDX +
+    // iflags + xname vstring) then the phase NDX_DONE.
     let mut wire: Vec<u8> = Vec::new();
     let mut wc = create_ndx_codec(32);
     let iflags = (ItemFlags::ITEM_LOCAL_CHANGE
         | ItemFlags::ITEM_XNAME_FOLLOWS
         | ItemFlags::ITEM_IS_NEW) as u16;
-    for ndx in [2i32, 3i32] {
+    for ndx in [1i32, 2i32] {
         wc.write_ndx(&mut wire, ndx).unwrap();
         wire.extend_from_slice(&iflags.to_le_bytes());
         let leader = b"a.txt";
