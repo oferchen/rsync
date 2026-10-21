@@ -108,9 +108,10 @@ fn push_del_stats(wire: &mut Vec<u8>, codec: &mut NdxCodecEnum, stats: &DeleteSt
 fn segment_between_file_echoes_is_consumed_and_never_surfaces() {
     let mut wire = Vec::new();
     let mut codec = create_ndx_codec(PROTOCOL);
-    push_file_echo(&mut wire, &mut codec, 3, 0);
+    // Wire 0 is the initial list's gap slot; the sub-list lands at 2..=3.
+    push_file_echo(&mut wire, &mut codec, 0, 0);
     push_segment(&mut wire, &mut codec, 0, &["d0/a.txt", "d0/b.txt"]);
-    push_file_echo(&mut wire, &mut codec, 4, 0);
+    push_file_echo(&mut wire, &mut codec, 3, 0);
 
     let mut ctx = inc_recurse_receiver(&["d0"]);
     let mut reader = Cursor::new(wire);
@@ -119,13 +120,13 @@ fn segment_between_file_echoes_is_consumed_and_never_surfaces() {
     let (first, _) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut ctx, false, false)
         .expect("first echo decodes")
         .expect("a per-file index, not NDX_DONE");
-    assert_eq!(first, 3);
+    assert_eq!(first, 0);
     assert_eq!(ctx.file_list().len(), 0, "no segment consumed yet");
 
     let (second, _) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut ctx, false, false)
         .expect("the interleaved segment is consumed, then the next echo decodes")
         .expect("a per-file index, not NDX_DONE");
-    assert_eq!(second, 4, "only file NDXs surface");
+    assert_eq!(second, 3, "only file NDXs surface");
     assert_eq!(
         ctx.file_list().len(),
         2,
@@ -145,7 +146,7 @@ fn flist_eof_sets_the_flag_and_continues() {
     let mut wire = Vec::new();
     let mut codec = create_ndx_codec(PROTOCOL);
     codec.write_ndx(&mut wire, NDX_FLIST_EOF).unwrap();
-    push_file_echo(&mut wire, &mut codec, 7, 0);
+    push_file_echo(&mut wire, &mut codec, 0, 0);
 
     let mut ctx = inc_recurse_receiver(&["d0"]);
     let mut reader = Cursor::new(wire);
@@ -154,7 +155,7 @@ fn flist_eof_sets_the_flag_and_continues() {
     let (ndx, _) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut ctx, false, false)
         .expect("the terminator is consumed, then the echo decodes")
         .expect("a per-file index, not NDX_DONE");
-    assert_eq!(ndx, 7);
+    assert_eq!(ndx, 0);
     assert!(ctx.flist_eof, "NDX_FLIST_EOF must set flist_eof");
 }
 
@@ -263,6 +264,10 @@ fn sender_drains_del_stats_and_receives_the_counters() {
 
         fn last_file_ndx(&self) -> i32 {
             9
+        }
+
+        fn first_file_ndx(&self) -> i32 {
+            -1
         }
 
         fn ndx_is_active(&self, _ndx: i32) -> bool {
@@ -392,6 +397,10 @@ fn marker_rejected_by_sender_with_upstream_text() {
 
         fn last_file_ndx(&self) -> i32 {
             5
+        }
+
+        fn first_file_ndx(&self) -> i32 {
+            -1
         }
 
         fn ndx_is_active(&self, _ndx: i32) -> bool {
@@ -671,8 +680,9 @@ fn proto29_keepalive_frame_then_done_yields_none() {
 }
 
 /// EXACT-EQUALITY CONTROL: upstream's predicate is `iflags == ITEM_IS_NEW`,
-/// not a bit test. The same NDX with any extra flag bit is a real frame and
-/// must surface.
+/// not a bit test. The same NDX with any extra flag bit is a real frame, so it
+/// reaches flist_for_ndx() and is refused as one past the list (rsync.c:394)
+/// instead of vanishing into the loop.
 #[test]
 fn proto29_keepalive_shape_with_extra_flag_bits_is_not_a_keepalive() {
     const PROTO29: u8 = 29;
@@ -689,18 +699,14 @@ fn proto29_keepalive_shape_with_extra_flag_bits_is_not_a_keepalive() {
     let mut reader = Cursor::new(wire);
     let mut read_codec = create_ndx_codec(PROTO29);
 
-    let (ndx, attrs) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
-        .expect("a non-keep-alive frame decodes")
-        .expect("a per-file index, not NDX_DONE");
-    assert_eq!(ndx, 5);
-    assert_eq!(
-        attrs.iflags,
-        SenderAttrs::ITEM_IS_NEW | SenderAttrs::ITEM_LOCAL_CHANGE
-    );
+    let err = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
+        .expect_err("a real frame one past the list");
+    assert_not_live(&err, 5, -1, 4);
 }
 
 /// PROTOCOL CONTROL: the branch is gated on `protocol_version < 30`. The
-/// identically shaped frame at protocol 30 is a real frame and must surface.
+/// identically shaped frame at protocol 30 is a real frame, refused by
+/// flist_for_ndx() rather than consumed as a keep-alive.
 #[test]
 fn proto30_frame_with_keepalive_shape_is_not_consumed() {
     const PROTO30: u8 = 30;
@@ -712,9 +718,93 @@ fn proto30_frame_with_keepalive_shape_is_not_consumed() {
     let mut reader = Cursor::new(wire);
     let mut read_codec = create_ndx_codec(PROTO30);
 
-    let (ndx, attrs) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
-        .expect("a protocol-30 frame decodes")
-        .expect("a per-file index, not NDX_DONE");
-    assert_eq!(ndx, 5);
-    assert_eq!(attrs.iflags, SenderAttrs::ITEM_IS_NEW);
+    let err = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
+        .expect_err("a real protocol-30 frame one past the list");
+    assert_not_live(&err, 5, -1, 4);
+}
+
+/// An INC_RECURSE receiver holding two segments: `d0`'s files at wire 1..=2
+/// and the sub-list `sub`'s file at wire 4 (gap slot 3).
+fn receiver_with_two_segments() -> ReceiverContext {
+    let mut ctx = inc_recurse_receiver(&["d0"]);
+    for name in ["a", "b"] {
+        ctx.file_list
+            .push(FileEntry::new_file(PathBuf::from(name), 1, 0o100644));
+    }
+    ctx.ndx_segments.push((2, 4));
+    ctx.file_list
+        .push(FileEntry::new_file(PathBuf::from("sub/c"), 1, 0o100644));
+    ctx
+}
+
+/// Encodes one per-file frame: `ndx` followed by empty iflags.
+fn item_frame(ndx: i32) -> Vec<u8> {
+    let mut wire = Vec::new();
+    let mut codec = create_ndx_codec(PROTOCOL);
+    codec.write_ndx(&mut wire, ndx).unwrap();
+    wire.extend_from_slice(&0u16.to_le_bytes());
+    wire
+}
+
+fn read_item(ctx: &mut ReceiverContext, ndx: i32) -> io::Result<Option<(i32, SenderAttrs)>> {
+    let mut reader = Cursor::new(item_frame(ndx));
+    let mut read_codec = create_ndx_codec(PROTOCOL);
+    read_ndx_and_attrs(&mut reader, &mut read_codec, ctx, false, false)
+}
+
+fn assert_not_live(err: &io::Error, ndx: i32, first: i32, last: i32) {
+    assert!(
+        err.to_string().starts_with(&format!(
+            "File-list index {ndx} not in {first} - {last} (read_ndx_and_attrs) "
+        )),
+        "unexpected message: {err}"
+    );
+    assert!(err.to_string().contains("[receiver="), "message: {err}");
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+        "must map to RERR_PROTOCOL (2)"
+    );
+}
+
+/// Every live index, both gap slots included, reads back; one past the newest
+/// list is upstream's flist_for_ndx() refusal (rsync.c:394, rsync.c:976-981).
+#[test]
+fn receiver_reads_every_live_index_and_refuses_one_past_the_newest_list() {
+    let mut ctx = receiver_with_two_segments();
+    for ndx in [0, 1, 2, 3, 4] {
+        let got = read_item(&mut ctx, ndx).expect("a live index");
+        assert_eq!(got.map(|(n, _)| n), Some(ndx));
+    }
+    let err = read_item(&mut ctx, 5).expect_err("past the newest list");
+    assert_not_live(&err, 5, 0, 4);
+}
+
+/// Once the receiver's NDX_DONE has freed the first list, its indices are
+/// gone (receiver.c:858-864 flist_free(first_flist)): a peer naming one gets
+/// the refusal instead of an entry whose storage was released. The next
+/// list's gap slot stays live because it belongs to that list.
+#[test]
+fn receiver_refuses_an_index_in_a_released_segment() {
+    let mut ctx = receiver_with_two_segments();
+    ctx.release_segment_locally(0);
+    assert_eq!(FlistMarkerSink::first_file_ndx(&ctx), 3);
+    for ndx in [0, 1, 2] {
+        let err = read_item(&mut ctx, ndx).expect_err("a freed list");
+        assert_not_live(&err, ndx, 3, 4);
+    }
+    assert!(read_item(&mut ctx, 3).is_ok(), "the live list's gap slot");
+    assert!(read_item(&mut ctx, 4).is_ok(), "the live list's entry");
+}
+
+/// The phase-boundary sink carries the same lower bound, so a released list
+/// stays refused on every read path.
+#[test]
+fn no_lazy_flist_sink_carries_the_released_window() {
+    let sink = NoLazyFlist::new(StreamRole::Receiver, 4).with_first_file_ndx(3);
+    assert_eq!(FlistMarkerSink::first_file_ndx(&sink), 3);
+    assert_eq!(
+        FlistMarkerSink::first_file_ndx(&NoLazyFlist::new(StreamRole::Receiver, 4)),
+        -1
+    );
 }
