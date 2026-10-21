@@ -33,8 +33,9 @@ pub(crate) fn handle_batch_read(
         return None;
     }
 
-    // upstream: main.c:1500-1509 - reject remote destinations with --read-batch
-    let has_remote_dest = config.transfer_args().iter().any(|arg| {
+    // upstream: main.c:1538-1543 - only the destination (`argv[argc-1]`) is
+    // checked; every earlier operand is dropped unread.
+    let has_remote_dest = config.transfer_args().last().is_some_and(|arg| {
         let s = arg.to_string_lossy();
         s.starts_with("rsync://") || s.contains("::") || remote::operand_is_remote(arg)
     });
@@ -365,21 +366,8 @@ fn replay_batch(
     // a too-new batch protocol with RERR_PROTOCOL (compat.c:609-613).
     let stream_flags = reader.read_header().map_err(map_batch_error)?;
 
-    // upstream: compat.c:641-642 - setup_protocol() calls check_batch_flags()
-    // under read_batch. Non-iconv mismatches are forced to the batch's value
-    // and mentioned at --info=misc level; an --iconv mismatch is fatal
-    // (RERR_SYNTAX, via the FlagMismatch arm of map_batch_error).
-    let notices = engine::batch::check_batch_flags(
-        stream_flags,
-        active_flags,
-        reader.config().protocol_version,
-    )
-    .map_err(map_batch_error)?;
-    if config.verbosity() > 0 {
-        for message in &notices {
-            println!("{message}");
-        }
-    }
+    let replay_flags =
+        reconcile_with_batch(stream_flags, active_flags, reader.config().protocol_version)?;
 
     let header = reader.header().cloned().ok_or_else(|| {
         ClientError::new(
@@ -392,7 +380,8 @@ fn replay_batch(
     let compat_flags = header
         .compat_flags
         .map(|bits| protocol::CompatibilityFlags::from_bits(bits as u32));
-    let server_config = build_replay_server_config(config, dest_root, &stream_flags, compat_flags)?;
+    let server_config =
+        build_replay_server_config(config, dest_root, &replay_flags, compat_flags)?;
 
     let mut ctx = crate::server::ReceiverContext::for_batch_replay(&header, server_config)
         .map_err(|e| {
@@ -436,6 +425,30 @@ fn replay_batch(
     }
 
     Ok(summary)
+}
+
+/// Reconciles the invocation's options with the batch header's stream flags,
+/// printing the reconcile notices, and returns the options the replay runs
+/// with.
+///
+/// upstream: compat.c:641-642 - setup_protocol() calls check_batch_flags()
+/// under read_batch. Visited mismatches are forced to the batch's value; an
+/// --iconv mismatch is fatal (RERR_SYNTAX, via the FlagMismatch arm of
+/// map_batch_error).
+fn reconcile_with_batch(
+    recorded: engine::batch::BatchFlags,
+    active: engine::batch::BatchFlags,
+    protocol_version: i32,
+) -> Result<engine::batch::BatchFlags, ClientError> {
+    let reconciled = engine::batch::check_batch_flags(recorded, active, protocol_version)
+        .map_err(map_batch_error)?;
+    // upstream: batch.c:143-147 - the notices are `INFO_GTE(MISC, 1)` output.
+    if logging::info_gte(logging::InfoFlag::Misc, 1) {
+        for message in &reconciled.notices {
+            println!("{message}");
+        }
+    }
+    Ok(reconciled.flags)
 }
 
 /// Maps a batch open/header/reconcile error onto upstream's exit codes.
@@ -483,10 +496,9 @@ fn map_batch_error(e: engine::batch::BatchError) -> ClientError {
 ///
 /// - no daemon connection is involved (upstream: main.c:1538 read_batch
 ///   forces `local_server = 1`), and
-/// - every data-stream-affecting option is forced to the batch's recorded
-///   stream flag, mirroring upstream `batch.c:126-135` where
-///   `check_batch_flags()` writes each recorded bit back onto the option
-///   global before `do_recv()` decodes the stream.
+/// - every data-stream-affecting option takes its reconciled value: the
+///   batch's bit where `check_batch_flags()` visits it, the invocation's
+///   otherwise (`batch.c:121-162`), before `do_recv()` decodes the stream.
 fn build_replay_server_config(
     config: &ClientConfig,
     dest_root: std::ffi::OsString,
@@ -526,8 +538,8 @@ fn build_replay_server_config(
     // output because `render_out_format_locally()` is false for them.
     server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
 
-    // upstream: batch.c:126-135 - the recorded stream flags win over the
-    // invocation's options; the stream was encoded under them.
+    // upstream: batch.c:121-162 - the reconciled options the stream decodes
+    // under.
     server_config.flags.recursive = stream_flags.recurse;
     server_config.flags.owner = stream_flags.preserve_uid;
     server_config.flags.group = stream_flags.preserve_gid;
@@ -1254,6 +1266,23 @@ mod tests {
                 itemize.starts_with(">f"),
                 "{name} must itemize as a received regular file, got {itemize:?}"
             );
+        }
+    }
+
+    /// upstream: batch.c:125-128 - a protocol-29 header has no `--inplace`
+    /// bit for check_batch_flags() to visit, so the replay keeps the
+    /// invocation's `--inplace`; at protocol 30+ the header's clear bit wins.
+    /// The receiver config must carry the reconciled value, not the header's.
+    #[test]
+    fn replay_keeps_options_the_batch_protocol_does_not_record() {
+        let config = ClientConfig::builder().inplace(true).build();
+        let active = config_batch_flags(&config);
+        let recorded = engine::batch::BatchFlags::default();
+        for (protocol, inplace) in [(29, true), (30, false)] {
+            let flags = reconcile_with_batch(recorded, active, protocol).unwrap();
+            let server =
+                build_replay_server_config(&config, "dest".into(), &flags, None).unwrap();
+            assert_eq!(server.write.inplace, inplace, "protocol {protocol}");
         }
     }
 

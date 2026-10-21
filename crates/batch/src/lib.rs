@@ -214,7 +214,7 @@ pub use format::BatchFlags;
 ///
 /// Emits upstream's `--info=misc` reconcile notices and treats an `--iconv`
 /// mismatch as fatal, mirroring `batch.c:check_batch_flags()`.
-pub use format::check_batch_flags;
+pub use format::{ReconciledFlags, check_batch_flags};
 
 /// Binary header structure at the start of every batch file.
 ///

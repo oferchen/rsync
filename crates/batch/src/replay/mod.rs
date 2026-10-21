@@ -124,7 +124,9 @@ pub fn replay(
         flags,
         batch_cfg.active_flags,
         reader.config().protocol_version,
-    )? {
+    )?
+    .notices
+    {
         if verbosity >= 1 {
             println!("{message}");
         }
