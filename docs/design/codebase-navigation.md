@@ -104,8 +104,8 @@ Full rationale and trade-offs:
 ### 2.2 Strategy pattern for checksums and compression
 
 **What.** `StrongDigest` trait in
-`crates/checksums/src/strong/mod.rs`, `ChecksumStrategy` trait in
-`crates/checksums/src/strong/strategy/trait_def.rs`, and
+`crates/checksums/src/strong/mod.rs`, the runtime-selected
+`ChecksumVerifier` enum in `crates/transfer/src/delta_apply/checksum.rs`, and
 `CompressionStrategy` / `CompressionNegotiator` traits in
 `crates/compress/src/strategy/`. Concrete implementations
 (Adler32, MD4, MD5, XXH3, XXH128, SHA-1/256/512; zlib, zlibx, zstd, lz4)
@@ -178,7 +178,7 @@ Coverage matrix: [`docs/filter-coverage-matrix.md`](../filter-coverage-matrix.md
 ### 2.6 Dependency inversion via traits
 
 **What.** High-level modules depend on abstractions, not concrete types.
-The transfer layer asks for `dyn ChecksumStrategy` and `dyn
+The transfer layer asks for a negotiated `ChecksumVerifier` and `dyn
 CompressionStrategy`, not `MD5` or `Zlib`. The local-copy executor asks
 for `dyn PlatformCopy`, not `std::fs::copy`. Tests inject
 `NoCowPlatformCopy` or `NoZeroCopyPlatformCopy` to exercise specific

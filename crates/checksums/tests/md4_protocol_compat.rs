@@ -13,16 +13,11 @@
 //!
 //! # Test Coverage
 //!
-//! 1. Protocol version selection (< 30 uses MD4)
-//! 2. MD4 RFC 1320 compliance
-//! 3. Integration with ChecksumStrategy pattern
-//! 4. Streaming and one-shot consistency
-//! 5. Known test vectors from upstream rsync
+//! 1. MD4 RFC 1320 compliance
+//! 2. Streaming and one-shot consistency
+//! 3. Known test vectors from upstream rsync
 
-use checksums::{
-    ChecksumAlgorithmKind, ChecksumStrategySelector,
-    strong::{Md4, StrongDigest},
-};
+use checksums::strong::{Md4, StrongDigest};
 
 /// Convert bytes to hex string for assertions
 fn to_hex(bytes: &[u8]) -> String {
@@ -34,63 +29,7 @@ fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
-#[test]
-fn protocol_27_selects_md4() {
-    let strategy = ChecksumStrategySelector::for_protocol_version(27, 0);
-    assert_eq!(
-        strategy.algorithm_kind(),
-        ChecksumAlgorithmKind::Md4,
-        "Protocol 27 should use MD4"
-    );
-    assert_eq!(strategy.digest_len(), 16, "MD4 produces 16-byte digest");
-}
-
-#[test]
-fn protocol_28_selects_md4() {
-    let strategy = ChecksumStrategySelector::for_protocol_version(28, 0);
-    assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md4);
-}
-
-#[test]
-fn protocol_29_selects_md4() {
-    let strategy = ChecksumStrategySelector::for_protocol_version(29, 0);
-    assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md4);
-}
-
-#[test]
-fn protocol_30_selects_md5_not_md4() {
-    let strategy = ChecksumStrategySelector::for_protocol_version(30, 0);
-    assert_eq!(
-        strategy.algorithm_kind(),
-        ChecksumAlgorithmKind::Md5,
-        "Protocol 30 and above should use MD5, not MD4"
-    );
-}
-
-#[test]
-fn explicit_md4_selection() {
-    let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
-    assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md4);
-    assert_eq!(strategy.digest_len(), 16);
-}
-
 // RFC 1320 vectors pinned to guarantee upstream rsync compatibility.
-
-#[test]
-fn rfc1320_empty_string() {
-    // MD4("") = 31d6cfe0d16ae931b73c59d7e0c089c0
-    let digest = Md4::digest(b"");
-    assert_eq!(
-        to_hex(&digest),
-        "31d6cfe0d16ae931b73c59d7e0c089c0",
-        "RFC 1320: MD4 of empty string"
-    );
-
-    // The strategy pattern must produce the same bytes as direct `Md4::digest`.
-    let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
-    let strategy_digest = strategy.compute(b"");
-    assert_eq!(strategy_digest.as_bytes(), &digest);
-}
 
 #[test]
 fn rfc1320_single_char_a() {
@@ -161,56 +100,6 @@ fn rfc1320_numeric_repeated() {
 }
 
 #[test]
-fn strategy_produces_correct_digest_length() {
-    let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
-    let data = b"test data for digest length verification";
-    let digest = strategy.compute(data);
-
-    assert_eq!(digest.len(), 16, "MD4 digest should be 16 bytes");
-    assert_eq!(
-        digest.len(),
-        strategy.digest_len(),
-        "Strategy digest_len() should match actual digest length"
-    );
-}
-
-#[test]
-fn strategy_compute_vs_compute_into() {
-    let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
-    let data = b"compute vs compute_into test";
-
-    let digest = strategy.compute(data);
-
-    let mut buffer = [0u8; 16];
-    strategy.compute_into(data, &mut buffer);
-
-    assert_eq!(digest.as_bytes(), &buffer[..]);
-}
-
-#[test]
-fn strategy_deterministic() {
-    let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
-    let data = b"determinism test";
-
-    let d1 = strategy.compute(data);
-    let d2 = strategy.compute(data);
-    let d3 = strategy.compute(data);
-
-    assert_eq!(d1, d2);
-    assert_eq!(d2, d3);
-}
-
-#[test]
-fn strategy_different_inputs_different_outputs() {
-    let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
-
-    let d1 = strategy.compute(b"input1");
-    let d2 = strategy.compute(b"input2");
-
-    assert_ne!(d1, d2, "Different inputs should produce different digests");
-}
-
-#[test]
 fn streaming_matches_oneshot_empty() {
     let oneshot = Md4::digest(b"");
 
@@ -278,97 +167,7 @@ fn streaming_various_chunk_sizes() {
     }
 }
 
-#[test]
-fn protocol_version_boundary_at_30() {
-    let v29 = ChecksumStrategySelector::for_protocol_version(29, 0);
-    let v30 = ChecksumStrategySelector::for_protocol_version(30, 0);
-
-    assert_eq!(v29.algorithm_kind(), ChecksumAlgorithmKind::Md4);
-    assert_eq!(v30.algorithm_kind(), ChecksumAlgorithmKind::Md5);
-
-    let test_data = b"boundary test";
-    let d29 = v29.compute(test_data);
-    let d30 = v30.compute(test_data);
-
-    assert_eq!(d29.len(), 16);
-    assert_eq!(d30.len(), 16);
-    assert_ne!(d29, d30, "MD4 and MD5 should produce different digests");
-}
-
-#[test]
-fn all_protocols_below_30_use_md4() {
-    for version in 20..30 {
-        let strategy = ChecksumStrategySelector::for_protocol_version(version, 0);
-        assert_eq!(
-            strategy.algorithm_kind(),
-            ChecksumAlgorithmKind::Md4,
-            "Protocol {version} should use MD4"
-        );
-    }
-}
-
-#[test]
-fn all_protocols_30_and_above_use_md5() {
-    for version in 30..35 {
-        let strategy = ChecksumStrategySelector::for_protocol_version(version, 0);
-        assert_eq!(
-            strategy.algorithm_kind(),
-            ChecksumAlgorithmKind::Md5,
-            "Protocol {version} should use MD5"
-        );
-    }
-}
-
 // Block-checksum scenarios below mirror how rsync uses MD4 in protocol < 30.
-
-#[test]
-fn simulate_block_checksum_small_file() {
-    // Three 700-byte blocks from a 2100-byte file.
-    let file_data: Vec<u8> = (0..2100).map(|i| (i % 256) as u8).collect();
-    let block_size = 700;
-
-    let strategy = ChecksumStrategySelector::for_protocol_version(29, 0);
-
-    let mut block_checksums = Vec::new();
-    for block in file_data.chunks(block_size) {
-        let digest = strategy.compute(block);
-        assert_eq!(digest.len(), 16, "Each block checksum should be 16 bytes");
-        block_checksums.push(digest);
-    }
-
-    assert_eq!(block_checksums.len(), 3);
-
-    assert_ne!(block_checksums[0], block_checksums[1]);
-    assert_ne!(block_checksums[1], block_checksums[2]);
-    assert_ne!(block_checksums[0], block_checksums[2]);
-}
-
-#[test]
-fn simulate_block_checksum_large_file() {
-    let file_data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
-    let block_size = 4096;
-
-    let strategy = ChecksumStrategySelector::for_protocol_version(29, 0);
-
-    let block_count = file_data.len().div_ceil(block_size);
-    let mut block_checksums = Vec::with_capacity(block_count);
-
-    for block in file_data.chunks(block_size) {
-        let digest = strategy.compute(block);
-        assert_eq!(digest.len(), 16);
-        block_checksums.push(digest);
-    }
-
-    assert_eq!(block_checksums.len(), block_count);
-
-    for (i, block) in file_data.chunks(block_size).enumerate() {
-        let recomputed = strategy.compute(block);
-        assert_eq!(
-            recomputed, block_checksums[i],
-            "Block {i} checksum should be deterministic"
-        );
-    }
-}
 
 #[test]
 fn simulate_incremental_block_generation() {
@@ -477,47 +276,4 @@ fn md4_digest_len_constant_matches_trait() {
     assert_eq!(Md4::DIGEST_LEN, 16);
     let digest = Md4::digest(b"test");
     assert_eq!(digest.as_ref().len(), Md4::DIGEST_LEN);
-}
-
-#[test]
-fn protocol_compatibility_summary() {
-    // This test serves as documentation for the protocol behavior
-
-    // Protocol < 30: MD4
-    for protocol in [27, 28, 29] {
-        let strategy = ChecksumStrategySelector::for_protocol_version(protocol, 0);
-        assert_eq!(
-            strategy.algorithm_kind(),
-            ChecksumAlgorithmKind::Md4,
-            "Protocol {protocol} uses MD4"
-        );
-        assert_eq!(strategy.digest_len(), 16, "MD4 produces 16-byte digest");
-    }
-
-    // Protocol >= 30: MD5
-    for protocol in [30, 31, 32] {
-        let strategy = ChecksumStrategySelector::for_protocol_version(protocol, 0);
-        assert_eq!(
-            strategy.algorithm_kind(),
-            ChecksumAlgorithmKind::Md5,
-            "Protocol {protocol} uses MD5"
-        );
-        assert_eq!(strategy.digest_len(), 16, "MD5 produces 16-byte digest");
-    }
-
-    // Explicit algorithm selection works regardless of protocol
-    let md4 = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
-    assert_eq!(md4.algorithm_kind(), ChecksumAlgorithmKind::Md4);
-
-    let md5 = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md5, 0);
-    assert_eq!(md5.algorithm_kind(), ChecksumAlgorithmKind::Md5);
-
-    // Both work correctly
-    let test_data = b"protocol compatibility test";
-    let md4_digest = md4.compute(test_data);
-    let md5_digest = md5.compute(test_data);
-
-    assert_eq!(md4_digest.len(), 16);
-    assert_eq!(md5_digest.len(), 16);
-    assert_ne!(md4_digest, md5_digest, "MD4 and MD5 should differ");
 }
