@@ -90,10 +90,6 @@ name = "checksums_benchmark"
 harness = false
 
 [[bench]]
-name = "parallel_benchmark"
-harness = false
-
-[[bench]]
 name = "pipelined_benchmark"
 harness = false
 

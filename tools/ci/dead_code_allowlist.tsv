@@ -12,8 +12,6 @@
 # ledger task are marked "unreviewed baseline row" and expire together.
 standard_id	crates/apple-fs/src/apple_double.rs	2026-11-07	unreviewed baseline row
 read_all_delta_ops	crates/batch/src/reader/delta.rs	2026-11-07	unreviewed baseline row
-compute_digests_auto	crates/checksums/src/parallel/blocks.rs	2026-11-07	unreviewed baseline row
-compute_block_signatures_auto	crates/checksums/src/parallel/blocks.rs	2026-11-07	unreviewed baseline row
 with_dir_merge_options	crates/core/src/client/config/filters.rs	2026-11-07	unreviewed baseline row
 is_enabled_by_env	crates/core/src/client/remote/async_ssh_transport.rs	2026-11-07	unreviewed baseline row
 registered_waker_count	crates/core/src/signal/io_wake.rs	2026-11-07	unreviewed baseline row

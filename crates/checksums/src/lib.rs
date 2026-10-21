@@ -25,8 +25,7 @@
 //! # Modules
 //!
 //! - [`strong`] - Strong checksum algorithms (MD4, MD5, SHA-1, SHA-256, SHA-512, XXH64, XXH3)
-//! - [`strong::strategy`] - Strategy pattern for runtime algorithm selection
-//! - [`parallel`] - Parallel checksum computation using rayon (always compiled)
+//! - [`parallel`] - The parallel whole-file checksum service behind `--checksum`
 //!
 //! # Checksum Algorithms
 //!
@@ -197,21 +196,9 @@
 //!
 //! ### Parallel Computation (always compiled)
 //!
-//! The [`parallel`] module provides concurrent checksum computation using
-//! [rayon](https://crates.io/crates/rayon). Both parallel and sequential code
-//! paths are always compiled; use runtime selection based on workload size.
-//!
-//! ```rust
-//! use checksums::parallel::{compute_block_signatures_parallel, BlockSignature};
-//! use checksums::strong::Sha256;
-//!
-//! let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
-//! let signatures = compute_block_signatures_parallel::<Sha256, _>(&blocks);
-//!
-//! for sig in &signatures {
-//!     println!("Rolling: {:08x}", sig.rolling);
-//! }
-//! ```
+//! The [`parallel`] module hashes many files on the
+//! [rayon](https://crates.io/crates/rayon) pool and returns digests in input
+//! order; see its documentation for the whole-file and block-vector forms.
 //!
 //! # The ChecksumFactory Pattern (StrongDigest Trait)
 //!
@@ -273,29 +260,6 @@
 //! assert_eq!(streaming_result, oneshot_result);
 //! ```
 //!
-//! # Strategy Pattern for Runtime Algorithm Selection
-//!
-//! For runtime algorithm selection (e.g., based on protocol version or
-//! negotiated capabilities), use the [`strong::strategy`] module:
-//!
-//! ```rust
-//! use checksums::{ChecksumStrategySelector, ChecksumAlgorithmKind};
-//!
-//! // Select algorithm based on protocol version
-//! let strategy = ChecksumStrategySelector::for_protocol_version(30, 0x12345678);
-//! let digest = strategy.compute(b"data");
-//!
-//! // Or select explicitly by algorithm
-//! let xxh3 = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh3, 42);
-//! let fast_hash = xxh3.compute(b"fast hashing");
-//! ```
-//!
-//! The Strategy pattern provides:
-//! - Runtime algorithm selection via trait objects
-//! - Protocol version-aware defaults (MD4 < v30, MD5 >= v30)
-//! - Unified digest representation avoiding heap allocation
-//! - Easy extension with new algorithms
-//!
 //! # Performance Optimization
 //!
 //! ## SIMD Acceleration
@@ -322,8 +286,8 @@
 //! 1. **Prefer one-shot methods** when hashing complete buffers - they enable
 //!    better optimization and SIMD utilization.
 //!
-//! 2. **Use parallel computation** for multiple blocks - the [`parallel`] module
-//!    is always available and uses rayon for concurrent processing.
+//! 2. **Hash many files through [`parallel`]** - it spreads files across the
+//!    rayon pool and keeps results in input order.
 //!
 //! 3. **Choose appropriate algorithms**:
 //!    - XXH3 for maximum speed (non-cryptographic)
@@ -352,7 +316,7 @@
 //! # See Also
 //!
 //! - [`strong`] module for detailed algorithm documentation
-//! - [`parallel`] module for concurrent computation (always compiled)
+//! - [`parallel`] module for the parallel whole-file checksum service
 //! - [`RollingChecksum`] for sliding window checksum details
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(unsafe_code)]
@@ -391,7 +355,7 @@ pub mod md5_backend {
     pub use crate::simd_batch::md5_dispatcher::Dispatcher;
 }
 
-/// Parallel checksum computation using rayon with automatic sequential fallback.
+/// The parallel whole-file checksum service behind `--checksum`.
 pub mod parallel;
 
 /// Pipelined checksum computation with double-buffering.
@@ -448,14 +412,3 @@ pub use cpu_features::{SimdLevel, set_simd_override, simd_override};
 /// can write `checksums::run_simd_self_test()` without depending on the
 /// submodule path.
 pub use simd_self_test::{SimdAlgorithm, SimdParityError, run_simd_self_test};
-
-/// Re-exports from the [`strong::strategy`] module for runtime checksum algorithm selection.
-///
-/// These types implement the Strategy pattern, allowing callers to select
-/// checksum algorithms at runtime based on protocol version or explicit choice.
-/// See the [`strong::strategy`] module documentation for usage details.
-pub use strong::strategy::{
-    ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
-    MAX_DIGEST_LEN, Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig, Sha1Strategy,
-    Sha256Strategy, Sha512Strategy, Xxh3_128Strategy, Xxh3Strategy, Xxh64Strategy,
-};

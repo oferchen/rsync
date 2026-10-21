@@ -17,15 +17,13 @@ based on negotiated capabilities or configured preferences.
 
 ### Sites
 
-- `crates/checksums/src/strong/strategy/trait_def.rs:24` defines
-  `ChecksumStrategy` (`Send + Sync`) with `compute`, `compute_into`,
-  `digest_len`, `algorithm_kind`. Concrete strategies live in
-  `crates/checksums/src/strong/strategy/impls.rs:13` (`Md4Strategy`,
-  `Md5Strategy`, plus SHA-1/256/512, XXH64, XXH3, XXH3-128).
-- `crates/checksums/src/strong/strategy/selector.rs:41`
-  (`ChecksumStrategySelector::for_protocol_version`) returns
-  `Box<dyn ChecksumStrategy>` chosen by negotiated protocol version - MD4 for
-  pre-30, MD5 for >= 30 - and `:87` lets callers pick a kind directly.
+- `crates/transfer/src/delta_apply/checksum.rs` defines `ChecksumVerifier`,
+  an enum over MD4, MD5, SHA-1, XXH64, XXH3 and XXH3-128 built from the
+  negotiated algorithm and seed (`ChecksumVerifier::new`) - static enum
+  dispatch, no allocation.
+- `crates/checksums/src/parallel/files.rs` defines `FileHasher`, the streaming
+  digest the parallel `--checksum` service (`hash_files`) is parameterised by;
+  every `StrongDigest` implements it.
 - `crates/compress/src/strategy/traits.rs:26` defines `CompressionStrategy`
   with `compress`, `decompress`, `algorithm_kind`. The factory at
   `crates/compress/src/strategy/selector.rs:42`
@@ -188,9 +186,9 @@ injected at construction time, which makes hot paths swappable and testable.
   trait with associated `Seed`, `Digest`, and `DIGEST_LEN`. Generators and
   receivers parameterise over `T: StrongDigest` rather than referencing
   concrete hashers.
-- `crates/checksums/src/strong/strategy/trait_def.rs:24` (`ChecksumStrategy`)
-  is the trait-object form of the same idea - used where the algorithm is
-  only known at runtime, e.g. once a daemon negotiation has completed.
+- `ChecksumVerifier` (`crates/transfer/src/delta_apply/checksum.rs`) is the
+  runtime-selected form of the same idea - used once negotiation has fixed
+  the algorithm.
 - `crates/compress/src/strategy/traits.rs:26` (`CompressionStrategy`) plays
   the same role for codecs. The transfer crate consumes a
   `Box<dyn CompressionStrategy>` chosen by
@@ -209,10 +207,9 @@ selects via the negotiator.
 ### Trade-offs
 
 - Static dispatch (`T: StrongDigest`) is cheaper but forces monomorphisation
-  of every consumer. Dynamic dispatch (`Box<dyn ChecksumStrategy>`) is
-  marginally slower but keeps codegen size bounded. The codebase uses both,
-  picking the variant that matches the call site's lifetime and selection
-  semantics.
+  of every consumer. The runtime-selected `ChecksumVerifier` enum keeps
+  codegen bounded without trait objects. The codebase uses both, picking the
+  variant that matches the call site's selection semantics.
 - The traits intentionally do not expose algorithm-specific tunables. This
   keeps the abstraction clean but means novel knobs (e.g. zstd dictionary
   IDs) require new public surface in the implementing crate.

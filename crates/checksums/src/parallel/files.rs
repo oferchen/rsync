@@ -1,505 +1,358 @@
-//! Parallel file hashing and signature computation.
-//!
-//! Provides concurrent file I/O with digest computation using rayon.
-//! On Unix, files above the mmap threshold are zero-copy hashed from a
-//! `MmapReader` mapping; on Windows the equivalent path streams through
-//! `WindowsChunkedReader` so peak RSS stays bounded by the configured
-//! chunk size (default 4 MiB) rather than the file size, mirroring the
-//! WIN-S.LAND.1.b bounded-RSS contract.
+//! Whole-file and per-block digests of many files, computed on the rayon pool.
 
-#[cfg(unix)]
-use fast_io::mmap_reader::{MMAP_THRESHOLD, MmapReader};
-#[cfg(windows)]
-use fast_io::windows_chunked_reader::WindowsChunkedReader;
-use rayon::prelude::*;
 use std::fs::File;
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::io::{self, Read, Seek, SeekFrom};
+use std::num::NonZeroU64;
+use std::path::Path;
 
-use crate::rolling::RollingChecksum;
+use rayon::prelude::*;
+
 use crate::strong::StrongDigest;
 
-use super::types::{BlockSignature, FileHashConfig, FileHashResult, FileSignatureResult};
+// upstream: rsync.h MAX_MAP_SIZE - the read window file_checksum() hashes through.
+const READ_CHUNK: usize = 256 * 1024;
 
-/// Hashes a single file using the specified digest algorithm.
+/// Largest digest a [`FileHasher`] may produce, in bytes.
 ///
-/// On Unix, files above the mmap threshold are memory-mapped first to
-/// avoid per-chunk read syscalls, with buffered I/O as fallback. On
-/// Windows, the same size band streams through `WindowsChunkedReader`
-/// so peak RSS stays bounded by the chunk size, not the file size.
-fn hash_file_internal<D>(path: &Path, config: &FileHashConfig) -> FileHashResult<D::Digest>
-where
-    D: StrongDigest,
-    D::Seed: Default,
-{
-    let result = (|| -> io::Result<(D::Digest, u64)> {
-        let mut file = File::open(path)?;
-        let metadata = file.metadata()?;
-        let size = metadata.len();
+/// Every whole-file checksum rsync negotiates fits: SHA1 is the longest at 20.
+pub const MAX_FILE_DIGEST_LEN: usize = 32;
 
-        if size <= config.max_memory_file_size {
-            let mut data = vec![0u8; size as usize];
-            file.read_exact(&mut data)?;
-            return Ok((D::digest(&data), size));
-        }
+/// Streaming whole-file digest: the algorithm a checksum site plugs into the
+/// service.
+///
+/// Implementations carry their own algorithm choice and any seed prefix, so the
+/// service never knows which algorithm it runs.
+pub trait FileHasher: Send {
+    /// Feeds the next run of file bytes.
+    fn update(&mut self, data: &[u8]);
 
-        // upstream: checksum.c:432 file_checksum() uses map_file() (mmap) for
-        // zero-copy hashing. On Windows the legacy mmap_reader_stub slurps the
-        // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
-        // below so peak RSS stays bounded by the chunk size, not the file size.
-        #[cfg(unix)]
-        if size >= MMAP_THRESHOLD
-            && let Ok(mmap) = MmapReader::open(path)
-        {
-            let _ = mmap.advise_sequential();
-            return Ok((D::digest(mmap.as_slice()), size));
-        }
+    /// Writes the digest into `out` and returns its length.
+    ///
+    /// The length must not exceed [`MAX_FILE_DIGEST_LEN`].
+    fn finalize_into(self, out: &mut [u8; MAX_FILE_DIGEST_LEN]) -> usize;
+}
 
-        // upstream: checksum.c:file_checksum() reads a known length (CHUNK_SIZE
-        // loop plus remainder), so a pre-sized read loop avoids a trailing EOF probe.
-        // Windows shadows `file` with the bounded-RSS WindowsChunkedReader; the
-        // Unix streaming fallback continues to use the std::fs::File opened
-        // above (mmap unavailable on NFS/FUSE/procfs).
-        #[cfg(windows)]
-        let mut file = WindowsChunkedReader::open(path)?;
-        let mut hasher = D::new();
-        let mut buffer = vec![0u8; config.buffer_size];
-        let mut remaining = size;
-        while remaining > 0 {
-            let to_read = (remaining as usize).min(buffer.len());
-            file.read_exact(&mut buffer[..to_read])?;
-            hasher.update(&buffer[..to_read]);
-            remaining -= to_read as u64;
-        }
+/// Every unseeded strong digest is a file hasher, as `file_checksum()` uses it.
+impl<D: StrongDigest + Send> FileHasher for D {
+    fn update(&mut self, data: &[u8]) {
+        StrongDigest::update(self, data);
+    }
 
-        Ok((hasher.finalize(), size))
-    })();
-
-    match result {
-        Ok((digest, size)) => FileHashResult {
-            path: path.to_path_buf(),
-            digest: Ok(digest),
-            size,
-        },
-        Err(e) => FileHashResult {
-            path: path.to_path_buf(),
-            digest: Err(e),
-            size: 0,
-        },
+    fn finalize_into(self, out: &mut [u8; MAX_FILE_DIGEST_LEN]) -> usize {
+        let digest = self.finalize();
+        let bytes = digest.as_ref();
+        out[..bytes.len()].copy_from_slice(bytes);
+        bytes.len()
     }
 }
 
-/// Hashes multiple files in parallel using the specified digest algorithm.
+/// One file to hash: its path and the byte count to read from it.
 ///
-/// Each file is read and hashed independently using rayon's parallel iterator.
-/// Results are returned in the same order as the input paths.
-///
-/// # Type Parameters
-///
-/// - `D`: The digest algorithm implementing [`StrongDigest`]
-///
-/// # Arguments
-///
-/// * `paths` - Slice of file paths to hash
-/// * `buffer_size` - Size of the read buffer for each file (e.g., 64 * 1024)
-///
-/// # Returns
-///
-/// A vector of [`FileHashResult`] containing either the computed digest or an
-/// error for each file. Results are in the same order as input paths.
-///
-/// # Example
-///
-/// ```
-/// use checksums::parallel::hash_files_parallel;
-/// use checksums::strong::Sha256;
-///
-/// let dir = test_support::create_tempdir();
-/// let file1 = dir.path().join("file1.txt");
-/// let file2 = dir.path().join("file2.txt");
-/// std::fs::write(&file1, b"hello").unwrap();
-/// std::fs::write(&file2, b"world").unwrap();
-///
-/// let files = vec![file1, file2];
-/// let results = hash_files_parallel::<Sha256>(&files, 64 * 1024);
-///
-/// assert_eq!(results.len(), 2);
-/// assert!(results[0].digest.is_ok());
-/// assert!(results[1].digest.is_ok());
-/// ```
-pub fn hash_files_parallel<D>(
-    paths: &[PathBuf],
-    buffer_size: usize,
-) -> Vec<FileHashResult<D::Digest>>
-where
-    D: StrongDigest + Send,
-    D::Seed: Default + Clone + Send + Sync,
-    D::Digest: Send,
-{
-    let config = FileHashConfig::default().with_buffer_size(buffer_size);
-    hash_files_parallel_with_config::<D>(paths, &config)
+/// The length is the size recorded when the file was listed, exactly as
+/// upstream hashes `st_size` bytes (`checksum.c:file_checksum()`).
+#[derive(Clone, Copy, Debug)]
+pub struct FileJob<'a> {
+    /// File to open and read.
+    pub path: &'a Path,
+    /// Number of bytes to hash.
+    pub len: u64,
 }
 
-/// Hashes multiple files in parallel with custom configuration.
+/// The exact digest of a whole file, as the negotiated algorithm defines it.
 ///
-/// Similar to [`hash_files_parallel`] but allows specifying a [`FileHashConfig`]
-/// for fine-grained control over buffering and memory usage.
+/// This is the only value the service produces that may leave the process:
+/// it is what a sender puts in the file list and what a receiver compares
+/// against it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FileDigest {
+    bytes: [u8; MAX_FILE_DIGEST_LEN],
+    len: u8,
+}
+
+impl FileDigest {
+    /// Returns the digest bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+}
+
+/// Per-block digests of one file, for comparing two local files only.
 ///
-/// # Example
+/// The blocks' digests are not the whole-file digest and cannot be combined
+/// into it, so this type exposes no bytes: it can only be compared with another
+/// [`BlockDigests`] computed with the same block length and algorithm. That
+/// keeps it off the wire and out of any output by construction.
+#[derive(Debug, Eq, PartialEq)]
+pub struct BlockDigests(Vec<FileDigest>);
+
+/// Hashes each job's whole file, in parallel across files.
 ///
-/// ```
-/// use checksums::parallel::{hash_files_parallel_with_config, FileHashConfig};
-/// use checksums::strong::Md5;
-///
-/// let dir = test_support::create_tempdir();
-/// let path = dir.path().join("data.bin");
-/// std::fs::write(&path, b"test data").unwrap();
-///
-/// let config = FileHashConfig::new()
-///     .with_buffer_size(128 * 1024)
-///     .with_max_memory_file_size(4 * 1024 * 1024);
-///
-/// let files = vec![path];
-/// let results = hash_files_parallel_with_config::<Md5>(&files, &config);
-/// assert_eq!(results.len(), 1);
-/// assert!(results[0].digest.is_ok());
-/// ```
-pub fn hash_files_parallel_with_config<D>(
-    paths: &[PathBuf],
-    config: &FileHashConfig,
-) -> Vec<FileHashResult<D::Digest>>
+/// Results are in `jobs` order so callers consume them in file-list order.
+/// A job fails when its file cannot be opened or holds fewer than `len` bytes.
+pub fn hash_files<H, F>(jobs: &[FileJob<'_>], new_hasher: F) -> Vec<io::Result<FileDigest>>
 where
-    D: StrongDigest + Send,
-    D::Seed: Default + Clone + Send + Sync,
-    D::Digest: Send,
+    H: FileHasher,
+    F: Fn() -> H + Sync,
 {
-    // Ordering: results must correspond 1:1 with input paths for whole-file checksum comparison.
-    // Preserved by par_iter().map().collect() (rayon preserves index order).
-    // Violation mismatches file hashes with paths, causing incorrect transfer decisions.
-    paths
-        .par_iter()
-        .map(|path| hash_file_internal::<D>(path, config))
+    let hash =
+        |buf: &mut Vec<u8>, job: &FileJob<'_>| hash_range(job.path, 0, job.len, new_hasher(), buf);
+    if jobs.len() < 2 {
+        let mut buf = read_buffer();
+        return jobs.iter().map(|job| hash(&mut buf, job)).collect();
+    }
+    // Ordering: callers zip results with jobs by position.
+    // Preserved by par_iter().map_init().collect() (rayon preserves index order).
+    jobs.par_iter().map_init(read_buffer, hash).collect()
+}
+
+/// Hashes each job as a vector of `block_len` block digests, in parallel across
+/// files and, for files of at least two blocks' length, across the blocks of
+/// one file. A shorter file is one block: its whole-file digest.
+///
+/// Only for deciding whether two local files are identical: both sides of a
+/// comparison must use the same `block_len` and hasher, and files of equal
+/// length then split identically. Results are in `jobs` order.
+pub fn hash_files_blocked<H, F>(
+    jobs: &[FileJob<'_>],
+    block_len: NonZeroU64,
+    new_hasher: F,
+) -> Vec<io::Result<BlockDigests>>
+where
+    H: FileHasher,
+    F: Fn() -> H + Sync,
+{
+    jobs.par_iter()
+        .map(|job| hash_blocks(job, block_len.get(), &new_hasher))
         .collect()
 }
 
-/// Hashes multiple files in parallel with a seed value.
-///
-/// For algorithms that support seeded hashing (e.g., XXH64), this allows
-/// specifying a seed value used for all files.
-///
-/// # Example
-///
-/// ```
-/// use checksums::parallel::hash_files_with_seed_parallel;
-/// use checksums::strong::Xxh64;
-///
-/// let dir = test_support::create_tempdir();
-/// let path = dir.path().join("data.bin");
-/// std::fs::write(&path, b"seeded hash input").unwrap();
-///
-/// let files = vec![path];
-/// let seed = 0x12345678u64;
-/// let results = hash_files_with_seed_parallel::<Xxh64>(&files, seed, 64 * 1024);
-/// assert_eq!(results.len(), 1);
-/// assert!(results[0].digest.is_ok());
-/// ```
-pub fn hash_files_with_seed_parallel<D>(
-    paths: &[PathBuf],
-    seed: D::Seed,
-    buffer_size: usize,
-) -> Vec<FileHashResult<D::Digest>>
+fn hash_blocks<H, F>(job: &FileJob<'_>, block_len: u64, new_hasher: &F) -> io::Result<BlockDigests>
 where
-    D: StrongDigest + Send,
-    D::Seed: Clone + Send + Sync,
-    D::Digest: Send,
+    H: FileHasher,
+    F: Fn() -> H + Sync,
 {
-    let config = FileHashConfig::default().with_buffer_size(buffer_size);
-
-    paths
-        .par_iter()
-        .map(|path| hash_file_with_seed_internal::<D>(path, seed.clone(), &config))
-        .collect()
+    if job.len < block_len.saturating_mul(2) {
+        let digest = hash_range(job.path, 0, job.len, new_hasher(), &mut read_buffer())?;
+        return Ok(BlockDigests(vec![digest]));
+    }
+    (0..job.len.div_ceil(block_len))
+        .into_par_iter()
+        .map_init(read_buffer, |buf, index| {
+            let start = index * block_len;
+            let len = block_len.min(job.len - start);
+            hash_range(job.path, start, len, new_hasher(), buf)
+        })
+        .collect::<io::Result<Vec<_>>>()
+        .map(BlockDigests)
 }
 
-/// Hashes a single file with a seed value.
-///
-/// Uses the same mmap-first strategy as [`hash_file_internal`].
-fn hash_file_with_seed_internal<D>(
+fn read_buffer() -> Vec<u8> {
+    vec![0; READ_CHUNK]
+}
+
+/// Hashes `len` bytes of `path` starting at `start` with a sized read loop.
+fn hash_range<H: FileHasher>(
     path: &Path,
-    seed: D::Seed,
-    config: &FileHashConfig,
-) -> FileHashResult<D::Digest>
-where
-    D: StrongDigest,
-    D::Seed: Clone,
-{
-    let result = (|| -> io::Result<(D::Digest, u64)> {
-        let mut file = File::open(path)?;
-        let metadata = file.metadata()?;
-        let size = metadata.len();
-
-        if size <= config.max_memory_file_size {
-            let mut data = vec![0u8; size as usize];
-            file.read_exact(&mut data)?;
-            return Ok((D::digest_with_seed(seed, &data), size));
-        }
-
-        // upstream: checksum.c:432 file_checksum() uses map_file() (mmap) for
-        // zero-copy hashing. On Windows the legacy mmap_reader_stub slurps the
-        // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
-        // below so peak RSS stays bounded by the chunk size, not the file size.
-        #[cfg(unix)]
-        if size >= MMAP_THRESHOLD
-            && let Ok(mmap) = MmapReader::open(path)
-        {
-            let _ = mmap.advise_sequential();
-            return Ok((D::digest_with_seed(seed, mmap.as_slice()), size));
-        }
-
-        // upstream: checksum.c:file_checksum() reads a known length (CHUNK_SIZE
-        // loop plus remainder), so a pre-sized read loop avoids a trailing EOF probe.
-        // Windows shadows `file` with the bounded-RSS WindowsChunkedReader; the
-        // Unix streaming fallback continues to use the std::fs::File opened
-        // above (mmap unavailable on NFS/FUSE/procfs).
-        #[cfg(windows)]
-        let mut file = WindowsChunkedReader::open(path)?;
-        let mut hasher = D::with_seed(seed);
-        let mut buffer = vec![0u8; config.buffer_size];
-        let mut remaining = size;
-        while remaining > 0 {
-            let to_read = (remaining as usize).min(buffer.len());
-            file.read_exact(&mut buffer[..to_read])?;
-            hasher.update(&buffer[..to_read]);
-            remaining -= to_read as u64;
-        }
-
-        Ok((hasher.finalize(), size))
-    })();
-
-    match result {
-        Ok((digest, size)) => FileHashResult {
-            path: path.to_path_buf(),
-            digest: Ok(digest),
-            size,
-        },
-        Err(e) => FileHashResult {
-            path: path.to_path_buf(),
-            digest: Err(e),
-            size: 0,
-        },
+    start: u64,
+    len: u64,
+    mut hasher: H,
+    buf: &mut [u8],
+) -> io::Result<FileDigest> {
+    let mut file = File::open(path)?;
+    if start > 0 {
+        file.seek(SeekFrom::Start(start))?;
     }
+    let mut remaining = len;
+    while remaining > 0 {
+        let take = buf
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        file.read_exact(&mut buf[..take])?;
+        hasher.update(&buf[..take]);
+        remaining -= take as u64;
+    }
+    let mut bytes = [0u8; MAX_FILE_DIGEST_LEN];
+    let len = hasher.finalize_into(&mut bytes);
+    assert!(
+        len <= MAX_FILE_DIGEST_LEN,
+        "FileHasher digest exceeds MAX_FILE_DIGEST_LEN"
+    );
+    Ok(FileDigest {
+        bytes,
+        len: len as u8,
+    })
 }
 
-/// Computes block signatures for multiple files in parallel.
-///
-/// For each file, computes both rolling and strong checksums for every block.
-/// This is the primary function for building signatures during delta detection.
-///
-/// # Arguments
-///
-/// * `paths` - Files to process
-/// * `block_size` - Size of each block to hash
-/// * `buffer_size` - Read buffer size for I/O
-///
-/// # Example
-///
-/// ```
-/// use checksums::parallel::compute_file_signatures_parallel;
-/// use checksums::strong::Md5;
-///
-/// let dir = test_support::create_tempdir();
-/// let path = dir.path().join("test.bin");
-/// std::fs::write(&path, b"block signature test data").unwrap();
-///
-/// let files = vec![path];
-/// let results = compute_file_signatures_parallel::<Md5>(&files, 8192, 64 * 1024);
-/// assert_eq!(results.len(), 1);
-/// assert!(results[0].signatures.is_ok());
-/// ```
-pub fn compute_file_signatures_parallel<D>(
-    paths: &[PathBuf],
-    block_size: usize,
-    buffer_size: usize,
-) -> Vec<FileSignatureResult<D::Digest>>
-where
-    D: StrongDigest + Send,
-    D::Seed: Default + Clone + Send + Sync,
-    D::Digest: Send,
-{
-    // Ordering: results must correspond 1:1 with input paths by position.
-    // Preserved by par_iter().map().collect() (rayon preserves index order).
-    // Violation mismatches file signatures with paths.
-    paths
-        .par_iter()
-        .map(|path| compute_file_signatures_internal::<D>(path, block_size, buffer_size))
-        .collect()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::strong::{Md5, Xxh3_128};
+    use std::path::PathBuf;
 
-/// Internal result type for file signature computation.
-type SignatureComputeResult<D> = (Vec<BlockSignature<D>>, u64, usize);
-
-/// Computes block signatures for a single file.
-fn compute_file_signatures_internal<D>(
-    path: &Path,
-    block_size: usize,
-    buffer_size: usize,
-) -> FileSignatureResult<D::Digest>
-where
-    D: StrongDigest,
-    D::Seed: Default,
-{
-    let result = (|| -> io::Result<SignatureComputeResult<D::Digest>> {
-        // Unix mutates `file` in the streaming read loop below; Windows only
-        // reads its metadata before shadowing it with WindowsChunkedReader, so
-        // `mut` there would be flagged unused under -D unused-mut.
-        #[cfg(unix)]
-        let mut file = File::open(path)?;
-        #[cfg(windows)]
-        let file = File::open(path)?;
-        let metadata = file.metadata()?;
-        let size = metadata.len();
-        let estimated_blocks = (size as usize).div_ceil(block_size);
-
-        // For files above the mmap threshold on Unix, slice blocks directly
-        // from mapped memory - zero read syscalls. On Windows the legacy
-        // mmap_reader_stub would slurp the whole file into a Vec<u8>; switch
-        // to WindowsChunkedReader streaming below so peak RSS stays bounded
-        // by the chunk size, not the file size.
-        #[cfg(unix)]
-        if size >= MMAP_THRESHOLD
-            && let Ok(mmap) = MmapReader::open(path)
-        {
-            let _ = mmap.advise_sequential();
-            let data = mmap.as_slice();
-            let mut signatures = Vec::with_capacity(estimated_blocks);
-
-            for chunk in data.chunks(block_size) {
-                let mut rolling = RollingChecksum::new();
-                rolling.update(chunk);
-                signatures.push(BlockSignature {
-                    rolling: rolling.value(),
-                    strong: D::digest(chunk),
-                });
-            }
-
-            let block_count = signatures.len();
-            return Ok((signatures, size, block_count));
-        }
-
-        // Windows shadows `file` with the bounded-RSS WindowsChunkedReader;
-        // Unix retains the std::fs::File opened above for the streaming
-        // fallback (mmap unavailable on NFS/FUSE/procfs).
-        #[cfg(windows)]
-        let mut file = WindowsChunkedReader::open(path)?;
-        let mut signatures = Vec::with_capacity(estimated_blocks);
-        let _ = buffer_size; // size known from metadata; BufReader not needed
-        let mut buffer = vec![0u8; block_size];
-        let mut remaining = size;
-
-        while remaining > 0 {
-            let to_read = (remaining as usize).min(block_size);
-            file.read_exact(&mut buffer[..to_read])?;
-            remaining -= to_read as u64;
-
-            let block = &buffer[..to_read];
-            let mut rolling = RollingChecksum::new();
-            rolling.update(block);
-
-            signatures.push(BlockSignature {
-                rolling: rolling.value(),
-                strong: D::digest(block),
-            });
-        }
-
-        let block_count = signatures.len();
-        Ok((signatures, size, block_count))
-    })();
-
-    match result {
-        Ok((signatures, size, block_count)) => FileSignatureResult {
-            path: path.to_path_buf(),
-            signatures: Ok(signatures),
-            size,
-            block_count,
-        },
-        Err(e) => FileSignatureResult {
-            path: path.to_path_buf(),
-            signatures: Err(e),
-            size: 0,
-            block_count: 0,
-        },
+    fn md5() -> Md5 {
+        Md5::new()
     }
-}
 
-/// Iterator adapter for processing files in parallel batches.
-///
-/// This is useful when you have a large number of files and want to
-/// process them in manageable batches while still utilizing parallelism.
-pub struct ParallelFileHasher<'a, D>
-where
-    D: StrongDigest,
-{
-    paths: &'a [PathBuf],
-    config: FileHashConfig,
-    batch_size: usize,
-    current_index: usize,
-    _phantom: std::marker::PhantomData<D>,
-}
+    fn write_files(dir: &Path, sizes: &[usize]) -> Vec<(PathBuf, Vec<u8>)> {
+        sizes
+            .iter()
+            .enumerate()
+            .map(|(i, &size)| {
+                let data: Vec<u8> = (0..size).map(|b| (b * 31 + i * 7) as u8).collect();
+                let path = dir.join(format!("f{i}"));
+                std::fs::write(&path, &data).unwrap();
+                (path, data)
+            })
+            .collect()
+    }
 
-impl<'a, D> ParallelFileHasher<'a, D>
-where
-    D: StrongDigest + Send,
-    D::Seed: Default + Clone + Send + Sync,
-    D::Digest: Send,
-{
-    /// Creates a new parallel file hasher.
-    ///
-    /// # Arguments
-    ///
-    /// * `paths` - Files to hash
-    /// * `config` - Hashing configuration
-    /// * `batch_size` - Number of files to process per batch
-    #[must_use]
-    pub fn new(paths: &'a [PathBuf], config: FileHashConfig, batch_size: usize) -> Self {
-        Self {
-            paths,
-            config,
-            batch_size: batch_size.max(1),
-            current_index: 0,
-            _phantom: std::marker::PhantomData,
+    fn jobs(files: &[(PathBuf, Vec<u8>)]) -> Vec<FileJob<'_>> {
+        files
+            .iter()
+            .map(|(path, data)| FileJob {
+                path,
+                len: data.len() as u64,
+            })
+            .collect()
+    }
+
+    /// The parallel digest of every file must equal the one-shot digest of its
+    /// bytes, at sizes on both sides of the read window, so the value a sender
+    /// puts on the wire is the exact upstream whole-file checksum.
+    #[test]
+    fn whole_file_digest_equals_one_shot_digest_at_window_boundaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let sizes = [
+            0,
+            1,
+            READ_CHUNK - 1,
+            READ_CHUNK,
+            READ_CHUNK + 1,
+            3 * READ_CHUNK + 5,
+        ];
+        let files = write_files(dir.path(), &sizes);
+        let results = hash_files(&jobs(&files), md5);
+        for ((_, data), result) in files.iter().zip(results) {
+            assert_eq!(result.unwrap().as_bytes(), Md5::digest(data).as_ref());
         }
     }
 
-    /// Processes the next batch of files.
-    ///
-    /// Returns `None` when all files have been processed.
-    pub fn next_batch(&mut self) -> Option<Vec<FileHashResult<D::Digest>>> {
-        if self.current_index >= self.paths.len() {
-            return None;
+    /// Results come back in job order even when files finish out of order:
+    /// the large first file finishes last on any pool.
+    #[test]
+    fn results_follow_job_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sizes = vec![8 * READ_CHUNK];
+        sizes.extend(std::iter::repeat_n(17, 64));
+        let files = write_files(dir.path(), &sizes);
+        let results = hash_files(&jobs(&files), || Xxh3_128::with_seed(0));
+        for ((_, data), result) in files.iter().zip(results) {
+            assert_eq!(
+                result.unwrap().as_bytes(),
+                Xxh3_128::digest_with_seed(0, data).as_ref()
+            );
         }
-
-        let end = (self.current_index + self.batch_size).min(self.paths.len());
-        let batch = &self.paths[self.current_index..end];
-        self.current_index = end;
-
-        Some(hash_files_parallel_with_config::<D>(batch, &self.config))
     }
 
-    /// Returns the number of remaining files to process.
-    #[must_use]
-    pub fn remaining(&self) -> usize {
-        self.paths.len().saturating_sub(self.current_index)
+    /// A missing file and a file shorter than its listed length both fail that
+    /// job alone; the caller decides what a failed sum means.
+    #[test]
+    fn unreadable_and_short_files_fail_only_their_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = write_files(dir.path(), &[10, 10]);
+        let missing = dir.path().join("missing");
+        let job_list = [
+            FileJob {
+                path: &missing,
+                len: 4,
+            },
+            FileJob {
+                path: &files[0].0,
+                len: 11,
+            },
+            FileJob {
+                path: &files[1].0,
+                len: 10,
+            },
+        ];
+        let results = hash_files(&job_list, md5);
+        assert_eq!(
+            results[0].as_ref().unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            results[1].as_ref().unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        assert_eq!(
+            results[2].as_ref().unwrap().as_bytes(),
+            Md5::digest(&files[1].1).as_ref()
+        );
     }
 
-    /// Returns the total number of files.
-    #[must_use]
-    pub fn total(&self) -> usize {
-        self.paths.len()
+    /// Hashing only the listed length ignores bytes appended after listing,
+    /// as upstream reads st_size bytes.
+    #[test]
+    fn hashes_only_the_listed_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = write_files(dir.path(), &[100]);
+        let job = [FileJob {
+            path: &files[0].0,
+            len: 40,
+        }];
+        let result = hash_files(&job, md5).remove(0).unwrap();
+        assert_eq!(result.as_bytes(), Md5::digest(&files[0].1[..40]).as_ref());
     }
 
-    /// Returns the number of files already processed.
-    #[must_use]
-    pub fn processed(&self) -> usize {
-        self.current_index
+    fn block_len(n: u64) -> NonZeroU64 {
+        NonZeroU64::new(n).unwrap()
+    }
+
+    /// One flipped byte in the first, a middle or the last block changes the
+    /// block vector, so local change detection still sees every change.
+    #[test]
+    fn block_vectors_detect_a_change_in_any_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let len = 9 * 1024;
+        let original: Vec<u8> = (0..len).map(|b| (b % 251) as u8).collect();
+        let base = dir.path().join("base");
+        std::fs::write(&base, &original).unwrap();
+        for offset in [0, 4 * 1024 + 3, len - 1] {
+            let mut changed = original.clone();
+            changed[offset] ^= 1;
+            let other = dir.path().join(format!("c{offset}"));
+            std::fs::write(&other, &changed).unwrap();
+            let job_list = [
+                FileJob {
+                    path: &base,
+                    len: len as u64,
+                },
+                FileJob {
+                    path: &other,
+                    len: len as u64,
+                },
+            ];
+            let mut results = hash_files_blocked(&job_list, block_len(4 * 1024), md5);
+            let b = results.pop().unwrap().unwrap();
+            let a = results.pop().unwrap().unwrap();
+            assert_ne!(a, b, "change at offset {offset} went undetected");
+        }
+    }
+
+    /// Identical files give equal block vectors, and a single-block file is
+    /// its whole-file digest, so small files cost one hash as before.
+    #[test]
+    fn block_vectors_of_identical_files_are_equal() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = write_files(dir.path(), &[9 * 1024, 9 * 1024, 100]);
+        let mut copies = jobs(&files);
+        copies[1].path = &files[0].0;
+        let results = hash_files_blocked(&copies, block_len(4 * 1024), md5);
+        assert_eq!(results[0].as_ref().unwrap(), results[1].as_ref().unwrap());
+        assert_eq!(results[0].as_ref().unwrap().0.len(), 3);
+        let small = results[2].as_ref().unwrap();
+        assert_eq!(small.0.len(), 1);
+        assert_eq!(small.0[0].as_bytes(), Md5::digest(&files[2].1).as_ref());
     }
 }
