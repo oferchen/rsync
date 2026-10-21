@@ -604,10 +604,7 @@ impl GeneratorContext {
 
             // upstream: exclude.c:push_local_filters() - read per-directory
             // merge files when entering the root transfer directory.
-            let guard = self
-                .filter_chain
-                .enter_directory(&path)
-                .map_err(|e| filter_chain_error(&path, e))?;
+            let guard = self.enter_filter_scope(&path)?;
 
             // LIFO: the scan runs before the scope is released.
             stack.push(WalkStep::LeaveDir(guard));
@@ -718,10 +715,7 @@ impl GeneratorContext {
 
             // upstream: exclude.c:push_local_filters() - read per-directory
             // merge files when entering a subdirectory during recursive walk.
-            let guard = self
-                .filter_chain
-                .enter_directory(&dir_path)
-                .map_err(|e| filter_chain_error(&dir_path, e))?;
+            let guard = self.enter_filter_scope(&dir_path)?;
 
             // LIFO: the scan runs before the scope is released.
             stack.push(WalkStep::LeaveDir(guard));
@@ -794,8 +788,8 @@ impl GeneratorContext {
     /// expanding it. Each call therefore costs one level, not one subtree, and
     /// the caller decides when to spend the next.
     ///
-    /// Filter scope is entered and left around the scan, so per-directory merge
-    /// files apply to the children exactly as they do under the whole-tree walk.
+    /// The caller owns the directory's filter scope: the lazy producer enters
+    /// it before the scan and keeps it pushed for the directory's descendants.
     ///
     /// # Upstream Reference
     ///
@@ -806,23 +800,23 @@ impl GeneratorContext {
         base: &Path,
         dir_path: &Path,
     ) -> io::Result<()> {
-        // upstream: exclude.c:push_local_filters() - the per-directory scope the
-        // whole-tree walk enters before scanning, entered here for the same
-        // reason: the children are matched against this directory's merge files.
-        let guard = self
-            .filter_chain
-            .enter_directory(dir_path)
-            .map_err(|e| filter_chain_error(dir_path, e))?;
-
-        // LIFO: the scan runs before the scope is released.
-        let mut stack = vec![
-            WalkStep::LeaveDir(guard),
-            WalkStep::ScanChildren {
-                dir: dir_path.to_path_buf(),
-                opened: None,
-            },
-        ];
+        let mut stack = vec![WalkStep::ScanChildren {
+            dir: dir_path.to_path_buf(),
+            opened: None,
+        }];
         self.drive_walk(WalkScope::one_level(base), &mut stack)
+    }
+
+    /// Pushes `dir`'s per-directory merge files onto the filter chain.
+    ///
+    /// upstream: exclude.c:push_local_filters()
+    pub(in crate::generator) fn enter_filter_scope(
+        &mut self,
+        dir: &Path,
+    ) -> io::Result<filters::DirFilterGuard> {
+        self.filter_chain
+            .enter_directory(dir)
+            .map_err(|e| filter_chain_error(dir, e))
     }
 
     /// Opens `dir_path` when the caller did not, then schedules its children.
