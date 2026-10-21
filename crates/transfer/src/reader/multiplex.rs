@@ -135,17 +135,35 @@ const fn text_frame_action(code: logging::LogCode, role: LocalRole) -> TextFrame
 
 /// A peer frame upstream's `read_a_msg()` refuses with
 /// `exit_cleanup(RERR_STREAMIO)`; it renders upstream's `rprintf(FERROR, ..)`
-/// text (io.c:1833-1836).
+/// text (io.c:1833-1836, 1871-1875).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FrameViolation {
     /// `goto invalid_msg`: a tag this reader may not receive.
     Invalid { tag: u8, len: usize },
+    /// `goto overflow`: a text or `MSG_DELETED` payload that does not fit
+    /// upstream's `char data[BIGPATHBUFLEN]` buffer.
+    Overflow { tag: u8, len: usize },
+}
+
+impl FrameViolation {
+    /// The overflow violation for `tag` when `len` does not fit upstream's
+    /// line buffer, which must also hold a terminating NUL.
+    ///
+    /// upstream: io.c:1683 `char data[BIGPATHBUFLEN]`; io.c:1779 and :1870
+    /// `if (msg_bytes >= sizeof data) goto overflow;`
+    fn overflow(tag: protocol::MessageCode, len: usize) -> Option<Self> {
+        (len >= protocol::secluded_args::BIGPATHBUFLEN).then_some(Self::Overflow {
+            tag: tag.as_u8(),
+            len,
+        })
+    }
 }
 
 impl std::fmt::Display for FrameViolation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Invalid { tag, len } => write!(f, "invalid multi-message {tag}:{len}"),
+            Self::Overflow { tag, len } => write!(f, "multiplexing overflow {tag}:{len}"),
         }
     }
 }
@@ -1027,6 +1045,7 @@ impl<R> MultiplexReader<R> {
                 // upstream: io.c:1750-1769
                 self.handle_io_timeout_msg(sink);
             }
+            protocol::MessageCode::Deleted if self.refuse_oversized(code) => {}
             protocol::MessageCode::Deleted => {
                 // upstream: io.c:1802-1803 + log.c:917-922 - the client formats
                 // the raw deleted name (a trailing NUL marks a directory) and
@@ -1048,6 +1067,23 @@ impl<R> MultiplexReader<R> {
         false
     }
 
+    /// Records a `multiplexing overflow` when the frame `tag` just read does
+    /// not fit upstream's line buffer, and reports whether it did.
+    ///
+    /// The frame is already buffered (oc's decoder reads whole frames), but
+    /// the outcome matches upstream's check before the read: the frame has no
+    /// effect and the stream ends with `RERR_STREAMIO`.
+    /// upstream: io.c:1779, 1870-1876.
+    fn refuse_oversized(&mut self, tag: protocol::MessageCode) -> bool {
+        match FrameViolation::overflow(tag, self.buffer.len()) {
+            Some(violation) => {
+                self.frame_violation.get_or_insert(violation);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Delivers a peer's text frame `tag`, carrying `code`, as
     /// [`text_frame_action`] directs for this reader's role.
     fn dispatch_text_frame<S: MuxSink>(
@@ -1062,6 +1098,9 @@ impl<R> MultiplexReader<R> {
                 tag: tag.as_u8(),
                 len: self.buffer.len(),
             });
+            return;
+        }
+        if self.refuse_oversized(tag) {
             return;
         }
         // upstream: log.c:338 - receipt of FERROR_XFER sets got_xfer_error = 1.
@@ -2218,5 +2257,89 @@ mod sibling_log_frame_tests {
             }
         }
         let _ = logging::drain_events();
+    }
+}
+
+/// Oversized text and `MSG_DELETED` frames.
+///
+/// upstream: io.c:1683 `char data[BIGPATHBUFLEN]` holds every text and
+/// `MSG_DELETED` payload, and io.c:1779 / :1870 refuse one of
+/// `BIGPATHBUFLEN` bytes or more with `multiplexing overflow %d:%lu`, exiting
+/// `RERR_STREAMIO`. Accepting up to the 24-bit frame limit instead lets a peer
+/// push a 16 MiB "line" onto the terminal or into a server's peer queue.
+#[cfg(test)]
+mod frame_overflow_tests {
+    use super::*;
+    use protocol::secluded_args::BIGPATHBUFLEN;
+
+    /// `code` carrying `len` bytes, then one data byte.
+    fn wire(code: protocol::MessageCode, len: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        protocol::send_msg(&mut out, code, &vec![b'a'; len]).unwrap();
+        protocol::send_msg(&mut out, protocol::MessageCode::Data, b"y").unwrap();
+        out
+    }
+
+    fn read(role: LocalRole, code: protocol::MessageCode, len: usize) -> io::Result<Vec<u8>> {
+        let _ = logging::drain_events();
+        let mut reader = MultiplexReader::new(io::Cursor::new(wire(code, len)));
+        reader.set_local_role(role);
+        let mut buf = [0u8; 8];
+        let result = reader.read(&mut buf).map(|n| buf[..n].to_vec());
+        let _ = logging::drain_events();
+        result
+    }
+
+    const BOUNDED: [protocol::MessageCode; 5] = [
+        protocol::MessageCode::Info,
+        protocol::MessageCode::Error,
+        protocol::MessageCode::ErrorXfer,
+        protocol::MessageCode::Warning,
+        protocol::MessageCode::Deleted,
+    ];
+
+    #[test]
+    fn a_payload_of_bigpathbuflen_bytes_overflows() {
+        for role in [LocalRole::Client, LocalRole::Server] {
+            for code in BOUNDED {
+                let err = read(role, code, BIGPATHBUFLEN).expect_err("must overflow");
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{role:?} {code:?}");
+                assert_eq!(
+                    err.to_string(),
+                    format!("multiplexing overflow {}:{BIGPATHBUFLEN}", code.as_u8()),
+                    "{role:?} {code:?}"
+                );
+            }
+        }
+    }
+
+    /// NON-VACUITY and the boundary: one byte less still fits (the buffer
+    /// keeps a byte for the NUL), so the data behind it is delivered.
+    #[test]
+    fn a_payload_one_byte_shorter_is_delivered() {
+        for role in [LocalRole::Client, LocalRole::Server] {
+            for code in BOUNDED {
+                assert_eq!(
+                    read(role, code, BIGPATHBUFLEN - 1).expect("fits upstream's buffer"),
+                    b"y",
+                    "{role:?} {code:?}"
+                );
+            }
+        }
+    }
+
+    /// WHY: the role check precedes the size check upstream (io.c:1861 before
+    /// :1870), so an oversized sibling tag reports `invalid multi-message`.
+    #[test]
+    fn an_oversized_sibling_tag_is_an_invalid_message_first() {
+        let err = read(LocalRole::Client, protocol::MessageCode::Log, BIGPATHBUFLEN)
+            .expect_err("must abort");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "invalid multi-message {}:{BIGPATHBUFLEN}",
+                protocol::MessageCode::Log.as_u8()
+            )
+        );
     }
 }
