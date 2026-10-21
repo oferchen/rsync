@@ -1,37 +1,18 @@
 use super::*;
 use filters::FilterRule;
-use std::fs;
 use std::path::{Path, PathBuf};
-use tempfile::tempdir;
 
 #[test]
-fn filter_program_reports_merge_and_marker_rules() {
+fn filter_program_reports_merge_rules() {
     let dir_merge = DirMergeRule::new(".rsync-filter", DirMergeOptions::default());
     let program = FilterProgram::new([
         FilterProgramEntry::Rule(FilterRule::include("keep/**")),
         FilterProgramEntry::DirMerge(dir_merge.clone()),
-        FilterProgramEntry::ExcludeIfPresent(ExcludeIfPresentRule::new(".rsyncignore")),
     ])
     .expect("compile filter program");
 
     assert!(!program.is_empty());
     assert_eq!(program.dir_merge_rules(), [dir_merge]);
-
-    let temp = tempdir().expect("tempdir");
-    let root = temp.path();
-    assert!(
-        !program
-            .should_exclude_directory(root)
-            .expect("marker check succeeds")
-    );
-
-    let marker_path = root.join(".rsyncignore");
-    fs::write(&marker_path, b"ignored").expect("write marker");
-    assert!(
-        program
-            .should_exclude_directory(root)
-            .expect("marker detected")
-    );
 }
 
 #[test]
@@ -200,24 +181,4 @@ fn filter_program_evaluate_applies_dir_merge_layers() {
         FilterContext::Transfer,
     );
     assert!(allowed_from_ephemeral.allows_transfer());
-}
-
-#[test]
-fn filter_program_should_exclude_directory_reports_io_errors() {
-    let temp = tempdir().expect("tempdir");
-    let long_name = "x".repeat(5000);
-    let program = FilterProgram::new([FilterProgramEntry::ExcludeIfPresent(
-        ExcludeIfPresentRule::new(&long_name),
-    )])
-    .expect("compile program");
-
-    let error = program
-        .should_exclude_directory(temp.path())
-        .expect_err("long path should trigger error");
-    if let LocalCopyErrorKind::Io { action, path, .. } = error.kind() {
-        assert_eq!(*action, "inspect exclude-if-present marker");
-        assert!(path.ends_with(&long_name));
-    } else {
-        panic!("unexpected error: {error:?}");
-    }
 }

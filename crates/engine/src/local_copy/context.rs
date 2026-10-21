@@ -15,9 +15,8 @@ use super::ActiveCompressor;
 use super::buffer_pool::{BufferPool, global_buffer_pool};
 use super::deferred_sync::{DeferredSync, SyncStrategy};
 use super::filter_program::{
-    ExcludeIfPresentLayers, ExcludeIfPresentRule, ExcludeIfPresentStack, FilterContext,
-    FilterOutcome, FilterProgram, FilterSegment, FilterSegmentLayers, FilterSegmentStack,
-    directory_has_marker,
+    FilterContext, FilterOutcome, FilterProgram, FilterSegment, FilterSegmentLayers,
+    FilterSegmentStack,
 };
 
 #[cfg(all(unix, feature = "xattr"))]
@@ -821,12 +820,10 @@ include!("context_impl/delta_transfer.rs");
 include!("context_impl/reporting.rs");
 
 /// Outcome of loading one nested `dir-merge` file in a directory: the compiled
-/// rule segment (absent when the file had no concrete rules), any
-/// `exclude-if-present` markers, and any further nested dir-merge rules it
-/// registered.
+/// rule segment (absent when the file had no concrete rules) and any further
+/// nested dir-merge rules it registered.
 struct LoadedNestedDirMerge {
     segment: Option<FilterSegment>,
-    markers: Vec<ExcludeIfPresentRule>,
     nested: Vec<NestedDirMerge>,
 }
 
@@ -880,9 +877,8 @@ pub(crate) struct LoadedDynamicSegment {
 ///
 /// upstream: exclude.c:1573-1582 `parse_filter_str()` - tracks the cumulative set of nested
 /// `dir-merge` directives that are active at the current traversal depth
-/// (`active_rules`), and the segments / markers produced by looking those
-/// rules up against the directory being entered (`loaded_segments` and
-/// `loaded_markers`). The frame is pushed by `enter_directory_for_path` and
+/// (`active_rules`), and the segments produced by looking those rules up
+/// against the directory being entered (`loaded_segments`). The frame is pushed by `enter_directory_for_path` and
 /// popped by [`DirectoryFilterGuard`].
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DynamicDirMergeFrame {
@@ -901,8 +897,6 @@ pub(crate) struct DynamicDirMergeFrame {
     /// `n` modifier (`FILTRULE_NO_INHERIT`) are flagged non-inheritable and are
     /// dropped from child frames.
     pub(crate) loaded_segments: Vec<LoadedDynamicSegment>,
-    /// `exclude-if-present` markers loaded from the same files.
-    pub(crate) loaded_markers: Vec<ExcludeIfPresentRule>,
 }
 
 /// Shared references to the layered filter stacks, used by
@@ -910,9 +904,7 @@ pub(crate) struct DynamicDirMergeFrame {
 #[derive(Clone)]
 pub(crate) struct DirectoryFilterHandles {
     pub(crate) layers: Rc<RefCell<FilterSegmentLayers>>,
-    pub(crate) marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
     pub(crate) ephemeral: Rc<RefCell<FilterSegmentStack>>,
-    pub(crate) marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
     pub(crate) dynamic: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
 }
 
@@ -924,9 +916,7 @@ impl DirectoryFilterHandles {
         let layer_count = program.map_or(0, |p| p.dir_merge_rules().len());
         Self {
             layers: Rc::new(RefCell::new(vec![Vec::new(); layer_count])),
-            marker_layers: Rc::new(RefCell::new(vec![Vec::new(); layer_count])),
             ephemeral: Rc::new(RefCell::new(Vec::new())),
-            marker_ephemeral: Rc::new(RefCell::new(Vec::new())),
             dynamic: Rc::new(RefCell::new(Vec::new())),
         }
     }
@@ -968,7 +958,6 @@ fn record_filter_file_load() {}
 struct ClearedLayerRestore {
     index: usize,
     layer: Vec<FilterSegment>,
-    markers: Vec<ExcludeIfPresentRule>,
 }
 
 /// RAII guard that reverts per-directory filter rules when dropped.
@@ -985,10 +974,8 @@ struct ClearedLayerRestore {
 pub(crate) struct DirectoryFilterGuard {
     handles: DirectoryFilterHandles,
     indices: Vec<usize>,
-    marker_counts: Vec<(usize, usize)>,
     ephemeral_active: bool,
     dynamic_active: bool,
-    excluded: bool,
     cleared_restores: Vec<ClearedLayerRestore>,
 }
 
@@ -996,25 +983,16 @@ impl DirectoryFilterGuard {
     const fn new(
         handles: DirectoryFilterHandles,
         indices: Vec<usize>,
-        marker_counts: Vec<(usize, usize)>,
         ephemeral_active: bool,
         dynamic_active: bool,
-        excluded: bool,
     ) -> Self {
         Self {
             handles,
             indices,
-            marker_counts,
             ephemeral_active,
             dynamic_active,
-            excluded,
             cleared_restores: Vec::new(),
         }
-    }
-
-    /// Returns `true` if the directory was excluded by a filter rule.
-    pub(crate) const fn is_excluded(&self) -> bool {
-        self.excluded
     }
 
     /// Attaches the pre-clear layer contents captured during a
@@ -1050,19 +1028,6 @@ impl Drop for DirectoryFilterGuard {
         if self.ephemeral_active {
             let mut stack = self.handles.ephemeral.borrow_mut();
             stack.pop();
-            let mut marker_stack = self.handles.marker_ephemeral.borrow_mut();
-            marker_stack.pop();
-        }
-
-        if !self.marker_counts.is_empty() {
-            let mut marker_layers = self.handles.marker_layers.borrow_mut();
-            for (index, count) in self.marker_counts.drain(..).rev() {
-                if let Some(layer) = marker_layers.get_mut(index) {
-                    for _ in 0..count {
-                        layer.pop();
-                    }
-                }
-            }
         }
 
         if !self.indices.is_empty() {
@@ -1080,13 +1045,9 @@ impl Drop for DirectoryFilterGuard {
         // source-visible state matches exactly what it was before the load.
         if !self.cleared_restores.is_empty() {
             let mut layers = self.handles.layers.borrow_mut();
-            let mut marker_layers = self.handles.marker_layers.borrow_mut();
             for restore in self.cleared_restores.drain(..) {
                 if let Some(layer) = layers.get_mut(restore.index) {
                     *layer = restore.layer;
-                }
-                if let Some(markers) = marker_layers.get_mut(restore.index) {
-                    *markers = restore.markers;
                 }
             }
         }

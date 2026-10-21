@@ -53,6 +53,4 @@ use directives::{parse_dir_merge_alias, parse_long_merge_directive};
 #[cfg(test)]
 use entry::{is_cvs_convenience_rule, parse_rule_directive};
 #[cfg(test)]
-use rules::{
-    parse_exclude_if_present, parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules,
-};
+use rules::{parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules};

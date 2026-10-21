@@ -312,7 +312,7 @@ fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> Result<String, ClientErro
         // upstream: exclude.c:1532-1541 - action prefix
         let action_char = match rule.kind() {
             FilterRuleKind::Include => '+',
-            FilterRuleKind::Exclude | FilterRuleKind::ExcludeIfPresent => '-',
+            FilterRuleKind::Exclude => '-',
             FilterRuleKind::Protect => 'P',
             FilterRuleKind::Risk => 'R',
             FilterRuleKind::DirMerge => ':',

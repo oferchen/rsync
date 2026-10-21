@@ -81,7 +81,7 @@ impl<'a> CopyContext<'a> {
         source: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(source, relative_dir, true, false, &self.dir_merge)
+        self.enter_directory_for_path(source, relative_dir, false, &self.dir_merge)
     }
 
     /// Loads per-dir-merge filter files from the destination directory before a
@@ -106,12 +106,11 @@ impl<'a> CopyContext<'a> {
     /// exactly that delta on drop:
     ///
     /// - the single dynamic frame, the single ephemeral frame, and every
-    ///   `layers[index].push` / `marker_layers[index].extend` are balanced by
+    ///   `layers[index].push` is balanced by
     ///   [`DirectoryFilterGuard`]'s normal per-index pop (identical to the
     ///   source-side guard);
     /// - the ONLY unbalanced mutation is a `clear` directive
-    ///   (`clear_inherited`) calling `layers[index].clear()` /
-    ///   `marker_layers[index].clear()`, which discards inherited entries the
+    ///   (`clear_inherited`) calling `layers[index].clear()`, which discards inherited entries the
     ///   per-index pop cannot restore (exclude.c:900 keeps inherited rules in
     ///   `lp->head` an arbitrary number of indices deep). Those wiped vectors
     ///   are captured before the clear and restored after the pop, so the
@@ -125,13 +124,7 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(
-            destination,
-            relative_dir,
-            false,
-            true,
-            &self.delete_dir_merge,
-        )
+        self.enter_directory_for_path(destination, relative_dir, true, &self.delete_dir_merge)
     }
 
     /// Advances the persistent destination delete-filter chain to `destination`.
@@ -177,7 +170,6 @@ impl<'a> CopyContext<'a> {
         &self,
         directory: &Path,
         relative_dir: Option<&Path>,
-        check_directory_excluded: bool,
         capture_cleared_layers: bool,
         stacks: &DirectoryFilterHandles,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
@@ -186,28 +178,22 @@ impl<'a> CopyContext<'a> {
             return Ok(DirectoryFilterGuard::new(
                 stacks.clone(),
                 Vec::new(),
-                Vec::new(),
-                false,
                 false,
                 false,
             ));
         };
 
         let mut added_indices = Vec::new();
-        let mut marker_counts = Vec::new();
         // PEX (#333): when the caller is the destination-deletion scan, record
-        // the pre-clear contents of any `layers[index]` / `marker_layers[index]`
+        // the pre-clear contents of any `layers[index]`
         // a `clear` directive is about to wipe, so the guard can restore the
         // inherited entries the per-index pop cannot rebuild. Empty (and never
         // populated) on the source-side path, whose nested guards restore state
         // by unwinding in child-before-parent order.
         let mut cleared_layers: Vec<ClearedLayerRestore> = Vec::new();
         let mut layers = stacks.layers.borrow_mut();
-        let mut marker_layers = stacks.marker_layers.borrow_mut();
         let mut ephemeral_stack = stacks.ephemeral.borrow_mut();
-        let mut marker_ephemeral_stack = stacks.marker_ephemeral.borrow_mut();
         ephemeral_stack.push(Vec::new());
-        marker_ephemeral_stack.push(Vec::new());
 
         // upstream: exclude.c:900 `push_local_filters` sets `lp->tail = NULL`,
         // keeping `lp->head` so rules loaded at an ancestor depth keep matching
@@ -234,7 +220,6 @@ impl<'a> CopyContext<'a> {
         let mut new_frame = DynamicDirMergeFrame {
             active_rules: inherited_active,
             loaded_segments: inherited_segments,
-            loaded_markers: Vec::new(),
         };
 
         // upstream: exclude.c:359-375 add_rule - a merge file that is already
@@ -270,7 +255,6 @@ impl<'a> CopyContext<'a> {
                 Ok(present) => present,
                 Err(error) => {
                     ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
                     return Err(error);
                 }
             };
@@ -290,7 +274,6 @@ impl<'a> CopyContext<'a> {
                 Ok(entries) => entries,
                 Err(error) => {
                     ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
                     return Err(error);
                 }
             };
@@ -319,7 +302,6 @@ impl<'a> CopyContext<'a> {
                 let compiled = anchor_dir_merge_rule(compiled, relative_dir);
                 if let Err(error) = segment.push_rule(compiled) {
                     ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
                     return Err(filter_program_local_error(&candidate, &error));
                 }
             }
@@ -333,7 +315,6 @@ impl<'a> CopyContext<'a> {
             // again on this load path would exclude the name twice.
 
             let has_segment = !segment.is_empty();
-            let markers = entries.exclude_if_present;
             let clear_inherited = entries.clear_inherited;
 
             // upstream: exclude.c:886-888 - dir-merge directives found in a
@@ -360,45 +341,27 @@ impl<'a> CopyContext<'a> {
                     cleared_layers.push(ClearedLayerRestore {
                         index,
                         layer: layers[index].clone(),
-                        markers: marker_layers[index].clone(),
                     });
                 }
                 layers[index].clear();
-                marker_layers[index].clear();
                 // Remove any indices we may have added for parent directories
                 // in this same traversal (shouldn't happen normally, but be safe)
                 added_indices.retain(|&i| i != index);
-                marker_counts.retain(|(i, _)| *i != index);
             }
 
-            if !has_segment && markers.is_empty() && !clear_inherited {
+            if !has_segment {
                 continue;
             }
 
             if rule.options().inherit_rules() {
-                if has_segment {
-                    layers[index].push(segment);
-                    added_indices.push(index);
-                }
-                if !markers.is_empty() {
-                    let count = markers.len();
-                    marker_layers[index].extend(markers);
-                    marker_counts.push((index, count));
-                }
-            } else {
-                if has_segment && let Some(current) = ephemeral_stack.last_mut() {
-                    current.push((index, segment));
-                }
-                if !markers.is_empty()
-                    && let Some(current) = marker_ephemeral_stack.last_mut()
-                {
-                    current.push((index, markers));
-                }
+                layers[index].push(segment);
+                added_indices.push(index);
+            } else if let Some(current) = ephemeral_stack.last_mut() {
+                current.push((index, segment));
             }
         }
 
         drop(layers);
-        drop(marker_layers);
 
         // upstream: exclude.c:886-888 - walk the GROWING active-rule list so a
         // dir-merge directive registered while loading an inherited file (or a
@@ -414,7 +377,6 @@ impl<'a> CopyContext<'a> {
                 Ok(loaded) => loaded,
                 Err(error) => {
                     ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
                     return Err(error);
                 }
             };
@@ -425,7 +387,6 @@ impl<'a> CopyContext<'a> {
                     inherit: rule.options.inherit_rules(),
                 });
             }
-            new_frame.loaded_markers.append(&mut loaded.markers);
             // Registration is what bounds this loop: a merge file already
             // active is dropped here, mirroring upstream's `free_filter(rule);
             // return;` (exclude.c:373-374), so a self-referential or mutually
@@ -434,27 +395,18 @@ impl<'a> CopyContext<'a> {
         }
 
         drop(ephemeral_stack);
-        drop(marker_ephemeral_stack);
 
         stacks.dynamic.borrow_mut().push(new_frame);
 
-        let excluded = if check_directory_excluded {
-            self.directory_excluded(source, program)?
-        } else {
-            false
-        };
-
-        let handles = stacks.clone();
         Ok(
-            DirectoryFilterGuard::new(handles, added_indices, marker_counts, true, true, excluded)
+            DirectoryFilterGuard::new(stacks.clone(), added_indices, true, true)
                 .with_cleared_restores(cleared_layers),
         )
     }
 
     /// Resolves a single nested `dir-merge` rule against `source` and loads its
-    /// filter file (if present), returning the compiled segment, any
-    /// `exclude-if-present` markers, and any further nested dir-merge rules the
-    /// file registered.
+    /// filter file (if present), returning the compiled segment and any further
+    /// nested dir-merge rules the file registered.
     ///
     /// Anchored patterns are rewritten relative to `relative_dir` to mirror
     /// upstream `exclude.c:297-304 add_rule`.
@@ -502,53 +454,8 @@ impl<'a> CopyContext<'a> {
 
         Ok(Some(LoadedNestedDirMerge {
             segment: (!segment.is_empty()).then_some(segment),
-            markers: entries.exclude_if_present,
             nested: entries.nested_dir_merges,
         }))
-    }
-
-    /// Returns whether `directory` is excluded by an active per-dir filter
-    /// program, either directly or via an `exclude-if-present` marker file at
-    /// any layer (persistent, ephemeral, or dynamic dir-merge).
-    pub(super) fn directory_excluded(
-        &self,
-        directory: &Path,
-        program: &FilterProgram,
-    ) -> Result<bool, LocalCopyError> {
-        if program.should_exclude_directory(directory)? {
-            return Ok(true);
-        }
-
-        {
-            let layers = self.dir_merge.marker_layers.borrow();
-            for rules in layers.iter() {
-                if directory_has_marker(rules, directory)? {
-                    return Ok(true);
-                }
-            }
-        }
-
-        {
-            let stack = self.dir_merge.marker_ephemeral.borrow();
-            if let Some(entries) = stack.last() {
-                for (_, rules) in entries {
-                    if directory_has_marker(rules, directory)? {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-
-        {
-            let stack = self.dir_merge.dynamic.borrow();
-            if let Some(frame) = stack.last()
-                && directory_has_marker(&frame.loaded_markers, directory)?
-            {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
     }
 
     /// Returns a mutable reference to the running transfer summary.

@@ -17,9 +17,7 @@ use super::directives::{parse_dir_merge_alias, parse_long_merge_directive};
 use super::helpers::unexpected_end_of_filter_rule;
 use super::merge::parse_short_merge_directive;
 use super::rule_line::RuleLine;
-use super::rules::{
-    parse_exclude_if_present, parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules,
-};
+use super::rules::{parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules};
 
 /// Parses a top-level `--filter` argument into a `FilterDirective`, trying the
 /// short and long merge forms before the general rule dispatcher. Leading
@@ -153,8 +151,8 @@ pub(crate) fn parse_old_prefix_rule(
 }
 
 /// Dispatches a trimmed rule line (no merge prefix) to the matching parser:
-/// `!`/`clear`, CVS convenience, shorthands, `exclude-if-present`, `+`/`-`
-/// short rules, then the long keyword rules.
+/// `!`/`clear`, CVS convenience, shorthands, `+`/`-` short rules, then the
+/// long keyword rules.
 pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective, Message> {
     let text = line.text();
     // upstream: exclude.c:1465 parse_rule_tok - the pattern length is strlen, so
@@ -193,10 +191,6 @@ pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective
     }
 
     if let Some(result) = parse_shorthand_rules(line) {
-        return result;
-    }
-
-    if let Some(result) = parse_exclude_if_present(line) {
         return result;
     }
 

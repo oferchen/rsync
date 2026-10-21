@@ -4,7 +4,6 @@ use super::{
     modifiers::split_short_rule_modifiers,
     types::{FilterParseError, ParsedFilterDirective},
 };
-use crate::local_copy::filter_program::ExcludeIfPresentRule;
 use filters::{FilterRule, RuleSource};
 use std::borrow::Cow;
 use std::fmt;
@@ -173,13 +172,6 @@ fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
 /// is reported as an unknown rule.
 const CLEAR_KEYWORD: &str = "clear";
 
-/// The oc-only `exclude-if-present` keyword.
-///
-/// Upstream has no such directive, so there is no upstream case rule to mirror.
-/// The spelling stays case-insensitive to match the CLI option of the same name
-/// (`crates/cli/src/frontend/filters/parsing/rules.rs`), which accepts any case.
-const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
-
 /// Reports whether `token` names a directive whose pattern arrives as the next
 /// whitespace-delimited word in a word-split filter file.
 ///
@@ -200,15 +192,12 @@ const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
 /// widen the divergence, not narrow it.
 ///
 /// The case policy is shared with [`parse_filter_directive_line`]: the upstream
-/// keywords match exactly (`rule_strcmp` is `strncmp`, exclude.c:1218), while
-/// the oc-only `exclude-if-present` keeps the case-insensitive spelling its own
-/// parser accepts.
+/// keywords match exactly (`rule_strcmp` is `strncmp`, exclude.c:1218).
 pub(crate) fn directive_takes_argument(token: &str) -> bool {
     matches!(
         token,
         "merge" | "include" | "exclude" | "show" | "hide" | "protect"
     ) || token.starts_with("dir-merge")
-        || token.eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
 }
 
 /// The single-character rule prefixes this parser dispatches, upper case only.
@@ -258,9 +247,6 @@ pub(crate) fn parse_filter_directive_line(
 /// of a data divergence, not a cosmetic gap.
 ///
 /// `Clear` carries no pattern, so upstream's check can never fire for it.
-/// `ExcludeIfPresent` is an oc directive with no upstream counterpart in this
-/// loop, so it is deliberately left alone rather than given a bound upstream
-/// does not impose.
 fn discard_over_long(
     directive: ParsedFilterDirective,
     source: RuleSource<'_>,
@@ -269,9 +255,7 @@ fn discard_over_long(
         ParsedFilterDirective::Rule(rule) => String::from_utf8_lossy(rule.pattern()),
         ParsedFilterDirective::Merge { path, .. } => path.to_string_lossy(),
         ParsedFilterDirective::DirMerge { pattern, .. } => pattern.to_string_lossy(),
-        ParsedFilterDirective::ExcludeIfPresent(_) | ParsedFilterDirective::Clear => {
-            return Some(directive);
-        }
+        ParsedFilterDirective::Clear => return Some(directive),
     };
 
     if !filters::is_over_long(&pattern) {
@@ -303,8 +287,7 @@ fn discard_over_long(
 /// the file reader's job, not this parser's - upstream puts it in
 /// `parse_filter_file` (exclude.c:1806) and `parse_rule_tok` has no comment
 /// concept at all. Recognises list-clear (`!`/`clear`), short-form merges
-/// (`.`/`:`), `merge`/`dir-merge`/`per-dir` directives, `exclude-if-present`,
-/// the `+`/`-` short-form rule prefixes, and the
+/// (`.`/`:`), `merge`/`dir-merge`/`per-dir` directives, the `+`/`-` short-form rule prefixes, and the
 /// `include`/`exclude`/`show`/`hide`/`protect`/`risk` keywords with their
 /// `,modifier` suffix.
 ///
@@ -346,27 +329,6 @@ fn classify_filter_directive_line(
 
     if let Some(directive) = parse_dir_merge_directive(text, source)? {
         return Ok(Some(directive));
-    }
-
-    if text.len() >= EXCLUDE_IF_PRESENT_PREFIX.len()
-        && text[..EXCLUDE_IF_PRESENT_PREFIX.len()].eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX)
-    {
-        let mut remainder = text[EXCLUDE_IF_PRESENT_PREFIX.len()..]
-            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-        if let Some(rest) = remainder.strip_prefix('=') {
-            remainder = rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-        }
-
-        let pattern_text = remainder.trim();
-        if pattern_text.is_empty() {
-            return Err(FilterParseError::new(
-                "filter directive 'exclude-if-present' requires a marker file",
-            ));
-        }
-
-        return Ok(Some(ParsedFilterDirective::ExcludeIfPresent(
-            ExcludeIfPresentRule::new(pattern_text),
-        )));
     }
 
     if let Some(remainder) = text.strip_prefix('+') {
@@ -851,17 +813,6 @@ mod tests {
     fn parse_filter_directive_line_hide() {
         let result = parse_filter_directive_line("hide *.secret", RuleSource::Argument).unwrap();
         assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
-    }
-
-    #[test]
-    fn parse_filter_directive_line_exclude_if_present() {
-        let result =
-            parse_filter_directive_line("exclude-if-present .nobackup", RuleSource::Argument)
-                .unwrap();
-        assert!(matches!(
-            result,
-            Some(ParsedFilterDirective::ExcludeIfPresent(_))
-        ));
     }
 
     #[test]

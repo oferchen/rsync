@@ -299,11 +299,7 @@ fn copy_directory_recursive_inner(
     context.reserve_event_capacity(entries.len());
     context.register_progress();
 
-    let dir_merge_guard = context.enter_directory(source, relative)?;
-    if dir_merge_guard.is_excluded() {
-        return Ok(false);
-    }
-    let _dir_merge_guard = dir_merge_guard;
+    let _dir_merge_guard = context.enter_directory(source, relative)?;
 
     let directory_ready = Cell::new(!destination_missing && !list_only);
     let mut created_directory_on_disk = false;

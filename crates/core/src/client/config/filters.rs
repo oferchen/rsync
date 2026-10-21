@@ -15,11 +15,6 @@ pub enum FilterRuleKind {
     Risk,
     /// Merge per-directory filter rules from `.rsync-filter` style files.
     DirMerge,
-    /// Exclude directories containing a specific marker file.
-    ///
-    /// Deviation from upstream: rsync 3.5.1 has no exclude-if-present rule;
-    /// this kind is an oc-only extension.
-    ExcludeIfPresent,
 }
 
 /// Filter rule supplied by the caller.
@@ -158,25 +153,6 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::DirMerge,
             pattern: pattern.into(),
             dir_merge_options: Some(options),
-            applies_to_sender: true,
-            applies_to_receiver: true,
-            perishable: false,
-            xattr_only: false,
-            negate: false,
-            cvs_origin: false,
-            abs_path: false,
-            implied_partial_dir: false,
-        }
-    }
-
-    /// Creates an `exclude-if-present` rule mirroring `--filter='H {FILE}'`.
-    #[must_use]
-    #[doc(alias = "H")]
-    pub fn exclude_if_present(pattern: impl Into<String>) -> Self {
-        Self {
-            kind: FilterRuleKind::ExcludeIfPresent,
-            pattern: pattern.into(),
-            dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,

@@ -79,7 +79,6 @@ pub(crate) fn append_filter_rules_from_files(
                     FilterRuleKind::Include => FilterRuleSpec::include(pattern),
                     FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
                     FilterRuleKind::Clear => FilterRuleSpec::clear(),
-                    FilterRuleKind::ExcludeIfPresent => FilterRuleSpec::exclude_if_present(pattern),
                     FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
                     FilterRuleKind::Risk => FilterRuleSpec::risk(pattern),
                     FilterRuleKind::DirMerge => unreachable!("dir-merge handled above"),

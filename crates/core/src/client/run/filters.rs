@@ -5,7 +5,7 @@
 //! phase of upstream `main.c` where CLI filter flags are compiled before
 //! the transfer begins.
 
-use engine::local_copy::{DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry};
+use engine::local_copy::{DirMergeRule, FilterProgram, FilterProgramEntry};
 use filters::FilterRule as EngineFilterRule;
 
 use super::super::config::{FilterRuleKind, FilterRuleSpec};
@@ -74,9 +74,6 @@ pub(crate) fn compile_filter_program(
                     rule.dir_merge_options().cloned().unwrap_or_default(),
                 )))
             }
-            FilterRuleKind::ExcludeIfPresent => entries.push(FilterProgramEntry::ExcludeIfPresent(
-                ExcludeIfPresentRule::new(rule.pattern().to_owned()),
-            )),
         }
     }
 

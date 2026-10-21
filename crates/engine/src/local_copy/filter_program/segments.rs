@@ -1,5 +1,5 @@
-//! Compiled filter segments and stacks that evaluate include/exclude,
-//! protect/risk, and exclude-if-present rules sequentially with first-match
+//! Compiled filter segments and stacks that evaluate include/exclude and
+//! protect/risk rules sequentially with first-match
 //! semantics, mirroring upstream `exclude.c` rule traversal.
 
 use std::borrow::Cow;
@@ -271,13 +271,10 @@ fn match_trace_pattern(rule: &CompiledRule) -> String {
 pub(crate) enum FilterInstruction {
     Segment(FilterSegment),
     DirMerge { index: usize },
-    ExcludeIfPresent { index: usize },
 }
 
 pub(crate) type FilterSegmentLayers = Vec<Vec<FilterSegment>>;
 pub(crate) type FilterSegmentStack = Vec<Vec<(usize, FilterSegment)>>;
-pub(crate) type ExcludeIfPresentLayers = Vec<Vec<super::ExcludeIfPresentRule>>;
-pub(crate) type ExcludeIfPresentStack = Vec<Vec<(usize, Vec<super::ExcludeIfPresentRule>)>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FilterContext {
