@@ -96,6 +96,8 @@ enum TextFrameAction {
     /// Queue it for this server's peer through the diagnostic buffer, which
     /// the server frames to the client (and a daemon also logs).
     Forward,
+    /// Abort the stream: upstream `goto invalid_msg`, `RERR_STREAMIO`.
+    Invalid,
 }
 
 /// The legality table for a peer's text frames: what a frame carrying `code`
@@ -103,6 +105,12 @@ enum TextFrameAction {
 ///
 /// upstream: io.c:1857-1882 `read_a_msg()` passes the frame to `rwrite()`,
 /// which renders it locally or forwards it by `am_server` (log.c:292-366).
+/// `MSG_LOG`, `MSG_CLIENT`, `MSG_ERROR_SOCKET` and `MSG_ERROR_UTF8` are
+/// sibling logging, legal only on a generator reading its own receiver over
+/// the internal pipe (io.c:1857-1862 `if (!am_generator) goto invalid_msg`).
+/// Every oc `MultiplexReader` reads the network peer - oc's generator and
+/// receiver are threads that share a diagnostic buffer, never frames - so
+/// those tags are invalid on every role here.
 const fn text_frame_action(code: logging::LogCode, role: LocalRole) -> TextFrameAction {
     use logging::LogCode;
     match (code, role) {
@@ -113,15 +121,32 @@ const fn text_frame_action(code: logging::LogCode, role: LocalRole) -> TextFrame
         (
             LogCode::Info | LogCode::Error | LogCode::ErrorXfer | LogCode::Warning,
             LocalRole::Client,
-        )
-        | (
+        ) => TextFrameAction::Render,
+        (
             LogCode::Log
             | LogCode::Client
             | LogCode::ErrorSocket
             | LogCode::ErrorUtf8
             | LogCode::None,
             _,
-        ) => TextFrameAction::Render,
+        ) => TextFrameAction::Invalid,
+    }
+}
+
+/// A peer frame upstream's `read_a_msg()` refuses with
+/// `exit_cleanup(RERR_STREAMIO)`; it renders upstream's `rprintf(FERROR, ..)`
+/// text (io.c:1833-1836).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameViolation {
+    /// `goto invalid_msg`: a tag this reader may not receive.
+    Invalid { tag: u8, len: usize },
+}
+
+impl std::fmt::Display for FrameViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid { tag, len } => write!(f, "invalid multi-message {tag}:{len}"),
+        }
     }
 }
 
@@ -314,6 +339,9 @@ pub(crate) struct MultiplexReader<R> {
     /// (`goto invalid_msg` -> `exit_cleanup(RERR_STREAMIO)`); oc surfaces it via
     /// [`MultiplexReader::check_control_msg`]. upstream: io.c:read_a_msg invalid_msg.
     invalid_control_msg: bool,
+    /// The first peer frame that broke upstream's per-tag rules, surfaced by
+    /// [`MultiplexReader::check_control_msg`].
+    frame_violation: Option<FrameViolation>,
     /// Client-sender rendering state for `MSG_DELETED` frames. `Some` only on
     /// the client side of a push, where the remote receiver runs `--delete`;
     /// every other reader leaves it `None` so the frame is dropped like upstream
@@ -470,6 +498,7 @@ impl<R> MultiplexReader<R> {
             io_timeout_reapply: None,
             io_timeout_invalid: false,
             invalid_control_msg: false,
+            frame_violation: None,
             deleted_render: None,
             role: LocalRole::Client,
             block_stats_accepted: false,
@@ -898,6 +927,12 @@ impl<R> MultiplexReader<R> {
     }
 
     fn check_control_msg(&self) -> io::Result<()> {
+        if let Some(violation) = self.frame_violation {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                violation.to_string(),
+            ));
+        }
         if self.invalid_control_msg {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -937,7 +972,7 @@ impl<R> MultiplexReader<R> {
         sink: &mut S,
     ) -> bool {
         if let Some(log_code) = code.log_code() {
-            self.dispatch_text_frame(log_code, sink);
+            self.dispatch_text_frame(code, log_code, sink);
             return false;
         }
         match code {
@@ -1013,16 +1048,29 @@ impl<R> MultiplexReader<R> {
         false
     }
 
-    /// Delivers a peer's text frame, carrying `code`, as [`text_frame_action`]
-    /// directs for this reader's role.
-    fn dispatch_text_frame<S: MuxSink>(&mut self, code: logging::LogCode, sink: &mut S) {
+    /// Delivers a peer's text frame `tag`, carrying `code`, as
+    /// [`text_frame_action`] directs for this reader's role.
+    fn dispatch_text_frame<S: MuxSink>(
+        &mut self,
+        tag: protocol::MessageCode,
+        code: logging::LogCode,
+        sink: &mut S,
+    ) {
+        let action = text_frame_action(code, self.role);
+        if action == TextFrameAction::Invalid {
+            self.frame_violation.get_or_insert(FrameViolation::Invalid {
+                tag: tag.as_u8(),
+                len: self.buffer.len(),
+            });
+            return;
+        }
         // upstream: log.c:338 - receipt of FERROR_XFER sets got_xfer_error = 1.
         // Track the count so check_error_exit can distinguish daemon filter
         // refusals from real errors.
         if code == logging::LogCode::ErrorXfer {
             self.xfer_error_count += 1;
         }
-        match text_frame_action(code, self.role) {
+        match action {
             TextFrameAction::Forward => {
                 // upstream: log.c:292-301 - a server receiver hands the bytes to
                 // its generator before the quiet check; the server's own
@@ -1036,10 +1084,10 @@ impl<R> MultiplexReader<R> {
                 );
             }
             TextFrameAction::Render => {
-                // upstream: log.c:310-311 rewrites FCLIENT to FINFO; FINFO goes
-                // to stdout and returns early under `--quiet` (log.c:344-346),
-                // every other code goes to stderr (log.c:336-342).
-                let is_info = matches!(code, logging::LogCode::Info | logging::LogCode::Client);
+                // upstream: FINFO goes to stdout and returns early under
+                // `--quiet` (log.c:344-346); every other code goes to stderr
+                // (log.c:336-342).
+                let is_info = code == logging::LogCode::Info;
                 if is_info && logging::finfo_suppressed() {
                     return;
                 }
@@ -1055,6 +1103,7 @@ impl<R> MultiplexReader<R> {
                     sink.error(&out);
                 }
             }
+            TextFrameAction::Invalid => {}
         }
     }
 }
@@ -2061,5 +2110,113 @@ mod error_exit_length_tests {
     fn four_byte_and_empty_payloads_remain_exit_requests() {
         assert_eq!(remote_exit_code(&read_err(&12i32.to_le_bytes())), Some(12));
         assert_eq!(remote_exit_code(&read_err(&[])), Some(0));
+    }
+}
+
+/// Sibling-logging tags from a network peer.
+///
+/// upstream: io.c:1857-1862 `read_a_msg()` - `MSG_LOG`, `MSG_CLIENT`,
+/// `MSG_ERROR_SOCKET` and `MSG_ERROR_UTF8` are legal only on a generator,
+/// which receives them from its own receiver over the internal pipe; anywhere
+/// else they are `goto invalid_msg`, printing `invalid multi-message %d:%lu`
+/// and exiting `RERR_STREAMIO`. No oc reader is that generator, so a peer
+/// sending one must end the stream - rendering it would let the peer drive
+/// `MSG_CLIENT` text onto a server's stdout, the protocol stream.
+#[cfg(test)]
+mod sibling_log_frame_tests {
+    use super::*;
+
+    const SIBLING_TAGS: [protocol::MessageCode; 4] = [
+        protocol::MessageCode::Log,
+        protocol::MessageCode::Client,
+        protocol::MessageCode::ErrorSocket,
+        protocol::MessageCode::ErrorUtf8,
+    ];
+
+    #[derive(Default)]
+    struct CountingSink {
+        writes: usize,
+    }
+
+    impl MuxSink for CountingSink {
+        fn info(&mut self, _: &[u8]) {
+            self.writes += 1;
+        }
+
+        fn error(&mut self, _: &[u8]) {
+            self.writes += 1;
+        }
+    }
+
+    /// `code` carrying `payload`, then one data byte.
+    fn wire(code: protocol::MessageCode, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        protocol::send_msg(&mut out, code, payload).unwrap();
+        protocol::send_msg(&mut out, protocol::MessageCode::Data, b"y").unwrap();
+        out
+    }
+
+    fn read(role: LocalRole, code: protocol::MessageCode, payload: &[u8]) -> io::Result<Vec<u8>> {
+        let mut reader = MultiplexReader::new(io::Cursor::new(wire(code, payload)));
+        reader.set_local_role(role);
+        let mut buf = [0u8; 8];
+        let n = reader.read(&mut buf)?;
+        Ok(buf[..n].to_vec())
+    }
+
+    #[test]
+    fn sibling_tags_are_invalid_on_every_role() {
+        for role in [LocalRole::Client, LocalRole::Server] {
+            for code in SIBLING_TAGS {
+                let err = read(role, code, b"x\n").expect_err("a sibling tag must end the stream");
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{role:?} {code:?}");
+                assert_eq!(
+                    err.to_string(),
+                    format!("invalid multi-message {}:2", code.as_u8()),
+                    "{role:?} {code:?}"
+                );
+                assert!(
+                    err.get_ref()
+                        .is_none_or(|e| !e.is::<protocol::ProtocolViolation>()),
+                    "upstream exits RERR_STREAMIO (12), not RERR_PROTOCOL"
+                );
+            }
+        }
+    }
+
+    /// WHY: the rejected frame must have no side effect - not on the
+    /// terminal, not queued for a peer.
+    #[test]
+    fn sibling_tags_render_and_forward_nothing() {
+        for role in [LocalRole::Client, LocalRole::Server] {
+            for code in SIBLING_TAGS {
+                let _ = logging::drain_events();
+                let mut reader = MultiplexReader::new(io::empty());
+                reader.set_local_role(role);
+                reader.buffer = b"x\n".to_vec();
+                let mut sink = CountingSink::default();
+                assert!(!reader.dispatch_message_with(code, &mut sink));
+                assert_eq!(sink.writes, 0, "{role:?} {code:?}");
+                assert!(logging::drain_events().is_empty(), "{role:?} {code:?}");
+            }
+        }
+    }
+
+    /// NON-VACUITY: the four peer-facing text tags stay legal, so the data
+    /// behind them is still delivered.
+    #[test]
+    fn peer_text_tags_stay_legal() {
+        for role in [LocalRole::Client, LocalRole::Server] {
+            for code in [
+                protocol::MessageCode::Info,
+                protocol::MessageCode::Error,
+                protocol::MessageCode::ErrorXfer,
+                protocol::MessageCode::Warning,
+            ] {
+                let _ = logging::drain_events();
+                assert_eq!(read(role, code, b"").expect("legal text tag"), b"y");
+            }
+        }
+        let _ = logging::drain_events();
     }
 }
