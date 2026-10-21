@@ -219,8 +219,13 @@ impl SourcePrefetcher {
         for wire in
             peek_whole_file_requests(buffered, codec, shape, flist_frees, MAX_BATCH_FILES - 1)
         {
-            let flat = ctx.resolve_itemize_ndx(wire);
-            let Some(entry) = files.get(flat) else {
+            // A peeked index is only a hint: the read that consumes it refuses
+            // a bad one, so here it is merely skipped.
+            let Some((flat, entry)) = ctx
+                .flist_for_ndx(wire)
+                .ok()
+                .and_then(|flat| Some((flat, files.get(flat)?)))
+            else {
                 continue;
             };
             let size = entry.size();

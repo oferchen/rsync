@@ -970,10 +970,11 @@ impl GeneratorContext {
         // (flist.c:3511) and the owning directory's flat index, so the gap NDX
         // `seg_ndx_start - 1` resolves to that directory rather than to the
         // trailing file of the previous segment.
-        let seg_ndx_start = self
-            .incremental
-            .ndx_map
-            .push_sublist(segment.flist_start, segment.parent_flat_idx as i32);
+        let seg_ndx_start = self.incremental.ndx_map.push_sublist(
+            segment.flist_start,
+            segment.count,
+            segment.parent_flat_idx as i32,
+        );
 
         // Signal new sub-list to receiver.
         // upstream: flist.c:2664 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)

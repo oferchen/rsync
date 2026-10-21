@@ -1534,11 +1534,12 @@ impl ReceiverContext {
                 // `f_xfer == f_out`, so the sum head and the whole delta land
                 // on the wire and must be consumed to keep the sender in
                 // lockstep (receiver.c:829-830 discard_receive_data()).
-                let _echoed_sum_head = crate::receiver::wire::SumHead::read(reader)?;
+                let echoed_sum_head = crate::receiver::wire::SumHead::read(reader)?;
                 token_reader.reset();
                 crate::delta_apply::discard_delta_stream(
                     reader,
                     token_reader,
+                    u64::from(echoed_sum_head.count),
                     discard_checksum_len,
                 )?;
             }

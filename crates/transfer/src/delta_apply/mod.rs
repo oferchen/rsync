@@ -7,6 +7,7 @@
 //! # Submodules
 //!
 //! - `applicator` - Core delta application logic (`DeltaApplicator`, config, result types)
+//! - `block` - Block-match index validation and basis span lookup
 //! - `checksum` - Checksum verification with enum dispatch for algorithm selection
 //! - `sparse` - Sparse file write state tracking for hole optimization
 //!
@@ -27,6 +28,7 @@
 //! - `receiver.c:677-692` - File checksum verification
 
 mod applicator;
+mod block;
 mod checksum;
 mod sparse;
 
@@ -35,5 +37,6 @@ pub use applicator::{
     BasisWriterKind, DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, apply_delta_stream,
     discard_delta_stream,
 };
+pub(crate) use block::{block_span, check_block_index};
 pub use checksum::ChecksumVerifier;
 pub use sparse::SparseWriteState;

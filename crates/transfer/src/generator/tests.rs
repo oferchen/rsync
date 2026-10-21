@@ -417,7 +417,7 @@ fn sender_flist_path_emits_no_debug_instrumentation_at_verbose() {
 
 #[test]
 fn ndx_convert_call_counter_increments() {
-    // INC_RECURSE diagnostics: every wire_to_flat_ndx /
+    // INC_RECURSE diagnostics: every peer NDX resolution and
     // flat_to_wire_ndx invocation must bump the global call counter. The
     // assertion uses >= because the counter is shared across the process and
     // other tests may run concurrently.
@@ -426,7 +426,7 @@ fn ndx_convert_call_counter_increments() {
     let (_handshake, ctx) = test_generator();
     let (calls_before, _) = ndx_convert_totals();
 
-    let _ = ctx.wire_to_flat_ndx(0);
+    let _ = ctx.flist_for_ndx(0);
     let _ = ctx.flat_to_wire_ndx(0);
     let _ = ctx.flat_to_wire_ndx(0);
 
@@ -448,9 +448,9 @@ fn ndx_convert_partition_point_depth_grows() {
     let (_handshake, mut ctx) = test_generator();
     // The map starts with one segment; extend it to four so each query
     // contributes a measurably larger partition_point depth.
-    ctx.incremental.ndx_map.push_sublist(10, -1);
-    ctx.incremental.ndx_map.push_sublist(20, -1);
-    ctx.incremental.ndx_map.push_sublist(30, -1);
+    ctx.incremental.ndx_map.push_sublist(10, 10, -1);
+    ctx.incremental.ndx_map.push_sublist(20, 10, -1);
+    ctx.incremental.ndx_map.push_sublist(30, 10, -1);
 
     let per_call_depth = partition_point_depth(ctx.incremental.ndx_map.len());
     assert!(
@@ -504,7 +504,7 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
     let gap_ndx: i32 = 0;
 
     // The fix preserves wire_ndx directly, so the round-trip through
-    // wire_to_flat_ndx + flat_to_wire_ndx is no longer used in production.
+    // wire_to_flat + flat_to_wire_ndx is no longer used in production.
     // Verify that the gap NDX value (0) is below ndx_start (1), which is
     // the condition under which upstream echoes the original NDX unchanged.
     let ndx_start = ctx.incremental.ndx_map.first_ndx_start();
@@ -516,11 +516,11 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
     // Also verify that a normal NDX (at or above ndx_start) round-trips
     // correctly through the conversion functions.
     let normal_ndx: i32 = 1;
-    let flat = ctx.wire_to_flat_ndx(normal_ndx);
+    let flat = ctx.incremental.ndx_map.wire_to_flat(normal_ndx);
     let back = ctx.flat_to_wire_ndx(flat);
     assert_eq!(
         back, normal_ndx,
-        "normal NDX round-trip: wire_to_flat_ndx({normal_ndx}) = {flat}, \
+        "normal NDX round-trip: wire_to_flat({normal_ndx}) = {flat}, \
          flat_to_wire_ndx({flat}) = {back}, expected {normal_ndx}"
     );
 }
@@ -628,7 +628,7 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     // are flat file_list indices, NOT wire dir_ndx values (`sub` has wire
     // dir_ndx 1 but that alone would misresolve to flat 0 == `.`).
     assert_eq!(
-        ctx.resolve_itemize_ndx(0),
+        ctx.flist_for_ndx(0).unwrap(),
         0,
         "the initial list's gap NDX must resolve to `.` at flat 0"
     );
@@ -641,16 +641,20 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     // loop. upstream flist.c:3511: ndx_start = prev(1) + prev_used(2) + 1 = 4,
     // so sub/'s gap NDX is 3. The initial list keeps ndx_start 1, gap NDX 0.
     ctx.incremental.ndx_map.set_initial_parent_flat(0);
-    let sub_ndx_start = ctx.incremental.ndx_map.push_sublist(2, 1);
+    let sub_ndx_start = ctx.incremental.ndx_map.push_sublist(2, 1, 1);
     assert_eq!(sub_ndx_start, 4, "flist.c:3209 - 1 + 2 + 1");
 
     // Each gap resolves to its OWN owning directory; the child resolves to
     // itself. The `!= 0` anti-regression: sub/'s gap 3 must be flat 1 (`sub`),
     // never flat 0 (`./`), and the root gap 0 must map to the live flat 0 so the
     // root row is emitted rather than guarded out as an out-of-range index.
-    assert_eq!(ctx.resolve_itemize_ndx(0), 0, "root gap -> `.`");
-    assert_eq!(ctx.resolve_itemize_ndx(3), 1, "sub/ gap -> `sub`, not `./`");
-    assert_eq!(ctx.resolve_itemize_ndx(4), 2, "child -> itself");
+    assert_eq!(ctx.flist_for_ndx(0).unwrap(), 0, "root gap -> `.`");
+    assert_eq!(
+        ctx.flist_for_ndx(3).unwrap(),
+        1,
+        "sub/ gap -> `sub`, not `./`"
+    );
+    assert_eq!(ctx.flist_for_ndx(4).unwrap(), 2, "child -> itself");
 
     let itemize_ctx = itemize::ItemizeContext::default();
 
@@ -660,9 +664,9 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     let unchanged = ItemFlags::from_raw(0);
     let new_local = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
     let new_xfer = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
-    let root = &ctx.file_list[ctx.resolve_itemize_ndx(0)];
-    let sub = &ctx.file_list[ctx.resolve_itemize_ndx(3)];
-    let child = &ctx.file_list[ctx.resolve_itemize_ndx(4)];
+    let root = &ctx.file_list[ctx.flist_for_ndx(0).unwrap()];
+    let sub = &ctx.file_list[ctx.flist_for_ndx(3).unwrap()];
+    let child = &ctx.file_list[ctx.flist_for_ndx(4).unwrap()];
     assert_eq!(
         itemize::format_itemize_line(&unchanged, root, true, &itemize_ctx, None),
         ".d          ./\n"
@@ -2016,48 +2020,55 @@ fn get_checksum_algorithm_negotiated() {
     assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::XXH3);
 }
 
-#[test]
-fn validate_file_index_valid() {
+/// Two regular entries in a single (non-INC_RECURSE) list: wire 0 and 1.
+fn two_entry_sender() -> GeneratorContext {
     let handshake = test_handshake();
     let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
-    ctx.file_list.push(protocol::flist::FileEntry::new_file(
-        "test.txt".into(),
-        100,
-        0o644,
-    ));
-    ctx.file_list.push(protocol::flist::FileEntry::new_file(
-        "test2.txt".into(),
-        200,
-        0o644,
-    ));
-
-    assert!(ctx.validate_file_index(0).is_ok());
-    assert!(ctx.validate_file_index(1).is_ok());
+    for (name, size) in [("test.txt", 100), ("test2.txt", 200)] {
+        ctx.file_list.push(protocol::flist::FileEntry::new_file(
+            name.into(),
+            size,
+            0o644,
+        ));
+    }
+    ctx
 }
 
 #[test]
-fn validate_file_index_invalid() {
-    let handshake = test_handshake();
-    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
-    ctx.file_list.push(protocol::flist::FileEntry::new_file(
-        "test.txt".into(),
-        100,
-        0o644,
-    ));
+fn flist_for_ndx_resolves_every_index_of_the_list() {
+    let ctx = two_entry_sender();
+    assert_eq!(ctx.flist_for_ndx(0).unwrap(), 0);
+    assert_eq!(ctx.flist_for_ndx(1).unwrap(), 1);
+}
 
-    let result = ctx.validate_file_index(1);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+/// One past the last entry is refused with upstream's text and the
+/// RERR_PROTOCOL tag (rsync.c:977-981), never resolved or clamped.
+#[test]
+fn flist_for_ndx_refuses_one_past_the_list_with_upstreams_text() {
+    let ctx = two_entry_sender();
+    let err = ctx.flist_for_ndx(2).expect_err("past the list");
+    let text = err.to_string();
+    assert!(
+        text.starts_with("File-list index 2 not in -1 - 1 (read_ndx_and_attrs) at "),
+        "{text}"
+    );
+    assert!(text.ends_with(&crate::role_trailer::sender()), "{text}");
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+        "must map to RERR_PROTOCOL (2)"
+    );
 }
 
 #[test]
-fn validate_file_index_empty_list() {
+fn flist_for_ndx_refuses_every_index_of_an_empty_list() {
     let handshake = test_handshake();
     let ctx = GeneratorContext::new_for_test(&handshake, test_config());
-
-    let result = ctx.validate_file_index(0);
-    assert!(result.is_err());
+    let err = ctx.flist_for_ndx(0).expect_err("nothing to name");
+    assert!(
+        err.to_string()
+            .starts_with("File-list index 0 not in -1 - -1 ")
+    );
 }
 
 #[test]
@@ -5617,8 +5628,8 @@ fn reclaim_oldest_segment_frees_first_segment_entries() {
             PathBuf::from(format!("/src/dir/file_{i}.txt")),
         );
     }
-    assert_eq!(ctx.incremental.ndx_map.push_sublist(3, -1), 5);
-    assert_eq!(ctx.incremental.ndx_map.push_sublist(5, -1), 8);
+    assert_eq!(ctx.incremental.ndx_map.push_sublist(3, 2, -1), 5);
+    assert_eq!(ctx.incremental.ndx_map.push_sublist(5, 2, -1), 8);
     assert_eq!(ctx.incremental.ndx_map.first_live(), 0);
 
     // Verify initial state.
@@ -5681,13 +5692,14 @@ fn reclaim_oldest_segment_keeps_directories_for_gap_ndx_itemize() {
         ctx.push_file_item(entry, PathBuf::from(path));
     }
     ctx.incremental.ndx_map.set_initial_parent_flat(0);
-    let sub_gap = ctx.incremental.ndx_map.push_sublist(3, 2) - 1;
+    let sub_used = ctx.file_list().len() - 3;
+    let sub_gap = ctx.incremental.ndx_map.push_sublist(3, sub_used, 2) - 1;
 
     ctx.reclaim_oldest_segment();
     assert_eq!(ctx.incremental.ndx_map.first_live(), 1);
     assert_eq!(ctx.file_list()[1].name(), "", "a file is still reclaimed");
 
-    let sub = &ctx.file_list()[ctx.resolve_itemize_ndx(sub_gap)];
+    let sub = &ctx.file_list()[ctx.flist_for_ndx(sub_gap).unwrap()];
     assert!(sub.is_dir(), "the gap NDX must still name a directory");
     let created = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
     assert_eq!(
@@ -6252,7 +6264,9 @@ fn remove_source_files_failure_yields_ferror_xfer_text() {
     perms.set_mode(0o555);
     std::fs::set_permissions(temp.path(), perms).expect("make the parent read-only");
 
-    let outcome = ctx.confirm_source_removal(wire);
+    let outcome = ctx
+        .confirm_source_removal(wire)
+        .expect("an in-range confirmation");
 
     std::fs::set_permissions(temp.path(), restore).expect("restore the parent");
 
@@ -6313,7 +6327,9 @@ fn remove_source_files_unlinks_after_msg_success() {
     );
 
     // MSG_SUCCESS(ndx) confirms the commit and drives the deferred unlink.
-    let outcome = ctx.confirm_source_removal(wire);
+    let outcome = ctx
+        .confirm_source_removal(wire)
+        .expect("an in-range confirmation");
     assert_eq!(outcome.io_error, 0, "a clean removal sets no io_error bits");
     assert!(
         outcome.error_xfer.is_none(),
@@ -6351,10 +6367,10 @@ fn remove_source_files_defers_until_msg_success() {
     ctx.pending_source_removals.mark_pending(flat);
     assert!(src.exists(), "an unconfirmed source must stay in place");
 
-    // A confirmation for an index the sender never marked pending must not
-    // trigger a spurious deletion.
+    // A confirmation for an index no list owns is refused outright
+    // (sender.c:409 flist_for_ndx) and must not trigger a spurious deletion.
     let bogus_wire = ctx.flat_to_wire_ndx(flat) + 100;
-    assert_eq!(ctx.confirm_source_removal(bogus_wire).io_error, 0);
+    assert!(ctx.confirm_source_removal(bogus_wire).is_err());
     assert!(
         src.exists(),
         "a stray MSG_SUCCESS must never delete an unrelated source"
@@ -6363,6 +6379,175 @@ fn remove_source_files_defers_until_msg_success() {
         !ctx.pending_source_removals.is_empty(),
         "the genuine pending entry must remain until its own confirmation"
     );
+}
+
+/// Three real sources split into two sub-lists the way INC_RECURSE sends
+/// them: `a` alone in the initial list (wire 0), `b` and `c` in the next
+/// (wire 2 and 3, gap slot 1). Every source is pending removal, as after its
+/// transfer. Returns the sources in flist order.
+fn two_list_sender_with_pending_removals(
+    temp: &tempfile::TempDir,
+) -> (GeneratorContext, Vec<PathBuf>) {
+    let paths: Vec<PathBuf> = ["a.txt", "b.txt", "c.txt"]
+        .iter()
+        .map(|name| temp.path().join(name))
+        .collect();
+    let (_h, mut ctx) = test_generator_for_path(&paths[0], false);
+    ctx.config.args = paths.iter().map(OsString::from).collect();
+    ctx.config.flags.remove_source_files = true;
+    ctx.build_file_list(&paths)
+        .expect("building the file list for three real files must succeed");
+    assert_eq!(
+        ctx.file_list.len(),
+        3,
+        "three positional files, no directories"
+    );
+    ctx.incremental.ndx_map.set_initial_used(1);
+    assert_eq!(ctx.incremental.ndx_map.push_sublist(1, 2, -1), 2);
+    let sources: Vec<PathBuf> = (0..3)
+        .map(|flat| ctx.reconstruct_source_path(flat))
+        .collect();
+    for flat in 0..3 {
+        ctx.pending_source_removals.mark_pending(flat);
+    }
+    (ctx, sources)
+}
+
+/// A `MSG_SUCCESS` naming a gap slot confirms no file. upstream refuses it
+/// (sender.c:409-411: `flist_for_ndx(ndx, "successful_send")`, then
+/// `if (ndx < flist->ndx_start) exit_cleanup(RERR_PROTOCOL)`); the plain
+/// wire-to-flat mapping instead landed on the next list's first entry and
+/// unlinked `b`, a source the peer never confirmed.
+#[test]
+fn msg_success_for_a_gap_ndx_never_unlinks_the_next_lists_first_file() {
+    // upstream prints no line of its own here (sender.c:410-411): only the
+    // standard RERR_PROTOCOL exit line.
+    assert_eq!(refuse_success(1), "protocol incompatibility");
+}
+
+/// Feeds one crafted `MSG_SUCCESS` to a sender whose every source is pending
+/// removal, asserts it is refused with RERR_PROTOCOL and that no source was
+/// unlinked, and returns the refusal text.
+fn refuse_success(wire: i32) -> String {
+    refuse_success_after(wire, |_| {})
+}
+
+fn refuse_success_after(wire: i32, prepare: impl FnOnce(&mut GeneratorContext)) -> String {
+    let temp = create_test_files(&[
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+        ("c.txt", b"charlie"),
+    ]);
+    let (mut ctx, sources) = two_list_sender_with_pending_removals(&temp);
+    prepare(&mut ctx);
+    let Err(err) = ctx.confirm_source_removal(wire) else {
+        panic!("a MSG_SUCCESS naming no live entry must be refused");
+    };
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+        "must map to RERR_PROTOCOL (2)"
+    );
+    assert!(
+        sources.iter().all(|src| src.exists()),
+        "no source may be unlinked"
+    );
+    err.to_string()
+}
+
+/// The gap of a list with no directory names nothing to itemize. upstream
+/// exits RERR_PROTOCOL without a line of its own (sender.c:553-555), so the
+/// refusal carries only the standard exit text.
+#[test]
+fn an_item_naming_the_gap_of_a_list_without_a_directory_exits_silently() {
+    let temp = create_test_files(&[
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+        ("c.txt", b"charlie"),
+    ]);
+    let (ctx, _sources) = two_list_sender_with_pending_removals(&temp);
+    let err = ctx
+        .flist_for_ndx(-1)
+        .expect_err("the initial list has no directory to itemize");
+    assert_eq!(err.to_string(), "protocol incompatibility");
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+        "must map to RERR_PROTOCOL (2)"
+    );
+}
+
+/// One past the newest list, and far past it: upstream's flist_for_ndx()
+/// refusal (rsync.c:977-981) with the successful_send site.
+#[test]
+fn msg_success_past_the_newest_list_is_refused_with_upstreams_text() {
+    for wire in [4, i32::MAX] {
+        let err = refuse_success(wire);
+        assert!(
+            err.starts_with(&format!(
+                "File-list index {wire} not in -1 - 3 (successful_send) "
+            )),
+            "{err}"
+        );
+    }
+}
+
+/// A negative index is outside every list too (io.c:1840 passes the raw int).
+#[test]
+fn msg_success_with_a_negative_index_is_refused() {
+    let err = refuse_success(-2);
+    assert!(
+        err.starts_with("File-list index -2 not in -1 - 3 (successful_send) "),
+        "{err}"
+    );
+}
+
+/// Once the initial list is freed its indices are gone, as flist_free()
+/// drops them from upstream's chain (sender.c:535-536): a late success for
+/// `a` is refused rather than resolved against a reclaimed entry.
+#[test]
+fn msg_success_for_a_freed_list_is_refused() {
+    let err = refuse_success_after(0, GeneratorContext::reclaim_oldest_segment);
+    assert!(
+        err.starts_with("File-list index 0 not in 1 - 3 (successful_send) "),
+        "{err}"
+    );
+}
+
+/// Non-vacuity companion: every live entry still confirms its own source,
+/// in either list.
+#[test]
+fn msg_success_for_each_live_entry_unlinks_exactly_that_source() {
+    let temp = create_test_files(&[
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+        ("c.txt", b"charlie"),
+    ]);
+    let (mut ctx, sources) = two_list_sender_with_pending_removals(&temp);
+    for (wire, flat) in [(0, 0), (3, 2)] {
+        let outcome = ctx.confirm_source_removal(wire).expect("a live entry");
+        assert_eq!(outcome.io_error, 0);
+        assert!(!sources[flat].exists(), "wire {wire} confirms flat {flat}");
+    }
+    assert!(sources[1].exists(), "an unconfirmed source stays");
+}
+
+/// Without --remove-source-files upstream never looks at the index
+/// (sender.c:406-407), so even a bogus one is ignored.
+#[test]
+fn msg_success_is_ignored_without_remove_source_files() {
+    let temp = create_test_files(&[
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+        ("c.txt", b"charlie"),
+    ]);
+    let (mut ctx, sources) = two_list_sender_with_pending_removals(&temp);
+    ctx.config.flags.remove_source_files = false;
+    let outcome = ctx
+        .confirm_source_removal(i32::MAX)
+        .expect("never examined");
+    assert_eq!(outcome.io_error, 0);
+    assert!(sources.iter().all(|src| src.exists()));
 }
 
 /// A mid-commit connection drop must leave every not-yet-confirmed source in
@@ -6427,7 +6612,9 @@ fn remove_source_files_mid_commit_teardown_retains_unconfirmed_sources() {
     // dropped: exactly one MSG_SUCCESS is consumed.
     let wire_first = ctx.flat_to_wire_ndx(file_flats[0]);
     assert_eq!(
-        ctx.confirm_source_removal(wire_first).io_error,
+        ctx.confirm_source_removal(wire_first)
+            .expect("an in-range confirmation")
+            .io_error,
         0,
         "a clean removal sets no io_error bits"
     );
@@ -7319,16 +7506,16 @@ fn inc_recurse_hardlink_gnum_is_the_leaders_send_order_wire_ndx() {
     ctx.partition_file_list_for_inc_recurse();
 
     // Replay the send path's NDX bookkeeping (encode_and_send_segment).
-    let segments: Vec<(usize, i32)> = ctx
+    let segments: Vec<(usize, usize, i32)> = ctx
         .incremental
         .pending_segments
         .iter()
-        .map(|seg| (seg.flist_start, seg.parent_flat_idx as i32))
+        .map(|seg| (seg.flist_start, seg.count, seg.parent_flat_idx as i32))
         .collect();
-    for (flist_start, parent_flat) in segments {
+    for (flist_start, count, parent_flat) in segments {
         ctx.incremental
             .ndx_map
-            .push_sublist(flist_start, parent_flat);
+            .push_sublist(flist_start, count, parent_flat);
     }
     let flat_of = |name: &str| {
         (0..ctx.file_list().len())

@@ -433,10 +433,7 @@ fn replay_batch(
         })?;
 
     let start = std::time::Instant::now();
-    let stats = ctx.run_local_replay(body, None).map_err(|e| {
-        let msg = format!("batch replay failed: {e}");
-        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-    })?;
+    let stats = ctx.run_local_replay(body, None).map_err(map_replay_error)?;
 
     // upstream: main.c:362-373 - the --read-batch side surfaces the replayed
     // totals through output_summary(). The receiver ran for real, so reuse the
@@ -469,6 +466,22 @@ fn replay_batch(
     Ok(summary)
 }
 
+/// Maps a failed replay of the recorded stream onto upstream's exit codes.
+///
+/// upstream: a replay is `do_recv()` over the batch fd, so a protocol
+/// violation in the recorded delta - receiver.c:585-589 `Invalid block index`,
+/// say - ends on the receiver's own diagnostic with
+/// `exit_cleanup(RERR_PROTOCOL)` (exit 2). Every other failure keeps the
+/// generic replay-failure code.
+fn map_replay_error(e: std::io::Error) -> ClientError {
+    if e.get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+    {
+        return ClientError::new(2, rsync_error!(2, "{}", e).with_role(Role::Client));
+    }
+    let msg = format!("batch replay failed: {e}");
+    ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+}
 /// Maps a batch open/header/reconcile error onto upstream's exit codes.
 fn map_batch_error(e: engine::batch::BatchError) -> ClientError {
     match e {
@@ -597,6 +610,29 @@ mod tests {
         ClientConfig::builder().compress(compress).build()
     }
 
+    /// A protocol violation inside the recorded stream ends a replay exactly
+    /// as it ends a live receive: RERR_PROTOCOL (2) and the receiver's own
+    /// text, not the generic exit-1 replay failure.
+    #[test]
+    fn replay_protocol_violation_exits_rerr_protocol_with_the_bare_text() {
+        let err = map_replay_error(protocol::protocol_violation(
+            "Invalid block index 100 (count=3) [receiver]",
+        ));
+        assert_eq!(err.exit_code(), 2);
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("Invalid block index 100 (count=3) [receiver]")
+                && !rendered.contains("batch replay failed"),
+            "{rendered}"
+        );
+    }
+    /// Non-vacuity companion: an ordinary replay I/O failure keeps exit 1.
+    #[test]
+    fn replay_io_failure_keeps_the_generic_exit_code() {
+        let err = map_replay_error(std::io::Error::other("disk full"));
+        assert_eq!(err.exit_code(), 1);
+        assert!(err.to_string().contains("batch replay failed: disk full"));
+    }
     #[test]
     fn read_batch_rejects_remote_destination() {
         let batch_cfg = read_batch_config(30);

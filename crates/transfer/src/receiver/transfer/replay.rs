@@ -11,7 +11,6 @@
 //! replaying generator's requests fall into a consumer-less pipe.
 
 use std::io::{self, Read, Write};
-use std::num::{NonZeroU8, NonZeroU32};
 
 use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
@@ -19,7 +18,6 @@ use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
 use metadata::apply_metadata_with_cached_stat;
 
 use engine::CleanupManager;
-use signature::{FileSignature, SignatureLayout};
 
 use crate::delta_apply::ChecksumVerifier;
 use crate::receiver::stats::TransferStats;
@@ -349,23 +347,7 @@ impl ReceiverContext {
 
             // The recorded sum head is the applicator's block layout; the
             // strong sums themselves are not needed to resolve COPY offsets.
-            let layout_signature = (sum_head.count > 0 && sum_head.blength > 0)
-                .then(|| {
-                    NonZeroU32::new(sum_head.blength).map(|blength| {
-                        FileSignature::from_raw_parts(
-                            SignatureLayout::from_raw_parts(
-                                blength,
-                                sum_head.remainder,
-                                u64::from(sum_head.count),
-                                NonZeroU8::new(u8::try_from(sum_head.s2length).unwrap_or(16))
-                                    .unwrap_or(NonZeroU8::MIN),
-                            ),
-                            Vec::new(),
-                            sum_head.flength(),
-                        )
-                    })
-                })
-                .flatten();
+            let layout_signature = sum_head.block_signature();
 
             #[cfg(unix)]
             let open_result = open_tmpfile_sandboxed(
@@ -394,6 +376,7 @@ impl ReceiverContext {
                     crate::delta_apply::discard_delta_stream(
                         reader,
                         &mut token_reader,
+                        u64::from(sum_head.count),
                         checksum_len,
                     )?;
                     metadata_errors
