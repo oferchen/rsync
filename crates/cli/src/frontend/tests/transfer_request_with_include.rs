@@ -37,7 +37,6 @@ fn transfer_request_with_include_from_reinstate_patterns() {
         FilterRuleKind::Clear => None,
         FilterRuleKind::Protect => Some(EngineFilterRule::protect(rule.pattern())),
         FilterRuleKind::Risk => Some(EngineFilterRule::risk(rule.pattern())),
-        FilterRuleKind::ExcludeIfPresent => None,
         FilterRuleKind::DirMerge => None,
     });
     let filter_set = FilterSet::from_rules(engine_rules).expect("filters");

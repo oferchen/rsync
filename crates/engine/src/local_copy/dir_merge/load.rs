@@ -3,7 +3,7 @@ use super::parse::{
 };
 use crate::local_copy::LocalCopyError;
 use crate::local_copy::filter_program::{
-    DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, ExcludeIfPresentRule, FilterProgramError,
+    DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, FilterProgramError,
 };
 use filters::{FilterRule, RuleSource};
 use std::fs;
@@ -282,14 +282,12 @@ pub(crate) struct NestedDirMerge {
     pub(crate) options: DirMergeOptions,
 }
 
-/// Accumulated rules and `exclude-if-present` markers loaded from a single
+/// Accumulated rules loaded from a single
 /// per-directory merge file (and any files it transitively merges).
 #[derive(Default)]
 pub(crate) struct DirMergeEntries {
     /// Filter rules parsed from the merge file, in source order.
     pub(crate) rules: Vec<FilterRule>,
-    /// `exclude-if-present` marker rules parsed from the merge file.
-    pub(crate) exclude_if_present: Vec<ExcludeIfPresentRule>,
     /// Nested `dir-merge`/`:` declarations to register as per-directory rules
     /// for subsequent subdirectory traversal.
     pub(crate) nested_dir_merges: Vec<NestedDirMerge>,
@@ -326,10 +324,6 @@ impl DirMergeEntries {
             .push(rule.with_source(filters::OwnedRuleSource::FileReadEarlier));
     }
 
-    fn push_exclude_if_present(&mut self, rule: ExcludeIfPresentRule) {
-        self.exclude_if_present.push(rule);
-    }
-
     fn push_nested_dir_merge(&mut self, nested: NestedDirMerge) {
         // upstream: exclude.c:1558-1571 - a `:e` directive synthesises an
         // exclude for the merge file's own BASENAME at REGISTRATION, into the
@@ -363,13 +357,10 @@ impl DirMergeEntries {
     fn extend(&mut self, mut other: DirMergeEntries) {
         if other.clear_inherited {
             self.rules.clear();
-            self.exclude_if_present.clear();
             self.nested_dir_merges.clear();
             self.clear_inherited = true;
         }
         self.rules.append(&mut other.rules);
-        self.exclude_if_present
-            .append(&mut other.exclude_if_present);
         self.nested_dir_merges.append(&mut other.nested_dir_merges);
     }
 }
@@ -470,7 +461,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                 if token == "!" || token == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.clear_inherited = true;
                         continue;
                     }
@@ -513,12 +503,8 @@ pub(crate) fn load_dir_merge_rules_recursive(
                             delete_excluded,
                         ));
                     }
-                    Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
-                        entries.push_exclude_if_present(rule);
-                    }
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.nested_dir_merges.clear();
                         entries.clear_inherited = true;
                     }
@@ -603,7 +589,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                 if line == "!" || line == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.clear_inherited = true;
                         continue;
                     }
@@ -640,9 +625,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                             options,
                             delete_excluded,
                         ));
-                    }
-                    Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
-                        entries.push_exclude_if_present(rule);
                     }
                     Ok(Some(ParsedFilterDirective::Merge {
                         path: merge_path,
@@ -695,7 +677,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     }
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.nested_dir_merges.clear();
                         entries.clear_inherited = true;
                     }
@@ -900,7 +881,6 @@ mod tests {
     fn dir_merge_entries_default_is_empty() {
         let entries = DirMergeEntries::default();
         assert!(entries.rules.is_empty());
-        assert!(entries.exclude_if_present.is_empty());
     }
 
     #[test]
@@ -921,27 +901,16 @@ mod tests {
     }
 
     #[test]
-    fn dir_merge_entries_push_exclude_if_present() {
-        let mut entries = DirMergeEntries::default();
-        let rule = ExcludeIfPresentRule::new(".nobackup".to_owned());
-        entries.push_exclude_if_present(rule);
-        assert_eq!(entries.exclude_if_present.len(), 1);
-    }
-
-    #[test]
-    fn dir_merge_entries_extend_merges_both_vecs() {
+    fn dir_merge_entries_extend_appends_rules() {
         let mut entries1 = DirMergeEntries::default();
         entries1.push_rule(FilterRule::exclude("*.tmp".to_owned()));
-        entries1.push_exclude_if_present(ExcludeIfPresentRule::new(".skip".to_owned()));
 
         let mut entries2 = DirMergeEntries::default();
         entries2.push_rule(FilterRule::include("*.rs".to_owned()));
-        entries2.push_exclude_if_present(ExcludeIfPresentRule::new(".ignore".to_owned()));
 
         entries1.extend(entries2);
 
         assert_eq!(entries1.rules.len(), 2);
-        assert_eq!(entries1.exclude_if_present.len(), 2);
     }
 
     #[test]
@@ -978,7 +947,6 @@ mod tests {
         let mut parent_entries = DirMergeEntries::default();
         parent_entries.push_rule(FilterRule::exclude("*.tmp".to_owned()));
         parent_entries.push_rule(FilterRule::exclude("*.bak".to_owned()));
-        parent_entries.push_exclude_if_present(ExcludeIfPresentRule::new(".nobackup".to_owned()));
 
         let mut child_entries = DirMergeEntries {
             clear_inherited: true,
@@ -989,7 +957,6 @@ mod tests {
         parent_entries.extend(child_entries);
 
         assert_eq!(parent_entries.rules.len(), 1);
-        assert_eq!(parent_entries.exclude_if_present.len(), 0);
         assert!(parent_entries.clear_inherited);
     }
 
