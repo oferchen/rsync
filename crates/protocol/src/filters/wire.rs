@@ -746,6 +746,24 @@ fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io:
             "filter rules are too modern for remote rsync",
         )
     })?;
+    Ok(rule_bytes(prefix, rule))
+}
+
+/// Spells `rule` as one line of a local (non-transfer) rule listing: the
+/// prefix with every protocol gate lifted, the pattern and the directory `/`,
+/// without a terminator.
+///
+/// # Upstream Reference
+///
+/// `batch.c:225-233` - `write_filter_rules()` writes `get_rule_prefix(ent,
+/// "- ", 0, &plen)`, then `ent->pattern`, then `/` for `FILTRULE_DIRECTORY`.
+#[must_use]
+pub fn serialize_rule_local(rule: &FilterRuleWireFormat) -> Vec<u8> {
+    rule_bytes(super::prefix::build_local_rule_prefix(rule), rule)
+}
+
+/// Appends the pattern body and directory `/` of `rule` to its `prefix`.
+fn rule_bytes(prefix: String, rule: &FilterRuleWireFormat) -> Vec<u8> {
     let mut bytes = prefix.into_bytes();
     let pattern_bytes = pattern_to_wire_bytes(&rule.pattern);
     // Non-merge anchored rules carry the anchor as a leading `/` in the pattern
@@ -767,7 +785,7 @@ fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io:
         bytes.push(b'/');
     }
 
-    Ok(bytes)
+    bytes
 }
 
 #[cfg(test)]

@@ -28,6 +28,21 @@ pub fn build_rule_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion)
     Some(build_modern_prefix(rule, protocol))
 }
 
+/// Builds the prefix of a rule listed locally rather than sent to a peer, such
+/// as a line of the batch `.sh` here-doc.
+///
+/// With `for_xfer` clear, `legal_len` is `MAX_RULE_PREFIX-1` and no protocol
+/// gate (`s`/`r` at 29, `p` at 30) applies, which is exactly the encoding of
+/// the newest protocol.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1829` - `get_rule_prefix(rule, pat, 0, ...)`, as called by
+/// `batch.c:write_filter_rules()`.
+pub(super) fn build_local_rule_prefix(rule: &FilterRuleWireFormat) -> String {
+    build_modern_prefix(rule, ProtocolVersion::NEWEST)
+}
+
 /// Builds a prefix for protocol < 29 (old-style, `legal_len = 1`).
 ///
 /// Only `"+ "` (include) and `"- "` (exclude) are valid. Dir-merge and

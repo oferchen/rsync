@@ -119,6 +119,102 @@ fn record_both(args: &[&str]) -> (Recording, Option<Recording>) {
     (oc, upstream)
 }
 
+/// Asserts oc's masked `.sh` equals both the pinned 3.5.1 text and, when an
+/// oracle is installed, what the oracle writes for the same invocation.
+fn assert_script_matches_upstream(args: &[&str], pinned: &[u8]) {
+    let (oc, upstream) = record_both(args);
+    assert!(oc.output.status.success(), "{args:?}: {:?}", oc.output);
+    let oc_script = oc.masked_script().expect("oc wrote a .sh");
+    assert_eq!(
+        String::from_utf8_lossy(&oc_script),
+        String::from_utf8_lossy(pinned),
+        "{args:?}: oc .sh differs from the pinned rsync {ORACLE_VERSION} text"
+    );
+    if let Some(up) = upstream {
+        assert!(up.output.status.success(), "{args:?}: oracle {:?}", up.output);
+        assert_eq!(
+            up.masked_script().as_deref(),
+            Some(pinned),
+            "{args:?}: the pinned text no longer matches the oracle"
+        );
+    }
+}
+
+/// upstream: batch.c:213-240 write_filter_rules() lists every filter_list
+/// entry through get_rule_prefix(for_xfer = 0) (exclude.c:1824-1885). `P` and
+/// `R` are `-r`/`+r`, and dir-merge, side, negate and directory modifiers all
+/// survive; a here-doc that drops one replays a different rule set than the
+/// recording run used.
+#[test]
+fn filter_heredoc_matches_upstream_get_rule_prefix() {
+    assert_script_matches_upstream(
+        &[
+            "-a",
+            "--checksum-seed=7",
+            "--write-batch=bf",
+            "-f",
+            "- gone",
+            "-f",
+            "!",
+            "--exclude=/x",
+            "--include=*/",
+            "-f",
+            "P keep",
+            "-f",
+            "R junk",
+            "-f",
+            ":n .rules",
+            "-f",
+            "- dir/",
+            "-f",
+            "-! neg",
+            "-f",
+            "H hid",
+            "-f",
+            "S sh",
+            "-f",
+            ":e .m",
+            "-f",
+            "-x xa",
+            "-f",
+            "-p per",
+            "-f",
+            ":C",
+            "-f",
+            "dir-merge,- .d",
+            "-C",
+            "--exclude=*.log",
+            "src/",
+            "dst/",
+        ],
+        b"ARGV0 --filter='._-' '-a' --checksum-seed='7' --read-batch='bf' '-C' \
+${1:-'dst/'} <<'#E#'\n- /x\n+ */\n-r keep\n+r junk\n:n .rules\n- dir/\n-! neg\n\
+-s hid\n+s sh\n- .m\n: .m\n-x xa\n-p per\n:C .cvsignore\n:- .d\n- *.log\n#E#\n",
+    );
+}
+
+/// upstream: batch.c:231-238 - under `--from0` each rule ends in NUL and the
+/// block gains a trailing `;\n`, so the replay's `--filter=._-` reads the
+/// rules with the same `-0` parsing the recording used.
+#[test]
+fn filter_heredoc_under_from0_matches_upstream() {
+    assert_script_matches_upstream(
+        &[
+            "-a",
+            "-0",
+            "--checksum-seed=7",
+            "--write-batch=bf",
+            "--exclude=x",
+            "-f",
+            "P keep",
+            "src/",
+            "dst/",
+        ],
+        b"ARGV0 --filter='._-' '-a' '-0' --checksum-seed='7' --read-batch='bf' \
+${1:-'dst/'} <<'#E#'\n- x\0-r keep\0;\n#E#\n",
+    );
+}
+
 /// upstream: options.c:2280-2283 - `--dry-run` zeroes `write_batch` for both
 /// write forms, so rsync 3.5.1 leaves neither the batch nor its `.sh` behind.
 /// A batch written under `-n` would also be a lie: no update was applied, yet
