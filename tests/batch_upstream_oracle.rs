@@ -626,3 +626,43 @@ fn script_open_error_names_the_full_path() {
         );
     }
 }
+
+/// upstream: compat.c:739-740 sets CF_ID0_NAMES for a local transfer (its
+/// child advertises 'u'), and with no INC_RECURSE (no `-r`) the header's
+/// compat varint is `81 fe`.
+/// The id lists then end with the name of id 0 (uidlist.c:398-405), so each
+/// implementation must also replay the other's batch.
+#[test]
+fn local_batch_compat_flags_match_upstream() {
+    let args = ["-lptgo", "--write-batch=bf", "src/a.txt", "dst/"];
+    let (oc, upstream) = record_both(&args);
+    assert!(oc.output.status.success(), "{:?}", oc.output);
+    let oc_header = oc.batch.as_ref().expect("oc batch");
+    assert_eq!(
+        oc_header[4..10],
+        [0x21, 0, 0, 0, 0x81, 0xfe],
+        "oc protocol + compat"
+    );
+    if let Some(up) = upstream.as_ref() {
+        assert_eq!(
+            up.batch.as_ref().expect("oracle batch")[4..10],
+            oc_header[4..10]
+        );
+    }
+
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&record_bin, &args);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = format!("{replayer}-replay/");
+            let out = fx.run(&replay_bin, &["--read-batch=bf", "-lptgo", &dest]);
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(
+                fs::read(fx.root.join(&dest).join("a.txt")).unwrap(),
+                b"alpha\n",
+                "{recorder}->{replayer}"
+            );
+        }
+    }
+}

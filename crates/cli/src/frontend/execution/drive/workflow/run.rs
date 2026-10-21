@@ -685,37 +685,25 @@ where
     // files_from is active. This is the implied level, not an explicit `-d`.
     let dirs = if files_from_active { Some(true) } else { dirs };
 
-    // upstream: compat.c:722-750 - local transfers negotiate compat_flags
-    // between sender and receiver. For protocol 32 with full capability
-    // string (`.LsfxCIvu`), the flags include SAFE_FILE_LIST,
-    // AVOID_XATTR_OPTIMIZATION, CHECKSUM_SEED_FIX, INPLACE_PARTIAL_DIR,
-    // ID0_NAMES, and VARINT_FLIST_FLAGS. These flags must be written to
-    // the batch header so upstream rsync can decode the file list and
-    // delta stream.
+    // upstream: compat.c:722-750 - a local transfer negotiates compat_flags
+    // between its sender and receiving child, and batch.c records them in the
+    // batch header so a reader decodes the file list and delta stream the
+    // same way.
     //
-    // upstream: batch.c - batch files record the compat_flags used during the
-    // transfer. INC_RECURSE must be set: without it, upstream's reader calls
-    // recv_id_list() after the flist end marker, consuming delta bytes as ID
-    // list data and causing "File-list index N not in range" errors. With
-    // INC_RECURSE, recv_id_list() is skipped (names are inline in flist).
-    // Our flat flist (all entries in the initial segment) is compatible with
-    // INC_RECURSE - the reader simply finds no sub-list segments.
-    // upstream: compat.c:724-750 - compat_flags written to batch header.
-    // CF_INC_RECURSE is deliberately omitted because upstream's --read-batch
-    // calls set_allow_inc_recurse() which may disable inc_recurse, causing
-    // "Incompatible options specified for inc-recursive batch file" (compat.c:781-784).
-    // Upstream's own -a --write-batch produces unreadable batches for this reason.
-    // Match upstream --no-inc-recursive --write-batch behavior.
+    // CF_INC_RECURSE is not recorded, although a recursive 3.5.1 recording
+    // sets it (compat.c:162-180): the local batch carries one flat file list,
+    // and an inc-recursive reader refuses any name below the top level in the
+    // first list ("invalid path from sender", flist.c:3230).
     let local_batch_compat_flags = {
         use protocol::CompatibilityFlags;
-        // ID0_NAMES is omitted because without INC_RECURSE, uid/gid name
-        // mappings go through post-flist ID lists (uidlist.c:send_id_lists).
-        // Empty ID lists with simple varint30(0) terminators are written;
-        // keeping ID0_NAMES off avoids the need to look up id=0 names.
+        // upstream: compat.c:739-740 - a local transfer's child advertises 'u',
+        // so CF_ID0_NAMES is set and the post-flist id lists carry the name of
+        // id 0 (uidlist.c:398-405).
         let flags = CompatibilityFlags::SAFE_FILE_LIST
             | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
             | CompatibilityFlags::CHECKSUM_SEED_FIX
             | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::ID0_NAMES
             | CompatibilityFlags::VARINT_FLIST_FLAGS;
         #[cfg(unix)]
         let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
