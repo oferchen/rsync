@@ -159,7 +159,7 @@ pub fn set_mtime(path: &Path, mtime: filetime::FileTime) -> io::Result<()> {
                 tv_nsec: libc::UTIME_OMIT,
             },
             libc::timespec {
-                tv_sec: mtime.unix_seconds() as libc::time_t,
+                tv_sec: mtime.unix_seconds() as _,
                 tv_nsec: libc::c_long::from(mtime.nanoseconds() as i32),
             },
         ];
