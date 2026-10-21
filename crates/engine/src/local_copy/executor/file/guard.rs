@@ -292,6 +292,42 @@ fn hardened_rename(
     }
 }
 
+/// Moves the staging temp onto the destination across filesystems: the `EXDEV`
+/// arm of [`hardened_rename`]'s caller.
+///
+/// On Unix the copy resolves each endpoint the way the confined rename did, so
+/// a destination parent flipped to a symlink cannot redirect the copy outside
+/// `dest_root` either. `--fsync` needs no sync here: the committed destination
+/// is registered with the deferred sync after the commit.
+///
+/// upstream: `util1.c:636-663` `robust_rename()` - the `EXDEV` arm runs
+/// `copy_file()`, whose `unlink_and_reopen()` clears the destination first,
+/// then `do_unlink_at(from)`.
+#[cfg(unix)]
+fn cross_device_move(
+    temp_path: &Path,
+    final_path: &Path,
+    dest_root: Option<&Path>,
+) -> io::Result<()> {
+    fast_io::confined_copy_then_unlink(dest_root, temp_path, final_path, false)
+}
+
+/// Non-Unix arm of [`cross_device_move`]: no `*at` resolver exists, so the
+/// destination is cleared and the bytes copied by path.
+#[cfg(not(unix))]
+fn cross_device_move(
+    temp_path: &Path,
+    final_path: &Path,
+    _dest_root: Option<&Path>,
+) -> io::Result<()> {
+    match fs::remove_file(final_path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    fs::copy(temp_path, final_path)?;
+    fs::remove_file(temp_path)
+}
+
 /// Whether a `linkat(2)` failure means the platform cannot publish an anonymous
 /// inode *at all*, as opposed to refusing this particular commit.
 ///
@@ -912,23 +948,15 @@ impl DestinationWriteGuard {
                     }
                     remove_existing_destination(&self.final_path)?;
                 }
-                // upstream: util1.c:robust_rename() EXDEV fallback calls
-                // copy_file() which calls unlink_and_reopen() - removing the
-                // existing destination before creating a fresh file. Without
-                // this unlink, fs::copy fails with EACCES when the existing
-                // destination has restrictive permissions (e.g. mode 440).
                 Err(error) if fast_io::is_cross_device(&error) => {
-                    remove_existing_destination(&self.final_path)?;
-                    fs::copy(&temp_path, &self.final_path).map_err(|copy_error| {
-                        LocalCopyError::io(
-                            self.finalise_action(),
-                            self.final_path.clone(),
-                            copy_error,
-                        )
-                    })?;
-                    fs::remove_file(&temp_path).map_err(|remove_error| {
-                        LocalCopyError::io(self.finalise_action(), temp_path, remove_error)
-                    })?;
+                    cross_device_move(&temp_path, &self.final_path, self.dest_root.as_deref())
+                        .map_err(|copy_error| {
+                            LocalCopyError::io(
+                                self.finalise_action(),
+                                self.final_path.clone(),
+                                copy_error,
+                            )
+                        })?;
                     return Ok(true);
                 }
                 Err(error) => {
@@ -1162,6 +1190,43 @@ mod tests {
     fn partial_guard_over(dest: &Path, old: &[u8]) -> (DestinationWriteGuard, fs::File) {
         fs::write(dest, old).expect("write destination");
         DestinationWriteGuard::new(dest, true, None, None).expect("guard")
+    }
+
+    /// A cross-device commit copies through the confined walk the rename used,
+    /// so a destination parent swapped for a symlink out of the root after
+    /// the temp was staged is refused rather than followed.
+    ///
+    /// upstream: `util1.c:636-663` `robust_rename()` - the `EXDEV` arm's
+    /// `copy_file()` resolves through the same confinement as the rename.
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_commit_refuses_a_parent_swapped_for_an_escaping_symlink() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("root");
+        let sub = root.join("sub");
+        let outside = temp.path().join("outside");
+        let staging = temp.path().join("staging");
+        for dir in [&sub, &outside, &staging] {
+            fs::create_dir_all(dir).expect("mkdir");
+        }
+        let dest = sub.join("file.txt");
+        let (guard, mut file) =
+            DestinationWriteGuard::new_confined(&dest, false, None, Some(&staging), Some(&root))
+                .expect("guard");
+        file.write_all(b"payload").expect("write");
+        drop(file);
+        fs::remove_dir(&sub).expect("rmdir sub");
+        std::os::unix::fs::symlink(&outside, &sub).expect("swap sub");
+
+        let _exdev = ForceExdev::new();
+        assert!(
+            guard.commit().is_err(),
+            "the escaping commit must be refused"
+        );
+        assert!(
+            !outside.join("file.txt").exists(),
+            "the payload must not be copied outside the root"
+        );
     }
 
     // upstream: cleanup.c:159 - no `cleanup_got_literal`, no promotion; the

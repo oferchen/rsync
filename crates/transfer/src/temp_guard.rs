@@ -613,7 +613,8 @@ impl TempFileGuard {
     ///
     /// Computes the target path as `partial_dir / filename` where `filename`
     /// is derived from `dest_path` (the final destination). Creates the
-    /// partial directory if it does not exist.
+    /// partial directory if it does not exist. `fsync` syncs the copy a
+    /// cross-device move makes, as `--fsync` does upstream.
     ///
     /// On success, marks the guard as kept (no deletion on drop) and returns
     /// `Ok(partial_path)`. On failure, returns the I/O error - the caller
@@ -628,6 +629,7 @@ impl TempFileGuard {
         &mut self,
         dest_path: &Path,
         partial_dir: &Path,
+        fsync: bool,
     ) -> io::Result<PathBuf> {
         let partial_path = partial_dir_fname(dest_path, partial_dir).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "destination has no filename")
@@ -652,11 +654,8 @@ impl TempFileGuard {
                 Ok(partial_path)
             }
             Err(ref e) if is_cross_device_error(e) => {
-                // upstream: util1.c:robust_rename() - copy + unlink on EXDEV
-                fs::copy(self.path(), &partial_path)?;
-                // The guard's drop will remove the source temp file.
+                partial_dir_copy_then_unlink(self.path(), &partial_path, fsync)?;
                 self.keep_on_drop = true;
-                let _ = fs::remove_file(self.path());
                 Ok(partial_path)
             }
             Err(e) => Err(e),
@@ -709,12 +708,47 @@ fn is_cross_device_error(e: &io::Error) -> bool {
 /// Other platforms have neither the ownership walk nor the filter.
 #[cfg(unix)]
 fn partial_dir_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if crate::disk_commit::ForceExdev::active() {
+        return Err(crate::disk_commit::ForceExdev::error());
+    }
     fast_io::operator_rename(old_path, new_path, true)
 }
 
 #[cfg(not(unix))]
 fn partial_dir_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if crate::disk_commit::ForceExdev::active() {
+        return Err(crate::disk_commit::ForceExdev::error());
+    }
     fs::rename(old_path, new_path)
+}
+
+/// The `EXDEV` arm of [`TempFileGuard::rename_to_partial_dir`]: copies the temp
+/// into the partial dir through the ownership walk the rename used, then
+/// unlinks it.
+///
+/// upstream: `util1.c:636-663` `robust_rename()` - an absolute `--partial-dir`
+/// is an operator path, so `copy_file()` and `do_unlink_at()` run under
+/// `operator_path_resolve`.
+#[cfg(unix)]
+fn partial_dir_copy_then_unlink(old_path: &Path, new_path: &Path, fsync: bool) -> io::Result<()> {
+    fast_io::confined_copy_then_unlink(None, old_path, new_path, fsync)
+}
+
+/// Non-Unix arm of [`partial_dir_copy_then_unlink`]: a plain path copy,
+/// synced under `--fsync` as upstream's `copy_file()` syncs it.
+#[cfg(not(unix))]
+fn partial_dir_copy_then_unlink(old_path: &Path, new_path: &Path, fsync: bool) -> io::Result<()> {
+    fs::copy(old_path, new_path)?;
+    if fsync {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(new_path)?
+            .sync_all()?;
+    }
+    let _ = fs::remove_file(old_path);
+    Ok(())
 }
 
 /// Commits a temp file to its final destination on Windows with a
@@ -1318,6 +1352,39 @@ mod tests {
         );
     }
 
+    /// A cross-device move into the partial dir clears a symlink planted at
+    /// the leaf instead of writing through it: the interrupted transfer's
+    /// bytes must not overwrite whatever the link points at.
+    ///
+    /// upstream: `util1.c:347-376` `unlink_and_reopen()` - `robust_unlink()`
+    /// then an `O_EXCL` create, reached from `robust_rename()`'s `EXDEV` arm.
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_partial_dir_move_does_not_write_through_a_planted_leaf() {
+        let dir = tempdir().expect("create temp dir");
+        let temp_path = dir.path().join("temp_file.tmp");
+        let partial_dir = dir.path().join("partial");
+        let dest_path = dir.path().join("final_dest.txt");
+        let victim = dir.path().join("victim");
+        fs::write(&temp_path, b"partial content").unwrap();
+        fs::write(&victim, b"VICTIM").unwrap();
+        fs::create_dir(&partial_dir).unwrap();
+        let leaf = partial_dir.join("final_dest.txt");
+        std::os::unix::fs::symlink(&victim, &leaf).unwrap();
+
+        let mut guard = TempFileGuard::new(temp_path.clone());
+        let _exdev = crate::disk_commit::ForceExdev::new();
+        let partial = guard
+            .rename_to_partial_dir(&dest_path, &partial_dir, false)
+            .expect("cross-device move");
+
+        assert_eq!(partial, leaf);
+        assert_eq!(fs::read(&victim).unwrap(), b"VICTIM");
+        assert!(fs::symlink_metadata(&leaf).unwrap().file_type().is_file());
+        assert_eq!(fs::read(&leaf).unwrap(), b"partial content");
+        assert!(!temp_path.exists(), "the moved temp must be unlinked");
+    }
+
     #[test]
     fn rename_to_partial_dir_absolute() {
         let dir = tempdir().expect("create temp dir");
@@ -1328,7 +1395,7 @@ mod tests {
         fs::write(&temp_path, b"partial content").unwrap();
 
         let mut guard = TempFileGuard::new(temp_path.clone());
-        let result = guard.rename_to_partial_dir(&dest_path, &partial_dir);
+        let result = guard.rename_to_partial_dir(&dest_path, &partial_dir, false);
 
         assert!(result.is_ok());
         let partial_path = result.unwrap();
@@ -1352,7 +1419,7 @@ mod tests {
 
         let mut guard = TempFileGuard::new(temp_path.clone());
         let relative_dir = Path::new(".rsync-partial");
-        let result = guard.rename_to_partial_dir(&dest_path, relative_dir);
+        let result = guard.rename_to_partial_dir(&dest_path, relative_dir, false);
 
         assert!(result.is_ok());
         let partial_path = result.unwrap();
@@ -1374,7 +1441,7 @@ mod tests {
         fs::write(&temp_path, b"nested partial").unwrap();
 
         let mut guard = TempFileGuard::new(temp_path.clone());
-        let result = guard.rename_to_partial_dir(&dest_path, &partial_dir);
+        let result = guard.rename_to_partial_dir(&dest_path, &partial_dir, false);
 
         assert!(result.is_ok());
         let partial_path = result.unwrap();
@@ -1391,7 +1458,7 @@ mod tests {
         fs::write(&temp_path, b"data").unwrap();
 
         let mut guard = TempFileGuard::new(temp_path);
-        let result = guard.rename_to_partial_dir(Path::new("/"), &partial_dir);
+        let result = guard.rename_to_partial_dir(Path::new("/"), &partial_dir, false);
 
         assert!(result.is_err());
     }

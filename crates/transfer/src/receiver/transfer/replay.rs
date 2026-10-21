@@ -494,6 +494,7 @@ impl ReceiverContext {
                 crate::robust_rename::CommitAnchor {
                     sandbox: sandbox.as_deref(),
                     root: &dest_dir,
+                    fsync: self.config.write.fsync,
                 },
                 temp_guard.path(),
                 &file_path,
