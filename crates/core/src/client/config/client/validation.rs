@@ -48,6 +48,7 @@ impl ClientConfig {
     /// upstream: compat.c:538-574 `negotiate_the_strings()`, checksum.c:192-207
     /// `parse_checksum_choice()`, checksum.c:322-412 `get_checksum2()`,
     /// options.c:3228 the `C` flag, compat.c:823-824 the seed.
+    #[must_use]
     pub fn transfer_signature_algorithm(&self) -> SignatureAlgorithm {
         let algorithm = self
             .checksum_protocol_override()
