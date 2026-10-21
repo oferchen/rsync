@@ -1424,6 +1424,15 @@ where
         ));
     }
 
+    // upstream: options.c:2280-2283 - `--dry-run` zeroes `write_batch` for both
+    // write forms (after the name check above, which still sees `batch_name`),
+    // so a dry run creates neither the batch file nor its `.sh`.
+    let (write_batch, only_write_batch) = if dry_run {
+        (None, None)
+    } else {
+        (write_batch, only_write_batch)
+    };
+
     // upstream: options.c:2450-2455 - a `--suffix` containing a slash is rejected
     // regardless of `--backup-dir`.
     if let Some(suffix) = backup_suffix.as_ref()
