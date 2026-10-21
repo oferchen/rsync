@@ -403,6 +403,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A local `--write-batch` below protocol 31 ends at the stats trailer, so upstream `--read-batch` accepts it (#8036)
 - `--write-batch` records itemize flags for created and metadata-changed non-regular entries, so an upstream `--read-batch` replays them (#7929, #7957, #7970)
 - Quote the injected `--filter` value in the batch replay script like upstream `write_arg()` (#7972)
+- `--write-batch` and `--only-write-batch` create no batch files under `--dry-run`, as upstream does (#PRNUM)
 - Resolve a relative `--temp-dir` against the destination (#7397)
 - Keep an absolute `--partial-dir` through the delayed sweep, clear a non-directory at its name, reuse its leaf as a basis, and stage a resume in place (#7499, #7500, #7556, #7557, #7599, #7868)
 - Recover a read-only in-place destination (#7485)
