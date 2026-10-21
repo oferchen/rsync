@@ -457,24 +457,47 @@ fn try_parse_short_form(
         source_path,
         line_num,
     )?;
-    if pattern.is_empty() && !mods.cvs_ignore {
-        return Ok(None);
-    }
-    // upstream: exclude.c:1554-1557 - a merge / dir-merge rule with the `C`
-    // (CVS-ignore) modifier and an empty pattern defaults to the filename
-    // `.cvsignore`.
-    let pattern = if pattern.is_empty() {
-        ".cvsignore"
-    } else {
-        pattern
-    };
-
     // upstream: exclude.c:1365-1443 `parse_rule_tok` applies the parsed modifiers
     // to every rule prefix, including a plain merge (`.`): the merge-file
     // modifiers are gated on `FILTRULE_MERGE_FILE`, which `.` sets (exclude.c:1337-1338)
     // just as `:` does. Dropping them for `.` silently ignored `C`, `w`, `n`, `e`,
     // side restrictions and anchoring on plain merges.
-    Ok(Some(parsed_rule(action, mods, pattern)))
+    complete_rule(action, mods, pattern, line, source_path, line_num).map(Some)
+}
+
+/// Finishes a rule once its prefix, modifiers and pattern are split, the same
+/// way for every spelling of the prefix.
+///
+/// upstream: exclude.c:1474-1476 parse_rule_tok() - an empty pattern is
+/// "unexpected end of filter rule" unless the rule has `C`, so a bare `-` or
+/// `exclude` is refused; exclude.c:1553-1557 parse_filter_str() then names a
+/// `C` merge rule's missing file `.cvsignore`, for `:C` and `dir-merge,C` alike.
+fn complete_rule(
+    action: ShortFormAction,
+    mods: RuleModifiers,
+    pattern: &str,
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<ParsedLine, MergeFileError> {
+    if pattern.is_empty() && !mods.cvs_ignore {
+        let name = source_path.display().to_string();
+        let source = RuleSource::File {
+            name: &name,
+            line: line_num,
+        };
+        return Err(MergeFileError::parse_error(
+            source_path,
+            line_num,
+            format!("unexpected end of filter rule: {}", source.rule_text(line)),
+        ));
+    }
+    let pattern = if pattern.is_empty() && action.is_merge() {
+        ".cvsignore"
+    } else {
+        pattern
+    };
+    Ok(parsed_rule(action, mods, pattern))
 }
 
 /// Returns true for the characters upstream `isspace()` treats as whitespace in
@@ -542,7 +565,7 @@ fn try_parse_long_form(
                     source_path,
                     line_num,
                 )?;
-                return Ok(Some(parsed_rule(action, mods, pattern)));
+                return complete_rule(action, mods, pattern, line, source_path, line_num).map(Some);
             }
             // upstream: rule_strcmp accepts isspace/`_` as terminating
             // separators; exactly one is consumed and the remainder is the
@@ -550,11 +573,29 @@ fn try_parse_long_form(
             // whitespace stays part of the pattern.
             Some(ch) if ch == '_' || is_c_isspace(ch) => {
                 let pattern = &after[ch.len_utf8()..];
-                return Ok(Some(ParsedLine::Rule(action.to_rule(pattern))));
+                return complete_rule(
+                    action,
+                    RuleModifiers::default(),
+                    pattern,
+                    line,
+                    source_path,
+                    line_num,
+                )
+                .map(Some);
             }
             // upstream: rule_strcmp accepts end-of-string (`!str[rule_len]`); the
             // keyword stands alone and the pattern is empty.
-            None => return Ok(Some(ParsedLine::Rule(action.to_rule("")))),
+            None => {
+                return complete_rule(
+                    action,
+                    RuleModifiers::default(),
+                    "",
+                    line,
+                    source_path,
+                    line_num,
+                )
+                .map(Some);
+            }
             // Any other trailing byte means this is not the keyword (e.g.
             // `excludes`); fall through to the next candidate.
             Some(_) => continue,

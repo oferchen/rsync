@@ -1107,18 +1107,6 @@ fn long_form_keyword_tab_separator() {
     assert_eq!(rules[0].pattern(), b"*.txt");
 }
 
-// upstream: rule_strcmp accepts end-of-string (`!str[rule_len]`), so a bare
-// keyword with no pattern is a valid rule whose pattern is empty.
-#[test]
-fn long_form_keyword_alone_is_empty_pattern() {
-    let rules = parse_rules("hide", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert!(rules[0].applies_to_sender());
-    assert!(!rules[0].applies_to_receiver());
-    assert_eq!(rules[0].pattern(), b"");
-}
-
 // upstream: rule_strcmp returns `str + rule_len` for a comma, so the modifier
 // loop runs after it. `dir-merge,n .filt` must therefore carry the same
 // no-inherit modifier as the short-form `:n .filt`.
@@ -1322,4 +1310,39 @@ fn cvs_rule_prefix_and_modifiers_reach_every_cvs_pattern() {
         sender.iter().all(|rule| rule.pattern() != b"foo"),
         "the C rule's own pattern is never matched"
     );
+}
+
+/// #227: an empty pattern is "unexpected end of filter rule" for every prefix
+/// spelling unless the rule has `C` (exclude.c:1474-1476), and the error names
+/// the line rather than echoing it (exclude.c:133-137). oc used to return an
+/// empty-pattern rule for a bare keyword and "Unknown filter rule" for `-`.
+#[test]
+fn parse_rule_with_no_pattern_is_an_unexpected_end() {
+    for line in [
+        "exclude",
+        "hide",
+        "merge",
+        "exclude ",
+        "-",
+        "+",
+        ":",
+        "dir-merge",
+    ] {
+        let err = parse_rules(line, Path::new("test")).unwrap_err();
+        assert_eq!(
+            err.message, "unexpected end of filter rule: <rule from test line 1>",
+            "{line:?}"
+        );
+    }
+}
+
+/// #227: a `C` merge rule with no name merges `.cvsignore`, for the long
+/// keyword as for `:C` (exclude.c:1553-1557).
+#[test]
+fn parse_cvs_merge_rule_with_no_name_merges_cvsignore() {
+    for line in ["dir-merge,C", ":C", "merge,C", ".C"] {
+        let rules = parse_rules(line, Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 1, "{line}");
+        assert_eq!(rules[0].pattern(), b".cvsignore", "{line}");
+    }
 }

@@ -268,47 +268,77 @@ fn exclude_self_precedes_the_merged_rules() {
     }
 }
 
-/// #226: a rule that names a side inside a `:s`/`:r` file is a
-/// `filter_rule_err` (exclude.c:1447-1456), exit 1 (12 for the pull's client,
-/// which sees its server die), with the line redacted to
-/// `<rule from ...>` (exclude.c:133-137). Both binaries refuse; the location
-/// inside `<rule from ...>` is compared only up to the file name, because
-/// upstream names the file by absolute path and oc by the path it opened. A
-/// pull with `:r` refuses nothing in either: the receiver-side rule never
-/// reaches the sender that reads the file.
+/// Asserts an oc client and an upstream client agree on `args` over `files`
+/// for a rule refused out of a merge FILE, where the two may differ only in
+/// how `<rule from ...>` names the file: upstream by absolute path, oc by the
+/// path it opened. So each diagnostic is compared up to `<rule from `.
 ///
 /// On a push the refusal comes from oc's sender walk, which, like every
 /// per-directory parse error there, still exits 11 inside a `transfer failed`
 /// wrapper where upstream exits 1 (task #376: RERR codes chosen from
 /// `ErrorKind`). That leg pins the refusal and its text, not the exit code.
-#[test]
-fn sided_merge_file_refuses_a_sided_rule() {
-    const REFUSAL: &str = "specified-side merge file contains specified-side filter: <rule from ";
+fn assert_file_rule_parity(files: &[(&str, &str)], args: &[&str], source: Source) {
     let Some(upstream) = upstream() else { return };
     let server = upstream.binary();
+    let expected = run(server, server, files, args, source);
+    let actual = run(&oc_rsync_bin(), server, files, args, source);
+    let context = format!("{args:?} {files:?}: oc {actual:?} vs upstream {expected:?}");
+    assert_eq!(actual.transferred, expected.transferred, "{context}");
+    let text = expected
+        .diagnostic
+        .split("<rule from ")
+        .next()
+        .unwrap_or_default();
+    if matches!(source, Source::Push) && expected.exit != 0 {
+        assert_ne!(actual.exit, 0, "{context}");
+        assert!(actual.diagnostic.contains(text), "{context}");
+    } else {
+        assert_eq!(actual.exit, expected.exit, "{context}");
+        assert!(actual.diagnostic.starts_with(text), "{context}");
+    }
+}
+
+/// #226: a rule that names a side inside a `:s`/`:r` file is a
+/// `filter_rule_err` (exclude.c:1447-1456), exit 1 (12 for the pull's client,
+/// which sees its server die), with the line redacted to `<rule from ...>`
+/// (exclude.c:133-137). A pull with `:r` refuses nothing in either: the
+/// receiver-side rule never reaches the sender that reads the file.
+#[test]
+fn sided_merge_file_refuses_a_sided_rule() {
     for (rule, line) in [(":s .f", "-r foo"), (":r .f", "S foo"), (":s .f", ":r .g")] {
         let files = [("a", "a"), (".f", &*format!("- ok\n{line}\n"))];
-        let args = [&*format!("--filter={rule}")];
         for source in [Source::Local, Source::Push, Source::Pull] {
-            let expected = run(server, server, &files, &args, source);
-            let actual = run(&oc_rsync_bin(), server, &files, &args, source);
-            assert_eq!(actual.transferred, expected.transferred, "{rule} {line}");
-            assert_eq!(
-                actual.diagnostic.contains(REFUSAL),
-                expected.diagnostic.contains(REFUSAL),
-                "{rule} {line}: {actual:?} vs {expected:?}"
-            );
-            if matches!(source, Source::Local) {
-                assert!(expected.diagnostic.contains(REFUSAL), "{expected:?}");
-            }
-            if matches!(source, Source::Push) {
-                assert_ne!(actual.exit, 0, "{rule} {line}");
-            } else {
-                assert_eq!(actual.exit, expected.exit, "{rule} {line}");
-            }
-            if actual.exit != 0 {
-                assert!(actual.diagnostic.contains(" line 2>"), "{actual:?}");
-            }
+            assert_file_rule_parity(&files, &[&format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// #227: an empty pattern is "unexpected end of filter rule" unless the rule
+/// has `C` (exclude.c:1474-1476), so a bare `exclude` or `merge` in a merge
+/// file is refused, and a word-split file ends every rule at whitespace
+/// (exclude.c:1772), so `exclude foo` there is a bare `exclude`. A `C` merge
+/// rule with no name merges `.cvsignore` (exclude.c:1553-1557).
+#[test]
+fn merge_file_rules_end_where_upstream_ends_them() {
+    for (filter, file, contents) in [
+        (":w .f", ".f", "exclude foo\n"),
+        (":w .f", ".f", "- foo\n"),
+        (":w .f", ".f", "-_foo\n"),
+        (": .f", ".f", "exclude\n"),
+        (": .f", ".f", "merge\n"),
+        (": .f", ".f", "dir-merge,C\n"),
+        (". src/rules", "rules", "exclude\n"),
+        (". src/rules", "rules", "dir-merge,C\n"),
+        (".w src/rules", "rules", "exclude foo\n"),
+    ] {
+        let files = [
+            ("a", "a"),
+            ("foo", "f"),
+            (".cvsignore", "a\n"),
+            (file, contents),
+        ];
+        for source in [Source::Local, Source::Push] {
+            assert_file_rule_parity(&files, &[&format!("--filter={filter}")], source);
         }
     }
 }
