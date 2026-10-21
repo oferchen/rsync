@@ -1,78 +1,154 @@
 //! Stream flags bitmap for batch file headers.
 //!
 //! The flags encode which rsync options were active during batch creation.
-//! Bit positions and protocol-version gating match upstream rsync's
-//! `batch.c:write_stream_flags()`.
+//! Bit positions, names and protocol-version gating all come from one table,
+//! [`STREAM_FLAGS`], mirroring upstream's `batch.c:59-95` `flag_ptr[]` and
+//! `flag_name[]` arrays.
 
 use std::io::{self, Read, Write};
 
 use super::wire::{read_i32, write_i32};
 use crate::error::{BatchError, BatchResult};
 
-/// Human-readable option names in stream-flag bit order.
+/// One data-stream-affecting option recorded in the batch header.
+struct StreamFlag {
+    /// The `flag_name[]` text embedded in the reconcile notice.
+    name: &'static str,
+    /// Lowest protocol whose `check_batch_flags()` visits this bit.
+    min_protocol: i32,
+    /// The [`BatchFlags`] field carrying this bit.
+    field: fn(&mut BatchFlags) -> &mut bool,
+}
+
+impl StreamFlag {
+    fn get(&self, mut flags: BatchFlags) -> bool {
+        *(self.field)(&mut flags)
+    }
+}
+
+/// The batch-restorable options in bit order: entry N is bit N.
 ///
-/// Mirrors upstream `batch.c:78-95 flag_name[]` exactly. Index N names the
-/// option carried by bit N of the stream-flags bitmap and is embedded verbatim
-/// in the reconcile notices emitted by [`check_batch_flags`].
-const FLAG_NAMES: [&str; 15] = [
-    "--recurse (-r)",
-    "--owner (-o)",
-    "--group (-g)",
-    "--links (-l)",
-    "--devices (-D)",
-    "--hard-links (-H)",
-    "--checksum (-c)",
-    "--dirs (-d)",
-    "--compress (-z)",
-    "--iconv",
-    "--acls (-A)",
-    "--xattrs (-X)",
-    "--inplace",
-    "--append",
-    "--append-verify",
+/// upstream: batch.c:59-95 `flag_ptr[]` / `flag_name[]`. `check_batch_flags()`
+/// truncates the array below protocol 29 at bit 7 and below 30 at bit 9
+/// (batch.c:125-128), which `min_protocol` records.
+const STREAM_FLAGS: [StreamFlag; 15] = [
+    StreamFlag {
+        name: "--recurse (-r)",
+        min_protocol: 0,
+        field: |f| &mut f.recurse,
+    },
+    StreamFlag {
+        name: "--owner (-o)",
+        min_protocol: 0,
+        field: |f| &mut f.preserve_uid,
+    },
+    StreamFlag {
+        name: "--group (-g)",
+        min_protocol: 0,
+        field: |f| &mut f.preserve_gid,
+    },
+    StreamFlag {
+        name: "--links (-l)",
+        min_protocol: 0,
+        field: |f| &mut f.preserve_links,
+    },
+    StreamFlag {
+        name: "--devices (-D)",
+        min_protocol: 0,
+        field: |f| &mut f.preserve_devices,
+    },
+    StreamFlag {
+        name: "--hard-links (-H)",
+        min_protocol: 0,
+        field: |f| &mut f.preserve_hard_links,
+    },
+    StreamFlag {
+        name: "--checksum (-c)",
+        min_protocol: 0,
+        field: |f| &mut f.always_checksum,
+    },
+    StreamFlag {
+        name: "--dirs (-d)",
+        min_protocol: 29,
+        field: |f| &mut f.xfer_dirs,
+    },
+    StreamFlag {
+        name: "--compress (-z)",
+        min_protocol: 29,
+        field: |f| &mut f.do_compression,
+    },
+    StreamFlag {
+        name: "--iconv",
+        min_protocol: 30,
+        field: |f| &mut f.iconv,
+    },
+    StreamFlag {
+        name: "--acls (-A)",
+        min_protocol: 30,
+        field: |f| &mut f.preserve_acls,
+    },
+    StreamFlag {
+        name: "--xattrs (-X)",
+        min_protocol: 30,
+        field: |f| &mut f.preserve_xattrs,
+    },
+    StreamFlag {
+        name: "--inplace",
+        min_protocol: 30,
+        field: |f| &mut f.inplace,
+    },
+    StreamFlag {
+        name: "--append",
+        min_protocol: 30,
+        field: |f| &mut f.append,
+    },
+    StreamFlag {
+        name: "--append-verify",
+        min_protocol: 30,
+        field: |f| &mut f.append_verify,
+    },
 ];
 
 /// Bit index of the `--iconv` flag - a mismatch here is fatal upstream.
 const ICONV_BIT: usize = 9;
 
-/// Project a [`BatchFlags`] onto the 15-entry bit vector used by
-/// [`check_batch_flags`], in the same order as upstream `batch.c:59-76
-/// flag_ptr[]`.
-fn flag_bits(flags: &BatchFlags) -> [bool; 15] {
-    [
-        flags.recurse,
-        flags.preserve_uid,
-        flags.preserve_gid,
-        flags.preserve_links,
-        flags.preserve_devices,
-        flags.preserve_hard_links,
-        flags.always_checksum,
-        flags.xfer_dirs,
-        flags.do_compression,
-        flags.iconv,
-        flags.preserve_acls,
-        flags.preserve_xattrs,
-        flags.inplace,
-        flags.append,
-        flags.append_verify,
-    ]
+/// The stream flags `check_batch_flags()` visits at `protocol_version`, with
+/// their bit index.
+fn visited_flags(protocol_version: i32) -> impl Iterator<Item = (usize, &'static StreamFlag)> {
+    STREAM_FLAGS
+        .iter()
+        .enumerate()
+        .filter(move |(_, flag)| flag.min_protocol <= protocol_version)
+}
+
+/// The invocation's options after reconciling them with a batch header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconciledFlags {
+    /// The options the replay runs with.
+    pub flags: BatchFlags,
+    /// One `rprintf(FINFO, ...)` notice per option the batch changed, in bit
+    /// order. Upstream prints them under `--info=misc` (`INFO_GTE(MISC, 1)`).
+    pub notices: Vec<String>,
 }
 
 /// Reconcile the currently-active options against a batch file's recorded
 /// stream flags.
 ///
 /// `recorded` is the stream-flags bitmap read from the batch header; `active`
-/// is the flag state derived from the current `--read-batch` invocation. For
-/// every data-stream-affecting flag that differs, upstream forces the active
-/// option to match the batch and mentions the change at `--info=misc` level.
-/// The returned vector holds those notices in bit order, each formatted exactly
-/// as upstream's `rprintf(FINFO, ...)`; the caller decides whether to print
-/// them based on verbosity. An `--iconv` mismatch is instead fatal and returns
+/// is the flag state derived from the current `--read-batch` invocation. Each
+/// option `check_batch_flags()` visits at `protocol_version` is forced to the
+/// batch's value, with a notice when it changes; every other option keeps the
+/// invocation's value. An `--iconv` mismatch is fatal and returns
 /// [`BatchError::FlagMismatch`].
 ///
-/// Protocol version gates which flags participate, matching how upstream
-/// truncates `flag_ptr[]`: bits 7-8 require protocol >= 29 and bits 9-14
-/// require protocol >= 30.
+/// Two adjustments follow the loop, as upstream makes them:
+///
+/// - below protocol 29, where the header has no `--dirs` bit, `--dirs`
+///   follows `-r`: on with it, and off without it unless the invocation gave
+///   `-d` without `-r` (batch.c:151-156);
+/// - the append mode changes only when the batch sets `--append` or
+///   `--append-verify`; a batch with neither leaves the invocation's mode in
+///   place even after the "Clearing" notice (batch.c:158-161).
 ///
 /// # Upstream Reference
 ///
@@ -81,28 +157,17 @@ pub fn check_batch_flags(
     recorded: BatchFlags,
     active: BatchFlags,
     protocol_version: i32,
-) -> BatchResult<Vec<String>> {
-    // upstream: batch.c:125-128 - flag_ptr[] is truncated by protocol version
-    // (flag_ptr[7]=NULL below 29, flag_ptr[9]=NULL below 30), so the reconcile
-    // loop only visits the bits the peer actually negotiated.
-    let bit_count = if protocol_version < 29 {
-        7
-    } else if protocol_version < 30 {
-        9
-    } else {
-        15
-    };
+) -> BatchResult<ReconciledFlags> {
+    let mut flags = active;
+    let mut notices = Vec::new();
 
-    let recorded_bits = flag_bits(&recorded);
-    let active_bits = flag_bits(&active);
-    let mut messages = Vec::new();
-
-    for i in 0..bit_count {
-        let set = recorded_bits[i];
-        if active_bits[i] == set {
+    for (bit, flag) in visited_flags(protocol_version) {
+        let set = flag.get(recorded);
+        let current = (flag.field)(&mut flags);
+        if *current == set {
             continue;
         }
-        if i == ICONV_BIT {
+        if bit == ICONV_BIT {
             // upstream: batch.c:137-142 - an --iconv mismatch is fatal.
             return Err(BatchError::FlagMismatch(format!(
                 "{} specify the --iconv option to use this batch file.",
@@ -110,21 +175,35 @@ pub fn check_batch_flags(
             )));
         }
         // upstream: batch.c:143-148 - INFO(MISC) reconcile notice.
-        messages.push(format!(
+        notices.push(format!(
             "{}ing the {} option to match the batchfile.",
             if set { "Sett" } else { "Clear" },
-            FLAG_NAMES[i]
+            flag.name
         ));
+        *current = set;
     }
 
-    Ok(messages)
+    // upstream: batch.c:151-156 - `if (recurse) xfer_dirs |= 1; else if
+    // (xfer_dirs < 2) xfer_dirs = 0;`. parse_arguments() leaves xfer_dirs at 2
+    // only for `-d` without `-r` (options.c:2323-2329).
+    if protocol_version < 29 {
+        flags.xfer_dirs = flags.recurse || (active.xfer_dirs && !active.recurse);
+    }
+
+    // upstream: batch.c:158-161 - append_mode is assigned only from a set bit.
+    if !flags.append && !flags.append_verify {
+        flags.append = active.append;
+        flags.append_verify = active.append_verify;
+    }
+
+    Ok(ReconciledFlags { flags, notices })
 }
 
 /// Stream flags bitmap that affects data stream format.
 ///
 /// These flags must match between write and read to ensure correct
-/// interpretation of the batch file. The bit positions and protocol-version
-/// gating match upstream rsync's `batch.c:59-76 flag_ptr[]` array exactly.
+/// interpretation of the batch file. Each field is one [`STREAM_FLAGS`] entry,
+/// which fixes its bit position and protocol gating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BatchFlags {
     /// Bit 0: --recurse (-r) - upstream: batch.c:60 `&recurse`
@@ -166,129 +245,41 @@ pub struct BatchFlags {
 }
 
 impl BatchFlags {
-    /// Create a new flags structure from a bitmap.
-    #[allow(clippy::field_reassign_with_default)]
+    /// Decode the bits `check_batch_flags()` visits at `protocol_version`;
+    /// the rest stay clear.
     pub fn from_bitmap(bitmap: i32, protocol_version: i32) -> Self {
         let mut flags = Self::default();
-        flags.recurse = (bitmap & (1 << 0)) != 0;
-        flags.preserve_uid = (bitmap & (1 << 1)) != 0;
-        flags.preserve_gid = (bitmap & (1 << 2)) != 0;
-        flags.preserve_links = (bitmap & (1 << 3)) != 0;
-        flags.preserve_devices = (bitmap & (1 << 4)) != 0;
-        flags.preserve_hard_links = (bitmap & (1 << 5)) != 0;
-        flags.always_checksum = (bitmap & (1 << 6)) != 0;
-
-        if protocol_version >= 29 {
-            flags.xfer_dirs = (bitmap & (1 << 7)) != 0;
-            flags.do_compression = (bitmap & (1 << 8)) != 0;
+        for (bit, flag) in visited_flags(protocol_version) {
+            *(flag.field)(&mut flags) = bitmap & (1 << bit) != 0;
         }
-
-        if protocol_version >= 30 {
-            flags.iconv = (bitmap & (1 << 9)) != 0;
-            flags.preserve_acls = (bitmap & (1 << 10)) != 0;
-            flags.preserve_xattrs = (bitmap & (1 << 11)) != 0;
-            flags.inplace = (bitmap & (1 << 12)) != 0;
-            flags.append = (bitmap & (1 << 13)) != 0;
-            flags.append_verify = (bitmap & (1 << 14)) != 0;
-        }
-
         flags
     }
 
-    /// Convert flags to a bitmap.
-    pub const fn to_bitmap(&self, protocol_version: i32) -> i32 {
-        let mut bitmap = 0i32;
-
-        if self.recurse {
-            bitmap |= 1 << 0;
-        }
-        if self.preserve_uid {
-            bitmap |= 1 << 1;
-        }
-        if self.preserve_gid {
-            bitmap |= 1 << 2;
-        }
-        if self.preserve_links {
-            bitmap |= 1 << 3;
-        }
-        if self.preserve_devices {
-            bitmap |= 1 << 4;
-        }
-        if self.preserve_hard_links {
-            bitmap |= 1 << 5;
-        }
-        if self.always_checksum {
-            bitmap |= 1 << 6;
-        }
-
-        if protocol_version >= 29 {
-            if self.xfer_dirs {
-                bitmap |= 1 << 7;
-            }
-            if self.do_compression {
-                bitmap |= 1 << 8;
-            }
-        }
-
-        if protocol_version >= 30 {
-            if self.iconv {
-                bitmap |= 1 << 9;
-            }
-            if self.preserve_acls {
-                bitmap |= 1 << 10;
-            }
-            if self.preserve_xattrs {
-                bitmap |= 1 << 11;
-            }
-            if self.inplace {
-                bitmap |= 1 << 12;
-            }
-            if self.append {
-                bitmap |= 1 << 13;
-            }
-            if self.append_verify {
-                bitmap |= 1 << 14;
-            }
-        }
-
-        bitmap
-    }
-
-    /// Encode the full, untruncated stream-flags bitmap.
-    ///
-    /// Mirrors upstream `batch.c:97-114 write_stream_flags()`, which walks the
-    /// entire `flag_ptr[]` array and sets every active option's bit regardless
-    /// of the negotiated protocol version. Protocol-based truncation is a
-    /// read-time concern only (`batch.c:125-128 check_batch_flags()`; see
-    /// [`BatchFlags::from_bitmap`] and [`check_batch_flags`]), so the header
-    /// always carries all 15 bits on the wire.
-    fn full_bitmap(&self) -> i32 {
-        let mut bitmap = 0i32;
-        for (i, set) in flag_bits(self).into_iter().enumerate() {
-            if set {
-                bitmap |= 1 << i;
-            }
-        }
-        bitmap
+    /// Encode the bits `check_batch_flags()` visits at `protocol_version`.
+    pub fn to_bitmap(&self, protocol_version: i32) -> i32 {
+        visited_flags(protocol_version)
+            .filter(|(_, flag)| flag.get(*self))
+            .fold(0, |bitmap, (bit, _)| bitmap | 1 << bit)
     }
 
     /// Write the stream-flags bitmap to a writer.
     ///
     /// The full 15-bit bitmap is always written, independent of the negotiated
     /// protocol version, mirroring upstream `batch.c:97-114
-    /// write_stream_flags()` (which writes `flags` unmasked). Upstream truncates
-    /// by protocol only on the read side in `batch.c:125-128 check_batch_flags()`,
-    /// so a proto < 30 batch created with `-z`/`-d` (proto 28) or `--inplace`
-    /// (proto 29) must still record those header bits for the byte layout to match
-    /// upstream. `protocol_version` is accepted for call-site symmetry with the
-    /// rest of the header writer but has no effect on the emitted bytes.
+    /// write_stream_flags()` (which walks the whole `flag_ptr[]` array).
+    /// Upstream truncates by protocol only on the read side in
+    /// `batch.c:125-128 check_batch_flags()`, so a proto < 30 batch created
+    /// with `-z`/`-d` (proto 28) or `--inplace` (proto 29) must still record
+    /// those header bits for the byte layout to match upstream.
+    /// `protocol_version` is accepted for call-site symmetry with the rest of
+    /// the header writer but has no effect on the emitted bytes.
     pub fn write_to_versioned<W: Write>(
         &self,
         writer: &mut W,
         protocol_version: i32,
     ) -> io::Result<()> {
         let _ = protocol_version;
-        write_i32(writer, self.full_bitmap())
+        write_i32(writer, self.to_bitmap(i32::MAX))
     }
 
     /// Read the raw bitmap from a reader.
@@ -317,7 +308,7 @@ mod check_flags_tests {
             ..BatchFlags::default()
         };
         assert_eq!(
-            check_batch_flags(flags, flags, 31).unwrap(),
+            check_batch_flags(flags, flags, 31).unwrap().notices,
             Vec::<String>::new()
         );
     }
@@ -332,7 +323,7 @@ mod check_flags_tests {
         };
         let active = BatchFlags::default();
         assert_eq!(
-            check_batch_flags(recorded, active, 31).unwrap(),
+            check_batch_flags(recorded, active, 31).unwrap().notices,
             vec!["Setting the --recurse (-r) option to match the batchfile.".to_owned()]
         );
     }
@@ -347,7 +338,7 @@ mod check_flags_tests {
             ..BatchFlags::default()
         };
         assert_eq!(
-            check_batch_flags(recorded, active, 31).unwrap(),
+            check_batch_flags(recorded, active, 31).unwrap().notices,
             vec!["Clearing the --checksum (-c) option to match the batchfile.".to_owned()]
         );
     }
@@ -395,7 +386,7 @@ mod check_flags_tests {
         };
         let active = BatchFlags::default();
         assert_eq!(
-            check_batch_flags(recorded, active, 29).unwrap(),
+            check_batch_flags(recorded, active, 29).unwrap().notices,
             Vec::<String>::new()
         );
     }
@@ -411,7 +402,7 @@ mod check_flags_tests {
         };
         let active = BatchFlags::default();
         assert_eq!(
-            check_batch_flags(recorded, active, 28).unwrap(),
+            check_batch_flags(recorded, active, 28).unwrap().notices,
             Vec::<String>::new()
         );
     }
@@ -429,11 +420,97 @@ mod check_flags_tests {
             ..BatchFlags::default()
         };
         assert_eq!(
-            check_batch_flags(recorded, active, 31).unwrap(),
+            check_batch_flags(recorded, active, 31).unwrap().notices,
             vec![
                 "Clearing the --owner (-o) option to match the batchfile.".to_owned(),
                 "Setting the --links (-l) option to match the batchfile.".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn options_beyond_the_protocol_cutoff_keep_the_invocation_value() {
+        // WHY: batch.c:125-128 stops the loop at bit 9 below protocol 30, so
+        // a proto-29 replay with --inplace keeps it even though the header
+        // bit is clear; forcing it off would replay via temp files instead.
+        let active = BatchFlags {
+            inplace: true,
+            preserve_acls: true,
+            ..BatchFlags::default()
+        };
+        let reconciled = check_batch_flags(BatchFlags::default(), active, 29).unwrap();
+        assert_eq!(reconciled.flags, active);
+        assert!(reconciled.notices.is_empty());
+    }
+
+    #[test]
+    fn proto28_derives_dirs_from_recurse() {
+        // WHY: batch.c:151-156 - a proto-28 header has no -d bit, so -d
+        // follows the recorded -r, except an explicit -d without -r.
+        let recurse = BatchFlags {
+            recurse: true,
+            ..BatchFlags::default()
+        };
+        let reconciled = check_batch_flags(recurse, BatchFlags::default(), 28).unwrap();
+        assert!(reconciled.flags.xfer_dirs, "-r implies -d");
+
+        let dirs_and_recurse = BatchFlags {
+            recurse: true,
+            xfer_dirs: true,
+            ..BatchFlags::default()
+        };
+        let reconciled = check_batch_flags(BatchFlags::default(), dirs_and_recurse, 28).unwrap();
+        assert!(
+            !reconciled.flags.xfer_dirs,
+            "-r -d is xfer_dirs 1, cleared with -r"
+        );
+
+        let dirs_only = BatchFlags {
+            xfer_dirs: true,
+            ..BatchFlags::default()
+        };
+        let reconciled = check_batch_flags(BatchFlags::default(), dirs_only, 28).unwrap();
+        assert!(reconciled.flags.xfer_dirs, "-d alone is xfer_dirs 2, kept");
+    }
+
+    #[test]
+    fn append_mode_changes_only_for_a_set_bit() {
+        // WHY: batch.c:158-161 assigns append_mode only from a set tweaked
+        // bit; a batch without either keeps the invocation's --append after
+        // printing the "Clearing" notice.
+        let active = BatchFlags {
+            append: true,
+            ..BatchFlags::default()
+        };
+        let reconciled = check_batch_flags(BatchFlags::default(), active, 31).unwrap();
+        assert!(reconciled.flags.append);
+        assert_eq!(
+            reconciled.notices,
+            vec!["Clearing the --append option to match the batchfile.".to_owned()]
+        );
+
+        let recorded = BatchFlags {
+            append_verify: true,
+            ..BatchFlags::default()
+        };
+        let reconciled = check_batch_flags(recorded, active, 31).unwrap();
+        assert!(!reconciled.flags.append && reconciled.flags.append_verify);
+    }
+
+    #[test]
+    fn bitmap_round_trip_follows_the_table() {
+        // WHY: one table drives encode and decode; bit N must land on the
+        // field flag_ptr[N] names and the header always carries all 15 bits.
+        let all = BatchFlags::from_bitmap(0x7fff, 31);
+        assert_eq!(all.to_bitmap(31), 0x7fff);
+        assert_eq!(BatchFlags::from_bitmap(0x7fff, 29).to_bitmap(31), 0x01ff);
+        assert_eq!(BatchFlags::from_bitmap(0x7fff, 28).to_bitmap(31), 0x007f);
+        let inplace = BatchFlags {
+            inplace: true,
+            ..BatchFlags::default()
+        };
+        let mut header = Vec::new();
+        inplace.write_to_versioned(&mut header, 28).unwrap();
+        assert_eq!(header, (1i32 << 12).to_le_bytes());
     }
 }

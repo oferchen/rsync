@@ -96,13 +96,18 @@ impl Fixture {
         Self { _temp: temp, root }
     }
 
-    /// Runs `bin` from the fixture root and collects `bf` and `bf.sh`.
-    fn record(&self, bin: &Path, args: &[&str]) -> Recording {
-        let output = Command::new(bin)
+    /// Runs `bin` with `args` from the fixture root.
+    fn run(&self, bin: &Path, args: &[&str]) -> Output {
+        Command::new(bin)
             .args(args)
             .current_dir(&self.root)
             .output()
-            .unwrap_or_else(|e| panic!("spawn {}: {e}", bin.display()));
+            .unwrap_or_else(|e| panic!("spawn {}: {e}", bin.display()))
+    }
+
+    /// Runs `bin` from the fixture root and collects `bf` and `bf.sh`.
+    fn record(&self, bin: &Path, args: &[&str]) -> Recording {
+        let output = self.run(bin, args);
         Recording {
             output,
             batch: fs::read(self.root.join("bf")).ok(),
@@ -233,6 +238,112 @@ fn dry_run_write_batch_creates_no_files() {
                 (up.batch.is_some(), up.script.is_some()),
                 (false, false),
                 "{option}: oracle unexpectedly wrote batch files"
+            );
+        }
+    }
+}
+
+/// Every implementation available to record or replay a cell: oc always,
+/// the oracle when installed.
+fn implementations() -> Vec<(&'static str, PathBuf)> {
+    let mut all = vec![("oc", oc_rsync())];
+    all.extend(upstream_rsync().map(|bin| ("upstream", bin)));
+    all
+}
+
+/// upstream: batch.c:143-147 - the reconcile notice is `INFO_GTE(MISC, 1)`
+/// output, so `--info=misc1` prints it without `-v` and `--info=misc0`
+/// silences it under `-v`. A `-v`-only gate gets both wrong. (`-r` stays on
+/// the replay: an inc-recursive batch refuses a replay without it,
+/// compat.c:780-785.)
+#[test]
+fn read_batch_reconcile_notice_follows_info_misc() {
+    const NOTICE: &str = "Setting the --checksum (-c) option to match the batchfile.";
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&record_bin, &["-r", "-c", "--write-batch=bf", "src/", "dst/"]);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            for (args, printed) in [
+                (["-r", "--info=misc1", "-n"].as_slice(), true),
+                (["-r", "-v", "--info=misc0", "-n"].as_slice(), false),
+            ] {
+                let mut argv = vec!["--read-batch=bf"];
+                argv.extend_from_slice(args);
+                argv.push("dst/");
+                let out = fx.run(&replay_bin, &argv);
+                assert!(out.status.success(), "{recorder}->{replayer} {args:?}: {out:?}");
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                assert_eq!(
+                    stdout.lines().any(|line| line == NOTICE),
+                    printed,
+                    "{recorder}->{replayer} {args:?}: {stdout}"
+                );
+            }
+        }
+    }
+}
+
+/// upstream: main.c:1538-1546 - `--read-batch` checks only the destination
+/// (`argv[argc-1]`) for a host spec; earlier operands are discarded, so a
+/// remote-looking source is not an error.
+#[test]
+fn read_batch_ignores_remote_looking_source_operand() {
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&record_bin, &["-r", "--write-batch=bf", "src/", "dst/"]);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = format!("{replayer}-replay/");
+            let out = fx.run(&replay_bin, &["--read-batch=bf", "-r", "host::mod/src", &dest]);
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(fs::read(fx.root.join(&dest).join("a.txt")).unwrap(), b"alpha\n");
+
+            let out = fx.run(&replay_bin, &["--read-batch=bf", "-r", "host:dst/"]);
+            assert_eq!(out.status.code(), Some(1), "{recorder}->{replayer}: {out:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stderr)
+                    .contains("remote destination is not allowed with --read-batch"),
+                "{recorder}->{replayer}: {out:?}"
+            );
+        }
+    }
+}
+
+/// upstream: options.c:1780-1792, 2265-2269 - the two write forms share one
+/// `write_batch` mode, so combining them is legal and the later one decides;
+/// only a write form with `--read-batch` is refused, with upstream's text.
+#[test]
+fn batch_option_combinations_match_upstream() {
+    for (name, bin) in implementations() {
+        // --only-write-batch last: no destination writes.
+        let fx = Fixture::new();
+        let out = fx.run(
+            &bin,
+            &["-r", "--write-batch=bf", "--only-write-batch=bf", "src/", "dst/"],
+        );
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(fx.root.join("bf").is_file(), "{name}: no batch");
+        assert!(!fx.root.join("dst/a.txt").exists(), "{name}: only-write wrote dst");
+
+        // --write-batch last: the destination is updated too.
+        let fx = Fixture::new();
+        let out = fx.run(
+            &bin,
+            &["-r", "--only-write-batch=bf", "--write-batch=bf", "src/", "dst/"],
+        );
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(fx.root.join("bf").is_file(), "{name}: no batch");
+        assert!(fx.root.join("dst/a.txt").is_file(), "{name}: write-batch skipped dst");
+
+        for write in ["--write-batch=x", "--only-write-batch=x"] {
+            let fx = Fixture::new();
+            let out = fx.run(&bin, &["-r", write, "--read-batch=bf", "dst/"]);
+            assert_eq!(out.status.code(), Some(1), "{name} {write}: {out:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stderr)
+                    .contains("--write-batch and --read-batch can not be used together"),
+                "{name} {write}: {out:?}"
             );
         }
     }
