@@ -10,7 +10,7 @@ use super::file_list::apply_permutation_in_place;
 use super::ndx_map::NdxMap;
 use super::protocol_io::{
     calculate_duration_ms, read_signature_blocks, read_signature_blocks_keepalive,
-    signature_read_lull_mod,
+    refuse_sum_allocation, signature_read_lull_mod,
 };
 use super::*;
 use crate::delta_apply::ChecksumVerifier;
@@ -1710,6 +1710,34 @@ fn significant_wire_bits_matches_upstream_mask() {
     // Lower 16 bits of ~0x5800 = 0xA7FF
     let flags = ItemFlags::from_raw(0xFFFF);
     assert_eq!(flags.significant_wire_bits(), 0xA7FF);
+}
+
+/// upstream: util2.c:75 my_alloc() refuses `num >= max_alloc / size`, so a
+/// signature is refused at the first count whose block array (sender.c:364)
+/// or strong-sum array (sender.c:365) reaches the ceiling, with RERR_MALLOC.
+#[test]
+fn refuse_sum_allocation_mirrors_receive_sums_allocations() {
+    protocol::set_max_alloc(1024 * 1024);
+    let blocks_at_ceiling = (1024 * 1024 / 24) as u32;
+    assert!(refuse_sum_allocation(&SumHead::new(blocks_at_ceiling - 1, 1024, 16, 0), 16).is_ok());
+    let refused = refuse_sum_allocation(&SumHead::new(blocks_at_ceiling, 1024, 16, 0), 16)
+        .expect_err("block array at the ceiling");
+    assert!(
+        refused.to_string().ends_with("(file=sender.c, line=364)"),
+        "{refused}"
+    );
+    assert!(
+        refused
+            .get_ref()
+            .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
+    );
+    let wide = refuse_sum_allocation(&SumHead::new(32_768, 1024, 16, 0), 32)
+        .expect_err("strong sums at the ceiling");
+    assert!(
+        wide.to_string().ends_with("(file=sender.c, line=365)"),
+        "{wide}"
+    );
+    assert!(refuse_sum_allocation(&SumHead::empty(), 16).is_ok());
 }
 
 #[test]
