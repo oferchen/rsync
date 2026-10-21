@@ -148,6 +148,15 @@ impl Md4 {
     ///
     /// upstream: checksum.c:376-412 `get_checksum2()` MD4 branch.
     ///
+    /// Upstream is not consistent here. Its OpenSSL path (checksum.c:324-336)
+    /// feeds the seed to `EVP_DigestUpdate()` BEFORE the data whenever
+    /// `EVP_DigestInit_ex()` succeeds for MD4, while the built-in `mdfour` path
+    /// above appends it AFTER. The two digests differ, so an upstream peer whose
+    /// OpenSSL MD4 works matches no blocks against an upstream or oc peer using
+    /// the built-in order; files still arrive intact, only the delta saving is
+    /// lost. oc keeps the built-in order: it is what upstream uses without
+    /// OpenSSL and with stock OpenSSL 3, whose default provider lacks MD4.
+    ///
     /// # Examples
     ///
     /// ```
