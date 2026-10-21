@@ -355,7 +355,6 @@ pub mod md5_backend {
     pub use crate::simd_batch::md5_dispatcher::Dispatcher;
 }
 
-/// The parallel whole-file checksum service behind `--checksum`.
 pub mod parallel;
 
 /// Pipelined checksum computation with double-buffering.
