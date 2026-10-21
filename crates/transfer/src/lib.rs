@@ -1192,6 +1192,8 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // Captured before `handshake` is borrowed by the role context: the
     // `MSG_ERROR_EXIT` gate below needs it after the dispatch has ended.
     let negotiated_protocol = handshake.protocol.as_u8();
+    let error_exit_reaches_peer =
+        error_exit_reaches_peer(config.role, config.connection.is_daemon_connection);
 
     let outcome: ServerResult = 'dispatch: {
         match config.role {
@@ -1301,7 +1303,12 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     match outcome {
         Ok(stats) => Ok(stats),
         Err(error) => {
-            announce_error_exit(&mut writer, &error, negotiated_protocol);
+            announce_error_exit(
+                &mut writer,
+                &error,
+                negotiated_protocol,
+                error_exit_reaches_peer,
+            );
             Err(error)
         }
     }
@@ -1345,11 +1352,18 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 ///
 /// - `cleanup.c:242-258` - the gate and `send_msg_int(MSG_ERROR_EXIT, exit_code)`.
 /// - `errcode.h` - `RERR_SOCKETIO`/`RERR_STREAMIO`/`RERR_SIGNAL1`/`RERR_TIMEOUT`.
+///
+/// `reaches_peer` is [`error_exit_reaches_peer`]: a frame upstream would queue
+/// but never flush is not written at all.
 fn announce_error_exit<W: Write>(
     writer: &mut writer::ServerWriter<W>,
     error: &io::Error,
     protocol_version: u8,
+    reaches_peer: bool,
 ) {
+    if !reaches_peer {
+        return;
+    }
     // upstream: cleanup.c:245 `line > 0` - never echo an exit the peer asked for.
     if remote_exit_code(error).is_some() {
         return;
@@ -1382,6 +1396,28 @@ fn announce_error_exit<W: Write>(
     if writer.send_error_exit(exit_code).is_ok() {
         let _ = writer.flush_all_pending();
     }
+}
+
+/// Whether a `MSG_ERROR_EXIT` this side queues ever reaches the peer.
+///
+/// A receiver flushes the frame at once. A sender never flushes it itself
+/// (`if (!am_sender) io_flush(MSG_FLUSH)`): the frame leaves only through the
+/// `perform_io()` drain inside `noop_io_until_death()`'s read loop, and that
+/// loop returns at once when messages go to stderr outside a socket daemon
+/// (`msgs2stderr && daemon_connection >= 0`). So a sender over a remote shell
+/// exits with the frame unsent and its peer sees the connection close, while a
+/// daemon sender's frame is delivered.
+///
+/// Measured against rsync 3.5.1 with strace: a remote-shell server sender that
+/// fails in the file list, in an incremental sub-list, or in the delta loop
+/// writes no frame before `exit_group`, and the client exits 12 or 10 from the
+/// broken stream; a daemon server sender's frame arrives and the client exits
+/// with its code. A daemon reached over a remote shell is not told apart here.
+///
+/// upstream: cleanup.c:244-253 _exit_cleanup(), io.c:1066-1075
+/// noop_io_until_death(), options.c:103 msgs2stderr, clientserver.c:1178
+const fn error_exit_reaches_peer(role: ServerRole, over_daemon_socket: bool) -> bool {
+    !matches!(role, ServerRole::Generator) || over_daemon_socket
 }
 
 /// Walks the source chain of an `io::Error` looking for a [`RemoteExitError`],

@@ -471,7 +471,7 @@ impl GeneratorContext {
         use super::super::super::shared::TransferDeadline;
         use super::super::delta::updating_basis_file;
         use super::super::delta_context::SenderDeltaContext;
-        use super::super::protocol_io::signature_read_lull_mod;
+        use super::super::protocol_io::{refuse_sum_allocation, signature_read_lull_mod};
 
         // upstream: sender.c:507-508 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
@@ -1060,6 +1060,7 @@ impl GeneratorContext {
                 // large/slow checksum read does not trip the peer's --timeout.
                 // Newer protocols multiplex the stream and set lull_mod = 0.
                 let lull_mod = signature_read_lull_mod(self.protocol, writer.allowed_lull());
+                refuse_sum_allocation(&sum_head, xfer_sum_len)?;
                 delta_ctx.receive_sums(&mut *reader, &sum_head, lull_mod, || {
                     writer.maybe_send_keepalive().map(|_| ())
                 })?;
