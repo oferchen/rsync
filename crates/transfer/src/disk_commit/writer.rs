@@ -85,6 +85,11 @@ impl<'a> ReusableBufWriter<'a> {
         self.flush()?;
         self.file.sync_all()
     }
+
+    /// Releases the file. Callers flush first; nothing buffered is written here.
+    pub(super) fn into_file(self) -> fs::File {
+        self.file
+    }
 }
 
 impl Write for ReusableBufWriter<'_> {
@@ -367,13 +372,12 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// Releases the writer and, for the batched variants, commits the active
-    /// file (with optional fsync) so its file handle can be used for
-    /// rename/truncate.
+    /// Releases the writer and hands back the file it wrote, still open, so
+    /// the caller can close it with [`close_received_file`].
     ///
-    /// The buffered variant simply drops, closing the file. The batched
-    /// variants call `commit_file` to flush, optionally fsync, and detach
-    /// the file from the batch.
+    /// The batched variants first call `commit_file` to flush, optionally
+    /// fsync, and detach the file from the batch. `None` only for the GCD
+    /// writer, whose dispatch channel owns and closes the descriptor itself.
     #[cfg_attr(
         not(any(
             all(target_os = "linux", feature = "io_uring"),
@@ -381,31 +385,107 @@ impl<'a> Writer<'a> {
         )),
         allow(unused_variables)
     )]
-    pub(super) fn finish(self, do_fsync: bool, file_path: &Path) -> io::Result<()> {
-        match self {
-            Writer::Buffered(_) => Ok(()),
+    pub(super) fn finish(self, do_fsync: bool, file_path: &Path) -> io::Result<Option<fs::File>> {
+        let file = match self {
+            Writer::Buffered(w) => w.into_file(),
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
-            Writer::IoUring { batch } => batch.commit_file(do_fsync).map(|_| ()).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("io_uring commit failed for {file_path:?}: {e}"),
-                )
-            }),
+            Writer::IoUring { batch } => {
+                batch
+                    .commit_file(do_fsync)
+                    .map_err(|e| {
+                        io::Error::new(
+                            e.kind(),
+                            format!("io_uring commit failed for {file_path:?}: {e}"),
+                        )
+                    })?
+                    .0
+            }
             #[cfg(all(target_os = "windows", feature = "iocp"))]
-            Writer::Iocp { batch } => batch.commit_file(do_fsync).map(|_| ()).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("IOCP commit failed for {file_path:?}: {e}"),
-                )
-            }),
+            Writer::Iocp { batch } => {
+                batch
+                    .commit_file(do_fsync)
+                    .map_err(|e| {
+                        io::Error::new(
+                            e.kind(),
+                            format!("IOCP commit failed for {file_path:?}: {e}"),
+                        )
+                    })?
+                    .0
+            }
             #[cfg(target_os = "macos")]
-            Writer::Macos(_) => Ok(()),
+            Writer::Macos(w) => w.into_file()?,
             #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
-            Writer::MacosGcd(_) => Ok(()),
+            Writer::MacosGcd(_) => return Ok(None),
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
-            Writer::Vmsplice(_) => Ok(()),
+            Writer::Vmsplice(w) => w.into_file(),
             #[cfg(all(target_os = "linux", feature = "dontcache"))]
-            Writer::Dontcache(_) => Ok(()),
+            Writer::Dontcache(w) => w.into_file(),
+        };
+        Ok(Some(file))
+    }
+}
+
+/// Closes a received file and fails the transfer if `close(2)` reports an
+/// error, tagged [`CommitOp::Close`](crate::temp_guard::CommitOp::Close) so it
+/// is reported as upstream's `close failed on` and exits `RERR_FILEIO`.
+///
+/// `written` names the file that was written: the temp file, or the
+/// destination itself for an in-place update (upstream's `fnametmp`).
+///
+/// upstream: receiver.c:1296-1300 - `if (close(fd2) < 0) { rsyserr(FERROR,
+/// errno, "close failed on %s", full_fname(fnametmp));
+/// exit_cleanup(RERR_FILEIO); }`.
+pub(crate) fn close_received_file(file: Option<fs::File>, written: &Path) -> io::Result<()> {
+    let Some(file) = file else {
+        return Ok(());
+    };
+    close_seam(file).map_err(|e| {
+        crate::temp_guard::attach_commit_op(crate::temp_guard::CommitOp::Close, written, e)
+    })
+}
+
+#[cfg(not(test))]
+fn close_seam(file: fs::File) -> io::Result<()> {
+    fast_io::close_file(file)
+}
+
+/// Test build: honours a fault armed with [`close_fault::arm`] before
+/// delegating to the real close.
+#[cfg(test)]
+fn close_seam(file: fs::File) -> io::Result<()> {
+    match close_fault::take() {
+        Some(error) => {
+            drop(file);
+            Err(error)
+        }
+        None => fast_io::close_file(file),
+    }
+}
+
+/// Fault seam for the received-file close: no filesystem the test suite can
+/// rely on makes `close(2)` fail on demand, so the next close is told to.
+///
+/// Process-wide rather than thread-local because the close runs on the disk
+/// thread; nextest runs each test in its own process, so an armed fault
+/// cannot leak into another test.
+#[cfg(test)]
+pub(crate) mod close_fault {
+    use std::io;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static ERRNO: AtomicI32 = AtomicI32::new(0);
+
+    /// Makes the next received-file close fail with `errno`. Armed only by the
+    /// unix tests, which can name the errno and its text.
+    #[cfg(unix)]
+    pub(crate) fn arm(errno: i32) {
+        ERRNO.store(errno, Ordering::SeqCst);
+    }
+
+    pub(super) fn take() -> Option<io::Error> {
+        match ERRNO.swap(0, Ordering::SeqCst) {
+            0 => None,
+            errno => Some(io::Error::from_raw_os_error(errno)),
         }
     }
 }

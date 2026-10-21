@@ -468,7 +468,9 @@ impl ReceiverContext {
                     )
                 })?;
             }
-            drop(file);
+            // upstream: receiver.c:1296-1300 - a failed close is fatal,
+            // exit_cleanup(RERR_FILEIO).
+            crate::disk_commit::close_received_file(Some(file), temp_guard.path())?;
 
             // upstream: generator.c:2280-2288 - read_batch with make_backups>0
             // still resolves the backup name and preserves the pre-image before

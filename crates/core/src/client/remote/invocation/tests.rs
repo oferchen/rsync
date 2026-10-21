@@ -897,13 +897,11 @@ fn includes_partial_dir_long_arg() {
     let config = ClientConfig::builder()
         .partial_directory(Some(".rsync-partial"))
         .build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build(std::ffi::OsStr::new("/path"));
+    let args = build_sender_args(&config);
 
     assert!(
-        args.iter()
-            .any(|a| a.to_string_lossy() == "--partial-dir=.rsync-partial"),
-        "expected --partial-dir=.rsync-partial in args: {args:?}"
+        has_split_arg(&args, "--partial-dir", ".rsync-partial"),
+        "expected --partial-dir .rsync-partial in args: {args:?}"
     );
 }
 
@@ -1060,9 +1058,8 @@ fn includes_backup_related_args() {
          string instead, options.c:2657-2658): {args:?}"
     );
     assert!(
-        args.iter()
-            .any(|a| a.to_string_lossy() == "--backup-dir=/backup"),
-        "expected --backup-dir=/backup in args: {args:?}"
+        has_split_arg(&string_args, "--backup-dir", "/backup"),
+        "expected --backup-dir /backup in args: {args:?}"
     );
     assert!(
         args.iter().any(|a| a.to_string_lossy() == "--suffix=.bak"),
@@ -1070,16 +1067,45 @@ fn includes_backup_related_args() {
     );
 }
 
+/// upstream: options.c:2988-2989 - `--suffix` is sent only when it differs
+/// from the default (`""` with a backup dir, `~` without), so the server
+/// derives the same suffix from its own default.
+#[test]
+fn default_backup_suffix_is_not_forwarded() {
+    let tilde = ClientConfig::builder()
+        .backup(true)
+        .backup_suffix(Some("~"))
+        .build();
+    assert!(!names_option(&build_sender_args(&tilde), "--suffix"));
+    let empty_with_dir = ClientConfig::builder()
+        .backup(true)
+        .backup_directory(Some("/backup"))
+        .backup_suffix(Some(""))
+        .build();
+    assert!(!names_option(
+        &build_sender_args(&empty_with_dir),
+        "--suffix"
+    ));
+    let tilde_with_dir = ClientConfig::builder()
+        .backup(true)
+        .backup_directory(Some("/backup"))
+        .backup_suffix(Some("~"))
+        .build();
+    assert!(
+        build_sender_args(&tilde_with_dir)
+            .iter()
+            .any(|a| a == "--suffix=~")
+    );
+}
+
 #[test]
 fn includes_link_dest_via_reference_directories() {
     let config = ClientConfig::builder().link_destination("/prev").build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build(std::ffi::OsStr::new("/path"));
+    let args = build_sender_args(&config);
 
     assert!(
-        args.iter()
-            .any(|a| a.to_string_lossy() == "--link-dest=/prev"),
-        "expected --link-dest=/prev in args: {args:?}"
+        has_split_arg(&args, "--link-dest", "/prev"),
+        "expected --link-dest /prev in args: {args:?}"
     );
 }
 
@@ -1683,6 +1709,21 @@ fn build_sender_args(config: &ClientConfig) -> Vec<String> {
         .into_iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()
+}
+
+/// Helper: whether `args` holds `opt` followed by `value`, upstream's split
+/// form for path values (options.c:2982-2984).
+fn has_split_arg(args: &[String], opt: &str, value: &str) -> bool {
+    args.windows(2).any(|w| w[0] == opt && w[1] == value)
+}
+
+/// Helper: whether `args` names `opt` in its split or joined form.
+fn names_option(args: &[String], opt: &str) -> bool {
+    args.iter().any(|a| {
+        a == opt
+            || a.strip_prefix(opt)
+                .is_some_and(|rest| rest.starts_with('='))
+    })
 }
 
 /// Helper: finds the compact flag string in an args vector.
@@ -2631,8 +2672,8 @@ fn includes_temp_dir_long_arg() {
         .build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--temp-dir=/tmp/staging"),
-        "expected --temp-dir=/tmp/staging in args: {args:?}"
+        has_split_arg(&args, "--temp-dir", "/tmp/staging"),
+        "expected --temp-dir /tmp/staging in args: {args:?}"
     );
 }
 
@@ -2832,8 +2873,8 @@ fn includes_compare_dest_long_arg() {
         .build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--compare-dest=/tmp/compare"),
-        "expected --compare-dest=/tmp/compare in args: {args:?}"
+        has_split_arg(&args, "--compare-dest", "/tmp/compare"),
+        "expected --compare-dest /tmp/compare in args: {args:?}"
     );
 }
 
@@ -2844,8 +2885,8 @@ fn includes_copy_dest_long_arg() {
         .build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--copy-dest=/tmp/copy"),
-        "expected --copy-dest=/tmp/copy in args: {args:?}"
+        has_split_arg(&args, "--copy-dest", "/tmp/copy"),
+        "expected --copy-dest /tmp/copy in args: {args:?}"
     );
 }
 
@@ -3070,8 +3111,8 @@ fn partial_dir_emits_partial_dir_not_compact_p_nor_bare_partial() {
     );
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--partial-dir=.rsync-partial"),
-        "expected --partial-dir=.rsync-partial: {args:?}"
+        has_split_arg(&args, "--partial-dir", ".rsync-partial"),
+        "expected --partial-dir .rsync-partial: {args:?}"
     );
     assert!(
         !args.iter().any(|a| a == "--partial"),
@@ -3091,8 +3132,8 @@ fn backup_without_dir_or_suffix_emits_only_b_short_flag() {
         "expected 'b' in transfer flags portion: {flag_string}"
     );
     assert!(!args.iter().any(|a| a == "--backup"));
-    assert!(!args.iter().any(|a| a.starts_with("--backup-dir=")));
-    assert!(!args.iter().any(|a| a.starts_with("--suffix=")));
+    assert!(!names_option(&args, "--backup-dir"));
+    assert!(!names_option(&args, "--suffix"));
 }
 
 #[test]
@@ -3222,8 +3263,8 @@ fn omits_partial_dir_when_none() {
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
     assert!(
-        !args.iter().any(|a| a.starts_with("--partial-dir=")),
-        "should not emit --partial-dir= when none: {args:?}"
+        !names_option(&args, "--partial-dir"),
+        "should not emit --partial-dir when none: {args:?}"
     );
 }
 
@@ -3232,8 +3273,8 @@ fn omits_temp_dir_when_none() {
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
     assert!(
-        !args.iter().any(|a| a.starts_with("--temp-dir=")),
-        "should not emit --temp-dir= when none: {args:?}"
+        !names_option(&args, "--temp-dir"),
+        "should not emit --temp-dir when none: {args:?}"
     );
 }
 
@@ -3257,9 +3298,9 @@ fn omits_reference_dirs_when_empty() {
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
     assert!(
-        !args.iter().any(|a| a.starts_with("--compare-dest=")
-            || a.starts_with("--copy-dest=")
-            || a.starts_with("--link-dest=")),
+        !["--compare-dest", "--copy-dest", "--link-dest"]
+            .iter()
+            .any(|opt| names_option(&args, opt)),
         "should not emit reference dir args when empty: {args:?}"
     );
 }
@@ -3489,21 +3530,23 @@ fn all_flags_enabled_produces_valid_invocation() {
         "all-flags test: expected --old-compress for explicit zlib: {args:?}"
     );
 
-    let expected_prefixed = [
-        "--checksum-choice=",
-        "--bwlimit=",
-        "--partial-dir=",
-        "--temp-dir=",
-        "--backup-dir=",
-        "--suffix=",
-        "--link-dest=",
-        "--compare-dest=",
-        "--copy-dest=",
-    ];
-    for prefix in expected_prefixed {
+    for prefix in ["--checksum-choice=", "--bwlimit=", "--suffix="] {
         assert!(
             args.iter().any(|a| a.starts_with(prefix)),
             "all-flags test: missing arg with prefix {prefix} in args: {args:?}"
+        );
+    }
+    for (opt, value) in [
+        ("--partial-dir", ".partial"),
+        ("--temp-dir", "/tmp/rsync"),
+        ("--backup-dir", "/backup"),
+        ("--link-dest", "/prev"),
+        ("--compare-dest", "/cmp"),
+        ("--copy-dest", "/cpd"),
+    ] {
+        assert!(
+            has_split_arg(&args, opt, value),
+            "all-flags test: missing split {opt} {value} in args: {args:?}"
         );
     }
 
@@ -3854,14 +3897,14 @@ fn iconv_explicit_single_forwards_whole_spec() {
 // filename args when protect_args is off. These tests verify that oc-rsync
 // produces the same escaping, matching the lsh.sh `eval "$@"` contract.
 
-use super::builder::{shell_safe_filename_arg, shell_safe_filename_arg_with_tilde};
+use super::super::safe_arg::filename_arg;
 
 /// `&str` test wrappers around the byte-native escape helpers.
 fn shell_safe(arg: &str) -> OsString {
-    shell_safe_filename_arg(std::ffi::OsStr::new(arg))
+    filename_arg(std::ffi::OsStr::new(arg), false)
 }
 fn shell_safe_tilde(arg: &str, escape_leading_tilde: bool) -> OsString {
-    shell_safe_filename_arg_with_tilde(std::ffi::OsStr::new(arg), escape_leading_tilde)
+    filename_arg(std::ffi::OsStr::new(arg), escape_leading_tilde)
 }
 
 #[test]
@@ -3893,7 +3936,7 @@ fn shell_safe_leaves_a_metacharacter_free_name_alone() {
 }
 
 /// A non-UTF-8 operand round-trips byte-identically through
-/// `determine_transfer_role` -> `shell_safe_filename_arg`: the raw path byte
+/// `determine_transfer_role` -> `filename_arg`: the raw path byte
 /// (`0xFF`, a legal Unix filename byte rsync carries as `char*`) survives, and
 /// the ASCII shell metacharacter beside it is still escaped. Fails pre-fix,
 /// where the operand was lossily decoded to U+FFFD before escaping ran.
@@ -3918,7 +3961,7 @@ fn shell_safe_preserves_non_utf8_operand_bytes() {
     };
 
     let parsed = rsync_io::ssh::parse_ssh_operand(&operand).unwrap();
-    let escaped = shell_safe_filename_arg(parsed.path());
+    let escaped = filename_arg(parsed.path(), false);
 
     // `)` is escaped; the raw 0xFF byte is preserved verbatim.
     let mut expected = b"/a".to_vec();
@@ -4091,28 +4134,28 @@ fn old_args_level_two_skips_filename_escaping() {
 
 #[cfg(unix)]
 #[test]
-fn includes_groupmap_wildcard_verbatim() {
-    // upstream: options.c:3096-3097 - --groupmap is forwarded verbatim under
-    // `protect_args` (the default). The wildcard `*` must survive so the
-    // receiver's `uidlist.c:parse_name_map()` installs a wildcard rule.
+fn includes_groupmap_wildcard_escaped() {
+    // upstream: options.c:3096-3097 - `safe_arg("--groupmap", groupmap)`
+    // escapes the `*` so the remote shell does not glob it; the server sees
+    // `*:1234` and `uidlist.c:parse_name_map()` installs a wildcard rule.
     let mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse");
     let config = ClientConfig::builder().group_mapping(Some(mapping)).build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--groupmap=*:1234"),
-        "expected --groupmap=*:1234 verbatim: {args:?}"
+        args.iter().any(|a| a == "--groupmap=\\*:1234"),
+        "expected --groupmap=\\*:1234: {args:?}"
     );
 }
 
 #[cfg(unix)]
 #[test]
-fn includes_usermap_wildcard_verbatim() {
+fn includes_usermap_wildcard_escaped() {
     let mapping = ::metadata::UserMapping::parse("*:5678").expect("parse");
     let config = ClientConfig::builder().user_mapping(Some(mapping)).build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--usermap=*:5678"),
-        "expected --usermap=*:5678 verbatim: {args:?}"
+        args.iter().any(|a| a == "--usermap=\\*:5678"),
+        "expected --usermap=\\*:5678: {args:?}"
     );
 }
 
@@ -4132,14 +4175,14 @@ fn omits_usermap_and_groupmap_when_unset() {
 
 #[cfg(unix)]
 #[test]
-fn forwards_multi_rule_groupmap_verbatim() {
+fn forwards_multi_rule_groupmap_in_order() {
     let mapping = ::metadata::GroupMapping::parse("100-200:1234,wheel:9999,*:0").expect("parse");
     let config = ClientConfig::builder().group_mapping(Some(mapping)).build();
     let args = build_sender_args(&config);
     assert!(
         args.iter()
-            .any(|a| a == "--groupmap=100-200:1234,wheel:9999,*:0"),
-        "expected multi-rule groupmap verbatim (no rule reordering): {args:?}"
+            .any(|a| a == "--groupmap=100-200:1234,wheel:9999,\\*:0"),
+        "expected multi-rule groupmap in order (no rule reordering): {args:?}"
     );
 }
 
@@ -4407,12 +4450,10 @@ fn push_with_remote_files_from_forwards_path() {
     let config = ClientConfig::builder()
         .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
         .build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build(std::ffi::OsStr::new("/remote/dest"));
+    let args = build_sender_args(&config);
 
     assert!(
-        args.iter()
-            .any(|a| a.to_string_lossy() == "--files-from=/remote/list.txt"),
+        has_split_arg(&args, "--files-from", "/remote/list.txt"),
         "PUSH with remote files-from must forward the path to the remote: {args:?}"
     );
 }
@@ -4505,12 +4546,10 @@ fn pull_with_remote_files_from_forwards_path() {
     let config = ClientConfig::builder()
         .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
         .build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
-    let args = builder.build(std::ffi::OsStr::new("/remote/source"));
+    let args = build_receiver_args(&config);
 
     assert!(
-        args.iter()
-            .any(|a| a.to_string_lossy() == "--files-from=/remote/list.txt"),
+        has_split_arg(&args, "--files-from", "/remote/list.txt"),
         "PULL with remote files-from must forward the path to the remote: {args:?}"
     );
 }
@@ -4736,33 +4775,27 @@ fn sender_only_mapping_and_dest_options_not_forwarded_on_pull() {
         .preallocate(true)
         .build();
 
-    let pull = build_receiver_args(&config);
-    for needle in [
-        "--usermap=*:5678",
-        "--groupmap=*:1234",
+    let options = [
+        "--usermap",
+        "--groupmap",
         "--ignore-existing",
         "--existing",
-        "--temp-dir=/tmp/staging",
+        "--temp-dir",
         "--preallocate",
-    ] {
+    ];
+    let pull = build_receiver_args(&config);
+    for opt in options {
         assert!(
-            !pull.iter().any(|a| a == needle),
-            "PULL must not forward am_sender-only {needle}: {pull:?}"
+            !names_option(&pull, opt),
+            "PULL must not forward am_sender-only {opt}: {pull:?}"
         );
     }
 
     let push = build_sender_args(&config);
-    for needle in [
-        "--usermap=*:5678",
-        "--groupmap=*:1234",
-        "--ignore-existing",
-        "--existing",
-        "--temp-dir=/tmp/staging",
-        "--preallocate",
-    ] {
+    for opt in options {
         assert!(
-            push.iter().any(|a| a == needle),
-            "PUSH must forward am_sender-only {needle}: {push:?}"
+            names_option(&push, opt),
+            "PUSH must forward am_sender-only {opt}: {push:?}"
         );
     }
 }

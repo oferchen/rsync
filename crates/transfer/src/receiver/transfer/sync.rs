@@ -435,7 +435,9 @@ impl ReceiverContext {
                     )
                 })?;
             }
-            drop(file);
+            // upstream: receiver.c:1296-1300 - a failed close is fatal,
+            // exit_cleanup(RERR_FILEIO).
+            crate::disk_commit::close_received_file(Some(file), temp_guard.path())?;
 
             // upstream: backup.c:make_backup() - back up the existing file
             // before overwrite. Routed through the shared commit-tier owner so

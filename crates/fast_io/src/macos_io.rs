@@ -139,6 +139,22 @@ impl MacosWriter {
         self.file.sync_all()
     }
 
+    /// Flushes pending buffers and hands back a file whose `close(2)` is the
+    /// last one for the open file description.
+    ///
+    /// The flush-on-drop contract keeps `file` from being moved out, so the
+    /// returned handle is a `dup` and the writer's own descriptor is closed
+    /// here. Closing the returned file is then the final close, which is
+    /// where the kernel reports deferred write-back errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error from flushing or duplicating the descriptor.
+    pub fn into_file(mut self) -> io::Result<std::fs::File> {
+        self.flush_writev()?;
+        self.file.try_clone()
+    }
+
     /// Attempts to set `F_NOCACHE` on the file descriptor.
     ///
     /// Returns `true` on success, `false` if `fcntl` fails (e.g., on a
@@ -520,6 +536,17 @@ impl MacosWriter {
         self.inner.flush()?;
         self.inner.get_ref().sync_all()
     }
+
+    /// Flushes buffered data and returns the underlying file.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error from flushing the buffer.
+    pub fn into_file(self) -> io::Result<std::fs::File> {
+        self.inner
+            .into_inner()
+            .map_err(io::IntoInnerError::into_error)
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -783,6 +810,21 @@ mod tests {
 
         let content = std::fs::read(&path).unwrap();
         assert_eq!(&content, b"drop me");
+    }
+
+    /// The handle `into_file` returns carries every pending byte, so the
+    /// caller's checked close is the one that commits them.
+    #[test]
+    fn into_file_flushes_pending_writes() {
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("into_file.bin");
+
+        let mut writer = MacosWriter::create(&path, 0).unwrap();
+        writer.write_all(b"pending").unwrap();
+        let file = writer.into_file().unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"pending");
+        crate::close_file(file).unwrap();
     }
 
     #[test]
