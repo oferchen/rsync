@@ -204,6 +204,18 @@ impl RuntimeOptions {
             )));
         }
 
+        // Windows has no setuid/setgid, only account-name impersonation, so a
+        // numeric uid/gid drop cannot be honoured. Refuse to start rather than
+        // serve with the privileges the operator asked to drop. Upstream has no
+        // Windows build: rsync_module() (clientserver.c:1096-1131) and
+        // start_daemon() (clientserver.c:1496-1520) always perform the drop.
+        #[cfg(windows)]
+        if let Some(directive) = options.configured_privilege_drop_directive() {
+            return Err(config_error(format!(
+                "{directive} is set, but a Windows daemon cannot drop privileges to a uid or gid"
+            )));
+        }
+
         // QUIC listener identity is a certificate/key pair: the listener needs
         // both to present an identity, and upstream rsync-ssl keeps
         // RSYNC_SSL_CERT / RSYNC_SSL_KEY distinct (docs/design/quic-transport-

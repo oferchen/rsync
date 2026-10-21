@@ -94,17 +94,15 @@ This mapping is lossy and the loss is documented. POSIX has no concept
 of `DELETE`, `WRITE_DAC`, `WRITE_OWNER`, audit ACEs, or inheritance
 flags, so the resulting DACL is functionally equivalent to the POSIX
 source but does not match what a hand-authored Windows DACL would
-typically contain. For higher fidelity in Windows-to-Windows transfers,
-the planned `--windows-acls` flag will negotiate the SDDL slot
-end-to-end (see **--windows-acls** in `docs/oc-rsync.1.md`).
+typically contain. Higher fidelity for Windows-to-Windows transfers
+through the SDDL slot is planned (see
+`docs/design/windows-ntfs-acl-support.md` section 4.2).
 
 #### What is not supported
 
 - **System ACLs (SACL).** Audit ACEs require the `SE_SECURITY_NAME`
   privilege to read and write, and they cannot ride the cross-platform
-  payload. The current path covers the DACL only. The planned
-  **--audit-acls** flag will opt in to SACL handling and carry SACL
-  contents in the SDDL slot.
+  payload. The current path covers the DACL only.
 - **Mandatory integrity labels** and `OBJECT_ACE` variants. Not
   representable in either payload.
 - **Inherited ACEs** (`AceFlags & INHERITED_ACE`). Skipped on send; the
@@ -130,9 +128,7 @@ audit trail and the WAS-6 cohort-guard implementation notes.
 #### Further reading
 
 - `docs/oc-rsync.1.md` - the **-A**, **--acls** entry documents the full
-  Windows behaviour, the planned **--audit-acls**,
-  **--fail-on-windows-acl-loss**, and **--windows-acls** flags, and the
-  per-loss warning channel.
+  Windows behaviour and the per-loss warning channel.
 - `docs/design/windows-ntfs-acl-support.md` (#2306) - the design
   document with the full DACL-to-POSIX mapping matrix, the wire-format
   decision record, and the WAS-2 through WAS-8 roadmap.

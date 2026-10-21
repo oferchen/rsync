@@ -489,6 +489,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Read the remote exit status over embedded SSH and exit with the worse of the local and remote codes, so a remote rsync that is missing (127), partial (23) or killed fails the run as it does over the ssh binary (#8225)
 
 **Windows**
+- A Windows daemon whose config sets `uid`, `gid`, `daemon uid` or `daemon gid` refuses to start with a config error naming the directive, instead of warning and serving with the privileges it was told to drop (#PRNUM)
+- A Windows sender skips a cloud-files (OneDrive) placeholder, AF_UNIX socket or other non-link reparse point with a `make_file failed` line naming the path and kind, and ends with exit 23; it was sent as a symlink with an empty target and was never hydrated (#PRNUM)
 - Compare the read-only bit, open directories for `--fsync`, honour `--one-file-system` across volumes, and warn when metadata cannot be applied (#7163, #7164, #7210, #7054)
 - An auto-inherited (`AI`) Windows DACL is written unprotected, so the destination keeps inheriting from its parent like the source did; protected and POSIX-synthesised DACLs stay protected (#8214)
 - Report the NTFS ACEs the rsync wire format cannot carry (#7267)
@@ -527,6 +529,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Removed
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#PRNUM)
 
+- The planned `--windows-acls`, `--audit-acls` and `--fail-on-windows-acl-loss` options from the man page and Windows ACL docs; the CLI never had them (#PRNUM)
 - rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`) (#8087)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030) and the non-upstream per-directory filter alias (#6846)
 - The unreachable reorder-buffer spill layer: the `OC_RSYNC_SPILL_*` environment variables, the `--spill-dir`, `--spill-threshold-bytes` and `--no-spill` options and the `spill-compression` build feature (#8197)

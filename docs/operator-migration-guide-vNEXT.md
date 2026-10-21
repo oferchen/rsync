@@ -326,21 +326,17 @@ budget for the documented lossy cases before flipping `-A` on:
 - Explicit deny ACEs are dropped on send.
 - Inherited ACEs are not transmitted; the destination inheritance chain
   takes over.
-- The system ACL (SACL) is skipped unless the planned **--audit-acls**
-  flag is passed and `SE_SECURITY_NAME` is held.
+- The system ACL (SACL) is skipped.
 - Non-`rwx` access bits (`DELETE`, `WRITE_DAC`, `WRITE_OWNER`, generic
   bits) collapse to `r`/`w`/`x` plus `SYNCHRONIZE` on receive.
 - Trustee SIDs that cannot be translated to or from an account name are
   dropped with a one-time warning.
 
 The cross-platform payload remains byte-compatible with upstream rsync
-and POSIX peers. The planned **--windows-acls** opt-in adds a higher-
-fidelity SDDL payload over the existing xattr stream for Windows-to-
-Windows transfers, and **--fail-on-windows-acl-loss** turns the lossy
-cases into a hard failure (exit code 23) for environments that need to
-preserve every NTFS ACE verbatim or abort. None of these three flags
-ship in this release; track `docs/design/windows-ntfs-acl-support.md`
-section 4 for the rollout schedule.
+and POSIX peers. A higher-fidelity SDDL payload over the existing
+xattr stream for Windows-to-Windows transfers is planned; track
+`docs/design/windows-ntfs-acl-support.md` section 4 for the rollout
+schedule. No option turns the lossy cases into a hard failure.
 
 The full mapping matrix, hardlink-safe DACL application rules, and the
 SDDL wire format details are in

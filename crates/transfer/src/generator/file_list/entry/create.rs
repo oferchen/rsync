@@ -189,26 +189,16 @@ impl GeneratorContext {
         } {
             // upstream: flist.c:readlink_stat() returns the link target as
             // recorded on disk. On Windows the kernel exposes junctions and
-            // symlinks through `read_link`; cloud placeholders and AF_UNIX
-            // sockets do not have a portable target and we fall back to an
-            // empty path so the receiver materialises a stub link rather than
-            // dropping the entry. The WPC-8 classification is consulted only
-            // to decide whether we trust `read_link` (Symlink/Junction) or
-            // emit an empty target (OneDrive/AfUnix/Other); the on-wire
-            // type is always SYMLINK for Cygwin parity.
+            // symlinks through `read_link`, and they go on the wire as
+            // SYMLINK for Cygwin parity. Cloud placeholders, AF_UNIX sockets
+            // and opaque tags have no link target, and reading their data
+            // would hydrate a placeholder, so the entry is refused here; the
+            // walk reports it and sets IOERR_GENERAL, as upstream's
+            // make_file() does when it cannot stat an entry (flist.c:1691-1695).
             #[cfg(windows)]
-            let raw_target = match reparse_kind {
-                Some(metadata::windows::ReparseKind::Symlink)
-                | Some(metadata::windows::ReparseKind::Junction)
-                | Some(metadata::windows::ReparseKind::MountPoint)
-                | None => self
-                    .read_source_link(full_path)
-                    .unwrap_or_else(|_| PathBuf::from("")),
-                Some(metadata::windows::ReparseKind::OneDrive)
-                | Some(metadata::windows::ReparseKind::AfUnix)
-                | Some(metadata::windows::ReparseKind::Other(_)) => PathBuf::from(""),
-            };
-            #[cfg(not(windows))]
+            if let Some(error) = reparse_kind.and_then(unsendable_reparse_point) {
+                return Err(error);
+            }
             let raw_target = self
                 .read_source_link(full_path)
                 .unwrap_or_else(|_| PathBuf::from(""));
@@ -560,6 +550,26 @@ impl GeneratorContext {
     // call site later should reintroduce a stub here.
 }
 
+/// Refuses a Windows reparse point that has no link target to send.
+///
+/// Returns `None` for the link kinds (symlink, junction, mount point), which
+/// go on the wire as SYMLINK. Every other kind yields an `Unsupported` error
+/// whose message names the kind, so the walk's `make_file failed` line tells
+/// the operator why the file was skipped.
+#[cfg(windows)]
+fn unsendable_reparse_point(kind: metadata::windows::ReparseKind) -> Option<io::Error> {
+    use metadata::windows::ReparseKind;
+    let what = match kind {
+        ReparseKind::Symlink | ReparseKind::Junction | ReparseKind::MountPoint => return None,
+        ReparseKind::OneDrive => "a cloud-files (OneDrive) placeholder".to_owned(),
+        ReparseKind::AfUnix => "an AF_UNIX socket".to_owned(),
+        ReparseKind::Other(tag) => format!("an unsupported reparse point (tag {tag:#010x})"),
+    };
+    Some(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("skipping {what}: it has no link target and is not read"),
+    ))
+}
 #[cfg(all(test, unix, feature = "xattr"))]
 mod fake_super_round_trip_tests {
     //! End-to-end sender override: place a fake-super xattr on a regular
@@ -1386,9 +1396,10 @@ mod windows_reparse_tests {
     //! Windows reparse-point classification regression tests (WPC-8'.9).
     //!
     //! Verifies that `create_entry` routes NTFS reparse points through the
-    //! WPC-8 classifier so junctions, symbolic links, and non-symlink
-    //! reparse points serialise as SYMLINK-class `FileEntry` values
-    //! (matching upstream's Cygwin behaviour) rather than as regular files.
+    //! WPC-8 classifier so junctions and symbolic links serialise as
+    //! SYMLINK-class `FileEntry` values (matching upstream's Cygwin
+    //! behaviour), while cloud placeholders, AF_UNIX sockets and opaque tags
+    //! are skipped with an I/O error instead of being sent or hydrated.
     //!
     //! `mklink /j` runs without elevation on Windows 10+; `mklink /d`
     //! (directory symlink) requires admin or developer mode and is
@@ -1557,6 +1568,67 @@ mod windows_reparse_tests {
         assert!(
             !link_target.as_os_str().is_empty(),
             "directory symlink target must be preserved, entry={entry:?}"
+        );
+    }
+    /// Only the link kinds have a target to send; every other kind is refused
+    /// with a message naming it, so the skip line tells the operator why.
+    #[test]
+    fn non_link_reparse_kinds_are_refused_by_name() {
+        use metadata::windows::ReparseKind;
+        for kind in [
+            ReparseKind::Symlink,
+            ReparseKind::Junction,
+            ReparseKind::MountPoint,
+        ] {
+            assert!(
+                super::unsendable_reparse_point(kind).is_none(),
+                "{kind:?} has a link target and must be sent"
+            );
+        }
+        for (kind, named) in [
+            (ReparseKind::OneDrive, "cloud-files (OneDrive) placeholder"),
+            (ReparseKind::AfUnix, "AF_UNIX socket"),
+            (ReparseKind::Other(0x8000_0042), "tag 0x80000042"),
+        ] {
+            let error = super::unsendable_reparse_point(kind).expect("refused");
+            assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+            assert!(error.to_string().contains(named), "{kind:?}: {error}");
+        }
+    }
+    /// Binds a real AF_UNIX socket, which NTFS stores as an
+    /// `IO_REPARSE_TAG_AF_UNIX` reparse point (Windows 10 1803 and later).
+    fn bind_af_unix_socket(path: &std::path::Path) -> socket2::Socket {
+        use socket2::{Domain, SockAddr, Socket, Type};
+        let socket = Socket::new(Domain::UNIX, Type::STREAM, None).expect("AF_UNIX socket");
+        socket
+            .bind(&SockAddr::unix(path).expect("AF_UNIX address"))
+            .expect("bind AF_UNIX socket");
+        socket
+    }
+    /// A non-link reparse point beside a regular file: the file is sent, the
+    /// reparse point is left out of the file list rather than sent as an
+    /// empty-target symlink, and IOERR_GENERAL makes the run exit 23.
+    #[test]
+    fn af_unix_reparse_point_is_skipped_with_io_error() {
+        let tmp = TempDir::new().expect("tempdir");
+        std::fs::write(tmp.path().join("kept.txt"), b"data").expect("write file");
+        let socket_path = tmp.path().join("socket");
+        let _socket = bind_af_unix_socket(&socket_path);
+        assert_eq!(
+            metadata::windows::classify_path(&socket_path).expect("classify"),
+            metadata::windows::ReparseKind::AfUnix,
+            "the fixture must be a non-link reparse point"
+        );
+        let mut ctx = windows_generator();
+        ctx.build_file_list(&[tmp.path().join("kept.txt"), socket_path])
+            .expect("build file list");
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert_eq!(names, ["kept.txt"], "only the regular file is sent");
+        let general = crate::generator::io_error_flags::IOERR_GENERAL;
+        assert_eq!(ctx.io_error() & general, general);
+        assert_eq!(
+            crate::generator::io_error_flags::to_exit_code(ctx.io_error()),
+            23
         );
     }
 }
