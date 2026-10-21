@@ -6,14 +6,15 @@ fn destination_write_guard_uses_custom_partial_directory() {
     let destination = destination_dir.join("file.txt");
     let partial_dir = Path::new(".custom-partial");
 
-    let (guard, mut file) =
+    let (mut guard, mut file) =
         DestinationWriteGuard::new(destination.as_path(), true, Some(partial_dir), None)
             .expect("guard");
     let temp_path = guard.staging_path().to_path_buf();
     file.write_all(b"partial payload").expect("write partial");
+    guard.note_literal();
     drop(file);
 
-    // Dropping without commit models an interrupted transfer.
+    // Dropping without commit models a transfer interrupted after literal data.
     drop(guard);
 
     // upstream: the in-progress temp stages beside the destination and is moved

@@ -31,7 +31,7 @@ use super::sync_xattrs_if_requested;
 
 use super::{
     BackupDirCache, CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker,
-    LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
+    LiteralLatch, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
     LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress,
     LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, MergeFileOrigin,
     MergeFileRegistry, NestedDirMerge, ReferenceDirectory, SparseWriteState, compute_backup_path,
@@ -251,6 +251,10 @@ pub(crate) struct CopyContext<'a> {
     // upstream: the per-file equivalent is `mbuf->status` handed back by
     // `unmap_file()` (fileio.c:427) - per-map, not global.
     source_read_events: u64,
+    /// Whether the file being copied has received literal data yet, armed with
+    /// the `--partial` promotion that data earns.
+    // upstream: cleanup.c:88 `cleanup_got_literal`
+    literal_latch: LiteralLatch,
     /// Set when a source entry was dropped from the file list with a
     /// diagnostic: an `--iconv` filename that could not be strictly transcoded,
     /// or a `--copy-links` referent that could not be stat'ed. Drives the final

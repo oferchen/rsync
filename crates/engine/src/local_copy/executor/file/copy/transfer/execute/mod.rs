@@ -42,7 +42,7 @@ use crate::local_copy::{
 use super::super::super::append::{AppendMode, determine_append_mode};
 use super::super::super::comparison::build_delta_signature;
 use super::super::super::compute_backup_path;
-use super::super::super::guard::remove_incomplete_destination;
+use super::super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
 use super::finalize::finalize_guard_and_metadata;
 use super::open::{open_source_file, source_open_error};
@@ -673,6 +673,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // Snapshot the short-read counter so the check below sees only THIS
     // pass's report, not one an earlier file already recorded.
     let source_read_events_before = context.source_read_events();
+    context.arm_literal_latch(
+        guard
+            .as_ref()
+            .and_then(DestinationWriteGuard::pending_promotion),
+    );
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
@@ -691,6 +696,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
         basis_separate_from_writer,
         updating_in_place,
     );
+    if context.take_literal_latch()
+        && let Some(existing_guard) = guard.as_mut()
+    {
+        existing_guard.note_literal();
+    }
 
     // On Linux, keep writer alive for fd-based metadata (fchmod/fchown/futimens).
     // On macOS/APFS, fd-based metadata shifts cost to close(), so drop early.
@@ -740,7 +750,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             if let Err(timeout_error) = context.enforce_timeout() {
                 drop(writer_for_metadata.take());
                 if let Some(guard) = guard.take() {
-                    guard.discard();
+                    guard.abort();
                 }
                 // In --partial/--partial-dir mode discard() finalised the temp
                 // onto its partial destination; removing it here would defeat
@@ -768,7 +778,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         Err(error) => {
             drop(writer_for_metadata.take());
             if let Some(guard) = guard.take() {
-                guard.discard();
+                guard.abort();
             }
             if existing_metadata.is_none() && !partial_enabled {
                 remove_incomplete_destination(destination);

@@ -35,8 +35,9 @@ pub use file::{
     trace_make_backup_rename, trace_make_backup_symlink,
 };
 pub(crate) use file::{
-    CopyComparison, SparseWriteState, copy_entry_to_backup, copy_file, create_backup_parents,
-    should_skip_copy, skip_matched_sparse, system_time_within_window, write_sparse_chunk,
+    CopyComparison, LiteralLatch, PartialPromotion, SparseWriteState, copy_entry_to_backup,
+    copy_file, create_backup_parents, should_skip_copy, skip_matched_sparse,
+    system_time_within_window, write_sparse_chunk,
 };
 #[cfg(test)]
 pub(crate) use file::{

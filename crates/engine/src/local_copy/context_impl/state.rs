@@ -75,6 +75,7 @@ impl<'a> CopyContext<'a> {
             io_error_delete_warning_emitted: false,
             source_read_error: false,
             source_read_events: 0,
+            literal_latch: LiteralLatch::default(),
             flist_io_error: false,
             unsupported_operation_skipped: false,
             sender_remove_error: false,
@@ -807,6 +808,27 @@ impl<'a> CopyContext<'a> {
     /// cannot carry that per-pass signal once any earlier file has set it.
     pub(in crate::local_copy) const fn source_read_events(&self) -> u64 {
         self.source_read_events
+    }
+
+    /// Starts a copy pass whose temp earns `promotion` once literal data
+    /// lands. upstream: receiver.c:978 clears `cleanup_got_literal` per file.
+    pub(in crate::local_copy) fn arm_literal_latch(
+        &mut self,
+        promotion: Option<crate::local_copy::PartialPromotion>,
+    ) {
+        self.literal_latch.arm(promotion);
+    }
+
+    /// Records that literal data is about to reach the destination.
+    /// upstream: receiver.c:575 `cleanup_got_literal = 1`.
+    #[inline]
+    pub(super) fn note_literal(&mut self) {
+        self.literal_latch.note();
+    }
+
+    /// Ends a copy pass, returning whether it wrote literal data.
+    pub(in crate::local_copy) fn take_literal_latch(&mut self) -> bool {
+        self.literal_latch.take()
     }
 
     /// Reports whether a short source read must force `RERR_PARTIAL` (23).
