@@ -169,13 +169,59 @@ pub fn terminate_process(pid: i32) -> io::Result<()> {
 /// A group with no members left has nothing to stop, so `ESRCH` is success.
 /// Call it while the leader is still unreaped - a zombie keeps its pid, and
 /// with it the group id, from being reused by an unrelated process.
+///
+/// On Apple platforms a group whose only member is that unreaped leader
+/// answers `EPERM`, not `ESRCH`: XNU's `killpg1()` skips zombies when it walks
+/// the group and then returns `EPERM` for a POSIX caller that signalled
+/// nothing (xnu `bsd/kern/kern_sig.c` `killpg1()`, the `p_stat != SZOMB`
+/// filter and `nfound > 0 ? 0 : (posix ? EPERM : ESRCH)`). That `EPERM` is
+/// success only when `pgid` is this process's own ended, unreaped child; any
+/// other `EPERM` is a real permission failure and is returned. A group that
+/// also holds a live member this process may not signal answers the same
+/// `EPERM`, so callers must own every member of the group, as a supervisor
+/// whose group holds only its own descendants does.
 pub fn kill_process_group(pgid: i32) -> io::Result<()> {
     match nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(pgid),
         nix::sys::signal::Signal::SIGKILL,
     ) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        #[cfg(target_vendor = "apple")]
+        Err(nix::errno::Errno::EPERM) if child_has_ended(pgid)? => Ok(()),
         Err(errno) => Err(errno.into()),
+    }
+}
+
+/// Reports whether `child_pid`, a child of this process, has ended and is
+/// still unreaped, without blocking and without consuming its status.
+///
+/// A pid that is not this process's child answers `ECHILD`, which is `false`.
+#[cfg(target_vendor = "apple")]
+#[allow(unsafe_code)]
+fn child_has_ended(child_pid: i32) -> io::Result<bool> {
+    loop {
+        // SAFETY: `waitid` writes only through `info`, a live local zeroed to
+        // a valid `siginfo_t`, so `si_pid` stays 0 when `WNOHANG` finds no
+        // ended child. `WNOWAIT` leaves the child waitable for its reaper.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child_pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+            )
+        };
+        if waited == -1 {
+            let error = io::Error::last_os_error();
+            match error.raw_os_error() {
+                // As `await_child_end`: the kernel never ran the wait.
+                Some(libc::EINTR) => continue,
+                Some(libc::ECHILD) => return Ok(false),
+                _ => return Err(error),
+            }
+        }
+        return Ok(info.si_pid == child_pid);
     }
 }
 
@@ -461,6 +507,31 @@ mod tests {
                     .read_to_end(&mut rest)
                     .expect("EOF once every member of the group is gone");
                 kill_process_group(child_pid).expect("an empty group is already stopped");
+            }
+        }
+    }
+
+    /// A group whose only member is its ended, unreaped leader has nothing
+    /// left to stop, so killing it succeeds on every platform - including
+    /// Darwin, whose `killpg()` answers `EPERM` for a zombie-only group - and
+    /// the leader's own exit status still reaches its reaper.
+    #[test]
+    fn kill_process_group_of_an_unreaped_ended_leader_succeeds() {
+        const CHILD_EXIT_CODE: i32 = 5;
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => {
+                if lead_process_group(0).is_err() {
+                    exit_child(1);
+                }
+                exit_child(CHILD_EXIT_CODE);
+            }
+            ForkSide::Parent { child_pid } => {
+                await_child_end(child_pid).expect("observe the leader's end");
+                kill_process_group(child_pid).expect("a zombie-only group is already stopped");
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Exited(CHILD_EXIT_CODE)
+                );
             }
         }
     }
