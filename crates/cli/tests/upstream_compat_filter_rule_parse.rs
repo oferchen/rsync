@@ -240,3 +240,30 @@ fn c_modifier_inside_a_per_directory_merge_file() {
         }
     }
 }
+
+/// #224: `e` adds an exclude of the merge file's basename, once and with none
+/// of the rule's modifiers, AHEAD of the merged rules (exclude.c:1558-1572), so
+/// a `+` naming the file inside it, or after a dir-merge, cannot re-include it.
+#[test]
+fn exclude_self_precedes_the_merged_rules() {
+    let files = [
+        ("a", "a"),
+        ("b", "b"),
+        ("rules", "+ rules\n- b\n"),
+        (".f", "+ .f\n:e .g\n+ .g\n"),
+        ("sub/.f", "- a\n"),
+        ("sub/.g", "- b\n"),
+        ("sub/a", "a"),
+        ("sub/b", "b"),
+    ];
+    for args in [
+        &["--filter=.e src/rules"][..],
+        &["--filter=merge,e src/rules"],
+        &["--filter=:e .f"],
+        &["--filter=dir-merge,e .f", "--filter=+ .f"],
+    ] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, args, source);
+        }
+    }
+}

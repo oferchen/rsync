@@ -8,19 +8,12 @@ fn dir_merge_config_defaults() {
     let config = DirMergeConfig::new(".rsync-filter");
     assert_eq!(config.filename(), ".rsync-filter");
     assert!(config.inherits());
-    assert!(!config.excludes_self());
 }
 
 #[test]
 fn dir_merge_config_no_inherit() {
     let config = DirMergeConfig::new(".rsync-filter").with_inherit(false);
     assert!(!config.inherits());
-}
-
-#[test]
-fn dir_merge_config_exclude_self() {
-    let config = DirMergeConfig::new(".rsync-filter").with_exclude_self(true);
-    assert!(config.excludes_self());
 }
 
 #[test]
@@ -63,13 +56,10 @@ fn dir_merge_config_perishable() {
 
 #[test]
 fn dir_merge_config_clone() {
-    let config = DirMergeConfig::new(".rsync-filter")
-        .with_inherit(false)
-        .with_exclude_self(true);
+    let config = DirMergeConfig::new(".rsync-filter").with_inherit(false);
     let cloned = config.clone();
     assert_eq!(cloned.filename(), ".rsync-filter");
     assert!(!cloned.inherits());
-    assert!(cloned.excludes_self());
 }
 
 #[test]
@@ -229,20 +219,19 @@ fn filter_chain_enter_directory_comments_only() {
     chain.leave_directory(guard);
 }
 
+/// #224: a `:e` read out of a per-directory merge file adds its exclude ahead
+/// of the nested merge, in the enclosing file's list (exclude.c:1558-1572), so
+/// a later `+ .inner` in that same file cannot re-include the merge file.
 #[test]
-fn filter_chain_enter_directory_exclude_self() {
+fn filter_chain_nested_exclude_self_precedes_the_rules_after_it() {
     let dir = test_support::create_tempdir();
-    fs::write(dir.path().join(".rsync-filter"), "- *.tmp\n").unwrap();
+    fs::write(dir.path().join(".rsync-filter"), ":e .inner\n+ .inner\n").unwrap();
 
     let mut chain = FilterChain::empty();
-    chain.add_merge_config(DirMergeConfig::new(".rsync-filter").with_exclude_self(true));
+    chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
 
     let guard = chain.enter_directory(dir.path()).unwrap();
-    assert_eq!(guard.pushed_count(), 1);
-
-    assert!(!chain.allows(Path::new(".rsync-filter"), false));
-    assert!(!chain.allows(Path::new("file.tmp"), false));
-
+    assert!(!chain.allows(Path::new(".inner"), false));
     chain.leave_directory(guard);
 }
 
