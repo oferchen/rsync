@@ -17,6 +17,7 @@ use super::super::super::config::{
 };
 use super::super::flags;
 use super::super::output_option::make_output_option;
+use super::super::safe_arg;
 use super::{RemoteRole, SecludedInvocation};
 use transfer::setup::build_capability_string_suffix;
 
@@ -248,14 +249,41 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// `protect_args` NULL cutoff, so `--iconv` stays on the command line
     /// even under secluded-args.
     fn iconv_arg(&self) -> Option<OsString> {
-        match self.config.iconv() {
-            IconvSetting::Unspecified | IconvSetting::Disabled => None,
-            IconvSetting::LocaleDefault => Some(OsString::from("--iconv=.")),
-            IconvSetting::Explicit { local, remote } => {
-                let forwarded = remote.as_deref().unwrap_or(local);
-                Some(OsString::from(format!("--iconv={forwarded}")))
-            }
-        }
+        let forwarded = match self.config.iconv() {
+            IconvSetting::Unspecified | IconvSetting::Disabled => return None,
+            IconvSetting::LocaleDefault => ".",
+            IconvSetting::Explicit { local, remote } => remote.as_deref().unwrap_or(local),
+        };
+        Some(self.option_arg("--iconv", OsStr::new(forwarded)))
+    }
+
+    /// Whether `safe_arg()` escapes an option value: `!protect_args &&
+    /// old_style_args < 2`, and at `--old-args` level 1 only for values other
+    /// than `-M` remote options, which the remote shell must split
+    /// (`SPLIT_ARG_WHEN_OLD`).
+    ///
+    /// upstream: options.c:2694, :2715 safe_arg().
+    fn escapes_option_values(&self, remote_option: bool) -> bool {
+        let old_style_args = self.config.old_args().unwrap_or(0);
+        !self.config.protect_args().unwrap_or(false)
+            && old_style_args < 2
+            && (old_style_args == 0 || !remote_option)
+    }
+
+    /// The joined `opt=value` token upstream builds with `safe_arg(opt, value)`.
+    fn option_arg(&self, opt: &str, value: &OsStr) -> OsString {
+        safe_arg::option_arg(opt, value, self.escapes_option_values(false))
+    }
+
+    /// Pushes the split `opt` `value` pair upstream emits for a path value as
+    /// `opt` then `safe_arg("", value)`, so the remote shell can expand a
+    /// leading `~/`.
+    ///
+    /// upstream: options.c:2982-2984 ("This split idiom allows for ~/path
+    /// expansion via the shell"), :3064-3065, :3107-3108, :3120-3121, :3145-3146.
+    fn push_split_option(&self, args: &mut Vec<OsString>, opt: &str, value: &OsStr) {
+        args.push(OsString::from(opt));
+        args.push(self.option_arg("", value));
     }
 
     /// Builds the argument list without the rsync program name.
@@ -306,12 +334,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 let escape_tilde = escape_tilde_role
                     && ((self.config.relative_paths() && !shape.contains("/./"))
                         || !shape.contains('/'));
-                let escaped = if escape_tilde {
-                    shell_safe_filename_arg_with_tilde(path, true)
-                } else {
-                    shell_safe_filename_arg(path)
-                };
-                args.push(escaped);
+                args.push(safe_arg::filename_arg(path, escape_tilde));
             } else {
                 args.push((*path).to_os_string());
             }
@@ -325,10 +348,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// These are options that upstream rsync's `server_options()` emits as separate
     /// tokens rather than single-character flags.
     ///
+    /// Value-bearing options take upstream's `safe_arg()` form: path values
+    /// split into two argv slots, the rest joined as `--opt=VAL`, each value
+    /// escaped for the remote shell.
+    ///
     /// Deviation from upstream: the emission order differs from
-    /// `options.c:2923-3193`, path-valued options are joined as `--opt=VAL`
-    /// instead of split into two argv slots, and option values are not passed
-    /// through `safe_arg()` escaping.
+    /// `options.c:2923-3193`.
     fn append_long_form_args(&self, args: &mut Vec<OsString>) {
         // upstream: options.c server_options() - `am_sender` is true when the
         // local process is the sender (a PUSH). RemoteRole::Sender == am_sender.
@@ -496,10 +521,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if checksum_choice.transfer() != StrongChecksumAlgorithm::Auto
             || checksum_choice.file() != StrongChecksumAlgorithm::Auto
         {
-            args.push(OsString::from(format!(
-                "--checksum-choice={}",
-                checksum_choice.to_argument()
-            )));
+            args.push(self.option_arg(
+                "--checksum-choice",
+                OsStr::new(&checksum_choice.to_argument()),
+            ));
         }
 
         // upstream: options.c:2963-2967 - block_size is forwarded as the SHORT
@@ -544,9 +569,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // There is no compact 'P'.
         if am_sender {
             if let Some(dir) = self.config.partial_directory() {
-                let mut arg = OsString::from("--partial-dir=");
-                arg.push(dir.as_os_str());
-                args.push(arg);
+                self.push_split_option(args, "--partial-dir", dir.as_os_str());
                 if self.config.delay_updates() {
                     args.push(OsString::from("--delay-updates"));
                 }
@@ -562,9 +585,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // remote receiver writes temp files under the requested directory; a
         // remote sender never writes temp files and must not receive it.
         if am_sender && let Some(dir) = self.config.temp_directory() {
-            let mut arg = OsString::from("--temp-dir=");
-            arg.push(dir.as_os_str());
-            args.push(arg);
+            self.push_split_option(args, "--temp-dir", dir.as_os_str());
         }
 
         // upstream: options.c:3132-3141 server_options() - `if (append_mode)
@@ -661,7 +682,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // the built-in default suffix list is never sent (upstream's
         // skip_compress global is NULL unless --skip-compress was given).
         if !am_sender && let Some(spec) = self.config.skip_compress_spec() {
-            args.push(OsString::from(format!("--skip-compress={spec}")));
+            args.push(self.option_arg("--skip-compress", OsStr::new(spec)));
         }
         // upstream: options.c:3099-3104 - --ignore-existing and --existing
         // (sent as --existing for ignore_non_existing) both sit inside the
@@ -777,20 +798,18 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // upstream: options.c:2806-2807 - bare `make_backups` is emitted as the
         // `b` character in the compact flag string by `build_flag_string`. Only
         // `--backup-dir` and `--suffix` are forwarded as long-form arguments
-        // (`options.c:2981-2989`). Deviation from upstream: `--backup-dir` is
-        // joined as one `--backup-dir=DIR` token rather than split (upstream
-        // splits it so the remote shell can expand `~/path`), and `--suffix` is
-        // sent whenever one is configured rather than only when non-default.
+        // (`options.c:2981-2989`), and `--suffix` only when it differs from the
+        // default: `strcmp(backup_suffix, backup_dir ? "" : BACKUP_SUFFIX)`.
         if self.config.backup() {
-            if let Some(dir) = self.config.backup_directory() {
-                let mut arg = OsString::from("--backup-dir=");
-                arg.push(dir.as_os_str());
-                args.push(arg);
+            let backup_dir = self.config.backup_directory();
+            if let Some(dir) = backup_dir {
+                self.push_split_option(args, "--backup-dir", dir.as_os_str());
             }
-            if let Some(suffix) = self.config.backup_suffix() {
-                let mut arg = OsString::from("--suffix=");
-                arg.push(suffix);
-                args.push(arg);
+            let default_suffix = if backup_dir.is_some() { "" } else { "~" };
+            if let Some(suffix) = self.config.backup_suffix()
+                && suffix != default_suffix
+            {
+                args.push(self.option_arg("--suffix", suffix));
             }
         }
 
@@ -804,13 +823,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.role == RemoteRole::Sender {
             for ref_dir in self.config.reference_directories() {
                 let flag = match ref_dir.kind() {
-                    ReferenceDirectoryKind::Compare => "--compare-dest=",
-                    ReferenceDirectoryKind::Copy => "--copy-dest=",
-                    ReferenceDirectoryKind::Link => "--link-dest=",
+                    ReferenceDirectoryKind::Compare => "--compare-dest",
+                    ReferenceDirectoryKind::Copy => "--copy-dest",
+                    ReferenceDirectoryKind::Link => "--link-dest",
                 };
-                let mut arg = OsString::from(flag);
-                arg.push(ref_dir.path().as_os_str());
-                args.push(arg);
+                self.push_split_option(args, flag, ref_dir.path().as_os_str());
             }
         }
 
@@ -893,7 +910,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
             .files_from()
             .resolve_for(local_is_push, self.config.from0());
         if let Some(arg) = plan.remote_arg {
-            args.push(OsString::from(format!("--files-from={arg}")));
+            // upstream: options.c:3144-3150 - a remote-hosted list is split
+            // like the other path values; a forwarded one is `--files-from=-`.
+            if arg == "-" {
+                args.push(OsString::from("--files-from=-"));
+            } else {
+                self.push_split_option(args, "--files-from", OsStr::new(&arg));
+            }
             if plan.remote_from0 {
                 args.push(OsString::from("--from0"));
             }
@@ -908,25 +931,18 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c:3093-3097 - --usermap / --groupmap are
-        // forwarded as `--key=value` arguments. With `protect_args` the value
-        // is shipped verbatim; without `protect_args`, upstream wraps it in
-        // `safe_arg("--usermap", value)` which escapes shell + wildcard
-        // characters so a downstream `eval "$@"` does not glob-expand them.
-        // Deviation from upstream: the value is always sent verbatim, even when
-        // `protect_args` is off (its default, options.c:2103-2113).
-        //
-        // upstream: options.c:3092-3098 - both --usermap and --groupmap sit
-        // inside the `if (am_sender)` block, so they are forwarded only on a
-        // PUSH: the remote receiver applies the id remapping when it writes
-        // ownership. On a PULL the local receiver owns the mapping and the
-        // remote sender must not receive it.
+        // upstream: options.c:3092-3098 - `safe_arg("--usermap", usermap)` and
+        // `safe_arg("--groupmap", groupmap)` sit inside the `if (am_sender)`
+        // block, so they are forwarded only on a PUSH: the remote receiver
+        // applies the id remapping when it writes ownership. On a PULL the
+        // local receiver owns the mapping and the remote sender must not
+        // receive it.
         if am_sender {
             if let Some(mapping) = self.config.user_mapping() {
-                args.push(OsString::from(format!("--usermap={}", mapping.spec())));
+                args.push(self.option_arg("--usermap", OsStr::new(mapping.spec())));
             }
             if let Some(mapping) = self.config.group_mapping() {
-                args.push(OsString::from(format!("--groupmap={}", mapping.spec())));
+                args.push(self.option_arg("--groupmap", OsStr::new(mapping.spec())));
             }
         }
 
@@ -937,10 +953,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // `Self::iconv_arg`), not here.
 
         // upstream: options.c:3185-3193 - remote_options[] are appended after
-        // all other server arguments. Deviation from upstream: each -M value is
-        // forwarded verbatim, not through `safe_arg(SPLIT_ARG_WHEN_OLD, ...)`.
+        // all other server arguments via `safe_arg(SPLIT_ARG_WHEN_OLD, ...)`.
+        let escape_remote_options = self.escapes_option_values(true);
         for opt in self.config.remote_options() {
-            args.push(opt.clone());
+            args.push(safe_arg::option_arg("", opt, escape_remote_options));
         }
     }
 
@@ -1159,147 +1175,4 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         flags
     }
-}
-
-/// Shell metacharacters that upstream rsync escapes in filename arguments.
-///
-/// upstream: options.c:2705 `SHELL_CHARS` - characters requiring backslash
-/// escaping when passing filename arguments through a remote shell that
-/// evaluates them via `eval "$@"`.
-///
-/// `\n` and `\r` are load-bearing: without them a newline inside a filename
-/// argument reaches the remote shell unescaped and terminates the command,
-/// so everything after it is executed as a second command.
-const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\n\r\\";
-
-/// Wildcard characters recognized by upstream rsync.
-///
-/// upstream: options.c:2706 `WILD_CHARS` - when a backslash precedes one of these
-/// characters in a filename argument, the backslash is kept as-is (it already
-/// serves as a wildcard escape), so we do not double-escape it.
-const WILD_CHARS: &str = "*?[]";
-
-/// Backslash-escapes shell metacharacters in a filename argument.
-///
-/// Mirrors upstream `options.c:safe_arg(NULL, arg)` which prepends a backslash
-/// before every character in `SHELL_CHARS`, with special handling:
-///
-/// - Backslash itself is only escaped when it does NOT precede a wildcard
-///   character (`*`, `?`, `[`, `]`), preserving intentional wildcard escapes.
-/// - A leading `-` is prefixed with `./` to prevent the remote server from
-///   interpreting the path as an option.
-///
-/// This escaping is applied only when `protect_args` is not active and
-/// `old_style_args == 0`; the caller (`build_args_without_program`) evaluates
-/// that gate (upstream `options.c:2715`, where the filename branch reduces to
-/// `!protect_args && old_style_args == 0`) and calls this only when it holds.
-pub(super) fn shell_safe_filename_arg(arg: &OsStr) -> OsString {
-    shell_safe_filename_arg_with_tilde(arg, false)
-}
-
-/// Backslash-escapes shell metacharacters in a filename argument, optionally
-/// escaping a leading `~`.
-///
-/// Behaves like [`shell_safe_filename_arg`]; when `escape_leading_tilde` is
-/// set and `arg` begins with `~`, a single backslash is prepended (`~foo` ->
-/// `\~foo`) so the remote shell does not tilde-expand a path literally named
-/// `~foo`. Mirrors upstream `options.c:2717-2722` / `:2754-2755`, where the
-/// `escape_leading_tilde` flag is set only on a pull (`!am_sender`) for an
-/// untrusted sender and a relative/no-slash path; the caller computes that
-/// gate and passes the result here.
-pub(super) fn shell_safe_filename_arg_with_tilde(
-    arg: &OsStr,
-    escape_leading_tilde: bool,
-) -> OsString {
-    // On Unix the escape runs over raw bytes so a non-UTF-8 remote path (a legal
-    // filename, carried by rsync as raw `char*`) survives verbatim; every
-    // metacharacter in SHELL_CHARS/WILD_CHARS is ASCII, so byte-level membership
-    // is exact and non-ASCII bytes pass through untouched. Other targets keep
-    // the char-based escape over the lossy string: their operands originate from
-    // Unicode argv, so no arbitrary-byte fidelity is lost.
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-        OsString::from_vec(escape_shell_bytes(arg.as_bytes(), escape_leading_tilde))
-    }
-    #[cfg(not(unix))]
-    {
-        OsString::from(escape_shell_str(
-            &arg.to_string_lossy(),
-            escape_leading_tilde,
-        ))
-    }
-}
-
-/// Byte-level shell escape used on Unix (see [`shell_safe_filename_arg_with_tilde`]).
-#[cfg(unix)]
-fn escape_shell_bytes(arg: &[u8], escape_leading_tilde: bool) -> Vec<u8> {
-    let shell = SHELL_CHARS.as_bytes();
-    let wild = WILD_CHARS.as_bytes();
-    let leading_dash = arg.first() == Some(&b'-');
-    let leading_tilde = escape_leading_tilde && arg.first() == Some(&b'~');
-    let needs_escaping = leading_dash || leading_tilde || arg.iter().any(|b| shell.contains(b));
-    if !needs_escaping {
-        return arg.to_vec();
-    }
-
-    let mut out = Vec::with_capacity(arg.len() + 16);
-    if leading_dash {
-        out.extend_from_slice(b"./");
-    } else if leading_tilde {
-        // upstream: options.c:2754-2755 - a single backslash before a leading ~.
-        out.push(b'\\');
-    }
-
-    for (i, &b) in arg.iter().enumerate() {
-        if b == b'\\' {
-            // upstream: backslash is only escaped when the next character is
-            // NOT a wildcard (preserving intentional wildcard escapes).
-            let next = arg.get(i + 1).copied().unwrap_or(0);
-            if !wild.contains(&next) {
-                out.push(b'\\');
-            }
-        } else if shell.contains(&b) {
-            out.push(b'\\');
-        }
-        out.push(b);
-    }
-
-    out
-}
-
-/// Char-level shell escape used on non-Unix targets, over the lossy operand.
-#[cfg(not(unix))]
-fn escape_shell_str(arg: &str, escape_leading_tilde: bool) -> String {
-    let leading_dash = arg.starts_with('-');
-    let leading_tilde = escape_leading_tilde && arg.starts_with('~');
-    let needs_escaping =
-        leading_dash || leading_tilde || arg.chars().any(|c| SHELL_CHARS.contains(c));
-    if !needs_escaping {
-        return arg.to_owned();
-    }
-
-    let mut out = String::with_capacity(arg.len() + 16);
-
-    if leading_dash {
-        out.push_str("./");
-    } else if leading_tilde {
-        // upstream: options.c:2754-2755 - a single backslash before a leading ~.
-        out.push('\\');
-    }
-
-    let chars: Vec<char> = arg.chars().collect();
-    for (i, &ch) in chars.iter().enumerate() {
-        if ch == '\\' {
-            let next = chars.get(i + 1).copied().unwrap_or('\0');
-            if !WILD_CHARS.contains(next) {
-                out.push('\\');
-            }
-        } else if SHELL_CHARS.contains(ch) {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-
-    out
 }

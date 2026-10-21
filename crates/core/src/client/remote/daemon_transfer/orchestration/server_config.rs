@@ -300,6 +300,19 @@ mod tests {
     // stop compressing, diverging from upstream's observable wire output. This
     // pins that a client `-z --skip-compress=*` push keeps compression enabled and
     // leaves whole-stream store off.
+    /// A daemon push with `-m` packs the `m` letter for the remote receiver,
+    /// which then reads a filter list (upstream exclude.c:1975-1983). The
+    /// local sender decides whether to send one from its own
+    /// `prune_empty_dirs`, so the generator config must carry it; without it
+    /// the 3.5.1 receiver died with `buffer overflow: recv_rules` (code 22).
+    #[test]
+    fn generator_config_carries_prune_empty_dirs_for_the_filter_list_gate() {
+        let config = ClientConfig::builder().prune_empty_dirs(true).build();
+        let server_config = build_server_config_for_generator(&config, &[], Vec::new())
+            .expect("generator config builds");
+        assert!(server_config.flags.prune_empty_dirs);
+    }
+
     #[test]
     fn client_skip_compress_match_all_never_stores_sender_stream() {
         let config = ClientConfig::builder()

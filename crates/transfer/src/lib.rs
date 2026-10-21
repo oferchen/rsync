@@ -334,6 +334,40 @@ pub(crate) const fn receiver_wants_filter_list(
     prune_empty_dirs || (delete_mode && (!delete_excluded || protocol.as_u8() >= 29))
 }
 
+/// Reports whether a client puts its filter list on the wire.
+///
+/// A receiving client always sends it, because the remote sender always reads
+/// one. A sending client applies its excludes locally and sends the list only
+/// when the remote receiver reads it ([`receiver_wants_filter_list`]), so the
+/// client's `prune_empty_dirs`, `delete` and `delete_excluded` must mirror the
+/// options it forwarded: a mismatch leaves the receiver parsing the file list
+/// as a rule length (`buffer overflow: recv_rules`, code 22) or stalls it.
+/// A server never sends a list.
+///
+/// # Upstream Reference
+///
+/// - `exclude.c:1944-1949` - `send_filter_list()`: `f_out = -1` when
+///   `local_server || (am_sender && !receiver_wants_list)`.
+/// - `exclude.c:1971-1983` - `recv_filter_list()`: the server reads when
+///   `am_sender || receiver_wants_list`.
+pub(crate) fn client_sends_filter_list(
+    config: &ServerConfig,
+    protocol: protocol::ProtocolVersion,
+) -> bool {
+    if !config.connection.client_mode {
+        return false;
+    }
+    match config.role {
+        ServerRole::Generator => receiver_wants_filter_list(
+            config.flags.prune_empty_dirs,
+            config.flags.delete,
+            config.deletion.delete_excluded,
+            protocol,
+        ),
+        ServerRole::Receiver => true,
+    }
+}
+
 /// Reports whether a single wire filter rule is transmitted to the peer.
 ///
 /// Mirrors the elision performed by upstream `send_rules()`: a rule restricted to
@@ -1075,31 +1109,6 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         writer.set_allowed_lull(Some(allowed_lull));
     }
 
-    // upstream: exclude.c:1946-1947 send_filter_list() -
-    //   receiver_wants_list = prune_empty_dirs
-    //       || (delete_mode && (!delete_excluded || protocol_version >= 29));
-    // Push mode applies exclusion locally in the generator; the receiver only
-    // needs the filter list for --prune-empty-dirs or --delete. Under
-    // --delete-excluded on a legacy peer (protocol < 29) the list is suppressed:
-    // the pre-29 wire cannot encode the sender-side modifier that keeps excluded
-    // entries deletable, so upstream neither sends nor reads it there.
-    let receiver_wants_filter_list = receiver_wants_filter_list(
-        config.flags.prune_empty_dirs,
-        config.flags.delete,
-        config.deletion.delete_excluded,
-        handshake.protocol,
-    );
-
-    // upstream: main.c:1332 - a server sender always calls recv_filter_list(f_in).
-    let should_send_filter_list = if config.connection.client_mode {
-        match config.role {
-            ServerRole::Generator => receiver_wants_filter_list,
-            ServerRole::Receiver => true,
-        }
-    } else {
-        false
-    };
-
     if config.connection.client_mode {
         send_client_filter_list(
             &mut writer,
@@ -1107,10 +1116,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             config.role == ServerRole::Generator,
             config.deletion.delete_excluded,
             handshake.protocol,
-            should_send_filter_list,
+            client_sends_filter_list(&config, handshake.protocol),
         )?;
     }
-
     // upstream: main.c:1426-1431 - after sending filter list, forward
     // pre-read --files-from data to the remote daemon's generator so it
     // can build the file list from the forwarded filenames.
