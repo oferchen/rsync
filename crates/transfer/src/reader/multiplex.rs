@@ -59,17 +59,69 @@ impl MuxSink for RealSink {
     }
 }
 
-/// Maps a peer frame a daemon receiver forwards to the log code it carries.
+/// Which end of the connection a reader serves.
 ///
-/// upstream: io.c:1866-1882 `read_a_msg()` hands exactly these four tags to
-/// `rwrite()`; the enum values coincide (rsync.h `MSG_INFO = FINFO`, ...).
-const fn forwarded_log_code(code: protocol::MessageCode) -> Option<logging::LogCode> {
-    match code {
-        protocol::MessageCode::Info => Some(logging::LogCode::Info),
-        protocol::MessageCode::Error => Some(logging::LogCode::Error),
-        protocol::MessageCode::ErrorXfer => Some(logging::LogCode::ErrorXfer),
-        protocol::MessageCode::Warning => Some(logging::LogCode::Warning),
-        _ => None,
+/// A peer's text frame is handed to upstream's `rwrite()`, which routes it by
+/// `am_server`: a client writes it to its own stdout or stderr, while a server
+/// sends it on to its peer, because a server's stdout may be the protocol
+/// stream itself (an rsh `--server`'s fd 1 is the pipe to the client).
+///
+/// upstream: log.c:292-301 (a server receiver hands the frame to its
+/// generator), log.c:357-366 (`am_server` frames it to the client).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LocalRole {
+    /// The side the user ran (`!am_server`).
+    #[default]
+    Client,
+    /// An rsh `--server` or a daemon (`am_server`).
+    Server,
+}
+
+impl LocalRole {
+    /// The role of a transfer whose `client_mode` is as given.
+    pub(crate) const fn from_client_mode(client_mode: bool) -> Self {
+        if client_mode {
+            Self::Client
+        } else {
+            Self::Server
+        }
+    }
+}
+
+/// What a reader does with a peer's text frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextFrameAction {
+    /// Write it to this process's stdout (`FINFO`) or stderr (the rest).
+    Render,
+    /// Queue it for this server's peer through the diagnostic buffer, which
+    /// the server frames to the client (and a daemon also logs).
+    Forward,
+}
+
+/// The legality table for a peer's text frames: what a frame carrying `code`
+/// becomes on a reader serving `role`.
+///
+/// upstream: io.c:1857-1882 `read_a_msg()` passes the frame to `rwrite()`,
+/// which renders it locally or forwards it by `am_server` (log.c:292-366).
+const fn text_frame_action(code: logging::LogCode, role: LocalRole) -> TextFrameAction {
+    use logging::LogCode;
+    match (code, role) {
+        (
+            LogCode::Info | LogCode::Error | LogCode::ErrorXfer | LogCode::Warning,
+            LocalRole::Server,
+        ) => TextFrameAction::Forward,
+        (
+            LogCode::Info | LogCode::Error | LogCode::ErrorXfer | LogCode::Warning,
+            LocalRole::Client,
+        )
+        | (
+            LogCode::Log
+            | LogCode::Client
+            | LogCode::ErrorSocket
+            | LogCode::ErrorUtf8
+            | LogCode::None,
+            _,
+        ) => TextFrameAction::Render,
     }
 }
 
@@ -267,14 +319,10 @@ pub(crate) struct MultiplexReader<R> {
     /// every other reader leaves it `None` so the frame is dropped like upstream
     /// drops it on `am_server`. upstream: log.c:917-922.
     deleted_render: Option<DeletedRender>,
-    /// Daemon-receiver routing of a peer's log frames. Set only when this
-    /// reader is a daemon's receiver, which hands a peer `MSG_INFO`,
-    /// `MSG_ERROR`, `MSG_ERROR_XFER` or `MSG_WARNING` to the daemon's log
-    /// channel instead of its own stdout/stderr. Every other reader leaves it
-    /// unset and renders the frame locally. upstream: log.c:292-301 - the
-    /// receiver's `rwrite()` passes the bytes to its generator, whose
-    /// `rwrite()` writes them to the daemon log (log.c:312-330).
-    forward_peer_log: bool,
+    /// Which end of the connection this reader serves; it decides whether a
+    /// peer's text frame is rendered locally or forwarded to this server's
+    /// peer. See [`text_frame_action`].
+    role: LocalRole,
     /// Whether a received `MSG_BLOCK_STATS` is valid here. Set only on a sender
     /// reader once protocol 33 is negotiated; on every other reader the frame
     /// is an invalid message. upstream: io.c:1724 `if (msg_bytes != 8 ||
@@ -423,7 +471,7 @@ impl<R> MultiplexReader<R> {
             io_timeout_invalid: false,
             invalid_control_msg: false,
             deleted_render: None,
-            forward_peer_log: false,
+            role: LocalRole::Client,
             block_stats_accepted: false,
             touched_blocks_4k: 0,
         }
@@ -465,15 +513,13 @@ impl<R> MultiplexReader<R> {
         self.deleted_render = Some(render);
     }
 
-    /// Routes a peer's log frames to the daemon's log channel.
+    /// Sets which end of the connection this reader serves.
     ///
-    /// Called only for a daemon's receiver; every other reader keeps
-    /// rendering `MSG_INFO`/`MSG_ERROR`/`MSG_ERROR_XFER`/`MSG_WARNING` on the
-    /// local stdout/stderr.
-    ///
-    /// upstream: log.c:292-301 `rwrite()` `send_msgs_to_gen` branch.
-    pub(super) const fn forward_peer_log(&mut self) {
-        self.forward_peer_log = true;
+    /// A [`LocalRole::Server`] reader forwards a peer's text frames instead of
+    /// writing them to its own stdout, which on an rsh server is the
+    /// protocol stream. upstream: log.c:292-301, 357-366 `rwrite()`.
+    pub(super) const fn set_local_role(&mut self, role: LocalRole) {
+        self.role = role;
     }
 
     /// Accepts `MSG_BLOCK_STATS` frames on this reader.
@@ -890,62 +936,12 @@ impl<R> MultiplexReader<R> {
         code: protocol::MessageCode,
         sink: &mut S,
     ) -> bool {
-        if self.forward_peer_log
-            && let Some(log_code) = forwarded_log_code(code)
-        {
-            if log_code == logging::LogCode::ErrorXfer {
-                self.xfer_error_count += 1;
-            }
-            // upstream: log.c:292-301 - the daemon receiver forwards the bytes
-            // before the quiet check, so `--quiet` does not drop them.
-            logging::emit_info_coded(
-                logging::InfoFlag::Misc,
-                0,
-                log_code,
-                peer_log_line(&self.buffer),
-            );
+        if let Some(log_code) = code.log_code() {
+            self.dispatch_text_frame(log_code, sink);
             return false;
         }
         match code {
             protocol::MessageCode::Data => return true,
-            protocol::MessageCode::Info | protocol::MessageCode::Client => {
-                // upstream: log.c:rwrite() - FINFO and FCLIENT go to stdout
-                // (log.c:310-311 rewrites FCLIENT to FINFO first), and the FINFO
-                // arm returns early under `--quiet` (log.c:344-346). A frame
-                // arriving from the peer is delivered through `read_a_msg()` ->
-                // `rwrite()`, so it meets that same arm: `--quiet` silences a
-                // remote FINFO exactly as it silences a local one.
-                if logging::finfo_suppressed() {
-                    return false;
-                }
-                // upstream: log.c:425 rwrite() escapes the peer's buffer through
-                // filtered_fwrite before it reaches the terminal. The payload is
-                // raw wire bytes (not required to be UTF-8, exactly as upstream's
-                // `char *buf`), so escape the bytes directly rather than dropping
-                // an invalid-UTF-8 frame.
-                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
-                sink.info(&out);
-            }
-            protocol::MessageCode::Warning | protocol::MessageCode::Log => {
-                // upstream: log.c:rwrite() - FWARNING to stderr, FLOG to daemon log
-                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
-                sink.error(&out);
-            }
-            protocol::MessageCode::Error
-            | protocol::MessageCode::ErrorSocket
-            | protocol::MessageCode::ErrorUtf8 => {
-                // upstream: log.c:rwrite() - FERROR* to stderr
-                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
-                sink.error(&out);
-            }
-            protocol::MessageCode::ErrorXfer => {
-                // upstream: log.c:338 - receipt of FERROR_XFER sets
-                // got_xfer_error = 1. Track the count so check_error_exit
-                // can distinguish daemon filter refusals from real errors.
-                self.xfer_error_count += 1;
-                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
-                sink.error(&out);
-            }
             protocol::MessageCode::ErrorExit => {
                 // upstream: io.c:1892-1930 - MSG_ERROR_EXIT carries a 4-byte
                 // exit code, or none for exit code 0; any other length is
@@ -1015,6 +1011,51 @@ impl<R> MultiplexReader<R> {
             _ => {}
         }
         false
+    }
+
+    /// Delivers a peer's text frame, carrying `code`, as [`text_frame_action`]
+    /// directs for this reader's role.
+    fn dispatch_text_frame<S: MuxSink>(&mut self, code: logging::LogCode, sink: &mut S) {
+        // upstream: log.c:338 - receipt of FERROR_XFER sets got_xfer_error = 1.
+        // Track the count so check_error_exit can distinguish daemon filter
+        // refusals from real errors.
+        if code == logging::LogCode::ErrorXfer {
+            self.xfer_error_count += 1;
+        }
+        match text_frame_action(code, self.role) {
+            TextFrameAction::Forward => {
+                // upstream: log.c:292-301 - a server receiver hands the bytes to
+                // its generator before the quiet check; the server's own
+                // rwrite() then applies it (log.c:344-346), as the peer drain
+                // does here.
+                logging::emit_info_coded(
+                    logging::InfoFlag::Misc,
+                    0,
+                    code,
+                    peer_log_line(&self.buffer),
+                );
+            }
+            TextFrameAction::Render => {
+                // upstream: log.c:310-311 rewrites FCLIENT to FINFO; FINFO goes
+                // to stdout and returns early under `--quiet` (log.c:344-346),
+                // every other code goes to stderr (log.c:336-342).
+                let is_info = matches!(code, logging::LogCode::Info | logging::LogCode::Client);
+                if is_info && logging::finfo_suppressed() {
+                    return;
+                }
+                // upstream: log.c:425 rwrite() escapes the peer's buffer through
+                // filtered_fwrite before it reaches the terminal. The payload is
+                // raw wire bytes (not required to be UTF-8, exactly as upstream's
+                // `char *buf`), so escape the bytes directly rather than dropping
+                // an invalid-UTF-8 frame.
+                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
+                if is_info {
+                    sink.info(&out);
+                } else {
+                    sink.error(&out);
+                }
+            }
+        }
     }
 }
 
@@ -1304,11 +1345,13 @@ mod terminal_escape_tests {
     }
 }
 
-/// A daemon's receiver hands a peer's log frames to its generator, which writes
-/// them to the daemon log (upstream: log.c:292-301, log.c:312-330). Writing them
-/// to the receiver's own stdout instead - which in a daemon reaches neither the
-/// log nor the client - is how a peer `MSG_INFO` vanished (UTS
-/// `proto-msg-info-assert`). Every other reader must keep rendering locally.
+/// A server hands a peer's text frames on to its own peer: its receiver
+/// passes them to its generator (upstream: log.c:292-301), and a server's
+/// `rwrite()` frames them to the client (log.c:357-366), after a daemon has
+/// also logged them (log.c:312-330). Writing them to the server's own stdout
+/// instead loses them in a daemon (UTS `proto-msg-info-assert`) and, on an
+/// rsh server whose stdout IS the protocol stream, splices raw bytes into it.
+/// A client renders them locally.
 #[cfg(test)]
 mod peer_log_forward_tests {
     use super::*;
@@ -1330,15 +1373,13 @@ mod peer_log_forward_tests {
     }
 
     fn dispatch(
-        forward: bool,
+        role: LocalRole,
         code: protocol::MessageCode,
         payload: &[u8],
     ) -> (StreamSink, Vec<logging::DiagnosticEvent>, u32) {
         let _ = logging::drain_events();
         let mut reader = MultiplexReader::new(io::empty());
-        if forward {
-            reader.forward_peer_log();
-        }
+        reader.set_local_role(role);
         reader.buffer = payload.to_vec();
         let mut sink = StreamSink::default();
         assert!(!reader.dispatch_message_with(code, &mut sink));
@@ -1352,13 +1393,14 @@ mod peer_log_forward_tests {
         }
     }
 
-    /// WHY: the UTS cell's marker must reach the daemon log, and must not be
-    /// written to the receiver's own stdout. The log line carries no trailing
-    /// newline because the log sink terminates lines itself.
+    /// WHY: the marker must reach the peer drain (which frames it to the
+    /// client and, on a daemon, logs it) and must not be written to the
+    /// server's own stdout. The event carries no trailing newline because each
+    /// sink terminates lines itself.
     #[test]
-    fn daemon_receiver_sends_peer_msg_info_to_the_log_channel() {
+    fn server_queues_peer_msg_info_for_its_peer() {
         let (sink, events, _) = dispatch(
-            true,
+            LocalRole::Server,
             protocol::MessageCode::Info,
             b"SCANNER-0009-FORWARDED\n",
         );
@@ -1374,11 +1416,11 @@ mod peer_log_forward_tests {
     }
 
     /// WHY: upstream forwards each tag with its own log code (rsync.h
-    /// `MSG_ERROR = FERROR` ...), so the daemon log priority and any echo to
+    /// `MSG_ERROR = FERROR` ...), so the daemon log priority and the echo to
     /// the client keep the peer's severity. `MSG_ERROR_XFER` still counts as a
     /// transfer error (log.c:338).
     #[test]
-    fn daemon_receiver_keeps_each_forwarded_tag_s_log_code() {
+    fn server_keeps_each_forwarded_tag_s_log_code() {
         for (code, expected) in [
             (protocol::MessageCode::Error, logging::LogCode::Error),
             (protocol::MessageCode::Warning, logging::LogCode::Warning),
@@ -1387,7 +1429,7 @@ mod peer_log_forward_tests {
                 logging::LogCode::ErrorXfer,
             ),
         ] {
-            let (sink, events, xfer_errors) = dispatch(true, code, b"peer text\n");
+            let (sink, events, xfer_errors) = dispatch(LocalRole::Server, code, b"peer text\n");
             assert!(sink.stdout.is_empty() && sink.stderr.is_empty(), "{code:?}");
             assert_eq!(sole_event(&events), (expected, "peer text"), "{code:?}");
             assert_eq!(
@@ -1398,28 +1440,38 @@ mod peer_log_forward_tests {
         }
     }
 
-    /// WHY: the daemon receiver forwards before rwrite()'s FINFO quiet check
-    /// (log.c:292 precedes log.c:344), so `--quiet` must not drop the frame.
+    /// WHY: the server receiver forwards before rwrite()'s FINFO quiet check
+    /// (log.c:292 precedes log.c:344), so the reader must not drop the frame
+    /// under `--quiet`; the peer drain applies the check, and a daemon still
+    /// gets to log it.
     #[test]
-    fn daemon_receiver_forwards_peer_msg_info_under_quiet() {
+    fn server_forwards_peer_msg_info_under_quiet() {
         logging::set_quiet(true);
-        let (_, events, _) = dispatch(true, protocol::MessageCode::Info, b"kept\n");
+        let (_, events, _) = dispatch(LocalRole::Server, protocol::MessageCode::Info, b"kept\n");
         logging::set_quiet(false);
         assert_eq!(sole_event(&events), (logging::LogCode::Info, "kept"));
     }
 
-    /// WHY: client receivers and SSH-server receivers never set forwarding;
-    /// they must keep writing a peer `MSG_INFO` to stdout and `MSG_ERROR` to
-    /// stderr and must not leak it into the daemon-log channel.
+    /// WHY: a client is `!am_server`; it must keep writing a peer `MSG_INFO`
+    /// to stdout and `MSG_ERROR` to stderr and must not queue them for a peer.
     #[test]
-    fn non_daemon_reader_renders_peer_frames_locally() {
-        let (sink, events, _) = dispatch(false, protocol::MessageCode::Info, b"note\n");
+    fn client_renders_peer_frames_locally() {
+        let (sink, events, _) = dispatch(LocalRole::Client, protocol::MessageCode::Info, b"note\n");
         assert_eq!(sink.stdout, b"note\n".to_vec());
         assert!(sink.stderr.is_empty() && events.is_empty());
 
-        let (sink, events, _) = dispatch(false, protocol::MessageCode::Error, b"bad\n");
+        let (sink, events, _) = dispatch(LocalRole::Client, protocol::MessageCode::Error, b"bad\n");
         assert_eq!(sink.stderr, b"bad\n".to_vec());
         assert!(sink.stdout.is_empty() && events.is_empty());
+    }
+
+    /// WHY: a reader's role comes from the transfer's `client_mode`; flipping
+    /// the mapping would send every rsh server's peer frames to raw stdout.
+    #[test]
+    fn role_follows_client_mode() {
+        assert_eq!(LocalRole::from_client_mode(true), LocalRole::Client);
+        assert_eq!(LocalRole::from_client_mode(false), LocalRole::Server);
+        assert_eq!(LocalRole::default(), LocalRole::Client);
     }
 }
 

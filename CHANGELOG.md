@@ -282,6 +282,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
+- An rsh `--server` receiver or sender forwards a peer `MSG_INFO`, `MSG_ERROR`, `MSG_ERROR_XFER` or `MSG_WARNING` to the client as a frame, instead of writing it raw to stdout, which is the protocol stream (#PRNUM)
 - Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)
 - Remote output fidelity: `--progress`, `-v` / `-vi` names, banners, `--stats` breakdown and dry-run itemize (#6786, #6789, #6791, #6793, #6802, #6814, #7062, #7172)
 - Preserve mtime on remote `--sparse`, and apply `dest_mode` without `-p` (#6803, #6804)
