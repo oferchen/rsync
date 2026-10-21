@@ -234,6 +234,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Hold the per-file parent dirfd on the receiver and sender (#8067)
 - SHA-256 and SHA-512 use the ARMv8 hardware path on macOS aarch64 again (#8064)
 - Skip the sender seek between adjacent matched blocks and batch receiver signature buffers: daemon push 282K to 158K syscalls and 0.536 s to 0.472 s, pull 361K to 208K and 0.491 s to 0.419 s (#8210)
+- Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#PRNUM)
 
 ### Fixed
 
