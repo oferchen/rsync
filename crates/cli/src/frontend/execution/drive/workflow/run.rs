@@ -708,14 +708,14 @@ where
     // Match upstream --no-inc-recursive --write-batch behavior.
     let local_batch_compat_flags = {
         use protocol::CompatibilityFlags;
-        // ID0_NAMES is omitted because without INC_RECURSE, uid/gid name
-        // mappings go through post-flist ID lists (uidlist.c:send_id_lists).
-        // Empty ID lists with simple varint30(0) terminators are written;
-        // keeping ID0_NAMES off avoids the need to look up id=0 names.
+        // upstream: compat.c:739-740 - a local transfer's child advertises 'u',
+        // so CF_ID0_NAMES is set and the post-flist id lists carry the name of
+        // id 0 (uidlist.c:398-405).
         let flags = CompatibilityFlags::SAFE_FILE_LIST
             | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
             | CompatibilityFlags::CHECKSUM_SEED_FIX
             | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::ID0_NAMES
             | CompatibilityFlags::VARINT_FLIST_FLAGS;
         #[cfg(unix)]
         let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
