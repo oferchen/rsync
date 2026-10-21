@@ -348,12 +348,11 @@ impl BatchReader {
         self.io_error
     }
 
-    /// Returns a mutable reference to the underlying batch file reader.
-    ///
-    /// This is useful when callers need direct access to the stream, for
-    /// example to pass it to protocol-level decoders like `read_delta`.
+    /// Returns the underlying batch stream, so tests can decode the NDX
+    /// framing between file-list segments directly.
     ///
     /// Returns `None` if the batch file has not been opened or has been closed.
+    #[cfg(test)]
     pub(crate) fn inner_reader(&mut self) -> Option<&mut BatchStream> {
         self.batch_file.as_mut()
     }
