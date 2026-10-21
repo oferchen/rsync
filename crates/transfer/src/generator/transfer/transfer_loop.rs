@@ -4068,3 +4068,164 @@ mod io_uring_read_ahead_tests {
         assert_eq!(served, 0);
     }
 }
+
+#[cfg(test)]
+mod lazy_lookahead_scan_tests {
+    //! Lookahead pacing of the lazy INC_RECURSE producer's directory SCANS.
+    //!
+    //! upstream: `flist.c:2651` `send_extra_file_list()` scans one directory per
+    //! loop turn (`send1extra()`), and the loop head bounds the turns by the
+    //! backlog: `MIN_FILECNT_LOOKAHEAD` from the send loop (`sender.c:516,550`)
+    //! and `MAX_FILECNT_LOOKAHEAD` from the idle path (`io.c:854-862`). The
+    //! bound therefore caps how much of the tree has been READ, not only how
+    //! much has been sent - which is the whole point of the lazy producer.
+    //!
+    //! The WHY: a producer that scanned ahead and merely paced the emission
+    //! would put identical bytes on the wire, so wire assertions cannot see it.
+    //! These tests count scanned directories through the file list itself,
+    //! which grows only when a directory is read.
+
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    use protocol::codec::MonotonicNdxWriter;
+    use protocol::{CompatibilityFlags, ProtocolVersion};
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::generator::segments::{
+        MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD, SegmentScheduler,
+    };
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// Entries in each sub-directory's sub-list; divides both bounds evenly.
+    const FILES_PER_DIR: usize = 100;
+
+    /// A lazily seeded sender over `dirs` sub-directories of
+    /// [`FILES_PER_DIR`] files each, plus the tree that backs it.
+    struct LazySender {
+        _tree: tempfile::TempDir,
+        ctx: GeneratorContext,
+        scheduler: SegmentScheduler,
+        initial: usize,
+    }
+
+    impl LazySender {
+        fn new(dirs: usize) -> Self {
+            let tree = tempfile::TempDir::new().unwrap();
+            for d in 0..dirs {
+                let dir = tree.path().join(format!("d{d:03}"));
+                std::fs::create_dir(&dir).unwrap();
+                for f in 0..FILES_PER_DIR {
+                    std::fs::write(dir.join(format!("f{f:03}")), b"").unwrap();
+                }
+            }
+            let protocol = ProtocolVersion::try_from(32u8).unwrap();
+            let handshake = HandshakeResult {
+                protocol,
+                buffered: Vec::new(),
+                compat_exchanged: true,
+                client_args: None,
+                io_timeout: None,
+                negotiated_algorithms: None,
+                compat_flags: Some(CompatibilityFlags::INC_RECURSE),
+                checksum_seed: 0,
+            };
+            let mut config = ServerConfig {
+                role: ServerRole::Generator,
+                protocol,
+                flag_string: "-logDtpre.".to_owned(),
+                ..Default::default()
+            };
+            config.flags.recursive = true;
+            let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+            ctx.lazy_flist_override = Some(true);
+            let mut source = OsString::from(tree.path());
+            source.push("/");
+            ctx.build_file_list(&[PathBuf::from(source)]).unwrap();
+            ctx.partition_file_list_for_inc_recurse();
+            assert!(ctx.lazy_producer_active, "lazy producer must engage");
+            let initial = ctx.file_list.len();
+            let scheduler =
+                SegmentScheduler::new(std::mem::take(&mut ctx.incremental.pending_segments));
+            Self {
+                _tree: tree,
+                ctx,
+                scheduler,
+                initial,
+            }
+        }
+
+        /// Directories read so far: each lazy scan appends one sub-list.
+        fn scanned_dirs(&self) -> usize {
+            (self.ctx.file_list.len() - self.initial) / FILES_PER_DIR
+        }
+    }
+
+    #[test]
+    fn send_loop_scans_only_up_to_the_min_lookahead() {
+        let mut s = LazySender::new(30);
+        let mut writer = ServerWriter::new_plain(Vec::new());
+        let mut flist_writer = s.ctx.build_flist_writer();
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut flist_done = 0;
+
+        s.ctx
+            .send_extra_file_lists(
+                &mut writer,
+                &mut s.scheduler,
+                &mut flist_writer,
+                &mut ndx,
+                &mut flist_done,
+            )
+            .unwrap();
+
+        assert_eq!(
+            s.scanned_dirs(),
+            MIN_FILECNT_LOOKAHEAD / FILES_PER_DIR,
+            "the send loop must read just enough directories to queue \
+             {MIN_FILECNT_LOOKAHEAD} entries, not the whole tree"
+        );
+        assert_eq!(flist_done, s.scanned_dirs(), "every scanned dir is sent");
+    }
+
+    #[test]
+    fn a_stalled_receiver_caps_scanning_at_the_max_lookahead() {
+        let mut s = LazySender::new(MAX_FILECNT_LOOKAHEAD / FILES_PER_DIR + 50);
+        let mut writer = ServerWriter::new_plain(Vec::new());
+        let mut flist_writer = s.ctx.build_flist_writer();
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut flist_done = 0;
+
+        // The receiver never acknowledges a list, so the backlog only grows;
+        // every turn is one the sender would otherwise spend blocked.
+        for _ in 0..MAX_FILECNT_LOOKAHEAD / FILES_PER_DIR * 2 {
+            s.ctx
+                .grow_lookahead_while_idle(
+                    &mut writer,
+                    &mut s.scheduler,
+                    &mut flist_writer,
+                    &mut ndx,
+                    &mut flist_done,
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            s.scheduler.lookahead_total(),
+            MAX_FILECNT_LOOKAHEAD,
+            "the backlog must stop at the ceiling"
+        );
+        assert_eq!(
+            s.scanned_dirs(),
+            MAX_FILECNT_LOOKAHEAD / FILES_PER_DIR,
+            "no directory may be read beyond the {MAX_FILECNT_LOOKAHEAD}-entry ceiling"
+        );
+        assert!(
+            !s.ctx.lazy_scan_exhausted(),
+            "the fixture must leave unscanned directories behind the ceiling"
+        );
+    }
+}
