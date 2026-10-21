@@ -304,6 +304,21 @@ corresponding program-name aliases (`oc-rsync`, `rsync`, `rsyncd`).
 Unset or unrecognised values keep the identity derived from the invoked
 executable name. Intended for testing and development.
 
+### OC_RSYNC_LAZY_FLIST
+Temporary staging flag for the lazy incremental-recursion sender producer
+(upstream `flist.c:send_extra_file_list` / `send1extra`). When enabled, the
+sending side scans each directory on demand as the INC_RECURSE segments are
+emitted, instead of walking the whole tree before the first segment. Enabling
+values are `1`, `on`, `true` and `yes` (case-insensitive, surrounding
+whitespace ignored); unset, empty or any other value keeps the eager producer.
+It engages only on an INC_RECURSE transfer with `-r` and a single source
+argument, and bows out under `--relative`, `--hard-links` and `--acls`, whose
+file-list bytes depend on a whole-list pass. It changes only which producer
+fills the segments, never a wire byte. Read by the sender at file-list build
+time on each transfer (`crates/transfer/src/generator/lazy_flist.rs`), not
+cached per process. The flag is removed once the lazy producer becomes the
+default; see `docs/design/lazy-sender-inc-recurse.md` section 8. Default: off.
+
 ### OC_RSYNC_PULL_INC_RECURSE
 
 Override flag for incremental recursion on pulls. By default, pulling clients
