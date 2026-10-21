@@ -94,7 +94,7 @@ pub(crate) fn copy_fifo(
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let itemize_acls = false;
 
-    let mut existing_metadata = match fs::symlink_metadata(destination) {
+    let mut existing_metadata = match fast_io::destination_at::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => {
@@ -170,7 +170,8 @@ pub(crate) fn copy_fifo(
         }
     };
     #[cfg(not(unix))]
-    let (replaced_special, replaced_content_differs): (Option<fs::Metadata>, bool) = (None, false);
+    let (replaced_special, replaced_content_differs): (Option<fast_io::EntryMetadata>, bool) =
+        (None, false);
 
     // could be deduped to an earlier FIFO we created
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);

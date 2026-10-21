@@ -93,7 +93,7 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("safe-links client push failed: {e}");
         }
     }
@@ -135,7 +135,7 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
         "file.txt content mismatch"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 /// End-to-end test for `--copy-links` push over daemon protocol.
@@ -232,7 +232,7 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("copy-links client push failed: {e}");
         }
     }
@@ -286,5 +286,5 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
         "subdir/deep.txt content mismatch"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

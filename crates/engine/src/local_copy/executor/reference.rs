@@ -75,8 +75,8 @@ pub(crate) fn resolve_reference_candidate(
 /// - `rsync-3.5.1/generator.c:1084` / `:1110` / `:1227` / `:1254` - its call
 ///   sites in `try_dests_reg()` and `try_dests_non()`.
 #[cfg(unix)]
-fn basis_stat(path: &Path) -> io::Result<fs::Metadata> {
-    fast_io::operator_symlink_metadata(path)
+fn basis_stat(path: &Path) -> io::Result<fast_io::EntryMetadata> {
+    fast_io::operator_symlink_metadata(path).map(fast_io::EntryMetadata::from)
 }
 
 /// Non-Unix fallback: the ownership walk is a dirfd construction with no Windows
@@ -84,8 +84,8 @@ fn basis_stat(path: &Path) -> io::Result<fs::Metadata> {
 /// follow a symlink at the leaf, which keeps a symlinked basis entry from being
 /// consumed; only the parent components are unguarded.
 #[cfg(not(unix))]
-fn basis_stat(path: &Path) -> io::Result<fs::Metadata> {
-    fs::symlink_metadata(path)
+fn basis_stat(path: &Path) -> io::Result<fast_io::EntryMetadata> {
+    fs::symlink_metadata(path).map(fast_io::EntryMetadata::from)
 }
 
 /// Parameters for finding a matching file in reference directories.
@@ -137,7 +137,7 @@ fn unix_time_parts(time: SystemTime) -> (i64, u32) {
 /// nanoseconds, and a positive window is a whole-second tolerance.
 fn reference_mtime_matches(
     source_meta: &fs::Metadata,
-    basis_meta: &fs::Metadata,
+    basis_meta: &fast_io::EntryMetadata,
     modify_window: ModifyWindow,
 ) -> bool {
     let (Ok(source_time), Ok(basis_time)) = (source_meta.modified(), basis_meta.modified()) else {
@@ -235,13 +235,19 @@ pub(crate) fn reference_attrs_unchanged(
 /// On Unix this is the low 12 mode bits (`0o7777`); on other platforms it is the
 /// read-only attribute, the only permission bit oc preserves there.
 #[cfg(unix)]
-fn reference_permissions_match(source_meta: &fs::Metadata, basis_meta: &fs::Metadata) -> bool {
+fn reference_permissions_match(
+    source_meta: &fs::Metadata,
+    basis_meta: &fast_io::EntryMetadata,
+) -> bool {
     use std::os::unix::fs::MetadataExt;
     (source_meta.mode() & 0o7777) == (basis_meta.mode() & 0o7777)
 }
 
 #[cfg(not(unix))]
-fn reference_permissions_match(source_meta: &fs::Metadata, basis_meta: &fs::Metadata) -> bool {
+fn reference_permissions_match(
+    source_meta: &fs::Metadata,
+    basis_meta: &fast_io::EntryMetadata,
+) -> bool {
     source_meta.permissions().readonly() == basis_meta.permissions().readonly()
 }
 
@@ -378,7 +384,7 @@ pub(crate) fn find_copy_dest_symlink(
     destination: &Path,
     relative: &Path,
     target: &Path,
-) -> Result<Option<fs::Metadata>, LocalCopyError> {
+) -> Result<Option<fast_io::EntryMetadata>, LocalCopyError> {
     find_reference_symlink(context, destination, relative, target, |kind| {
         kind == ReferenceDirectoryKind::Copy
     })
@@ -397,7 +403,7 @@ pub(crate) fn find_compare_dest_symlink(
     destination: &Path,
     relative: &Path,
     target: &Path,
-) -> Result<Option<fs::Metadata>, LocalCopyError> {
+) -> Result<Option<fast_io::EntryMetadata>, LocalCopyError> {
     find_reference_symlink(context, destination, relative, target, |kind| {
         kind == ReferenceDirectoryKind::Compare
     })
@@ -410,7 +416,7 @@ fn find_reference_symlink(
     relative: &Path,
     target: &Path,
     accept: impl Fn(ReferenceDirectoryKind) -> bool,
-) -> Result<Option<fs::Metadata>, LocalCopyError> {
+) -> Result<Option<fast_io::EntryMetadata>, LocalCopyError> {
     if relative.as_os_str().is_empty() {
         return Ok(None);
     }
@@ -460,7 +466,7 @@ pub(crate) fn find_copy_dest_basis(
     context: &CopyContext<'_>,
     destination: &Path,
     relative: &Path,
-) -> Result<Option<fs::Metadata>, LocalCopyError> {
+) -> Result<Option<fast_io::EntryMetadata>, LocalCopyError> {
     // An empty `relative` is the transfer root: the basis is the reference
     // directory itself, resolved from the destination root. Unlike the file and
     // symlink lookups, the directory lookup must handle this case so the `./`

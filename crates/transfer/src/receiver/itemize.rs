@@ -144,13 +144,8 @@ impl ReceiverContext {
         entry: &protocol::flist::FileEntry,
         dir_path: &std::path::Path,
     ) -> u32 {
-        match std::fs::metadata(dir_path) {
-            Ok(meta) => self.itemize_existing_flags(
-                entry,
-                dir_path,
-                Some(&fast_io::EntryMetadata::from(meta.clone())),
-                0,
-            ),
+        match fast_io::destination_at::metadata(dir_path) {
+            Ok(meta) => self.itemize_existing_flags(entry, dir_path, Some(&meta), 0),
             // Not `None`: a failed stat is upstream's benign "no change"
             // outcome here, not the `statret < 0` ITEM_IS_NEW leg.
             Err(_) => 0,
@@ -391,6 +386,40 @@ impl ReceiverContext {
         line.extend_from_slice(name);
         line.extend_from_slice(b"\"\n");
         line
+    }
+
+    /// Whether the module's daemon filter refuses a non-directory entry,
+    /// reporting the refusal the way `recv_generator()` does.
+    ///
+    /// upstream: generator.c:1662-1676 - `check_filter(&daemon_filter_list,
+    /// ...)` runs for every entry type before any type-specific branch, so an
+    /// excluded regular file, symlink, device, special or hard-link follower
+    /// is refused as a `file`. An entry below an already-refused directory is
+    /// dropped in silence (generator.c:1647-1655).
+    pub(in crate::receiver) fn daemon_refuses_non_dir<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        filters: Option<&mut super::daemon_filter::DaemonFilterGate>,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> bool {
+        let Some(filters) = filters else {
+            return false;
+        };
+        let name = entry.path();
+        if name.as_os_str() == "." {
+            return false;
+        }
+        if filters.refuses_ancestor(name) {
+            return true;
+        }
+        if filters.allows(name, false) {
+            return false;
+        }
+        let _ = self.emit_error_xfer_line(
+            writer,
+            Self::daemon_refusal_line("file", &entry.name_bytes()),
+        );
+        true
     }
 
     /// Reports a failed generator-side operation the way upstream's

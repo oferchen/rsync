@@ -12,7 +12,6 @@ use std::time::Duration;
 use crate::existence_gate::{DestinationEntry, ExistenceSkip};
 use crate::local_copy::{
     CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
-    follow_symlink_metadata,
 };
 
 /// Result of checking destination directory state.
@@ -24,7 +23,7 @@ pub(super) enum DestinationState {
     /// `generator.c:1869-1871` which feeds the existing `sx.st` into
     /// `itemize()` with `iflags=0` and lets `itemize()` compute the
     /// `ITEM_REPORT_TIME|PERMS|...` bits.
-    Ready(Option<fs::Metadata>),
+    Ready(Option<fast_io::EntryMetadata>),
     /// Destination is missing and needs to be created.
     Missing,
     /// The `--existing` / `--ignore-existing` gate skips this directory and,
@@ -39,7 +38,7 @@ impl DestinationState {
     }
 
     /// Returns the existing destination metadata when available.
-    pub(super) fn existing_metadata(&self) -> Option<&fs::Metadata> {
+    pub(super) fn existing_metadata(&self) -> Option<&fast_io::EntryMetadata> {
         match self {
             Self::Ready(Some(meta)) => Some(meta),
             _ => None,
@@ -68,7 +67,7 @@ pub(super) fn check_destination_state(
     destination: &Path,
     relative: Option<&Path>,
 ) -> Result<DestinationState, LocalCopyError> {
-    let existing = match fs::symlink_metadata(destination) {
+    let existing = match fast_io::destination_at::symlink_metadata(destination) {
         Ok(existing) => existing,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Ok(
@@ -90,8 +89,9 @@ pub(super) fn check_destination_state(
     let directory = if file_type.is_dir() {
         Some(existing.clone())
     } else if file_type.is_symlink() && context.keep_dirlinks_enabled() {
-        let target = follow_symlink_metadata(destination)?;
-        target.file_type().is_dir().then_some(target)
+        let target = fast_io::destination_at::metadata(destination)
+            .map_err(|error| LocalCopyError::io("inspect symlink target", destination, error))?;
+        target.is_dir().then_some(target)
     } else {
         None
     };

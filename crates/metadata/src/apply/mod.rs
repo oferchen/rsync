@@ -243,12 +243,11 @@ pub fn apply_directory_metadata_with_options(
 /// direction upstream takes when it cannot prove the special case.
 #[cfg(unix)]
 fn is_volume_root(destination: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
     /// Inode number of an HFS+ volume root.
     const HFS_VOLUME_ROOT_INO: u64 = 2;
 
-    fs::symlink_metadata(destination).is_ok_and(|meta| meta.ino() == HFS_VOLUME_ROOT_INO)
+    fast_io::destination_at::symlink_metadata(destination)
+        .is_ok_and(|meta| meta.ino() == HFS_VOLUME_ROOT_INO)
 }
 
 /// Non-Unix targets have no HFS+ volume-root inode convention, so no directory
@@ -419,11 +418,9 @@ pub fn apply_file_metadata_if_changed(
     // so re-stat before the chmod compare so they get re-applied.
     let refreshed;
     let existing = if restat_after_chown {
-        refreshed = fs::metadata(destination)
-            .map(fast_io::EntryMetadata::from)
-            .map_err(|error| {
-                MetadataError::new("inspect destination permissions", destination, error)
-            })?;
+        refreshed = fast_io::destination_at::metadata(destination).map_err(|error| {
+            MetadataError::new("inspect destination permissions", destination, error)
+        })?;
         &refreshed
     } else {
         existing
@@ -466,11 +463,9 @@ pub fn apply_file_metadata_with_fd_if_changed(
     // so re-stat before the chmod compare so they get re-applied.
     let refreshed;
     let existing = if restat_after_chown {
-        refreshed = fs::metadata(destination)
-            .map(fast_io::EntryMetadata::from)
-            .map_err(|error| {
-                MetadataError::new("inspect destination permissions", destination, error)
-            })?;
+        refreshed = fast_io::destination_at::metadata(destination).map_err(|error| {
+            MetadataError::new("inspect destination permissions", destination, error)
+        })?;
         &refreshed
     } else {
         existing
@@ -844,9 +839,7 @@ pub fn apply_symlink_metadata_from_entry_with_pre_transfer(
     options: &MetadataOptions,
     pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
-    let cached_meta = fs::symlink_metadata(destination)
-        .map(fast_io::EntryMetadata::from)
-        .ok();
+    let cached_meta = fast_io::destination_at::symlink_metadata(destination).ok();
     // upstream: syscall.c:do_symlink_atfd() - a fake-super link on Linux is a
     // regular placeholder, so it takes the regular-file attribute path, whose
     // set_stat_xattr() records the link type. A placeholder just created
@@ -932,9 +925,7 @@ pub fn apply_metadata_from_file_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    let cached_meta = fs::metadata(destination)
-        .map(fast_io::EntryMetadata::from)
-        .ok();
+    let cached_meta = fast_io::destination_at::metadata(destination).ok();
     apply_metadata_with_cached_stat(destination, entry, options, cached_meta)
 }
 
@@ -1085,8 +1076,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     // upstream: rsync.c:694-704 - the chown may have cleared setuid/setgid bits,
     // so refresh the cached stat before the chmod compare re-applies them.
     let cached_meta = if restat_after_chown {
-        fs::metadata(destination)
-            .map(fast_io::EntryMetadata::from)
+        fast_io::destination_at::metadata(destination)
             .ok()
             .or(cached_meta)
     } else {

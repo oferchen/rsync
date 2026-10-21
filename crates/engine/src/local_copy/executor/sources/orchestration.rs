@@ -489,7 +489,7 @@ fn emit_merged_transfer_root(
         // Existing root: itemize the source "." against the on-disk destination
         // root so an unchanged pair yields an all-dot `.d` row (shown only under
         // -vv / --list-only), exactly as the recursive root frame does.
-        let dest_meta = fs::symlink_metadata(destination_path)
+        let dest_meta = fast_io::destination_at::symlink_metadata(destination_path)
             .map_err(|error| LocalCopyError::io("inspect destination", destination_path, error))?;
         let change_set = LocalCopyChangeSet::for_existing_directory(
             &source_meta,
@@ -1215,17 +1215,16 @@ fn emit_relative_implied_parents(
     let omit_dir_times = context.omit_dir_times_enabled();
     let modify_window = context.options().modify_window();
 
-    // Dot-dir transfer root ".": upstream flist.c:2880-2881+2929-2931 injects a
-    // synthetic "." entry into the flist only for an operand that *begins* with
-    // `./` (`implied_dot_dir`), so it counts toward "Number of files" whenever
-    // directories are being transferred (the `xfer_dirs` gate below). A dot in
-    // the middle of the path (e.g. `src/./sub`) reroots the relative path but
-    // adds no "." entry. `dot_dir_anchor()` returns "." exactly for the leading
-    // form (its prefix-skip is zero). The entry is a real flist member, so it is
-    // both counted and itemized like any other implied parent; the created-dir
-    // bump stays owned by `mark_destination_root_created`, which is what
-    // distinguishes the freshly made root from a pre-existing one.
-    if source.dot_dir_anchor().as_deref() == Some(Path::new(".")) {
+    // Dot-dir transfer root ".": upstream flist.c:2862-2881+2929-2932 injects a
+    // synthetic "." entry into the flist only when the operand's remainder after
+    // its first `/./` begins with `./` (`implied_dot_dir`), so it counts toward
+    // "Number of files" whenever directories are being transferred (the
+    // `xfer_dirs` gate below). `src/./sub` reroots the relative path but adds no
+    // "." entry. The entry is a real flist member, so it is both counted and
+    // itemized like any other implied parent; the created-dir bump stays owned by
+    // `mark_destination_root_created`, which is what distinguishes the freshly
+    // made root from a pre-existing one.
+    if let Some(anchor) = source.implied_dot_dir() {
         let dot = PathBuf::from(".");
         if context.mark_implied_dir_emitted(&dot) {
             // upstream: flist.c:2931 routes the synthetic "." through
@@ -1257,8 +1256,7 @@ fn emit_relative_implied_parents(
                 let root_created = destination_root_created
                     || (context.mode().is_dry_run() && !destination_path.exists());
                 if itemize
-                    && let Some(anchor) = source.dot_dir_anchor()
-                    && let Ok(meta) = fs::symlink_metadata(&anchor)
+                    && let Ok(meta) = fs::symlink_metadata(anchor)
                     && meta.file_type().is_dir()
                 {
                     let snapshot = LocalCopyMetadata::from_metadata(&meta, None);
@@ -1276,7 +1274,8 @@ fn emit_relative_implied_parents(
                             )
                             .with_creation(true),
                         )
-                    } else if let Ok(existing) = fs::symlink_metadata(destination_path)
+                    } else if let Ok(existing) =
+                        fast_io::destination_at::symlink_metadata(destination_path)
                         && existing.file_type().is_dir()
                     {
                         // Pre-existing transfer root: upstream still placed the
@@ -1359,7 +1358,7 @@ fn emit_relative_implied_parents(
             _ => continue,
         };
         let destination_dir = destination_root.join(&accumulated);
-        let existing_meta = match fs::symlink_metadata(&destination_dir) {
+        let existing_meta = match fast_io::destination_at::symlink_metadata(&destination_dir) {
             Ok(meta) if meta.file_type().is_dir() => Some(meta),
             _ => None,
         };
@@ -1459,13 +1458,12 @@ fn retouch_relative_implied_dirs(
         context.metadata_options()
     };
 
-    // Phase 1: stamp the destination operand from the dot-dir anchor when the
-    // operand carries an explicit `./` marker. Upstream emits this as the
-    // synthetic `.` entry in `flist.c:2931`.
-    if source.has_dot_dir_marker()
-        && let Some(anchor) = source.dot_dir_anchor()
-    {
-        stamp_directory_from_source(destination_path, &anchor, &metadata_options)?;
+    // Phase 1: stamp the destination operand from the anchor only when upstream
+    // sends the synthetic transfer-root "." (flist.c:2862-2881+2929-2932).
+    // `src/./f` re-roots the relative path without that entry, so the
+    // destination root keeps its own attributes.
+    if let Some(anchor) = source.implied_dot_dir() {
+        stamp_directory_from_source(destination_path, anchor, &metadata_options)?;
     }
 
     // Phase 2: walk every implied parent dir along the relative chain and
@@ -1516,7 +1514,7 @@ fn stamp_directory_from_source(
         Ok(meta) if meta.file_type().is_dir() => meta,
         _ => return Ok(()),
     };
-    let dest_meta = match fs::symlink_metadata(dest_dir) {
+    let dest_meta = match fast_io::destination_at::symlink_metadata(dest_dir) {
         Ok(meta) if meta.file_type().is_dir() => meta,
         _ => return Ok(()),
     };
@@ -1527,7 +1525,7 @@ fn stamp_directory_from_source(
         dest_dir,
         &source_meta,
         metadata_options.clone(),
-        Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
+        Some(&dest_meta),
     )
     .map_err(crate::local_copy::map_metadata_error)?;
     Ok(())

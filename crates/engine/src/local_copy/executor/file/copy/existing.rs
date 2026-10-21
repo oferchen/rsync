@@ -60,7 +60,7 @@ pub(super) fn handle_update_skip(
     destination: &Path,
     metadata: &fs::Metadata,
     record_path: &Path,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
 ) -> Result<bool, LocalCopyError> {
     if context.update_enabled()
         && let Some(existing) = existing_metadata

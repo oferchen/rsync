@@ -90,7 +90,7 @@ pub(crate) fn copy_device(
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let itemize_acls = false;
 
-    let mut existing_metadata = match fs::symlink_metadata(destination) {
+    let mut existing_metadata = match fast_io::destination_at::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => {
@@ -150,7 +150,7 @@ pub(crate) fn copy_device(
     // fresh creation.
     #[cfg(unix)]
     let (replaced_device, replaced_content_differs) = {
-        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        use std::os::unix::fs::MetadataExt;
         match existing_metadata.as_ref().filter(|existing| {
             let existing_type = existing.file_type();
             existing_type.is_block_device() || existing_type.is_char_device()
@@ -160,7 +160,8 @@ pub(crate) fn copy_device(
         }
     };
     #[cfg(not(unix))]
-    let (replaced_device, replaced_content_differs): (Option<fs::Metadata>, bool) = (None, false);
+    let (replaced_device, replaced_content_differs): (Option<fast_io::EntryMetadata>, bool) =
+        (None, false);
 
     // hard-link dedupe source (from earlier copies)
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);

@@ -205,7 +205,7 @@ pub fn apply_delta_ops(
 ///
 /// upstream: `checksum.c:206` - `xfer_sum_len = csum_len_for_type(xfer_sum_nni->num, 0)`.
 /// Batch files don't record the negotiated checksum algorithm. For all
-/// supported protocols (28-32), the default xfer checksum is MD4, MD5, or
+/// supported protocols (28-33), the default xfer checksum is MD4, MD5, or
 /// XXH3-128 - all produce 16-byte digests.
 pub(super) fn default_xfer_sum_len(protocol_version: i32) -> usize {
     let _ = protocol_version;

@@ -165,6 +165,100 @@ fn entries(dir: &Path) -> Vec<String> {
     names
 }
 
+/// A kernel notification on changes to one directory's entry list, so a test
+/// can act on the receiver's own write instead of sleep-polling for it.
+struct DirWatch {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    inotify: nix::sys::inotify::Inotify,
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    kqueue: nix::sys::event::Kqueue,
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    _dir: fs::File,
+}
+impl DirWatch {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn new(dir: &Path) -> Self {
+        use nix::sys::inotify::{AddWatchFlags, InitFlags, Inotify};
+        let inotify =
+            Inotify::init(InitFlags::IN_CLOEXEC | InitFlags::IN_NONBLOCK).expect("inotify_init");
+        inotify
+            .add_watch(dir, AddWatchFlags::IN_CREATE | AddWatchFlags::IN_MOVED_TO)
+            .expect("inotify_add_watch");
+        Self { inotify }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    fn new(dir: &Path) -> Self {
+        use nix::sys::event::{EvFlags, EventFilter, FilterFlag, KEvent, Kqueue};
+        use std::os::fd::AsRawFd;
+        let dir_file = fs::File::open(dir).expect("open the watched directory");
+        let kqueue = Kqueue::new().expect("kqueue");
+        let change = KEvent::new(
+            usize::try_from(dir_file.as_raw_fd()).expect("fd"),
+            EventFilter::EVFILT_VNODE,
+            EvFlags::EV_ADD | EvFlags::EV_CLEAR,
+            FilterFlag::NOTE_WRITE,
+            0,
+            0,
+        );
+        kqueue
+            .kevent(&[change], &mut [], None)
+            .expect("register the watch");
+        Self {
+            kqueue,
+            _dir: dir_file,
+        }
+    }
+    /// Blocks for at most `budget` until the directory changes.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn wait(&self, budget: Duration) {
+        use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+        use std::os::fd::AsFd;
+        let mut fds = [PollFd::new(self.inotify.as_fd(), PollFlags::POLLIN)];
+        poll(
+            &mut fds,
+            PollTimeout::try_from(budget).unwrap_or(PollTimeout::MAX),
+        )
+        .expect("poll the watch");
+        // Non-blocking: an empty queue after a timeout reads as EAGAIN.
+        let _ = self.inotify.read_events();
+    }
+    /// Blocks for at most `budget` until the directory changes.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    fn wait(&self, budget: Duration) {
+        use nix::sys::event::{EvFlags, EventFilter, FilterFlag, KEvent};
+        let mut events = [KEvent::new(
+            0,
+            EventFilter::EVFILT_VNODE,
+            EvFlags::empty(),
+            FilterFlag::empty(),
+            0,
+            0,
+        )];
+        let timeout = libc::timespec {
+            tv_sec: libc::time_t::try_from(budget.as_secs()).unwrap_or(libc::time_t::MAX),
+            tv_nsec: libc::c_long::from(i32::try_from(budget.subsec_nanos()).expect("nanos")),
+        };
+        self.kqueue
+            .kevent(&[], &mut events, Some(timeout))
+            .expect("wait on the watch");
+    }
+    /// Blocks until an entry whose name contains `needle` exists in `dir`.
+    ///
+    /// The check runs before every wait, so an entry that arrived before the
+    /// watch fired - or before it was armed - is still seen.
+    fn await_entry(&self, dir: &Path, needle: &str, budget: Duration) {
+        let deadline = Instant::now() + budget;
+        while !entries(dir).iter().any(|name| name.contains(needle)) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "nothing named {needle} appeared in {}",
+                dir.display()
+            );
+            self.wait(remaining);
+        }
+    }
+}
 /// Chowns the symlink at `path` (not its target) to `uid`, as root directly
 /// or through `sudo -n`. Returns `false` when neither is available.
 fn chown_symlink(path: &Path, uid: u32) -> bool {
@@ -310,59 +404,96 @@ fn a_real_destination_directory_transfers_for_every_receiver() {
 }
 
 /// The destination is swapped for a symlink to `outside` after the receiver
-/// entered it, while the first file is still in flight. Every later write - the
-/// rest of the first file, its commit, and the second file - must land in the
-/// directory that was entered, as upstream's `fchdir()` guarantees, and nothing
-/// may be created through the swapped-in symlink.
+/// entered it and committed its first file. Every later operation - the second
+/// and third files' temp-file creates, their commits and attribute changes, and
+/// the closing directory touch-ups - must land in the directory that was
+/// entered, as upstream's `fchdir()` guarantees: the run exits 0, all three
+/// files are in the entered directory, and `outside` is untouched.
 ///
-/// The exit status is deliberately not asserted. The network receiver still
-/// applies some file metadata by path, and after the swap those stats fail
-/// closed (`ENOENT`, exit 23) instead of reaching the entered directory; that is
-/// the per-site resolver migration, not this anchor.
+/// `outside` is read-only, so a create resolved through the swapped-in symlink
+/// fails instead of silently landing elsewhere, and its mode and mtime are
+/// compared so a directory step that followed the symlink is caught too.
 ///
-/// `--bwlimit` stretches both files. The swap waits for the first file to
-/// appear - a network receiver's temp file as soon as it starts writing, a
-/// local copy's `O_TMPFILE` only when it commits - which proves the receiver
-/// is past its setup, and the second file is still to be written after the
-/// swap whichever way the first one became visible.
+/// The swap is driven by a kernel directory notification on the first file's
+/// arrival, not by polling. `--bwlimit` stretches each file to about two
+/// seconds, so the third file is wholly written after the swap whichever way
+/// the first one became visible (a network receiver's temp file, or a local
+/// copy's `O_TMPFILE` link at commit).
+///
+/// upstream: `rsync-3.5.1/main.c:865` and `rsync-3.5.1/util1.c:1448-1466`
+/// (enter with `fchdir`), `rsync-3.5.1/receiver.c:413` (relative temp names).
 fn assert_swap_after_entry_is_contained(receiver: Receiver) {
-    const BIG: usize = 1 << 20;
-    let (_temp, base) = fixture(&[("a_big", BIG), ("b_big", BIG)]);
+    const LEN: usize = 256 << 10;
+    const FILES: [&str; 3] = ["a_big", "b_big", "c_big"];
+    let (_temp, base) = fixture(&FILES.map(|name| (name, LEN)));
     let sub = base.join("dest/sub");
     fs::create_dir(&sub).expect("mkdir dest/sub");
-    let child = command(receiver, &base, false, &["--bwlimit=128"], &[])
-        .spawn()
-        .expect("spawn oc-rsync");
-    let deadline = Instant::now() + RUN_TIMEOUT;
-    while !entries(&sub).iter().any(|name| name.contains("a_big")) {
-        assert!(
-            Instant::now() < deadline,
-            "{receiver:?}: the receiver never started writing a_big"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let outside = base.join("outside");
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o555)).expect("chmod outside");
+    let outside_before = fs::metadata(&outside).expect("stat outside");
     let entered = base.join("dest/entered");
-    fs::rename(&sub, &entered).expect("move the entered destination aside");
-    symlink(base.join("outside"), &sub).expect("swap in the symlink");
-    let output = wait(child);
+    let watch = DirWatch::new(&sub);
+    let swapper = {
+        let (sub, entered, outside) = (sub.clone(), entered.clone(), outside.clone());
+        std::thread::spawn(move || {
+            watch.await_entry(&sub, "a_big", RUN_TIMEOUT);
+            fs::rename(&sub, &entered).expect("move the entered destination aside");
+            symlink(&outside, &sub).expect("swap in the symlink");
+        })
+    };
+    let mut cmd = command(receiver, &base, false, &["--bwlimit=128"], &[]);
+    let output = match test_support::deadline::run_deadlined(&mut cmd, RUN_TIMEOUT)
+        .expect("spawn oc-rsync")
+    {
+        test_support::deadline::Deadlined::Finished {
+            status,
+            stdout,
+            stderr,
+        } => Output {
+            status,
+            stdout,
+            stderr,
+        },
+        expired => panic!("{receiver:?}: oc-rsync did not finish: {expired:?}"),
+    };
+    swapper.join().expect("the swap ran");
     assert!(
-        entries(&base.join("outside")).is_empty(),
-        "{receiver:?}: a write followed the swapped-in symlink: {:?}\n{}",
-        entries(&base.join("outside")),
-        describe(&output)
-    );
-    assert_eq!(
-        entries(&entered),
-        ["a_big", "b_big"],
+        output.status.success(),
         "{receiver:?}: {}",
         describe(&output)
     );
-    for name in ["a_big", "b_big"] {
+    assert!(
+        entries(&outside).is_empty(),
+        "{receiver:?}: a write followed the swapped-in symlink: {:?}\n{}",
+        entries(&outside),
+        describe(&output)
+    );
+    let outside_after = fs::metadata(&outside).expect("stat outside");
+    assert_eq!(
+        (
+            outside_after.mode(),
+            outside_after.mtime(),
+            outside_after.mtime_nsec()
+        ),
+        (
+            outside_before.mode(),
+            outside_before.mtime(),
+            outside_before.mtime_nsec()
+        ),
+        "{receiver:?}: a directory step followed the swapped-in symlink"
+    );
+    assert_eq!(
+        entries(&entered),
+        FILES,
+        "{receiver:?}: {}",
+        describe(&output)
+    );
+    for name in FILES {
         assert_eq!(
             fs::read(entered.join(name))
                 .expect("read landed file")
                 .len(),
-            BIG,
+            LEN,
             "{receiver:?}: {name}"
         );
     }

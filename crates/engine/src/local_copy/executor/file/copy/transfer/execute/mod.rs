@@ -42,7 +42,7 @@ use crate::local_copy::{
 use super::super::super::append::{AppendMode, determine_append_mode};
 use super::super::super::comparison::build_delta_signature;
 use super::super::super::compute_backup_path;
-use super::super::super::guard::remove_incomplete_destination;
+use super::super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
 use super::finalize::finalize_guard_and_metadata;
 use super::open::{open_source_file, source_open_error};
@@ -65,7 +65,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     record_path: &Path,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     file_type: fs::FileType,
     relative: Option<&Path>,
@@ -144,8 +144,9 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // upstream: generator.c:2172-2179 + 2270-2274, receiver.c:1153-1155.
     let one_inplace_partial_file =
         super::write_strategy::one_inplace_partial_file(context, destination);
-    let partial_dir_basis: Option<(&Path, fs::Metadata)> = match one_inplace_partial_file {
-        Some(ref leaf) if !whole_file_enabled => fs::symlink_metadata(leaf)
+    let partial_dir_basis: Option<(&Path, fast_io::EntryMetadata)> = match one_inplace_partial_file
+    {
+        Some(ref leaf) if !whole_file_enabled => fast_io::destination_at::symlink_metadata(leaf)
             .ok()
             .map(|meta| (leaf.as_path(), meta)),
         _ => None,
@@ -184,9 +185,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
                     build_delta_signature(destination, existing, context.block_size_override())?
                 }
                 _ => match fuzzy_basis {
-                    Some((ref path, ref meta)) => {
-                        build_delta_signature(path, meta, context.block_size_override())?
-                    }
+                    Some((ref path, ref meta)) => build_delta_signature(
+                        path,
+                        &fast_io::EntryMetadata::from(meta.clone()),
+                        context.block_size_override(),
+                    )?,
                     None => None,
                 },
             },
@@ -670,6 +673,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // Snapshot the short-read counter so the check below sees only THIS
     // pass's report, not one an earlier file already recorded.
     let source_read_events_before = context.source_read_events();
+    context.arm_literal_latch(
+        guard
+            .as_ref()
+            .and_then(DestinationWriteGuard::pending_promotion),
+    );
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
@@ -688,6 +696,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
         basis_separate_from_writer,
         updating_in_place,
     );
+    if context.take_literal_latch()
+        && let Some(existing_guard) = guard.as_mut()
+    {
+        existing_guard.note_literal();
+    }
 
     // On Linux, keep writer alive for fd-based metadata (fchmod/fchown/futimens).
     // On macOS/APFS, fd-based metadata shifts cost to close(), so drop early.
@@ -737,7 +750,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             if let Err(timeout_error) = context.enforce_timeout() {
                 drop(writer_for_metadata.take());
                 if let Some(guard) = guard.take() {
-                    guard.discard();
+                    guard.abort();
                 }
                 // In --partial/--partial-dir mode discard() finalised the temp
                 // onto its partial destination; removing it here would defeat
@@ -765,7 +778,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         Err(error) => {
             drop(writer_for_metadata.take());
             if let Some(guard) = guard.take() {
-                guard.discard();
+                guard.abort();
             }
             if existing_metadata.is_none() && !partial_enabled {
                 remove_incomplete_destination(destination);
@@ -831,7 +844,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // size/time/perm slots blank when the source already matched the basis.
     let basis_metadata = match reference_basis.as_deref() {
         Some(path) => match fs::symlink_metadata(path) {
-            Ok(meta) => Some(meta),
+            Ok(meta) => Some(fast_io::EntryMetadata::from(meta)),
             Err(error) => {
                 return Err(LocalCopyError::io(
                     "inspect reference basis",

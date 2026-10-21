@@ -10,7 +10,8 @@ use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Path, PathBuf};
 
 use fast_io::confinement::{
-    clear_destination_root, pin_destination_root, pinned_destination_root_for,
+    clear_destination_root, pin_destination_root, pinned_destination_relative,
+    pinned_destination_root_for,
 };
 
 fn layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -94,4 +95,30 @@ fn the_pin_answers_only_for_its_own_root() {
 
     clear_destination_root();
     assert!(pinned_destination_root_for(&dest).is_none());
+}
+/// Every path beneath the pinned destination resolves to the held descriptor
+/// plus its remainder, so a consumer anchored on it keeps reaching the entered
+/// directory after a swap. Paths outside the pin, or climbing out with `..`,
+/// are left to the ordinary resolver.
+#[test]
+fn paths_beneath_the_pin_resolve_relative_to_the_held_descriptor() {
+    let (_temp, base, dest) = layout();
+    assert!(pinned_destination_relative(&dest.join("f")).is_none());
+    pin(&dest);
+    let (fd, relative) = pinned_destination_relative(&dest).expect("the root itself");
+    assert_eq!(relative, Path::new("."));
+    let (_, relative) = pinned_destination_relative(&base.join("dest/a/b")).expect("beneath");
+    assert_eq!(relative, Path::new("a/b"));
+    assert!(pinned_destination_relative(&dest.join("../outside")).is_none());
+    assert!(pinned_destination_relative(&base.join("outside/f")).is_none());
+    let entered = swap_for_symlink(&base, &dest);
+    let held = fs::File::from(fd.try_clone().expect("dup the held descriptor"));
+    let held_meta = held.metadata().expect("fstat held");
+    let entered_meta = fs::metadata(&entered).expect("stat entered");
+    assert_eq!(
+        (held_meta.dev(), held_meta.ino()),
+        (entered_meta.dev(), entered_meta.ino())
+    );
+    clear_destination_root();
+    assert!(pinned_destination_relative(&dest.join("f")).is_none());
 }

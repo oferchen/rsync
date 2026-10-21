@@ -33,7 +33,6 @@ fn create_test_data(size: usize, change_percent: u8) -> (Vec<u8>, Vec<u8>) {
     // Generate basis with deterministic pattern
     let basis: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
 
-    // Create modified version
     let mut modified = basis.clone();
     let change_count = (size as f64 * (change_percent as f64 / 100.0)) as usize;
 

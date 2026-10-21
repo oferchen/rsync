@@ -803,6 +803,7 @@ impl<'a> CopyContext<'a> {
             return Ok(0);
         }
         self.enforce_timeout()?;
+        self.note_literal();
 
         // upstream: receiver.c:568-571 - a local transfer runs a real receiver
         // over a socketpair, so it reports every literal run it applies. This

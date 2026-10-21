@@ -16,7 +16,11 @@ impl<'a> CopyContext<'a> {
     /// A `readlink` failure refuses the backup rather than permitting it:
     /// upstream fails closed at `backup.c:295-300` on the same reasoning, that
     /// an unverifiable target must not be preserved into the backup area.
-    fn backup_refused_by_safe_links(&self, destination: &Path, file_type: fs::FileType) -> bool {
+    fn backup_refused_by_safe_links(
+        &self,
+        destination: &Path,
+        file_type: fast_io::EntryFileType,
+    ) -> bool {
         if !(file_type.is_symlink()
             && self.options.links_enabled()
             && self.options.safe_links_enabled())
@@ -73,13 +77,14 @@ impl<'a> CopyContext<'a> {
         &mut self,
         destination: &Path,
         _relative: Option<&Path>,
-        file_type: fs::FileType,
+        file_type: impl Into<fast_io::EntryFileType>,
         prefer_rename: bool,
     ) -> Result<(), LocalCopyError> {
         if !self.options.backup_enabled() || self.mode.is_dry_run() {
             return Ok(());
         }
 
+        let file_type: fast_io::EntryFileType = file_type.into();
         if file_type.is_dir() {
             return Ok(());
         }
@@ -423,7 +428,7 @@ impl<'a> CopyContext<'a> {
         &mut self,
         destination: &Path,
         relative: Option<&Path>,
-        metadata: &fs::Metadata,
+        metadata: &fast_io::EntryMetadata,
     ) -> Result<(), LocalCopyError> {
         let file_type = metadata.file_type();
 

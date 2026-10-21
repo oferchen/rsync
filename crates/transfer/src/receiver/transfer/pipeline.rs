@@ -664,6 +664,7 @@ impl ReceiverContext {
                         #[cfg(unix)]
                         dest_dir: Some(setup.dest_dir.as_path()),
                         metadata_opts: Some(&setup.metadata_opts),
+                        fsync: self.config.write.fsync,
                     },
                 )
             });

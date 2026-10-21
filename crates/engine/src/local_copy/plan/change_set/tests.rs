@@ -276,7 +276,7 @@ fn for_file_wrote_data_sets_checksum_changed() {
 
     let change_set = LocalCopyChangeSet::for_file_with_checksum(
         &metadata,
-        Some(&metadata),
+        Some(&fast_io::EntryMetadata::from(metadata.clone())),
         &options,
         true,
         true, // wrote data
@@ -306,7 +306,7 @@ fn for_file_reports_xattr_change_only_when_the_comparison_found_one() {
     let build = |xattrs_changed| {
         LocalCopyChangeSet::for_file(
             &metadata,
-            Some(&metadata),
+            Some(&fast_io::EntryMetadata::from(metadata.clone())),
             &options,
             true,
             false,
@@ -330,7 +330,7 @@ fn for_file_acls_enabled_sets_acl_changed() {
 
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&metadata),
+        Some(&fast_io::EntryMetadata::from(metadata.clone())),
         &options,
         true,
         false,
@@ -352,7 +352,7 @@ fn for_file_no_changes_same_metadata() {
 
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&metadata),
+        Some(&fast_io::EntryMetadata::from(metadata.clone())),
         &options,
         true,  // previously existed
         false, // no data written
@@ -378,7 +378,7 @@ fn for_file_size_difference_detected() {
 
     let change_set = LocalCopyChangeSet::for_file(
         &large_meta,
-        Some(&small_meta),
+        Some(&fast_io::EntryMetadata::from(small_meta.clone())),
         &options,
         true,
         false,
@@ -422,7 +422,7 @@ fn for_file_times_not_preserved_wrote_data() {
 
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&metadata),
+        Some(&fast_io::EntryMetadata::from(metadata.clone())),
         &options,
         true,
         true, // wrote data
@@ -466,7 +466,7 @@ fn for_file_times_not_changed_existing_no_write() {
 
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&metadata),
+        Some(&fast_io::EntryMetadata::from(metadata.clone())),
         &options,
         true,  // existed
         false, // no write
@@ -503,7 +503,7 @@ fn for_file_within_window_mtime_drift_reports_no_time_change() {
     // 1s drift, 2s window -> within tolerance -> no `t` glyph.
     let within = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&existing),
+        Some(&fast_io::EntryMetadata::from(existing.clone())),
         &options,
         true,
         false,
@@ -517,7 +517,7 @@ fn for_file_within_window_mtime_drift_reports_no_time_change() {
     // Same drift with a zero window still lights the `t` glyph.
     let exact = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&existing),
+        Some(&fast_io::EntryMetadata::from(existing.clone())),
         &options,
         true,
         false,
@@ -547,7 +547,7 @@ fn change_set_detects_size_and_time_changes() {
     let options = MetadataOptions::new();
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&existing),
+        Some(&fast_io::EntryMetadata::from(existing.clone())),
         &options,
         true,
         true,
@@ -593,7 +593,7 @@ fn change_set_detects_permission_changes_for_existing_destination() {
     let options = MetadataOptions::new();
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&existing),
+        Some(&fast_io::EntryMetadata::from(existing.clone())),
         &options,
         true,
         false,
@@ -629,7 +629,7 @@ fn change_set_detects_owner_override_mismatch() {
         .with_owner_override(Some(override_uid));
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&metadata),
+        Some(&fast_io::EntryMetadata::from(metadata.clone())),
         &options,
         true,
         false,
@@ -663,7 +663,7 @@ fn change_set_detects_group_override_mismatch() {
         .with_group_override(Some(override_gid));
     let change_set = LocalCopyChangeSet::for_file(
         &metadata,
-        Some(&metadata),
+        Some(&fast_io::EntryMetadata::from(metadata.clone())),
         &options,
         true,
         false,
@@ -695,7 +695,7 @@ fn for_existing_directory_flags_time_change_when_mtimes_differ() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_existing_directory(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         false,
         false,
@@ -735,7 +735,7 @@ fn for_existing_directory_ignores_sub_second_mtime_drift() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_existing_directory(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         false,
         false,
@@ -768,7 +768,7 @@ fn for_existing_directory_no_change_when_mtimes_match() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_existing_directory(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         false,
         false,
@@ -800,7 +800,7 @@ fn for_existing_directory_omit_dir_times_suppresses_time_flag() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_existing_directory(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         true,
         false,
@@ -842,7 +842,7 @@ fn for_recreated_symlink_sets_checksum_and_time_when_mtimes_differ() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_recreated_symlink(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         false,
         ModifyWindow::ZERO,
@@ -887,7 +887,7 @@ fn for_recreated_symlink_ignores_sub_second_mtime_drift() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_recreated_symlink(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         false,
         ModifyWindow::ZERO,
@@ -928,7 +928,7 @@ fn for_recreated_symlink_omit_link_times_still_reports_time() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_recreated_symlink(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         true,
         ModifyWindow::ZERO,
@@ -961,7 +961,7 @@ fn for_recreated_device_sets_checksum_and_time_when_content_differs() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_recreated_device(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         ModifyWindow::ZERO,
         true,
@@ -995,7 +995,7 @@ fn for_recreated_device_reports_transfer_time_when_times_not_preserved() {
     let options = MetadataOptions::new().preserve_times(false);
     let change_set = LocalCopyChangeSet::for_recreated_device(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         ModifyWindow::ZERO,
         true,
@@ -1031,7 +1031,7 @@ fn for_recreated_device_no_change_when_content_and_time_match() {
     let options = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_recreated_device(
         &src_meta,
-        &dst_meta,
+        &fast_io::EntryMetadata::from(dst_meta.clone()),
         &options,
         ModifyWindow::ZERO,
         false,
@@ -1078,7 +1078,7 @@ fn for_file_atimes_differing_access_time_sets_u_glyph() {
         .preserve_atimes(true);
     let change_set = LocalCopyChangeSet::for_file(
         &src_meta,
-        Some(&dst_meta),
+        Some(&fast_io::EntryMetadata::from(dst_meta.clone())),
         &options,
         true,
         false,
@@ -1101,7 +1101,7 @@ fn for_file_atimes_differing_access_time_sets_u_glyph() {
     let no_u = MetadataOptions::new().preserve_times(true);
     let change_set = LocalCopyChangeSet::for_file(
         &src_meta,
-        Some(&dst_meta),
+        Some(&fast_io::EntryMetadata::from(dst_meta.clone())),
         &no_u,
         true,
         false,
@@ -1155,7 +1155,7 @@ fn for_file_chmod_does_not_report_perms_for_a_symlink() {
 
     let link_change_set = LocalCopyChangeSet::for_file(
         &src_link_meta,
-        Some(&dst_link_meta),
+        Some(&fast_io::EntryMetadata::from(dst_link_meta.clone())),
         &options,
         true,
         false,
@@ -1171,7 +1171,7 @@ fn for_file_chmod_does_not_report_perms_for_a_symlink() {
 
     let file_change_set = LocalCopyChangeSet::for_file(
         &file_meta,
-        Some(&file_meta),
+        Some(&fast_io::EntryMetadata::from(file_meta.clone())),
         &options,
         true,
         false,

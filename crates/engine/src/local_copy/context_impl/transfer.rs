@@ -865,6 +865,11 @@ impl<'a> CopyContext<'a> {
             && self.limiter.is_none()
             && initial_bytes == 0
         {
+            // The kernel mover writes as it reads, so the data counts as
+            // literal before the call. upstream: receiver.c:575.
+            if expected_remaining > 0 {
+                self.note_literal();
+            }
             let copied = fast_io::copy_file_range::copy_file_contents_buffered(
                 reader,
                 writer,
@@ -945,6 +950,7 @@ impl<'a> CopyContext<'a> {
             if read == 0 {
                 break;
             }
+            self.note_literal();
 
             writer
                 .write_all(&buffer[..read])
@@ -1074,6 +1080,7 @@ impl<'a> CopyContext<'a> {
             if read == 0 {
                 break;
             }
+            self.note_literal();
 
             write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?;
 

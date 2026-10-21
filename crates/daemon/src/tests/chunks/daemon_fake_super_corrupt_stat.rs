@@ -59,7 +59,7 @@ fn daemon_fake_super_pull_of_a_corrupt_stat_exits_file_io() {
             .recursive(true)
             .build(),
     );
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
     let error = result.expect_err("a corrupt %stat must end the pull");
     assert_eq!(error.exit_code(), 11, "got {error}");
     assert!(

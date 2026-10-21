@@ -180,7 +180,7 @@ fn daemon_acl_push_preserves_acls() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("ACL push failed: {e}");
         }
     }
@@ -231,5 +231,5 @@ fn daemon_acl_push_preserves_acls() {
     check_acl(&dest_alpha_acl, "alpha.txt");
     check_acl(&dest_beta_acl, "beta.txt");
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

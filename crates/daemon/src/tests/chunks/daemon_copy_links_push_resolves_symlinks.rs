@@ -99,7 +99,7 @@ fn daemon_copy_links_push_resolves_symlinks() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("copy-links client push failed: {e}");
         }
     }
@@ -166,5 +166,5 @@ fn daemon_copy_links_push_resolves_symlinks() {
     );
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

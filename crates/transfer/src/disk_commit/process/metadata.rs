@@ -61,12 +61,18 @@ pub(super) fn apply_file_metadata(
         // leaves `exists = fd1 != -1` false and dest_mode() takes the
         // new-destination arm (its lstat mode - 0o755 for a symlink on some
         // platforms - must never become the file's permissions).
+        // Stat the destination beneath the directory the receiver entered, as
+        // upstream's link_stat() of a name relative to the change_dir() cwd
+        // does (receiver.c:1191-1194), so a destination swapped after entry
+        // cannot turn an existing file into a fresh one.
         let pre_transfer_meta = if target_path != begin.file_path {
-            std::fs::symlink_metadata(&begin.file_path).ok()
+            fast_io::destination_at::symlink_metadata(&begin.file_path).ok()
         } else {
-            inplace_pre_transfer.cloned()
+            inplace_pre_transfer
+                .cloned()
+                .map(fast_io::EntryMetadata::from)
         }
-        .filter(|existing| existing.file_type().is_file());
+        .filter(fast_io::EntryMetadata::is_file);
         apply_metadata_acls_and_xattrs(
             target_path,
             MetadataApplyInputs {
@@ -108,7 +114,7 @@ struct MetadataApplyInputs<'a> {
     /// `x`-modifier xattr name filter.
     xattr_filter: Option<&'a filters::FilterSet>,
     /// Pre-transfer destination stat feeding `dest_mode()`.
-    pre_transfer_meta: Option<std::fs::Metadata>,
+    pre_transfer_meta: Option<fast_io::EntryMetadata>,
     /// fnamecmp basis file for abbreviated xattr resolution.
     basis_path: &'a Path,
     /// Destination tree the xattr writes are pinned beneath.
@@ -155,7 +161,7 @@ fn apply_metadata_acls_and_xattrs(
         entry,
         opts,
         None,
-        pre_transfer_meta.map(fast_io::EntryMetadata::from),
+        pre_transfer_meta,
     ) {
         return Some((file_path.to_path_buf(), e.to_string()));
     }

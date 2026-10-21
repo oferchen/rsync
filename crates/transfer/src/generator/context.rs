@@ -281,6 +281,11 @@ pub struct GeneratorContext {
     ///
     /// upstream: `flist.c:240-242` `sender_source_roots`
     pub(crate) source_roots: Arc<fast_io::SourceRoots>,
+    /// The held `--files-from` base the list entries resolve beneath through
+    /// the ownership walk; `None` whenever
+    /// [`Self::filesfrom_owner_walk_active`] does not hold.
+    #[cfg(unix)]
+    pub(crate) files_from_base: Option<Arc<fast_io::FilesFromBase>>,
     /// The last whole-file sum sent, which `%C` shows for a transfer
     /// (upstream's `sender_file_sum` global).
     pub(crate) sender_file_sum: std::cell::Cell<[u8; crate::progress::MAX_FILE_SUM_LEN]>,
@@ -421,6 +426,8 @@ impl GeneratorContext {
             daemon_log_rows: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             confined_source_root: std::sync::OnceLock::new(),
             source_roots: Arc::new(fast_io::SourceRoots::new()),
+            #[cfg(unix)]
+            files_from_base: None,
             sender_file_sum: std::cell::Cell::new([0; crate::progress::MAX_FILE_SUM_LEN]),
             daemon_log_byte_counts: std::cell::Cell::new((0, 0)),
         }
@@ -945,12 +952,54 @@ impl GeneratorContext {
         // no symlink-following mode is set; those keep do_open_checklinks().
         let pinned_roots = (root.is_none() && !follow_symlinks && !self.config.flags.copy_dirlinks)
             .then(|| Arc::clone(&self.source_roots));
-        open_source::SourceOpen::new(
+        let policy = open_source::SourceOpen::new(
             root,
             pinned_roots,
             follow_symlinks,
             self.config.write.open_noatime,
-        )
+        );
+        #[cfg(unix)]
+        {
+            policy.with_files_from(self.files_from_base.clone())
+        }
+        #[cfg(not(unix))]
+        {
+            policy
+        }
+    }
+
+    /// Whether `--files-from` entries resolve through the ownership walk: a
+    /// non-daemon sender with none of `--copy-links`, `--copy-unsafe-links`,
+    /// `--copy-dirlinks` or the `--insecure-links` opt-out.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:149-154` `filesfrom_owner_walk_active()`.
+    #[cfg(unix)]
+    fn filesfrom_owner_walk_active(&self) -> bool {
+        let flags = &self.config.flags;
+        !self.config.connection.is_daemon_connection
+            && !flags.copy_links
+            && !flags.copy_unsafe_links
+            && !flags.copy_dirlinks
+            && !fast_io::confinement::session_optout_allowed()
+    }
+
+    /// Holds the `--files-from` base, the source argument upstream's sender
+    /// `chdir`s into before reading the list, while the walk is active.
+    ///
+    /// upstream: `rsync-3.5.1/flist.c:2788-2792` `change_dir(argv[0])`.
+    ///
+    /// # Errors
+    ///
+    /// The base cannot be opened; the list is then not walked at all rather
+    /// than resolved by the path-following lookups the walk replaces.
+    #[cfg(unix)]
+    pub(in crate::generator) fn hold_files_from_base(&mut self, base: &Path) -> io::Result<()> {
+        self.files_from_base = if self.filesfrom_owner_walk_active() {
+            Some(Arc::new(fast_io::FilesFromBase::open(base)?))
+        } else {
+            None
+        };
+        Ok(())
     }
 
     /// The absolute directory every source-side path resolution is confined

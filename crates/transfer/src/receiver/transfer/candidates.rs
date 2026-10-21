@@ -291,27 +291,9 @@ impl ReceiverContext {
                 // than writing to the daemon's own stderr. Dropping the file
                 // without that frame would let a push of module-excluded files
                 // exit 0 with no diagnostic at all.
-                if let Some(filters) = daemon_filters.as_mut() {
-                    // upstream: generator.c:1662 check_filter() sees the raw
-                    // name bytes, so the gate is probed with the path itself.
-                    let name = e.path();
-                    if name.as_os_str() != "." {
-                        // upstream: generator.c:1647-1655 - the `skip_dir` check
-                        // runs before the filter check, so a file below an
-                        // already-refused directory is dropped in silence.
-                        if filters.refuses_ancestor(name) {
-                            stats.files_skipped += 1;
-                            return false;
-                        }
-                        if !filters.allows(name, false) {
-                            let _ = self.emit_error_xfer_line(
-                                writer,
-                                Self::daemon_refusal_line("file", &e.name_bytes()),
-                            );
-                            stats.files_skipped += 1;
-                            return false;
-                        }
-                    }
+                if self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, e) {
+                    stats.files_skipped += 1;
+                    return false;
                 }
                 if has_failed_dirs {
                     let fd = failed_dirs.expect("failed_dirs is Some when has_failed_dirs");

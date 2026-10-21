@@ -8,7 +8,7 @@ fn pre_xfer_push_session(
     tempfile::TempDir,
     TcpStream,
     BufReader<TcpStream>,
-    std::thread::JoinHandle<Result<(), crate::DaemonError>>,
+    DaemonHandle,
 ) {
     let dir = tempdir().expect("config dir");
     let module_dir = dir.path().join("module");

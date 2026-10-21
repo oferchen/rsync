@@ -66,7 +66,7 @@ pub const MIN_BLOCK_SIZE: u32 = 64;
 ///
 /// Upstream starts `csum_length` at this value (io.c:82) and
 /// `sum_sizes_sqroot()` uses it as the per-file floor; the phase 2 redo pass
-/// switches to `MAX_SUM_LENGTH` (generator.c:2650).
+/// switches to [`MAX_SUM_LENGTH`], upstream's `SUM_LENGTH` (generator.c:2650).
 /// (upstream: rsync.h:758 `SHORT_SUM_LENGTH`)
 pub const SHORT_SUM_LENGTH: u8 = 2;
 

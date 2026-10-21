@@ -106,6 +106,8 @@ pub mod confined_readdir;
 pub mod confinement;
 /// Rootless container / user-namespace detection for SQPOLL gating.
 pub mod container;
+/// Destination-side calls anchored on the pinned destination root.
+pub mod destination_at;
 /// Parent-dirfd carrier (`DirSandbox`) for the SEC-1 sandbox.
 ///
 /// Threads an in-tree dirfd stack plus a `DashMap<PathBuf, Arc<OwnedFd>>`
@@ -429,8 +431,8 @@ pub use confined_readdir::read_dir_confined;
 #[cfg(unix)]
 pub use dir_sandbox::{
     AtMetadata, CloneAttempt, CloneFreshTimes, DirEntryView, DirSandbox, EntryKind, ReadDirOutcome,
-    UnlinkFailure, UnlinkFlags, UnlinkResidue, confined_clone_file, confined_create_new,
-    confined_link_anonymous, confined_rename, copy_then_unlink_via_sandbox_or_fallback,
+    UnlinkFailure, UnlinkFlags, UnlinkResidue, confined_clone_file, confined_copy_then_unlink,
+    confined_create_new, confined_link_anonymous, confined_rename,
     create_dir_all_via_sandbox_or_fallback, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
     fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
     linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,

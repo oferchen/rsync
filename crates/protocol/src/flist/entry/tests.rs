@@ -1269,6 +1269,19 @@ fn strip_leading_slashes_preserves_extras() {
     assert_eq!(entry.xattr_ndx(), Some(3));
 }
 
+/// A Windows operand can lead with native `\` separators (`\\share\foo`).
+/// The strip-root pass must remove them as the Unix branch removes `/`, or
+/// the name stays rooted.
+#[cfg(windows)]
+#[test]
+fn strip_leading_slashes_strips_native_and_posix_separators() {
+    let mut entry = FileEntry::new_file("\\\\share/\\foo.txt".into(), 100, 0o644);
+
+    entry.strip_leading_slashes();
+
+    assert_eq!(entry.name(), "share/\\foo.txt");
+}
+
 /// name_bytes returns correct byte representation.
 #[test]
 fn name_bytes_accessor() {
