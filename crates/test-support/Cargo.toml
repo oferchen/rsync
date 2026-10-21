@@ -58,6 +58,13 @@ path = "src/bin/lsh-stub.rs"
 name = "capture-rsh"
 path = "src/bin/capture-rsh.rs"
 
+# Byte-neutrality A/B gate: captures every network transcript cell (remote
+# shell and daemon, push and pull) with two `oc-rsync` builds and reports any
+# byte that moved (see src/transcript_cells.rs).
+[[bin]]
+name = "transcript-ab"
+path = "src/bin/transcript-ab.rs"
+
 # Stand-in for an orphaned `oc-rsync --daemon`: carries the production SIGTERM
 # disposition and never exits on its own, so `ReapOnDrop` can be tested against
 # a child that genuinely survives SIGTERM.

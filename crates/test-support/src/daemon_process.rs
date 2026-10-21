@@ -99,17 +99,34 @@ impl DaemonProcess {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        Self::spawn_binary(&oc_rsync_bin(), config, args)
+    }
+
+    /// [`DaemonProcess::spawn`] with an explicit `oc-rsync` binary, so a
+    /// comparison can run two builds side by side.
+    ///
+    /// # Errors
+    ///
+    /// As [`DaemonProcess::spawn`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `args` contains `--detach`.
+    pub fn spawn_binary<I, S>(bin: &Path, config: &Path, args: I) -> io::Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let args: Vec<_> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
         assert!(
             !args.iter().any(|a| a == "--detach"),
             "a detached daemon outlives its test; the harness always runs --no-detach"
         );
-        let bin = oc_rsync_bin();
         let stderr = Arc::new(Mutex::new(Vec::new()));
         let mut stderr_drain = None;
 
         let spawned = spawn_daemon_on_free_port(|port| {
-            let mut command = Command::new(&bin);
+            let mut command = Command::new(bin);
             command
                 .arg("--daemon")
                 .arg("--no-detach")
