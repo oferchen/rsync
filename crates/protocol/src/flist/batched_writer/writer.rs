@@ -1,8 +1,6 @@
 //! Core batched file list writer implementation.
 
 use std::io::{self, Write};
-#[cfg(test)]
-use std::time::Duration;
 use std::time::Instant;
 
 use super::config::{BatchConfig, DEFAULT_MAX_BYTES};
@@ -34,6 +32,9 @@ pub struct BatchedFileListWriter {
     entry_count: usize,
     /// Timestamp when the first entry was added to the current batch.
     batch_start: Option<Instant>,
+    /// Test seam: the current batch's flush timeout reads as elapsed.
+    #[cfg(test)]
+    timeout_forced: bool,
     /// Statistics about batching operations.
     stats: BatchStats,
 }
@@ -54,6 +55,8 @@ impl BatchedFileListWriter {
             buffer: Vec::with_capacity(DEFAULT_MAX_BYTES),
             entry_count: 0,
             batch_start: None,
+            #[cfg(test)]
+            timeout_forced: false,
             stats: BatchStats::default(),
         }
     }
@@ -67,6 +70,8 @@ impl BatchedFileListWriter {
             buffer: Vec::with_capacity(DEFAULT_MAX_BYTES),
             entry_count: 0,
             batch_start: None,
+            #[cfg(test)]
+            timeout_forced: false,
             stats: BatchStats::default(),
         }
     }
@@ -84,6 +89,8 @@ impl BatchedFileListWriter {
             buffer: Vec::with_capacity(DEFAULT_MAX_BYTES),
             entry_count: 0,
             batch_start: None,
+            #[cfg(test)]
+            timeout_forced: false,
             stats: BatchStats::default(),
         }
     }
@@ -271,13 +278,21 @@ impl BatchedFileListWriter {
             return Some(FlushReason::ByteSize);
         }
 
-        if let Some(start) = self.batch_start
-            && start.elapsed() >= self.config.flush_timeout
-        {
+        if self.timeout_elapsed() {
             return Some(FlushReason::Timeout);
         }
 
         None
+    }
+
+    /// Reports whether the current batch has outlived the flush timeout.
+    fn timeout_elapsed(&self) -> bool {
+        #[cfg(test)]
+        if self.timeout_forced {
+            return self.batch_start.is_some();
+        }
+        self.batch_start
+            .is_some_and(|start| start.elapsed() >= self.config.flush_timeout)
     }
 
     /// Flushes the current batch to the writer.
@@ -298,10 +313,7 @@ impl BatchedFileListWriter {
     ///
     /// Returns `Ok(true)` if a flush was performed, `Ok(false)` otherwise.
     pub fn check_timeout_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
-        if let Some(start) = self.batch_start
-            && start.elapsed() >= self.config.flush_timeout
-            && self.entry_count > 0
-        {
+        if self.entry_count > 0 && self.timeout_elapsed() {
             self.flush_with_reason(writer, FlushReason::Timeout)?;
             return Ok(true);
         }
@@ -334,6 +346,10 @@ impl BatchedFileListWriter {
         self.buffer.clear();
         self.entry_count = 0;
         self.batch_start = None;
+        #[cfg(test)]
+        {
+            self.timeout_forced = false;
+        }
 
         Ok(())
     }
@@ -372,13 +388,11 @@ impl BatchedFileListWriter {
         self.writer
     }
 
-    /// Backdates the batch start timestamp so that the flush timeout has
-    /// already elapsed, making timeout tests fully deterministic.
+    /// Makes the current batch's flush timeout read as elapsed, so a test
+    /// whose timeout can never pass naturally (`Duration::MAX`) drives the
+    /// expiry without reading the wall clock.
     #[cfg(test)]
     pub(super) fn expire_batch_timeout(&mut self) {
-        if self.batch_start.is_some() {
-            self.batch_start =
-                Some(Instant::now() - self.config.flush_timeout - Duration::from_millis(1));
-        }
+        self.timeout_forced = true;
     }
 }
