@@ -39,7 +39,6 @@ use crate::daemon::{
     RuntimeOptions,
     TestSecretsEnvOverride,
     UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
-    UnresolvedId,
     advertised_capability_lines,
     // From daemon.rs apply_verbosity helper
     apply_verbosity,
