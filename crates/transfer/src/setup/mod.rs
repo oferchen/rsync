@@ -30,7 +30,7 @@ pub use capability::{build_capability_string, build_capability_string_suffix};
 pub use compat::exchange_compat_flags_direct;
 pub use negotiator::{
     CapabilityNegotiator, ChecksumSeedExchanger, CompatFlagsExchanger, ProtocolNegotiator,
-    RsyncNegotiator,
+    RsyncNegotiator, resolve_checksum_seed,
 };
 pub use restrictions::{ProtocolRestrictionFlags, refuse_unsupported_options};
 pub use types::{ProtocolSetupConfig, SetupResult};

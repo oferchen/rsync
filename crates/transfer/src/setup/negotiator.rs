@@ -107,6 +107,28 @@ pub trait ChecksumSeedExchanger {
     fn read_seed(&self, reader: &mut dyn Read) -> io::Result<i32>;
 }
 
+/// Returns the checksum seed the server side of a transfer uses.
+///
+/// A missing or zero `--checksum-seed` generates `time() ^ (pid << 6)`; any
+/// other value is used as given.
+///
+/// upstream: compat.c:823-824 `checksum_seed = time(NULL) ^ (getpid() << 6)`
+#[must_use]
+pub fn resolve_checksum_seed(fixed_seed: Option<i32>) -> i32 {
+    match fixed_seed {
+        Some(0) | None => {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i32;
+            let pid = std::process::id() as i32;
+            timestamp ^ (pid << 6)
+        }
+        Some(fixed) => fixed,
+    }
+}
+
 /// Composed negotiator that drives the full protocol setup exchange.
 ///
 /// Bundles the three negotiation concerns - compat flags, capability
@@ -184,19 +206,7 @@ impl CapabilityNegotiator for RsyncNegotiator {
 
 impl ChecksumSeedExchanger for RsyncNegotiator {
     fn write_seed(&self, writer: &mut dyn Write, fixed_seed: Option<i32>) -> io::Result<i32> {
-        // upstream: compat.c:823-824 - seed generation
-        let seed = match fixed_seed {
-            Some(0) | None => {
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i32;
-                let pid = std::process::id() as i32;
-                timestamp ^ (pid << 6)
-            }
-            Some(fixed) => fixed,
-        };
+        let seed = resolve_checksum_seed(fixed_seed);
         writer.write_all(&seed.to_le_bytes())?;
         writer.flush()?;
         Ok(seed)
