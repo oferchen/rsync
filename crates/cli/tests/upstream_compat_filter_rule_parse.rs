@@ -394,3 +394,19 @@ fn a_nested_merge_file_opens_from_the_current_directory() {
         }
     }
 }
+
+/// The local copy matches through the same wildmatch port as the transfer
+/// roles. upstream rejects no pattern (exclude.c add_rule) and lib/wildmatch.c
+/// fails an unclosed `[`, so `-[` transfers a file named `[`. The local copy's
+/// old globset matcher refused the pattern and failed the run.
+#[test]
+fn unclosed_bracket_pattern_is_kept_and_matches_nothing() {
+    let files = [("[", "a"), ("b[c", "b"), ("d", "d")];
+    for rule in ["--exclude=[", "--exclude=b[c", "--filter=- *["] {
+        for source in [Source::Local, Source::Push] {
+            if let Some(outcome) = assert_parity_from(&files, &[rule], source) {
+                assert_eq!(outcome.exit, 0, "{rule}");
+            }
+        }
+    }
+}
