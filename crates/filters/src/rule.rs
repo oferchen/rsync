@@ -54,7 +54,7 @@ use crate::rule_source::OwnedRuleSource;
 ///
 /// When `negate` is true, the rule's match result is inverted. A negated exclude
 /// rule excludes files that do NOT match the pattern, matching upstream rsync's
-/// `!` modifier behavior (see `exclude.c` line 906: `ret_match = negate ? 0 : 1`).
+/// `!` modifier behavior (upstream: exclude.c:1005 `ret_match = negate ? 0 : 1`).
 #[derive(Clone, Eq, PartialEq)]
 pub struct FilterRule {
     pub(crate) action: FilterAction,

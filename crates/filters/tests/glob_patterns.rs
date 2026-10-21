@@ -62,7 +62,6 @@ fn star_does_not_match_slash() {
     assert!(!set.allows(Path::new("src/lib.rs"), false));
 
     // Does not match nested files (star doesn't cross slash)
-    // But the pattern is anchored and uses implicit ** for unanchored
     // With anchored /src/*.rs, it should only match direct children
     assert!(set.allows(Path::new("src/module/mod.rs"), false));
 }
@@ -252,11 +251,11 @@ fn character_class_negation_exclamation() {
 fn character_class_negation_caret() {
     let set = FilterSet::from_rules([FilterRule::exclude("file[^a-z].txt")]).unwrap();
 
-    // Lowercase excluded
+    // Lowercase allowed
     assert!(set.allows(Path::new("filea.txt"), false));
     assert!(set.allows(Path::new("filez.txt"), false));
 
-    // Non-lowercase allowed
+    // Non-lowercase excluded
     assert!(!set.allows(Path::new("file1.txt"), false));
     assert!(!set.allows(Path::new("fileA.txt"), false));
 }
@@ -393,8 +392,7 @@ fn internal_slash_matches_segment() {
     // ...and nested via tail-match on the trailing `build/output` suffix.
     assert!(!set.allows(Path::new("project/build/output"), false));
 
-    // A different leading component still matches because tail-match
-    // pivots on the trailing two components, not the parent path.
+    // A path whose last two components are not `build/output` is not matched.
     assert!(set.allows(Path::new("src/output"), false));
 }
 
