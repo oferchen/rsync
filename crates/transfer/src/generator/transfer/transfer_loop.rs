@@ -1578,20 +1578,12 @@ impl GeneratorContext {
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // upstream: sender.c:815-816
-        // rprintf(FINFO, "send files finished\n")
-        debug_log!(Send, 1, "send files finished");
-
-        // upstream: sender.c:812-813 - if (io_error != save_io_error &&
-        // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error);
-        // upstream: sender.c:818 match_report() - the once-per-run delta totals,
-        // printed after the send loop has finished every file. `data` is
-        // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
-        // Upstream prints it whether or not any delta ran, leaving the counters
-        // at zero for a whole-file transfer.
-        self.emit_match_totals_report(&mut *writer, &run_scan_counters, literal_data);
-
-        // Emitted immediately before NDX_DONE so a remote receiver learns of
+        // Diagnostics the loop raised go out first: upstream wrote each the
+        // moment it was raised, before the closing sequence below.
+        self.flush_thread_local_diagnostics(&mut *writer)?;
+        // upstream: sender.c:811-812 - if (io_error != save_io_error &&
+        // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error); - the
+        // first frame of the closing sequence, so a remote receiver learns of
         // vanished/unreadable source files and reports exit 24/23. MSG_NO_SEND
         // only skips the file; it does not carry the exit-code bits.
         if self.io_error != save_io_error && self.protocol.supports_generator_messages() {
@@ -1602,12 +1594,19 @@ impl GeneratorContext {
                 return Err(e);
             }
         }
-
-        // upstream: sender.c:812-821 - after the transfer loop exits, the sender
-        // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the
-        // "goodbye" that tells the client's generator to proceed with its own
-        // goodbye handshake. Without it, the client hangs waiting for this marker.
+        // upstream: sender.c:814-815
+        // rprintf(FINFO, "send files finished\n")
+        debug_log!(Send, 1, "send files finished");
         self.flush_thread_local_diagnostics(&mut *writer)?;
+        // upstream: sender.c:818 match_report() - the once-per-run delta totals,
+        // printed after the send loop has finished every file. `data` is
+        // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
+        // Upstream prints it whether or not any delta ran, leaving the counters
+        // at zero for a whole-file transfer.
+        self.emit_match_totals_report(&mut *writer, &run_scan_counters, literal_data);
+        // upstream: sender.c:820 - the final NDX_DONE is the "goodbye" that
+        // tells the client's generator to proceed with its own goodbye
+        // handshake. Without it, the client hangs waiting for this marker.
         if let Err(e) = ndx_write_codec
             .write_ndx_done(&mut *writer)
             .and_then(|()| flush_with_count(&mut *writer))
@@ -3150,6 +3149,74 @@ mod proto29_keepalive_tests {
             err.to_string()
                 .starts_with("File-list index 1 not in -1 - 0 (read_ndx_and_attrs) "),
             "{err}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod end_of_send_order_tests {
+    //! The closing frames of `send_files()`, in upstream's order.
+    //!
+    //! upstream: sender.c:811-820 - `MSG_IO_ERROR` (when the run's io_error
+    //! changed), then the `send files finished` debug line, then
+    //! `match_report()`'s `total:` line, then the final `NDX_DONE`.
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+    use protocol::{MessageCode, MessageHeader};
+
+    use super::proto29_keepalive_tests::{drive_multiplexed, generator_at};
+
+    /// The multiplexed frames a sender wrote, in order.
+    fn frames(mut out: &[u8]) -> Vec<(MessageCode, Vec<u8>)> {
+        let mut frames = Vec::new();
+        while !out.is_empty() {
+            let header = MessageHeader::decode(&out[..4]).expect("frame header");
+            let end = 4 + header.payload_len_usize();
+            frames.push((header.code(), out[4..end].to_vec()));
+            out = &out[end..];
+        }
+        frames
+    }
+
+    /// Position of the first frame matching `code` whose payload starts with
+    /// `prefix`.
+    fn position(frames: &[(MessageCode, Vec<u8>)], code: MessageCode, prefix: &str) -> usize {
+        frames
+            .iter()
+            .position(|(c, body)| *c == code && body.starts_with(prefix.as_bytes()))
+            .unwrap_or_else(|| panic!("no {code:?} frame starting {prefix:?} in {frames:?}"))
+    }
+
+    /// A server sender whose only source vanished before it was opened, at
+    /// `-vv`-equivalent SEND and DELTASUM debug levels so both closing lines
+    /// are emitted.
+    #[test]
+    fn io_error_precedes_the_send_files_finished_and_total_lines() {
+        let mut cfg = logging::VerbosityConfig::default();
+        cfg.debug.send = 1;
+        cfg.debug.deltasum = 1;
+        logging::init(cfg);
+        let _ = logging::drain_events();
+
+        let (dir, mut ctx) = generator_at(32);
+        std::fs::remove_file(dir.path().join("only.txt")).expect("vanish the source");
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 0).expect("request ndx");
+        wire.extend_from_slice(&[0x00, 0x80]); // ITEM_TRANSFER
+        wire.extend_from_slice(&[0u8; 16]); // whole-file sum_head
+        for _ in 0..3 {
+            ndx.write_ndx_done(&mut wire).expect("done");
+        }
+
+        let out = drive_multiplexed(&mut ctx, wire).expect("a vanished file is not fatal");
+        let frames = frames(&out);
+        let io_error = position(&frames, MessageCode::IoError, "");
+        let finished = position(&frames, MessageCode::Info, "send files finished");
+        let total = position(&frames, MessageCode::Info, "total: matches=");
+        assert!(
+            io_error < finished && finished < total,
+            "upstream order is MSG_IO_ERROR, send files finished, total: - got \
+             {io_error}, {finished}, {total} in {frames:?}"
         );
     }
 }
