@@ -50,6 +50,12 @@ pub enum BatchError {
     /// code from the batch file's own open failure.
     #[error("{0}")]
     ScriptFileUnusable(String),
+    /// A filter rule cannot be written to the `.sh` here-doc.
+    ///
+    /// upstream: batch.c:226-229 - a pattern containing a newline is refused
+    /// with `exit_cleanup(RERR_SYNTAX)`.
+    #[error("{0}")]
+    FilterRuleRefused(String),
 }
 
 #[cfg(test)]
