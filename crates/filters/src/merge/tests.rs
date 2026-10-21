@@ -1032,7 +1032,8 @@ fn parse_dir_merge_w_modifier_sets_word_split_on_rule() {
 // each token as a rule; `_` separates a token's prefix from its pattern.
 #[test]
 fn parse_rules_word_split_splits_on_any_whitespace() {
-    let rules = parse_rules_word_split("-_*.log\t-_*.tmp -_*.bak\n", Path::new("test")).unwrap();
+    let rules =
+        parse_rules_word_split("-_*.log\t-_*.tmp -_*.bak\n", Path::new("test"), false).unwrap();
     assert_eq!(rules.len(), 3);
     for rule in &rules {
         assert_eq!(rule.action(), FilterAction::Exclude);
@@ -1046,7 +1047,7 @@ fn parse_rules_word_split_splits_on_any_whitespace() {
 // "Unknown filter rule" error, same as the non-word-split parser.
 #[test]
 fn parse_rules_word_split_rejects_bare_token() {
-    assert!(parse_rules_word_split("*.log", Path::new("test")).is_err());
+    assert!(parse_rules_word_split("*.log", Path::new("test"), false).is_err());
 }
 
 // upstream: exclude.c:1273-1275, 1772-1773 - `:w-` tokenises on whitespace with each
