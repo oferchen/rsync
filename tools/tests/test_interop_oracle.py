@@ -242,7 +242,9 @@ class CatalogueTest(unittest.TestCase):
                        "batch-local-protocol-28/3.5.1/local/push/oc-client",
                        "max-delete/3.5.1/rsh/push/oc-server",
                        "delete/3.5.1/rsh/pull/oc-server",
-                       "inc-recurse-dirs/3.5.1/rsh/push/oc-client"):
+                       "inc-recurse-dirs/3.5.1/rsh/push/oc-client",
+                       "inc-recurse-wide/3.5.1/rsh/pull/oc-server",
+                       "inc-recurse-wide/3.5.1/daemon/push/oc-client"):
             self.assertIn(wanted, ids)
 
 
