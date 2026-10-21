@@ -533,7 +533,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The macOS kqueue bandwidth-limit sleeper and its `OC_RSYNC_BWLIMIT_BACKEND` selector; `--bwlimit` sleeps with `nanosleep` on every platform, matching upstream's `select()` sleep for its 100 ms minimum delay (#8229)
 - The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
 
-- The unused `checksums::strong::strategy` runtime selector and the uncalled generic parallel hashing helpers; `checksums::parallel` is now the one parallel `--checksum` service (`hash_files`, `hash_files_blocked`) (#PRNUM)
+- The unused `checksums::strong::strategy` runtime selector and the uncalled generic parallel hashing helpers; `checksums::parallel` is now the one parallel `--checksum` service (`hash_files`, `hash_files_blocked`) (#8238)
 ## [0.6.4] - 2026-07-18
 
 This release rolls up every change merged since v0.6.3 (roughly 1,200 pull
