@@ -122,18 +122,27 @@ where
     H: FileHasher,
     F: Fn() -> H + Sync,
 {
+    // Ordering: callers zip results with jobs by position.
+    // Preserved by par_iter().map_init().collect() (rayon preserves index order).
     jobs.par_iter()
-        .map(|job| hash_blocks(job, block_len.get(), &new_hasher))
+        .map_init(read_buffer, |buf, job| {
+            hash_blocks(job, block_len.get(), &new_hasher, buf)
+        })
         .collect()
 }
 
-fn hash_blocks<H, F>(job: &FileJob<'_>, block_len: u64, new_hasher: &F) -> io::Result<BlockDigests>
+fn hash_blocks<H, F>(
+    job: &FileJob<'_>,
+    block_len: u64,
+    new_hasher: &F,
+    buf: &mut [u8],
+) -> io::Result<BlockDigests>
 where
     H: FileHasher,
     F: Fn() -> H + Sync,
 {
     if job.len < block_len.saturating_mul(2) {
-        let digest = hash_range(job.path, 0, job.len, new_hasher(), &mut read_buffer())?;
+        let digest = hash_range(job.path, 0, job.len, new_hasher(), buf)?;
         return Ok(BlockDigests(vec![digest]));
     }
     (0..job.len.div_ceil(block_len))
