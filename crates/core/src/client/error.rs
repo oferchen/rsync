@@ -9,7 +9,7 @@ use crate::auth::supported_daemon_digest_list;
 use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
 use crate::rsync_error;
-use engine::local_copy::{LocalCopyError, LocalCopyErrorKind, upstream_io_error};
+use engine::local_copy::{LocalCopyError, LocalCopyErrorKind, LocalCopySide, upstream_io_error};
 use rsync_io::ssh::RemoteOperandParseError;
 
 // upstream: errcode.h - Exit code definitions
@@ -45,8 +45,17 @@ pub const UNSUPPORTED_EXIT_CODE: i32 = ExitCode::Unsupported.as_i32();
 pub struct ClientError {
     exit_code: ExitCode,
     message: Message,
-    program_line: Option<String>,
+    lead_line: Option<LeadLine>,
     completed: Option<Box<ClientSummary>>,
+}
+
+/// The line upstream prints before log_exit()'s trailer, if a failure has one.
+#[derive(Clone, Debug)]
+enum LeadLine {
+    /// `rprintf(FERROR, RSYNC_NAME ": ...")`, prefixed with the program name.
+    Program(String),
+    /// An unprefixed `rprintf(FERROR, ...)` cause.
+    Cause(String),
 }
 impl ClientError {
     /// Creates a new [`ClientError`] from the supplied exit code and message.
@@ -54,9 +63,19 @@ impl ClientError {
         Self {
             exit_code,
             message,
-            program_line: None,
+            lead_line: None,
             completed: None,
         }
+    }
+
+    /// Attaches the cause upstream prints, unprefixed, before the exit
+    /// trailer.
+    ///
+    /// upstream: xattrs.c:1253-1258 - `rprintf(FERROR, "Corrupt ...")` and
+    /// then `exit_cleanup()`, whose log_exit() trailer follows it.
+    fn with_cause_line(mut self, line: String) -> Self {
+        self.lead_line = Some(LeadLine::Cause(line));
+        self
     }
     /// Attaches the summary of a transfer that finished every entry but still
     /// exits non-zero, so the caller renders it before the exit trailer.
@@ -106,7 +125,19 @@ impl ClientError {
     /// exit trailer, if this failure has one. The caller prefixes the program
     /// name so the line carries the same brand as the trailer.
     pub fn program_line(&self) -> Option<&str> {
-        self.program_line.as_deref()
+        match &self.lead_line {
+            Some(LeadLine::Program(line)) => Some(line),
+            _ => None,
+        }
+    }
+
+    /// Returns the line upstream prints verbatim before the exit trailer, if
+    /// this failure has one.
+    pub fn cause_line(&self) -> Option<&str> {
+        match &self.lead_line {
+            Some(LeadLine::Cause(line)) => Some(line),
+            _ => None,
+        }
     }
 }
 
@@ -360,15 +391,41 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
             ClientError::with_code(code, msg)
         }
-        // upstream: xattrs.c:1253-1258 - the sender prints the cause and
-        // exits RERR_FILEIO.
-        LocalCopyErrorKind::FileIo { message } => {
-            let code = ExitCode::FileIo;
-            let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Sender);
-            ClientError::with_code(code, msg)
+        // upstream: xattrs.c:1253-1258 - the cause is printed on its own line,
+        // then exit_cleanup(RERR_FILEIO) adds log_exit()'s trailer, tagged with
+        // the half that hit it.
+        LocalCopyErrorKind::FileIo { side, message } => {
+            let role = match side {
+                LocalCopySide::Sender => Role::Sender,
+                LocalCopySide::Generator => Role::Generator,
+            };
+            file_io_error(message, role)
         }
         LocalCopyErrorKind::Interrupted => signal_interrupt_error(Role::Sender),
     }
+}
+
+/// Builds a fatal `RERR_FILEIO` (11) failure: the cause on its own line, then
+/// log_exit()'s `error in file IO` trailer tagged with `role`.
+///
+/// upstream: xattrs.c:1253-1258 get_stat_xattr() - `rprintf(FERROR, ...)`
+/// then `exit_cleanup(RERR_FILEIO)`.
+#[cold]
+fn file_io_error(cause: String, role: Role) -> ClientError {
+    let code = ExitCode::FileIo;
+    let trailer = rsync_error!(code.as_i32(), "{}", code.description()).with_role(role);
+    ClientError::with_code(code, trailer).with_cause_line(cause)
+}
+
+/// Maps a receiving client's corrupt `--fake-super` destination record to
+/// upstream's generator failure, if `error` is one.
+///
+/// upstream: generator.c:1393-1399 link_stat() -> xattrs.c:1372 x_lstat() ->
+/// xattrs.c:1253-1258 - the generator reads the destination, so the trailer
+/// names the generator.
+pub(crate) fn corrupt_fake_super_destination_error(error: &io::Error) -> Option<ClientError> {
+    metadata::is_corrupt_fake_super(error)
+        .then(|| file_io_error(error.to_string(), Role::Generator))
 }
 
 /// Builds the single signal-abort diagnostic emitted when a transfer is
@@ -551,10 +608,10 @@ pub fn connection_unexpectedly_closed_error(
     role: Role,
 ) -> ClientError {
     let mut error = remote_exit_error(exit_code, role);
-    error.program_line = Some(format!(
+    error.lead_line = Some(LeadLine::Program(format!(
         "connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
         role.as_str()
-    ));
+    )));
     error
 }
 
@@ -750,6 +807,24 @@ mod tests {
 
     mod client_error_tests {
         use super::*;
+
+        /// upstream: xattrs.c:1253-1258 prints the cause on its own line and
+        /// exit_cleanup(RERR_FILEIO) adds log_exit()'s `error in file IO`
+        /// trailer, tagged with the half that hit it.
+        #[test]
+        fn a_file_io_failure_prints_its_cause_then_the_file_io_trailer() {
+            for (side, role) in [
+                (LocalCopySide::Sender, Role::Sender),
+                (LocalCopySide::Generator, Role::Generator),
+            ] {
+                let cause = "Corrupt user.rsync.%stat xattr attached to \"/d/f\": \"x\"";
+                let error = map_local_copy_error(LocalCopyError::file_io(side, cause));
+                assert_eq!(error.code(), ExitCode::FileIo);
+                assert_eq!(error.cause_line(), Some(cause));
+                assert_eq!(error.message().text(), ExitCode::FileIo.description());
+                assert_eq!(error.message().role(), Some(role));
+            }
+        }
 
         #[test]
         fn new_and_accessors() {

@@ -207,7 +207,7 @@ impl ReceiverContext {
             &mut stats,
             setup.acl_cache.as_deref(),
             setup.acl_id_map.as_deref(),
-        );
+        )?;
 
         // Both assigned by every arm of the mode match below.
         // upstream: receiver.c:976 total_transferred_size, summed with files_transferred.

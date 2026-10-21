@@ -54,6 +54,7 @@ fn sandbox_anchored_lstat_reports_symlink_at_leaf() {
         EntryMetadata::Std(_) => {
             panic!("expected the sandbox-anchored fstatat path for a single-component leaf");
         }
+        EntryMetadata::Overlaid(_) => panic!("an lstat never answers with an overlay"),
     }
 }
 

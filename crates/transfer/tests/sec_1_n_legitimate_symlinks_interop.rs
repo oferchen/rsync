@@ -106,6 +106,7 @@ fn assert_outcome_is_symlink(outcome: &EntryMetadata, ctx: &str) {
             meta.is_symlink(),
             "{ctx}: fallback lstat must report a symlink leaf"
         ),
+        EntryMetadata::Overlaid(_) => panic!("an lstat never answers with an overlay"),
     }
 }
 

@@ -593,9 +593,11 @@ struct StatPlan {
 }
 #[cfg(all(unix, feature = "xattr"))]
 impl StatPlan {
-    // upstream: xattrs.c:1313-1326 set_stat_xattr()
+    // upstream: xattrs.c:1313-1326 set_stat_xattr() - decided on the real
+    // stat (`fst`), never on one a `%stat` record was folded into.
     fn new(current: &fast_io::EntryMetadata, intended: &crate::fake_super::FakeSuperStat) -> Self {
         const S_IFMT: u32 = 0o170000;
+        let current = current.real();
         let is_dir = current.is_dir();
         let real_mode = fake_super_real_mode(current.mode(), intended.mode, is_dir);
         let stored_mode = fake_super_type_bits(intended.mode, is_dir) | (intended.mode & 0o7777);
@@ -1878,6 +1880,37 @@ pub(super) fn apply_permissions_from_entry(
 mod tests {
     use super::*;
     use crate::MetadataOptions;
+
+    /// set_stat_xattr() decides on the real stat. A destination read through
+    /// its `%stat` reports the recorded ids, so judging faithfulness on it
+    /// would drop a record the real inode still needs.
+    ///
+    /// upstream: xattrs.c:1298 x_lstat(fname, &fst, &xst), then xattrs.c:1325
+    /// compares `fst.st_uid` / `fst.st_gid`, never `xst`.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn stat_plan_judges_the_real_stat_not_the_folded_one() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("f");
+        fs::write(&path, b"x").expect("write");
+        let real = fast_io::EntryMetadata::from(fs::symlink_metadata(&path).expect("lstat"));
+        let (uid, gid) = (real.uid().wrapping_add(1), real.gid().wrapping_add(1));
+        let intended = crate::fake_super::FakeSuperStat {
+            mode: 0o100_644,
+            uid,
+            gid,
+            rdev: None,
+        };
+        let folded = real.with_overlay(0o644, uid, gid);
+        let plan = StatPlan::new(&folded, &intended);
+        assert!(
+            !plan.faithful,
+            "the real owner {}:{} cannot represent {uid}:{gid}, so the %stat stays",
+            fs::metadata(&path).expect("stat").uid(),
+            fs::metadata(&path).expect("stat").gid(),
+        );
+    }
 
     /// upstream: syscall.c:do_chmod():1745-1746 - when neither --perms nor
     /// --executability is active, do_chmod returns 0 on failure.
