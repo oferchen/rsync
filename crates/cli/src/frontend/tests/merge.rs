@@ -27,7 +27,9 @@ fn merge_directive_options_inherit_parent_configuration() {
 fn apply_merge_directive_rejects_exclude_if_present_in_whitespace_file() {
     let temp = test_support::create_tempdir();
     let merge_file = temp.path().join("rules.txt");
-    std::fs::write(&merge_file, "risk logs/** exclude-if-present marker\n")
+    // A word-split file ends each rule at whitespace (exclude.c:1772), so the
+    // rules use `_` as their separator.
+    std::fs::write(&merge_file, "risk_logs/** exclude-if-present_marker\n")
         .expect("write merge rules");
 
     let options = DirMergeOptions::default().use_whitespace();
