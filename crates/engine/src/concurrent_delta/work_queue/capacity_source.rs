@@ -16,11 +16,17 @@
 //!
 //! # Scope
 //!
-//! This module introduces the abstraction and the semaphore-backed constructor
-//! only. Wiring a controller to actually grow/shrink the ceiling, and releasing
-//! a permit when a consumed item drains, are deliberately left to a later
-//! change. The dynamic path is therefore additive and opt-in; no existing caller
-//! is affected.
+//! This module holds only the abstraction and the sender-side acquire. The
+//! matching release lives on the receiver: `drain_parallel` and
+//! `drain_parallel_into` return one permit when each item's task completes or
+//! unwinds (`PermitGuard`), and the bare iterator returns one per dequeued
+//! item. The ceiling is moved by
+//! [`AdaptiveQueueController`](super::AdaptiveQueueController) or by the
+//! throughput governor's `Rope`. No production transfer builds a dynamic queue
+//! yet: `bounded_dynamic` is reached only through
+//! `throughput::governed_work_queue` in `GovernorMode::Observe`, which no
+//! transfer path calls. The dynamic path is therefore opt-in, and every live
+//! queue uses [`CapacitySource::Fixed`].
 
 use std::sync::Arc;
 
