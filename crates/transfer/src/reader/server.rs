@@ -428,6 +428,10 @@ impl<R: Read> super::BufferedInputHint for ServerReader<R> {
             ServerReaderInner::Plain(_) | ServerReaderInner::Compressed(_) => &[],
         }
     }
+
+    fn take_success_indices(&mut self) -> Vec<i32> {
+        ServerReader::take_success_indices(self)
+    }
 }
 
 impl<R: Read> Read for ServerReader<R> {

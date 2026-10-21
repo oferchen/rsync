@@ -240,7 +240,7 @@ impl FlistSegment {
     /// unassigned; the remote generator uses it to itemize the segment's
     /// parent directory (`ndx = cur_flist->ndx_start - 1`, generator.c:2787),
     /// which the sender resolves through `parent_ndx` (sender.c:552-558).
-    /// `NdxMap::resolve_itemize` relies on the same identity
+    /// `NdxMap::resolve` relies on the same identity
     /// (`gap + 1 == ndx_start`).
     #[must_use]
     pub fn gap_ndx(&self) -> i32 {
@@ -437,7 +437,7 @@ mod tests {
         }
     }
 
-    /// WHY: `NdxMap::resolve_itemize` decodes a gap NDX via
+    /// WHY: `NdxMap::resolve` decodes a gap NDX via
     /// `gap + 1 == ndx_start` over the SAME flist.c:3511 arithmetic - the
     /// owning container and the live resolver must agree on where every
     /// segment starts, or IR-6a's rewiring would move wire bytes.
@@ -451,17 +451,25 @@ mod tests {
 
         // The map's segments are (flat_start, parent_flat) pairs over one
         // flat list; flat starts are the running entry counts.
+        use crate::generator::ndx_map::NdxSlot;
         let mut map = NdxMap::new(root.ndx_start());
-        let child_start = map.push_sublist(root.used(), 0);
-        let grand_start = map.push_sublist(root.used() + child.used(), 3);
+        let child_start = map.push_sublist(root.used(), child.used(), 0);
+        let grand_start = map.push_sublist(root.used() + child.used(), grand.used(), 3);
+        let entries = root.used() + child.used() + grand.used();
 
         assert_eq!(map.first_ndx_start(), root.ndx_start());
         assert_eq!(child_start, child.ndx_start());
         assert_eq!(grand_start, grand.ndx_start());
         // And the map resolves each segment's gap to its parent slot, which
         // only works because both sides reserve the same slot.
-        assert_eq!(map.resolve_itemize(child.gap_ndx()), 0);
-        assert_eq!(map.resolve_itemize(grand.gap_ndx()), 3);
+        assert_eq!(
+            map.resolve(child.gap_ndx(), entries),
+            Ok(NdxSlot::Gap(Some(0)))
+        );
+        assert_eq!(
+            map.resolve(grand.gap_ndx(), entries),
+            Ok(NdxSlot::Gap(Some(3)))
+        );
     }
 
     /// WHY: `parent_ndx` is `-1` or a non-negative `dir_flist` index

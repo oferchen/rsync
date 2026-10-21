@@ -10,7 +10,7 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-/// Total invocations of `wire_to_flat_ndx` + `flat_to_wire_ndx` across all
+/// Total invocations of the peer NDX gate + `flat_to_wire_ndx` across all
 /// generator transfers in this process. Diagnostic counter for sender-side
 /// INC_RECURSE - quantifies how often the NDX conversion hot path
 /// fires per transfer relative to the file count.

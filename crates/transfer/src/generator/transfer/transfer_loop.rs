@@ -707,6 +707,15 @@ impl GeneratorContext {
                             // Reclaim heap data from the oldest completed segment to
                             // reduce RSS. Entries stay in place for NDX indexing but
                             // their PathBuf/extras allocations are freed.
+                            // upstream: io.c:1831-1845 ran successful_send() for
+                            // every MSG_SUCCESS ahead of this NDX_DONE while
+                            // reading it, before sender.c:535-536 freed the
+                            // list; confirm them now, while their entries still
+                            // name their sources.
+                            self.drain_confirmed_source_removals(
+                                writer,
+                                reader.take_success_indices(),
+                            )?;
                             self.reclaim_oldest_segment();
                             // upstream: sender.c:539 - `file_old_total =
                             // cur_flist->used`. The freed list drops out of the
@@ -823,18 +832,37 @@ impl GeneratorContext {
             // converting through wire_to_flat_ndx and back via flat_to_wire_ndx
             // corrupts these gap values (the subtraction wraps to usize::MAX).
             let wire_ndx = ndx;
-            // upstream: rsync.c:437 - i = ndx - cur_flist->ndx_start.
-            // resolve_itemize_ndx also handles the INC_RECURSE directory gap
-            // NDX (`ndx_start - 1`), mapping it to the parent directory entry so
-            // a dir itemize prints `.d.. sub/` rather than a file row for the
-            // trailing child of the previous segment (sender.c:552-558).
-            let ndx = self.resolve_itemize_ndx(wire_ndx);
 
             // upstream: rsync.c:227 - read_ndx_and_attrs() reads iflags
             let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
             if self.protocol.supports_iflags() {
                 self.timing.total_bytes_read += 2;
             }
+
+            // upstream: rsync.c:387-391 - the protocol-29 keep-alive frame. A
+            // <=3.0.x generator running --timeout writes `NDX ==
+            // cur_flist->used` followed by `iflags == ITEM_IS_NEW` as its
+            // keep-alive (3.0.9 io.c:971-986); rsync >= 3.1.0 sends an empty
+            // MSG_DATA instead, so only old peers emit this frame. It names no
+            // entry: consume it, answer with our own keepalive (`if (am_sender)
+            // maybe_send_keepalive(time(NULL), MSK_ALLOW_FLUSH)`, rsync.c:389-390)
+            // and re-enter the read loop. Its index is one past the list, so
+            // the check precedes the index validation below, as upstream's
+            // does. Protocol < 30 has no INC_RECURSE, so the wire NDX compares
+            // directly against the full list length.
+            if self.protocol.as_u8() < 30
+                && wire_ndx as usize == self.file_list.len()
+                && iflags.raw() == ItemFlags::ITEM_IS_NEW
+            {
+                writer.answer_keepalive()?;
+                continue;
+            }
+
+            // upstream: rsync.c:394 - flist_for_ndx(ndx, "read_ndx_and_attrs")
+            // refuses an index no live list owns before any attribute past the
+            // iflags is read; the INC_RECURSE gap NDX resolves to its owning
+            // directory (sender.c:552-558).
+            let ndx = self.flist_for_ndx(wire_ndx)?;
 
             let (fnamecmp_type, xname, trailing_bytes) = iflags.read_trailing(&mut *reader)?;
             // upstream: rsync.c:403-418 - the basis-type byte plus the xname
@@ -847,41 +875,15 @@ impl GeneratorContext {
             let initial_read = self.timing.total_bytes_read;
             self.daemon_log_byte_counts.set((0, 0));
 
-            // upstream: rsync.c:387-391 - the protocol-29 keep-alive frame. A
-            // <=3.0.x generator running --timeout writes `NDX ==
-            // cur_flist->used` followed by `iflags == ITEM_IS_NEW` as its
-            // keep-alive (3.0.9 io.c:971-986); rsync >= 3.1.0 sends an empty
-            // MSG_DATA instead, so only old peers emit this frame. It names no
-            // entry: consume it, answer with our own keepalive (`if (am_sender)
-            // maybe_send_keepalive(time(NULL), MSK_ALLOW_FLUSH)`, rsync.c:389-390)
-            // and re-enter the read loop. An exact ITEM_IS_NEW carries no
-            // follows-bits, so read_trailing consumed nothing and checking here
-            // is byte-identical to upstream's placement right after the iflags
-            // read. Protocol < 30 has no INC_RECURSE, so the wire NDX compares
-            // directly against the full list length.
-            if self.protocol.as_u8() < 30
-                && wire_ndx as usize == self.file_list.len()
-                && iflags.raw() == ItemFlags::ITEM_IS_NEW
-            {
-                writer.answer_keepalive()?;
-                continue;
-            }
-
             // upstream: rsync.c:436-444 - read_ndx_and_attrs() refuses an
             // ITEM_TRANSFER frame whose index does not name a regular file
             // ("received request to transfer non-regular file") with
             // exit_cleanup(RERR_PROTOCOL), on the sender as much as on the
             // receiver, before send_files() ever sees the request. The `i < 0`
-            // half of upstream's test is a gap NDX, which resolve_itemize_ndx
-            // maps to the owning *directory* entry, so the S_ISREG half below
-            // refuses it identically. An index past the end of the list is a
-            // different fault owned by validate_file_index (upstream's
-            // flist_for_ndx abort, which runs first), so it is deferred, not
-            // claimed with this diagnostic.
-            if iflags.needs_transfer()
-                && ndx < self.file_list.len()
-                && !self.file_list[ndx].is_file()
-            {
+            // half of upstream's test is a gap NDX, which flist_for_ndx maps to
+            // the owning *directory* entry, so the S_ISREG half below refuses
+            // it identically.
+            if iflags.needs_transfer() && !self.file_list[ndx].is_file() {
                 return Err(crate::receiver::ndx_stream::non_regular_transfer_request(
                     wire_ndx,
                     crate::receiver::ndx_stream::StreamRole::Sender,
@@ -906,10 +908,13 @@ impl GeneratorContext {
             // rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname)
             // F_PATHNAME is unset for the in-band file list we build, so the
             // path/slash prefix is empty and we emit just the relative name.
-            if ndx < self.file_list.len() {
-                let entry_path = self.file_list[ndx].path().display().to_string();
-                debug_log!(Send, 1, "send_files({}, {})", wire_ndx, entry_path);
-            }
+            debug_log!(
+                Send,
+                1,
+                "send_files({}, {})",
+                wire_ndx,
+                self.file_list[ndx].path().display()
+            );
 
             if !iflags.needs_transfer() {
                 // upstream: sender.c:588-602 - a non-transfer item that is new
@@ -917,7 +922,7 @@ impl GeneratorContext {
                 // counter for its mode. This is how a pushed new directory,
                 // symlink, device, or FIFO reaches the "Number of created files"
                 // breakdown even though it carries no file data.
-                if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 && ndx < self.file_list.len() {
+                if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 {
                     created_stats.record(self.file_list[ndx].mode());
                 }
                 // upstream: sender.c:581-587 - non-transfer items still echo
@@ -962,7 +967,6 @@ impl GeneratorContext {
             // echo still carries the xattr response when ITEM_REPORT_XATTR is
             // set so the receiver can pair its outstanding request.
             if self.config.flags.dry_run {
-                self.validate_file_index(ndx)?;
                 let file_entry = &self.file_list[ndx];
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
@@ -1006,8 +1010,6 @@ impl GeneratorContext {
             let sum_head =
                 SumHead::read_negotiated(&mut *reader, self.protocol.as_u8(), xfer_sum_len)?;
             self.timing.total_bytes_read += 16;
-
-            self.validate_file_index(ndx)?;
 
             let file_entry = &self.file_list[ndx];
             debug_assert_eq!(
@@ -1585,20 +1587,12 @@ impl GeneratorContext {
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // upstream: sender.c:815-816
-        // rprintf(FINFO, "send files finished\n")
-        debug_log!(Send, 1, "send files finished");
-
-        // upstream: sender.c:812-813 - if (io_error != save_io_error &&
-        // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error);
-        // upstream: sender.c:818 match_report() - the once-per-run delta totals,
-        // printed after the send loop has finished every file. `data` is
-        // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
-        // Upstream prints it whether or not any delta ran, leaving the counters
-        // at zero for a whole-file transfer.
-        self.emit_match_totals_report(&mut *writer, &run_scan_counters, literal_data);
-
-        // Emitted immediately before NDX_DONE so a remote receiver learns of
+        // Diagnostics the loop raised go out first: upstream wrote each the
+        // moment it was raised, before the closing sequence below.
+        self.flush_thread_local_diagnostics(&mut *writer)?;
+        // upstream: sender.c:811-812 - if (io_error != save_io_error &&
+        // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error); - the
+        // first frame of the closing sequence, so a remote receiver learns of
         // vanished/unreadable source files and reports exit 24/23. MSG_NO_SEND
         // only skips the file; it does not carry the exit-code bits.
         if self.io_error != save_io_error && self.protocol.supports_generator_messages() {
@@ -1609,12 +1603,19 @@ impl GeneratorContext {
                 return Err(e);
             }
         }
-
-        // upstream: sender.c:812-821 - after the transfer loop exits, the sender
-        // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the
-        // "goodbye" that tells the client's generator to proceed with its own
-        // goodbye handshake. Without it, the client hangs waiting for this marker.
+        // upstream: sender.c:814-815
+        // rprintf(FINFO, "send files finished\n")
+        debug_log!(Send, 1, "send files finished");
         self.flush_thread_local_diagnostics(&mut *writer)?;
+        // upstream: sender.c:818 match_report() - the once-per-run delta totals,
+        // printed after the send loop has finished every file. `data` is
+        // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
+        // Upstream prints it whether or not any delta ran, leaving the counters
+        // at zero for a whole-file transfer.
+        self.emit_match_totals_report(&mut *writer, &run_scan_counters, literal_data);
+        // upstream: sender.c:820 - the final NDX_DONE is the "goodbye" that
+        // tells the client's generator to proceed with its own goodbye
+        // handshake. Without it, the client hangs waiting for this marker.
         if let Err(e) = ndx_write_codec
             .write_ndx_done(&mut *writer)
             .and_then(|()| flush_with_count(&mut *writer))
@@ -1727,16 +1728,23 @@ impl GeneratorContext {
     /// - `sender.c:396` - `successful_send()` unlink + guards.
     /// - `sender.c:413-415` - `change_pathname(file, NULL, 0)` then
     ///   `f_name(file, fname)` is the name every diagnostic below prints.
-    pub(crate) fn confirm_source_removal(&mut self, wire_ndx: i32) -> SourceRemovalOutcome {
-        if wire_ndx < 0 {
-            return SourceRemovalOutcome::clean();
+    ///
+    /// # Errors
+    ///
+    /// A `RERR_PROTOCOL`-tagged error when the index names no live entry
+    /// (out of range, freed, or a gap slot), as `sender.c:409-411` refuses it.
+    pub(crate) fn confirm_source_removal(
+        &mut self,
+        wire_ndx: i32,
+    ) -> io::Result<SourceRemovalOutcome> {
+        // upstream: sender.c:406-407 - without --remove-source-files the index
+        // is never examined.
+        if !self.config.flags.remove_source_files {
+            return Ok(SourceRemovalOutcome::clean());
         }
-        let flat_ndx = self.wire_to_flat_ndx(wire_ndx);
-        if flat_ndx >= self.file_list.len() {
-            return SourceRemovalOutcome::clean();
-        }
+        let flat_ndx = self.successful_send_ndx(wire_ndx)?;
         if !self.pending_source_removals.confirm(flat_ndx) {
-            return SourceRemovalOutcome::clean();
+            return Ok(SourceRemovalOutcome::clean());
         }
         let source_path = self.reconstruct_source_path(flat_ndx);
         let entry = &self.file_list[flat_ndx];
@@ -1746,7 +1754,7 @@ impl GeneratorContext {
             mtime: entry.mtime(),
             mtime_nsec: entry.mtime_nsec(),
         };
-        self.remove_source_file_if_requested(&source_path, &display_name, recorded)
+        Ok(self.remove_source_file_if_requested(&source_path, &display_name, recorded))
     }
 
     /// Runs the deferred `--remove-source-files` unlink for every confirmation
@@ -1777,7 +1785,7 @@ impl GeneratorContext {
     ) -> io::Result<usize> {
         let drained = confirmed.len();
         for wire_ndx in confirmed {
-            let outcome = self.confirm_source_removal(wire_ndx);
+            let outcome = self.confirm_source_removal(wire_ndx)?;
             self.io_error |= outcome.io_error;
             if let Some(text) = outcome.error_xfer {
                 self.emit_sender_diagnostic(
@@ -2676,6 +2684,67 @@ mod phase2_guard_tests {
         drive(&mut ctx, wire).expect("NDX_DEL_STATS is handled above the gate");
     }
 
+    /// Feeds one item frame (`ndx` + 2-byte iflags) and asserts the sender
+    /// ends on upstream's `flist_for_ndx()` refusal:
+    /// `File-list index %d not in %d - %d (read_ndx_and_attrs)`, tagged for
+    /// RERR_PROTOCOL (rsync.c:394, rsync.c:977-981).
+    fn assert_sender_refuses_index(ndx: i32, iflags: [u8; 2]) {
+        let (_dir, mut ctx) = generator_with_one_file();
+        let last = ctx.file_list().len() as i32 - 1;
+        let mut codec = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        codec.write_ndx(&mut wire, ndx).expect("write ndx");
+        wire.extend_from_slice(&iflags);
+        let err = drive(&mut ctx, wire).expect_err("an index no list owns");
+        let text = err.to_string();
+        assert!(
+            text.starts_with(&format!(
+                "File-list index {ndx} not in -1 - {last} (read_ndx_and_attrs) "
+            )),
+            "{text}"
+        );
+        assert!(
+            err.get_ref()
+                .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+            "must map to RERR_PROTOCOL (2), not a stream error"
+        );
+    }
+
+    /// A non-transfer item (iflags without ITEM_TRANSFER) names an entry as
+    /// much as a transfer request does: upstream validates every index
+    /// read_ndx_and_attrs() returns. The sender used to echo such an index
+    /// back without checking it.
+    #[test]
+    fn sender_refuses_a_non_transfer_index_one_past_the_list() {
+        assert_sender_refuses_index(1, [0, 0]);
+    }
+
+    #[test]
+    fn sender_refuses_a_transfer_request_one_past_the_list() {
+        assert_sender_refuses_index(1, ITEM_TRANSFER_LE);
+    }
+
+    #[test]
+    fn sender_refuses_the_largest_index() {
+        assert_sender_refuses_index(i32::MAX, [0, 0]);
+    }
+
+    /// Non-vacuity companion: the last in-range index still itemizes and the
+    /// session runs to completion.
+    #[test]
+    fn sender_accepts_a_non_transfer_item_for_the_last_entry() {
+        let (_dir, mut ctx) = generator_with_one_file();
+        let last = ctx.file_list().len() as i32 - 1;
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, last).expect("write ndx");
+        wire.extend_from_slice(&[0, 0]);
+        ndx.write_ndx_done(&mut wire).expect("write done");
+        ndx.write_ndx_done(&mut wire).expect("write done");
+        ndx.write_ndx_done(&mut wire).expect("write done");
+        drive(&mut ctx, wire).expect("an in-range itemize frame is served");
+    }
+
     /// Runs the sender loop over one NDX_DEL_STATS frame and the three phase
     /// NDX_DONEs, returning the frame bytes and everything the sender wrote.
     fn del_stats_round_trip(client_mode: bool) -> (Vec<u8>, Vec<u8>) {
@@ -3078,8 +3147,9 @@ mod proto29_keepalive_tests {
     }
 
     /// PROTOCOL CONTROL: at protocol 30 the identically shaped frame is NOT a
-    /// keep-alive - it is handled as a regular non-transfer item, and no empty
-    /// MSG_DATA reply is emitted.
+    /// keep-alive. Its index is one past the list, so it reaches
+    /// flist_for_ndx() and is refused there (rsync.c:387 gates the keep-alive
+    /// on protocol < 30; rsync.c:394 then validates the index).
     #[test]
     fn proto30_sender_does_not_treat_the_frame_as_a_keepalive() {
         let mut ndx = MonotonicNdxWriter::new(30);
@@ -3089,12 +3159,80 @@ mod proto29_keepalive_tests {
         push_phase_dones(&mut ndx, &mut wire);
 
         let (_dir, mut ctx) = generator_at(30);
-        let out = drive_multiplexed(&mut ctx, wire).expect("session completes");
+        let err = drive_multiplexed(&mut ctx, wire).expect_err("not a keep-alive at protocol 30");
 
-        assert_ne!(
-            &out[..4],
-            &EMPTY_MSG_DATA_FRAME,
-            "protocol 30 must not answer the frame with a keepalive"
+        assert!(
+            err.to_string()
+                .starts_with("File-list index 1 not in -1 - 0 (read_ndx_and_attrs) "),
+            "{err}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod end_of_send_order_tests {
+    //! The closing frames of `send_files()`, in upstream's order.
+    //!
+    //! upstream: sender.c:811-820 - `MSG_IO_ERROR` (when the run's io_error
+    //! changed), then the `send files finished` debug line, then
+    //! `match_report()`'s `total:` line, then the final `NDX_DONE`.
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+    use protocol::{MessageCode, MessageHeader};
+
+    use super::proto29_keepalive_tests::{drive_multiplexed, generator_at};
+
+    /// The multiplexed frames a sender wrote, in order.
+    fn frames(mut out: &[u8]) -> Vec<(MessageCode, Vec<u8>)> {
+        let mut frames = Vec::new();
+        while !out.is_empty() {
+            let header = MessageHeader::decode(&out[..4]).expect("frame header");
+            let end = 4 + header.payload_len_usize();
+            frames.push((header.code(), out[4..end].to_vec()));
+            out = &out[end..];
+        }
+        frames
+    }
+
+    /// Position of the first frame matching `code` whose payload starts with
+    /// `prefix`.
+    fn position(frames: &[(MessageCode, Vec<u8>)], code: MessageCode, prefix: &str) -> usize {
+        frames
+            .iter()
+            .position(|(c, body)| *c == code && body.starts_with(prefix.as_bytes()))
+            .unwrap_or_else(|| panic!("no {code:?} frame starting {prefix:?} in {frames:?}"))
+    }
+
+    /// A server sender whose only source vanished before it was opened, at
+    /// `-vv`-equivalent SEND and DELTASUM debug levels so both closing lines
+    /// are emitted.
+    #[test]
+    fn io_error_precedes_the_send_files_finished_and_total_lines() {
+        let mut cfg = logging::VerbosityConfig::default();
+        cfg.debug.send = 1;
+        cfg.debug.deltasum = 1;
+        logging::init(cfg);
+        let _ = logging::drain_events();
+
+        let (dir, mut ctx) = generator_at(32);
+        std::fs::remove_file(dir.path().join("only.txt")).expect("vanish the source");
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 0).expect("request ndx");
+        wire.extend_from_slice(&[0x00, 0x80]); // ITEM_TRANSFER
+        wire.extend_from_slice(&[0u8; 16]); // whole-file sum_head
+        for _ in 0..3 {
+            ndx.write_ndx_done(&mut wire).expect("done");
+        }
+
+        let out = drive_multiplexed(&mut ctx, wire).expect("a vanished file is not fatal");
+        let frames = frames(&out);
+        let io_error = position(&frames, MessageCode::IoError, "");
+        let finished = position(&frames, MessageCode::Info, "send files finished");
+        let total = position(&frames, MessageCode::Info, "total: matches=");
+        assert!(
+            io_error < finished && finished < total,
+            "upstream order is MSG_IO_ERROR, send files finished, total: - got \
+             {io_error}, {finished}, {total} in {frames:?}"
         );
     }
 }

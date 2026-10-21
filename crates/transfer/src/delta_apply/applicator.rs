@@ -350,39 +350,17 @@ impl<'a> DeltaApplicator<'a> {
     /// # Errors
     ///
     /// Returns an error if:
+    /// - The block index is out of bounds (>= block count), checked first as
+    ///   upstream does (`receiver.c:585-589`)
     /// - No basis file is available
-    /// - The block index is out of bounds (>= block count)
     pub fn apply_block_ref(&mut self, block_idx: usize) -> io::Result<()> {
-        let (Some(signature), Some(basis_map)) = (&self.basis_signature, self.basis_map.as_mut())
-        else {
+        let (offset, bytes_to_copy) =
+            super::block_span(self.basis_signature.map(FileSignature::layout), block_idx)?;
+        let Some(basis_map) = self.basis_map.as_mut() else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("block reference {block_idx} without basis file"),
             ));
-        };
-
-        let layout = signature.layout();
-        let block_len = layout.block_length().get() as u64;
-        let block_count = layout.block_count() as usize;
-
-        if block_idx >= block_count {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("block reference {block_idx} out of bounds (block count: {block_count})"),
-            ));
-        }
-
-        let offset = block_idx as u64 * block_len;
-
-        let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-            let remainder = layout.remainder();
-            if remainder > 0 {
-                remainder as usize
-            } else {
-                block_len as usize
-            }
-        } else {
-            block_len as usize
         };
         // upstream: receiver.c:640-645 - an in-place update seeks past a block
         // already at its own offset, so it credits no touched blocks.
@@ -771,26 +749,13 @@ impl<'a> DeltaApplicator<'a> {
         block_idx: usize,
         token_reader: &mut TokenReader,
     ) -> io::Result<()> {
-        let (Some(signature), Some(basis_map)) = (&self.basis_signature, self.basis_map.as_mut())
-        else {
+        let (offset, bytes_to_copy) =
+            super::block_span(self.basis_signature.map(FileSignature::layout), block_idx)?;
+        let Some(basis_map) = self.basis_map.as_mut() else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("block reference {block_idx} without basis file"),
             ));
-        };
-        let layout = signature.layout();
-        let block_len = layout.block_length().get() as u64;
-        let block_count = layout.block_count() as usize;
-        let offset = block_idx as u64 * block_len;
-        let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-            let remainder = layout.remainder();
-            if remainder > 0 {
-                remainder as usize
-            } else {
-                block_len as usize
-            }
-        } else {
-            block_len as usize
         };
         let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
         token_reader.see_token(block_data)
@@ -924,8 +889,10 @@ pub fn apply_delta_stream<R: Read>(
 ///   writing (`receiver.c:579` `write_file` is guarded by `fd != -1`). On the
 ///   compressed path the decoder returns the already-decompressed payload, so
 ///   reading the token keeps the inflate stream in sync.
-/// - Block-match tokens: absorbed benignly by advancing the notional offset,
-///   with NO basis read and NO `see_token` dictionary feed - exactly the
+/// - Block-match tokens: bounded by `block_count`, the echoed `sum_head`'s
+///   count, exactly as on the write path (`receiver.c:585-589` runs before the
+///   `fd`/`mapbuf` tests), then absorbed benignly by advancing the notional
+///   offset, with NO basis read and NO `see_token` dictionary feed - exactly the
 ///   `if (!mapbuf) { ...; offset += len; continue; }` branch at
 ///   `receiver.c:616-624`. That branch runs BEFORE the `if (mapbuf)` guard that
 ///   would otherwise call `see_token`/`sum_update` (`receiver.c:633-638`), so
@@ -950,6 +917,7 @@ pub fn apply_delta_stream<R: Read>(
 pub fn discard_delta_stream<R: Read>(
     reader: &mut R,
     token_reader: &mut TokenReader,
+    block_count: u64,
     checksum_len: usize,
 ) -> io::Result<()> {
     debug_log!(Deltasum, 2, "recv delta stream discard start");
@@ -971,7 +939,7 @@ pub fn discard_delta_stream<R: Read>(
             }
             // Block match with no basis: absorb without reading a basis block
             // and without feeding see_token. upstream: receiver.c:616-624.
-            DeltaToken::BlockRef(_) => {}
+            DeltaToken::BlockRef(index) => super::check_block_index(index, block_count)?,
         }
     }
 
@@ -1489,7 +1457,8 @@ mod tests {
         let mut cursor = io::Cursor::new(wire);
         let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
-        discard_delta_stream(&mut cursor, &mut token_reader, digest_len).expect("drains cleanly");
+        discard_delta_stream(&mut cursor, &mut token_reader, 1, digest_len)
+            .expect("drains cleanly");
 
         // The cursor is positioned exactly after the frame: the next 4 bytes
         // are the untouched sentinel NDX, proving no desync.
@@ -1497,6 +1466,30 @@ mod tests {
         let mut next = [0u8; 4];
         cursor.read_exact(&mut next).expect("sentinel intact");
         assert_eq!(next, sentinel);
+    }
+
+    /// Discarding is not a licence to accept any index: upstream bounds the
+    /// token by the echoed `sum_head` before it tests `fd` or `mapbuf`
+    /// (receiver.c:585-589), so a match past that count ends the run with
+    /// RERR_PROTOCOL even though no basis byte would have been read.
+    #[test]
+    fn discard_refuses_a_match_past_the_echoed_count() {
+        let digest_len = 16;
+        let mut cursor = io::Cursor::new(plain_delta_with_match(digest_len));
+        let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
+
+        let err = discard_delta_stream(&mut cursor, &mut token_reader, 0, digest_len)
+            .expect_err("a whole-file head describes no block 0");
+        assert_eq!(
+            err.to_string(),
+            "Invalid block index 0 (count=0) [receiver]"
+        );
+        assert!(
+            err.get_ref()
+                .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
+                .is_some(),
+            "must map to RERR_PROTOCOL (2)"
+        );
     }
 
     /// A truncated frame (delta drained but trailing checksum missing) must
@@ -1515,7 +1508,7 @@ mod tests {
         let mut cursor = io::Cursor::new(wire);
         let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
-        let err = discard_delta_stream(&mut cursor, &mut token_reader, digest_len)
+        let err = discard_delta_stream(&mut cursor, &mut token_reader, 1, digest_len)
             .expect_err("truncated frame must error");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
@@ -1537,7 +1530,8 @@ mod tests {
         let mut token_reader = TokenReader::new(None, 31).expect("plain reader");
 
         // Draining must succeed (no crash, no propagated open error).
-        discard_delta_stream(&mut cursor, &mut token_reader, digest_len).expect("drains cleanly");
+        discard_delta_stream(&mut cursor, &mut token_reader, 1, digest_len)
+            .expect("drains cleanly");
         assert_eq!(cursor.position(), frame.len() as u64);
 
         // The receiver ORs IOERR_GENERAL for the failed file; that bit is the

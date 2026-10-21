@@ -544,6 +544,7 @@ fn read_response_header<R: Read>(
         file_path,
         basis_path,
         signature,
+        sum_head: echoed_sum_head,
         target_size,
         use_inplace,
         append_offset,
@@ -560,6 +561,9 @@ pub(crate) struct ResponseHeader {
     basis_path: Option<std::path::PathBuf>,
     /// Optional file signature for delta matching.
     signature: Option<engine::signature::FileSignature>,
+    /// The sum head the sender echoed, which every block-match token is
+    /// resolved through (receiver.c:510 `read_sum_head()`, :584-593).
+    sum_head: SumHead,
     /// Expected final file size.
     target_size: u64,
     /// Whether to write directly to the destination (inplace mode).
