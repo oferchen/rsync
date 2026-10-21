@@ -197,20 +197,36 @@ pub(crate) fn dir_merge_file_present(
 /// ```
 ///
 /// The refusal sits ABOVE the inherit, so the conflicting side is never
-/// applied. oc spells "the rule has no side bit" as *both* sides applying, so
-/// any rule that is not both-sided has named one - `P`/`R` included, matching
-/// measured rsync 3.5.0 behaviour.
-pub(crate) fn dir_merge_side_conflict(rule: &FilterRule, options: &DirMergeOptions) -> bool {
-    options.specifies_side() && !(rule.applies_to_sender() && rule.applies_to_receiver())
+/// applied, and it covers every rule the file holds, merge rules included. oc
+/// spells "the rule has no side bit" as *both* sides applying, so any rule that
+/// is not both-sided has named one - `P`/`R` included, matching measured rsync
+/// 3.5.0 behaviour. A `C` rule's side lives on its template.
+fn directive_side_conflict(directive: &ParsedFilterDirective, options: &DirMergeOptions) -> bool {
+    options.specifies_side()
+        && match directive {
+            ParsedFilterDirective::Rule(rule) => {
+                !(rule.applies_to_sender() && rule.applies_to_receiver())
+            }
+            ParsedFilterDirective::CvsIgnore(template) => template.sides().is_some(),
+            ParsedFilterDirective::Merge {
+                options: Some(merge),
+                ..
+            }
+            | ParsedFilterDirective::DirMerge { options: merge, .. } => merge.specifies_side(),
+            ParsedFilterDirective::Merge { options: None, .. } | ParsedFilterDirective::Clear => {
+                false
+            }
+        }
 }
 
-/// [`dir_merge_side_conflict`] for a `C` rule, whose side lives on the template
-/// its CVS patterns inherit.
-fn dir_merge_template_side_conflict(
-    template: filters::CvsTemplate,
-    options: &DirMergeOptions,
-) -> bool {
-    options.specifies_side() && template.sides().is_some()
+/// The side conflict as upstream reports it: a `filter_rule_err`, whose text
+/// goes through `rule_text` (exclude.c:133-137), so a file's line is never
+/// echoed.
+fn side_conflict_error(text: &str, source: RuleSource<'_>) -> FilterParseError {
+    FilterParseError::new(format!(
+        "specified-side merge file contains specified-side filter: {}",
+        source.rule_text(text)
+    ))
 }
 
 pub(crate) fn apply_dir_merge_rule_defaults(
@@ -499,13 +515,12 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     directive.push_str(next);
                 }
 
-                match parse_filter_directive_line(&directive, origin.rule_source(&src_name, None)) {
+                let source = origin.rule_source(&src_name, None);
+                match parse_filter_directive_line(&directive, source) {
+                    Ok(Some(parsed)) if directive_side_conflict(&parsed, options) => {
+                        return Err(map_error(side_conflict_error(&directive, source)));
+                    }
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        if dir_merge_side_conflict(&rule, options) {
-                            return Err(map_error(FilterParseError::new(format!(
-                                "specified-side merge file contains specified-side filter: {directive}"
-                            ))));
-                        }
                         entries.push_rule(apply_dir_merge_rule_defaults(
                             rule,
                             options,
@@ -513,11 +528,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         ));
                     }
                     Ok(Some(ParsedFilterDirective::CvsIgnore(template))) => {
-                        if dir_merge_template_side_conflict(template, options) {
-                            return Err(map_error(FilterParseError::new(format!(
-                                "specified-side merge file contains specified-side filter: {directive}"
-                            ))));
-                        }
                         for rule in filters::cvs_ignore_rules(template, true) {
                             entries.push_rule(apply_dir_merge_rule_defaults(
                                 rule,
@@ -643,16 +653,12 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                match parse_filter_directive_line(
-                    line,
-                    origin.rule_source(&src_name, Some(line_number)),
-                ) {
+                let source = origin.rule_source(&src_name, Some(line_number));
+                match parse_filter_directive_line(line, source) {
+                    Ok(Some(parsed)) if directive_side_conflict(&parsed, options) => {
+                        return Err(map_error(side_conflict_error(line, source)));
+                    }
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        if dir_merge_side_conflict(&rule, options) {
-                            return Err(map_error(FilterParseError::new(format!(
-                                "specified-side merge file contains specified-side filter: {line}"
-                            ))));
-                        }
                         entries.push_rule(apply_dir_merge_rule_defaults(
                             rule,
                             options,
@@ -719,11 +725,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         });
                     }
                     Ok(Some(ParsedFilterDirective::CvsIgnore(template))) => {
-                        if dir_merge_template_side_conflict(template, options) {
-                            return Err(map_error(FilterParseError::new(format!(
-                                "specified-side merge file contains specified-side filter: {line}"
-                            ))));
-                        }
                         for rule in filters::cvs_ignore_rules(template, true) {
                             entries.push_rule(apply_dir_merge_rule_defaults(
                                 rule,

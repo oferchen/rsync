@@ -1287,3 +1287,50 @@ fn daemon_gate_root_matches_the_module_relative_merge_path() {
     assert!(!ungated.allows(Path::new("bait"), false));
     ungated.leave_directory(guard);
 }
+
+/// #226: a rule that names a side inside a `:s`/`:r` file is upstream's
+/// `filter_rule_err` (exclude.c:1447-1456), never silently given the file's
+/// side; the error names the file's line, not its text (exclude.c:133-137).
+#[test]
+fn filter_chain_sided_merge_file_refuses_a_sided_rule() {
+    for (modifier, line) in [
+        ("s", "-r foo"),
+        ("r", "S foo"),
+        ("s", "hide foo"),
+        ("r", ":s .g"),
+    ] {
+        let dir = test_support::create_tempdir();
+        fs::write(dir.path().join(".f"), format!("- ok\n{line}\n")).unwrap();
+        let config = DirMergeConfig::new(".f");
+        let config = if modifier == "s" {
+            config.with_sender_only(true)
+        } else {
+            config.with_receiver_only(true)
+        };
+        let mut chain = FilterChain::empty();
+        chain.add_merge_config(config);
+
+        let error = chain
+            .enter_directory(dir.path())
+            .expect_err(line)
+            .to_string();
+        assert!(
+            error.contains("specified-side merge file contains specified-side filter: <rule from ")
+                && error.contains("line 2>")
+                && !error.contains(line),
+            "{line}: {error}"
+        );
+    }
+}
+
+/// Non-vacuity for the refusal above: a rule without a side takes the file's.
+#[test]
+fn filter_chain_sided_merge_file_gives_unsided_rules_its_side() {
+    let dir = test_support::create_tempdir();
+    fs::write(dir.path().join(".f"), "- foo\n").unwrap();
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".f").with_sender_only(true));
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+    chain.leave_directory(guard);
+}

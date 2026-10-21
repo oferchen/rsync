@@ -267,3 +267,48 @@ fn exclude_self_precedes_the_merged_rules() {
         }
     }
 }
+
+/// #226: a rule that names a side inside a `:s`/`:r` file is a
+/// `filter_rule_err` (exclude.c:1447-1456), exit 1 (12 for the pull's client,
+/// which sees its server die), with the line redacted to
+/// `<rule from ...>` (exclude.c:133-137). Both binaries refuse; the location
+/// inside `<rule from ...>` is compared only up to the file name, because
+/// upstream names the file by absolute path and oc by the path it opened. A
+/// pull with `:r` refuses nothing in either: the receiver-side rule never
+/// reaches the sender that reads the file.
+///
+/// On a push the refusal comes from oc's sender walk, which, like every
+/// per-directory parse error there, still exits 11 inside a `transfer failed`
+/// wrapper where upstream exits 1 (task #376: RERR codes chosen from
+/// `ErrorKind`). That leg pins the refusal and its text, not the exit code.
+#[test]
+fn sided_merge_file_refuses_a_sided_rule() {
+    const REFUSAL: &str = "specified-side merge file contains specified-side filter: <rule from ";
+    let Some(upstream) = upstream() else { return };
+    let server = upstream.binary();
+    for (rule, line) in [(":s .f", "-r foo"), (":r .f", "S foo"), (":s .f", ":r .g")] {
+        let files = [("a", "a"), (".f", &*format!("- ok\n{line}\n"))];
+        let args = [&*format!("--filter={rule}")];
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            let expected = run(server, server, &files, &args, source);
+            let actual = run(&oc_rsync_bin(), server, &files, &args, source);
+            assert_eq!(actual.transferred, expected.transferred, "{rule} {line}");
+            assert_eq!(
+                actual.diagnostic.contains(REFUSAL),
+                expected.diagnostic.contains(REFUSAL),
+                "{rule} {line}: {actual:?} vs {expected:?}"
+            );
+            if matches!(source, Source::Local) {
+                assert!(expected.diagnostic.contains(REFUSAL), "{expected:?}");
+            }
+            if matches!(source, Source::Push) {
+                assert_ne!(actual.exit, 0, "{rule} {line}");
+            } else {
+                assert_eq!(actual.exit, expected.exit, "{rule} {line}");
+            }
+            if actual.exit != 0 {
+                assert!(actual.diagnostic.contains(" line 2>"), "{actual:?}");
+            }
+        }
+    }
+}
