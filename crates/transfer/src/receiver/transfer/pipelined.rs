@@ -12,6 +12,7 @@ use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
 
 use crate::pipeline::PipelineConfig;
+use crate::pipeline::receiver::DelayedUpdate;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 
@@ -216,7 +217,7 @@ impl ReceiverContext {
         let mut literal_data: u64 = 0;
         let mut matched_data: u64 = 0;
         let mut redo_count: usize = 0;
-        let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut all_delayed_updates: Vec<DelayedUpdate> = Vec::new();
 
         // Buffer directory `-v` names under their flist index so each is
         // released immediately before its first child is reached in the
