@@ -1,5 +1,6 @@
 //! Whole-file and per-block digests of many files, computed on the rayon pool.
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::num::NonZeroU64;
@@ -95,15 +96,13 @@ where
     H: FileHasher,
     F: Fn() -> H + Sync,
 {
-    let hash =
-        |buf: &mut Vec<u8>, job: &FileJob<'_>| hash_range(job.path, 0, job.len, new_hasher(), buf);
+    let hash = |job: &FileJob<'_>| hash_range(job.path, 0, job.len, new_hasher());
     if jobs.len() < 2 {
-        let mut buf = read_buffer();
-        return jobs.iter().map(|job| hash(&mut buf, job)).collect();
+        return jobs.iter().map(hash).collect();
     }
     // Ordering: callers zip results with jobs by position.
-    // Preserved by par_iter().map_init().collect() (rayon preserves index order).
-    jobs.par_iter().map_init(read_buffer, hash).collect()
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
+    jobs.par_iter().map(hash).collect()
 }
 
 /// Hashes each job as a vector of `block_len` block digests, in parallel across
@@ -123,45 +122,51 @@ where
     F: Fn() -> H + Sync,
 {
     // Ordering: callers zip results with jobs by position.
-    // Preserved by par_iter().map_init().collect() (rayon preserves index order).
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
     jobs.par_iter()
-        .map_init(read_buffer, |buf, job| {
-            hash_blocks(job, block_len.get(), &new_hasher, buf)
-        })
+        .map(|job| hash_blocks(job, block_len.get(), &new_hasher))
         .collect()
 }
 
-fn hash_blocks<H, F>(
-    job: &FileJob<'_>,
-    block_len: u64,
-    new_hasher: &F,
-    buf: &mut [u8],
-) -> io::Result<BlockDigests>
+fn hash_blocks<H, F>(job: &FileJob<'_>, block_len: u64, new_hasher: &F) -> io::Result<BlockDigests>
 where
     H: FileHasher,
     F: Fn() -> H + Sync,
 {
     if job.len < block_len.saturating_mul(2) {
-        let digest = hash_range(job.path, 0, job.len, new_hasher(), buf)?;
+        let digest = hash_range(job.path, 0, job.len, new_hasher())?;
         return Ok(BlockDigests(vec![digest]));
     }
     (0..job.len.div_ceil(block_len))
         .into_par_iter()
-        .map_init(read_buffer, |buf, index| {
+        .map(|index| {
             let start = index * block_len;
             let len = block_len.min(job.len - start);
-            hash_range(job.path, start, len, new_hasher(), buf)
+            hash_range(job.path, start, len, new_hasher())
         })
         .collect::<io::Result<Vec<_>>>()
         .map(BlockDigests)
 }
 
-fn read_buffer() -> Vec<u8> {
-    vec![0; READ_CHUNK]
+thread_local! {
+    /// One read window per thread for the life of the process, so hashing
+    /// many files allocates (and maps) no per-file or per-batch buffer.
+    static READ_BUFFER: RefCell<Vec<u8>> = RefCell::new(vec![0; READ_CHUNK]);
 }
 
 /// Hashes `len` bytes of `path` starting at `start` with a sized read loop.
 fn hash_range<H: FileHasher>(
+    path: &Path,
+    start: u64,
+    len: u64,
+    hasher: H,
+) -> io::Result<FileDigest> {
+    // No rayon call happens while the buffer is borrowed, so a worker never
+    // re-enters this borrow.
+    READ_BUFFER.with_borrow_mut(|buf| hash_range_into(path, start, len, hasher, buf))
+}
+
+fn hash_range_into<H: FileHasher>(
     path: &Path,
     start: u64,
     len: u64,
