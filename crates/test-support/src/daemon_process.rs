@@ -117,6 +117,47 @@ impl DaemonProcess {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        Self::spawn_binary_with_env(bin, config, args, std::iter::empty::<(&str, &str)>())
+    }
+
+    /// Like [`spawn`](Self::spawn), with `envs` set in the daemon's
+    /// environment (applied last, so they win over the harness defaults).
+    ///
+    /// # Errors
+    ///
+    /// As [`spawn`](Self::spawn).
+    ///
+    /// # Panics
+    ///
+    /// As [`spawn`](Self::spawn).
+    pub fn spawn_with_env<I, S, E, K, V>(config: &Path, args: I, envs: E) -> io::Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        Self::spawn_binary_with_env(&oc_rsync_bin(), config, args, envs)
+    }
+
+    fn spawn_binary_with_env<I, S, E, K, V>(
+        bin: &Path,
+        config: &Path,
+        args: I,
+        envs: E,
+    ) -> io::Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        let envs: Vec<(std::ffi::OsString, std::ffi::OsString)> = envs
+            .into_iter()
+            .map(|(k, v)| (k.as_ref().to_owned(), v.as_ref().to_owned()))
+            .collect();
         let args: Vec<_> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
         assert!(
             !args.iter().any(|a| a == "--detach"),
@@ -142,6 +183,7 @@ impl DaemonProcess {
                 command.env_remove(name);
             }
             command.envs(NO_FALLBACK_ENV);
+            command.envs(envs.iter().map(|(k, v)| (k, v)));
             let mut child = command.spawn()?;
             // Every attempt drains into the same buffer, so a daemon that lost a
             // port race and was retried still leaves its diagnostic behind.
