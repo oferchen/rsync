@@ -285,7 +285,6 @@ pub(crate) fn build_wire_format_rules(
         let rule_type = match spec.kind() {
             FilterRuleKind::Include => RuleType::Include,
             FilterRuleKind::Exclude => RuleType::Exclude,
-            FilterRuleKind::Clear => RuleType::Clear,
             FilterRuleKind::Protect => RuleType::Protect,
             FilterRuleKind::Risk => RuleType::Risk,
             FilterRuleKind::DirMerge => RuleType::DirMerge,
@@ -1296,7 +1295,6 @@ mod tests {
         let specs = vec![
             FilterRuleSpec::include("*.txt"),
             FilterRuleSpec::exclude("*.log"),
-            FilterRuleSpec::clear(),
             FilterRuleSpec::protect("important"),
             FilterRuleSpec::risk("temp"),
             FilterRuleSpec::dir_merge(".rsync-filter", DirMergeOptions::new()),
@@ -1304,13 +1302,12 @@ mod tests {
 
         let rules = build_wire_format_rules(&specs, false).expect("should convert all rule types");
 
-        assert_eq!(rules.len(), 6);
+        assert_eq!(rules.len(), 5);
         assert_eq!(rules[0].rule_type, RuleType::Include);
         assert_eq!(rules[1].rule_type, RuleType::Exclude);
-        assert_eq!(rules[2].rule_type, RuleType::Clear);
-        assert_eq!(rules[3].rule_type, RuleType::Protect);
-        assert_eq!(rules[4].rule_type, RuleType::Risk);
-        assert_eq!(rules[5].rule_type, RuleType::DirMerge);
+        assert_eq!(rules[2].rule_type, RuleType::Protect);
+        assert_eq!(rules[3].rule_type, RuleType::Risk);
+        assert_eq!(rules[4].rule_type, RuleType::DirMerge);
     }
 
     #[test]
