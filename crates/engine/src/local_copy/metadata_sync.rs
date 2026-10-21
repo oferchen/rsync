@@ -309,11 +309,39 @@ pub(crate) fn ensure_fake_super_source_stat(
         return Ok(());
     }
     match ::metadata::load_fake_super(source) {
-        Err(error) if ::metadata::is_corrupt_fake_super(&error) => {
-            Err(LocalCopyError::file_io(error.to_string()))
-        }
+        Err(error) if ::metadata::is_corrupt_fake_super(&error) => Err(LocalCopyError::file_io(
+            crate::local_copy::LocalCopySide::Sender,
+            error.to_string(),
+        )),
         _ => Ok(()),
     }
+}
+
+/// Reads a `--fake-super` destination through its `%stat` record, so the
+/// copy compares and itemizes against the attributes the file stands for.
+///
+/// A record that does not parse ends the copy with `RERR_FILEIO`, raised by
+/// the generator as upstream's is.
+// upstream: generator.c:1745 gen_entry_stat() -> link_stat() ->
+// xattrs.c:1372 x_lstat() -> xattrs.c:1253-1258 get_stat_xattr().
+pub(crate) fn fake_super_destination_stat(
+    destination: &std::path::Path,
+    stat: fast_io::EntryMetadata,
+) -> Result<fast_io::EntryMetadata, LocalCopyError> {
+    ::metadata::fold_fake_super_stat(destination, stat).map_err(|error| {
+        if ::metadata::is_corrupt_fake_super(&error) {
+            LocalCopyError::file_io(
+                crate::local_copy::LocalCopySide::Generator,
+                error.to_string(),
+            )
+        } else {
+            LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            )
+        }
+    })
 }
 /// Converts a [`MetadataError`] into a [`LocalCopyError`].
 pub(crate) fn map_metadata_error(error: MetadataError) -> LocalCopyError {

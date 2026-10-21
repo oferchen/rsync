@@ -835,6 +835,13 @@ where
             core::exit_code::io_error_exit_code(io_error, got_xfer_error).unwrap_or(0)
         }
         Err(e) => {
+            // upstream: io.c:1930 - an exit the peer asked for with
+            // MSG_ERROR_EXIT re-enters _exit_cleanup() with a negative line, so
+            // log_exit() prints nothing (cleanup.c:221-226) and the process
+            // leaves with the peer's code.
+            if let Some(code) = core::server::remote_exit_code(&e) {
+                return code;
+            }
             let exit_code = core::exit_code::ExitCode::from_io_error(&e);
             write_server_error_with_code(
                 stderr,

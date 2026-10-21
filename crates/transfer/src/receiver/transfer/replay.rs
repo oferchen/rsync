@@ -164,7 +164,7 @@ impl ReceiverContext {
         // upstream generator.c:2246 set_file_attrs for identical files). The
         // returned request list is discarded: the recorded stream, not the
         // local plan, decides what is transferred.
-        drop(self.build_files_to_transfer(
+        self.build_files_to_transfer(
             writer,
             &dest_dir,
             #[cfg(unix)]
@@ -175,7 +175,7 @@ impl ReceiverContext {
             &mut stats,
             acl_cache.as_deref(),
             acl_id_map.as_deref(),
-        ));
+        )?;
         self.server_no_transfer_itemize.borrow_mut().clear();
         // The generator half above itemizes against the LOCAL quick-check (it
         // classifies which files it would transfer), but on a replay the
