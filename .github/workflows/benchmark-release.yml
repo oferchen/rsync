@@ -124,7 +124,7 @@ jobs:
             echo ""
             echo "| Crate | Benchmark | Target |"
             echo "|-------|-----------|--------|"
-            echo "| checksums | checksums_benchmark, parallel_benchmark, pipelined_benchmark | Checksum algorithms (Adler32, MD4, MD5, XXH3), SIMD vs scalar |"
+            echo "| checksums | checksums_benchmark, pipelined_benchmark | Checksum algorithms (Adler32, MD4, MD5, XXH3), SIMD vs scalar |"
             echo "| core | transfer_benchmark | End-to-end transfer pipeline |"
             echo "| engine | optimizations_benchmark, parallel_checksum, delta_transfer_benchmark | Delta engine, parallel checksumming |"
             echo "| fast_io | io_optimizations | I/O strategies (mmap, buffered, sparse) |"
