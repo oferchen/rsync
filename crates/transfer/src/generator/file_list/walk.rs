@@ -58,9 +58,12 @@ enum WalkStep {
     /// that directory's own entry, so an `opendir` failure is reported ahead of
     /// the entry; the transfer-root arm opens it after entering the filter
     /// scope. Which side opens is what keeps diagnostic ordering unchanged.
+    ///
+    /// The handle is boxed because Windows' `std::fs::ReadDir` embeds a
+    /// `WIN32_FIND_DATAW`, which would otherwise size every pending step.
     ScanChildren {
         dir: PathBuf,
-        opened: Option<fast_io::pinned_root::ReadDir>,
+        opened: Option<Box<fast_io::pinned_root::ReadDir>>,
     },
     /// Release one per-directory filter scope.
     ///
@@ -533,7 +536,7 @@ impl GeneratorContext {
                     }
                 }
                 WalkStep::ScanChildren { dir, opened } => {
-                    self.scan_children_onto(&dir, opened, stack)?;
+                    self.scan_children_onto(&dir, opened.map(|entries| *entries), stack)?;
                 }
                 WalkStep::LeaveDir(guard) => self.filter_chain.leave_directory(guard),
             }
@@ -715,7 +718,7 @@ impl GeneratorContext {
             stack.push(WalkStep::LeaveDir(guard));
             stack.push(WalkStep::ScanChildren {
                 dir: dir_path,
-                opened: Some(entries),
+                opened: Some(Box::new(entries)),
             });
         }
 

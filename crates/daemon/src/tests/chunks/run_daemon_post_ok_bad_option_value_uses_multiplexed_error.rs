@@ -153,7 +153,7 @@ fn run_daemon_post_ok_bad_option_value_uses_multiplexed_error() {
     );
 
     drop(reader);
-    let _ = stream.shutdown(std::net::Shutdown::Both);
+    drop(stream);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok(), "daemon thread returned: {result:?}");
 }

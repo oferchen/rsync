@@ -98,7 +98,7 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("compare-dest client push failed: {e}");
         }
     }
@@ -122,7 +122,7 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
         "unchanged.txt must not exist at destination (compare-dest should skip it)"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 /// End-to-end test for `--link-dest` push over daemon protocol.
@@ -224,7 +224,7 @@ fn daemon_link_dest_push_creates_hardlinks() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("link-dest client push failed: {e}");
         }
     }
@@ -265,7 +265,7 @@ fn daemon_link_dest_push_creates_hardlinks() {
         "new_file.txt content mismatch"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 /// End-to-end test for `--copy-dest` push over daemon protocol.
@@ -370,7 +370,7 @@ fn daemon_copy_dest_push_copies_from_reference() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("copy-dest client push failed: {e}");
         }
     }
@@ -409,5 +409,5 @@ fn daemon_copy_dest_push_copies_from_reference() {
         "changed.txt content must match source"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

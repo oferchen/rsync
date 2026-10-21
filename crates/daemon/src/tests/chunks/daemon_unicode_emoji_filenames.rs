@@ -90,7 +90,7 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("emoji filenames push failed: {e}");
         }
     }
@@ -156,5 +156,5 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
         "directory name must contain U+1F4C2 emoji, got: {dir_name_str}"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

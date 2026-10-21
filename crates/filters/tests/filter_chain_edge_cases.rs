@@ -8,8 +8,6 @@ use std::path::Path;
 
 use filters::{FilterChain, FilterRule, FilterSet};
 
-// 1. Empty filter chain behavior
-
 /// An empty chain (no global rules, no scopes) allows every path.
 #[test]
 fn empty_chain_allows_all_files_and_dirs() {
@@ -59,8 +57,6 @@ fn multiple_empty_scopes_allow_all() {
     chain.leave_directory(g1);
     assert!(chain.is_empty());
 }
-
-// 2. Special characters in patterns
 
 /// Patterns with spaces match filenames containing spaces.
 #[test]
@@ -116,8 +112,6 @@ fn pattern_with_consecutive_dots() {
     assert!(chain.allows(Path::new("file.bak"), false));
 }
 
-// 3. CVE-related path traversal patterns
-
 /// A filter excluding `../` patterns does not affect normal paths.
 #[test]
 fn path_traversal_dot_dot_in_exclude_pattern() {
@@ -161,8 +155,6 @@ fn single_dot_pattern() {
     assert!(!chain.allows(Path::new("."), false));
     assert!(chain.allows(Path::new("a"), false));
 }
-
-// 4. Deeply nested path matching
 
 /// Double-star patterns match paths at arbitrary depth.
 #[test]
@@ -222,8 +214,6 @@ fn intermediate_double_star_pattern() {
     assert!(chain.allows(Path::new("src/foo/bar.snap"), false));
 }
 
-// 5. Case sensitivity edge cases
-
 /// Pattern matching is case-sensitive by default (upstream rsync behavior).
 #[test]
 fn case_sensitive_exclude() {
@@ -268,8 +258,6 @@ fn mixed_case_extension_pattern() {
     assert!(chain.allows(Path::new("photo.jpg"), false));
     assert!(chain.allows(Path::new("photo.JPG"), false));
 }
-
-// 6. Anchored vs unanchored rule interactions
 
 /// An anchored exclude followed by an unanchored include - first-match-wins.
 #[test]
@@ -343,8 +331,6 @@ fn scoped_exclude_overrides_global_anchored_include() {
     // After leaving scope, global include applies (default is include anyway).
     assert!(chain.allows(Path::new("data"), false));
 }
-
-// 7. Directory-only vs file-only filter rules
 
 /// A directory-only exclude (trailing `/`) does not match a file.
 #[test]
@@ -448,8 +434,6 @@ fn wildcard_directory_only_exclude() {
     assert!(!chain.allows(Path::new("pkg/__pycache__"), true));
     assert!(chain.allows(Path::new("__pycache__"), false));
 }
-
-// Interaction: scoped rules with directory-only and anchored patterns combined
 
 /// Scoped anchored directory-only exclude is removed when scope is popped.
 #[test]

@@ -91,7 +91,7 @@ fn daemon_delta_transfer_updates_modified_files() {
                 );
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("initial push failed: {e}");
             }
         }
@@ -145,7 +145,7 @@ fn daemon_delta_transfer_updates_modified_files() {
                 );
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("delta push failed: {e}");
             }
         }
@@ -172,5 +172,5 @@ fn daemon_delta_transfer_updates_modified_files() {
         "destination data.txt must contain the appended payload"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

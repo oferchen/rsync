@@ -20,12 +20,18 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use daemon::{DaemonConfig, run_daemon};
-use platform::signal::SignalFlags;
+#[cfg(not(unix))]
+use daemon::DaemonConfigBuilder;
+use daemon::{DaemonConfig, DaemonError, run_daemon};
+
+// The forked test-daemon harness the unit tests use; each binary uses a subset.
+#[allow(dead_code)]
+#[path = "../src/tests/daemon_process.rs"]
+mod daemon_process;
+use daemon_process::DaemonHandle;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -36,26 +42,12 @@ fn allocate_listener() -> (u16, TcpListener) {
     (port, listener)
 }
 
-fn spawn_daemon(
-    listener: TcpListener,
-    port: u16,
-) -> (
-    thread::JoinHandle<Result<(), daemon::DaemonError>>,
-    SignalFlags,
-) {
+fn spawn_daemon(listener: TcpListener, port: u16) -> DaemonHandle {
     spawn_daemon_with_args(listener, port, &[])
 }
 
 /// Spawns a daemon with additional CLI arguments beyond `--no-detach --port`.
-fn spawn_daemon_with_args(
-    listener: TcpListener,
-    port: u16,
-    extra_args: &[&str],
-) -> (
-    thread::JoinHandle<Result<(), daemon::DaemonError>>,
-    SignalFlags,
-) {
-    let flags = SignalFlags::new();
+fn spawn_daemon_with_args(listener: TcpListener, port: u16, extra_args: &[&str]) -> DaemonHandle {
     let mut args = vec![
         "--no-detach".to_string(),
         "--port".to_string(),
@@ -66,10 +58,8 @@ fn spawn_daemon_with_args(
         .disable_default_paths()
         .arguments(args)
         .pre_bound_listener(listener)
-        .signal_flags(flags.clone())
         .build();
-    let handle = thread::spawn(move || run_daemon(config));
-    (handle, flags)
+    DaemonHandle::spawn(config)
 }
 
 fn connect_with_timeout(port: u16) -> TcpStream {
@@ -118,7 +108,7 @@ fn send_version(stream: &mut TcpStream) {
 #[test]
 fn lifecycle_list_modules() {
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon(listener, port);
+    let handle = spawn_daemon(listener, port);
 
     let stream = connect_with_timeout(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
@@ -148,7 +138,7 @@ fn lifecycle_list_modules() {
     drop(writer);
     drop(reader);
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok(), "daemon should exit cleanly: {result:?}");
 }
@@ -162,7 +152,7 @@ fn lifecycle_list_modules() {
 #[test]
 fn lifecycle_unknown_module() {
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon(listener, port);
+    let handle = spawn_daemon(listener, port);
 
     let stream = connect_with_timeout(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
@@ -202,7 +192,7 @@ fn lifecycle_unknown_module() {
     drop(writer);
     drop(reader);
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok(), "daemon should exit cleanly: {result:?}");
 }
@@ -215,7 +205,7 @@ fn lifecycle_unknown_module() {
 #[test]
 fn lifecycle_early_exit_after_version() {
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon(listener, port);
+    let handle = spawn_daemon(listener, port);
 
     let stream = connect_with_timeout(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
@@ -230,7 +220,7 @@ fn lifecycle_early_exit_after_version() {
     drop(writer);
     drop(reader);
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(
         result.is_ok(),
@@ -246,7 +236,7 @@ fn lifecycle_early_exit_after_version() {
 #[test]
 fn lifecycle_immediate_disconnect() {
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon(listener, port);
+    let handle = spawn_daemon(listener, port);
 
     let stream = connect_with_timeout(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
@@ -260,7 +250,7 @@ fn lifecycle_immediate_disconnect() {
     // Give the daemon a moment to process the EOF.
     thread::sleep(Duration::from_millis(100));
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(
         result.is_ok(),
@@ -276,7 +266,7 @@ fn lifecycle_immediate_disconnect() {
 #[test]
 fn lifecycle_multiple_sequential_connections() {
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon(listener, port);
+    let handle = spawn_daemon(listener, port);
 
     for i in 0..5 {
         let stream = connect_with_timeout(port);
@@ -318,7 +308,7 @@ fn lifecycle_multiple_sequential_connections() {
         drop(reader);
     }
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(
         result.is_ok(),
@@ -347,7 +337,7 @@ fn lifecycle_max_connections_sequential_no_leak() {
     const ITERATIONS: usize = CAP * 3; // Well past the cap: N+2 and then some.
 
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon_with_args(listener, port, &["--max-connections", "4"]);
+    let handle = spawn_daemon_with_args(listener, port, &["--max-connections", "4"]);
 
     for i in 0..ITERATIONS {
         let stream = connect_with_timeout(port);
@@ -398,7 +388,7 @@ fn lifecycle_max_connections_sequential_no_leak() {
         drop(reader);
     }
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(
         result.is_ok(),
@@ -425,7 +415,7 @@ fn lifecycle_max_connections_sequential_no_leak() {
 #[test]
 fn lifecycle_repeated_version_line_is_a_module_name() {
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon(listener, port);
+    let handle = spawn_daemon(listener, port);
 
     let stream = connect_with_timeout(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
@@ -457,7 +447,7 @@ fn lifecycle_repeated_version_line_is_a_module_name() {
     drop(writer);
     drop(reader);
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(
         result.is_ok(),
@@ -474,7 +464,7 @@ fn lifecycle_repeated_version_line_is_a_module_name() {
 #[test]
 fn lifecycle_version_then_disconnect() {
     let (port, listener) = allocate_listener();
-    let (handle, flags) = spawn_daemon(listener, port);
+    let handle = spawn_daemon(listener, port);
 
     let stream = connect_with_timeout(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
@@ -483,8 +473,11 @@ fn lifecycle_version_then_disconnect() {
     read_greeting(&mut reader);
     send_version(&mut writer);
 
-    // Drop writer side to send FIN, triggering EOF on daemon read.
-    drop(writer);
+    // Half-close to send FIN, triggering EOF on the daemon's read. Dropping
+    // `writer` would not: `reader` holds a clone of the same socket.
+    writer
+        .shutdown(std::net::Shutdown::Write)
+        .expect("half-close the client");
 
     // Drain any response the daemon sends before closing.
     let mut buf = [0u8; 256];
@@ -499,7 +492,7 @@ fn lifecycle_version_then_disconnect() {
 
     thread::sleep(Duration::from_millis(100));
 
-    flags.shutdown.store(true, Ordering::Relaxed);
+    handle.terminate();
     let result = handle.join().expect("daemon thread");
     assert!(
         result.is_ok(),

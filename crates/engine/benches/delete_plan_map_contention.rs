@@ -49,8 +49,6 @@
 //! Run: `cargo bench -p engine --bench delete_plan_map_contention`
 
 #![deny(unsafe_code)]
-#![cfg(unix)]
-
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::path::{Path, PathBuf};

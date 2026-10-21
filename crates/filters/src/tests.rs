@@ -454,7 +454,7 @@ mod clear_scope_tests {
         ];
         let set = FilterSet::from_rules_with_merge_expansion(rules, 8).expect("expanded");
 
-        // `- /a` survives — parent CLI rule was not cleared.
+        // `- /a` survives - parent CLI rule was not cleared.
         assert!(
             !set.allows(Path::new("a"), false),
             "parent CLI exclude `- /a` should still match",

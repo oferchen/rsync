@@ -584,10 +584,8 @@ fn bench_bottleneck_analysis(c: &mut Criterion) {
     for (size_mb, change_pct, block_size) in test_cases {
         let size = size_mb * 1024 * 1024;
 
-        // Create basis data
         let basis = make_test_data(size);
 
-        // Create modified data
         let modified: Vec<u8> = if change_pct == 0 {
             basis.clone()
         } else if change_pct == 100 {

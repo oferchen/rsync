@@ -84,7 +84,7 @@ fn daemon_pull_default_send_zc_byte_identical() {
             ])
             .build();
         if let Err(e) = core::client::run_client(client_config) {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("{label} daemon pull failed: {e}");
         }
 
@@ -98,6 +98,6 @@ fn daemon_pull_default_send_zc_byte_identical() {
             "small.txt differs after a {label} daemon pull"
         );
 
-        let _ = finish_daemon(daemon_handle);
+        drop(daemon_handle);
     }
 }

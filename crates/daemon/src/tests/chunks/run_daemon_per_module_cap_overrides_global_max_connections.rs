@@ -93,7 +93,7 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
     // Second client targets the same module while the first still
     // holds its slot. The per-module cap (1) must fire even though the
     // global cap (10) has only one outstanding connection.
-    let mut second_stream = connect_with_retries(port);
+    let mut second_stream = connect_client(port);
     let mut second_reader = BufReader::new(second_stream.try_clone().expect("clone second"));
 
     line.clear();

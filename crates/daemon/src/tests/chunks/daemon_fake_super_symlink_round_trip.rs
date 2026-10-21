@@ -86,7 +86,7 @@ fn daemon_fake_super_module_round_trips_symlinks_through_placeholders() {
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     if let Err(e) = run(source_arg, OsString::from(&rsync_url)) {
-        let _ = finish_daemon(daemon_handle);
+        drop(daemon_handle);
         panic!("push into the fake-super module failed: {e}");
     }
     let owner = fs::metadata(source_dir.join("f")).expect("stat source");
@@ -125,10 +125,10 @@ fn daemon_fake_super_module_round_trips_symlinks_through_placeholders() {
     let mut back_arg = back_dir.clone().into_os_string();
     back_arg.push("/");
     if let Err(e) = run(OsString::from(&rsync_url), back_arg) {
-        let _ = finish_daemon(daemon_handle);
+        drop(daemon_handle);
         panic!("pull from the fake-super module failed: {e}");
     }
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
     for (name, target) in [("link", "f"), ("dangle", "/nonexistent/target")] {
         assert_eq!(
             fs::read_link(back_dir.join(name))

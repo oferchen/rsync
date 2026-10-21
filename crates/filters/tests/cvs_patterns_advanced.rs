@@ -133,9 +133,6 @@ fn cvs_directory_patterns_match_correctly() {
     // And its contents
     assert!(!set.allows(Path::new(".git/config"), false));
     assert!(!set.allows(Path::new(".git/objects/abc"), false));
-
-    // But not files named .git
-    // (depends on directory_only handling)
 }
 
 #[test]
@@ -509,8 +506,6 @@ fn file_matching_multiple_cvs_patterns() {
 
     // File matching multiple patterns
     assert!(!set.allows(Path::new("file.bak.old"), false));
-
-    // The fact that it matches multiple is irrelevant, first match is enough
 }
 
 #[test]

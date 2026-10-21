@@ -3,12 +3,7 @@
 /// connected client socket plus the daemon thread handle.
 ///
 /// The caller has already consumed nothing: the server greeting is still queued.
-fn start_auth_digest_daemon(
-    dir: &Path,
-) -> (
-    TcpStream,
-    thread::JoinHandle<Result<(), crate::DaemonError>>,
-) {
+fn start_auth_digest_daemon(dir: &Path) -> (TcpStream, DaemonHandle) {
     let module_dir = dir.join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
     let secrets_path = dir.join("secrets.txt");
@@ -283,7 +278,7 @@ fn daemon_skips_digest_negotiation_when_the_module_needs_no_auth() {
 
     drop(reader);
     drop(stream);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 /// A protocol > 31 greeting that carries no digest list at all is refused before
@@ -320,7 +315,7 @@ fn daemon_refuses_a_protocol_32_greeting_without_a_digest_list() {
 
     drop(reader);
     drop(stream);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 /// Drives one daemon with a greeting advertising an EMPTY digest list and
@@ -358,7 +353,7 @@ fn assert_empty_digest_list_refused(greeting: &str) {
 
     drop(reader);
     drop(stream);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 /// A protocol-31 greeting whose only trailing byte is the separating space
@@ -427,7 +422,7 @@ fn daemon_auth_falls_back_when_the_client_advertised_no_digest_list() {
 
     drop(reader);
     drop(stream);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 /// The single-session entry points (stdio, inetd) surface a session-fatal refusal

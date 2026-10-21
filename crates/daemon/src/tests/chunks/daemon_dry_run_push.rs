@@ -90,7 +90,7 @@ fn daemon_dry_run_push() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("dry-run client push failed: {e}");
         }
     }
@@ -110,5 +110,5 @@ fn daemon_dry_run_push() {
     );
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

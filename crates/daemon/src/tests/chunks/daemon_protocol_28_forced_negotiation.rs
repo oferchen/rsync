@@ -63,7 +63,7 @@ fn daemon_protocol_28_forced_client_greeting_accepted() {
     );
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -172,9 +172,10 @@ fn daemon_protocol_28_forced_version_negotiation_downgrade() {
     );
 
     drop(reader);
+    drop(stream);
     // Bound the join: on Windows the daemon accept loop can linger past the
     // client disconnect, so detach rather than wedge until the 360s slow-timeout.
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 /// End-to-end test using the client API with forced protocol 28 against a
@@ -244,7 +245,7 @@ fn daemon_protocol_28_forced_client_api_push() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("Protocol 28 forced push failed: {e}");
         }
     }
@@ -261,7 +262,7 @@ fn daemon_protocol_28_forced_client_api_push() {
         "file content must match after protocol 28 push"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 /// End-to-end test using the client API with forced protocol 28 against a
@@ -343,7 +344,7 @@ fn daemon_protocol_28_forced_client_api_pull() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("Protocol 28 forced pull failed: {e}");
         }
     }
@@ -365,7 +366,7 @@ fn daemon_protocol_28_forced_client_api_pull() {
         "nested/inner.txt content must match after protocol 28 pull"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 /// End-to-end roundtrip test combining push and pull at forced protocol 28
@@ -447,7 +448,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
                 );
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("protocol 28 push phase failed: {e}");
             }
         }
@@ -491,7 +492,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
                 );
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("protocol 28 pull phase failed: {e}");
             }
         }
@@ -514,7 +515,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
         "subdir/nested.txt roundtrip mismatch at protocol 28"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 #[test]
@@ -590,5 +591,5 @@ fn daemon_protocol_28_forced_module_listing_works() {
     );
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }

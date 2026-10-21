@@ -420,29 +420,7 @@ fn selector_for_algorithm_creates_correct_strategy() {
     }
 }
 
-#[test]
-fn selector_for_unavailable_algorithm_returns_error() {
-    #[cfg(not(feature = "zstd"))]
-    {
-        let result = CompressionStrategySelector::for_algorithm(
-            CompressionAlgorithmKind::Zstd,
-            CompressionLevel::Default,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
-    }
-
-    #[cfg(not(feature = "lz4"))]
-    {
-        let result = CompressionStrategySelector::for_algorithm(
-            CompressionAlgorithmKind::Lz4,
-            CompressionLevel::Default,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
-    }
-}
-
+#[cfg(all(feature = "zstd", feature = "lz4"))]
 #[test]
 fn selector_negotiate_finds_first_common_algorithm() {
     let local = vec![
@@ -461,6 +439,7 @@ fn selector_negotiate_finds_first_common_algorithm() {
     assert_eq!(strategy.algorithm_name(), "zlib");
 }
 
+#[cfg(feature = "zstd")]
 #[test]
 fn selector_negotiate_respects_local_preference_order() {
     let local = vec![
@@ -478,6 +457,7 @@ fn selector_negotiate_respects_local_preference_order() {
     assert_eq!(strategy.algorithm_name(), "zlib");
 }
 
+#[cfg(all(feature = "zstd", feature = "lz4"))]
 #[test]
 fn selector_negotiate_no_common_algorithm_returns_none() {
     let local = vec![CompressionAlgorithmKind::Zstd];

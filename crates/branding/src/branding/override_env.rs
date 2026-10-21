@@ -13,6 +13,11 @@ const BRAND_OVERRIDE_OC: u8 = 3;
 
 static BRAND_OVERRIDE_STATE: AtomicU8 = AtomicU8::new(BRAND_OVERRIDE_UNINITIALIZED);
 
+/// Returns the brand forced by `BRAND_OVERRIDE_ENV`, if any.
+///
+/// The environment is read once per process and cached in an atomic; later
+/// changes to the variable are ignored. An unset, empty or unparsable value
+/// yields `None`.
 pub(super) fn brand_override_from_env() -> Option<Brand> {
     let mut state = BRAND_OVERRIDE_STATE.load(Ordering::Acquire);
 
@@ -36,6 +41,7 @@ pub(super) fn brand_override_from_env() -> Option<Brand> {
     }
 }
 
+/// Clears the cached override so the next lookup re-reads the environment.
 #[cfg(test)]
 pub(super) fn reset_brand_override_cache() {
     BRAND_OVERRIDE_STATE.store(BRAND_OVERRIDE_UNINITIALIZED, Ordering::Release);

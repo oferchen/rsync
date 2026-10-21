@@ -43,7 +43,6 @@ fn level_2_searches_dest_and_reference_dirs() {
     fs::write(ref_dir1.path().join("app_v1.0.tar.gz"), "version 1.0").expect("write ref1");
     fs::write(ref_dir2.path().join("app_v1.1.tar.gz"), "version 1.1").expect("write ref2");
 
-    // Level 2 matcher
     let matcher = FuzzyMatcher::with_level(2).with_fuzzy_basis_dirs(vec![
         ref_dir1.path().to_path_buf(),
         ref_dir2.path().to_path_buf(),
@@ -73,7 +72,6 @@ fn level_2_chooses_best_match_across_all_dirs() {
     // Ref has a better match (same name pattern)
     fs::write(ref_dir.path().join("data_2023.csv"), "x".repeat(900)).expect("write ref");
 
-    // Level 2 matcher
     let matcher =
         FuzzyMatcher::with_level(2).with_fuzzy_basis_dirs(vec![ref_dir.path().to_path_buf()]);
 

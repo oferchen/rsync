@@ -93,7 +93,7 @@ fn daemon_itemize_push_reports_events() {
     let summary = match result {
         Ok(summary) => summary,
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("itemize push failed: {e}");
         }
     };
@@ -176,5 +176,5 @@ fn daemon_itemize_push_reports_events() {
         "new_file.txt should be marked as newly created"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

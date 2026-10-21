@@ -124,7 +124,7 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("hardlinks-relative client push failed: {e}");
         }
     }
@@ -203,5 +203,5 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
     );
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
