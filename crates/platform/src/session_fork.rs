@@ -135,6 +135,50 @@ pub fn die_with_parent(parent_pid: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// Makes `pid` - or the caller, for `0` - the leader of a new process group
+/// whose id is its pid.
+///
+/// A supervisor that must later stop a forked process together with every
+/// process it forks in turn calls this on both sides of the fork: the child
+/// for itself and the parent for the child. Whichever side runs first creates
+/// the group, so it exists before the parent can act on it. A child that has
+/// already exited cannot join a group and needs none, so `ESRCH` is success.
+pub fn lead_process_group(pid: i32) -> io::Result<()> {
+    let pid = nix::unistd::Pid::from_raw(pid);
+    match nix::unistd::setpgid(pid, pid) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        Err(errno) => Err(errno.into()),
+    }
+}
+
+/// Sends `SIGTERM` to process `pid`, asking it to shut down.
+///
+/// upstream: main.c:1919-1921 routes SIGTERM to `sig_int()`, the daemon's
+/// orderly-exit path; this is how a supervisor asks a forked daemon to stop
+/// rather than killing it.
+pub fn terminate_process(pid: i32) -> io::Result<()> {
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .map_err(io::Error::from)
+}
+
+/// Sends `SIGKILL` to every process in group `pgid`.
+///
+/// A group with no members left has nothing to stop, so `ESRCH` is success.
+/// Call it while the leader is still unreaped - a zombie keeps its pid, and
+/// with it the group id, from being reused by an unrelated process.
+pub fn kill_process_group(pgid: i32) -> io::Result<()> {
+    match nix::sys::signal::killpg(
+        nix::unistd::Pid::from_raw(pgid),
+        nix::sys::signal::Signal::SIGKILL,
+    ) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        Err(errno) => Err(errno.into()),
+    }
+}
+
 /// How a forked child ended.
 ///
 /// This is deliberately the *process* vocabulary, not the session's: what a
@@ -363,6 +407,77 @@ mod tests {
                 assert_eq!(
                     wait_for_child(child_pid).expect("wait failed"),
                     ChildEnd::Exited(0)
+                );
+            }
+        }
+    }
+
+    /// Killing a group stops its leader AND the processes the leader forked,
+    /// which is what lets a supervisor stop a forked daemon with its sessions.
+    ///
+    /// The descendants hold the only write ends of `pipe`, so the parent's
+    /// read reaching EOF proves both are gone - an event, not a timed wait.
+    /// The grandchild writes a byte first, so it provably existed when the
+    /// group was killed. A second kill finds the group empty and succeeds.
+    #[test]
+    fn killing_a_process_group_stops_the_leader_and_its_children() {
+        use std::io::Read as _;
+
+        let (mut reader, writer) = io::pipe().expect("pipe");
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => {
+                if lead_process_group(0).is_err() {
+                    exit_child(1);
+                }
+                match fork_session() {
+                    // The grandchild announces itself, so the kill below
+                    // cannot land before it exists.
+                    Ok(ForkSide::Child) => {
+                        use std::io::Write as _;
+                        if (&writer).write_all(b"r").is_err() {
+                            exit_child(3);
+                        }
+                    }
+                    Ok(ForkSide::Parent { .. }) => {}
+                    Err(_) => exit_child(2),
+                }
+                // Leader and grandchild both block until the group is killed.
+                loop {
+                    std::thread::park();
+                }
+            }
+            ForkSide::Parent { child_pid } => {
+                drop(writer);
+                lead_process_group(child_pid).expect("lead the child's group");
+                let mut ready = [0u8; 1];
+                reader.read_exact(&mut ready).expect("grandchild started");
+                kill_process_group(child_pid).expect("kill the group");
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Signalled(libc::SIGKILL)
+                );
+                let mut rest = Vec::new();
+                reader
+                    .read_to_end(&mut rest)
+                    .expect("EOF once every member of the group is gone");
+                kill_process_group(child_pid).expect("an empty group is already stopped");
+            }
+        }
+    }
+
+    /// A terminated child ends by SIGTERM - the signal is delivered, not
+    /// swallowed or replaced by a harder one.
+    #[test]
+    fn terminate_process_delivers_sigterm() {
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => loop {
+                std::thread::park();
+            },
+            ForkSide::Parent { child_pid } => {
+                terminate_process(child_pid).expect("terminate");
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Signalled(libc::SIGTERM)
                 );
             }
         }

@@ -26,8 +26,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
         ])
         .build();
 
-    drop(held_listener);
-    let daemon_handle = spawn_daemon(config);
+    let daemon_handle = spawn_daemon(config, held_listener);
 
     // The daemon refuses the garbage sent in place of the client's version
     // banner (upstream clientserver.c:209-213 `@ERROR: protocol startup
@@ -35,7 +34,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
     // catch_unwind isolates per-connection errors. Only the @ERROR-then-EOF
     // shape matters here, not which refusal it is.
     {
-        let mut bad = connect_with_retries(port);
+        let mut bad = connect_client(port);
         let mut bad_reader = BufReader::new(bad.try_clone().expect("clone bad stream"));
 
         // Drain the server greeting so the send buffer does not stall.
@@ -69,7 +68,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
     // If catch_unwind isolation had failed the daemon would have exited and
     // connect_with_retries would time out.
     {
-        let mut good = connect_with_retries(port);
+        let mut good = connect_client(port);
         let mut good_reader = BufReader::new(good.try_clone().expect("clone good stream"));
 
         let mut line = String::new();

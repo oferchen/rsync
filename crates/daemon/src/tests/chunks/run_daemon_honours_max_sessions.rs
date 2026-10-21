@@ -16,12 +16,11 @@ fn run_daemon_honours_max_sessions() {
         ])
         .build();
 
-    drop(held_listener);
-    let handle = spawn_daemon(config);
+    let handle = spawn_daemon(config, held_listener);
 
     let expected_greeting = legacy_daemon_greeting();
     for _ in 0..2 {
-        let mut stream = connect_with_retries(port);
+        let mut stream = connect_client(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
         let mut line = String::new();

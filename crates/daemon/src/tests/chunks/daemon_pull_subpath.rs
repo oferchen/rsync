@@ -37,10 +37,7 @@ fn launch_subpath_daemon(
     config_file: &Path,
     port: u16,
     held: std::net::TcpListener,
-) -> (
-    std::net::TcpStream,
-    std::thread::JoinHandle<Result<(), DaemonError>>,
-) {
+) -> (std::net::TcpStream, DaemonHandle) {
     let daemon_config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -99,7 +96,7 @@ fn daemon_pull_subpath_single_file_emits_basename() {
         .build();
     let result = core::client::run_client(client_config);
     if let Err(e) = &result {
-        let _ = finish_daemon(handle);
+        drop(handle);
         panic!("sub-path pull failed: {e}");
     }
 
@@ -121,7 +118,7 @@ fn daemon_pull_subpath_single_file_emits_basename() {
         "single-file sub-path pull must not walk the whole module root",
     );
 
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[cfg(unix)]
@@ -153,7 +150,7 @@ fn daemon_pull_subpath_directory_trailing_slash_flattens_contents() {
         .build();
     let result = core::client::run_client(client_config);
     if let Err(e) = &result {
-        let _ = finish_daemon(handle);
+        drop(handle);
         panic!("trailing-slash sub-path pull failed: {e}");
     }
 
@@ -173,7 +170,7 @@ fn daemon_pull_subpath_directory_trailing_slash_flattens_contents() {
         "trailing-slash sub-path pull must not walk above the requested directory",
     );
 
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[cfg(unix)]
@@ -211,7 +208,7 @@ fn daemon_pull_subpath_directory_no_trailing_slash_walks_subtree() {
         .build();
     let result = core::client::run_client(client_config);
     if let Err(e) = &result {
-        let _ = finish_daemon(handle);
+        drop(handle);
         panic!("no-trailing-slash sub-path pull failed: {e}");
     }
 
@@ -234,7 +231,7 @@ fn daemon_pull_subpath_directory_no_trailing_slash_walks_subtree() {
         "directory sub-path pull must not escape the requested sub-tree",
     );
 
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[cfg(unix)]
@@ -266,7 +263,7 @@ fn daemon_pull_subpath_deeply_nested_file_emits_basename() {
         .build();
     let result = core::client::run_client(client_config);
     if let Err(e) = &result {
-        let _ = finish_daemon(handle);
+        drop(handle);
         panic!("deep sub-path pull failed: {e}");
     }
 
@@ -281,7 +278,7 @@ fn daemon_pull_subpath_deeply_nested_file_emits_basename() {
         "deep sub-path pull must NOT recreate the intermediate path components",
     );
 
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[cfg(unix)]
@@ -332,5 +329,5 @@ fn daemon_pull_subpath_rejects_parent_dir_traversal() {
         "traversal pull must NEVER place a file outside the module on disk",
     );
 
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
