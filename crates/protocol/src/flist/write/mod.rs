@@ -403,7 +403,10 @@ impl FileListWriter {
 
     /// Returns whether safe file list mode is enabled.
     #[inline]
-    const fn use_safe_file_list(&self) -> bool {
+    /// Whether a list trailer can carry an I/O error word (upstream
+    /// `use_safe_inc_flist`: protocol 31+, or 30 with `CF_SAFE_FLIST`).
+    #[must_use]
+    pub const fn use_safe_file_list(&self) -> bool {
         self.use_safe_file_list
     }
 
