@@ -28,6 +28,12 @@
 //! - upstream: exclude.c:get_cvs_excludes() - builds the default CVS list
 //! - upstream: options.c - `--cvs-exclude` (`-C`) option handling
 
+use std::env;
+use std::fs;
+use std::path::Path;
+
+use crate::{FilterRule, RuleModifiers};
+
 /// Default CVS exclusion patterns.
 ///
 /// This is the single canonical definition of rsync's built-in `--cvs-exclude`
@@ -99,6 +105,138 @@ pub fn pattern_count() -> usize {
     default_patterns().count()
 }
 
+/// One pattern of the global CVS ignore list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CvsIgnorePattern {
+    /// The pattern text.
+    pub pattern: String,
+    /// Whether it is a built-in default, which upstream alone marks perishable
+    /// at protocol 30 and later (exclude.c:1498-1500).
+    pub builtin: bool,
+}
+
+/// Builds upstream's global CVS ignore list: the built-in defaults, then the
+/// words of `$HOME/.cvsignore`, then the words of `$CVSIGNORE`.
+///
+/// upstream: exclude.c:1489-1507 get_cvs_excludes(). Both extra sources are
+/// parsed word-split with no prefixes, so a bare `!` clears everything
+/// collected so far, defaults included (exclude.c:1273-1275, 1472-1473,
+/// 1541-1551), while `!foo` is a literal pattern. An unreadable
+/// `$HOME/.cvsignore` adds nothing, as `parse_filter_file` without
+/// XFLG_FATAL_ERRORS returns quietly (exclude.c:1703-1722).
+#[must_use]
+pub fn cvs_ignore_list() -> Vec<CvsIgnorePattern> {
+    let mut list: Vec<CvsIgnorePattern> = default_patterns()
+        .map(|pattern| CvsIgnorePattern {
+            pattern: pattern.to_owned(),
+            builtin: true,
+        })
+        .collect();
+    if let Some(home) = env::var_os("HOME").filter(|home| !home.is_empty())
+        && let Ok(contents) = fs::read(Path::new(&home).join(".cvsignore"))
+    {
+        push_cvsignore_words(&mut list, &String::from_utf8_lossy(&contents));
+    }
+    if let Some(value) = env::var_os("CVSIGNORE").filter(|value| !value.is_empty()) {
+        push_cvsignore_words(&mut list, &value.to_string_lossy());
+    }
+    list
+}
+
+/// Appends the words of one CVS ignore source, honouring a bare `!` clear.
+fn push_cvsignore_words(list: &mut Vec<CvsIgnorePattern>, text: &str) {
+    for word in text.split_whitespace() {
+        if word == "!" {
+            list.clear();
+        } else {
+            list.push(CvsIgnorePattern {
+                pattern: word.to_owned(),
+                builtin: false,
+            });
+        }
+    }
+}
+
+/// The flags a non-merge `C` rule hands to the CVS ignore patterns it stands
+/// for.
+///
+/// upstream: exclude.c:1595-1597 passes the rule's flags to get_cvs_excludes(),
+/// whose `rule_template()` makes every pattern inherit FILTRULES_FROM_CONTAINER
+/// - include, negate and perishable among them (exclude.c:1229-1231, 1263) -
+/// and the rule's side (:1447-1456). So `+C` makes the list includes and `-sC`
+/// makes it sender-only.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CvsTemplate {
+    /// The rule's prefix was `+` (FILTRULE_INCLUDE).
+    pub include: bool,
+    /// `!`: FILTRULE_NEGATE.
+    pub negate: bool,
+    /// `p`: FILTRULE_PERISHABLE.
+    pub perishable: bool,
+    /// `s`: FILTRULE_SENDER_SIDE.
+    pub sender_side: bool,
+    /// `r`: FILTRULE_RECEIVER_SIDE.
+    pub receiver_side: bool,
+}
+
+impl CvsTemplate {
+    /// The template of a `C` rule whose prefix is an include when `include`,
+    /// carrying the modifier flags `mods`.
+    #[must_use]
+    pub const fn new(include: bool, mods: &RuleModifiers) -> Self {
+        Self {
+            include,
+            negate: mods.negate,
+            perishable: mods.perishable,
+            sender_side: mods.sender_side,
+            receiver_side: mods.receiver_side,
+        }
+    }
+
+    /// Whether `entry` is perishable under this template; `builtin_perishable`
+    /// is the protocol >= 30 flag the built-in defaults carry.
+    #[must_use]
+    pub const fn perishable_for(&self, entry: &CvsIgnorePattern, builtin_perishable: bool) -> bool {
+        self.perishable || (entry.builtin && builtin_perishable)
+    }
+
+    /// The `(sender, receiver)` sides to impose, or `None` for both.
+    #[must_use]
+    pub const fn sides(&self) -> Option<(bool, bool)> {
+        if self.sender_side == self.receiver_side {
+            None
+        } else {
+            Some((self.sender_side, self.receiver_side))
+        }
+    }
+
+    /// The rule for one pattern of the list.
+    #[must_use]
+    pub fn rule(&self, entry: &CvsIgnorePattern, builtin_perishable: bool) -> FilterRule {
+        let rule = if self.include {
+            FilterRule::include(entry.pattern.as_str())
+        } else {
+            FilterRule::exclude(entry.pattern.as_str())
+        };
+        let rule = rule
+            .with_perishable(self.perishable_for(entry, builtin_perishable))
+            .with_negate(self.negate);
+        match self.sides() {
+            Some((sender, receiver)) => rule.with_sides(sender, receiver),
+            None => rule,
+        }
+    }
+}
+
+/// The global CVS ignore list as rules under `template`.
+#[must_use]
+pub fn cvs_ignore_rules(template: CvsTemplate, builtin_perishable: bool) -> Vec<FilterRule> {
+    cvs_ignore_list()
+        .iter()
+        .map(|entry| template.rule(entry, builtin_perishable))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +306,45 @@ mod tests {
         assert!(patterns.contains(&".svn/"));
         assert!(patterns.contains(&"*.o"));
         assert!(!patterns.contains(&"*.o/"));
+    }
+
+    fn words(list: &[CvsIgnorePattern]) -> Vec<&str> {
+        list.iter().map(|entry| entry.pattern.as_str()).collect()
+    }
+
+    /// upstream: exclude.c:1273-1275, 1472-1473 - in a word-split, no-prefix
+    /// CVS source a bare `!` keeps FILTRULE_CLEAR_LIST and pops the whole list,
+    /// built-in defaults included (exclude.c:1541-1551), while `!foo` and
+    /// `#foo` are literal patterns: the comment test is skipped when word
+    /// splitting (exclude.c:1806).
+    #[test]
+    fn cvsignore_words_honour_a_bare_bang_and_keep_literals() {
+        let mut list = vec![CvsIgnorePattern {
+            pattern: "core".to_owned(),
+            builtin: true,
+        }];
+        push_cvsignore_words(&mut list, "*.o ! !foo #bar");
+        assert_eq!(words(&list), ["!foo", "#bar"]);
+        assert!(list.iter().all(|entry| !entry.builtin));
+    }
+
+    #[test]
+    fn template_flags_reach_the_rule() {
+        let entry = CvsIgnorePattern {
+            pattern: "*.o".to_owned(),
+            builtin: true,
+        };
+        let template = CvsTemplate {
+            include: true,
+            negate: true,
+            perishable: false,
+            sender_side: false,
+            receiver_side: true,
+        };
+        let rule = template.rule(&entry, true);
+        assert_eq!(rule.action(), crate::FilterAction::Include);
+        assert!(rule.is_negated() && rule.is_perishable());
+        assert!(!rule.applies_to_sender() && rule.applies_to_receiver());
+        assert!(!CvsTemplate::default().rule(&entry, false).is_perishable());
     }
 }

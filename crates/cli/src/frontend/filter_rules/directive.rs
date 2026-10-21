@@ -18,12 +18,14 @@ pub(crate) enum FilterDirective {
     /// A blank `--filter`/`--exclude`/`--include` value is therefore a no-op,
     /// not a syntax error.
     Noop,
-    /// The `-C` cvs-convenience rule: expands to the global CVS default
-    /// excludes (built-in list + `$HOME/.cvsignore` + `$CVSIGNORE`).
+    /// A non-merge `C` rule (`-C`, `+C`, `-sC`, `-C pat`, ...): stands for the
+    /// global CVS ignore list (built-in list + `$HOME/.cvsignore` +
+    /// `$CVSIGNORE`) under the rule's own prefix and modifiers.
     ///
     /// upstream: exclude.c:1595-1597 get_cvs_excludes() on a non-merge
-    /// FILTRULE_CVS_IGNORE rule.
-    CvsDefaults,
+    /// FILTRULE_CVS_IGNORE rule; check_filter() never matches the rule's own
+    /// pattern (exclude.c:1201-1206).
+    CvsDefaults(filters::CvsTemplate),
 }
 
 /// Describes a filter merge directive including its source and options.

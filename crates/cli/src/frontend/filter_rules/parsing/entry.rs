@@ -60,7 +60,7 @@ fn discard_over_long(directive: FilterDirective, source: RuleSource<'_>) -> Filt
     let pattern = match &directive {
         FilterDirective::Rule(spec) => Cow::Borrowed(spec.pattern()),
         FilterDirective::Merge(merge) => merge.source().to_string_lossy(),
-        FilterDirective::Clear | FilterDirective::Noop | FilterDirective::CvsDefaults => {
+        FilterDirective::Clear | FilterDirective::Noop | FilterDirective::CvsDefaults(_) => {
             return directive;
         }
     };
@@ -151,8 +151,7 @@ pub(crate) fn parse_old_prefix_rule(
 }
 
 /// Dispatches a trimmed rule line (no merge prefix) to the matching parser:
-/// `!`/`clear`, CVS convenience, shorthands, `+`/`-` short rules, then the
-/// long keyword rules.
+/// `!`/`clear`, shorthands, `+`/`-` short rules, then the long keyword rules.
 pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective, Message> {
     let text = line.text();
     // upstream: exclude.c:1465 parse_rule_tok - the pattern length is strlen, so
@@ -186,10 +185,6 @@ pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective
         ClearToken::NotClearToken => {}
     }
 
-    if is_cvs_convenience_rule(trimmed) {
-        return Ok(FilterDirective::CvsDefaults);
-    }
-
     if let Some(result) = parse_shorthand_rules(line) {
         return result;
     }
@@ -207,28 +202,4 @@ pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective
     }
 
     parse_keyword_rule(line)
-}
-
-/// Detects the cvs-convenience filter rule (`-C` or `+C`, with an optional
-/// comma between the action and the modifier). Such a rule carries only the
-/// `C` (cvs-ignore) modifier and no pattern; upstream expands it into the
-/// global CVS default excludes rather than treating it as a literal pattern.
-///
-/// The per-directory `:C` / `.C` merge forms are handled earlier by the
-/// merge-directive parser, so they never reach this check.
-///
-/// upstream: exclude.c:1595-1597 - a FILTRULE_CVS_IGNORE rule that is not a
-/// merge triggers get_cvs_excludes().
-pub(super) fn is_cvs_convenience_rule(trimmed: &str) -> bool {
-    let body = match trimmed
-        .strip_prefix('-')
-        .or_else(|| trimmed.strip_prefix('+'))
-    {
-        Some(rest) => rest,
-        None => return false,
-    };
-    let body = body.strip_prefix(',').unwrap_or(body);
-    // upstream: exclude.c:1402 the cvs-ignore modifier is uppercase `C`; a
-    // lowercase `c` is rejected as an invalid modifier, so match exactly.
-    body == "C"
 }

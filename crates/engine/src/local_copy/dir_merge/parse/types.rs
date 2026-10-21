@@ -38,6 +38,9 @@ pub(crate) enum ParsedFilterDirective {
         /// Parser configuration for the registered per-directory merge rule.
         options: DirMergeOptions,
     },
+    /// A non-merge `C` rule, which stands for the CVS ignore list built from
+    /// its flags (upstream exclude.c:1595-1597).
+    CvsIgnore(filters::CvsTemplate),
     /// A list-clearing directive (`!` or `clear`) that wipes inherited rules.
     Clear,
 }
