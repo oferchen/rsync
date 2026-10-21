@@ -28,17 +28,16 @@ use crate::FilterRule;
 ///
 /// // No-inherit: rules apply only in the directory where the file is found
 /// let config = DirMergeConfig::new(".rsync-filter").with_inherit(false);
-///
-/// // Exclude the filter file itself from transfer
-/// let config = DirMergeConfig::new(".rsync-filter").with_exclude_self(true);
 /// ```
+///
+/// The `e` modifier is not a config property: upstream adds the exclude of the
+/// merge file's basename to the list that registers the rule, once, ahead of
+/// it (exclude.c:1558-1572), so the caller that registers the config adds it.
 #[derive(Clone, Debug)]
 pub struct DirMergeConfig {
     filename: String,
     /// upstream: exclude.c - FILTRULE_NO_INHERIT flag
     inherit: bool,
-    /// upstream: exclude.c - `e` modifier on dir-merge rules
-    exclude_self: bool,
     sender_only: bool,
     receiver_only: bool,
     anchor_root: bool,
@@ -87,7 +86,6 @@ impl DirMergeConfig {
         Self {
             filename: filename.into(),
             inherit: true,
-            exclude_self: false,
             sender_only: false,
             receiver_only: false,
             anchor_root: false,
@@ -131,15 +129,6 @@ impl DirMergeConfig {
     #[must_use]
     pub const fn with_inherit(mut self, inherit: bool) -> Self {
         self.inherit = inherit;
-        self
-    }
-
-    /// Sets whether the merge file itself should be excluded from transfer.
-    ///
-    /// Corresponds to upstream rsync's `e` modifier on dir-merge rules.
-    #[must_use]
-    pub const fn with_exclude_self(mut self, exclude: bool) -> Self {
-        self.exclude_self = exclude;
         self
     }
 
@@ -261,12 +250,6 @@ impl DirMergeConfig {
     #[must_use]
     pub const fn no_prefixes_include(&self) -> bool {
         self.no_prefixes_include
-    }
-
-    /// Returns whether the merge file itself should be excluded.
-    #[must_use]
-    pub const fn excludes_self(&self) -> bool {
-        self.exclude_self
     }
 
     /// Reports whether this config restricts its rules to the sender side.
