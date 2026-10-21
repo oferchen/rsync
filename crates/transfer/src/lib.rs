@@ -776,10 +776,38 @@ pub struct ServerTransferHooks<'p, 'i> {
 /// wire-identical.
 #[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake_adopting<W: Write>(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    stdin: &mut dyn Read,
+    stdout: W,
+    hooks: ServerTransferHooks<'_, '_>,
+) -> ServerResult {
+    run_server_over_transport(
+        config,
+        handshake,
+        Box::new(fast_io::transport::BlockingStreams::new(stdin, stdout)),
+        hooks,
+    )
+}
+
+/// Runs a server transfer over `transport`, the connection every later byte
+/// crosses.
+///
+/// The handshake has already happened; whatever its reader buffered past the
+/// greeting travels in `handshake.buffered` and is served first. Protocol
+/// setup reads exactly what it parses, then input buffering starts (upstream:
+/// main.c:1308 start_server() -> setup_protocol(), io.c:1573
+/// io_start_buffering_in()), and from there every read and write goes through
+/// one transport core (upstream: io.c:647 perform_io()).
+///
+/// # Errors
+///
+/// As [`run_server_with_handshake_adopting`].
+#[cfg_attr(feature = "tracing", instrument(skip(transport, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
+pub fn run_server_over_transport<'a>(
     mut config: ServerConfig,
     mut handshake: HandshakeResult,
-    stdin: &mut dyn Read,
-    mut stdout: W,
+    transport: Box<dyn fast_io::transport::Transport + 'a>,
     hooks: ServerTransferHooks<'_, '_>,
 ) -> ServerResult {
     let ServerTransferHooks {
@@ -803,15 +831,12 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // (already set by @RSYNCD greeting or SSH handshake).
     let buffered_data = std::mem::take(&mut handshake.buffered);
 
-    // Chain any buffered data from the handshake BufReader ahead of raw stdin.
-    // In daemon mode, the BufReader used for argument reading may buffer compat
-    // exchange bytes (TCP coalescing). Discarding them breaks protocol negotiation.
-    let mut chained_stdin: Box<dyn std::io::Read> = if buffered_data.is_empty() {
-        Box::new(stdin)
-    } else {
-        let buffered = std::io::Cursor::new(buffered_data);
-        Box::new(buffered.chain(stdin))
-    };
+    // The handshake BufReader may have buffered compat exchange bytes (TCP
+    // coalescing in daemon mode); the core serves them before reading more,
+    // since discarding them breaks protocol negotiation.
+    let core = iobuf::Core::new(transport, buffered_data);
+    let mut stdin = iobuf::CoreReader::new(&core);
+    let mut stdout = iobuf::CoreWriter::new(&core);
 
     // upstream: main.c:1308 start_server() → setup_protocol(f_out, f_in)
     // Performs compat flags exchange + capability negotiation in RAW mode,
@@ -944,7 +969,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             ..Default::default()
         },
     )?;
-    let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
+    let setup_result = setup::setup_protocol(&mut stdout, &mut stdin, &setup_config)?;
 
     // upstream: main.c:1356-1364 start_server() - fd 2 is set blocking only
     // after setup_protocol(), once ssh is done twiddling its descriptors. Like
@@ -1031,14 +1056,8 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // (io.c:314), and which counts raw transport reads below the demuxer and
     // token decompression, as upstream's `stats.total_read` (io.c:938).
     let bytes_received_counter = bytes_read.unwrap_or_default();
-    let core = iobuf::Core::new(
-        Box::new(fast_io::transport::BlockingStreams::new(
-            chained_stdin,
-            stdout,
-        )),
-        std::sync::Arc::clone(&bytes_received_counter),
-    );
-    let mut reader = reader::ServerReader::new_plain(iobuf::CoreReader::new(&core));
+    iobuf::Core::start_buffering(&core, std::sync::Arc::clone(&bytes_received_counter));
+    let mut reader = reader::ServerReader::new_plain(stdin);
 
     // upstream: io.c:1750-1751 - only the client receiver adopts a
     // daemon-advertised MSG_IO_TIMEOUT (`am_server || am_generator` treat it as
@@ -1075,10 +1094,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // on a pull). Install the limiter at the bottom of the writer stack so it
     // paces the exact wire bytes the descriptor accepts (io.c:952,979), below
     // the multiplex framer.
-    let throttled_stdout = writer::ThrottlingWriter::new(
-        iobuf::CoreWriter::new(&core),
-        sender_bandwidth_limiter(&config),
-    );
+    let throttled_stdout = writer::ThrottlingWriter::new(stdout, sender_bandwidth_limiter(&config));
 
     // upstream: io.c:977 - stats.total_written counts every byte the raw
     // descriptor accepts, multiplex frame headers included, in perform_io().

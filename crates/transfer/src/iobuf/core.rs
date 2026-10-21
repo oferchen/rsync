@@ -23,12 +23,16 @@ use protocol::iobuf::{IN_BUFFER_SIZE, InBuf};
 pub(crate) struct Core<'a> {
     transport: Box<dyn Transport + 'a>,
     input: InBuf,
+    /// Bytes the handshake already took off the transport, served before
+    /// anything new is read.
+    pending: Vec<u8>,
+    /// `stats.total_read`, once input buffering has started; until then reads
+    /// are raw and uncounted (upstream: io.c:2157-2161 read_buf() bypasses
+    /// perform_io() while `iobuf.in_fd < 0`).
+    read_counter: Option<Arc<AtomicU64>>,
     /// The peer closed its output; no more input will arrive
     /// (upstream: io.c:905-911 sets `iobuf.in_fd = -2`).
     in_eof: bool,
-    /// `stats.total_read`: every byte read off the transport (upstream:
-    /// io.c:938).
-    read_counter: Arc<AtomicU64>,
     /// How long one wait may last before the connection is declared dead;
     /// `None` waits without a bound.
     timeout: Option<Duration>,
@@ -39,23 +43,53 @@ pub(crate) struct Core<'a> {
 pub(crate) type SharedCore<'a> = Rc<RefCell<Core<'a>>>;
 
 impl<'a> Core<'a> {
-    /// A core over `transport`, publishing its read total into `read_counter`.
-    pub(crate) fn new(
-        transport: Box<dyn Transport + 'a>,
-        read_counter: Arc<AtomicU64>,
-    ) -> SharedCore<'a> {
+    /// A core over `transport` in raw mode, serving `pending` (bytes an
+    /// earlier handshake reader buffered) before reading anything new.
+    pub(crate) fn new(transport: Box<dyn Transport + 'a>, pending: Vec<u8>) -> SharedCore<'a> {
         Rc::new(RefCell::new(Self {
             transport,
             input: InBuf::new(IN_BUFFER_SIZE),
+            pending,
+            read_counter: None,
             in_eof: false,
-            read_counter,
             timeout: None,
         }))
     }
 
-    /// Serves `out` from buffered input, waiting for the peer when there is
-    /// none (upstream: io.c:1044 raw_read_buf() -> perform_io(PIO_NEED_INPUT)).
+    /// Starts buffered, counted input, as upstream does once protocol setup
+    /// is done (upstream: io.c:1573 io_start_buffering_in()). Bytes still
+    /// pending from the handshake move into the input buffer and count as
+    /// read, as they did when they first crossed the transport.
+    pub(crate) fn start_buffering(core: &SharedCore<'a>, read_counter: Arc<AtomicU64>) {
+        let mut core = core.borrow_mut();
+        let pending = std::mem::take(&mut core.pending);
+        read_counter.fetch_add(pending.len() as u64, Ordering::Relaxed);
+        core.read_counter = Some(read_counter);
+        let mut rest = &pending[..];
+        while !rest.is_empty() {
+            let n = core
+                .input
+                .fill_with(|span| {
+                    let n = span.len().min(rest.len());
+                    span[..n].copy_from_slice(&rest[..n]);
+                    Ok(Some(n))
+                })
+                .expect("copying from memory cannot fail")
+                .expect("an empty input buffer has room");
+            rest = &rest[n..];
+        }
+    }
+
+    fn buffering(&self) -> bool {
+        self.read_counter.is_some()
+    }
+
+    /// Serves `out`: from the handshake's leftovers or raw from the transport
+    /// before buffering starts, from the input buffer after.
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if !self.buffering() {
+            return self.read_raw(out);
+        }
         loop {
             if !self.input.is_empty() {
                 let readable = self.input.readable();
@@ -83,6 +117,23 @@ impl<'a> Core<'a> {
                 }
             } else if self.fill_input()?.is_some() {
                 continue;
+            }
+            self.wait(false)?;
+        }
+    }
+
+    /// An unbuffered read: exactly what the caller asks for, never more, so
+    /// nothing is held back from the stack built after setup.
+    fn read_raw(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if !self.pending.is_empty() {
+            let n = self.pending.len().min(out.len());
+            out[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            return Ok(n);
+        }
+        loop {
+            if let Some(n) = self.transport.try_read(out)? {
+                return Ok(n);
             }
             self.wait(false)?;
         }
@@ -120,10 +171,16 @@ impl<'a> Core<'a> {
     }
 
     /// One `perform_io()` pass: waits for output room when `want_output`,
-    /// and for input whenever the input buffer has room (upstream:
-    /// io.c:746-806), then reads what arrived.
+    /// and, once input is buffered, for input whenever the buffer has room
+    /// (upstream: io.c:746-806), then reads what arrived. Before buffering
+    /// starts a wait is for one direction only, as upstream's raw
+    /// safe_read()/safe_write() are (io.c:310, io.c:387).
     fn wait(&mut self, want_output: bool) -> io::Result<()> {
-        let poll_input = !self.in_eof && self.input.has_room();
+        let poll_input = if self.buffering() {
+            !self.in_eof && self.input.has_room()
+        } else {
+            !want_output
+        };
         let ready = self.transport.wait(poll_input, want_output, self.timeout)?;
         if !ready.readable && !ready.writable {
             return Err(io::Error::new(
@@ -131,14 +188,16 @@ impl<'a> Core<'a> {
                 "timed out waiting for the connection",
             ));
         }
-        if ready.readable {
+        if ready.readable && self.buffering() {
             self.fill_input()?;
         }
         Ok(())
     }
 
     fn count_read(&self, n: usize) {
-        self.read_counter.fetch_add(n as u64, Ordering::Relaxed);
+        if let Some(counter) = &self.read_counter {
+            counter.fetch_add(n as u64, Ordering::Relaxed);
+        }
     }
 }
 
@@ -190,10 +249,8 @@ mod tests {
     fn core_over_socket() -> (SharedCore<'static>, UnixStream, Arc<AtomicU64>) {
         let (ours, peer) = UnixStream::pair().unwrap();
         let counter = Arc::new(AtomicU64::new(0));
-        let core = Core::new(
-            Box::new(FdTransport::socket(ours).unwrap()),
-            Arc::clone(&counter),
-        );
+        let core = Core::new(Box::new(FdTransport::socket(ours).unwrap()), Vec::new());
+        Core::start_buffering(&core, Arc::clone(&counter));
         (core, peer, counter)
     }
 
@@ -250,8 +307,9 @@ mod tests {
                 waited: false,
                 waits: Rc::clone(&waits),
             }),
-            Arc::clone(&counter),
+            Vec::new(),
         );
+        Core::start_buffering(&core, Arc::clone(&counter));
         assert_eq!(CoreWriter::new(&core).write(b"data").unwrap(), 4);
         assert_eq!(*waits.borrow(), vec![(true, true)]);
         assert_eq!(
@@ -309,8 +367,9 @@ mod stream_tests {
         let counter = Arc::new(AtomicU64::new(0));
         let core = Core::new(
             Box::new(BlockingStreams::new(source, Vec::new())),
-            Arc::clone(&counter),
+            Vec::new(),
         );
+        Core::start_buffering(&core, Arc::clone(&counter));
         (core, counter)
     }
 
@@ -339,5 +398,28 @@ mod stream_tests {
             IN_BUFFER_SIZE
         );
         assert_eq!(out, source);
+    }
+
+    /// WHY: protocol setup reads exactly what it parses and is not counted,
+    /// as upstream's pre-buffering read_buf() is (io.c:2157-2161); bytes a
+    /// handshake reader buffered come first, and once buffering starts the
+    /// remainder counts as read.
+    #[test]
+    fn raw_mode_serves_the_handshake_leftovers_first_then_buffers_and_counts() {
+        let counter = Arc::new(AtomicU64::new(0));
+        let core = Core::new(
+            Box::new(BlockingStreams::new(&b"tail"[..], Vec::new())),
+            b"head".to_vec(),
+        );
+        let mut reader = CoreReader::new(&core);
+        let mut two = [0u8; 2];
+        reader.read_exact(&mut two).unwrap();
+        assert_eq!(&two, b"he", "leftovers come before the transport");
+        Core::start_buffering(&core, Arc::clone(&counter));
+        assert_eq!(counter.load(Ordering::Relaxed), 2, "unread leftovers count");
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"adtail");
+        assert_eq!(counter.load(Ordering::Relaxed), 6);
     }
 }
