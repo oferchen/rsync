@@ -293,8 +293,6 @@ fn protect_risk_sides_interaction() {
 
 #[test]
 fn perishable_exclude_overridden_by_include() {
-    // In actual rsync, perishable rules are checked differently
-    // This tests our implementation's behavior
     let rules = vec![
         FilterRule::exclude("*.tmp").with_perishable(true),
         FilterRule::include("important.tmp"),
@@ -339,9 +337,6 @@ fn mixed_perishable_non_perishable() {
     assert!(!set.allows(Path::new("file.tmp"), false));
     assert!(!set.allows(Path::new("file.log"), false));
     assert!(!set.allows(Path::new("file.bak"), false));
-
-    // For deletion context, perishable rules are ignored
-    // (This depends on implementation details)
 }
 
 #[test]

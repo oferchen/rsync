@@ -1514,7 +1514,6 @@ mod integration {
 
         let protocol_version = 31;
 
-        // Create basis files at destination
         let basis1 = vec![b'A'; 2000];
         let basis2 = vec![b'X'; 2000];
         fs::write(dest_dir.join("alpha.dat"), &basis1).unwrap();
@@ -1741,7 +1740,6 @@ mod integration {
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Delta data
         {
             use protocol::codec::{NdxCodec, NdxCodecEnum};
 
@@ -1819,7 +1817,6 @@ mod integration {
 
         assert_eq!(result.file_count, 3);
 
-        // Verify delta.dat
         let content_delta = fs::read(dest_dir.join("delta.dat")).unwrap();
         assert_eq!(content_delta.len(), delta_output_size);
         assert_eq!(&content_delta[0..700], &basis_data[0..700]);
@@ -1833,7 +1830,6 @@ mod integration {
             &basis_data[1400..2000]
         );
 
-        // Verify new.txt
         let content_new = fs::read(dest_dir.join("new.txt")).unwrap();
         assert_eq!(content_new, new_file_data);
     }

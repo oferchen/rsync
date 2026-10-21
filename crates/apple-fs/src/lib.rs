@@ -38,11 +38,14 @@ mod unix {
     use nix::sys::stat::{Mode, SFlag, mknod as nix_mknod};
     use nix::unistd::mkfifo as nix_mkfifo;
 
+    /// Creates a FIFO via `nix`; mode bits outside the permission mask are dropped.
     pub(super) fn mkfifo(path: &Path, mode: libc::mode_t) -> io::Result<()> {
         let mode = Mode::from_bits_truncate(mode);
         nix_mkfifo(path, mode).map_err(io::Error::from)
     }
 
+    /// Creates a special file via `nix`, splitting `mode` into its file-type
+    /// bits and permission bits.
     pub(super) fn mknod(path: &Path, mode: libc::mode_t, device: libc::dev_t) -> io::Result<()> {
         let kind = SFlag::from_bits_truncate(mode);
         let perm = Mode::from_bits_truncate(mode);

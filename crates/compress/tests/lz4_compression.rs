@@ -872,7 +872,6 @@ mod large_inputs {
 
     #[test]
     fn frame_large_compressible_data() {
-        // 10MB of highly compressible data
         let data = vec![0u8; 10_000_000];
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
         assert!(
@@ -886,7 +885,6 @@ mod large_inputs {
 
     #[test]
     fn frame_large_structured_data() {
-        // 5MB of structured data
         let data = test_data::structured_binary(5_000_000);
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
         assert!(
@@ -941,7 +939,6 @@ mod comparison {
     fn frame_vs_raw_same_data() {
         let data = test_data::english_text(1000);
 
-        // Both should compress and decompress correctly
         let frame_compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
         let frame_decompressed = frame_decompress(&frame_compressed).unwrap();
         assert_eq!(frame_decompressed, data);

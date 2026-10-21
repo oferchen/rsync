@@ -14,7 +14,7 @@ use crate::rule_source::OwnedRuleSource;
 /// # Negation
 ///
 /// When `negate` is true, the match result is inverted. This mirrors upstream
-/// rsync's `!` modifier behavior from `exclude.c` line 906:
+/// rsync's `!` modifier behavior from `exclude.c:1005`:
 /// ```c
 /// int ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1;
 /// ```
@@ -77,7 +77,7 @@ impl CompiledRule {
     ///
     /// When `negate` is true, the match result is inverted: returns true when
     /// the pattern does NOT match. This mirrors upstream rsync's `!` modifier
-    /// behavior from `exclude.c` line 906.
+    /// behavior from `exclude.c:1005`.
     ///
     /// When `check_descendants` is false, only direct matchers are evaluated -
     /// descendant matchers are skipped. This matches upstream rsync's

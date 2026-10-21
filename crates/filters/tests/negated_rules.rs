@@ -45,7 +45,6 @@ fn negation_is_pattern_level() {
     let rule = FilterRule::exclude("*.bak").with_negate(true);
     assert!(rule.is_negated());
     assert_eq!(rule.action(), FilterAction::Exclude);
-    // The action is still Exclude, but it applies to non-matching files
 }
 
 #[test]

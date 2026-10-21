@@ -552,7 +552,7 @@ mod tests {
         );
     }
 
-    // --- Byte-level entry point: preservation + traversal guard parity ---
+    // Byte-level entry point: preservation + traversal guard parity.
     //
     // `--files-from` names may be non-UTF-8 (a legal Unix filename), so the
     // sender sanitizes them through `sanitize_path_keep_dot_dirs_bytes`. These

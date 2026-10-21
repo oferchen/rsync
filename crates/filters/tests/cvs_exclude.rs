@@ -339,7 +339,8 @@ fn perishable_cvs_with_protect() {
     // Transfer: excluded by perishable CVS rule
     assert!(!set.allows(Path::new("important.o"), false));
 
-    // Deletion: perishable ignored, but protected
+    // Deletion: protected - the top-level scan does not ignore perishable
+    // rules, and `P important.o` matches as well
     assert!(!set.allows_deletion(Path::new("important.o"), false));
 }
 

@@ -209,8 +209,6 @@ fn sender_clear_preserves_receiver_protection() {
     assert!(set.allows(Path::new("file.tmp"), false));
 
     // Receiver protection preserved - deletion blocked
-    // Note: allows_deletion returns false because transfer_allowed must be true
-    // for deletion to be allowed, but protection should still be in effect
     assert!(!set.allows_deletion(Path::new("file.tmp"), false));
 }
 
@@ -310,8 +308,8 @@ fn perishable_in_complex_combinations() {
     assert!(!set.allows(Path::new("scratch.tmp"), false));
     assert!(!set.allows(Path::new("data.cache"), false));
 
-    // For deletion: perishable rules ignored, but exclude("*") matches
-    // Excluded files aren't allowed for deletion (only transferred files can be deleted)
+    // For deletion: only delete_dir_contents() sets `ignore_perishable`
+    // (upstream delete.c:208), so here the perishable excludes match and protect.
     assert!(!set.allows_deletion(Path::new("scratch.tmp"), false));
     assert!(!set.allows_deletion(Path::new("data.cache"), false));
 
