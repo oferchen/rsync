@@ -374,14 +374,11 @@ fn push_of_excluded_symlink_and_fifo_is_refused() {
     fs::remove_file(scratch.source.join("top.secret")).expect("drop the regular bait");
     std::os::unix::fs::symlink("allowed.txt", scratch.source.join("link.secret"))
         .expect("plant symlink");
-    rustix::fs::mknodat(
-        rustix::fs::CWD,
-        scratch.source.join("pipe.secret"),
-        rustix::fs::FileType::Fifo,
-        rustix::fs::Mode::from_raw_mode(0o644),
-        0,
-    )
-    .expect("plant fifo");
+    let status = std::process::Command::new("mkfifo")
+        .arg(scratch.source.join("pipe.secret"))
+        .status()
+        .expect("run mkfifo");
+    assert!(status.success(), "mkfifo failed");
     fs::hard_link(
         scratch.source.join("allowed.txt"),
         scratch.source.join("hard.secret"),
