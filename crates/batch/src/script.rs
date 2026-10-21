@@ -28,7 +28,8 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 /// When `filter_rules` is `Some`, the script includes `--filter=._-` (protocol
 /// 29+) or `--exclude-from=-` (older protocols) and appends the rules as a
 /// heredoc so that the replay applies the same filters used during batch
-/// creation.
+/// creation. The rules are raw bytes, one newline-terminated rule per line, so
+/// a non-UTF-8 pattern reaches the script unchanged.
 ///
 /// When `destination` is `Some`, it is embedded as the fallback in the
 /// `${1:-<dest>}` placeholder so that `./BATCH.sh` (invoked without
@@ -45,7 +46,7 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 /// - `batch.c:336-340`: destination placeholder `${1:-<dest>}`.
 pub fn generate_script_with_filters(
     config: &BatchConfig,
-    filter_rules: Option<&str>,
+    filter_rules: Option<&[u8]>,
     destination: Option<&str>,
 ) -> BatchResult<()> {
     let script_path = config.script_file_path();
@@ -132,22 +133,19 @@ pub fn generate_script_with_filters(
 /// - `batch.c:231-235`: per-rule terminator (`0` when `eol_nulls`, else `\n`).
 /// - `batch.c:237-238`: trailing `";\n"` after NUL-terminated rules.
 /// - `batch.c:239`: closing `#E#` delimiter.
-fn write_filter_heredoc(file: &mut File, rules: &str, eol_nulls: bool) -> io::Result<()> {
+fn write_filter_heredoc(file: &mut File, rules: &[u8], eol_nulls: bool) -> io::Result<()> {
     // upstream: batch.c:217 write_sbuf(fd, " <<'#E#'\n")
     writeln!(file, " <<'#E#'")?;
+    let body = rules.strip_suffix(b"\n").unwrap_or(rules);
+    // upstream: batch.c:231-235 - NUL terminates each rule under eol_nulls.
+    let terminator = if eol_nulls { 0 } else { b'\n' };
+    for rule in body.split(|&b| b == b'\n') {
+        file.write_all(rule)?;
+        file.write_all(&[terminator])?;
+    }
     if eol_nulls {
-        // upstream: batch.c:231-235 - NUL terminates each rule under eol_nulls.
-        for rule in rules.strip_suffix('\n').unwrap_or(rules).split('\n') {
-            file.write_all(rule.as_bytes())?;
-            file.write_all(&[0])?;
-        }
         // upstream: batch.c:237-238 write_sbuf(fd, ";\n")
         file.write_all(b";\n")?;
-    } else {
-        write!(file, "{rules}")?;
-        if !rules.ends_with('\n') {
-            writeln!(file)?;
-        }
     }
     // upstream: batch.c:239 write_sbuf(fd, "#E#")
     write!(file, "#E#")?;
@@ -736,7 +734,7 @@ mod tests {
 
         let filter_rules = "- *.tmp\n+ */\n+ *.txt\n- *\n";
 
-        let result = generate_script_with_filters(&config, Some(filter_rules), None);
+        let result = generate_script_with_filters(&config, Some(filter_rules.as_bytes()), None);
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -803,7 +801,7 @@ mod tests {
 
         let filter_rules = "- *.log\n";
 
-        let result = generate_script_with_filters(&config, Some(filter_rules), None);
+        let result = generate_script_with_filters(&config, Some(filter_rules.as_bytes()), None);
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -936,7 +934,7 @@ mod tests {
             ])
             .with_operands(["src/".to_owned(), "dst/".to_owned()]);
 
-        generate_script_with_filters(&config, Some("- *.tmp\n"), Some("dst/")).unwrap();
+        generate_script_with_filters(&config, Some("- *.tmp\n".as_bytes()), Some("dst/")).unwrap();
 
         let content = fs::read_to_string(config.script_file_path()).unwrap();
 
@@ -1025,7 +1023,7 @@ mod tests {
         .with_eol_nulls(true);
 
         let filter_rules = "- *.tmp\n+ *.txt\n";
-        generate_script_with_filters(&config, Some(filter_rules), None).unwrap();
+        generate_script_with_filters(&config, Some(filter_rules.as_bytes()), None).unwrap();
 
         let content = fs::read(config.script_file_path()).unwrap();
 
@@ -1063,7 +1061,7 @@ mod tests {
         );
 
         let filter_rules = "- *.tmp\n+ *.txt\n";
-        generate_script_with_filters(&config, Some(filter_rules), None).unwrap();
+        generate_script_with_filters(&config, Some(filter_rules.as_bytes()), None).unwrap();
 
         let content = fs::read(config.script_file_path()).unwrap();
         assert!(!content.contains(&0u8), "no NUL bytes without eol_nulls");
