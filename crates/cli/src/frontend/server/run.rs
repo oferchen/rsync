@@ -170,6 +170,7 @@ where
     // Route through the session-level driver facade
     // (`core::session::run_server_stdio`), which runs the threaded server body.
     use core::server::{ServerConfig, ServerRole, ServerStats};
+    #[cfg(not(unix))]
     use core::session::run_server_stdio;
 
     let program_brand =
@@ -194,6 +195,25 @@ where
     // after --server. upstream: options.c:2795-2796 - protect_args in server mode.
     let secluded_args = detect_secluded_args_flag(args);
 
+    // upstream: main.c:1304-1305 - the server reads and writes descriptors 0
+    // and 1 directly, through perform_io(). Unbuffered handles keep every byte
+    // the client sends for the transport core, so nothing is stranded in a
+    // std buffer.
+    #[cfg(unix)]
+    let stdio = match ServerStdio::open() {
+        Ok(stdio) => stdio,
+        Err(e) => {
+            write_server_error(
+                stderr,
+                program_brand,
+                format!("failed to open the server's stdio: {e}"),
+            );
+            return 1;
+        }
+    };
+    #[cfg(unix)]
+    let mut stdin = &stdio.stdin;
+    #[cfg(not(unix))]
     let mut stdin = io::stdin().lock();
 
     // When secluded-args is active, the client splits its argv: the
@@ -824,7 +844,15 @@ where
     // learns the code from the `MSG_ERROR_EXIT` the transfer body already sent
     // (transfer::announce_error_exit); this is the process status the remote
     // shell reports on top of it.
-    match run_server_stdio(config, &mut stdin, stdout, None) {
+    #[cfg(unix)]
+    let outcome = {
+        // The protocol stream is descriptor 1 itself, not the caller's handle.
+        let _ = stdout;
+        core::session::run_server_fds(config, stdio.stdin, stdio.stdout, None)
+    };
+    #[cfg(not(unix))]
+    let outcome = run_server_stdio(config, &mut stdin, stdout, None);
+    match outcome {
         // upstream: cleanup.c:210-218 - a clean finish still exits with the
         // code the accumulated io_error bits select (23/24/25).
         Ok(stats) => {
@@ -1567,5 +1595,23 @@ mod landlock_surfacing_tests {
             let events = landlock_events(0, &outcome);
             assert!(events.is_empty(), "{events:?}");
         }
+    }
+}
+
+/// Unbuffered handles on the server's descriptors 0 and 1.
+#[cfg(unix)]
+struct ServerStdio {
+    stdin: std::fs::File,
+    stdout: std::fs::File,
+}
+
+#[cfg(unix)]
+impl ServerStdio {
+    fn open() -> io::Result<Self> {
+        use std::os::fd::AsFd;
+        Ok(Self {
+            stdin: io::stdin().as_fd().try_clone_to_owned()?.into(),
+            stdout: io::stdout().as_fd().try_clone_to_owned()?.into(),
+        })
     }
 }

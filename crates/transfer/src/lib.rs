@@ -653,6 +653,47 @@ pub fn run_server_stdio(
     stdout: &mut dyn Write,
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
+    let handshake = server_stdio_handshake(&config, stdin, stdout)?;
+    run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
+}
+
+/// [`run_server_stdio`] over the process's own standard input and output
+/// descriptors, which the transport core polls together (upstream:
+/// main.c:1304-1305 sets both non-blocking for perform_io()).
+///
+/// `stdin` and `stdout` are handles on descriptors 0 and 1. The handshake runs
+/// on them blocking; the transport takes them over afterwards.
+///
+/// # Errors
+///
+/// As [`run_server_stdio`], plus the error switching the descriptors to
+/// non-blocking mode.
+#[cfg(unix)]
+pub fn run_server_fds(
+    config: ServerConfig,
+    stdin: std::fs::File,
+    stdout: std::fs::File,
+    progress: Option<&mut dyn TransferProgressCallback>,
+) -> ServerResult {
+    let handshake = server_stdio_handshake(&config, &mut &stdin, &mut &stdout)?;
+    let transport = fast_io::transport::FdTransport::pair(stdin, stdout)?;
+    run_server_over_transport(
+        config,
+        handshake,
+        Box::new(transport),
+        ServerTransferHooks {
+            progress,
+            ..ServerTransferHooks::default()
+        },
+    )
+}
+
+/// The `--server` side of the version exchange over standard I/O.
+fn server_stdio_handshake(
+    config: &ServerConfig,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+) -> io::Result<HandshakeResult> {
     // upstream: compat.c:602-604 - the non-local server reconciles the client's
     // pre-release subprotocol (carried in its `-e` capability string) before it
     // writes its protocol version. For a stock release peer this is a no-op and
@@ -670,7 +711,7 @@ pub fn run_server_stdio(
     // `ceil(N/2)`. Without a forwarded `--timeout` this stays `None` and the
     // wire is unchanged.
     handshake.io_timeout = config.connection.io_timeout.map(u64::from);
-    run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
+    Ok(handshake)
 }
 
 /// Executes the native server with a pre-negotiated protocol version.

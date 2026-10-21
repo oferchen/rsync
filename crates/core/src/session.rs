@@ -24,3 +24,21 @@ pub fn run_server_stdio(
 ) -> ServerResult {
     transfer::run_server_stdio(config, stdin, stdout, progress)
 }
+
+/// Executes the native server over the process's own standard input and
+/// output descriptors, which the transfer polls together.
+///
+/// `stdin` and `stdout` are handles on descriptors 0 and 1.
+///
+/// # Errors
+///
+/// Propagates every error from the underlying server body unchanged.
+#[cfg(unix)]
+pub fn run_server_fds(
+    config: ServerConfig,
+    stdin: std::fs::File,
+    stdout: std::fs::File,
+    progress: Option<&mut dyn TransferProgressCallback>,
+) -> ServerResult {
+    transfer::run_server_fds(config, stdin, stdout, progress)
+}
