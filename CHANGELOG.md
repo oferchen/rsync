@@ -382,6 +382,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - An interrupted local `--partial` or `--partial-dir` copy no longer replaces an existing destination with an empty temp: the temp is promoted only once literal data reached it, and is otherwise unlinked, as upstream gates on `cleanup_got_literal` (#PRNUM)
 - A daemon receiver now refuses a pushed symlink, device, FIFO, socket or hard-link follower that the module's filter excludes, with upstream's `daemon refused to receive file` line and exit 23, instead of creating it; only regular files and directories were checked before (#PRNUM)
 - Every cross-filesystem rename fallback - the local-copy commit, the `--partial-dir` retention and the `--backup` copy tier - now copies through the same confined resolver as the rename it replaces, clears a symlink planted at the target instead of writing through it, and syncs the copy under `--fsync`, as upstream's `robust_rename()`/`copy_file()` do (#PRNUM)
+- A push or other non-daemon network sender now resolves `--files-from` entries through upstream's trusted-owner walk - the file-list stat, the directory scan and the content open - so an entry below a symlink owned by another user is refused with `link_stat ... failed` and exit 23 instead of being sent (#PRNUM)
 - Honour `--force` when a directory stands where a file must go, and remove obstacles before creating nodes (#7625, #7602, #7701)
 - Never block opening a FIFO as a delta basis (#7594)
 - Apply ownership, timestamps, mode and ACLs to copy-tier backups (#7622, #7825)

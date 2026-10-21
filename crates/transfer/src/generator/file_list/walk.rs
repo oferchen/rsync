@@ -23,6 +23,8 @@ use super::super::GeneratorContext;
 use super::super::io_error_flags;
 use super::super::protocol_io::SenderDiagnostic;
 use super::batch_stat::{StatResult, batch_stat_dir_entries};
+#[cfg(unix)]
+use super::operand_has_dotdir_marker;
 
 /// One pending step of the directory walk.
 ///
@@ -122,6 +124,39 @@ impl<'a> WalkScope<'a> {
 }
 
 impl GeneratorContext {
+    /// The error with which the `--files-from` ownership walk refuses the list
+    /// entry `path`, as opposed to finding nothing there; `None` when the walk
+    /// is inactive.
+    pub(in crate::generator) fn files_from_walk_refusal(
+        &self,
+        path: &Path,
+        base: &Path,
+    ) -> Option<io::Error> {
+        #[cfg(unix)]
+        if self.files_from_base.is_some() {
+            return self
+                .resolve_symlink_metadata(path, base, operand_has_dotdir_marker(path))
+                .err()
+                .filter(|error| error.kind() != io::ErrorKind::NotFound);
+        }
+        let _ = (path, base);
+        None
+    }
+
+    /// Reports a list entry the ownership walk refused, as the entry's own
+    /// stat failure.
+    ///
+    /// upstream: `flist.c:2940-2946` - `rsyserr(FERROR_XFER, errno, "link_stat
+    /// %s failed", ...)` with `io_error |= IOERR_GENERAL`.
+    pub(in crate::generator) fn report_files_from_refusal(
+        &mut self,
+        path: &Path,
+        error: &io::Error,
+    ) {
+        self.log_stat_error(path, error);
+        self.record_io_error(error);
+    }
+
     /// Enumerates a source directory, confined beneath this transfer's root
     /// when it has one.
     ///
@@ -156,6 +191,13 @@ impl GeneratorContext {
     /// - `rsync-3.5.1/flist.c:2374` - the `opendir` failure diagnostic both call
     ///   sites report, unchanged by the anchoring.
     fn scan_source_dir(&self, path: &Path) -> io::Result<fast_io::pinned_root::ReadDir> {
+        // upstream: flist.c:2262-2265 - a `--files-from` directory opens
+        // through the ownership walk before any other arm is considered.
+        #[cfg(unix)]
+        if let Some(base) = self.files_from_base.as_deref() {
+            let names = base.read_dir(path)?;
+            return Ok(fast_io::pinned_root::ReadDir::from_names(path, names));
+        }
         #[cfg(unix)]
         if let Some(root) = self.confine_root() {
             return fast_io::pinned_root::read_dir_under(&root, path);
@@ -1042,6 +1084,16 @@ impl GeneratorContext {
             }
         };
 
+        // upstream: flist.c:465-466 `scan_link_stat()` - a `--files-from`
+        // entry is stat'd through the ownership walk, following a leaf symlink
+        // only for a dot-dir entry since the walk is inactive under
+        // `--copy-dirlinks`.
+        #[cfg(unix)]
+        if let Some(base) = self.files_from_base.as_deref() {
+            return base
+                .symlink_metadata(path, is_dotdir)
+                .map(fast_io::EntryMetadata::from);
+        }
         if self.config.flags.copy_links {
             return fast_io::pinned_root::metadata(path);
         }

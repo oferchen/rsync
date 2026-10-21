@@ -234,6 +234,19 @@ enum Source {
     },
 }
 
+#[cfg(unix)]
+impl ReadDir {
+    /// Lists `names`, already read from `dir` by another resolver, as the
+    /// entries of `dir`.
+    #[must_use]
+    pub fn from_names(dir: &Path, names: Vec<std::ffi::OsString>) -> Self {
+        Self(Source::Names {
+            dir: dir.to_path_buf(),
+            names: names.into_iter(),
+        })
+    }
+}
+
 impl Iterator for ReadDir {
     type Item = io::Result<PathBuf>;
 
