@@ -89,7 +89,6 @@ pub(super) fn apply_symlink_entry_metadata(
 /// rsync's replace-on-conflict behavior.
 #[cfg(unix)]
 pub(super) fn create_symlink(target: &Path, dest_path: &Path) -> BatchResult<()> {
-    // Remove existing entry if present, to mirror upstream rsync behavior
     if dest_path.exists() || dest_path.symlink_metadata().is_ok() {
         let _ = fs::remove_file(dest_path);
     }
