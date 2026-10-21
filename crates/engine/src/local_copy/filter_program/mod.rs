@@ -1,9 +1,8 @@
 //! Filter program and per-directory merge rules.
 //!
-//! A [`FilterProgram`] is an ordered list of filter instructions, per-directory
-//! merge directives ([`DirMergeRule`]), and exclude-if-present markers
-//! ([`ExcludeIfPresentRule`]) that together determine which source entries
-//! participate in a transfer.
+//! A [`FilterProgram`] is an ordered list of filter instructions and
+//! per-directory merge directives ([`DirMergeRule`]) that together determine
+//! which source entries participate in a transfer.
 
 mod options;
 mod program;
@@ -21,10 +20,8 @@ pub(crate) use program::{
 };
 pub use program::{FilterProgram, FilterProgramEntry, FilterProgramError};
 
-pub(crate) use rules::directory_has_marker;
-pub use rules::{DirMergeRule, ExcludeIfPresentRule};
+pub use rules::DirMergeRule;
 
 pub(crate) use segments::{
-    ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterOutcome, FilterSegment,
-    FilterSegmentLayers, FilterSegmentStack,
+    FilterContext, FilterOutcome, FilterSegment, FilterSegmentLayers, FilterSegmentStack,
 };

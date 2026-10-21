@@ -148,20 +148,6 @@ fn parse_filter_directive_clear_keyword_is_case_sensitive() {
 }
 
 #[test]
-fn parse_filter_directive_exclude_if_present_support() {
-    let directive = parse_filter_directive_line("exclude-if-present=.git", RuleSource::Argument)
-        .expect("parse")
-        .expect("directive");
-
-    match directive {
-        ParsedFilterDirective::ExcludeIfPresent(rule) => {
-            assert_eq!(rule.marker_path(Path::new(".")), PathBuf::from("./.git"));
-        }
-        other => panic!("expected exclude-if-present directive, got {other:?}"),
-    }
-}
-
-#[test]
 fn parse_filter_directive_dir_merge_without_modifiers() {
     let directive = parse_filter_directive_line("dir-merge .rsync-filter", RuleSource::Argument)
         .expect("parse")

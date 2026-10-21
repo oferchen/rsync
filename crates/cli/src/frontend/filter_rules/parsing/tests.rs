@@ -164,53 +164,6 @@ fn rule_directive_unsupported_keyword() {
 }
 
 #[test]
-fn exclude_if_present_basic() {
-    let result = parse_exclude_if_present(arg("exclude-if-present .nobackup"));
-    assert!(result.is_some());
-    let directive = result.unwrap().unwrap();
-    match directive {
-        FilterDirective::Rule(spec) => {
-            assert_eq!(spec.kind(), FilterRuleKind::ExcludeIfPresent);
-        }
-        _ => panic!("expected Rule directive"),
-    }
-}
-
-#[test]
-fn exclude_if_present_with_equals() {
-    let result = parse_exclude_if_present(arg("exclude-if-present = marker.txt"));
-    assert!(result.is_some());
-    assert!(result.unwrap().is_ok());
-}
-
-#[test]
-fn exclude_if_present_case_insensitive() {
-    let result = parse_exclude_if_present(arg("EXCLUDE-IF-PRESENT .skip"));
-    assert!(result.is_some());
-    assert!(result.unwrap().is_ok());
-}
-
-#[test]
-fn exclude_if_present_missing_pattern() {
-    let result = parse_exclude_if_present(arg("exclude-if-present"));
-    assert!(result.is_some());
-    assert!(result.unwrap().is_err());
-}
-
-#[test]
-fn exclude_if_present_empty_pattern() {
-    let result = parse_exclude_if_present(arg("exclude-if-present   "));
-    assert!(result.is_some());
-    assert!(result.unwrap().is_err());
-}
-
-#[test]
-fn exclude_if_present_non_matching() {
-    let result = parse_exclude_if_present(arg("other-directive"));
-    assert!(result.is_none());
-}
-
-#[test]
 fn short_include_basic() {
     let result = parse_short_include_rule(arg("+ *.rs"), '+', FilterRuleSpec::include);
     assert!(result.is_some());

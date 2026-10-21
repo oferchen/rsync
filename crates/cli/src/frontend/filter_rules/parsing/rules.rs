@@ -1,13 +1,12 @@
-//! Short-prefix, shorthand, exclude-if-present, and keyword rule parsers.
+//! Short-prefix, shorthand, and keyword rule parsers.
 //!
 //! These parsers handle the non-merge filter-rule forms that
 //! `parse_rule_directive` dispatches to: the `P`/`H`/`S`/`R` shorthands, the
-//! `exclude-if-present` directive, the `+`/`-` short rules, and the long
+//! `+`/`-` short rules, and the long
 //! `include`/`exclude`/`show`/`hide`/`protect`/`risk` keyword rules.
 
 use core::client::FilterRuleSpec;
-use core::message::{Message, Role};
-use core::rsync_error;
+use core::message::Message;
 
 use super::super::directive::FilterDirective;
 use super::helpers::{
@@ -40,47 +39,6 @@ pub(super) fn parse_shorthand_rules(
     }
 
     None
-}
-
-/// Parses an `exclude-if-present=MARKER` directive. Returns `None` when the
-/// text does not start with the `exclude-if-present` keyword, or an error when
-/// the marker file name is missing.
-pub(super) fn parse_exclude_if_present(
-    line: RuleLine<'_>,
-) -> Option<Result<FilterDirective, Message>> {
-    let trimmed = line.text();
-    const EXCLUDE_IF_PRESENT_PREFIX: &str = "exclude-if-present";
-    if trimmed.len() < EXCLUDE_IF_PRESENT_PREFIX.len() {
-        return None;
-    }
-
-    let prefix = &trimmed[..EXCLUDE_IF_PRESENT_PREFIX.len()];
-    if !prefix.eq_ignore_ascii_case(EXCLUDE_IF_PRESENT_PREFIX) {
-        return None;
-    }
-
-    let mut remainder = trimmed[EXCLUDE_IF_PRESENT_PREFIX.len()..]
-        .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    if let Some(rest) = remainder.strip_prefix('=') {
-        remainder = rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    }
-
-    let pattern_text = remainder.trim();
-    if pattern_text.is_empty() {
-        let message = rsync_error!(
-            1,
-            format!(
-                "filter rule '{}' is missing a marker file after 'exclude-if-present'",
-                line.shown()
-            )
-        )
-        .with_role(Role::Client);
-        return Some(Err(message));
-    }
-
-    Some(Ok(FilterDirective::Rule(
-        FilterRuleSpec::exclude_if_present(pattern_text.to_owned()),
-    )))
 }
 
 /// Parses a `+`/`-` short rule (include/exclude) identified by `prefix`,

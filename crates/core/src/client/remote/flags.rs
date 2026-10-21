@@ -289,27 +289,6 @@ pub(crate) fn build_wire_format_rules(
             FilterRuleKind::Protect => RuleType::Protect,
             FilterRuleKind::Risk => RuleType::Risk,
             FilterRuleKind::DirMerge => RuleType::DirMerge,
-            FilterRuleKind::ExcludeIfPresent => {
-                // upstream: ExcludeIfPresent is transmitted as Exclude with 'e' flag
-                // (FILTRULE_EXCLUDE_SELF).
-                let (pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
-                wire_rules.push(FilterRuleWireFormat {
-                    rule_type: RuleType::Exclude,
-                    pattern: pattern.into(),
-                    anchored,
-                    abs_path: spec.is_abs_path(),
-                    directory_only,
-                    // upstream: 'e' flag = FILTRULE_EXCLUDE_SELF.
-                    exclude_from_merge: true,
-                    xattr_only: spec.is_xattr_only(),
-                    sender_side: wire_sender_side(spec),
-                    receiver_side: wire_receiver_side(spec),
-                    perishable: spec.is_perishable(),
-                    negate: spec.is_negated(),
-                    ..FilterRuleWireFormat::default()
-                });
-                continue;
-            }
         };
 
         let (pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
@@ -1332,30 +1311,6 @@ mod tests {
         assert_eq!(rules[3].rule_type, RuleType::Protect);
         assert_eq!(rules[4].rule_type, RuleType::Risk);
         assert_eq!(rules[5].rule_type, RuleType::DirMerge);
-    }
-
-    #[test]
-    fn transmits_exclude_if_present_rules() {
-        let specs = vec![
-            FilterRuleSpec::exclude("*.log"),
-            FilterRuleSpec::exclude_if_present(".git"),
-            FilterRuleSpec::include("*.txt"),
-        ];
-
-        let rules =
-            build_wire_format_rules(&specs, false).expect("should transmit ExcludeIfPresent");
-
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].rule_type, RuleType::Exclude);
-        assert_eq!(rules[0].pattern, "*.log");
-        assert!(!rules[0].exclude_from_merge);
-
-        assert_eq!(rules[1].rule_type, RuleType::Exclude);
-        assert_eq!(rules[1].pattern, ".git");
-        assert!(rules[1].exclude_from_merge);
-
-        assert_eq!(rules[2].rule_type, RuleType::Include);
-        assert_eq!(rules[2].pattern, "*.txt");
     }
 
     #[test]

@@ -106,38 +106,24 @@ fn parse_filter_directive_accepts_shorthand_hide_show_and_protect() {
     );
 }
 
+/// upstream 3.5.1 has no `exclude-if-present` rule. `parse_rule_tok` takes the
+/// `case 'e':` arm, `RULE_STRCMP(s, "exclude")` rejects the `-` that follows
+/// the keyword, and the rule falls to `filter_rule_err("Unknown filter rule",
+/// *rulestr_ptr)` (exclude.c:1297-1299, 1362-1363): the whole rule text, exit
+/// RERR_SYNTAX (1).
 #[test]
-fn parse_filter_directive_accepts_exclude_if_present() {
-    let directive = parse_filter_directive(
-        OsStr::new("exclude-if-present marker"),
-        filters::RuleSource::Argument,
-    )
-    .expect("exclude-if-present with whitespace parses");
-    assert_eq!(
-        directive,
-        FilterDirective::Rule(FilterRuleSpec::exclude_if_present("marker".to_owned()))
-    );
-
-    let equals_variant = parse_filter_directive(
-        OsStr::new("exclude-if-present=.skip"),
-        filters::RuleSource::Argument,
-    )
-    .expect("exclude-if-present with equals parses");
-    assert_eq!(
-        equals_variant,
-        FilterDirective::Rule(FilterRuleSpec::exclude_if_present(".skip".to_owned()))
-    );
-}
-
-#[test]
-fn parse_filter_directive_rejects_exclude_if_present_without_marker() {
-    let error = parse_filter_directive(
-        OsStr::new("exclude-if-present   "),
-        filters::RuleSource::Argument,
-    )
-    .expect_err("missing marker should error");
-    let rendered = error.to_string();
-    assert!(rendered.contains("missing a marker file"));
+fn parse_filter_directive_rejects_exclude_if_present_as_unknown() {
+    for text in ["exclude-if-present marker", "exclude-if-present=.skip"] {
+        let error = parse_filter_directive(OsStr::new(text), filters::RuleSource::Argument)
+            .expect_err("exclude-if-present is not an upstream rule");
+        assert_eq!(error.code(), Some(1), "{text}");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("Unknown filter rule: {text}")),
+            "{text}: {error}"
+        );
+    }
 }
 
 #[test]
