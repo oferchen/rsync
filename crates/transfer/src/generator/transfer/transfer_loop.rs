@@ -707,6 +707,15 @@ impl GeneratorContext {
                             // Reclaim heap data from the oldest completed segment to
                             // reduce RSS. Entries stay in place for NDX indexing but
                             // their PathBuf/extras allocations are freed.
+                            // upstream: io.c:1831-1845 ran successful_send() for
+                            // every MSG_SUCCESS ahead of this NDX_DONE while
+                            // reading it, before sender.c:535-536 freed the
+                            // list; confirm them now, while their entries still
+                            // name their sources.
+                            self.drain_confirmed_source_removals(
+                                writer,
+                                reader.take_success_indices(),
+                            )?;
                             self.reclaim_oldest_segment();
                             // upstream: sender.c:539 - `file_old_total =
                             // cur_flist->used`. The freed list drops out of the
@@ -1719,16 +1728,23 @@ impl GeneratorContext {
     /// - `sender.c:396` - `successful_send()` unlink + guards.
     /// - `sender.c:413-415` - `change_pathname(file, NULL, 0)` then
     ///   `f_name(file, fname)` is the name every diagnostic below prints.
-    pub(crate) fn confirm_source_removal(&mut self, wire_ndx: i32) -> SourceRemovalOutcome {
-        if wire_ndx < 0 {
-            return SourceRemovalOutcome::clean();
+    ///
+    /// # Errors
+    ///
+    /// A `RERR_PROTOCOL`-tagged error when the index names no live entry
+    /// (out of range, freed, or a gap slot), as `sender.c:409-411` refuses it.
+    pub(crate) fn confirm_source_removal(
+        &mut self,
+        wire_ndx: i32,
+    ) -> io::Result<SourceRemovalOutcome> {
+        // upstream: sender.c:406-407 - without --remove-source-files the index
+        // is never examined.
+        if !self.config.flags.remove_source_files {
+            return Ok(SourceRemovalOutcome::clean());
         }
-        let flat_ndx = self.wire_to_flat_ndx(wire_ndx);
-        if flat_ndx >= self.file_list.len() {
-            return SourceRemovalOutcome::clean();
-        }
+        let flat_ndx = self.successful_send_ndx(wire_ndx)?;
         if !self.pending_source_removals.confirm(flat_ndx) {
-            return SourceRemovalOutcome::clean();
+            return Ok(SourceRemovalOutcome::clean());
         }
         let source_path = self.reconstruct_source_path(flat_ndx);
         let entry = &self.file_list[flat_ndx];
@@ -1738,7 +1754,7 @@ impl GeneratorContext {
             mtime: entry.mtime(),
             mtime_nsec: entry.mtime_nsec(),
         };
-        self.remove_source_file_if_requested(&source_path, &display_name, recorded)
+        Ok(self.remove_source_file_if_requested(&source_path, &display_name, recorded))
     }
 
     /// Runs the deferred `--remove-source-files` unlink for every confirmation
@@ -1769,7 +1785,7 @@ impl GeneratorContext {
     ) -> io::Result<usize> {
         let drained = confirmed.len();
         for wire_ndx in confirmed {
-            let outcome = self.confirm_source_removal(wire_ndx);
+            let outcome = self.confirm_source_removal(wire_ndx)?;
             self.io_error |= outcome.io_error;
             if let Some(text) = outcome.error_xfer {
                 self.emit_sender_diagnostic(

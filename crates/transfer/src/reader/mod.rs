@@ -45,4 +45,11 @@ pub(crate) trait BufferedInputHint {
     fn buffered_input(&self) -> &[u8] {
         &[]
     }
+
+    /// Takes the `MSG_SUCCESS` indices demultiplexed since the last call, so
+    /// the sender loop can confirm them before it frees their list. Empty for
+    /// a reader that never demultiplexes.
+    fn take_success_indices(&mut self) -> Vec<i32> {
+        Vec::new()
+    }
 }

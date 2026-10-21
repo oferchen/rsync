@@ -451,6 +451,7 @@ mod tests {
 
         // The map's segments are (flat_start, parent_flat) pairs over one
         // flat list; flat starts are the running entry counts.
+        use crate::generator::ndx_map::NdxSlot;
         let mut map = NdxMap::new(root.ndx_start());
         let child_start = map.push_sublist(root.used(), child.used(), 0);
         let grand_start = map.push_sublist(root.used() + child.used(), grand.used(), 3);
@@ -461,8 +462,14 @@ mod tests {
         assert_eq!(grand_start, grand.ndx_start());
         // And the map resolves each segment's gap to its parent slot, which
         // only works because both sides reserve the same slot.
-        assert_eq!(map.resolve(child.gap_ndx(), entries), Ok(0));
-        assert_eq!(map.resolve(grand.gap_ndx(), entries), Ok(3));
+        assert_eq!(
+            map.resolve(child.gap_ndx(), entries),
+            Ok(NdxSlot::Gap(Some(0)))
+        );
+        assert_eq!(
+            map.resolve(grand.gap_ndx(), entries),
+            Ok(NdxSlot::Gap(Some(3)))
+        );
     }
 
     /// WHY: `parent_ndx` is `-1` or a non-negative `dir_flist` index

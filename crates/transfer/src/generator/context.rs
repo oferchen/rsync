@@ -21,7 +21,7 @@ use crate::role_trailer::error_location;
 
 use super::diagnostics::{NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, partition_point_depth};
 use super::io_error_flags;
-use super::ndx_map::NdxFault;
+use super::ndx_map::{NdxOutOfRange, NdxSlot};
 use super::segments::IncrementalState;
 use super::timing::TransferTiming;
 use super::{itemize, open_source};
@@ -576,23 +576,6 @@ impl GeneratorContext {
         Self::new(handshake, config, pipeline)
     }
 
-    /// Converts a wire NDX value to a flat file list array index.
-    ///
-    /// Uses `partition_point` for O(log n) lookup, matching `flat_to_wire_ndx`.
-    ///
-    /// Updates the `NDX_CONVERT_CALLS` / `NDX_CONVERT_CMPS` counters used
-    /// for the INC_RECURSE diagnostics.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `rsync.c:437` - `i = ndx - cur_flist->ndx_start`
-    pub(crate) fn wire_to_flat_ndx(&self, wire_ndx: i32) -> usize {
-        let map = &self.incremental.ndx_map;
-        NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
-        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(map.len()), Ordering::Relaxed);
-        map.wire_to_flat(wire_ndx)
-    }
-
     /// Resolves a wire NDX the receiver sent to the flat `file_list` index of
     /// the entry it names: the one gate every peer-supplied index passes before
     /// the sender touches an entry.
@@ -616,23 +599,64 @@ impl GeneratorContext {
     ///   in %d - %d (%s) [%s]` and exits `RERR_PROTOCOL`.
     /// - `sender.c:552-558` - the gap resolves to `dir_flist->files[parent_ndx]`.
     pub(crate) fn flist_for_ndx(&self, wire_ndx: i32) -> io::Result<usize> {
-        self.incremental
-            .ndx_map
-            .resolve(wire_ndx, self.file_list.len())
-            .map_err(|fault| match fault {
-                NdxFault::OutOfRange { first, last } => protocol::protocol_violation(format!(
-                    "File-list index {wire_ndx} not in {first} - {last} (read_ndx_and_attrs) {}{}",
+        self.resolve_peer_ndx(wire_ndx, NdxSite::ReadNdxAndAttrs)
+    }
+
+    /// Resolves the NDX of a peer `MSG_SUCCESS` to the entry whose source it
+    /// confirms, through the same gate as [`Self::flist_for_ndx`].
+    ///
+    /// # Errors
+    ///
+    /// A `RERR_PROTOCOL`-tagged error for an index no live sub-list owns, and
+    /// for any gap slot: a success confirms a file, never a directory.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:409-411` - `flist_for_ndx(ndx, "successful_send")`, then
+    ///   `if (ndx < flist->ndx_start) exit_cleanup(RERR_PROTOCOL)`.
+    pub(crate) fn successful_send_ndx(&self, wire_ndx: i32) -> io::Result<usize> {
+        self.resolve_peer_ndx(wire_ndx, NdxSite::SuccessfulSend)
+    }
+
+    /// The one gate every peer-supplied NDX passes; `site` is upstream's
+    /// `fatal_error_loc` and decides what a gap slot means.
+    ///
+    /// Updates the `NDX_CONVERT_CALLS` / `NDX_CONVERT_CMPS` counters used
+    /// for the INC_RECURSE diagnostics.
+    fn resolve_peer_ndx(&self, wire_ndx: i32, site: NdxSite) -> io::Result<usize> {
+        let map = &self.incremental.ndx_map;
+        NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
+        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(map.len()), Ordering::Relaxed);
+        let slot = map.resolve(wire_ndx, self.file_list.len()).map_err(
+            |NdxOutOfRange { first, last }| {
+                protocol::protocol_violation(format!(
+                    "File-list index {wire_ndx} not in {first} - {last} ({}) {}{}",
+                    site.name(),
                     error_location!(),
                     crate::role_trailer::sender()
-                )),
-                // upstream exits here without a message of its own; name the
-                // index so the refusal is attributable.
-                NdxFault::OrphanGap => protocol::protocol_violation(format!(
+                ))
+            },
+        )?;
+        match (slot, site) {
+            (NdxSlot::Entry(flat), _) => Ok(flat),
+            (NdxSlot::Gap(Some(parent)), NdxSite::ReadNdxAndAttrs) => Ok(parent),
+            // upstream exits at both without a message of its own; name the
+            // index so the refusal is attributable.
+            (NdxSlot::Gap(None), NdxSite::ReadNdxAndAttrs) => {
+                Err(protocol::protocol_violation(format!(
                     "File-list index {wire_ndx} is the gap of a list with no directory {}{}",
                     error_location!(),
                     crate::role_trailer::sender()
-                )),
-            })
+                )))
+            }
+            (NdxSlot::Gap(_), NdxSite::SuccessfulSend) => {
+                Err(protocol::protocol_violation(format!(
+                    "File-list index {wire_ndx} is the gap of a list, not a file (successful_send) {}{}",
+                    error_location!(),
+                    crate::role_trailer::sender()
+                )))
+            }
+        }
     }
 
     /// Converts a flat file list array index to a wire NDX value.
@@ -2022,5 +2046,27 @@ mod confinement_root_tests {
             ..Default::default()
         };
         assert_eq!(confinement_root(&connection), None);
+    }
+}
+
+/// Where a peer-supplied NDX is read, which decides what a gap slot means.
+///
+/// upstream passes the same site to `flist_for_ndx()` as its
+/// `fatal_error_loc` (`rsync.c:951`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NdxSite {
+    /// An item request: a gap names its list's directory (`sender.c:552-558`).
+    ReadNdxAndAttrs,
+    /// A `MSG_SUCCESS` confirmation: a gap is refused (`sender.c:410-411`).
+    SuccessfulSend,
+}
+
+impl NdxSite {
+    /// The site name upstream prints in the refusal.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::ReadNdxAndAttrs => "read_ndx_and_attrs",
+            Self::SuccessfulSend => "successful_send",
+        }
     }
 }
