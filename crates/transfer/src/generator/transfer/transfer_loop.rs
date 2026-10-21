@@ -473,7 +473,9 @@ impl GeneratorContext {
             generate_delta_from_signature, generate_delta_from_signature_chunked,
             updating_basis_file,
         };
-        use super::super::protocol_io::{read_signature_blocks_keepalive, signature_read_lull_mod};
+        use super::super::protocol_io::{
+            read_signature_blocks_keepalive, refuse_sum_allocation, signature_read_lull_mod,
+        };
 
         // upstream: sender.c:507-508 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
@@ -1059,6 +1061,7 @@ impl GeneratorContext {
                 // large/slow checksum read does not trip the peer's --timeout.
                 // Newer protocols multiplex the stream and set lull_mod = 0.
                 let lull_mod = signature_read_lull_mod(self.protocol, writer.allowed_lull());
+                refuse_sum_allocation(&sum_head, xfer_sum_len)?;
                 let blocks =
                     read_signature_blocks_keepalive(&mut *reader, &sum_head, lull_mod, || {
                         writer.maybe_send_keepalive().map(|_| ())
