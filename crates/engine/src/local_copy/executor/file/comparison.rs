@@ -244,8 +244,11 @@ pub(crate) struct CopyComparison<'a> {
 /// - `generator.c:quick_check_ok()` - compares `st_rdev` for `IS_DEVICE`.
 /// - `xattrs.c:1216 get_stat_xattr()` - source of the virtualised stat.
 #[cfg(all(unix, feature = "xattr"))]
-pub(crate) fn fake_super_stat_differs(source: &Path, destination: &Path) -> bool {
-    let Ok(Some(src)) = ::metadata::load_fake_super(source) else {
+pub(crate) fn fake_super_stat_differs(
+    source: Option<&::metadata::FakeSuperStat>,
+    destination: &Path,
+) -> bool {
+    let Some(src) = source else {
         return false;
     };
     // Only devices and special files use the rdev/type comparison; a regular

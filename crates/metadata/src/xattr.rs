@@ -492,6 +492,8 @@ pub fn sync_xattrs(
 ///   abbreviated entry references. `None` disables resolution, leaving any
 ///   abbreviated entry's existing destination value in place (its name is still
 ///   protected from the removal sweep, matching upstream's `still_abbrev`).
+/// * `fake_super` - `--fake-super` is active, so the destination's own
+///   `rsync.%stat` is never removed as extraneous.
 /// * `filter` - Optional `x`-modifier filter predicate. When present, a name for
 ///   which it returns `false` is neither applied to the destination nor removed
 ///   from it, mirroring upstream's `saw_xattr_filter` screening.
@@ -515,6 +517,7 @@ pub fn apply_xattrs_from_list(
     basis: Option<&Path>,
     filter: Option<&dyn Fn(&str) -> bool>,
     confine_root: Option<&Path>,
+    fake_super: bool,
 ) -> Result<(), MetadataError> {
     let mut applied_names: HashSet<Vec<u8>> = HashSet::with_capacity(xattr_list.len());
 
@@ -603,8 +606,11 @@ pub fn apply_xattrs_from_list(
             // upstream: xattrs.c:1078-1080 rsync_xal_set() skips the removal of a
             // destination xattr whose name is excluded by an `x`-modifier
             // filter rule, leaving the pre-existing value in place.
+            // upstream: xattrs.c:1087-1088 - a fake-super receiver keeps the
+            // %stat that set_stat_xattr() wrote; it is not -X data.
             if is_xattr_permitted(&name_str, receiver_user_only())
                 && filter.is_none_or(|predicate| predicate(&name_str))
+                && !(fake_super && name_str == crate::fake_super::FAKE_SUPER_XATTR)
             {
                 dest.remove(name)?;
             }
@@ -2075,7 +2081,7 @@ mod tests {
             b"value2".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false).expect("apply xattrs");
 
         let attr1 = test_xattr_name("attr1");
         let attr2 = test_xattr_name("attr2");
@@ -2127,7 +2133,7 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("ro"), b"value".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false, None, None, None)
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false)
             .expect("apply xattrs on read-only file");
 
         let name = test_xattr_name("ro");
@@ -2235,7 +2241,7 @@ mod tests {
         let (_source, destination) = readonly_pair("apply");
         let mut list = XattrList::new();
         list.push(XattrEntry::new(name.clone(), b"applied".to_vec()));
-        apply_xattrs_from_list(&destination, &list, false, None, None, None)
+        apply_xattrs_from_list(&destination, &list, false, None, None, None, false)
             .expect("apply_xattrs_from_list on read-only dest");
         assert_eq!(
             read_attribute(&destination, &name, false)
@@ -2272,7 +2278,7 @@ mod tests {
         // Exclude any name containing "skip" (matches on the local xattr name,
         // which carries the `user.` prefix on Linux and is bare elsewhere).
         let filter = |name: &str| !name.contains("skip");
-        apply_xattrs_from_list(&file, &list, false, None, Some(&filter), None)
+        apply_xattrs_from_list(&file, &list, false, None, Some(&filter), None, false)
             .expect("apply xattrs");
 
         // The allowed attr is applied.
@@ -2317,7 +2323,7 @@ mod tests {
         list.push(XattrEntry::new(test_xattr_name("keep"), b"kept".to_vec()));
 
         let filter = |name: &str| !name.contains("skip");
-        apply_xattrs_from_list(&file, &list, false, None, Some(&filter), None)
+        apply_xattrs_from_list(&file, &list, false, None, Some(&filter), None, false)
             .expect("apply xattrs");
 
         // Excluded destination attr is preserved.
@@ -2364,7 +2370,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false).expect("apply xattrs");
 
         // Stale attr should be removed
         assert!(
@@ -2411,7 +2417,7 @@ mod tests {
             b"full_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false).expect("apply xattrs");
 
         assert!(
             read_attribute(&file, &test_xattr_name("abbrev"), false)
@@ -2461,7 +2467,7 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::abbreviated(name.clone(), digest, value.len()));
 
-        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None, None)
+        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None, None, false)
             .expect("apply xattrs");
 
         // The destination must carry the fully resolved value, identical to a
@@ -2497,7 +2503,7 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::abbreviated(name.clone(), vec![0xAAu8; 16], 100));
 
-        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None, None)
+        apply_xattrs_from_list(&dest, &list, false, Some(&basis), None, None, false)
             .expect("apply xattrs");
 
         assert!(
@@ -2522,7 +2528,8 @@ mod tests {
         write_attribute(&file, &attr, b"value", false).expect("write existing");
 
         let list = XattrList::new();
-        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply empty list");
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false)
+            .expect("apply empty list");
 
         // All permitted xattrs should be removed
         assert!(read_attribute(&file, &attr, false).expect("read").is_none());
@@ -2548,7 +2555,7 @@ mod tests {
             b"new_value".to_vec(),
         ));
 
-        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false).expect("apply xattrs");
 
         assert_eq!(
             read_attribute(&file, &attr, false)
@@ -2572,7 +2579,7 @@ mod tests {
         let mut list = XattrList::new();
         list.push(XattrEntry::new(test_xattr_name("empty_val"), b"".to_vec()));
 
-        apply_xattrs_from_list(&file, &list, false, None, None, None).expect("apply xattrs");
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false).expect("apply xattrs");
 
         let attr = test_xattr_name("empty_val");
         let value = read_attribute(&file, &attr, false)
@@ -2619,6 +2626,7 @@ mod tests {
             None,
             None,
             Some(&root),
+            false,
         );
 
         let landed = ::xattr::list(&victim)
@@ -2654,6 +2662,7 @@ mod tests {
             None,
             None,
             Some(&root),
+            false,
         )
         .is_err()
         {
@@ -2810,6 +2819,34 @@ mod tests {
             read_attribute(&base.join("held"), &marker, false)
                 .expect("read")
                 .is_some()
+        );
+    }
+    // upstream: xattrs.c:1087-1088 - rsync_xal_set() never removes the
+    // receiver's own %stat under fake-super. The receiver writes it before
+    // the -X data, and a sender never sends it, so a removal pass that treats
+    // it as extraneous erases the only record of a 0444 mode or an owner.
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn a_fake_super_xattr_apply_keeps_the_destination_stat() {
+        use crate::fake_super::FAKE_SUPER_XATTR;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("f");
+        std::fs::write(&file, b"x").expect("write file");
+        if xattr::set(&file, FAKE_SUPER_XATTR, b"100444 0,0 0:0").is_err() {
+            return;
+        }
+        let list =
+            XattrList::with_entries(vec![XattrEntry::new(b"user.keep".to_vec(), b"1".to_vec())]);
+        apply_xattrs_from_list(&file, &list, false, None, None, None, true).expect("apply");
+        assert_eq!(
+            xattr::get(&file, FAKE_SUPER_XATTR).expect("read %stat"),
+            Some(b"100444 0,0 0:0".to_vec())
+        );
+        apply_xattrs_from_list(&file, &list, false, None, None, None, false).expect("apply");
+        assert_eq!(
+            xattr::get(&file, FAKE_SUPER_XATTR).expect("read %stat"),
+            None,
+            "without fake-super the %stat is an extraneous name like any other"
         );
     }
 }

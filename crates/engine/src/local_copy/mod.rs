@@ -140,7 +140,9 @@ pub(crate) use metadata_sync::xattrs_differ_from_source;
 pub(crate) use metadata_sync::sync_acls_if_requested;
 
 #[cfg(all(unix, feature = "xattr"))]
-pub(crate) use metadata_sync::store_effective_fake_super_if_requested;
+pub(crate) use metadata_sync::{
+    ensure_fake_super_source_stat, store_effective_fake_super_if_requested,
+};
 
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_xattrs_if_requested;

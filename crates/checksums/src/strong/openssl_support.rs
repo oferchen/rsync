@@ -16,17 +16,34 @@ use openssl::hash::{Hasher, MessageDigest};
 use std::sync::OnceLock;
 
 static DETECTED: OnceLock<Result<(), ()>> = OnceLock::new();
+static MD4_DIGEST: OnceLock<Option<MessageDigest>> = OnceLock::new();
+
+#[cfg(test)]
+static MD4_PROBES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn detect() -> Result<(), ()> {
-    let md5 = MessageDigest::md5();
+    Hasher::new(MessageDigest::md5()).map(drop).map_err(drop)
+}
 
-    Hasher::new(md5).map_err(|_| ())?;
-    // MD4 may be absent on OpenSSL builds that exclude the legacy provider;
-    // the probe is best-effort and detection succeeds as long as MD5 works.
-    if let Some(md4) = MessageDigest::from_name("md4") {
-        let _ = Hasher::new(md4);
-    }
-    Ok(())
+/// Probes whether OpenSSL can initialise an MD4 digest.
+///
+/// OpenSSL 3 ships MD4 only in the legacy provider, so on a stock install the
+/// name resolves but `EVP_DigestInit_ex` fails with "unsupported". Probing
+/// once per process routes every later MD4 hasher to the built-in
+/// implementation instead of retrying OpenSSL, and draining its error queue,
+/// for every block.
+///
+/// upstream: checksum.c:175-186 csum_evp_md() - a failed EVP_DigestInit_ex
+/// clears NNI_EVP for the process and falls back to the built-in MD4.
+fn probe_md4() -> Option<MessageDigest> {
+    #[cfg(test)]
+    MD4_PROBES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let digest = MessageDigest::from_name("md4")?;
+    Hasher::new(digest).ok().map(|_| digest)
+}
+
+fn md4_digest() -> Option<MessageDigest> {
+    *MD4_DIGEST.get_or_init(probe_md4)
 }
 
 /// Returns whether OpenSSL-backed hashing is available for MD4/MD5.
@@ -50,13 +67,25 @@ pub fn new_md4_hasher() -> Option<Hasher> {
         return None;
     }
 
-    let digest = MessageDigest::from_name("md4")?;
-    Hasher::new(digest).ok()
+    Hasher::new(md4_digest()?).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn md4_availability_is_probed_once_per_process() {
+        for _ in 0..64 {
+            let _ = new_md4_hasher();
+            let _ = crate::strong::Md4::new();
+        }
+        let probes = MD4_PROBES.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            probes <= 1,
+            "OpenSSL MD4 must be probed at most once per process, saw {probes} probes"
+        );
+    }
 
     #[test]
     fn detection_is_deterministic() {

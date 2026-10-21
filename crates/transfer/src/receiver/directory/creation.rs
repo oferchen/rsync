@@ -680,6 +680,7 @@ impl ReceiverContext {
         let acl_id_map_clone = acl_id_map.cloned();
         let xattr_filter = self.xattr_name_filter_arc();
         let dest_root = dest_dir.to_path_buf();
+        let fake_super = self.config.fake_super;
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
             self.parallel_thresholds
@@ -723,6 +724,7 @@ impl ReceiverContext {
                         Some(&dir_path),
                         filter_ref,
                         Some(dest_root.as_path()),
+                        fake_super,
                     ) {
                         return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                     }
@@ -1199,6 +1201,7 @@ impl ReceiverContext {
                 Some(dir_path),
                 filter_ref,
                 Some(dest_dir),
+                self.config.fake_super,
             ) && self.config.flags.verbose
                 && self.config.connection.client_mode
             {

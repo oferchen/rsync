@@ -46,13 +46,32 @@ enum ArgvFilterRefusal {
     Fatal(io::Error),
 }
 
-impl ArgvFilterRefusal {
-    /// The text the client is sent.
-    fn message(&self) -> String {
-        match self {
-            Self::Rejected => ARGV_FILTER_OPTIONS_REJECTED.to_owned(),
-            Self::Fatal(err) => err.to_string(),
-        }
+/// A `-from` or `merge` file the daemon could not open.
+///
+/// Both an open failure and a malformed rule travel as [`io::Error`]; this
+/// inner type keeps them apart, because upstream exits `RERR_FILEIO` for the
+/// first (`exclude.c:1714-1719`) and `RERR_SYNTAX` for the second
+/// (`exclude.c:136`).
+#[derive(Debug)]
+struct FilterFileOpenFailure(String);
+
+impl fmt::Display for FilterFileOpenFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for FilterFileOpenFailure {}
+
+/// The code the daemon exits with for an [`ArgvFilterRefusal::Fatal`] error.
+fn fatal_exit_code(err: &io::Error) -> ExitCode {
+    if err
+        .get_ref()
+        .is_some_and(|inner| inner.is::<FilterFileOpenFailure>())
+    {
+        ExitCode::FileIo
+    } else {
+        ExitCode::Syntax
     }
 }
 
@@ -279,28 +298,56 @@ fn open_failure(include: bool, name: &str, err: &io::Error) -> io::Error {
     let kind = if include { "in" } else { "ex" };
     io::Error::new(
         err.kind(),
-        format!("failed to open {kind}clude file {name}: {err}"),
+        FilterFileOpenFailure(format!("failed to open {kind}clude file {name}: {err}")),
     )
 }
 
 /// Ends the session over a client argv filter option.
 ///
-/// `@RSYNCD: OK` is already on the wire, so the refusal travels as a
-/// multiplexed error, the same way an unparseable client argument does.
+/// A rejected `-from` name travels as a multiplexed error, the same way an
+/// unparseable client argument does: `@RSYNCD: OK` is already on the wire.
+/// A fatal error exits from inside upstream's `parse_arguments()`, before the
+/// protocol setup that could carry it back, so the client sees only EOF and
+/// the reason reaches the daemon log alone, followed by the totals line every
+/// daemon exit logs.
 ///
-/// upstream: `clientserver.c:1254-1267` reports the `err_buf` text and exits.
+/// upstream: `clientserver.c:1254-1267` reports the rejection's `err_buf` and
+/// exits; `exclude.c:136` and `exclude.c:1714-1719` call `exit_cleanup()`
+/// from `parse_arguments()` (`clientserver.c:1160`), ahead of the
+/// `setup_protocol()` at `clientserver.c:1226`; `cleanup.c:222-226` runs
+/// `log_exit()`, whose totals line is `log.c:942`.
 fn refuse_argv_filters(
     ctx: &mut ModuleRequestContext<'_>,
     refusal: &ArgvFilterRefusal,
     protocol_version: Option<ProtocolVersion>,
     client_args: &[String],
 ) -> io::Result<()> {
-    let text = refusal.message();
-    if let Some(log) = ctx.log_sink {
-        let message =
-            rsync_warning!(format!("module '{}': {text}", ctx.request)).with_role(Role::Daemon);
-        log_message(log, &message);
+    match refusal {
+        ArgvFilterRefusal::Rejected => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!("module '{}': {ARGV_FILTER_OPTIONS_REJECTED}", ctx.request);
+                log_message(log, &rsync_warning!(text).with_role(Role::Daemon));
+            }
+            let error = AtError::message(ARGV_FILTER_OPTIONS_REJECTED);
+            handle_client_arg_rejection_post_handshake(
+                ctx,
+                &error.line(),
+                protocol_version,
+                client_args,
+            )
+        }
+        ArgvFilterRefusal::Fatal(err) => {
+            let code = fatal_exit_code(err);
+            *ctx.session_exit_code = Some(code);
+            if let Some(log) = ctx.log_sink {
+                log_message(
+                    log,
+                    &rsync_error!(code.as_i32(), err.to_string()).with_role(Role::Daemon),
+                );
+                let totals = "sent 0 bytes  received 0 bytes  total size 0";
+                log_message(log, &rsync_info!(totals).with_role(Role::Daemon));
+            }
+            Ok(())
+        }
     }
-    let error = AtError::message(text);
-    handle_client_arg_rejection_post_handshake(ctx, &error.line(), protocol_version, client_args)
 }

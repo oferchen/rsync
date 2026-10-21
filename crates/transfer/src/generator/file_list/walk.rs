@@ -595,6 +595,8 @@ impl GeneratorContext {
         let filter_level = if is_top_level { 0 } else { 2 };
         let mut entry = match self.create_entry(&path, relative, &metadata, filter_level) {
             Ok(e) => e,
+            // upstream: xattrs.c:1253-1258 - a corrupt %stat ends the run.
+            Err(e) if metadata::is_corrupt_fake_super(&e) => return Err(e),
             Err(e) => {
                 // upstream: flist.c - rsyserr for make_file() failures
                 let text = format!(

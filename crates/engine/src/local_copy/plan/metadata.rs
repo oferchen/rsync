@@ -168,15 +168,28 @@ impl LocalCopyMetadata {
     #[must_use]
     #[cfg_attr(not(all(unix, feature = "xattr")), allow(unused_mut))]
     pub(in crate::local_copy) fn virtualize_fake_super(
-        mut self,
+        self,
         source: &Path,
         fake_super: bool,
     ) -> Self {
+        if !fake_super {
+            return self;
+        }
+        let stat = ::metadata::load_fake_super(source).ok().flatten();
+        self.virtualize_fake_super_stat(stat.as_ref())
+    }
+    /// [`Self::virtualize_fake_super`] for a caller that already read the
+    /// source's `%stat`, so it is not read twice.
+    #[must_use]
+    #[cfg_attr(not(all(unix, feature = "xattr")), allow(unused_mut))]
+    pub(in crate::local_copy) fn virtualize_fake_super_stat(
+        mut self,
+        stat: Option<&::metadata::FakeSuperStat>,
+    ) -> Self {
         #[cfg(all(unix, feature = "xattr"))]
         {
-            if fake_super
-                && matches!(self.kind, LocalCopyFileKind::File)
-                && let Ok(Some(stat)) = ::metadata::load_fake_super(source)
+            if matches!(self.kind, LocalCopyFileKind::File)
+                && let Some(stat) = stat
                 && let Some(kind) = LocalCopyFileKind::from_stat_mode(stat.mode)
             {
                 self.kind = kind;
@@ -185,7 +198,7 @@ impl LocalCopyMetadata {
         }
         #[cfg(not(all(unix, feature = "xattr")))]
         {
-            let _ = (source, fake_super);
+            let _ = stat;
         }
         self
     }

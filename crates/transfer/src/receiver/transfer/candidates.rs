@@ -1598,6 +1598,7 @@ impl ReceiverContext {
                 Some(file_path),
                 filter_ref,
                 Some(dest_dir),
+                self.config.fake_super,
             ) {
                 metadata_errors.push((file_path.to_path_buf(), e.to_string()));
             }
@@ -2302,7 +2303,7 @@ mod itemize_order_tests {
             b"user.itemize".to_vec(),
             b"v".to_vec(),
         )]);
-        if metadata::apply_xattrs_from_list(&path, &list, true, None, None, None).is_err() {
+        if metadata::apply_xattrs_from_list(&path, &list, true, None, None, None, false).is_err() {
             // A filesystem without user-namespace xattr support cannot
             // exercise the comparison; skip rather than assert a false pass.
             return;

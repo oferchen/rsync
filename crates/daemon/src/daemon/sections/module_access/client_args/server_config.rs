@@ -549,12 +549,17 @@ fn build_server_config(
                     effective.map(|rate| BandwidthLimitComponents::new(Some(rate)));
             }
 
-            // upstream: clientserver.c:1198-1203 - `fake super = yes` on the
-            // daemon module demotes the receiver's am_root and forces fake-super
-            // semantics regardless of whether the client requested --fake-super.
-            // The directive is purely daemon-config-driven; client --fake-super
-            // is demoted to --super on the wire and never reaches us.
+            // upstream: clientserver.c:1197-1202 - `fake super = yes` on the
+            // daemon module forces fake-super semantics and caps -XX at -X, so
+            // the receiver drops a client's own rsync.%FOO xattrs
+            // (xattrs.c:902-906) and only set_stat_xattr() writes %stat. A
+            // client's -M--fake-super on any other module is taken as --super,
+            // which oc's server accepts without effect, so it never sets
+            // fake_super here.
             cfg.fake_super = module.fake_super;
+            if module.fake_super {
+                cfg.flags.xattrs_level = cfg.flags.xattrs_level.min(1);
+            }
 
             // upstream: clientserver.c:1294-1302 - `daemon_chmod_modes` is armed
             // from the one directive for this session's direction, applied at

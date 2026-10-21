@@ -866,8 +866,10 @@ pub(in crate::local_copy) fn execute_transfer_once(
     #[cfg(all(unix, feature = "xattr"))]
     let change_set = if metadata_options.fake_super_enabled()
         && destination_previously_existed
-        && super::super::super::comparison::fake_super_stat_differs(source, destination)
-    {
+        && super::super::super::comparison::fake_super_stat_differs(
+            ::metadata::load_fake_super(source).ok().flatten().as_ref(),
+            destination,
+        ) {
         let change_set = change_set.with_checksum_changed(true);
         if metadata_options.times() {
             change_set

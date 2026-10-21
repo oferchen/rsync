@@ -576,19 +576,11 @@ pub(super) fn set_owner_like(
 ) -> Result<bool, MetadataError> {
     #[cfg(unix)]
     {
-        // upstream: xattrs.c:set_stat_xattr() encodes mode/uid/gid/rdev under
-        // fake-super. Symlinks are excluded because lsetxattr on a symlink is
-        // not portable; symlink fake-super follows upstream's "skip" path.
-        // Mirrors `apply_ownership_from_entry`'s gate so the local-copy and
-        // network-receiver paths agree on when the xattr is written.
-        if options.fake_super_enabled()
-            && follow_symlinks
-            && (options.owner()
-                || options.group()
-                || options.owner_override().is_some()
-                || options.group_override().is_some())
-        {
-            store_fake_super_from_local_metadata(destination, metadata)?;
+        // upstream: rsync.c:655-714 - under fake-super no chown runs; the
+        // permission step's set_stat_xattr() records uid/gid. Symlinks are
+        // excluded because lsetxattr on a symlink is not portable; a Linux
+        // placeholder link takes the regular-file path.
+        if options.fake_super_enabled() && follow_symlinks {
             return Ok(false);
         }
 
@@ -649,14 +641,8 @@ pub(super) fn set_owner_like_with_fd(
     existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<bool, MetadataError> {
     // upstream: xattrs.c:set_stat_xattr() under am_root < 0 - skip fchown.
-    if options.fake_super_enabled()
-        && (options.owner()
-            || options.group()
-            || options.owner_override().is_some()
-            || options.group_override().is_some())
-    {
+    if options.fake_super_enabled() {
         let _ = fd;
-        store_fake_super_from_local_metadata(destination, metadata)?;
         return Ok(false);
     }
 
@@ -919,45 +905,6 @@ fn apply_ownership_via_fake_super(
 
     store_fake_super(destination, &stat)
         .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
-}
-
-/// Stores fake-super metadata derived from a local `fs::Metadata` snapshot.
-///
-/// This is the local-copy counterpart to [`apply_ownership_via_fake_super`]:
-/// the caller already has the source's `fs::Metadata`, so there is no wire
-/// `FileEntry` to consult. Mode (with the full `S_IFMT` bits), uid, gid, and
-/// device rdev are captured via `FakeSuperStat::from_metadata` and stored
-/// in the `user.rsync.%stat` xattr.
-///
-/// Mirrors `apply_ownership_via_fake_super`'s "no-op when the existing xattr
-/// already matches" fast path. On platforms or builds without xattr support
-/// this is a graceful no-op.
-/// upstream: xattrs.c:set_stat_xattr() / rsync.c:set_file_attrs() with am_root<0
-#[cfg(unix)]
-fn store_fake_super_from_local_metadata(
-    destination: &Path,
-    metadata: &fs::Metadata,
-) -> Result<(), MetadataError> {
-    #[cfg(feature = "xattr")]
-    {
-        use crate::fake_super::{FakeSuperStat, load_fake_super, store_fake_super};
-
-        let stat = FakeSuperStat::from_metadata(metadata);
-
-        if let Ok(Some(existing)) = load_fake_super(destination)
-            && existing == stat
-        {
-            return Ok(());
-        }
-
-        store_fake_super(destination, &stat)
-            .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
-    }
-    #[cfg(not(feature = "xattr"))]
-    {
-        let _ = (destination, metadata);
-        Ok(())
-    }
 }
 
 /// No-op stub for non-Unix platforms where ownership (`chown`) is not supported.

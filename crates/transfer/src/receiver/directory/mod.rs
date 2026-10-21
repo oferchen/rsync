@@ -13,6 +13,8 @@ mod creation;
 /// `pub(in crate::receiver)` so the receiver context can name `DeletedEntry`
 /// for its deferred `--delete-delay` victim queue.
 pub(in crate::receiver) mod deletion;
+#[cfg(unix)]
+mod link_store;
 mod links;
 mod missing_args;
 /// Removal of a destination entry obstructing the incoming one.

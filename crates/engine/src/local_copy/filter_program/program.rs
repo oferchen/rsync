@@ -43,6 +43,10 @@ pub(crate) const TIMEOUT_EXIT_CODE: i32 = 30;
 #[allow(dead_code)] // upstream exit code constant; reserved for connection-timeout reporting
 pub(crate) const CONNECTION_TIMEOUT_EXIT_CODE: i32 = 35;
 
+/// Exit code returned when a file I/O step aborts the transfer.
+///
+/// Maps to upstream rsync's `RERR_FILEIO` (11) and `core::exit_code::ExitCode::FileIo`.
+pub(crate) const FILE_IO_EXIT_CODE: i32 = 11;
 /// Exit code returned when source files vanished during transfer.
 ///
 /// Maps to upstream rsync's `RERR_VANISHED` (24) and `core::exit_code::ExitCode::Vanished`.

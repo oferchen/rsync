@@ -94,6 +94,7 @@ pub fn apply_xattrs_from_list(
     _basis: Option<&Path>,
     _filter: Option<&dyn Fn(&str) -> bool>,
     _confine_root: Option<&Path>,
+    _fake_super: bool,
 ) -> Result<(), MetadataError> {
     warn_xattr_unsupported();
     Ok(())
@@ -135,7 +136,8 @@ mod tests {
         let root = Path::new("/nonexistent");
         assert!(sync_xattrs(src, dst, false, XattrSyncFilters::default(), Some(root)).is_ok());
         assert!(
-            apply_xattrs_from_list(dst, &XattrList::new(), false, None, None, Some(root)).is_ok()
+            apply_xattrs_from_list(dst, &XattrList::new(), false, None, None, Some(root), false)
+                .is_ok()
         );
     }
 
@@ -164,7 +166,7 @@ mod tests {
     fn apply_xattrs_from_list_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let xattr_list = XattrList::new();
-        let result = apply_xattrs_from_list(dst, &xattr_list, false, None, None, None);
+        let result = apply_xattrs_from_list(dst, &xattr_list, false, None, None, None, false);
         assert!(result.is_ok());
     }
 
@@ -172,7 +174,7 @@ mod tests {
     fn apply_xattrs_from_list_follow_symlinks_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let xattr_list = XattrList::new();
-        let result = apply_xattrs_from_list(dst, &xattr_list, true, None, None, None);
+        let result = apply_xattrs_from_list(dst, &xattr_list, true, None, None, None, false);
         assert!(result.is_ok());
     }
 }

@@ -74,10 +74,18 @@ pub(super) fn try_skip_up_to_date(
     // --fake-super placeholder can have identical content and mtime while its
     // %stat encodes a different device, so force a transfer when the encoded
     // node changed.
+    // upstream: xattrs.c:x_lstat() reads the source %stat once; the
+    // comparison and the skip record share it.
+    let source_stat = (skip && metadata_options.fake_super_enabled())
+        .then(|| ::metadata::load_fake_super(source).ok().flatten())
+        .flatten();
     #[cfg(all(unix, feature = "xattr"))]
     if skip
         && metadata_options.fake_super_enabled()
-        && super::super::super::super::comparison::fake_super_stat_differs(source, destination)
+        && super::super::super::super::comparison::fake_super_stat_differs(
+            source_stat.as_ref(),
+            destination,
+        )
     {
         skip = false;
     }
@@ -96,6 +104,7 @@ pub(super) fn try_skip_up_to_date(
         existing,
         flags,
         mode,
+        source_stat.as_ref(),
     )?;
 
     Ok(true)
@@ -120,6 +129,7 @@ pub(super) fn record_metadata_only_skip(
     flags: &TransferFlags,
     #[allow(unused_variables)] // REASON: used on unix with feature "xattr"
     mode: LocalCopyExecution,
+    source_stat: Option<&::metadata::FakeSuperStat>,
 ) -> Result<(), LocalCopyError> {
     // upstream: rsync.c:672-676 - rprintf(FCLIENT, "%s is uptodate\n", fname)
     // at INFO_GTE(NAME, 2) when a quick-check or content-equal path reuses
@@ -160,8 +170,8 @@ pub(super) fn record_metadata_only_skip(
 
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_regular_file_matched();
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+    let metadata_snapshot =
+        LocalCopyMetadata::from_metadata(metadata, None).virtualize_fake_super_stat(source_stat);
     let total_bytes = Some(metadata_snapshot.len());
     let change_set = LocalCopyChangeSet::for_file(
         metadata,

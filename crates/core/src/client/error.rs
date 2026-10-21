@@ -360,6 +360,13 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
             ClientError::with_code(code, msg)
         }
+        // upstream: xattrs.c:1253-1258 - the sender prints the cause and
+        // exits RERR_FILEIO.
+        LocalCopyErrorKind::FileIo { message } => {
+            let code = ExitCode::FileIo;
+            let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Sender);
+            ClientError::with_code(code, msg)
+        }
         LocalCopyErrorKind::Interrupted => signal_interrupt_error(Role::Sender),
     }
 }

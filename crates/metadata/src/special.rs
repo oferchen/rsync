@@ -216,38 +216,45 @@ pub fn format_skipped_socket_message(destination: &Path) -> String {
 
 /// Creates an empty 0600 regular file used as a fake-super placeholder.
 ///
-/// Upstream `do_mknod()` performs the equivalent substitution with
-/// `open(O_WRONLY|O_CREAT|O_TRUNC, 0600)` (syscall.c:1317-1322); oc uses
-/// `O_CREAT|O_WRONLY|O_EXCL` (`create_new`). Any
-/// pre-existing entry at `destination` is removed first to mirror the
-/// `unlink + create` semantics used by upstream when overwriting an existing
-/// special-file destination.
-/// upstream: syscall.c:1317-1322 - do_mknod() creates an empty 0600 file when am_root < 0
+/// On Unix the leaf is opened with `O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW`
+/// beneath its confined parent, so neither a planted leaf symlink nor a
+/// swapped parent component can redirect the create. The caller has already
+/// removed any obstacle, as upstream's generator does before `do_mknod()`.
+// upstream: syscall.c:1415-1427 do_mknod_at() - the `am_root < 0` arm opens
+// the leaf with openat(dfd, bname, O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW, 0600).
 fn create_fake_super_placeholder(
     destination: &Path,
     context: &'static str,
 ) -> Result<(), MetadataError> {
-    if let Err(error) = fs::remove_file(destination)
-        && error.kind() != io::ErrorKind::NotFound
-    {
-        return Err(MetadataError::new(context, destination, error));
-    }
-
-    let mut open_options = fs::OpenOptions::new();
-    open_options.write(true).create_new(true);
-    apply_placeholder_mode(&mut open_options);
-    open_options
-        .open(destination)
+    open_placeholder(destination)
         .map(drop)
         .map_err(|error| MetadataError::new(context, destination, error))
 }
-
 #[cfg(unix)]
-fn apply_placeholder_mode(open_options: &mut fs::OpenOptions) {
-    use std::os::unix::fs::OpenOptionsExt;
-    open_options.mode(0o600);
+fn open_placeholder(destination: &Path) -> io::Result<fs::File> {
+    let parent = destination.parent().unwrap_or(Path::new("."));
+    let leaf = Path::new(destination.file_name().unwrap_or_default());
+    fast_io::openat_via_sandbox_or_fallback(
+        None,
+        parent,
+        leaf,
+        destination,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        0o600,
+    )
 }
-
+#[cfg(not(unix))]
+fn open_placeholder(destination: &Path) -> io::Result<fs::File> {
+    if let Err(error) = fs::remove_file(destination)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(error);
+    }
+    let mut open_options = fs::OpenOptions::new();
+    open_options.write(true).create_new(true);
+    apply_placeholder_mode(&mut open_options);
+    open_options.open(destination)
+}
 #[cfg(not(unix))]
 fn apply_placeholder_mode(_open_options: &mut fs::OpenOptions) {
     // On non-Unix targets there is no POSIX mode to apply; the placeholder is
@@ -1207,5 +1214,32 @@ mod tests {
 
         let dest_meta = fs::symlink_metadata(&dest).expect("fifo metadata");
         assert!(dest_meta.file_type().is_fifo());
+    }
+    // upstream: syscall.c:1415-1427 do_mknod_at() - the fake-super placeholder
+    // is opened with O_NOFOLLOW, so a symlink planted at the leaf cannot
+    // redirect the create into the file it names.
+    #[cfg(unix)]
+    #[test]
+    fn fake_super_placeholder_does_not_write_through_a_planted_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_support::create_tempdir();
+        let victim = dir.path().join("victim");
+        fs::write(&victim, b"keep").expect("write victim");
+        fs::set_permissions(&victim, fs::Permissions::from_mode(0o644)).expect("chmod victim");
+        let dest = dir.path().join("fifo");
+        std::os::unix::fs::symlink(&victim, &dest).expect("plant symlink");
+        let source = dir.path().join("source");
+        fs::write(&source, b"").expect("write source");
+        let meta = fs::metadata(&source).expect("stat source");
+        let error = create_fifo_with_fake_super(&dest, &meta, true)
+            .expect_err("a planted leaf symlink must not be followed");
+        assert_eq!(error.source_error().raw_os_error(), Some(libc::ELOOP));
+        assert_eq!(fs::read(&victim).expect("read victim"), b"keep");
+        assert!(
+            fs::symlink_metadata(&dest)
+                .expect("lstat dest")
+                .file_type()
+                .is_symlink()
+        );
     }
 }
