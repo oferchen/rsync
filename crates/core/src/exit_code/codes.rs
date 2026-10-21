@@ -320,8 +320,9 @@ impl ExitCode {
     /// - `UnexpectedEof`, other `InvalidData` - `StreamIo`
     /// - `Unsupported` - `Unsupported`
     /// - `Interrupted` by signal - `Signal`
-    /// - A failed commit-path backup (tagged
-    ///   [`transfer::temp_guard::CommitOp::Backup`]) - `FileIo`, whatever the
+    /// - A failed commit-path backup or received-file close (tagged
+    ///   [`transfer::temp_guard::CommitOp::Backup`] or
+    ///   [`transfer::temp_guard::CommitOp::Close`]) - `FileIo`, whatever the
     ///   errno
     /// - All other I/O errors - `FileIo`
     ///

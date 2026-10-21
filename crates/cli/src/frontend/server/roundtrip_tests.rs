@@ -129,10 +129,10 @@ fn block_size_emits_short_b_and_does_not_leak() {
 }
 
 #[test]
-fn temp_dir_and_backup_dir_joined_forms_do_not_leak() {
-    // upstream emits these SPLIT (options.c:2981-2985 / 3106-3109); oc's own
-    // forwarder emits the JOINED `--flag=value`. Both must be recognised. These
-    // are am_sender (PUSH) only, so exercise the Sender role.
+fn temp_dir_and_backup_dir_split_forms_do_not_leak() {
+    // upstream emits these SPLIT (options.c:2981-2985 / 3106-3109), and so does
+    // oc's forwarder (safe_arg). The server parser must consume each value slot.
+    // These are am_sender (PUSH) only, so exercise the Sender role.
     let config = ClientConfig::builder()
         .temp_directory(Some("/var/tmp/oc-spill"))
         .backup(true)
@@ -143,14 +143,16 @@ fn temp_dir_and_backup_dir_joined_forms_do_not_leak() {
     assert_no_positional_leak(&config, RemoteRole::Sender, &["/remote/dest"]);
 
     let built = server_argv(&config, RemoteRole::Sender, &["/remote/dest"]);
-    assert!(
-        built.iter().any(|a| a == "--temp-dir=/var/tmp/oc-spill"),
-        "temp-dir must forward joined: {built:?}"
-    );
-    assert!(
-        built.iter().any(|a| a == "--backup-dir=/srv/backups"),
-        "backup-dir must forward joined: {built:?}"
-    );
+    for pair in [
+        ["--temp-dir", "/var/tmp/oc-spill"],
+        ["--backup-dir", "/srv/backups"],
+    ] {
+        assert!(
+            built.windows(2).any(|w| w == pair),
+            "{} must forward split like upstream: {built:?}",
+            pair[0]
+        );
+    }
 }
 
 #[test]

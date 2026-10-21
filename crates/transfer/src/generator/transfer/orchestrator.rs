@@ -153,6 +153,11 @@ impl GeneratorContext {
         if self.protocol.supports_block_stats() {
             reader.accept_block_stats();
         }
+        // upstream: log.c:357-366 - a server sender's rwrite() frames a peer's
+        // MSG_INFO/MSG_ERROR back to the client; its stdout may be the stream.
+        reader.set_local_role(crate::reader::LocalRole::from_client_mode(
+            self.config.connection.client_mode,
+        ));
         if self.should_activate_input_multiplex() {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(

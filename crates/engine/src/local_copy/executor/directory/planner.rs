@@ -308,6 +308,13 @@ pub(crate) fn plan_directory_entries<'a>(
             continue;
         }
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
+        // upstream: flist.c make_file() reads the %stat through x_lstat()
+        // before any filter, and a corrupt one ends the run.
+        #[cfg(all(unix, feature = "xattr"))]
+        crate::local_copy::ensure_fake_super_source_stat(
+            context.options().fake_super_enabled(),
+            &entry.path,
+        )?;
 
         let mut keep_name = true;
         let mut action = decide_entry_action(
@@ -725,6 +732,13 @@ fn plan_directory_entries_with_prefetch<'a>(
             continue;
         }
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
+        // upstream: flist.c make_file() reads the %stat through x_lstat()
+        // before any filter, and a corrupt one ends the run.
+        #[cfg(all(unix, feature = "xattr"))]
+        crate::local_copy::ensure_fake_super_source_stat(
+            context.options().fake_super_enabled(),
+            &entry.path,
+        )?;
 
         let mut keep_name = true;
         let mut action = decide_entry_action(

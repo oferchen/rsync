@@ -341,6 +341,21 @@ fn matched_block_roundtrips_at_every_buffer_boundary() {
 }
 
 #[test]
+fn matched_block_insert_that_exactly_fills_the_inflate_buffer_roundtrips() {
+    // upstream: token.c:726 `} while (len || rx_strm.avail_out == 0);` - the
+    // receiver keeps inflating while the output buffer came back full, even
+    // with no input left. A stored-block chunk of exactly CHUNK_SIZE bytes is
+    // the case that leaves the input empty and the output buffer full on the
+    // same call, so any output inflate still holds must be drained before the
+    // next token is decoded. The tail literal after the insert is what exposes
+    // a skipped drain: its bytes would be displaced by the stale residue.
+    for insert_len in [CHUNK_SIZE, 0xFFFF + CHUNK_SIZE] {
+        for tail_len in [8 * 1024, CHUNK_SIZE, 0x1_0000 + 1000] {
+            roundtrip_across_insert(insert_len, 8 * 1024, tail_len).unwrap();
+        }
+    }
+}
+#[test]
 fn encoder_protocol_version_31_advances_offset() {
     // Protocol >= 31 advances the offset between 0xFFFF chunks in see_token,
     // matching upstream's data-duplicating bug fix.

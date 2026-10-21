@@ -18,6 +18,7 @@ use crate::client::error::{ClientError, socket_error};
 use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
 use crate::client::remote::flags;
 use crate::client::remote::output_option::make_output_option;
+use crate::client::remote::safe_arg::{ArgKind, escape_metachars};
 
 /// Sends daemon-mode arguments to the server.
 ///
@@ -868,16 +869,6 @@ fn strip_client_only_batch_flags(args: &mut Vec<String>) {
     }
 }
 
-/// Characters that the remote shell wrapper (or upstream `unbackslash_arg`)
-/// will interpret unless escaped. Mirrors upstream `options.c:2705`
-/// `SHELL_CHARS`. Backslash is included so a literal `\` round-trips intact,
-/// and `\n`/`\r` so a newline cannot terminate the command and start a second.
-const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\n\r\\";
-
-/// Wildcard characters that the remote shell would expand. Mirrors upstream
-/// `options.c:2706` `WILD_CHARS`.
-const WILD_CHARS: &str = "*?[]";
-
 /// Mirrors upstream `options.c:2703` `safe_arg()` for non-protect_args
 /// daemon transmission.
 ///
@@ -952,74 +943,22 @@ fn daemon_arg_wire_bytes(arg: &OsStr) -> &[u8] {
     }
 }
 
-/// Whether byte `b` must be backslash-escaped in a daemon arg.
-///
-/// Mirrors upstream `options.c:2708`
-/// `escapes = is_filename_arg ? SHELL_CHARS : WILD_CHARS SHELL_CHARS`: filename
-/// args escape only `SHELL_CHARS` (leaving wildcards shell-expandable), while
-/// option values also escape `WILD_CHARS`. Deriving the option set from the two
-/// owner constants at the point of use reproduces upstream's literal
-/// juxtaposition and keeps the sets - including the `\n`/`\r` that stop a value
-/// from splitting the newline-terminated proto<30 wire - from drifting apart.
-fn daemon_arg_needs_escape(b: u8, is_filename_arg: bool) -> bool {
-    SHELL_CHARS.as_bytes().contains(&b) || (!is_filename_arg && WILD_CHARS.as_bytes().contains(&b))
-}
-
 /// Backslash-escapes a daemon argument at the byte level - the strict inverse
 /// of upstream `unbackslash_arg` (`io.c:1467`, `\X -> X` for any byte X).
 ///
-/// Mirrors upstream `safe_arg()` (`options.c:2703`):
-///
-/// - The arg is split at the first `=` (upstream's `opt = "--foo"` /
-///   `arg = "value"` convention in `server_options()`); the `--foo=` key
-///   passes through verbatim while only the value is escaped.
-/// - Option values escape `WILD_CHARS` + `SHELL_CHARS`; the filename /
-///   module-path form escapes only `SHELL_CHARS` so wildcards stay
-///   shell-expandable ([`daemon_arg_needs_escape`]).
-/// - `\` is doubled so `unbackslash_arg` recovers the literal, except in the
-///   filename form where an existing `\` before a wildcard is left intact
-///   (upstream `options.c:2731`, `options.c:2758`) to preserve a deliberate
-///   wildcard escape.
-/// - Every other byte - crucially including bytes >= 0x80 - passes through
-///   untouched, exactly as upstream `safe_arg` leaves non-metacharacter bytes,
-///   so a non-UTF-8 path round-trips through escape -> `unbackslash_arg`
-///   byte-for-byte unchanged. All escape-set members are ASCII, so byte-level
-///   membership never mis-flags a continuation byte of a multibyte sequence.
-///
-/// Args with neither `=` nor any escapable byte are returned verbatim to avoid
-/// allocation.
+/// The arg is split at the first `=` (upstream's `opt = "--foo"` /
+/// `arg = "value"` convention in `server_options()`); the `--foo=` key passes
+/// through verbatim and the value takes `safe_arg()`'s option-value escaping.
+/// An arg without that shape takes the filename escaping. Bytes >= 0x80 pass
+/// through untouched, so a non-UTF-8 path round-trips byte-for-byte.
 fn escape_daemon_arg_bytes(arg: &[u8]) -> Vec<u8> {
-    let (prefix, value, is_filename_arg): (&[u8], &[u8], bool) =
-        match arg.iter().position(|&b| b == b'=') {
-            Some(eq_pos) if arg.starts_with(b"--") => (&arg[..=eq_pos], &arg[eq_pos + 1..], false),
-            _ => (b"", arg, true),
-        };
-
-    let needs_work = value
-        .iter()
-        .any(|&b| b == b'\\' || daemon_arg_needs_escape(b, is_filename_arg));
-    if !needs_work {
-        return arg.to_vec();
-    }
-
-    let wild = WILD_CHARS.as_bytes();
-    let mut out = Vec::with_capacity(prefix.len() + value.len() + 8);
-    out.extend_from_slice(prefix);
-    for (i, &b) in value.iter().enumerate() {
-        if b == b'\\' {
-            // upstream: options.c:2758 - filename args preserve `\<wildcard>`
-            // sequences verbatim so the user's deliberate wildcard escape
-            // survives. Option args always double the backslash.
-            let next = value.get(i + 1).copied().unwrap_or(0);
-            if !(is_filename_arg && wild.contains(&next)) {
-                out.push(b'\\');
-            }
-        } else if daemon_arg_needs_escape(b, is_filename_arg) {
-            out.push(b'\\');
+    let (prefix, value, kind): (&[u8], &[u8], ArgKind) = match arg.iter().position(|&b| b == b'=') {
+        Some(eq_pos) if arg.starts_with(b"--") => {
+            (&arg[..=eq_pos], &arg[eq_pos + 1..], ArgKind::OptionValue)
         }
-        out.push(b);
-    }
-    out
+        _ => (b"", arg, ArgKind::Filename),
+    };
+    [prefix, escape_metachars(value, kind).as_ref()].concat()
 }
 
 // upstream: clientserver.c carries the daemon operand path as raw `char*`

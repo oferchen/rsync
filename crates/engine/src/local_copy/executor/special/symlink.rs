@@ -26,8 +26,7 @@ use crate::local_copy::{
     remove_source_entry_if_requested,
 };
 use ::metadata::{
-    MetadataOptions, apply_symlink_metadata_with_options,
-    apply_symlink_metadata_with_options_and_pre_transfer,
+    MetadataError, MetadataOptions, apply_symlink_metadata_with_options_and_pre_transfer,
 };
 
 use super::super::{is_device, is_fifo};
@@ -387,12 +386,10 @@ pub(crate) fn copy_symlink(
     // outright under plain `-i` (iflags=0 path), matching the upstream
     // `testsuite/itemize.test` golden for the post-setup assertion at line
     // 74-79.
-    let symlink_target_unchanged = destination_metadata
-        .as_ref()
-        .is_some_and(|existing| existing.file_type().is_symlink())
-        && fs::read_link(destination)
-            .map(|existing_target| existing_target == target)
-            .unwrap_or(false);
+    let placeholders = fake_super_placeholders(context);
+    let symlink_target_unchanged = destination_metadata.is_some()
+        && read_existing_link(placeholders, destination)
+            .is_ok_and(|existing_target| existing_target == target);
 
     if symlink_target_unchanged {
         let existing = destination_metadata
@@ -404,7 +401,7 @@ pub(crate) fn copy_symlink(
             metadata_options.clone()
         };
         if !mode.is_dry_run() {
-            apply_symlink_metadata_with_options(destination, metadata, &symlink_options)
+            apply_link_metadata(placeholders, destination, metadata, &symlink_options, None)
                 .map_err(map_metadata_error)?;
         }
         // upstream: generator.c:1963-1970 + receiver.c:925-926 - an existing
@@ -464,7 +461,10 @@ pub(crate) fn copy_symlink(
     // `ITEM_REPORT_TIME` correctly.
     let pre_replace_symlink_metadata = destination_metadata
         .as_ref()
-        .filter(|existing| existing.file_type().is_symlink())
+        .filter(|existing| {
+            existing.file_type().is_symlink()
+                || (placeholders && read_existing_link(true, destination).is_ok())
+        })
         .cloned();
 
     // upstream: generator.c:1938 - `exists = statret == 0 && stype != FT_DIR`,
@@ -720,7 +720,7 @@ pub(crate) fn copy_symlink(
         target.clone()
     };
 
-    if let Err(error) = create_symlink(&write_target, source, destination) {
+    if let Err(error) = create_link(placeholders, &write_target, source, destination) {
         // A Windows file symbolic link cannot be created without privilege and
         // has no junction fallback (directory links do fall back inside
         // `create_symlink`). Skip it with a warning and a soft error so the
@@ -761,7 +761,8 @@ pub(crate) fn copy_symlink(
     // default `symlink(2)` gave it, while one that replaced any other obstacle
     // keeps the OBSTACLE's old bits via `pre_transfer_metadata`.
     let symlink_options = symlink_options.with_destination_is_new(pre_transfer_metadata.is_none());
-    apply_symlink_metadata_with_options_and_pre_transfer(
+    apply_link_metadata(
+        placeholders,
         destination,
         metadata,
         &symlink_options,
@@ -878,6 +879,70 @@ pub(crate) fn copy_symlink(
     Ok(())
 }
 
+/// Applies a copied link's metadata. A fake-super placeholder is a regular
+/// file, so it takes the regular-file applier, whose set_stat_xattr() records
+/// the link type.
+// upstream: syscall.c:do_symlink_atfd() - the placeholder is a regular file.
+fn apply_link_metadata(
+    placeholders: bool,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    pre_transfer: Option<&fast_io::EntryMetadata>,
+) -> Result<(), MetadataError> {
+    if placeholders {
+        return ::metadata::apply_file_metadata_with_options(destination, metadata, options);
+    }
+    apply_symlink_metadata_with_options_and_pre_transfer(
+        destination,
+        metadata,
+        options,
+        pre_transfer,
+    )
+}
+/// Reports whether this copy stores symlinks as fake-super placeholders.
+#[cfg(unix)]
+fn fake_super_placeholders(context: &CopyContext) -> bool {
+    ::metadata::symlinks_are_placeholders(context.options().fake_super_enabled())
+}
+#[cfg(not(unix))]
+const fn fake_super_placeholders(_context: &CopyContext) -> bool {
+    false
+}
+/// Reads the target of the link at `destination`, in the store's form.
+fn read_existing_link(placeholders: bool, destination: &Path) -> io::Result<PathBuf> {
+    #[cfg(unix)]
+    if placeholders {
+        return ::metadata::read_fake_super_link(
+            None,
+            destination.parent().unwrap_or(Path::new(".")),
+            Path::new(destination.file_name().unwrap_or_default()),
+            destination,
+        );
+    }
+    let _ = placeholders;
+    fs::read_link(destination)
+}
+/// Creates a link at `destination` to `target`, in the store's form.
+fn create_link(
+    placeholders: bool,
+    target: &Path,
+    source: &Path,
+    destination: &Path,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    if placeholders {
+        return ::metadata::create_fake_super_link(
+            None,
+            destination.parent().unwrap_or(Path::new(".")),
+            Path::new(destination.file_name().unwrap_or_default()),
+            destination,
+            target,
+        );
+    }
+    let _ = placeholders;
+    create_symlink(target, source, destination)
+}
 /// Creates a symbolic link at `destination` pointing to `target`.
 #[cfg(unix)]
 pub(crate) fn create_symlink(target: &Path, _source: &Path, destination: &Path) -> io::Result<()> {

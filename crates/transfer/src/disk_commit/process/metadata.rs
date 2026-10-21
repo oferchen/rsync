@@ -215,6 +215,7 @@ fn apply_metadata_acls_and_xattrs(
             // upstream: rsync.c:582-597 - a confined receiver re-pins the leaf
             // and refuses rather than falling back to a path-based lsetxattr.
             dest_root,
+            opts.fake_super_enabled(),
         ) {
             return Some((file_path.to_path_buf(), e.to_string()));
         }

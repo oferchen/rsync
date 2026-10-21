@@ -168,6 +168,28 @@ pub(in crate::client::remote) fn map_child_exit_status(
     }
 }
 
+/// Maps an SSH child exit status the way an aborting client folds it in.
+///
+/// A client that fails exits through `_exit_cleanup()`, which takes
+/// `WEXITSTATUS(status)` raw. For a child killed by a signal that is 0, so the
+/// signal never outranks the local failure code; only the clean-finish reap
+/// ([`map_child_exit_status`]) turns a signal into `RERR_TERMINATED` or
+/// `RERR_CRASHED`. A remote shell that dies from a signal before the handshake
+/// therefore leaves the client's `RERR_STREAMIO` (12) standing.
+///
+/// upstream: cleanup.c:146-152 `_exit_cleanup()`.
+pub(in crate::client::remote) fn map_cleanup_child_exit_status(
+    status: std::process::ExitStatus,
+) -> ExitCode {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if status.signal().is_some() {
+            return ExitCode::Ok;
+        }
+    }
+    map_child_exit_status(status)
+}
 /// Maps the embedded SSH transport's remote exit report to an rsync exit code.
 ///
 /// The embedded transport has no child to `waitpid()`; the server's
