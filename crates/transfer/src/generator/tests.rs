@@ -6420,11 +6420,9 @@ fn two_list_sender_with_pending_removals(
 /// unlinked `b`, a source the peer never confirmed.
 #[test]
 fn msg_success_for_a_gap_ndx_never_unlinks_the_next_lists_first_file() {
-    let err = refuse_success(1);
-    assert!(
-        err.starts_with("File-list index 1 is the gap of a list, not a file (successful_send) "),
-        "{err}"
-    );
+    // upstream prints no line of its own here (sender.c:410-411): only the
+    // standard RERR_PROTOCOL exit line.
+    assert_eq!(refuse_success(1), "protocol incompatibility");
 }
 
 /// Feeds one crafted `MSG_SUCCESS` to a sender whose every source is pending
@@ -6455,6 +6453,28 @@ fn refuse_success_after(wire: i32, prepare: impl FnOnce(&mut GeneratorContext)) 
         "no source may be unlinked"
     );
     err.to_string()
+}
+
+/// The gap of a list with no directory names nothing to itemize. upstream
+/// exits RERR_PROTOCOL without a line of its own (sender.c:553-555), so the
+/// refusal carries only the standard exit text.
+#[test]
+fn an_item_naming_the_gap_of_a_list_without_a_directory_exits_silently() {
+    let temp = create_test_files(&[
+        ("a.txt", b"alpha"),
+        ("b.txt", b"bravo"),
+        ("c.txt", b"charlie"),
+    ]);
+    let (ctx, _sources) = two_list_sender_with_pending_removals(&temp);
+    let err = ctx
+        .flist_for_ndx(-1)
+        .expect_err("the initial list has no directory to itemize");
+    assert_eq!(err.to_string(), "protocol incompatibility");
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+        "must map to RERR_PROTOCOL (2)"
+    );
 }
 
 /// One past the newest list, and far past it: upstream's flist_for_ndx()

@@ -640,22 +640,10 @@ impl GeneratorContext {
         match (slot, site) {
             (NdxSlot::Entry(flat), _) => Ok(flat),
             (NdxSlot::Gap(Some(parent)), NdxSite::ReadNdxAndAttrs) => Ok(parent),
-            // upstream exits at both without a message of its own; name the
-            // index so the refusal is attributable.
-            (NdxSlot::Gap(None), NdxSite::ReadNdxAndAttrs) => {
-                Err(protocol::protocol_violation(format!(
-                    "File-list index {wire_ndx} is the gap of a list with no directory {}{}",
-                    error_location!(),
-                    crate::role_trailer::sender()
-                )))
-            }
-            (NdxSlot::Gap(_), NdxSite::SuccessfulSend) => {
-                Err(protocol::protocol_violation(format!(
-                    "File-list index {wire_ndx} is the gap of a list, not a file (successful_send) {}{}",
-                    error_location!(),
-                    crate::role_trailer::sender()
-                )))
-            }
+            // upstream: sender.c:553-555 and sender.c:410-411 exit without a
+            // message of their own.
+            (NdxSlot::Gap(None), NdxSite::ReadNdxAndAttrs)
+            | (NdxSlot::Gap(_), NdxSite::SuccessfulSend) => Err(silent_protocol_exit()),
         }
     }
 
@@ -2047,6 +2035,12 @@ mod confinement_root_tests {
         };
         assert_eq!(confinement_root(&connection), None);
     }
+}
+
+/// A bare `exit_cleanup(RERR_PROTOCOL)`: the run ends on the standard exit
+/// line alone, whose text is upstream's name for the code (log.c:83).
+fn silent_protocol_exit() -> io::Error {
+    protocol::protocol_violation("protocol incompatibility")
 }
 
 /// Where a peer-supplied NDX is read, which decides what a gap slot means.
