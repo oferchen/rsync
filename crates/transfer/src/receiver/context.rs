@@ -1328,18 +1328,18 @@ impl ReceiverContext {
         }
     }
 
-    /// Whether a peer's log frames go to the daemon's log channel.
+    /// The end of the connection this receiver's reader serves.
     ///
-    /// True only for a daemon's receiver (oc's `am_daemon`, see
-    /// `served_module_root`). Upstream's receiver child always passes a peer
-    /// `MSG_INFO`/`MSG_ERROR` to its generator (`send_msgs_to_gen`); only a
-    /// daemon's generator then writes it to the log file, so the SSH server
-    /// and client receivers keep rendering it locally.
+    /// Every server receiver (rsh `--server` or daemon) forwards a peer's
+    /// `MSG_INFO`/`MSG_ERROR` rather than rendering it: upstream's receiver
+    /// child sets `send_msgs_to_gen = am_server` and passes the frame to its
+    /// generator, whose `rwrite()` frames it to the client (and a daemon's
+    /// also logs it). A client receiver renders it locally.
     ///
-    /// upstream: log.c:292-301 (forward), log.c:312-330 (`am_daemon` logit)
+    /// upstream: main.c:1085, log.c:292-301 (forward), log.c:312-366
     #[must_use]
-    pub(crate) fn forwards_peer_log(&self) -> bool {
-        self.config.connection.served_module_root().is_some()
+    pub(crate) fn reader_role(&self) -> crate::reader::LocalRole {
+        crate::reader::LocalRole::from_client_mode(self.config.connection.client_mode)
     }
 
     /// Determines if filter list should be read from sender.

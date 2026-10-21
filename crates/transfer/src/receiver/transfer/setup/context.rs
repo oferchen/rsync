@@ -112,9 +112,7 @@ impl ReceiverContext {
 
         self.emit_delta_transmission_notice(writer);
 
-        if self.forwards_peer_log() {
-            reader.forward_peer_log();
-        }
+        reader.set_local_role(self.reader_role());
         let mut reader = if self.should_activate_input_multiplex() {
             reader.activate_multiplex().map_err(|e| {
                 io::Error::new(
