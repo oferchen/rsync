@@ -257,3 +257,182 @@ fn a_corrupt_fake_super_record_fails_like_upstream() {
         assert_eq!(outcomes[1], outcomes[0], "{cell}");
     }
 }
+
+/// One failing server-sender phase: how to plant it and what to run.
+struct SenderFailure {
+    phase: &'static str,
+    plant: fn(&Path),
+    flags: &'static [&'static str],
+}
+
+fn fresh_src_dst(root: &Path) {
+    for dir in ["src", "dst"] {
+        let _ = fs::remove_dir_all(root.join(dir));
+        fs::create_dir_all(root.join(dir)).expect("create dir");
+    }
+}
+
+fn plant_corrupt(path: &Path) {
+    fs::write(path, b"z").expect("write corrupt source");
+    xattr::set(path, FAKE_SUPER_XATTR, b"garbage").expect("plant %stat");
+}
+
+/// The top-level file list carries the corrupt record.
+fn plant_flist(root: &Path) {
+    fresh_src_dst(root);
+    plant_corrupt(&root.join("src/f"));
+}
+
+/// The corrupt record sits in the second sub-list, which the sender builds
+/// while `count` files of the first are still in flight.
+fn plant_sublist(root: &Path, count: usize) {
+    fresh_src_dst(root);
+    let first = root.join("src/a");
+    fs::create_dir_all(&first).expect("create a");
+    fs::create_dir_all(root.join("src/z")).expect("create z");
+    for i in 0..count {
+        fs::write(first.join(format!("f{i}")), i.to_string()).expect("write small");
+    }
+    fs::write(first.join("zbig"), vec![0x5a; 20_000_000]).expect("write big");
+    plant_corrupt(&root.join("src/z/f"));
+}
+
+fn plant_early_sublist(root: &Path) {
+    plant_sublist(root, 5);
+}
+
+fn plant_late_sublist(root: &Path) {
+    plant_sublist(root, 3000);
+}
+
+/// A 50 MB basis whose block count at `-B 1024` exceeds what a 1 MiB
+/// `--max-alloc` lets the sender's receive_sums() allocate.
+fn plant_mid_delta(root: &Path) {
+    fresh_src_dst(root);
+    let basis = vec![b'a'; 50_000_000];
+    fs::write(root.join("dst/m-big"), &basis).expect("write basis");
+    filetime::set_file_mtime(
+        root.join("dst/m-big"),
+        FileTime::from_unix_time(1_546_300_800, 0),
+    )
+    .expect("mtime");
+    let mut source = basis;
+    source.push(b'x');
+    fs::write(root.join("src/m-big"), source).expect("write source");
+    for i in 0..3 {
+        fs::write(root.join(format!("src/z-s{i}")), i.to_string()).expect("write small");
+    }
+}
+
+/// Pulls `src/` from a daemon serving it as module `m`, the daemon run in
+/// inetd mode on the one connection the client makes to a listener this test
+/// already bound, so there is no port race and no readiness poll.
+fn daemon_pull(binary: &Path, root: &Path) -> Option<i32> {
+    let config = root.join("rsyncd.conf");
+    fs::write(
+        &config,
+        format!(
+            "use chroot = false\nfake super = yes\n[m]\npath = {}/src\n",
+            root.display()
+        ),
+    )
+    .expect("write rsyncd.conf");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let url = format!(
+        "rsync://127.0.0.1:{}/m/",
+        listener.local_addr().expect("addr").port()
+    );
+    let daemon_binary = binary.to_path_buf();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept");
+        // inetd hands the daemon the socket as both stdin and stdout.
+        let output = stream.try_clone().expect("clone socket");
+        Command::new(daemon_binary)
+            .arg("--daemon")
+            .arg(format!("--config={}", config.display()))
+            .stdin(std::os::fd::OwnedFd::from(stream))
+            .stdout(std::os::fd::OwnedFd::from(output))
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn daemon")
+    });
+    let client = run(binary, root, &["-a", &url, "dst/"]);
+    server.join().expect("daemon thread");
+    client.code
+}
+
+/// upstream: cleanup.c:244-253 exit_cleanup() queues MSG_ERROR_EXIT and then
+/// runs io.c:1066-1075 noop_io_until_death(), which returns before draining
+/// while `msgs2stderr` is set (options.c:103). Only a socket daemon clears it
+/// (clientserver.c:1178), so an rsh server sender never delivers the frame
+/// and its client exits 12, while a daemon sender's client exits with the
+/// sender's own code.
+///
+/// Only exit codes are compared: the trailer role name and the daemon's cause
+/// line are separate residuals.
+#[test]
+fn a_failing_server_sender_exits_like_upstream() {
+    let Some(pair) = pair() else { return };
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    if !mode_tree(root) {
+        return;
+    }
+    let shell = local_shell(root);
+    let shell = shell.to_str().expect("utf-8 path");
+    let src_url = format!("localhost:{}/src/", root.display());
+    let rsh: [SenderFailure; 3] = [
+        SenderFailure {
+            phase: "file list",
+            plant: plant_flist,
+            flags: &["-a", "--fake-super", "-M--fake-super"],
+        },
+        SenderFailure {
+            phase: "early sub-list",
+            plant: plant_early_sublist,
+            flags: &["-a", "--fake-super", "-M--fake-super"],
+        },
+        SenderFailure {
+            phase: "late sub-list",
+            plant: plant_late_sublist,
+            flags: &["-a", "--fake-super", "-M--fake-super"],
+        },
+    ];
+    for cell in &rsh {
+        let mut codes = Vec::new();
+        for binary in [&pair.upstream, &pair.oc] {
+            (cell.plant)(root);
+            let bin = binary.to_str().expect("utf-8 path");
+            let mut args = cell.flags.to_vec();
+            args.extend(["-e", shell, "--rsync-path", bin, &src_url, "dst/"]);
+            codes.push(run(binary, root, &args).code);
+        }
+        assert_eq!(codes[0], Some(12), "{}: upstream's client", cell.phase);
+        assert_eq!(codes[1], codes[0], "{}", cell.phase);
+    }
+
+    // The client's own exit races the remote shell's: it reports either the
+    // broken pipe (10) or, once it has reaped the server, the server's
+    // RERR_MALLOC (22). upstream: cleanup.c:146-153.
+    let mid_delta = ["-a", "--no-whole-file", "-B", "1024", "-M--max-alloc=1M"];
+    for binary in [&pair.upstream, &pair.oc] {
+        plant_mid_delta(root);
+        let bin = binary.to_str().expect("utf-8 path");
+        let mut args = mid_delta.to_vec();
+        args.extend(["-e", shell, "--rsync-path", bin, &src_url, "dst/"]);
+        let code = run(binary, root, &args).code;
+        assert!(
+            matches!(code, Some(10 | 22)),
+            "mid-delta {}: {code:?}",
+            binary.display()
+        );
+    }
+
+    let mut codes = Vec::new();
+    for binary in [&pair.upstream, &pair.oc] {
+        plant_flist(root);
+        codes.push(daemon_pull(binary, root));
+    }
+    assert_eq!(codes[0], Some(11), "daemon file list: upstream's client");
+    assert_eq!(codes[1], codes[0], "daemon file list");
+}
