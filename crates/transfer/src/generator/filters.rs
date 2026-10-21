@@ -14,13 +14,12 @@
 //! - `flist.c:2476-2503` - `--files-from` filename reading and resolution
 //! - `exclude.c:push_local_filters()` - per-directory merge file loading
 
-use std::env;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 pub use ::filters::FilterSet;
-use filters::{DirMergeConfig, FilterChain, cvs_exclusion_rules};
+use filters::{DirMergeConfig, FilterChain};
 use logging::info_log;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 
@@ -486,24 +485,19 @@ impl GeneratorContext {
             // upstream: exclude.c:get_rule_prefix() encodes anchored as the
             // `/` modifier and directory-only as a trailing slash on the
             // pattern body.
+            // upstream: exclude.c:1595-1597 - a non-merge `C` rule triggers
+            // get_cvs_excludes() on this side, and check_filter() evaluates that
+            // list in the rule's place without ever matching its own pattern
+            // (exclude.c:1201-1206). Expand it here, under the rule's own
+            // prefix and modifiers, whatever pattern it carried.
+            if let Some(template) = cvs_template(wire_rule) {
+                rules.extend(filters::cvs_ignore_rules(template, cvs_perishable));
+                continue;
+            }
             let reconstructed_pattern = reconstruct_pattern(wire_rule);
             let mut rule = match wire_rule.rule_type {
                 RuleType::Include => FilterRule::include(reconstructed_pattern),
-                RuleType::Exclude => {
-                    // upstream: exclude.c:1595-1597 - a `-C` rule (cvs_exclude
-                    // with no pattern) triggers get_cvs_excludes() on the
-                    // local side, populating the filter list with the
-                    // default CVS-ignore patterns, `$HOME/.cvsignore`, and
-                    // `$CVSIGNORE`. Without expansion here, the bare empty
-                    // pattern's synthetic `**/` matcher would exclude every
-                    // top-level entry on the sender, defeating the whole
-                    // file list.
-                    if wire_rule.cvs_exclude && wire_rule.pattern.is_empty() {
-                        rules.extend(cvs_default_exclude_rules(cvs_perishable));
-                        continue;
-                    }
-                    FilterRule::exclude(reconstructed_pattern)
-                }
+                RuleType::Exclude => FilterRule::exclude(reconstructed_pattern),
                 RuleType::Protect => FilterRule::protect(reconstructed_pattern),
                 RuleType::Risk => FilterRule::risk(reconstructed_pattern),
                 RuleType::Clear => {
@@ -798,49 +792,23 @@ fn wire_rule_to_dir_merge_config(
     config
 }
 
-/// Builds the local CVS-ignore exclude list for a `-C` wire rule.
+/// The CVS template of a non-merge `C` wire rule, or `None` for any other rule.
 ///
-/// Mirrors upstream `exclude.c:get_cvs_excludes()`: the built-in
-/// `DEFAULT_CVSIGNORE` patterns, then any tokens from `$HOME/.cvsignore`,
-/// then any tokens from `$CVSIGNORE`. Each entry becomes an exclude rule
-/// with `perishable=true` when the negotiated protocol is >= 30.
-///
-/// # Upstream Reference
-///
-/// - `exclude.c:1489-1507 get_cvs_excludes()` - default patterns, HOME/.cvsignore, env.
-fn cvs_default_exclude_rules(perishable: bool) -> Vec<FilterRule> {
-    let mut out: Vec<FilterRule> = cvs_exclusion_rules(perishable).collect();
-
-    if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
-        let path = Path::new(&home).join(".cvsignore");
-        if let Ok(contents) = fs::read(&path) {
-            let text = String::from_utf8_lossy(&contents).into_owned();
-            append_cvsignore_tokens(&mut out, &text, perishable);
-        }
-    }
-
-    if let Some(value) = env::var_os("CVSIGNORE").filter(|value| !value.is_empty()) {
-        let text = value.to_string_lossy().into_owned();
-        append_cvsignore_tokens(&mut out, &text, perishable);
-    }
-
-    out
-}
-
-/// Splits a CVS-ignore source on whitespace and appends an exclude rule per
-/// token, mirroring upstream's word-split parsing of `$CVSIGNORE` and
-/// `$HOME/.cvsignore` in `exclude.c:get_cvs_excludes()`.
-fn append_cvsignore_tokens(rules: &mut Vec<FilterRule>, source: &str, perishable: bool) {
-    for token in source.split_whitespace() {
-        if token.is_empty() {
-            continue;
-        }
-        let mut rule = FilterRule::exclude(token.to_owned());
-        if perishable {
-            rule = rule.with_perishable(true);
-        }
-        rules.push(rule);
-    }
+/// upstream: exclude.c:1263, 1447-1456 - the CVS patterns inherit the rule's
+/// include, negate and perishable flags and its side.
+fn cvs_template(wire_rule: &FilterRuleWireFormat) -> Option<filters::CvsTemplate> {
+    let include = match wire_rule.rule_type {
+        RuleType::Include => true,
+        RuleType::Exclude => false,
+        _ => return None,
+    };
+    wire_rule.cvs_exclude.then_some(filters::CvsTemplate {
+        include,
+        negate: wire_rule.negate,
+        perishable: wire_rule.perishable,
+        sender_side: wire_rule.sender_side,
+        receiver_side: wire_rule.receiver_side,
+    })
 }
 
 /// Reads a `--files-from` list from a local file path on the server.

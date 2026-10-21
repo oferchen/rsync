@@ -119,7 +119,9 @@ fn push_filter_directive(
             )?;
         }
         FilterDirective::Clear => filter_rules.clear(),
-        FilterDirective::CvsDefaults => filter_rules.extend(cvs_default_exclude_rules()?),
+        FilterDirective::CvsDefaults(template) => {
+            filter_rules.extend(cvs_default_exclude_rules(template));
+        }
         // A blank rule contributes nothing (upstream parse_rule_tok returns NULL).
         FilterDirective::Noop => {}
     }
@@ -147,7 +149,7 @@ fn push_old_prefix_rule(
         FilterDirective::Clear => destination.clear(),
         // A blank `--exclude`/`--include` value contributes nothing.
         FilterDirective::Noop => {}
-        FilterDirective::Merge(_) | FilterDirective::CvsDefaults => {
+        FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
             unreachable!("parse_old_prefix_rule only emits Rule, Clear, or Noop")
         }
     }

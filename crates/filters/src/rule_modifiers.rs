@@ -102,6 +102,32 @@ pub fn parse_rule_modifiers(
     Ok(mods)
 }
 
+/// [`parse_rule_modifiers`] for a run that is a slice of `rule`, reporting a
+/// refused byte's offset within the whole rule - the position upstream prints
+/// (exclude.c:1374-1375, `s - *rulestr_ptr`). A run that is not a slice of
+/// `rule` is measured from its own start.
+///
+/// # Errors
+///
+/// As [`parse_rule_modifiers`].
+pub fn parse_rule_modifiers_in(
+    rule: &str,
+    run: &str,
+    scope: ModifierScope,
+) -> Result<RuleModifiers, InvalidModifier> {
+    let base = offset_within(rule, run).unwrap_or(0);
+    parse_rule_modifiers(run, scope).map_err(|invalid| InvalidModifier {
+        offset: base + invalid.offset,
+        ..invalid
+    })
+}
+
+/// Byte offset of `inner` within `outer`, when `inner` is a slice of it.
+fn offset_within(outer: &str, inner: &str) -> Option<usize> {
+    let offset = (inner.as_ptr() as usize).checked_sub(outer.as_ptr() as usize)?;
+    (offset + inner.len() <= outer.len()).then_some(offset)
+}
+
 /// One arm of upstream's modifier `switch`; `false` is its `goto invalid`.
 fn apply_modifier(mods: &mut RuleModifiers, ch: char, scope: ModifierScope) -> bool {
     match ch {
@@ -205,6 +231,16 @@ mod tests {
             assert_eq!(rejects(run, ModifierScope::PLAIN).offset, 0, "{run}");
         }
         assert_eq!(rejects("!", ModifierScope::MERGE).offset, 0);
+    }
+
+    #[test]
+    fn a_run_inside_a_rule_is_measured_from_the_rule_start() {
+        let rule = "-,sS pat";
+        let run = &rule[2..4];
+        assert_eq!(
+            parse_rule_modifiers_in(rule, run, ModifierScope::PLAIN),
+            Err(InvalidModifier { ch: 'S', offset: 3 })
+        );
     }
 
     #[test]

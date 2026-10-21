@@ -9,11 +9,8 @@ use core::client::FilterRuleSpec;
 use core::message::Message;
 
 use super::super::directive::FilterDirective;
-use super::helpers::{
-    split_keyword_modifiers, split_short_rule_modifiers, unexpected_end_of_filter_rule,
-    unknown_filter_rule,
-};
-use super::modifiers::{apply_rule_modifiers, parse_rule_modifiers};
+use super::helpers::{split_keyword_modifiers, split_short_modifiers, unknown_filter_rule};
+use super::modifiers::{parse_rule_modifiers, rule_directive};
 use super::rule_line::RuleLine;
 use super::shorthand::parse_filter_shorthand;
 
@@ -51,32 +48,23 @@ pub(super) fn parse_short_include_rule(
 ) -> Option<Result<FilterDirective, Message>> {
     let trimmed = line.text();
     let remainder = trimmed.strip_prefix(prefix)?;
-    // `remainder` starts one byte past the `+`/`-`, so that is the offset the
-    // position in upstream's diagnostic is measured from.
-    let (modifier_text, remainder) = match split_short_rule_modifiers(remainder) {
-        Ok(split) => split,
-        Err(invalid) => return Some(Err(invalid.into_message(prefix.len_utf8(), line))),
-    };
+    let (modifier_text, remainder) = split_short_modifiers(remainder);
     // `+`/`-` rules never bind a side via their prefix, so the `s`/`r` modifiers
     // stay valid (prefix_specifies_side = false). upstream: exclude.c:1340-1344.
-    let modifiers = match parse_rule_modifiers(modifier_text, line, true, true, false) {
+    let modifiers = match parse_rule_modifiers(modifier_text, line, false) {
         Ok(state) => state,
         Err(error) => return Some(Err(error)),
     };
-    // `split_short_rule_modifiers` already consumed the single separator that
+    // `split_short_modifiers` already consumed the single separator that
     // terminates the modifiers (upstream exclude.c:1444-1445), so the remainder
     // is the pattern verbatim. Do not trim further leading whitespace/`_`.
-    let pattern = remainder;
-    if pattern.is_empty() {
-        return Some(Err(unexpected_end_of_filter_rule(line)));
-    }
-
-    let rule = builder(pattern.to_owned());
-    let rule = match apply_rule_modifiers(rule, modifiers) {
-        Ok(rule) => rule,
-        Err(error) => return Some(Err(error)),
-    };
-    Some(Ok(FilterDirective::Rule(rule)))
+    Some(rule_directive(
+        line,
+        builder,
+        prefix == '+',
+        remainder,
+        modifiers,
+    ))
 }
 
 /// Parses a long-form keyword rule (`include`/`exclude`/`show`/`hide`/
@@ -98,24 +86,11 @@ pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, 
     let pattern = remainder;
 
     let build_rule = |builder: fn(String) -> FilterRuleSpec,
-                      allow_perishable: bool,
-                      allow_xattr: bool,
+                      include: bool,
                       prefix_specifies_side: bool|
      -> Result<FilterDirective, Message> {
-        if pattern.is_empty() {
-            return Err(unexpected_end_of_filter_rule(line));
-        }
-
-        let modifiers = parse_rule_modifiers(
-            keyword_modifiers,
-            line,
-            allow_perishable,
-            allow_xattr,
-            prefix_specifies_side,
-        )?;
-        let rule = builder(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers)?;
-        Ok(FilterDirective::Rule(rule))
+        let modifiers = parse_rule_modifiers(keyword_modifiers, line, prefix_specifies_side)?;
+        rule_directive(line, builder, include, pattern, modifiers)
     };
 
     // upstream: exclude.c:1218-1228 rule_strcmp - the long-form keywords are
@@ -127,30 +102,30 @@ pub(super) fn parse_keyword_rule(line: RuleLine<'_>) -> Result<FilterDirective, 
     // upstream: exclude.c:1340-1344 - include/exclude do not bind a side, so
     // `s`/`r`/`p` modifiers are all valid (prefix_specifies_side = false).
     if keyword == "include" {
-        return build_rule(FilterRuleSpec::include, true, true, false);
+        return build_rule(FilterRuleSpec::include, true, false);
     }
 
     if keyword == "exclude" {
-        return build_rule(FilterRuleSpec::exclude, true, true, false);
+        return build_rule(FilterRuleSpec::exclude, false, false);
     }
 
     // upstream: exclude.c:1345-1358 - show/hide/protect/risk map to the S/H/R/P
     // prefixes that set prefix_specifies_side, so `s`/`r` are invalid while `p`
     // (perishable) stays valid.
     if keyword == "show" {
-        return build_rule(FilterRuleSpec::show, true, true, true);
+        return build_rule(FilterRuleSpec::show, true, true);
     }
 
     if keyword == "hide" {
-        return build_rule(FilterRuleSpec::hide, true, true, true);
+        return build_rule(FilterRuleSpec::hide, false, true);
     }
 
     if keyword == "protect" {
-        return build_rule(FilterRuleSpec::protect, true, true, true);
+        return build_rule(FilterRuleSpec::protect, false, true);
     }
 
     if keyword == "risk" {
-        return build_rule(FilterRuleSpec::risk, true, true, true);
+        return build_rule(FilterRuleSpec::risk, true, true);
     }
 
     // upstream: exclude.c:1363 `filter_rule_err("Unknown filter rule", *rulestr_ptr)` -

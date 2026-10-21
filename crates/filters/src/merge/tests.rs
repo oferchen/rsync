@@ -4,10 +4,9 @@ use std::path::Path;
 
 use crate::FilterAction;
 
-use super::parse::{
-    RuleModifiers, parse_modifiers, parse_rules, parse_rules_no_prefixes, parse_rules_word_split,
-};
+use super::parse::{parse_modifiers, parse_rules, parse_rules_no_prefixes, parse_rules_word_split};
 use super::read::{read_rules, read_rules_recursive};
+use crate::RuleModifiers;
 
 /// Asserts a rule was rejected for an invalid modifier without echoing the rule
 /// text or naming the offending character.
@@ -490,9 +489,9 @@ fn rule_modifiers_default() {
     let mods = RuleModifiers::default();
     assert!(!mods.negate);
     assert!(!mods.perishable);
-    assert!(!mods.sender_only);
-    assert!(!mods.receiver_only);
-    assert!(!mods.xattr_only);
+    assert!(!mods.sender_side);
+    assert!(!mods.receiver_side);
+    assert!(!mods.xattr);
 }
 
 #[test]
@@ -525,13 +524,13 @@ fn parse_modifiers_all_flags() {
     )
     .unwrap();
     assert!(mods.perishable);
-    assert!(mods.sender_only);
-    assert!(mods.receiver_only);
-    assert!(mods.xattr_only);
+    assert!(mods.sender_side);
+    assert!(mods.receiver_side);
+    assert!(mods.xattr);
     assert!(mods.exclude_self);
     assert!(mods.no_inherit);
     assert!(mods.word_split);
-    assert!(mods.cvs_mode);
+    assert!(mods.cvs_ignore);
     assert_eq!(pattern, "pattern");
 }
 
@@ -550,10 +549,10 @@ fn parse_modifiers_non_merge_flags() {
     .unwrap();
     assert!(mods.negate);
     assert!(mods.perishable);
-    assert!(mods.sender_only);
-    assert!(mods.receiver_only);
-    assert!(mods.xattr_only);
-    assert!(mods.cvs_mode);
+    assert!(mods.sender_side);
+    assert!(mods.receiver_side);
+    assert!(mods.xattr);
+    assert!(mods.cvs_ignore);
     assert_eq!(pattern, "pattern");
 }
 
@@ -659,7 +658,7 @@ fn parse_cvs_mode_modifier() {
         1,
     )
     .unwrap();
-    assert!(mods.cvs_mode);
+    assert!(mods.cvs_ignore);
     assert_eq!(pattern, "pattern");
 }
 
@@ -1277,5 +1276,48 @@ fn no_prefixes_clear_token_never_reports_trailing_characters() {
         rules[0].action(),
         FilterAction::Clear,
         "`!` is literal without the C modifier"
+    );
+}
+
+/// #223: a non-merge `C` rule stands for the CVS ignore list. upstream accepts
+/// it with no pattern (exclude.c:1474), never matches its own pattern
+/// (exclude.c:1201-1206 check_filter) and builds the list from the rule's flags
+/// (exclude.c:1595-1597). MEASURED against rsync 3.5.1: a `.rsync-filter`
+/// holding `-C` excludes `a.o` and keeps `b.c`.
+#[test]
+fn non_merge_cvs_rule_expands_to_the_cvs_ignore_list() {
+    let rules = parse_rules("-C\n", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), crate::cvs_ignore_list().len());
+    assert!(
+        rules
+            .iter()
+            .all(|rule| rule.action() == FilterAction::Exclude)
+    );
+    assert!(rules.iter().any(|rule| rule.pattern() == b"*.o"));
+}
+
+/// The `C` rule's prefix and modifiers reach every pattern of the list, as
+/// `rule_template(rflags)` does in get_cvs_excludes() (exclude.c:1263,
+/// 1447-1456). MEASURED against rsync 3.5.1: `+C` then `- *.o` keeps `a.o`,
+/// and `-rC` excludes nothing on the sender.
+#[test]
+fn cvs_rule_prefix_and_modifiers_reach_every_cvs_pattern() {
+    let include = parse_rules("+C\n", Path::new("test")).unwrap();
+    assert!(
+        include
+            .iter()
+            .all(|rule| rule.action() == FilterAction::Include)
+    );
+
+    let sender = parse_rules("-sC foo\n", Path::new("test")).unwrap();
+    assert!(!sender.is_empty());
+    assert!(
+        sender
+            .iter()
+            .all(|rule| rule.applies_to_sender() && !rule.applies_to_receiver())
+    );
+    assert!(
+        sender.iter().all(|rule| rule.pattern() != b"foo"),
+        "the C rule's own pattern is never matched"
     );
 }
