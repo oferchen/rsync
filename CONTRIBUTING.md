@@ -1,271 +1,220 @@
 # Contributing to oc-rsync
-
-Thanks for your interest in contributing. This document captures the
-day-to-day workflow used by the maintainers so that outside contributors can
-match the same conventions. For project architecture see
+Thanks for your interest in contributing. This document describes the
+workflow and conventions the maintainers follow. For architecture see
 [`README.md`](./README.md) and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md);
 for security disclosures see [`SECURITY.md`](./SECURITY.md).
-
 ---
+## Ground rules
+- **Upstream is the source of truth.** oc-rsync mirrors upstream rsync 3.5.1
+  (protocol 33). Read the C source in `target/interop/upstream-src/rsync-3.5.1/`
+  before changing behaviour, and match it exactly. Any deliberate deviation
+  must be stated in the PR, not made silently.
+- **No placeholders.** No `todo!`, `unimplemented!`, `TODO`, `FIXME` or `XXX`
+  in tracked Rust sources. Use the issue tracker instead.
+- **Every change ships tests.** Tests must be able to fail when the behaviour
+  they protect changes.
+- **Hyphens, not em-dashes,** in all prose: comments, docs and commit messages.
 
-## Local development workflow
-
-oc-rsync uses a **push-and-let-CI-verify** workflow. Local builds are kept to
-the minimum needed for a fast, lock-free edit/push cycle; the full validation
-matrix runs in CI on every pull request.
-
-### Required local commands (lock-free, fast)
-
-- `cargo fmt --all` - always run before pushing.
-- `cargo fmt --all -- --check` - pre-push sanity check; matches the CI gate.
-- Standard `git` tooling for diff and history inspection.
-
-### CI-only commands (do NOT run locally)
-
-Leave these to CI. Running them locally is not required and is actively
-discouraged because concurrent invocations have caused multi-minute build-lock
-hangs on shared workstations:
-
-- `cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings`
-- `cargo nextest run --workspace --all-features`
-- `cargo build` / `cargo check` against the full workspace
-
-CI runs the full matrix on every pull request and nightly. A push to master
-runs only the jobs behind the required contexts (fmt + clippy, nextest on
-stable, Windows, macOS, Linux musl, interop). If you need to reproduce a failure locally, scope
-the run to a single crate and test pattern:
-
+Fetch the upstream source if it is missing:
+```sh
+mkdir -p target/interop/upstream-src
+curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.1.tar.gz \
+  | tar xz -C target/interop/upstream-src
+```
+---
+## Build, lint and test
+Run one cargo command at a time: cargo holds an exclusive build-directory
+lock, and concurrent invocations queue behind it.
+### Format and lint
+```sh
+cargo fmt --all -- --check
+python3 tools/ci/check_rustfmt_all.py
+cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+```
+`check_rustfmt_all.py` formats every tracked `.rs` file. `cargo fmt` reaches
+only files in the `mod` tree, so it misses `include!()`-ed and orphaned files.
+### Tests
+Use `cargo-nextest`, never `cargo test`. Configuration lives in
+[`.config/nextest.toml`](./.config/nextest.toml). Locally, run only the tests
+your change touches; the full suite runs in CI:
 ```sh
 cargo nextest run -p <crate> --all-features -E 'test(<pattern>)'
 ```
-
-Use `cargo-nextest` rather than `cargo test`; configuration lives in
-`.config/nextest.toml`.
-
-### Optional all-platform pre-push cross-check
-
-`cargo run -p xtask -- cross-check` runs the exact required-CI cross-platform
-gates in sequence (one cargo invocation at a time, sharing the workspace build
-lock) and prints a per-target pass/fail/skip summary, so cross-platform breaks
-are caught before CI:
-
-1. `cargo clippy --locked --workspace --all-targets --all-features --no-deps -- -D warnings`
-2. `cargo check  --locked --workspace --target x86_64-pc-windows-gnu`
-3. `cargo check  --locked --workspace --target x86_64-unknown-linux-musl`
-
-A target whose rustup target or cross toolchain (mingw-w64 for windows-gnu,
-musl for linux-musl) is absent is skipped with an actionable hint
-(`rustup target add ...`, install mingw-w64 / musl) rather than a raw linker
-error, and is never silently reported as passing. windows-MSVC is intentionally
-excluded: it cannot be cross-compiled from a non-Windows host (no
-`cl.exe` / `lib.exe`); the CI msvc runner is authoritative and windows-gnu
-covers the same `cfg(windows)` code paths. This command is opt-in - it takes
-the full workspace build lock, so do not run it concurrently with other cargo
-invocations.
-
-### Full local pre-push verification: `cargo run -p xtask -- validate`
-
-`cargo run -p xtask -- validate` is the single full local pre-push verification
-entrypoint. It runs the drop-in fidelity matrix (oc-rsync vs upstream rsync
-across every client transport) and then the cross-platform checks above (host
-`clippy -D warnings`, plus `cargo check` for `x86_64-pc-windows-gnu` and
-`x86_64-unknown-linux-musl`) via the same shared cross-check - so one command
-covers correctness, lints, and cross-platform compilation. Absent cross
-toolchains are skipped with an actionable hint (never failed), so `validate`
-still works on a dev box lacking mingw-w64 / musl; `cross-check` remains
-available on its own for a lint-and-cross-compile-only run. Run `cargo fmt
---all` first (validate does not reformat), and note that `validate` takes the
-full workspace build lock, so do not run other cargo commands alongside it.
-
----
-
-## Adding a new optional dependency
-
-1. Add the crate to the relevant per-crate `Cargo.toml`, under either
-   `[dependencies]` or a platform-conditional table such as
-   `[target.'cfg(target_os = "linux")'.dependencies]`, with `optional = true`
-   and a matching entry in `[features]`.
-2. Run `cargo update` once so the new entry is registered in `Cargo.lock`.
-   This will also rewrite unrelated lock entries with patch-level bumps; that
-   is normal cargo behaviour - accept the diff as-is.
-3. For platform-conditional optional deps, mirror the `iouring-send-zc`
-   pattern in `crates/fast_io/Cargo.toml`: declare the dep `optional = true`
-   under a `[target.'cfg(...)'.dependencies]` block, then expose it as a
-   named feature that re-exports the underlying capability.
-
----
-
-## Cargo.lock maintenance
-
-`Cargo.lock` is committed to the repository and every CI workflow (interop,
-parallel-determinism, MSRV, release-cross, nightly platform jobs) builds with
-`--locked`. The same flag is now required on `tools/ci/*.sh` helpers that
-invoke cargo. The discipline exists so that:
-
-- **Builds are reproducible.** A given commit always resolves to the exact
-  same dependency graph, locally and in CI.
-- **Dep drift is caught early.** A workflow that builds without `--locked`
-  can silently absorb a transitive bump and mask a real regression.
-- **PR diffs stay focused.** Lockfile churn lives in its own commit, not
-  spread across unrelated PRs.
-
-### When to update Cargo.lock
-
-Update the lockfile only via an intentional `cargo update --workspace`.
-Never let it drift sideways through a missing `--locked` flag - that path
-re-resolves the graph implicitly and is the bug class this discipline
-prevents.
-
-### How CI enforces it
-
-- `tools/ci/check_locked_flags.sh` (gating job, see CIM-LOCKFILE-5) scans
-  every workflow and helper script for cargo invocations missing `--locked`
-  and fails the PR if any unexpected call slips through.
-- A small allowlist of cargo calls is intentionally exempt - the weekly
-  refresh and PR auto-sync workflows below, which must run *without*
-  `--locked` to do their job. The allowlist lives inside
-  `tools/ci/check_locked_flags.sh`; add to it only with reviewer signoff.
-- `tools/ci/tests/test_check_locked_flags.sh` self-tests the gate against
-  synthetic fixtures and runs in the same workflow job, so a regression in
-  the matcher itself surfaces before it can let a real violation through.
-
-### Weekly auto-sync
-
-Dependabot (`.github/dependabot.yml`) opens grouped `chore(deps)` PRs every
-Monday for the root and fuzz workspaces. Contributors do not need to bump
-the lockfile manually for routine drift - just review and merge the
-Dependabot PR when CI is green. `.github/workflows/cargo-lockfile-sync.yml`
-additionally pushes a refreshed `Cargo.lock` back to any first-party PR that
-edits a workspace `Cargo.toml`, so adding a dependency does not require a
-separate lockfile commit.
-
-### What to do if CI fails on Cargo.lock
-
-If the gating job or a `--locked` workflow rejects your PR with a lockfile
-mismatch, regenerate locally and commit the result:
-
+### Repository gates
+Each of these runs in CI and blocks the PR:
 ```sh
-cargo update --workspace
-git add Cargo.lock
-git commit -m "chore: sync Cargo.lock"
+cargo run --locked -p xtask -- no-placeholders
+python3 tools/ci/unsafe_owner_deps.py gate
+python3 tools/ci/dead_code_census.py gate
+bash tools/ci/surface_diff.sh --check
+cargo xtask citations
 ```
+- `unsafe_owner_deps.py gate` fails on a new direct FFI dependency outside
+  `fast_io` and `platform` (see [Unsafe code](#unsafe-code)).
+- `dead_code_census.py gate` fails on a `pub fn` with no production caller and
+  no test reference unless it is allowlisted with a reason and expiry.
+- `surface_diff.sh --check` diffs user-facing surfaces (options, daemon
+  directives, exit codes, message codes and more) against upstream 3.5.1 and
+  fails on any divergence not declared in `tools/ci/surface_diff.accepted`. It
+  needs the upstream source tree above.
+- `cargo xtask citations` is described under
+  [Upstream source citations](#upstream-source-citations).
+### Cross-platform checks
+`cargo run -p xtask -- cross-check` runs the required cross-platform gates in
+sequence and prints a per-target summary:
+1. `cargo clippy --locked --workspace --all-targets --all-features --no-deps -- -D warnings`
+2. `cargo check --locked --workspace --target x86_64-pc-windows-gnu`
+3. `cargo check --locked --workspace --target x86_64-unknown-linux-musl`
 
-This is the same command the weekly cron and PR auto-sync workflows run; a
-manual run from your branch is equivalent.
-
+A target whose toolchain (mingw-w64, musl) is absent is skipped with a hint,
+never reported as passing. windows-MSVC is excluded because it cannot be
+cross-compiled; windows-gnu covers the same `cfg(windows)` paths. The required
+Windows job also compiles tests, so check them for the crates you touch:
+```sh
+cargo check --target x86_64-pc-windows-gnu -p <crate> --all-features --tests
+```
+`cargo run -p xtask -- validate` is the full local pre-push run: the drop-in
+fidelity matrix against upstream across every client transport, then the
+cross-check above. It does not reformat, so run `cargo fmt --all` first.
 ---
+## Platform and test rules
+- **Code must build and pass on Linux, macOS and Windows.** Gate
+  platform-specific code with `#[cfg(unix)]` / `#[cfg(windows)]`. Unsupported
+  platforms or features get a stub that returns a graceful result or error,
+  never silently drops the functionality.
+- **Watch `cfg` fallout.** Imports, variables or `mut` used only under one
+  platform warn on the others. If every test in a module is `#[cfg(unix)]`,
+  gate the module itself.
+- **Deterministic timing.** No sleeps, polling loops or wall-clock upper
+  bounds in tests. Wait on events, or inject a clock seam for timing logic.
+  Performance belongs in benchmarks, not test assertions.
+- **No retries or waivers for flakes.** Fix the root cause. Do not add nextest
+  retries, `#[ignore]` or a rerun to make a flaky test pass.
+- **Quick-check.** rsync skips files with matching size and mtime. Backdate
+  destination files (`filetime`) or use different sizes so a test cannot pass
+  by skipping the transfer.
+- **Environment isolation.** Wrap environment mutation in
+  `platform::env::EnvGuard`. `tools/ci/check_envguard.sh` flags tests that
+  touch `OC_RSYNC_BUFFER_POOL_*` without one; it runs warn-only in the
+  `fmt + clippy` job. Exempt a known-safe test with a
+  `<repo-relative-path>::<fn_name>` line in `tools/ci/envguard_lint.ignore`.
+  Design and EOL plan: `docs/design/bpf-4-envguard-ci-lint-spec.md`.
+---
+## Unsafe code
+Unsafe code belongs to two crates, split by subject:
+- **`fast_io`** - I/O syscalls (io_uring, copy dispatch, reflink, the confined
+  path resolver).
+- **`platform`** - process, identity, environment and signals.
 
+Every other crate root carries `#![deny(unsafe_code)]` and calls the safe APIs
+of these two. Before writing `unsafe`, try in order: a safe wrapper crate
+(`nix`, `rustix`, `socket2`, `windows`), a safe API on `platform` or `fast_io`,
+and only then a new `#[allow(unsafe_code)]` function in an owner crate, with a
+`SAFETY:` comment naming what was tried. Never add `#[allow(unsafe_code)]` to
+a crate that denies it. `tools/ci/unsafe_owner_deps.py gate` enforces the
+dependency side; existing exceptions are listed with a reason and expiry in
+`tools/ci/unsafe_owner_deps_allowlist.tsv`.
+---
 ## Upstream source citations
-
-Non-obvious protocol and wire behaviour is annotated with a citation to the
-upstream rsync C source, e.g. `// upstream: sender.c:478 - "sender finished"`.
-
-- **One pinned baseline.** Every citation line number is anchored to the single
-  pinned upstream tree at `target/interop/upstream-src/rsync-3.5.1/`. Do **not**
-  append a version to each citation - the baseline is recorded once, in
+Annotate non-obvious protocol and wire behaviour with the upstream file and
+function, e.g. `// upstream: sender.c:803 send_files() - "sender finished"`.
+- **One pinned baseline.** Line numbers refer to the pinned tree
+  `target/interop/upstream-src/rsync-3.5.1/`. Do not append a version to each
+  citation; the baseline is recorded once, in
   `tools/ci/citation_drift_audit.py` (`VER`) and `docs/UPSTREAM_COMPARISON.md`.
-  Repeating it across thousands of comments would turn a version bump into a
-  thousand-line edit instead of a one-constant edit.
-- **Quote a distinctive anchor.** Include a short verbatim string or symbol from
-  the cited line (`"sender finished"`, `csum_length = SHORT_SUM_LENGTH`) so the
-  reference can be relocated by content when line numbers move.
-- **On an upstream bump.** Line numbers drift between releases as files gain and
-  lose lines. After updating the source tree and `VER`, run the drift auditor to
-  list citations whose line no longer matches their anchor string:
-
+- **Quote a distinctive anchor.** Include a short verbatim string or symbol
+  from the cited line so the reference can be relocated when lines move.
+- **The hard gate.** `cargo xtask citations` checks that every citation in the
+  repository names a `.c`, `.h`, `.py` or `.sh` file the pinned release has,
+  at a line that file has. It reads `tools/ci/upstream-3.5.1-lines.tsv`, so it
+  needs no source tree. Citations under a directory the rsync tarball does not
+  ship (zsync's `librcksum/`) are out of scope.
+- **Naming a release.** `rsync-3.5.1/flist.c:2717` is accepted and checked as
+  the bare name; prefer the bare name. Any other release, such as
+  `rsync-3.4.1/delete.c:130`, fails as a stale citation. Only this file,
+  `xtask/src/commands/citations.rs` and `docs/` may name another release.
+- **On an upstream bump.** Update the source tree and `VER`, then list
+  citations whose line no longer matches their anchor:
   ```sh
   python3 tools/ci/citation_drift_audit.py            # all crates
   python3 tools/ci/citation_drift_audit.py engine cli # scoped
   ```
-
-  Re-anchor each flagged citation individually against the new source. Never
-  bulk-shift line numbers by a fixed offset: already-correct citations drift by
-  different amounts (or not at all), so a blind shift corrupts them. The
-  content-based retarget for a whole pin move is
-  `tools/ci/citation_retarget.py`: it re-locates every cited construct by its
-  enclosing function and line text, rewrites only what it can place, and lists
-  the ambiguous and vanished citations for a human to resolve.
-- **The hard gate.** `cargo xtask citations` asserts that every citation in the
-  repository - not only under `crates/` - names a `.c`, `.h`, `.py` or `.sh`
-  file the pinned release actually has, at a line that file actually has. It
-  reads `tools/ci/upstream-3.5.1-lines.tsv` rather than the source tree, so it
-  runs everywhere, including under `nextest`. Regenerate that manifest with
-  `cargo xtask citations --write-manifest` when the pin moves - in the same
-  change that moves `VER` in the drift auditor, never in a later one. The two
-  read the same comments against different trees, so a half-moved pin makes
-  them contradict each other. Citations qualified by a directory the rsync
-  tarball does not ship - zsync's `librcksum/` - name a different upstream and
-  are out of scope.
-- **Naming a release explicitly.** A citation may spell
-  `rsync-3.5.1/flist.c:2717` or `target/interop/upstream-src/rsync-3.5.1/flist.c:2717`;
-  the prefix is stripped and the line range is checked as if the bare name had
-  been written. Spelling any *other* release is a hard failure, so
-  `rsync-3.4.1/delete.c:130` fails - it names rsync at a release this tree no
-  longer builds against, which is a stale citation and not an out-of-scope one.
-  That closed a hole: 379 citations were being skipped outright, and 113 of
-  them named the PINNED release, so their line numbers had never been checked
-  by anything - including the ones the 3.5.0 retarget sweep had just written.
-  Prefer the bare name; it is what the rest of the tree writes.
-  Two exemptions, both scoped. This paragraph is one - the example above has to
-  be able to spell `rsync-3.4.1/` to show what the rule rejects, so
-  `CONTRIBUTING.md` and `xtask/src/commands/citations.rs`, the two files that
-  document the gate, may name a non-pinned release. `docs/` is the other: it
-  mixes live reference with historical record, and a note describing what
-  upstream looked like at 3.4.1 is accurate because it names the old release.
-
+  `tools/ci/citation_retarget.py` re-locates citations by enclosing function
+  and line text, and lists the ones it cannot place. Never shift line numbers
+  by a fixed offset. Regenerate the manifest with
+  `cargo xtask citations --write-manifest` in the same change that moves `VER`.
 ---
-
+## Dependencies and Cargo.lock
+`Cargo.lock` is committed and CI builds with `--locked`, so builds are
+reproducible and dependency drift cannot slip in unnoticed.
+- **Adding an optional dependency.** Declare it `optional = true` in the
+  crate's `Cargo.toml` (under a `[target.'cfg(...)'.dependencies]` table if it
+  is platform-specific) and expose it as a named feature. See
+  `iouring-send-zc` in [`crates/fast_io/Cargo.toml`](./crates/fast_io/Cargo.toml).
+- **Updating the lockfile.** Only through an intentional
+  `cargo update --workspace`, committed on its own:
+  ```sh
+  cargo update --workspace
+  git add Cargo.lock
+  git commit -m "chore: sync Cargo.lock"
+  ```
+- **Enforcement.** `tools/ci/check_locked_flags.sh` fails on any cargo
+  invocation in a workflow or CI script that lacks `--locked`; its allowlist
+  of exempt calls needs reviewer sign-off.
+- **Automation.** Dependabot ([`.github/dependabot.yml`](./.github/dependabot.yml))
+  opens grouped dependency PRs every Monday.
+  [`cargo-lockfile-sync.yml`](./.github/workflows/cargo-lockfile-sync.yml)
+  pushes a refreshed `Cargo.lock` to any first-party PR that edits a workspace
+  `Cargo.toml`, and posts the patch as a comment on fork PRs.
+---
 ## Opening a pull request
+Master is protected: changes land only through a pull request, and force
+pushes to master are blocked. Merge via GitHub (`gh pr merge`).
+- **Branch naming.** `<category>/<short-description>`, for example
+  `feat/parallel-delta` or `docs/contributing-refresh`.
+- **Conventional prefixes.** Commit messages and PR titles start with a
+  prefix. The labeler workflow (`.github/workflows/labeler.yml`) maps the PR
+  title prefix to a label, which sets the release-note category:
 
-- **Branch naming.** Use `<category>/<short-description>[-<task-id>]`, for
-  example `feat/parallel-delta-2087` or `docs/contributing-push-and-ci-workflow`.
-- **Conventional prefixes.** Both commit messages and PR titles must use one
-  of: `feat:`, `fix:`, `perf:`, `docs:`, `chore:`, `style:`, `test:`,
-  `refactor:`, `ci:`. A labeler workflow auto-applies release-note categories
-  from the PR title, so the prefix is load-bearing.
-- **Title length.** Keep PR titles under 70 characters; put detail in the body.
-- **CI gate.** All required checks must pass before merge: fmt + clippy,
-  nextest (stable), Windows, macOS, Linux musl. PRs require one approving
-  review. Master is protected; merge via GitHub (`gh pr merge`).
-- **Authorship hygiene.** PR titles, PR bodies, branch names, commit messages,
-  and added files must not reference internal tooling or non-human authoring
-  aids. Use hyphens (`-`) rather than em-dashes in prose.
-
+  | Prefix | Label |
+  |--------|-------|
+  | `feat:` | `enhancement` |
+  | `perf:` | `performance` |
+  | `fix:` | `bug` |
+  | `docs:` | `documentation` |
+  | `ci:` | `ci` |
+  | `test:` | `test` |
+  | `refactor:` | `refactor` |
+  | `chore:` | `chore` |
+  | `style:` | `style` |
+- **Length.** Keep the first line of a commit message and the PR title under
+  72 characters; put detail in the body.
+- **PR body.** Follow
+  [`.github/PULL_REQUEST_TEMPLATE.md`](./.github/PULL_REQUEST_TEMPLATE.md).
+- **Required checks.** All 15 must pass before merge:
+  - `fmt + clippy`
+  - `nextest (stable)`
+  - `Windows (stable)`
+  - `macOS (stable)`
+  - `Linux musl (stable)`
+  - `interop / interop with upstream rsync`
+  - `upstream-testsuite / upstream testsuite`
+  - `upstream-testsuite / upstream testsuite (root)`
+  - `upstream-testsuite-tcp / upstream testsuite`
+  - `upstream-testsuite-tcp / upstream testsuite (root)`
+  - `upstream-testsuite-macos / upstream testsuite (macOS)`
+  - `upstream-testsuite-macos / upstream testsuite (macOS, root)`
+  - `upstream-testsuite-macos-tcp / upstream testsuite (macOS)`
+  - `upstream-testsuite-macos-tcp / upstream testsuite (macOS, root)`
+  - `unsafe-safety-comment-audit`
+- **Authorship hygiene.** PR titles, bodies, branch names, commit messages and
+  added files must not reference internal tooling or non-human authoring aids.
 ---
-
-## EnvGuard CI lint
-
-If you write a test that sets an `OC_RSYNC_BUFFER_POOL_*` env var (or
-otherwise mutates `BufferPool` capacity state), wrap the env-var
-manipulation in `EnvGuard` (from `platform::env::EnvGuard`). The CI lint
-at `tools/ci/check_envguard.sh` walks every `#[test]` and
-`#[tokio::test]` body in the workspace and flags any cap-touching test
-that does not also hold an `EnvGuard`.
-
-The lint runs in the `fmt + clippy` job. It is currently in warn-only
-mode and will be flipped to strict (via `OC_RSYNC_ENVGUARD_LINT_STRICT=1`)
-once BPF-3 (#2821) closes the existing gap. To silence a known-safe
-test, add a `<repo-relative-path>::<fn_name>` entry to
-`tools/ci/envguard_lint.ignore`. See
-`docs/design/bpf-4-envguard-ci-lint-spec.md` for the full design and the
-EOL plan; the lint is removed once BPF-9 replaces the global `OnceLock`
-singleton with a per-test factory.
-
+## Parallel work
+Use `git worktree add` so each in-flight branch has its own checkout and build
+state. If a flake or regression on master blocks several PRs, fix it in the
+branch closest to mergeable rather than opening a separate hotfix PR.
 ---
-
-## Parallel work pattern
-
-- **Worktrees recommended.** Use `git worktree add` so each in-flight branch
-  has its own checkout. This keeps cargo build state isolated per branch and
-  avoids the lock contention that arises when several shells or agents share
-  one target directory.
-- **Cross-tree fix bundles allowed.** If a flake or regression on master is
-  blocking several in-flight PRs, fix it in whichever branch is closest to
-  mergeable rather than spinning up a separate hotfix PR.
-
----
-
 ## License
-
 By contributing you agree that your contributions will be licensed under
 GPL-3.0-or-later, matching the project license in [`LICENSE`](./LICENSE).

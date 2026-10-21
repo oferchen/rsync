@@ -33,7 +33,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
 | **Incremental recursion** | Negotiated whenever oc-rsync sends, when an oc-rsync server or daemon receives a push (#8169), and on client pulls by default (#8062, #8091, #8217). `OC_RSYNC_PULL_INC_RECURSE=0` opts a pull out. `--delete-before` and `--delete-after` need the whole list and withhold it as in upstream. |
 | **Batch** | `--write-batch` / `--read-batch` round trip |
-| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
+| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec; IPv4 and IPv6 listeners by default; one forked process per connection on Unix |
 | **Host names** | Internationalized host names converted to IDNA A-labels, as upstream 3.5.1 does (#8104) |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
@@ -224,6 +224,8 @@ quic key file  = /etc/oc-rsync/server-key.pem
 
 Clients must name the CA that signed the daemon certificate. There is no default trust and no trust-on-first-use, and the system trust store is not consulted. A failed QUIC connection exits 5 and never falls back to TCP.
 
+Under load, the daemon answers a new client with a stateless Retry before it holds any state for it. `quic retry` sets the policy: `auto` (the default), `always` or `never`.
+
 ```sh
 oc-rsync -av --quic-ca ca-cert.pem quic://host/module/ dest/
 oc-rsync -av --quic --quic-ca ca-cert.pem host::module/ dest/
@@ -262,7 +264,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 - **Two buffer pools.** `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` and `OC_BUFFER_POOL_BLOCK_SIZE` tune the engine `BufferPool` only. The io_uring registered buffer pool is sized statically and does not adapt. Its cost has not been measured separately.
 - **io_uring buffer-group IDs** are a 16-bit namespace, and allocation returns `BgidAllocError::Exhausted` rather than wrapping. No transfer path allocates one today. See [`docs/audits/bgid-lifecycle.md`](./docs/audits/bgid-lifecycle.md).
-- **Daemon traffic is plaintext**, like upstream (authentication, no encryption). There is no built-in TLS client. Use SSH, or put the daemon behind a TLS proxy (`stunnel`, HAProxy, nginx) and connect with a wrapper such as `rsync-ssl` or `stunnel`.
+- **Daemon traffic over TCP is plaintext**, like upstream (authentication, no encryption). There is no TLS over TCP. Use SSH, QUIC between two oc-rsync peers, or a TLS proxy in front of the daemon (`stunnel`, HAProxy, nginx) with a wrapper such as `rsync-ssl` or `stunnel`.
 - **Windows IOCP** covers sockets and disk writes. The IOCP file reader is only selected under the experimental `adaptive-basis-dispatch` feature.
 
 ---
@@ -290,8 +292,8 @@ Interop scenarios run in CI against the upstream releases listed in [`tools/ci/r
 | Platform | Tier | Notes |
 |---|---|---|
 | Linux x86_64 / aarch64 | **Tier 1** | io_uring, `splice`, `vmsplice`, Landlock. Required CI runs the full nextest workspace. A seccomp syscall allowlist for daemon workers is available with `--features daemon-seccomp`; it is off in default builds and in released binaries. |
-| macOS x86_64 / aarch64 | **Tier 1** | `clonefile`, `fcopyfile`, full metadata, ACL and xattr support including AppleDouble (`._foo`) resource forks. Required CI runs a crate-scoped subset (core, engine, cli, metadata, apple-fs, fast_io). |
-| Windows x86_64 | **Tier 2** | IOCP file and socket I/O, `CopyFileExW`, ReFS reflink, NTFS DACLs (partial), xattrs via NTFS Alternate Data Streams. No POSIX device nodes or FIFOs. Required CI tests the core, engine, cli, metadata, fast_io and transfer crates. |
+| macOS x86_64 / aarch64 | **Tier 1** | `clonefile`, `fcopyfile`, full metadata, ACL and xattr support including AppleDouble (`._foo`) resource forks. Required CI runs a crate-scoped subset (core, engine, cli, metadata, apple-fs, fast_io) plus the `rsync_io` QUIC tests. |
+| Windows x86_64 | **Tier 2** | IOCP file and socket I/O, `CopyFileExW`, ReFS reflink, NTFS DACLs (partial), xattrs via NTFS Alternate Data Streams. No POSIX device nodes or FIFOs. Required CI tests the core, engine, cli, metadata, fast_io and transfer crates, plus the `rsync_io` QUIC tests. |
 
 Tier definitions and criteria: [Platform support tiers](docs/design/platform-tiers.md). Windows detail: [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md).
 
@@ -320,13 +322,13 @@ Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows
 
 Releases up to and including v0.6.4 predate this harness: their report compares against 3.4.4 only, without peak RSS, corpus rate or spread. The chart above comes from the latest release, so read that release's `benchmark_report.md` for what it measured.
 
-oc-rsync uses threads where upstream forks, while keeping the same protocol. I/O buffers are sized by file size.
+A transfer runs its roles as threads where upstream forks, for performance, with the same protocol. The daemon forks one process per connection, as upstream does, to isolate sessions. I/O buffers are sized by file size.
 
 ---
 
 ## Testing and CI
 
-Branch protection requires fourteen checks: `fmt + clippy`, `nextest (stable)`, `Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`, `interop / interop with upstream rsync`, and the eight [upstream testsuite](#upstream-testsuite) legs (`upstream-testsuite / upstream testsuite` and its `(root)` variant, the same two under `upstream-testsuite-tcp /`, and `upstream testsuite (macOS)` and `(macOS, root)` under `upstream-testsuite-macos /` and `upstream-testsuite-macos-tcp /`). [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md) has the command that re-derives the list from the ruleset.
+Branch protection requires fifteen checks: `fmt + clippy`, `nextest (stable)`, `Windows (stable)`, `macOS (stable)`, `Linux musl (stable)`, `interop / interop with upstream rsync`, `unsafe-safety-comment-audit`, and the eight [upstream testsuite](#upstream-testsuite) legs (`upstream-testsuite / upstream testsuite` and its `(root)` variant, the same two under `upstream-testsuite-tcp /`, and `upstream testsuite (macOS)` and `(macOS, root)` under `upstream-testsuite-macos /` and `upstream-testsuite-macos-tcp /`). [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md) has the command that re-derives the list from the ruleset.
 
 The SSH throughput check (SSR-1) compares a release build of oc-rsync against upstream in its own `SSH throughput (SSR-1, release)` job. It runs on every pull request and reports its result, but it is not a required check. Benchmarks run only when a release is tagged (see [Performance](#performance)). Interop coverage is described under [Protocol and interop](#protocol-and-interop).
 
