@@ -1027,20 +1027,20 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;
 
-    // upstream: io.c:1587 iobuf.in is a fixed 32KB circular buffer that is never
-    // resized (io.c:663). IoBufReader is that buffer, and it sits beneath the
-    // multiplex demuxer so no decoder ever touches the descriptor - the layering
-    // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:314).
-    // The CountingReader wraps the raw transport (below the multiplex demuxer and
-    // token decompression) so the running total reflects compressed wire bytes,
-    // matching upstream's `stats.total_read` (io.c:938).
-    let counting_stdin = match bytes_read {
-        Some(counter) => reader::CountingReader::with_counter(chained_stdin, counter),
-        None => reader::CountingReader::new(chained_stdin),
-    };
-    let bytes_received_counter = counting_stdin.counter();
-    let mut reader =
-        reader::ServerReader::new_plain(protocol::iobuf::IoBufReader::new(counting_stdin));
+    // upstream: io.c:647 perform_io() - every byte in or out crosses one core,
+    // which owns the fixed 32KB iobuf.in (io.c:1587, never resized: io.c:663)
+    // beneath the multiplex demuxer, so no decoder touches the descriptor
+    // (io.c:314), and which counts raw transport reads below the demuxer and
+    // token decompression, as upstream's `stats.total_read` (io.c:938).
+    let bytes_received_counter = bytes_read.unwrap_or_default();
+    let core = iobuf::Core::new(
+        Box::new(fast_io::transport::BlockingStreams::new(
+            chained_stdin,
+            stdout,
+        )),
+        std::sync::Arc::clone(&bytes_received_counter),
+    );
+    let mut reader = reader::ServerReader::new_plain(iobuf::CoreReader::new(&core));
 
     // upstream: io.c:1750-1751 - only the client receiver adopts a
     // daemon-advertised MSG_IO_TIMEOUT (`am_server || am_generator` treat it as
@@ -1077,7 +1077,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // on a pull). Install the limiter at the bottom of the writer stack so it
     // paces the exact wire bytes the descriptor accepts (io.c:952,979), below
     // the multiplex framer.
-    let throttled_stdout = writer::ThrottlingWriter::new(stdout, sender_bandwidth_limiter(&config));
+    let throttled_stdout = writer::ThrottlingWriter::new(
+        iobuf::CoreWriter::new(&core),
+        sender_bandwidth_limiter(&config),
+    );
 
     // upstream: io.c:977 - stats.total_written counts every byte the raw
     // descriptor accepts, multiplex frame headers included, in perform_io().

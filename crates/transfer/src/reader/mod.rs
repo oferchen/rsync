@@ -5,14 +5,12 @@
 //! When multiplex is active (protocol >= 23), this wrapper automatically
 //! demultiplexes incoming messages, extracting MSG_DATA payloads.
 
-mod counting;
 mod multiplex;
 mod server;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use counting::CountingReader;
 pub(crate) use multiplex::{DeletedRender, LocalRole, MultiplexReader};
 pub use multiplex::{FileDeclinedError, RemoteExitError};
 pub use server::ServerReader;
