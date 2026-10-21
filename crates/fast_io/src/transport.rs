@@ -67,6 +67,61 @@ pub trait Transport {
         output: bool,
         timeout: Option<Duration>,
     ) -> io::Result<Readiness>;
+
+    /// Pushes out anything the transport itself holds back. A descriptor
+    /// holds nothing, so the default does nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the transport's flush error.
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A [`Transport`] over a blocking reader and writer that cannot be polled:
+/// an in-memory stream, or a caller-supplied `Read`/`Write` pair.
+///
+/// Its reads and writes block, so a wait never offers both directions: a
+/// wait that wants output reports only writable, and one that wants only
+/// input reports readable. The loop above therefore never reads while it is
+/// waiting to write - the behaviour of a blocking connection, kept exactly.
+pub struct BlockingStreams<R, W> {
+    reader: R,
+    writer: W,
+}
+
+impl<R: io::Read, W: io::Write> BlockingStreams<R, W> {
+    /// Wraps a blocking `reader` and `writer`.
+    pub fn new(reader: R, writer: W) -> Self {
+        Self { reader, writer }
+    }
+}
+
+impl<R: io::Read, W: io::Write> Transport for BlockingStreams<R, W> {
+    fn try_read(&mut self, buf: &mut [u8]) -> io::Result<Option<usize>> {
+        non_blocking(|| self.reader.read(buf))
+    }
+
+    fn try_write(&mut self, buf: &[u8]) -> io::Result<Option<usize>> {
+        non_blocking(|| self.writer.write(buf))
+    }
+
+    fn wait(
+        &mut self,
+        input: bool,
+        output: bool,
+        _timeout: Option<Duration>,
+    ) -> io::Result<Readiness> {
+        Ok(Readiness {
+            readable: input && !output,
+            writable: output,
+        })
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
 }
 
 /// Maps a would-block result to `Ok(None)` and retries an interrupted call.
@@ -304,6 +359,37 @@ mod windows {
                 writable: output && (fd.revents & POLLWRNORM != 0 || failed),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod blocking_tests {
+    use std::io::Cursor;
+
+    use super::{BlockingStreams, Readiness, Transport};
+
+    /// WHY: a stream that cannot be polled must never be read while the loop
+    /// waits to write, or a blocking read would stall the write forever.
+    #[test]
+    fn a_wait_for_output_never_offers_input() {
+        let mut t = BlockingStreams::new(Cursor::new(b"in".to_vec()), Vec::new());
+        assert_eq!(
+            t.wait(true, true, None).unwrap(),
+            Readiness {
+                readable: false,
+                writable: true
+            }
+        );
+        assert_eq!(
+            t.wait(true, false, None).unwrap(),
+            Readiness {
+                readable: true,
+                writable: false
+            }
+        );
+        let mut buf = [0u8; 2];
+        assert_eq!(t.try_read(&mut buf).unwrap(), Some(2));
+        assert_eq!(t.try_write(b"out").unwrap(), Some(3));
     }
 }
 

@@ -12,8 +12,11 @@
 //! halves - whether a blocking read must first flush, and what to do with
 //! buffered input when output fails - have one place to live.
 
+mod core;
+
 use std::io::{self, IoSlice, Read, Write};
 
+pub(crate) use self::core::{Core, CoreReader, CoreWriter};
 use crate::reader::{BufferedInputHint, ServerReader};
 use crate::writer::ServerWriter;
 
