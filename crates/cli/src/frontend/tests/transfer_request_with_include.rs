@@ -34,7 +34,6 @@ fn transfer_request_with_include_from_reinstate_patterns() {
     let engine_rules = expected_rules.iter().filter_map(|rule| match rule.kind() {
         FilterRuleKind::Include => Some(EngineFilterRule::include(rule.pattern())),
         FilterRuleKind::Exclude => Some(EngineFilterRule::exclude(rule.pattern())),
-        FilterRuleKind::Clear => None,
         FilterRuleKind::Protect => Some(EngineFilterRule::protect(rule.pattern())),
         FilterRuleKind::Risk => Some(EngineFilterRule::risk(rule.pattern())),
         FilterRuleKind::DirMerge => None,
