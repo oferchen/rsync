@@ -149,7 +149,7 @@ pub use byte_path::{path_pattern_bytes, pattern_path};
 pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use clean_fname::collapse_dot_dot_dirs;
 pub use clear_token::{ClearToken, classify_clear_token};
-pub use compiled::XattrSide;
+pub use compiled::{RuleMatcher, XattrMatcher, XattrSide};
 pub use cvs::{
     CvsIgnorePattern, CvsTemplate, DEFAULT_CVSIGNORE, cvs_ignore_list, cvs_ignore_rules,
     default_patterns as cvs_default_patterns,
