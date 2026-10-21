@@ -119,6 +119,7 @@ include!("tests/chunks/apply_verbosity_seeds_logging_levels.rs");
 include!("tests/chunks/builder_allows_brand_override.rs");
 include!("tests/chunks/builder_collects_arguments.rs");
 include!("tests/chunks/clap_parse_error_is_reported_via_message.rs");
+include!("tests/chunks/client_stream_drop_sends_fin_despite_a_duplicate_descriptor.rs");
 include!("tests/chunks/connection_limiter_creates_the_lock_file_with_upstream_mode.rs");
 include!("tests/chunks/no_daemon_entry_point_hand_rolls_a_null_connection_limiter.rs");
 include!("tests/chunks/connection_limiter_enforces_limits_across_guards.rs");
