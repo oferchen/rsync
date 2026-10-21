@@ -293,3 +293,27 @@ fn the_lazy_flag_engages_the_lazy_producer_in_both_directions() {
         );
     }
 }
+
+/// No deadlock past the 10000-entry `MAX_FILECNT_LOOKAHEAD` ceiling
+/// (rsync.h:152), in either direction: the sender must stop scanning at the
+/// ceiling and resume as the receiver retires lists, never wait on a receiver
+/// that is itself waiting for the next sub-list. A hang here is caught by the
+/// test runner's slow-test timeout, not a wall-clock bound in the test.
+#[test]
+fn lazy_transfers_past_the_max_lookahead_complete_both_ways() {
+    let src = test_support::create_tempdir();
+    for d in 0..120 {
+        for f in 0..100 {
+            let path = src.path().join(format!("d{d:03}/f{f:03}"));
+            fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            fs::write(path, format!("{d}.{f}\n")).expect("write");
+        }
+    }
+    backdate_tree(src.path());
+    let expected = tree_listing(src.path());
+    let server = test_support::oc_rsync_bin();
+    for direction in [Direction::Push, Direction::Pull] {
+        let lazy = run(src.path(), direction, &["-rlt"], true, &server);
+        assert_eq!(lazy.dest, expected, "{direction:?}: tree past the ceiling");
+    }
+}
