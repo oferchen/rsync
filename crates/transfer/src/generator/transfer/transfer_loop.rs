@@ -301,6 +301,9 @@ impl GeneratorContext {
         ndx_codec: &mut MonotonicNdxWriter,
         flist_done_remaining: &mut usize,
     ) -> io::Result<()> {
+        // upstream: flist.c:2641 - each send_extra_file_list() call takes a
+        // fresh io_error baseline for its sub-list trailers.
+        self.incremental.sublist_io_error_base = self.io_error;
         loop {
             // Under the lazy producer segments are not pre-built. Scan
             // the next directory just before the scheduler would dispatch, so
@@ -401,6 +404,8 @@ impl GeneratorContext {
         ndx_codec: &mut MonotonicNdxWriter,
         flist_done_remaining: &mut usize,
     ) -> io::Result<()> {
+        // upstream: flist.c:2641 - the idle call is its own round.
+        self.incremental.sublist_io_error_base = self.io_error;
         // Scan one directory ahead of the ceiling before growing, so the
         // idle-time top-up has a queued segment to dispatch. Bounded by
         // `MAX_FILECNT_LOOKAHEAD` exactly as `next_when_idle`.
@@ -1556,6 +1561,7 @@ impl GeneratorContext {
         // again. Mid-transfer increments in the NDX_DONE arm are still needed
         // for the in-loop accounting.
         if inc_recurse && !self.incremental.flist_eof_sent {
+            self.incremental.sublist_io_error_base = self.io_error;
             loop {
                 // Drain every remaining directory. `usize::MAX` disables
                 // the lookahead ceiling so the flush scans and sends the whole
