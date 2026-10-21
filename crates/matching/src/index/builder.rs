@@ -18,8 +18,6 @@ use super::{BitHash, DeltaSignatureIndex, NEXT_MATCH_NONE, TAG_TABLE_SIZE};
 /// block and patch its slot once a successor appears. Partial-length blocks
 /// break the chain (they are not indexed and never become successors), which
 /// preserves wire compatibility under trailing-partial-block layouts.
-///
-/// Returns `true` if at least one full-length block was indexed.
 fn populate_index(
     blocks: &[SignatureBlock],
     block_length: usize,
@@ -27,14 +25,12 @@ fn populate_index(
     bithash: &mut BitHash,
     lookup: &mut CompactLookup,
     next_match: &mut [u32],
-) -> bool {
-    let mut has_full_blocks = false;
+) {
     let mut prev_full: Option<usize> = None;
     for (index, block) in blocks.iter().enumerate() {
         if block.len() != block_length {
             continue;
         }
-        has_full_blocks = true;
         let digest = block.rolling();
         tag_table[digest.sum1() as usize] = true;
         bithash.insert(digest.value());
@@ -46,7 +42,6 @@ fn populate_index(
         }
         prev_full = Some(index);
     }
-    has_full_blocks
 }
 
 /// Detects whether two or more full-length blocks carry identical content.
@@ -163,15 +158,20 @@ impl DeltaSignatureIndex {
         Some(index)
     }
 
-    /// Rebuilds the index in-place from a new signature, reusing the
-    /// existing `CompactLookup` allocation.
+    /// Rebuilds the index in-place from a new signature, reusing every
+    /// existing allocation.
     ///
-    /// Mirrors upstream rsync's hash table reuse pattern (match.c):
-    /// the table is cleared and repopulated rather than freed and
-    /// re-allocated, avoiding per-file malloc/free overhead.
+    /// The tables are re-sized for the new block count exactly as
+    /// [`Self::from_signature_with_role`] sizes them, so the rebuilt index
+    /// matches the same blocks a freshly built one would.
     ///
-    /// Returns `false` if the signature has no full blocks (caller
-    /// should discard the index).
+    /// upstream: match.c:78-96 `build_hash_table()` - the table is a `static`
+    /// that is cleared and refilled per file, reallocated only when its size
+    /// changes.
+    ///
+    /// Returns `false` when the signature has no blocks - the case
+    /// [`Self::from_signature`] answers with `None` - and the index must not
+    /// be used.
     pub fn rebuild(&mut self, signature: &FileSignature, algorithm: SignatureAlgorithm) -> bool {
         let block_length = signature.layout().block_length().get() as usize;
         let strong_length = usize::from(signature.layout().strong_sum_length().get());
@@ -181,9 +181,10 @@ impl DeltaSignatureIndex {
         self.algorithm = algorithm;
         self.blocks.clear();
         self.blocks.extend_from_slice(signature.blocks());
-        self.lookup.clear();
-        self.tag_table.iter_mut().for_each(|v| *v = false);
-        self.bithash.clear();
+        let requested = self.blocks.len();
+        self.lookup.reset(requested);
+        self.tag_table.fill(false);
+        self.bithash.reset(requested);
         // Per ZSO-7 isolation: every link from the prior segment must be
         // cleared before re-population so a stale successor never leaks
         // across the per-NDX `rebuild` boundary.
@@ -192,7 +193,7 @@ impl DeltaSignatureIndex {
         #[cfg(any(test, feature = "bench-internal"))]
         self.seq_match_counters.reset();
 
-        let ok = populate_index(
+        populate_index(
             &self.blocks,
             block_length,
             &mut self.tag_table,
@@ -203,12 +204,12 @@ impl DeltaSignatureIndex {
 
         self.has_duplicate_blocks = detect_duplicate_blocks(&self.blocks, block_length);
 
+        let ok = requested > 0;
         if ok {
             let size = self.lookup.capacity();
             // upstream: hashtable.c:115-118 - emit when the bucket count
-            // changes from the previously traced value. Our `rebuild`
-            // reuses the same allocation when possible, so the size only
-            // ever differs when the caller's signature width changes.
+            // changes from the previously traced value, which happens
+            // whenever the new block count asks for a different table.
             if size != self.last_traced_size {
                 trace_growing(self.role, self.identifier(), size);
                 self.last_traced_size = size;

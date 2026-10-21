@@ -107,7 +107,7 @@ proptest! {
         }
     }
 
-    /// `clear` must preserve the no-false-negative contract for any rsums
+    /// `reset` must preserve the no-false-negative contract for any rsums
     /// inserted after the reset, even when bits left from earlier inserts
     /// would otherwise alias.
     #[test]
@@ -119,7 +119,7 @@ proptest! {
         for &rsum in &first {
             bh.insert(rsum);
         }
-        bh.clear();
+        bh.reset(2048);
         for &rsum in &second {
             bh.insert(rsum);
         }

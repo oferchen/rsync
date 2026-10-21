@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use tracing::instrument;
 
 use crate::index::DeltaSignatureIndex;
-use crate::ring_buffer::RingBuffer;
+use crate::scan_buffers::ScanBuffers;
 use crate::script::{DeltaScript, DeltaToken};
 use crate::trace_deltasum;
 
@@ -411,6 +411,20 @@ impl DeltaGenerator {
         reader: R,
         index: &DeltaSignatureIndex,
     ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
+        self.generate_counted_with(reader, index, &mut ScanBuffers::default())
+    }
+
+    /// Like [`Self::generate_counted`], scanning with caller-owned `buffers` so
+    /// a session that scans many files allocates them once.
+    ///
+    /// The output is identical to [`Self::generate_counted`]: the scan resets
+    /// `buffers` before reading its first byte.
+    pub fn generate_counted_with<R: Read>(
+        &self,
+        reader: R,
+        index: &DeltaSignatureIndex,
+        buffers: &mut ScanBuffers,
+    ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
         // The gated scan only matches full-length blocks, so it can form a run
         // of `needed` only when the basis holds at least `needed` full blocks.
         // With fewer (e.g. one full block plus a short tail) every match is
@@ -420,11 +434,11 @@ impl DeltaGenerator {
         if self.consecutive_match_needed >= 2
             && index.full_block_count() >= self.consecutive_match_needed as usize
         {
-            return self.generate_gated(reader, index);
+            return self.generate_gated(reader, index, buffers);
         }
         // `reader` is the whole source, so its EOF is the file's EOF and the
         // short-final-block probe is in scope.
-        self.scan(reader, index, true)
+        self.scan_inner(reader, index, true, None, buffers)
     }
 
     /// Reports whether emitting a `Copy` for basis block `idx` is safe at the
@@ -451,28 +465,6 @@ impl DeltaGenerator {
         basis_offset >= cursor
     }
 
-    /// Core single-stream delta scan.
-    ///
-    /// Performs only read-only lookups on `index`, so a shared `&index` is
-    /// safe to scan from multiple rayon workers concurrently
-    /// ([`Self::generate_chunked`]). A basis block stays matchable for the
-    /// whole scan, however many source windows it matches, exactly as
-    /// upstream's `hash_search()` leaves its hash chains intact outside
-    /// `--inplace` (`match.c:229-345`).
-    ///
-    /// `tail_match` states whether `reader`'s EOF is the source file's EOF. Only
-    /// then may the short-final-block probe run: upstream reaches that block
-    /// solely at offset `len - s->sums[s->count-1].len` (`match.c:197`), so a
-    /// stripe that merely stops early must not claim it mid-file.
-    fn scan<R: Read>(
-        &self,
-        reader: R,
-        index: &DeltaSignatureIndex,
-        tail_match: bool,
-    ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
-        self.scan_inner(reader, index, tail_match, None)
-    }
-
     fn scan_stripe_runs(
         &self,
         stripe: &[u8],
@@ -486,20 +478,35 @@ impl DeltaGenerator {
             index,
             tail_match,
             Some((&mut runs, scan_start)),
+            &mut ScanBuffers::default(),
         )?;
         Ok((runs, counters))
     }
 
+    /// Core single-stream delta scan.
+    ///
+    /// Performs only read-only lookups on `index`, so a shared `&index` is
+    /// safe to scan from multiple rayon workers concurrently
+    /// ([`Self::generate_chunked`]). A basis block stays matchable for the
+    /// whole scan, however many source windows it matches, exactly as
+    /// upstream's `hash_search()` leaves its hash chains intact outside
+    /// `--inplace` (`match.c:229-345`).
+    ///
+    /// `tail_match` states whether `reader`'s EOF is the source file's EOF. Only
+    /// then may the short-final-block probe run: upstream reaches that block
+    /// solely at offset `len - s->sums[s->count-1].len` (`match.c:197`), so a
+    /// stripe that merely stops early must not claim it mid-file.
     fn scan_inner<R: Read>(
         &self,
         mut reader: R,
         index: &DeltaSignatureIndex,
         tail_match: bool,
         mut copy_runs: Option<(&mut Vec<CopyRun>, u64)>,
+        buffers: &mut ScanBuffers,
     ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
         let emit_literals = copy_runs.is_none();
         let block_len = index.block_length();
-        let mut window = RingBuffer::with_capacity(block_len);
+        let (buffer, window) = buffers.prepare(self.buffer_len.max(block_len), block_len);
         let mut pending_literals = if emit_literals {
             Vec::with_capacity(block_len)
         } else {
@@ -533,7 +540,6 @@ impl DeltaGenerator {
         // lookup skips the probe entirely when data is sequential.
         let mut want_i: Option<usize> = Some(0);
 
-        let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
 
@@ -546,7 +552,7 @@ impl DeltaGenerator {
 
         loop {
             if buffer_pos == buffer_len {
-                buffer_len = reader.read(&mut buffer)?;
+                buffer_len = reader.read(buffer)?;
                 buffer_pos = 0;
                 if buffer_len == 0 {
                     break;
@@ -716,7 +722,7 @@ impl DeltaGenerator {
                     let mut filled = 0usize;
                     while filled < block_len {
                         if buffer_pos == buffer_len {
-                            buffer_len = reader.read(&mut buffer)?;
+                            buffer_len = reader.read(buffer)?;
                             buffer_pos = 0;
                             if buffer_len == 0 {
                                 break;
@@ -935,16 +941,16 @@ impl DeltaGenerator {
         &self,
         mut reader: R,
         index: &DeltaSignatureIndex,
+        buffers: &mut ScanBuffers,
     ) -> io::Result<(DeltaScript<'static>, ScanCounters)> {
         let block_len = index.block_length();
-        let mut window = RingBuffer::with_capacity(block_len);
+        let (buffer, window) = buffers.prepare(self.buffer_len.max(block_len), block_len);
         let mut pending_literals = Vec::with_capacity(block_len);
         let mut rolling = RollingChecksum::new();
         let mut tokens: Vec<DeltaToken> = Vec::new();
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
 
-        let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
 
@@ -987,7 +993,7 @@ impl DeltaGenerator {
 
         loop {
             if buffer_pos == buffer_len {
-                buffer_len = reader.read(&mut buffer)?;
+                buffer_len = reader.read(buffer)?;
                 buffer_pos = 0;
                 if buffer_len == 0 {
                     break;
@@ -1077,7 +1083,7 @@ impl DeltaGenerator {
                 let mut filled = 0usize;
                 while filled < block_len {
                     if buffer_pos == buffer_len {
-                        buffer_len = reader.read(&mut buffer)?;
+                        buffer_len = reader.read(buffer)?;
                         buffer_pos = 0;
                         if buffer_len == 0 {
                             break;
@@ -1250,7 +1256,7 @@ impl DeltaGenerator {
         if self.consecutive_match_needed >= 2
             && index.full_block_count() >= self.consecutive_match_needed as usize
         {
-            return self.generate_gated(Cursor::new(source), index);
+            return self.generate_gated(Cursor::new(source), index, &mut ScanBuffers::default());
         }
 
         // The in-place monotonicity guard (`match.c:235`) compares each match's
@@ -1348,7 +1354,7 @@ impl DeltaGenerator {
         if self.consecutive_match_needed >= 2
             && index.full_block_count() >= self.consecutive_match_needed as usize
         {
-            return self.generate_gated(Cursor::new(source), index);
+            return self.generate_gated(Cursor::new(source), index, &mut ScanBuffers::default());
         }
         if self.updating_basis_file {
             return self.generate_counted(Cursor::new(source), index);

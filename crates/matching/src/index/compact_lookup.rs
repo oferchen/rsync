@@ -259,10 +259,17 @@ impl CompactLookup {
         }
     }
 
-    /// Resets all bucket heads and chain entries, preserving the backing
-    /// allocations for the next per-segment rebuild.
-    pub(super) fn clear(&mut self) {
-        self.buckets.fill(CHAIN_END);
+    /// Empties the table and re-sizes it for `n_entries` blocks, keeping the
+    /// backing allocations.
+    ///
+    /// Sizing goes through [`BucketAddress::for_entries`] exactly as
+    /// [`Self::with_capacity`] does, so a reset table addresses and walks like
+    /// a freshly built one; keeping the previous size would leave a small
+    /// basis paying a large basis's table fill.
+    pub(super) fn reset(&mut self, n_entries: usize) {
+        self.address = BucketAddress::for_entries(n_entries);
+        self.buckets.clear();
+        self.buckets.resize(self.address.bucket_count(), CHAIN_END);
         self.entries.clear();
     }
 
@@ -383,13 +390,32 @@ mod tests {
     }
 
     #[test]
-    fn clear_resets_table() {
+    fn reset_resets_table() {
         let mut table = CompactLookup::with_capacity(16);
         table.insert(1, 2, 3);
         assert_eq!(table.len(), 1);
-        table.clear();
+        table.reset(16);
         assert_eq!(table.len(), 0);
         assert!(table.find_all(1, 2).next().is_none());
+    }
+
+    // WHY: a sender reuses one table across files, so a reset must size it
+    // for the new basis exactly as a fresh build would, in both directions.
+    #[test]
+    fn reset_sizes_the_table_like_a_fresh_build() {
+        let big = 1_000_000;
+        let small = 24;
+        let mut table = CompactLookup::with_capacity(small);
+        table.reset(big);
+        assert_eq!(
+            table.capacity(),
+            CompactLookup::with_capacity(big).capacity()
+        );
+        table.reset(small);
+        assert_eq!(
+            table.capacity(),
+            CompactLookup::with_capacity(small).capacity()
+        );
     }
 
     #[test]

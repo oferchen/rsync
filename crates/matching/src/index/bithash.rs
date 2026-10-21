@@ -82,10 +82,7 @@ impl BitHash {
     /// a multiple of 64 bits, so the [`u64`] backing store has no tail
     /// padding to special-case.
     pub(super) fn with_block_count(n_blocks: usize) -> Self {
-        let log2_bits = log2_bits_for(n_blocks);
-        let total_bits = 1usize << log2_bits;
-        let words = total_bits / u64::BITS as usize;
-        let mask = ((total_bits - 1) as u64 & u32::MAX as u64) as u32;
+        let (words, mask) = geometry(n_blocks);
         Self {
             bits: vec![0u64; words],
             mask,
@@ -115,15 +112,17 @@ impl BitHash {
         (self.bits[word_index] >> bit_index) & 1 == 1
     }
 
-    /// Resets every bit, preserving the backing allocation.
+    /// Zeroes every bit and re-sizes the array for `n_blocks`, preserving the
+    /// backing allocation, so the result equals
+    /// [`Self::with_block_count`]`(n_blocks)`.
     ///
     /// Used by [`super::DeltaSignatureIndex::rebuild`] to recycle the bithash
-    /// across per-segment INC_RECURSE rebuilds without re-allocating.
-    #[inline]
-    pub(super) fn clear(&mut self) {
-        for word in &mut self.bits {
-            *word = 0;
-        }
+    /// across files without re-allocating.
+    pub(super) fn reset(&mut self, n_blocks: usize) {
+        let (words, mask) = geometry(n_blocks);
+        self.bits.clear();
+        self.bits.resize(words, 0);
+        self.mask = mask;
     }
 
     /// Returns the fraction of bits currently set, in `[0.0, 1.0]`.
@@ -160,6 +159,14 @@ impl BitHash {
         let word_index = masked >> 6;
         (word_index, bit_index)
     }
+}
+
+/// Returns the `u64` word count and the rsum mask for `n_blocks`.
+fn geometry(n_blocks: usize) -> (usize, u32) {
+    let total_bits = 1usize << log2_bits_for(n_blocks);
+    let words = total_bits / u64::BITS as usize;
+    let mask = ((total_bits - 1) as u64 & u32::MAX as u64) as u32;
+    (words, mask)
 }
 
 /// Returns the `log2` of the chosen bit-array size for a block count.
@@ -240,13 +247,26 @@ mod tests {
         }
     }
 
+    // WHY: the sender reuses one bithash across files; a reset that kept the
+    // previous file's size would make a small basis clear a large array.
+    #[test]
+    fn reset_sizes_like_a_fresh_build() {
+        let mut bh = BitHash::with_block_count(4);
+        bh.reset(100_000);
+        let fresh = BitHash::with_block_count(100_000);
+        assert_eq!((bh.bits.len(), bh.mask), (fresh.bits.len(), fresh.mask));
+        bh.reset(4);
+        let fresh = BitHash::with_block_count(4);
+        assert_eq!((bh.bits.len(), bh.mask), (fresh.bits.len(), fresh.mask));
+    }
+
     #[test]
     fn clear_resets_all_bits() {
         let mut bh = BitHash::with_block_count(1024);
         bh.insert(42);
         bh.insert(0xCAFEBABE);
         assert!(bh.contains(42));
-        bh.clear();
+        bh.reset(1024);
         assert!(!bh.contains(42));
         assert!(!bh.contains(0xCAFEBABE));
         assert_eq!(bh.utilization(), 0.0);
