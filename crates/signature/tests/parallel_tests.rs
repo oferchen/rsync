@@ -631,7 +631,6 @@ mod performance {
 
         assert_eq!(signature.total_bytes(), size as u64);
 
-        // Should complete in reasonable time
         assert!(
             elapsed.as_secs() < 10,
             "parallel signature took too long: {elapsed:?}"

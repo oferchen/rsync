@@ -904,7 +904,6 @@ mod performance {
 
         assert_eq!(signature.total_bytes(), size as u64);
 
-        // Should complete well under 5 seconds on most systems
         assert!(
             elapsed.as_secs() < 5,
             "signature generation took too long: {elapsed:?}"
