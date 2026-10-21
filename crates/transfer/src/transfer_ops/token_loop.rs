@@ -12,13 +12,12 @@
 
 use std::io::{self, Read};
 
-use engine::signature::FileSignature;
-
 use crate::delta_apply::ChecksumVerifier;
 use crate::map_file::MapFile;
 use crate::pipeline::messages::FileMessage;
 use crate::pipeline::spsc;
 use crate::reader::ServerReader;
+use crate::receiver::SumHead;
 use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 
 use super::streaming::StreamingResult;
@@ -79,7 +78,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
     file_tx: &spsc::Sender<FileMessage>,
     buf_return_rx: &spsc::Receiver<Vec<u8>>,
     checksum_verifier: &mut ChecksumVerifier,
-    signature: &Option<FileSignature>,
+    sum_head: &SumHead,
     basis_map: &mut Option<MapFile>,
     mut total_bytes: u64,
     pending_delta: Option<DeltaToken>,
@@ -170,14 +169,14 @@ pub(super) fn process_remaining_tokens<R: Read>(
                 literal_bytes += len;
             }
             DeltaToken::BlockRef(block_idx) => {
-                // upstream: receiver.c:585-589 bounds the index before the
-                // receiver.c:616 no-basis test, so a whole-file head refuses
-                // the token as an invalid index, not as a missing basis.
-                let (offset, bytes_to_copy) = crate::delta_apply::block_span(
-                    signature.as_ref().map(FileSignature::layout),
-                    block_idx,
-                )
-                .inspect_err(|error| send_abort(file_tx, error.to_string()))?;
+                // upstream: receiver.c:585-589 bounds the index by the echoed
+                // head before the receiver.c:616 no-basis test, so a
+                // whole-file head refuses the token as an invalid index, and a
+                // head announcing blocks the receiver has no basis for ends on
+                // the missing basis.
+                let (offset, bytes_to_copy) =
+                    crate::delta_apply::block_span(sum_head.layout(), block_idx)
+                        .inspect_err(|error| send_abort(file_tx, error.to_string()))?;
                 let Some(basis_map) = basis_map.as_mut() else {
                     let error = super::block_match_without_basis(&describe_file());
                     send_abort(file_tx, error.to_string());
@@ -240,28 +239,17 @@ pub(super) fn process_remaining_tokens<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use std::num::{NonZeroU8, NonZeroU32};
-
     use protocol::ProtocolViolation;
-    use signature::SignatureLayout;
 
     use super::*;
 
-    /// A one-block signature: the generator announced a basis whose sum_head
-    /// describes exactly block 0.
-    fn one_block_signature() -> Option<FileSignature> {
-        let layout = SignatureLayout::from_raw_parts(
-            NonZeroU32::new(700).unwrap(),
-            0,
-            1,
-            NonZeroU8::new(16).unwrap(),
-        );
-        Some(FileSignature::from_raw_parts(layout, Vec::new(), 700))
-    }
+    /// A one-block head: the sender echoed a sum_head describing exactly
+    /// block 0, whatever basis the receiver itself ended up with.
+    const ONE_BLOCK: SumHead = SumHead::new(1, 700, 16, 0);
 
     /// Feeds one block-match token to the loop with no basis mapped, the way a
     /// crafted delta reaches the receiver, and returns the error it ends on.
-    fn refuse_match(signature: &Option<FileSignature>, block_idx: usize) -> io::Error {
+    fn refuse_match(sum_head: &SumHead, block_idx: usize) -> io::Error {
         let mut reader = ServerReader::new_plain(std::io::Cursor::new(Vec::new()));
         let (file_tx, file_rx) = spsc::channel(4);
         let (_buf_tx, buf_return_rx) = spsc::channel(4);
@@ -272,7 +260,7 @@ mod tests {
             &file_tx,
             &buf_return_rx,
             &mut verifier,
-            signature,
+            sum_head,
             &mut None,
             0,
             Some(DeltaToken::BlockRef(block_idx)),
@@ -301,10 +289,12 @@ mod tests {
     /// the generator announced. upstream names the file and exits
     /// RERR_PROTOCOL (receiver.c:616-620), and the rsync 3.5.1 testsuite's
     /// strict-basis cell greps for that exact text - a forged or refused basis
-    /// (a leaf symlink under --link-dest) must end on it.
+    /// (a leaf symlink under --link-dest) must end on it. The index is judged
+    /// by the echoed head alone: the receiver's refused basis gave it no
+    /// signature, yet the head's block 0 is in range.
     #[test]
     fn block_match_without_basis_names_the_file_as_a_protocol_error() {
-        let err = refuse_match(&one_block_signature(), 0);
+        let err = refuse_match(&ONE_BLOCK, 0);
         assert_eq!(
             err.to_string(),
             "got a block match with no basis file for \"/dest/f\" [receiver]"
@@ -316,7 +306,7 @@ mod tests {
     /// an invalid index even though no basis is mapped either.
     #[test]
     fn block_index_past_the_count_is_refused_before_the_basis_check() {
-        let err = refuse_match(&one_block_signature(), 1);
+        let err = refuse_match(&ONE_BLOCK, 1);
         assert_eq!(
             err.to_string(),
             "Invalid block index 1 (count=1) [receiver]"
@@ -327,7 +317,7 @@ mod tests {
     /// range: upstream reports the index, not a missing basis.
     #[test]
     fn a_whole_file_transfer_refuses_block_zero_as_an_invalid_index() {
-        let err = refuse_match(&None, 0);
+        let err = refuse_match(&SumHead::default(), 0);
         assert_eq!(
             err.to_string(),
             "Invalid block index 0 (count=0) [receiver]"

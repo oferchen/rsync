@@ -97,7 +97,7 @@ pub fn process_file_response<R: Read>(
     };
     let file_path = header.file_path;
     let basis_path = header.basis_path;
-    let signature = header.signature;
+    let sum_head = header.sum_head;
     let target_size = header.target_size;
     let use_inplace = header.use_inplace;
 
@@ -270,12 +270,8 @@ pub fn process_file_response<R: Read>(
             DeltaToken::BlockRef(block_idx) => {
                 // upstream: receiver.c:585-589 bounds the index before the
                 // receiver.c:616 no-basis test.
-                let (offset, bytes_to_copy) = crate::delta_apply::block_span(
-                    signature
-                        .as_ref()
-                        .map(engine::signature::FileSignature::layout),
-                    block_idx,
-                )?;
+                let (offset, bytes_to_copy) =
+                    crate::delta_apply::block_span(sum_head.layout(), block_idx)?;
                 let Some(basis_map) = basis_map.as_mut() else {
                     return Err(super::block_match_without_basis(&ctx.full_fname(receiver)));
                 };

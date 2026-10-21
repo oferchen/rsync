@@ -272,6 +272,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The entry after an abbreviated hard-link follower is encoded against the right previous entry (#7997)
 - A block match with no basis file exits 2, and a daemon stream closed mid-transfer exits 12, with upstream's messages (#8016)
 - An out-of-range block index in a delta stream, live or replayed with `--read-batch`, exits 2 with upstream's `Invalid block index` message (#8237)
+- The receiver resolves block-match tokens through the sum head the sender echoed, as upstream does, so a match against a basis it could not open ends on `got a block match with no basis file` (#8237)
 - A sender refuses a peer file-list index that no live list owns with upstream's `File-list index %d not in %d - %d` error and exit 2, for itemize-only items as well as transfer requests (#8237)
 - A sender sends its closing `MSG_IO_ERROR` before the `send files finished` and `total:` lines, in upstream's order (#8237)
 - `--remove-source-files` under incremental recursion unlinks every confirmed source and exits 0; a peer `MSG_SUCCESS` naming a gap, freed or out-of-range index is refused with exit 2 instead of unlinking another file (#8237)

@@ -6,12 +6,15 @@
 
 use std::io::{self, Read, Write};
 
+use std::num::{NonZeroU8, NonZeroU32};
+
 use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
 use protocol::effective_max_alloc;
 use protocol::read_varint;
 use protocol::wire::MAX_STRONG_SUM_LEN;
 use protocol::xattr::{MAX_XATTR_VALUE_BYTES, XattrList};
+use signature::SignatureLayout;
 
 /// Upstream `MAXPATHLEN` ceiling for an xname vstring (`rsync.c:409` -
 /// `read_vstring(f_in, buf, MAXPATHLEN)`).
@@ -185,6 +188,33 @@ impl SumHead {
         } else {
             total
         }
+    }
+
+    /// The block geometry this head describes, `None` for a whole-file head.
+    ///
+    /// upstream: receiver.c:584-593 `receive_data()` addresses every
+    /// block-match token through the head it read off the wire
+    /// (receiver.c:510 `read_sum_head(f_in, &sum)`), never through the
+    /// generator's own signature, so the two cannot disagree about a token.
+    #[must_use]
+    pub(crate) fn layout(&self) -> Option<SignatureLayout> {
+        let blength = NonZeroU32::new(self.blength).filter(|_| self.count > 0)?;
+        let s2length =
+            NonZeroU8::new(u8::try_from(self.s2length).unwrap_or(16)).unwrap_or(NonZeroU8::MIN);
+        Some(SignatureLayout::from_raw_parts(
+            blength,
+            self.remainder,
+            u64::from(self.count),
+            s2length,
+        ))
+    }
+
+    /// This head's geometry as a sum-less signature, the shape the delta
+    /// applicator resolves block-match tokens through.
+    #[must_use]
+    pub(crate) fn block_signature(&self) -> Option<FileSignature> {
+        self.layout()
+            .map(|layout| FileSignature::from_raw_parts(layout, Vec::new(), self.flength()))
     }
 
     /// Creates a `SumHead` from a file signature.

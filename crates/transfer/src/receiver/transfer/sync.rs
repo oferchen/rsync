@@ -383,11 +383,13 @@ impl ReceiverContext {
 
             token_reader.reset();
 
+            // upstream: receiver.c:584-593 - tokens resolve through the echoed head.
+            let echoed_signature = echoed_sum_head.block_signature();
             let mut applicator = crate::delta_apply::DeltaApplicator::new(
                 file,
                 &config,
                 file_verifier,
-                signature_opt.as_ref(),
+                echoed_signature.as_ref(),
                 basis_path_opt.as_deref(),
             )?;
 
