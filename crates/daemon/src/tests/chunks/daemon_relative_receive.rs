@@ -98,7 +98,7 @@ fn daemon_relative_receive_preserves_nested_paths() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("relative client push failed: {e}");
         }
     }
@@ -149,5 +149,5 @@ fn daemon_relative_receive_preserves_nested_paths() {
     );
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

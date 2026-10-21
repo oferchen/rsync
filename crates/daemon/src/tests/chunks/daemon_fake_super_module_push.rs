@@ -115,7 +115,7 @@ fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("fake-super module push failed: {e}");
         }
     }
@@ -177,5 +177,5 @@ fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
         "a regular file carries no rdev (got {stat_text:?})"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

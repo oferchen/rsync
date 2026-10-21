@@ -109,7 +109,7 @@ fn daemon_fuzzy_level2_pulls_basis_from_sibling_directories() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("client transfer failed: {e}");
         }
     }
@@ -128,7 +128,7 @@ fn daemon_fuzzy_level2_pulls_basis_from_sibling_directories() {
     );
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 /// Generates deterministic content of the given size using a repeating pattern.

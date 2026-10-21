@@ -51,6 +51,6 @@ fn run_daemon_handles_binary_negotiation() {
     drop(stream);
     // Bounded join (join-then-detach) like the sibling negotiation tests, so a
     // wedged daemon thread can never turn into a job-level 360s hang.
-    let _ = finish_daemon(handle);
+    drop(handle);
     // Don't assert on result - daemon rightfully fails when client sends invalid data
 }

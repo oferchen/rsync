@@ -103,7 +103,7 @@ fn daemon_inplace_push_preserves_destination_inodes() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("inplace push failed: {e}");
         }
     }
@@ -135,5 +135,5 @@ fn daemon_inplace_push_preserves_destination_inodes() {
         "beta.txt inode changed - transfer used temp+rename instead of inplace"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

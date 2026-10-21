@@ -99,7 +99,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
     // Windows CI a blocking accept on the re-bound listener can linger past the
     // client disconnect, so bound the join and detach if it does not finish
     // rather than wedging the test until nextest's 360s slow-timeout fires.
-    let _ = finish_daemon(handle);
+    drop(handle);
 
     // Challenges should be different
     assert_eq!(challenges.len(), 2);
@@ -362,7 +362,7 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
     // send transfer data. Bound the join: on Windows the daemon's accept loop
     // can linger past the client disconnect, so detach rather than wedge until
     // nextest's 360s slow-timeout fires.
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -544,5 +544,5 @@ fn daemon_negotiation_auth_successful_sends_ok() {
     // Don't assert on result - daemon may fail gracefully when client doesn't
     // continue. Bound the join: on Windows the accept loop can linger past the
     // disconnect, so detach rather than wedge until nextest's 360s slow-timeout.
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
