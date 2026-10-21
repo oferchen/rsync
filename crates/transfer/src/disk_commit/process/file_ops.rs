@@ -21,7 +21,7 @@ use crate::temp_guard::open_tmpfile;
 use crate::temp_guard::open_tmpfile_sandboxed;
 
 use super::super::config::{DiskCommitConfig, PartialMode};
-use super::super::writer::{ReusableBufWriter, Writer};
+use super::super::writer::{ReusableBufWriter, Writer, close_received_file};
 use super::commit::{
     SparseFinalize, commit_file, finalize_sparse, make_backup_copy, retain_partial_file,
 };
@@ -415,7 +415,8 @@ pub(in crate::disk_commit) fn process_file(
                     .map_or(touched.total(), SparseWriteState::touched_blocks);
 
                 output.flush_and_sync(config.do_fsync, &begin.file_path)?;
-                output.finish(config.do_fsync, &begin.file_path)?;
+                let file = output.finish(config.do_fsync, &begin.file_path)?;
+                close_received_file(file, cleanup_guard.path())?;
 
                 // upstream: receiver.c:677-691 - compute the whole-file checksum
                 // and compare it against the sender's trailing sum BEFORE the
@@ -678,7 +679,8 @@ pub(in crate::disk_commit) fn process_whole_file(
     let _ = buf_return_tx.try_send(data);
 
     output.flush_and_sync(config.do_fsync, &begin.file_path)?;
-    output.finish(config.do_fsync, &begin.file_path)?;
+    let file = output.finish(config.do_fsync, &begin.file_path)?;
+    close_received_file(file, cleanup_guard.path())?;
 
     // upstream: receiver.c:677-691 - verify the whole-file checksum before the
     // file is put into place (see process_file for the full rationale). A

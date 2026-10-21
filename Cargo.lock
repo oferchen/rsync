@@ -1440,6 +1440,7 @@ dependencies = [
  "libc",
  "logging",
  "memmap2",
+ "nix",
  "permutation",
  "proptest",
  "rayon",

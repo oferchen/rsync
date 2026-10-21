@@ -234,6 +234,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Fixed
 
 **Data integrity**
+- `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#PRNUM)
+- A received file whose `close()` fails (where NFS-like filesystems report a failed write) now aborts with exit 11 and upstream's `close failed on` message instead of being committed (#PRNUM)
 - `--inplace --sparse` local copies could write wrong content after a block ending in zeros (#7983); a related io_uring relative-seek defect is fixed and the network receiver is pinned unaffected (#7984)
 - Multi-source `--delete` no longer removes files an earlier source just copied (#7765)
 - A local copy whose source shrinks or grows mid-read is diagnosed or redone, never committed short (#7403, #7472, #7706, #7751, #7710)
