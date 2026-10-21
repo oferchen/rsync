@@ -2,13 +2,12 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.6.x   | :white_check_mark: (current: 0.6.4) |
-| 0.5.x   | :warning: critical fixes only |
-| < 0.5   | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| Latest release | :white_check_mark: |
+| Older releases | :x: |
 
-Fixes land on `master` first and ship in the next 0.6.x release. Changes merged since 0.6.4 are listed under *Unreleased* in [`CHANGELOG.md`](./CHANGELOG.md).
+Only the latest release receives security fixes. Fixes land on `master` first and ship in the next release. Changes merged since the latest release are listed under *Unreleased* in [`CHANGELOG.md`](./CHANGELOG.md).
 
 ## Reporting a Vulnerability
 
