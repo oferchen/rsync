@@ -37,8 +37,8 @@ pub use fuzzy::{
 };
 pub use generator::{DeltaGenerator, ScanCounters, generate_delta};
 pub use index::{
-    DeltaSignatureIndex, HASH_KEY_BITS, HashtableRole, ProbeCounters, trace_hashtable_created,
-    trace_hashtable_destroyed, trace_hashtable_growing,
+    DeltaSignatureIndex, HASH_KEY_BITS, HashtableRole, ProbeCounters, UpstreamHashTable,
+    trace_hashtable_created, trace_hashtable_destroyed, trace_hashtable_growing,
 };
 pub use scan_buffers::ScanBuffers;
 pub use script::{DeltaScript, DeltaToken, apply_delta};

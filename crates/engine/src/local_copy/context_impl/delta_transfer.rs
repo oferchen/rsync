@@ -199,11 +199,12 @@ impl<'a> CopyContext<'a> {
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
         // upstream: match.c:395 match_sums() zeroes the per-file counters
-        // before scanning; the loop tallies confirmed matches inline and
-        // hash_hits/false_alarms through the counted probe, folded into the run
-        // totals at the end for the `-vv` `total:` line (match.c:480
-        // match_report()).
-        let mut probe = ProbeCounters::default();
+        // before scanning; the loop tallies confirmed matches inline, and
+        // hash_hits/false_alarms come from replaying upstream's own hash table
+        // while the `-vv` `total:` line (match.c:480 match_report()) reports
+        // them.
+        let mut replay = matching::trace_deltasum::counters_reported()
+            .then(|| UpstreamHashTable::new(index, inplace_mode));
         let mut file_matches = 0u64;
         // Accumulated where matches are produced, never derived from
         // `total_size - literal_bytes`. upstream: match.c:144 `matched()` is the
@@ -300,10 +301,15 @@ impl<'a> CopyContext<'a> {
             // upstream: match.c:210-213 - the per-offset rolling sum.
             let scan_offset = total_bytes.saturating_add(pending_literals.len() as u64);
             matching::trace_deltasum::trace_scan_offset(scan_offset, digest.sum2(), digest.sum1());
-            if let Some(block_index) =
-                index.find_match_window_counted(digest, &window, &mut scratch, &mut probe)
-            {
+            if let Some(replay) = replay.as_mut() {
+                let (front, back) = window.as_slices();
+                replay.probe_window(index, digest, scan_offset, front, back);
+            }
+            if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
                 file_matches = file_matches.saturating_add(1);
+                if let Some(replay) = replay.as_mut() {
+                    replay.mark_same_offset(block_index, scan_offset);
+                }
                 // upstream: match.c:258-262 then :133-138
                 matching::trace_deltasum::trace_potential_match(
                     scan_offset,
@@ -489,6 +495,13 @@ impl<'a> CopyContext<'a> {
         // with a digest that happens to agree, only when a match `clear()`ed it
         // with exactly that many bytes left - an identical source, where every
         // full block matches. A fixture built that way passes either way.
+        // The window left here was never probed; upstream probes it, shrinking
+        // byte by byte (match.c:362-364).
+        if let Some(replay) = replay.as_mut() {
+            let (front, back) = window.as_slices();
+            let tail_offset = total_bytes.saturating_add(pending_literals.len() as u64);
+            replay.probe_shrinking_tail(index, &[front, back].concat(), tail_offset);
+        }
         let short_tail_len = index
             .block_count()
             .checked_sub(1)
@@ -526,11 +539,8 @@ impl<'a> CopyContext<'a> {
             }
         };
         if let Some(block_index) = tail_matched_block {
-            // A matched trailing partial block is one confirmed match, and its
-            // bucket lookup is one hash hit. upstream: match.c hash_search()
-            // counts the shrunk-window tail probe the same as any other.
+            // A matched trailing partial block is one confirmed match.
             file_matches = file_matches.saturating_add(1);
-            probe.hash_hits = probe.hash_hits.saturating_add(1);
             // upstream: match.c:258-262 then :133-138 - the short final block is
             // reported like any other match, with its own shorter length. Its
             // source offset is the scan cursor: everything before it has either
@@ -749,6 +759,10 @@ impl<'a> CopyContext<'a> {
         // (receiver.c:688) have no analogue here and are deliberately absent
         // rather than faked.
         matching::trace_deltasum::trace_done_hash_search();
+        let probe = replay
+            .as_ref()
+            .map(UpstreamHashTable::counters)
+            .unwrap_or_default();
         matching::trace_deltasum::trace_match_counters(
             probe.false_alarms,
             probe.hash_hits,

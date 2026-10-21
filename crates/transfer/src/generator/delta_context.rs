@@ -117,7 +117,10 @@ impl SenderDeltaContext {
     ) -> io::Result<(DeltaScript<'a>, ScanCounters)> {
         let generator = scan_generator(&config, source.len() as u64);
         let index = rebuild_index(&mut self.index, &mut self.blocks, &config)?;
-        let result = if index.has_duplicate_blocks() {
+        // A duplicate-content basis keeps the sequential scan, as does a run
+        // that reports the `-vv` match counters: only that scan visits
+        // upstream's offsets, which the counters are replayed at.
+        let result = if index.has_duplicate_blocks() || matching::trace_deltasum::counters_reported() {
             generator.generate_counted_with(io::Cursor::new(source), index, &mut self.scan)
         } else {
             generator.generate_chunked_counted(source, index, max_chunks)

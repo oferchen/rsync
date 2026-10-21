@@ -45,7 +45,7 @@ use super::{
 };
 use super::{ScanRoot, SourceSpec};
 use crate::block_touch::BlockTouchTracker;
-use crate::delta::{DeltaSignatureIndex, ProbeCounters};
+use crate::delta::{DeltaSignatureIndex, UpstreamHashTable};
 use crate::signature::SignatureBlock;
 use ::metadata::{
     MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,

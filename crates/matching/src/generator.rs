@@ -18,7 +18,8 @@ use rayon::prelude::*;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::index::DeltaSignatureIndex;
+use crate::index::{DeltaSignatureIndex, UpstreamHashTable};
+use crate::ring_buffer::RingBuffer;
 use crate::scan_buffers::ScanBuffers;
 use crate::script::{DeltaScript, DeltaToken};
 use crate::trace_deltasum;
@@ -52,16 +53,46 @@ const MIN_PARALLEL_CHUNK_BYTES: usize = 1024 * 1024;
 ///
 /// upstream: match.c:397-401 zeroes `false_alarms`/`hash_hits`/`matches` at the
 /// top of `match_sums()`; match.c:474-476 folds them into the run totals that
-/// `match_report()` prints. `hash_hits`/`false_alarms` carry oc-native
-/// semantics (see [`crate::ProbeCounters`]).
+/// `match_report()` prints. `hash_hits`/`false_alarms` are replayed from
+/// upstream's own hash table (see [`UpstreamHashTable`]) while they are
+/// reported, and zero otherwise.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ScanCounters {
     /// Confirmed block matches emitted as `Copy` tokens.
     pub matches: u64,
-    /// Hash-probe attempts that reached the index (bithash positives).
+    /// upstream: match.c:228 - offsets whose `hash_table` bucket was non-empty.
     pub hash_hits: u64,
-    /// Probe attempts that produced no confirmed match.
+    /// upstream: match.c:271 - chain candidates the strong compare rejected.
     pub false_alarms: u64,
+}
+
+impl ScanCounters {
+    /// Pairs the scan's confirmed `matches` with the replayed upstream
+    /// counters, which stay zero when they were not replayed.
+    fn from_replay(matches: u64, replay: Option<&UpstreamHashTable>) -> Self {
+        let probes = replay.map(UpstreamHashTable::counters).unwrap_or_default();
+        Self {
+            matches,
+            hash_hits: probes.hash_hits,
+            false_alarms: probes.false_alarms,
+        }
+    }
+}
+
+/// Replays the offsets past the scan's last probe, where upstream keeps
+/// probing a window that shrinks toward the short final block.
+///
+/// A full `window` was already probed at `offset`; a partial one was not.
+fn replay_unprobed_tail(
+    replay: &mut UpstreamHashTable,
+    index: &DeltaSignatureIndex,
+    window: &RingBuffer,
+    offset: u64,
+) {
+    let (front, back) = window.as_slices();
+    let tail = [front, back].concat();
+    let probed = usize::from(window.is_full());
+    replay.probe_shrinking_tail(index, &tail[probed..], offset + probed as u64);
 }
 
 /// Emits a coalesced `DeltaToken::Copy` covering an open seq-match run.
@@ -517,8 +548,11 @@ impl DeltaGenerator {
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
 
-        let mut hash_hits = 0u64;
-        let mut false_alarms = 0u64;
+        // Upstream's own hash_hits/false_alarms, replayed only while they are
+        // reported. A stripe of the parallel scan cannot replay them: its
+        // offsets are not upstream's, so that scan is not chosen while they are.
+        let mut replay = (copy_runs.is_none() && trace_deltasum::counters_reported())
+            .then(|| UpstreamHashTable::new(index, self.updating_basis_file));
         let mut matches = 0u64;
         let mut offset = 0u64;
         // upstream: match.c:130 `(offset - last_match)` - the literal-byte
@@ -612,14 +646,14 @@ impl DeltaGenerator {
             // upstream: match.c:321-334 - probe the want_i hint first; it picks the
             // same block `check_want_i` would prefer.
             let (first, second) = window.as_slices();
+            if let Some(replay) = replay.as_mut() {
+                replay.probe_window(index, digest, offset, first, second);
+            }
             let matched = match want_i {
                 Some(hint) if index.check_block_match_slices(hint, digest, first, second) => {
                     Some(hint)
                 }
-                _ => {
-                    hash_hits += 1;
-                    index.find_match_slices(digest, first, second)
-                }
+                _ => index.find_match_slices(digest, first, second),
             };
             // upstream: match.c:235 - under --inplace, drop any candidate whose
             // basis offset precedes the write cursor (fall back to literal).
@@ -642,6 +676,9 @@ impl DeltaGenerator {
                 let mut run_len: usize = 0;
                 loop {
                     matches += 1;
+                    if let Some(replay) = replay.as_mut() {
+                        replay.mark_same_offset(match_idx, offset);
+                    }
 
                     // upstream: match.c:258-262
                     trace_deltasum::trace_potential_match(
@@ -753,14 +790,12 @@ impl DeltaGenerator {
                     // still followed.
                     let adj_digest = rolling.digest();
                     let (f, s) = window.as_slices();
-                    let adj_match =
-                        match index.try_next_match_slices(last_matched, adj_digest, f, s) {
-                            Some(next_idx) => Some(next_idx),
-                            None => {
-                                hash_hits += 1;
-                                index.find_match_slices(adj_digest, f, s)
-                            }
-                        };
+                    if let Some(replay) = replay.as_mut() {
+                        replay.probe_window(index, adj_digest, offset, f, s);
+                    }
+                    let adj_match = index
+                        .try_next_match_slices(last_matched, adj_digest, f, s)
+                        .or_else(|| index.find_match_slices(adj_digest, f, s));
                     // upstream: match.c:235 - `offset` has advanced by one block
                     // above, so re-apply the in-place guard to the adjacent
                     // candidate before extending the run.
@@ -769,7 +804,6 @@ impl DeltaGenerator {
                     if let Some(next_idx) = adj_match {
                         match_idx = next_idx;
                     } else {
-                        false_alarms += 1;
                         break;
                     }
                 }
@@ -777,9 +811,11 @@ impl DeltaGenerator {
                     flush_seq_match_run(&mut tokens, &mut run_start_idx, &mut run_len, block_len);
                 }
                 continue;
-            } else {
-                false_alarms += 1;
             }
+        }
+
+        if let Some(replay) = replay.as_mut() {
+            replay_unprobed_tail(replay, index, &window, offset);
         }
 
         // EOF tail match, mirroring the three cooperating pieces of upstream's
@@ -908,11 +944,7 @@ impl DeltaGenerator {
 
         Ok((
             DeltaScript::new(tokens, total_bytes, literal_bytes),
-            ScanCounters {
-                matches,
-                hash_hits,
-                false_alarms,
-            },
+            ScanCounters::from_replay(matches, replay.as_ref()),
         ))
     }
 
@@ -962,8 +994,8 @@ impl DeltaGenerator {
         // by the consecutive-match rule - the confirmation is what upstream's
         // counter records (match.c:343 `matches++` sits at the accepted-block
         // site, before any emission decision).
-        let mut hash_hits = 0u64;
-        let mut false_alarms = 0u64;
+        let mut replay = trace_deltasum::counters_reported()
+            .then(|| UpstreamHashTable::new(index, self.updating_basis_file));
         let mut matches = 0u64;
         let mut last_match = 0u64;
 
@@ -1024,13 +1056,14 @@ impl DeltaGenerator {
             let (first, second) = window.as_slices();
             // upstream: match.c:235 - under --inplace, suppress a candidate whose
             // basis offset precedes the write cursor so it demotes to a literal.
-            hash_hits += 1;
+            if let Some(replay) = replay.as_mut() {
+                replay.probe_window(index, digest, offset, first, second);
+            }
             let matched = index
                 .find_match_slices(digest, first, second)
                 .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
 
             let Some(mut match_idx) = matched else {
-                false_alarms += 1;
                 continue;
             };
 
@@ -1058,6 +1091,9 @@ impl DeltaGenerator {
                     lone_src.extend_from_slice(s2);
                 }
                 matches += 1;
+                if let Some(replay) = replay.as_mut() {
+                    replay.mark_same_offset(match_idx, offset);
+                }
                 // upstream: match.c:258-262 then :133-138
                 trace_deltasum::trace_potential_match(
                     offset,
@@ -1107,16 +1143,15 @@ impl DeltaGenerator {
                     rolling.update(s);
                 }
                 let adj_digest = rolling.digest();
-                hash_hits += 1;
+                if let Some(replay) = replay.as_mut() {
+                    replay.probe_window(index, adj_digest, offset, f, s);
+                }
                 let adj = index
                     .find_match_slices(adj_digest, f, s)
                     .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
                 match adj {
                     Some(next_idx) => match_idx = next_idx,
-                    None => {
-                        false_alarms += 1;
-                        break;
-                    }
+                    None => break,
                 }
             }
 
@@ -1148,6 +1183,9 @@ impl DeltaGenerator {
         // Sending the tail as a literal stays byte-exact, only larger, and this
         // path is opt-in on both peers (`OC_CONSECUTIVE_MATCH`) so the default
         // wire is unaffected.
+        if let Some(replay) = replay.as_mut() {
+            replay_unprobed_tail(replay, index, &window, offset);
+        }
         while let Some(byte) = window.pop_front() {
             pending_literals.push(byte);
         }
@@ -1159,11 +1197,7 @@ impl DeltaGenerator {
 
         Ok((
             DeltaScript::new(tokens, total_bytes, literal_bytes),
-            ScanCounters {
-                matches,
-                hash_hits,
-                false_alarms,
-            },
+            ScanCounters::from_replay(matches, replay.as_ref()),
         ))
     }
 
