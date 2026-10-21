@@ -45,6 +45,14 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Sets the block strong checksum used by the delta transfer.
+    #[must_use]
+    #[doc(alias = "--checksum-choice")]
+    pub fn transfer_checksum_algorithm(mut self, algorithm: SignatureAlgorithm) -> Self {
+        self.transfer_checksum_algorithm = algorithm;
+        self
+    }
+
     /// Enables size-only comparison.
     #[must_use]
     pub fn size_only(mut self, enabled: bool) -> Self {

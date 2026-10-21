@@ -1048,6 +1048,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .itemize_active(config.itemize_changes())
             .checksum(config.checksum())
             .with_checksum_algorithm(config.checksum_signature_algorithm())
+            .with_transfer_checksum_algorithm(config.transfer_signature_algorithm())
             .size_only(config.size_only())
             .ignore_times(config.ignore_times())
             .ignore_existing(config.ignore_existing())

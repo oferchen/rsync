@@ -109,6 +109,9 @@ pub(crate) fn destination_is_newer(
 
 /// Builds a delta signature index from an existing destination file.
 ///
+/// `algorithm` is the block strong checksum (upstream `xfer_sum_nni`); the
+/// strong sum is capped at its digest width.
+///
 /// Returns `None` for empty files or when signature generation fails
 /// for non-I/O reasons. Used by the delta transfer path to compute
 /// block matches against the existing content.
@@ -116,6 +119,7 @@ pub(crate) fn build_delta_signature(
     destination: &Path,
     metadata: &fs::Metadata,
     block_size_override: Option<NonZeroU32>,
+    algorithm: SignatureAlgorithm,
 ) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
     let length = metadata.len();
     if length == 0 {
@@ -123,12 +127,16 @@ pub(crate) fn build_delta_signature(
     }
 
     let checksum_len = NonZeroU8::new(16).expect("strong checksum length must be non-zero");
+    // upstream: generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`
+    let digest_len = NonZeroU8::new(algorithm.digest_len().min(16) as u8)
+        .expect("strong checksum digest length must be non-zero");
     let params = SignatureLayoutParams::new(
         length,
         block_size_override,
         ProtocolVersion::NEWEST,
         checksum_len,
-    );
+    )
+    .with_transfer_digest_length(digest_len);
     let Ok(layout) = calculate_signature_layout(params) else {
         return Ok(None);
     };
@@ -149,9 +157,9 @@ pub(crate) fn build_delta_signature(
     // sequential path; below the threshold the rayon overhead would dominate,
     // so stay sequential there.
     let signature_result = if length >= PARALLEL_THRESHOLD_BYTES {
-        generate_file_signature_windowed(basis, layout, SignatureAlgorithm::Md4)
+        generate_file_signature_windowed(basis, layout, algorithm)
     } else {
-        generate_file_signature(basis, layout, SignatureAlgorithm::Md4)
+        generate_file_signature(basis, layout, algorithm)
     };
     let signature = match signature_result {
         Ok(signature) => signature,
@@ -199,7 +207,7 @@ pub(crate) fn build_delta_signature(
         );
     }
 
-    match DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4) {
+    match DeltaSignatureIndex::from_signature(&signature, algorithm) {
         Some(index) => Ok(Some(index)),
         None => Ok(None),
     }
@@ -498,11 +506,53 @@ mod tests {
 
         let metadata = fs::metadata(&path).expect("metadata");
         let override_size = NonZeroU32::new(2048).unwrap();
-        let index = build_delta_signature(&path, &metadata, Some(override_size))
-            .expect("signature")
-            .expect("index");
+        let index = build_delta_signature(
+            &path,
+            &metadata,
+            Some(override_size),
+            default_checksum_algorithm(),
+        )
+        .expect("signature")
+        .expect("index");
 
         assert_eq!(index.block_length(), override_size.get() as usize);
+    }
+
+    /// The basis block sums must be computed with the negotiated `xfer_sum`
+    /// (seed included), capped at its digest width, or the delta matches
+    /// against a different hash than upstream's local child would use.
+    #[test]
+    fn build_delta_signature_hashes_blocks_with_the_selected_algorithm() {
+        use checksums::strong::Md5Seed;
+
+        let temp = TempDir::new().expect("tempdir");
+        let path = temp.path().join("basis.bin");
+        let data: Vec<u8> = (0..5000u32).map(|i| (i * 31 % 251) as u8).collect();
+        fs::write(&path, &data).expect("write basis");
+        let metadata = fs::metadata(&path).expect("metadata");
+
+        for algorithm in [
+            SignatureAlgorithm::Xxh3_128 { seed: 7 },
+            SignatureAlgorithm::Xxh3 { seed: 7 },
+            SignatureAlgorithm::Md5 {
+                seed_config: Md5Seed::proper(7),
+            },
+            SignatureAlgorithm::Md4,
+        ] {
+            let index = build_delta_signature(&path, &metadata, None, algorithm)
+                .expect("signature")
+                .expect("index");
+            let strong_len = index.strong_length();
+            assert_eq!(strong_len, algorithm.digest_len().min(16), "{algorithm:?}");
+            let first_block = &data[..index.block_length()];
+            assert_eq!(
+                index.block(0).strong(),
+                algorithm
+                    .compute_truncated(first_block, strong_len)
+                    .as_slice(),
+                "{algorithm:?}"
+            );
+        }
     }
 
     #[test]
