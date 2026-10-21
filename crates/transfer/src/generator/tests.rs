@@ -448,9 +448,9 @@ fn ndx_convert_partition_point_depth_grows() {
     let (_handshake, mut ctx) = test_generator();
     // The map starts with one segment; extend it to four so each query
     // contributes a measurably larger partition_point depth.
-    ctx.incremental.ndx_map.push_sublist(10, -1);
-    ctx.incremental.ndx_map.push_sublist(20, -1);
-    ctx.incremental.ndx_map.push_sublist(30, -1);
+    ctx.incremental.ndx_map.push_sublist(10, 10, -1);
+    ctx.incremental.ndx_map.push_sublist(20, 10, -1);
+    ctx.incremental.ndx_map.push_sublist(30, 10, -1);
 
     let per_call_depth = partition_point_depth(ctx.incremental.ndx_map.len());
     assert!(
@@ -628,7 +628,7 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     // are flat file_list indices, NOT wire dir_ndx values (`sub` has wire
     // dir_ndx 1 but that alone would misresolve to flat 0 == `.`).
     assert_eq!(
-        ctx.resolve_itemize_ndx(0),
+        ctx.flist_for_ndx(0).unwrap(),
         0,
         "the initial list's gap NDX must resolve to `.` at flat 0"
     );
@@ -641,16 +641,20 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     // loop. upstream flist.c:3511: ndx_start = prev(1) + prev_used(2) + 1 = 4,
     // so sub/'s gap NDX is 3. The initial list keeps ndx_start 1, gap NDX 0.
     ctx.incremental.ndx_map.set_initial_parent_flat(0);
-    let sub_ndx_start = ctx.incremental.ndx_map.push_sublist(2, 1);
+    let sub_ndx_start = ctx.incremental.ndx_map.push_sublist(2, 1, 1);
     assert_eq!(sub_ndx_start, 4, "flist.c:3209 - 1 + 2 + 1");
 
     // Each gap resolves to its OWN owning directory; the child resolves to
     // itself. The `!= 0` anti-regression: sub/'s gap 3 must be flat 1 (`sub`),
     // never flat 0 (`./`), and the root gap 0 must map to the live flat 0 so the
     // root row is emitted rather than guarded out as an out-of-range index.
-    assert_eq!(ctx.resolve_itemize_ndx(0), 0, "root gap -> `.`");
-    assert_eq!(ctx.resolve_itemize_ndx(3), 1, "sub/ gap -> `sub`, not `./`");
-    assert_eq!(ctx.resolve_itemize_ndx(4), 2, "child -> itself");
+    assert_eq!(ctx.flist_for_ndx(0).unwrap(), 0, "root gap -> `.`");
+    assert_eq!(
+        ctx.flist_for_ndx(3).unwrap(),
+        1,
+        "sub/ gap -> `sub`, not `./`"
+    );
+    assert_eq!(ctx.flist_for_ndx(4).unwrap(), 2, "child -> itself");
 
     let itemize_ctx = itemize::ItemizeContext::default();
 
@@ -660,9 +664,9 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
     let unchanged = ItemFlags::from_raw(0);
     let new_local = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
     let new_xfer = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
-    let root = &ctx.file_list[ctx.resolve_itemize_ndx(0)];
-    let sub = &ctx.file_list[ctx.resolve_itemize_ndx(3)];
-    let child = &ctx.file_list[ctx.resolve_itemize_ndx(4)];
+    let root = &ctx.file_list[ctx.flist_for_ndx(0).unwrap()];
+    let sub = &ctx.file_list[ctx.flist_for_ndx(3).unwrap()];
+    let child = &ctx.file_list[ctx.flist_for_ndx(4).unwrap()];
     assert_eq!(
         itemize::format_itemize_line(&unchanged, root, true, &itemize_ctx, None),
         ".d          ./\n"
@@ -2016,48 +2020,55 @@ fn get_checksum_algorithm_negotiated() {
     assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::XXH3);
 }
 
-#[test]
-fn validate_file_index_valid() {
+/// Two regular entries in a single (non-INC_RECURSE) list: wire 0 and 1.
+fn two_entry_sender() -> GeneratorContext {
     let handshake = test_handshake();
     let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
-    ctx.file_list.push(protocol::flist::FileEntry::new_file(
-        "test.txt".into(),
-        100,
-        0o644,
-    ));
-    ctx.file_list.push(protocol::flist::FileEntry::new_file(
-        "test2.txt".into(),
-        200,
-        0o644,
-    ));
-
-    assert!(ctx.validate_file_index(0).is_ok());
-    assert!(ctx.validate_file_index(1).is_ok());
+    for (name, size) in [("test.txt", 100), ("test2.txt", 200)] {
+        ctx.file_list.push(protocol::flist::FileEntry::new_file(
+            name.into(),
+            size,
+            0o644,
+        ));
+    }
+    ctx
 }
 
 #[test]
-fn validate_file_index_invalid() {
-    let handshake = test_handshake();
-    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
-    ctx.file_list.push(protocol::flist::FileEntry::new_file(
-        "test.txt".into(),
-        100,
-        0o644,
-    ));
+fn flist_for_ndx_resolves_every_index_of_the_list() {
+    let ctx = two_entry_sender();
+    assert_eq!(ctx.flist_for_ndx(0).unwrap(), 0);
+    assert_eq!(ctx.flist_for_ndx(1).unwrap(), 1);
+}
 
-    let result = ctx.validate_file_index(1);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+/// One past the last entry is refused with upstream's text and the
+/// RERR_PROTOCOL tag (rsync.c:977-981), never resolved or clamped.
+#[test]
+fn flist_for_ndx_refuses_one_past_the_list_with_upstreams_text() {
+    let ctx = two_entry_sender();
+    let err = ctx.flist_for_ndx(2).expect_err("past the list");
+    let text = err.to_string();
+    assert!(
+        text.starts_with("File-list index 2 not in -1 - 1 (read_ndx_and_attrs) at "),
+        "{text}"
+    );
+    assert!(text.ends_with(&crate::role_trailer::sender()), "{text}");
+    assert!(
+        err.get_ref()
+            .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
+        "must map to RERR_PROTOCOL (2)"
+    );
 }
 
 #[test]
-fn validate_file_index_empty_list() {
+fn flist_for_ndx_refuses_every_index_of_an_empty_list() {
     let handshake = test_handshake();
     let ctx = GeneratorContext::new_for_test(&handshake, test_config());
-
-    let result = ctx.validate_file_index(0);
-    assert!(result.is_err());
+    let err = ctx.flist_for_ndx(0).expect_err("nothing to name");
+    assert!(
+        err.to_string()
+            .starts_with("File-list index 0 not in -1 - -1 ")
+    );
 }
 
 #[test]
@@ -5617,8 +5628,8 @@ fn reclaim_oldest_segment_frees_first_segment_entries() {
             PathBuf::from(format!("/src/dir/file_{i}.txt")),
         );
     }
-    assert_eq!(ctx.incremental.ndx_map.push_sublist(3, -1), 5);
-    assert_eq!(ctx.incremental.ndx_map.push_sublist(5, -1), 8);
+    assert_eq!(ctx.incremental.ndx_map.push_sublist(3, 2, -1), 5);
+    assert_eq!(ctx.incremental.ndx_map.push_sublist(5, 2, -1), 8);
     assert_eq!(ctx.incremental.ndx_map.first_live(), 0);
 
     // Verify initial state.
@@ -5681,13 +5692,14 @@ fn reclaim_oldest_segment_keeps_directories_for_gap_ndx_itemize() {
         ctx.push_file_item(entry, PathBuf::from(path));
     }
     ctx.incremental.ndx_map.set_initial_parent_flat(0);
-    let sub_gap = ctx.incremental.ndx_map.push_sublist(3, 2) - 1;
+    let sub_used = ctx.file_list().len() - 3;
+    let sub_gap = ctx.incremental.ndx_map.push_sublist(3, sub_used, 2) - 1;
 
     ctx.reclaim_oldest_segment();
     assert_eq!(ctx.incremental.ndx_map.first_live(), 1);
     assert_eq!(ctx.file_list()[1].name(), "", "a file is still reclaimed");
 
-    let sub = &ctx.file_list()[ctx.resolve_itemize_ndx(sub_gap)];
+    let sub = &ctx.file_list()[ctx.flist_for_ndx(sub_gap).unwrap()];
     assert!(sub.is_dir(), "the gap NDX must still name a directory");
     let created = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
     assert_eq!(
@@ -7319,16 +7331,16 @@ fn inc_recurse_hardlink_gnum_is_the_leaders_send_order_wire_ndx() {
     ctx.partition_file_list_for_inc_recurse();
 
     // Replay the send path's NDX bookkeeping (encode_and_send_segment).
-    let segments: Vec<(usize, i32)> = ctx
+    let segments: Vec<(usize, usize, i32)> = ctx
         .incremental
         .pending_segments
         .iter()
-        .map(|seg| (seg.flist_start, seg.parent_flat_idx as i32))
+        .map(|seg| (seg.flist_start, seg.count, seg.parent_flat_idx as i32))
         .collect();
-    for (flist_start, parent_flat) in segments {
+    for (flist_start, count, parent_flat) in segments {
         ctx.incremental
             .ndx_map
-            .push_sublist(flist_start, parent_flat);
+            .push_sublist(flist_start, count, parent_flat);
     }
     let flat_of = |name: &str| {
         (0..ctx.file_list().len())

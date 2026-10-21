@@ -87,6 +87,30 @@ pub(crate) struct NdxMap {
     /// (`sender.c:533`). Distinct from index 0 because the *mapping* outlives
     /// the *storage*.
     first_live: usize,
+    /// Flat end of the newest sub-list sent to the peer, or `None` while the
+    /// initial list is the whole file list (no INC_RECURSE).
+    ///
+    /// A sub-list's end is the next one's start, so only the newest needs its
+    /// own record: the file list may already hold entries of sub-lists not yet
+    /// sent, and upstream's `flist_for_ndx()` knows only the lists it has.
+    sent_end: Option<usize>,
+}
+
+/// Why a peer-supplied wire NDX names no file-list entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NdxFault {
+    /// No live sub-list owns the index: it is past the newest list sent, or in
+    /// one already freed. upstream: `rsync.c:972-981` - the `first` and `last`
+    /// of the `File-list index %d not in %d - %d` refusal.
+    OutOfRange {
+        /// `first_flist->ndx_start - 1`: the oldest live list's gap slot.
+        first: i32,
+        /// The newest list's last index.
+        last: i32,
+    },
+    /// The gap slot of a sub-list that has no directory to itemize.
+    /// upstream: `sender.c:553-555` - `parent_ndx < 0` exits `RERR_PROTOCOL`.
+    OrphanGap,
 }
 
 impl NdxMap {
@@ -102,6 +126,7 @@ impl NdxMap {
                 parent_flat: -1,
             }],
             first_live: 0,
+            sent_end: None,
         }
     }
 
@@ -125,6 +150,12 @@ impl NdxMap {
         self.segments[0].parent_flat = parent_flat;
     }
 
+    /// Records the initial list's entry count when INC_RECURSE splits the file
+    /// list, so its index range ends where the list sent to the peer does.
+    pub(crate) fn set_initial_used(&mut self, used: usize) {
+        self.sent_end = Some(self.segments[0].flat_start + used);
+    }
+
     /// Appends a sub-list beginning at `flat_start`, owned by `parent_flat`.
     ///
     /// The wire `ndx_start` is derived here rather than by the caller, because
@@ -134,8 +165,9 @@ impl NdxMap {
     /// site is how it drifts from the lookups that assume it.
     ///
     /// `prev->used` is the previous segment's entry count, which for a flat
-    /// list is the distance between the two `flat_start` values.
-    pub(crate) fn push_sublist(&mut self, flat_start: usize, parent_flat: i32) -> i32 {
+    /// list is the distance between the two `flat_start` values. `used` is the
+    /// new sub-list's own count, which bounds the indices the peer may name.
+    pub(crate) fn push_sublist(&mut self, flat_start: usize, used: usize, parent_flat: i32) -> i32 {
         let prev = self
             .segments
             .last()
@@ -148,6 +180,7 @@ impl NdxMap {
             ndx_start,
             parent_flat,
         });
+        self.sent_end = Some(flat_start + used);
         ndx_start
     }
 
@@ -165,35 +198,44 @@ impl NdxMap {
         seg.flat_start + (wire_ndx - seg.ndx_start) as usize
     }
 
-    /// Resolves a wire NDX read back from the receiver to the flat index whose
-    /// entry drives itemize formatting and xattr responses.
+    /// Resolves a wire NDX the peer sent to the flat index of the entry it
+    /// names, refusing an index no live sub-list owns.
     ///
-    /// This is [`Self::wire_to_flat`] for every regular entry. Under
-    /// INC_RECURSE the remote generator itemizes a directory by sending its
-    /// sub-list's *gap* NDX `ndx_start - 1` (`generator.c:2787`) rather than the
-    /// directory's own NDX. Feeding that through the plain mapping lands on the
-    /// trailing file of the previous segment, so the row would print a file type
-    /// char and the wrong path. upstream recovers the directory via
-    /// `dir_flist->files[cur_flist->parent_ndx]` (`sender.c:552-558`); this maps
-    /// the gap to the sub-list's recorded owning directory.
+    /// A sub-list owns its entries and the gap slot just below them
+    /// (`ndx_start - 1`, `flist.c:3511`), so the live lists tile one contiguous
+    /// range from the oldest live gap to the newest list's last entry. Inside
+    /// it, a gap resolves to the sub-list's owning directory - the remote
+    /// generator itemizes a directory by sending that gap
+    /// (`generator.c:2787`) - and every other index to its own entry.
+    /// `entries` is the file-list length, the newest list's end when no
+    /// INC_RECURSE split was recorded.
     ///
-    /// Each sub-list resolves to its own directory - the initial list's gap to
-    /// the `.` root, a subdirectory's gap to that subdirectory - so every
-    /// directory is itemized exactly once, as upstream emits one row per
-    /// directory.
-    pub(crate) fn resolve_itemize(&self, wire_ndx: i32) -> usize {
-        // A gap NDX `g` satisfies `g + 1 == ndx_start` for exactly one
-        // sub-list, and no regular entry's NDX can equal a sub-list start minus
-        // one because that slot is reserved (flist.c:3511). Binary search is
-        // valid because `ndx_start` is strictly increasing.
-        if let Ok(idx) = self
-            .segments
-            .binary_search_by(|seg| seg.ndx_start.cmp(&(wire_ndx + 1)))
-            && let Some(parent) = self.segments[idx].parent_flat()
-        {
-            return parent;
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:951-983` - `flist_for_ndx()` walks `first_flist` and fails
+    ///   outside `first_flist->ndx_start - 1 ..= last list's end`.
+    /// - `sender.c:552-558` - a gap NDX names `dir_flist->files[parent_ndx]`,
+    ///   and exits `RERR_PROTOCOL` when the list has no parent.
+    pub(crate) fn resolve(&self, wire_ndx: i32, entries: usize) -> Result<usize, NdxFault> {
+        let newest = self.segments[self.segments.len() - 1];
+        let used = self
+            .sent_end
+            .unwrap_or(entries)
+            .saturating_sub(newest.flat_start);
+        let first = self.segments[self.first_live].ndx_start - 1;
+        let last = newest.ndx_start + used as i32 - 1;
+        if wire_ndx < first || wire_ndx > last {
+            return Err(NdxFault::OutOfRange { first, last });
         }
-        self.wire_to_flat(wire_ndx)
+        let idx = self
+            .segments
+            .partition_point(|seg| seg.ndx_start - 1 <= wire_ndx)
+            - 1;
+        let seg = self.segments[idx];
+        if wire_ndx < seg.ndx_start {
+            return seg.parent_flat().ok_or(NdxFault::OrphanGap);
+        }
+        Ok(seg.flat_start + (wire_ndx - seg.ndx_start) as usize)
     }
 
     /// Converts a flat index back to its wire NDX.
@@ -243,9 +285,8 @@ impl NdxMap {
     /// The segment owning `wire_ndx`.
     ///
     /// upstream: `flist.c:flist_for_ndx()`. Saturating rather than panicking on
-    /// an NDX below the first segment preserves the previous behaviour exactly;
-    /// such a value is a gap that [`Self::resolve_itemize`] has already handled,
-    /// or a protocol violation the NDX reader rejects before reaching here.
+    /// an NDX below the first segment; a peer-supplied index goes through
+    /// [`Self::resolve`], which refuses it first.
     fn segment_containing_ndx(&self, wire_ndx: i32) -> NdxSegment {
         let idx = self
             .segments
@@ -259,14 +300,21 @@ impl NdxMap {
 mod tests {
     use super::*;
 
-    /// The initial list plus two sub-lists, laid out with upstream's gaps.
-    /// Initial list holds 3 entries at flat 0..3, so the next starts at flat 3
-    /// and its NDX skips one slot.
+    /// The initial list plus two sub-lists, laid out with upstream's gaps:
+    /// flat 0..3 at wire 0..=2, flat 3..5 at wire 4..=5 (gap 3), flat 5..8 at
+    /// wire 7..=9 (gap 6).
     fn three_segments() -> NdxMap {
         let mut map = NdxMap::new(0);
-        map.push_sublist(3, 1);
-        map.push_sublist(5, 4);
+        map.push_sublist(3, 2, 1);
+        map.push_sublist(5, 3, 4);
         map
+    }
+
+    /// Entries the file list holds for [`three_segments`].
+    const ENTRIES: usize = 8;
+
+    fn out_of_range(first: i32, last: i32) -> Result<usize, NdxFault> {
+        Err(NdxFault::OutOfRange { first, last })
     }
 
     #[test]
@@ -287,6 +335,7 @@ mod tests {
         for (wire, flat) in [(0, 0), (2, 2), (4, 3), (5, 4), (7, 5), (9, 7)] {
             assert_eq!(map.wire_to_flat(wire), flat, "wire {wire}");
             assert_eq!(map.flat_to_wire(flat), wire, "flat {flat}");
+            assert_eq!(map.resolve(wire, ENTRIES), Ok(flat), "resolve {wire}");
         }
     }
 
@@ -299,25 +348,62 @@ mod tests {
         // that list, and in oc's single flat vector it silently lands on flat 3,
         // the NEXT segment's first entry.
         assert_eq!(map.wire_to_flat(3), 3);
-        assert_eq!(map.resolve_itemize(3), 1);
-
-        assert_eq!(map.resolve_itemize(6), 4);
+        assert_eq!(map.resolve(3, ENTRIES), Ok(1));
+        assert_eq!(map.resolve(6, ENTRIES), Ok(4));
     }
 
+    /// The live range runs from the oldest gap slot to the newest list's last
+    /// entry; one past either end is upstream's `File-list index` refusal.
+    /// rsync.c:972-981 computes the same `first` and `last`.
     #[test]
-    fn a_regular_ndx_is_unaffected_by_the_gap_redirect() {
+    fn indices_past_either_end_of_the_live_range_are_refused() {
+        let mut map = three_segments();
+        map.set_initial_parent_flat(0);
+        assert_eq!(map.resolve(-1, ENTRIES), Ok(0), "first: the root's gap");
+        assert_eq!(map.resolve(9, ENTRIES), Ok(7), "last");
+        assert_eq!(map.resolve(10, ENTRIES), out_of_range(-1, 9), "last + 1");
+        assert_eq!(map.resolve(-2, ENTRIES), out_of_range(-1, 9), "first - 1");
+        assert_eq!(map.resolve(i32::MAX, ENTRIES), out_of_range(-1, 9));
+        assert_eq!(map.resolve(i32::MIN, ENTRIES), out_of_range(-1, 9));
+    }
+
+    /// The gap of a list with no directory names nothing to itemize; upstream
+    /// exits RERR_PROTOCOL rather than reading the previous list's last file
+    /// (sender.c:553-555). The plain mapping used to wrap here.
+    #[test]
+    fn the_gap_of_a_list_without_a_directory_is_refused() {
         let map = three_segments();
-        for wire in [0, 2, 4, 5, 7, 9] {
-            assert_eq!(map.resolve_itemize(wire), map.wire_to_flat(wire), "{wire}");
-        }
+        assert_eq!(map.resolve(-1, ENTRIES), Err(NdxFault::OrphanGap));
     }
 
+    /// Entries the sender has built but not yet sent are not the peer's to
+    /// name: upstream's flist chain ends at the newest list sent.
     #[test]
-    fn an_initial_list_with_no_directory_falls_through_to_the_plain_mapping() {
-        // parent_flat -1 means there is no `.` root to itemize; the gap must not
-        // resolve to entry 0.
+    fn entries_of_an_unsent_sub_list_are_refused() {
+        let map = three_segments();
+        assert_eq!(map.resolve(10, ENTRIES + 50), out_of_range(-1, 9));
+    }
+
+    /// INC_RECURSE before any sub-list goes out: the initial list alone is
+    /// live, even though the file list already holds later entries.
+    #[test]
+    fn the_initial_list_alone_bounds_the_range_until_a_sub_list_is_sent() {
+        let mut map = NdxMap::new(1);
+        map.set_initial_parent_flat(0);
+        map.set_initial_used(3);
+        assert_eq!(map.resolve(0, 40), Ok(0), "the root's gap");
+        assert_eq!(map.resolve(3, 40), Ok(2));
+        assert_eq!(map.resolve(4, 40), out_of_range(0, 3));
+    }
+
+    /// Without INC_RECURSE the single list is the whole file list.
+    #[test]
+    fn a_single_list_spans_the_whole_file_list() {
         let map = NdxMap::new(0);
-        assert_eq!(map.resolve_itemize(-1), map.wire_to_flat(-1));
+        assert_eq!(map.resolve(0, 5), Ok(0));
+        assert_eq!(map.resolve(4, 5), Ok(4));
+        assert_eq!(map.resolve(5, 5), out_of_range(-1, 4));
+        assert_eq!(map.resolve(0, 0), out_of_range(-1, -1), "an empty list");
     }
 
     #[test]
@@ -325,22 +411,25 @@ mod tests {
         let mut map = NdxMap::new(0);
         // One segment: the receiver is still inside it, so nothing is freeable.
         assert_eq!(map.reclaimable_range(), None);
-
-        map.push_sublist(3, 1);
+        map.push_sublist(3, 2, 1);
         assert_eq!(map.reclaimable_range(), Some((0, 3)));
         map.advance_reclaimed();
         assert_eq!(map.reclaimable_range(), None);
     }
 
+    /// A freed list's indices are gone, as `flist_free()` drops them from
+    /// upstream's chain; the next list's gap stays live because it belongs to
+    /// that list.
     #[test]
-    fn reclaiming_does_not_disturb_the_mapping() {
+    fn indices_in_a_reclaimed_segment_are_refused() {
         let mut map = three_segments();
         map.advance_reclaimed();
-        // The whole point of keeping the record: an NDX in the reclaimed
-        // segment must still resolve to its own flat slot, not to a neighbour.
-        assert_eq!(map.wire_to_flat(0), 0);
+        assert_eq!(map.resolve(2, ENTRIES), out_of_range(3, 9));
+        assert_eq!(map.resolve(0, ENTRIES), out_of_range(3, 9));
+        assert_eq!(map.resolve(3, ENTRIES), Ok(1), "sub-list 1's gap");
+        assert_eq!(map.resolve(4, ENTRIES), Ok(3));
+        // The plain mapping stays total for the sender's own bookkeeping.
         assert_eq!(map.wire_to_flat(2), 2);
-        assert_eq!(map.resolve_itemize(3), 1);
         assert_eq!(map.first_live(), 1);
         assert_eq!(map.len(), 3);
     }
@@ -348,10 +437,11 @@ mod tests {
     #[test]
     fn a_negotiated_nonzero_initial_ndx_start_shifts_every_lookup() {
         let mut map = NdxMap::new(100);
-        map.push_sublist(3, 1);
+        map.push_sublist(3, 1, 1);
         assert_eq!(map.first_ndx_start(), 100);
         assert_eq!(map.wire_to_flat(100), 0);
         assert_eq!(map.wire_to_flat(104), 3);
-        assert_eq!(map.resolve_itemize(103), 1);
+        assert_eq!(map.resolve(103, 4), Ok(1));
+        assert_eq!(map.resolve(105, 4), out_of_range(99, 104));
     }
 }

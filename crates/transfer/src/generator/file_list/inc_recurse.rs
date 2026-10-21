@@ -240,6 +240,9 @@ impl GeneratorContext {
             );
         }
         self.incremental.initial_segment_count = Some(initial_entries.len());
+        self.incremental
+            .ndx_map
+            .set_initial_used(initial_entries.len());
 
         // Phase 1: Assign wire dir_ndx to initial list directories.
         // Dense Vec indexed by node_id - O(1) lookup.
@@ -440,6 +443,9 @@ impl GeneratorContext {
 
         // The whole current file_list IS the initial segment; sub-lists follow.
         self.incremental.initial_segment_count = Some(self.file_list.len());
+        self.incremental
+            .ndx_map
+            .set_initial_used(self.file_list.len());
         // Same rule as the eager reorder: the transfer root `.` itemizes via its
         // own gap NDX only when it is the first sorted entry.
         self.incremental.ndx_map.set_initial_parent_flat(

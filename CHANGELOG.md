@@ -272,6 +272,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The entry after an abbreviated hard-link follower is encoded against the right previous entry (#7997)
 - A block match with no basis file exits 2, and a daemon stream closed mid-transfer exits 12, with upstream's messages (#8016)
 - An out-of-range block index in a delta stream, live or replayed with `--read-batch`, exits 2 with upstream's `Invalid block index` message (#PRNUM)
+- A sender refuses a peer file-list index that no live list owns with upstream's `File-list index %d not in %d - %d` error and exit 2, for itemize-only items as well as transfer requests (#PRNUM)
 - `--stop-at` and `--stop-after` are no longer forwarded to the server (#8001)
 - `--stats` file list times reach upstream clients (#7986)
 - Cap the `v` letters in the server flag string at nine, as upstream `server_options()` does (#8037)

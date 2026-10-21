@@ -21,6 +21,7 @@ use crate::role_trailer::error_location;
 
 use super::diagnostics::{NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, partition_point_depth};
 use super::io_error_flags;
+use super::ndx_map::NdxFault;
 use super::segments::IncrementalState;
 use super::timing::TransferTiming;
 use super::{itemize, open_source};
@@ -592,31 +593,46 @@ impl GeneratorContext {
         map.wire_to_flat(wire_ndx)
     }
 
-    /// Resolves a wire NDX read back from the receiver to the flat `file_list`
-    /// index whose entry drives itemize formatting and xattr responses.
+    /// Resolves a wire NDX the receiver sent to the flat `file_list` index of
+    /// the entry it names: the one gate every peer-supplied index passes before
+    /// the sender touches an entry.
     ///
-    /// This is [`Self::wire_to_flat_ndx`] for every regular entry. Under
-    /// INC_RECURSE, however, the remote generator itemizes a directory by
-    /// sending the "gap NDX" `ndx_start - 1` of that directory's sub-list
-    /// (generator.c:2787 `ndx = cur_flist->ndx_start - 1`) instead of the
-    /// directory's own NDX. Feeding that gap through the plain segment map lands
-    /// on the trailing file of the previous segment, so a directory row would
-    /// print with a file type char and the wrong path. Upstream recovers the
-    /// directory via `file = dir_flist->files[cur_flist->parent_ndx]`
-    /// (sender.c:552-558); oc mirrors that by mapping the gap to its sub-list's
-    /// recorded owning-directory flat index. Each sub-list resolves to its own
-    /// owning directory - the initial list's gap to the `.` root, a
-    /// subdirectory's gap to that subdirectory - so every directory is itemized
-    /// once, exactly as upstream emits one row per directory.
+    /// Under INC_RECURSE the remote generator itemizes a directory by sending
+    /// its sub-list's gap NDX `ndx_start - 1` (generator.c:2787), which
+    /// resolves to that sub-list's owning directory, so a directory row prints
+    /// `.d.. sub/` rather than the previous segment's trailing file.
+    ///
+    /// # Errors
+    ///
+    /// A `RERR_PROTOCOL`-tagged error, in upstream's wording, for an index no
+    /// live sub-list owns - past the newest list sent or in one already freed -
+    /// and for the gap of a list that has no directory.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:552-558` - gap NDX (`ndx < cur_flist->ndx_start`) resolves to
-    ///   the owning directory entry in `dir_flist`.
-    /// - `generator.c:2779-2787` - each sub-list (including the initial list
-    ///   whose `parent_ndx >= 0`) itemizes its owning directory at `ndx_start - 1`.
-    pub(crate) fn resolve_itemize_ndx(&self, wire_ndx: i32) -> usize {
-        self.incremental.ndx_map.resolve_itemize(wire_ndx)
+    /// - `rsync.c:394` - `read_ndx_and_attrs()` calls
+    ///   `flist_for_ndx(ndx, "read_ndx_and_attrs")` for every index it returns.
+    /// - `rsync.c:951-983` - `flist_for_ndx()` prints `File-list index %d not
+    ///   in %d - %d (%s) [%s]` and exits `RERR_PROTOCOL`.
+    /// - `sender.c:552-558` - the gap resolves to `dir_flist->files[parent_ndx]`.
+    pub(crate) fn flist_for_ndx(&self, wire_ndx: i32) -> io::Result<usize> {
+        self.incremental
+            .ndx_map
+            .resolve(wire_ndx, self.file_list.len())
+            .map_err(|fault| match fault {
+                NdxFault::OutOfRange { first, last } => protocol::protocol_violation(format!(
+                    "File-list index {wire_ndx} not in {first} - {last} (read_ndx_and_attrs) {}{}",
+                    error_location!(),
+                    crate::role_trailer::sender()
+                )),
+                // upstream exits here without a message of its own; name the
+                // index so the refusal is attributable.
+                NdxFault::OrphanGap => protocol::protocol_violation(format!(
+                    "File-list index {wire_ndx} is the gap of a list with no directory {}{}",
+                    error_location!(),
+                    crate::role_trailer::sender()
+                )),
+            })
     }
 
     /// Converts a flat file list array index to a wire NDX value.
@@ -1434,25 +1450,6 @@ impl GeneratorContext {
         } else {
             0
         }
-    }
-
-    /// Validates that a file index is within bounds of the file list.
-    ///
-    /// upstream: sender.c:409 `flist_for_ndx()` / rsync.c:352 - an out-of-range
-    /// wire file index aborts with `exit_cleanup(RERR_PROTOCOL)` (exit 2). The
-    /// error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
-    /// rather than RERR_STREAMIO(12).
-    pub(crate) fn validate_file_index(&self, ndx: usize) -> std::io::Result<()> {
-        if ndx >= self.file_list.len() {
-            return Err(protocol::protocol_violation(format!(
-                "invalid file index {}, file list has {} entries {}{}",
-                ndx,
-                self.file_list.len(),
-                error_location!(),
-                crate::role_trailer::sender()
-            )));
-        }
-        Ok(())
     }
 
     /// Reclaims heap data from the oldest unreclaimed INC_RECURSE segment.
