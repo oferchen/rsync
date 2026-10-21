@@ -4,9 +4,7 @@ use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, Filter
 use core::message::Message;
 
 use super::super::directive::{FilterDirective, MergeDirective};
-use super::helpers::{
-    parse_modifier_run, split_short_merge_modifiers, unexpected_end_of_filter_rule,
-};
+use super::helpers::{parse_modifier_run, split_short_modifiers, unexpected_end_of_filter_rule};
 use super::rule_line::RuleLine;
 
 /// Parses the modifier run that follows a `.`/`:`/`merge`/`dir-merge` prefix
@@ -81,13 +79,13 @@ pub(super) fn parse_short_merge_directive(
     let remainder = chars.as_str();
     // `remainder` starts one byte past the `.`/`:`, so that is the offset the
     // position in upstream's diagnostic is measured from.
-    let (modifiers, rest) = split_short_merge_modifiers(remainder);
+    let (modifiers, rest) = split_short_modifiers(remainder);
     let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
     };
 
-    // `split_short_merge_modifiers` already consumed the ONE separator that ends
+    // `split_short_modifiers` already consumed the ONE separator that ends
     // the modifier run (upstream exclude.c:1444-1445, `if (*s) s++`), and the
     // merge FILENAME is then the rest of the rule verbatim (`len = strlen(s)`,
     // exclude.c:1465). `parse_merge_name` (exclude.c:696-753) only runs

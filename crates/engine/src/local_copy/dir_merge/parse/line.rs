@@ -4,103 +4,78 @@ use super::{
     modifiers::split_short_rule_modifiers,
     types::{FilterParseError, ParsedFilterDirective},
 };
-use filters::{FilterRule, RuleSource};
+use filters::{CvsTemplate, FilterRule, ModifierScope, RuleModifiers, RuleSource};
 use std::borrow::Cow;
-use std::fmt;
 
-#[derive(Default)]
-struct RuleModifierState {
-    anchor_root: bool,
-    sender: Option<bool>,
-    receiver: Option<bool>,
-    perishable: bool,
-    xattr_only: bool,
-    negate: bool,
-}
-
-fn unsupported_modifier_error(directive: &str, modifier: impl fmt::Display) -> FilterParseError {
-    FilterParseError::new(format!(
-        "filter directive '{directive}' uses unsupported modifier '{modifier}'"
-    ))
-}
-
-/// Parses the `,modifier` run that may follow a rule prefix.
+/// Parses the modifier run that follows a rule prefix through the shared table.
 ///
 /// `prefix_specifies_side` mirrors upstream's variable of the same name, set by
 /// the four side-bound prefixes (exclude.c:1345-1358 for `S`/`H`/`R`/`P`, and
-/// the long keywords that map onto them). When it is set, a further `s` or `r`
-/// is a redundant side and upstream refuses the rule (exclude.c:1423-1432).
+/// the long keywords that map onto them), which refuse a further `s`, `r` or
+/// `C` (exclude.c:1402-1404, 1423-1432).
+///
+/// The refusal is upstream's `invalid modifier` (exclude.c:1371-1380), with the
+/// byte and its position crossing `rule_detail` and the rule crossing
+/// `rule_text`, so a merge file's line is never echoed.
 fn parse_rule_modifiers(
     modifiers: &str,
-    directive: &str,
+    text: &str,
+    source: RuleSource<'_>,
     prefix_specifies_side: bool,
-) -> Result<RuleModifierState, FilterParseError> {
-    let mut state = RuleModifierState::default();
+) -> Result<RuleModifiers, FilterParseError> {
+    let scope = ModifierScope {
+        merge_file: false,
+        prefix_specifies_side,
+    };
+    filters::parse_rule_modifiers_in(text, modifiers, scope).map_err(|invalid| {
+        let detail = format!(" '{}' at position {}", invalid.ch, invalid.offset);
+        FilterParseError::new(format!(
+            "invalid modifier{} in filter rule: {}",
+            source.rule_detail(&detail),
+            source.rule_text(text)
+        ))
+    })
+}
 
-    // upstream: exclude.c:1365 - the modifier loop switches on the raw byte.
-    // `R`/`S`/`P`/`X` are not modifiers at all; they reach the default arm and
-    // raise RERR_SYNTAX (exclude.c:1371-1379). Case-folding them here silently
-    // applied a side or perishable restriction the rule never asked for.
-    for modifier in modifiers.chars() {
-        match modifier {
-            '/' => state.anchor_root = true,
-            's' => {
-                if prefix_specifies_side {
-                    return Err(unsupported_modifier_error(directive, modifier));
-                }
-                state.sender = Some(true);
-                if state.receiver.is_none() {
-                    state.receiver = Some(false);
-                }
-            }
-            'r' => {
-                if prefix_specifies_side {
-                    return Err(unsupported_modifier_error(directive, modifier));
-                }
-                state.receiver = Some(true);
-                if state.sender.is_none() {
-                    state.sender = Some(false);
-                }
-            }
-            // upstream: exclude.c:1395-1401 - `!` sets FILTRULE_NEGATE and is
-            // refused only on a merge rule. Merge prefixes never reach this
-            // function (they are dispatched to the merge/dir-merge parsers
-            // above), so the guard has no expressible case here.
-            '!' => state.negate = true,
-            // upstream: exclude.c:1420 (`p`) and exclude.c:1438 (`x`) are the
-            // only modifiers besides `/` that carry NO guard at all - not the
-            // merge-file test that gates `- + e n w`, not the `!`-on-merge
-            // test, and not the `prefix_specifies_side` test that `C`, `r` and
-            // `s` consult. Both are therefore legal after every prefix,
-            // including the four side-bound ones.
-            'p' => state.perishable = true,
-            'x' => {
-                state.xattr_only = true;
-            }
-            _ => {
-                return Err(unsupported_modifier_error(directive, modifier));
-            }
-        }
+/// Builds what a rule parses to once its modifiers are known: the rule itself,
+/// or the CVS ignore list a non-merge `C` stands for.
+///
+/// upstream: exclude.c:1474 lets a `C` rule have no pattern, check_filter()
+/// never matches its pattern (exclude.c:1201-1206) and get_cvs_excludes() builds
+/// the list from its flags (exclude.c:1595-1597).
+fn rule_directive(
+    rule: FilterRule,
+    include: bool,
+    modifiers: RuleModifiers,
+    text: &str,
+    source: RuleSource<'_>,
+) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
+    if modifiers.cvs_ignore {
+        return Ok(Some(ParsedFilterDirective::CvsIgnore(CvsTemplate::new(
+            include, &modifiers,
+        ))));
     }
-
-    Ok(state)
+    if rule.pattern().is_empty() {
+        return Err(FilterParseError::unexpected_end_of_filter_rule(
+            source, text,
+        ));
+    }
+    apply_rule_modifiers(rule, modifiers, text).map(|rule| Some(ParsedFilterDirective::Rule(rule)))
 }
 
 fn apply_rule_modifiers(
     mut rule: FilterRule,
-    modifiers: RuleModifierState,
+    modifiers: RuleModifiers,
     directive: &str,
 ) -> Result<FilterRule, FilterParseError> {
-    if modifiers.anchor_root {
+    if modifiers.abs_path {
         rule = rule.anchor_to_root();
     }
 
-    if let Some(sender) = modifiers.sender {
-        rule = rule.with_sender(sender);
-    }
-
-    if let Some(receiver) = modifiers.receiver {
-        rule = rule.with_receiver(receiver);
+    if modifiers.sender_side != modifiers.receiver_side {
+        rule = rule
+            .with_sender(modifiers.sender_side)
+            .with_receiver(modifiers.receiver_side);
     }
 
     if modifiers.perishable {
@@ -111,7 +86,7 @@ fn apply_rule_modifiers(
         rule = rule.with_negate(true);
     }
 
-    if modifiers.xattr_only {
+    if modifiers.xattr {
         // upstream: exclude.c:1438 - `case 'x': rule->rflags |=
         // FILTRULE_XATTR;`. The modifier sets one bit and binds no side, so
         // forcing both sides here erased whatever `s`/`r` had already
@@ -255,7 +230,9 @@ fn discard_over_long(
         ParsedFilterDirective::Rule(rule) => String::from_utf8_lossy(rule.pattern()),
         ParsedFilterDirective::Merge { path, .. } => path.to_string_lossy(),
         ParsedFilterDirective::DirMerge { pattern, .. } => pattern.to_string_lossy(),
-        ParsedFilterDirective::Clear => return Some(directive),
+        ParsedFilterDirective::Clear | ParsedFilterDirective::CvsIgnore(_) => {
+            return Some(directive);
+        }
     };
 
     if !filters::is_over_long(&pattern) {
@@ -331,38 +308,22 @@ fn classify_filter_directive_line(
         return Ok(Some(directive));
     }
 
-    if let Some(remainder) = text.strip_prefix('+') {
-        let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
-        let modifiers = parse_rule_modifiers(modifier_text, text, false)?;
-        // `split_short_rule_modifiers` already consumed the ONE separator that
-        // ends the modifier run (upstream exclude.c:1444-1445 `if (*s) s++`),
-        // and the pattern is then taken verbatim (`len = strlen(s)`, :1465).
-        // Trimming here made `+  a` match `a` where upstream matches ` a`.
-        let pattern = remainder;
-        if pattern.is_empty() {
-            return Err(FilterParseError::unexpected_end_of_filter_rule(
-                source, text,
-            ));
+    for (prefix, include) in [('+', true), ('-', false)] {
+        if let Some(remainder) = text.strip_prefix(prefix) {
+            let (modifier_text, pattern) = split_short_rule_modifiers(remainder);
+            let modifiers = parse_rule_modifiers(modifier_text, text, source, false)?;
+            // `split_short_rule_modifiers` already consumed the ONE separator
+            // that ends the modifier run (upstream exclude.c:1444-1445
+            // `if (*s) s++`), and the pattern is then taken verbatim
+            // (`len = strlen(s)`, :1465). Trimming here made `+  a` match `a`
+            // where upstream matches ` a`.
+            let rule = if include {
+                FilterRule::include(pattern.to_owned())
+            } else {
+                FilterRule::exclude(pattern.to_owned())
+            };
+            return rule_directive(rule, include, modifiers, text, source);
         }
-        let rule = FilterRule::include(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers, text)?;
-        return Ok(Some(ParsedFilterDirective::Rule(rule)));
-    }
-
-    if let Some(remainder) = text.strip_prefix('-') {
-        let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
-        let modifiers = parse_rule_modifiers(modifier_text, text, false)?;
-        // See the `+` arm above: the single separator is already consumed, so
-        // any further whitespace is pattern text (upstream exclude.c:1465).
-        let pattern = remainder;
-        if pattern.is_empty() {
-            return Err(FilterParseError::unexpected_end_of_filter_rule(
-                source, text,
-            ));
-        }
-        let rule = FilterRule::exclude(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers, text)?;
-        return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
     // upstream: exclude.c:1222 `rule_strcmp` accepts `_` as a keyword separator
@@ -380,15 +341,11 @@ fn classify_filter_directive_line(
                           builder: fn(String) -> FilterRule,
                           prefix_specifies_side: bool|
      -> Result<Option<ParsedFilterDirective>, FilterParseError> {
-        if pattern.is_empty() {
-            return Err(FilterParseError::unexpected_end_of_filter_rule(
-                source, text,
-            ));
-        }
-        let modifiers = parse_rule_modifiers(keyword_modifiers, text, prefix_specifies_side)?;
+        let modifiers =
+            parse_rule_modifiers(keyword_modifiers, text, source, prefix_specifies_side)?;
         let rule = builder(pattern.to_owned());
-        let rule = apply_rule_modifiers(rule, modifiers, text)?;
-        Ok(Some(ParsedFilterDirective::Rule(rule)))
+        let include = rule.action() == filters::FilterAction::Include;
+        rule_directive(rule, include, modifiers, text, source)
     };
 
     if keyword.len() == 1 {

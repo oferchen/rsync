@@ -329,7 +329,12 @@ fn parse_filter_directive_still_rejects_a_redundant_side_modifier() {
     // (upstream exclude.c:1423-1432, measured: `Ps user.a` exits 1).
     let error = parse_filter_directive(OsStr::new("Ps secrets"), filters::RuleSource::Argument)
         .expect_err("s is redundant once P binds the side");
-    assert!(error.to_string().contains("unsupported modifier 's'"));
+    assert!(
+        error
+            .to_string()
+            .contains("invalid modifier 's' at position 1 in filter rule: Ps secrets"),
+        "{error}"
+    );
 }
 
 #[test]
