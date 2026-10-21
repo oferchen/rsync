@@ -16,7 +16,15 @@
 //! The daemon's result crosses the process boundary through a file the handle
 //! owns rather than a pipe: session children inherit a pipe's write end, so a
 //! read to EOF would wait on them - the defect this module exists to remove.
+//!
+//! The parent module must have `DaemonConfig`, `DaemonConfigBuilder`,
+//! `DaemonError` and `run_daemon` in scope: the unit tests include this module
+//! directly and the integration tests through `#[path]`, so it names the
+//! daemon API through `super::` rather than through either crate path.
 
+#[cfg(not(unix))]
+use super::DaemonConfigBuilder;
+use super::{DaemonConfig, DaemonError, run_daemon};
 use std::fmt;
 #[cfg(unix)]
 use std::fs;
@@ -31,8 +39,8 @@ pub(super) struct DaemonFailure {
     pub(super) message: String,
 }
 
-impl From<crate::DaemonError> for DaemonFailure {
-    fn from(error: crate::DaemonError) -> Self {
+impl From<DaemonError> for DaemonFailure {
+    fn from(error: DaemonError) -> Self {
         Self {
             exit_code: error.exit_code(),
             message: error.message().to_string(),
@@ -136,7 +144,7 @@ impl DaemonHandle {
     ///
     /// Call it before opening any client socket: whatever the test process
     /// holds at this point, the daemon and all its sessions inherit.
-    pub(super) fn spawn(config: crate::DaemonConfig) -> Self {
+    pub(super) fn spawn(config: DaemonConfig) -> Self {
         use platform::session_fork::{ForkSide, exit_child, fork_session, lead_process_group};
 
         let outcome_dir = tempfile::tempdir().expect("daemon outcome dir");
@@ -160,6 +168,15 @@ impl DaemonHandle {
     /// Pid of the daemon process.
     pub(super) fn pid(&self) -> u32 {
         self.pid.unsigned_abs()
+    }
+
+    /// Asks the daemon to shut down, as SIGTERM does to upstream's.
+    #[allow(
+        dead_code,
+        reason = "only the integration-test binaries stop a daemon by signal"
+    )]
+    pub(super) fn terminate(&self) {
+        platform::session_fork::terminate_process(self.pid).expect("signal the test daemon");
     }
 
     /// Blocks until the daemon process ends, and reports what it returned.
@@ -208,13 +225,13 @@ impl Drop for DaemonHandle {
 
 /// Runs the daemon in the forked child and returns the status to exit with.
 #[cfg(unix)]
-fn run_in_child(config: crate::DaemonConfig, outcome_path: PathBuf) -> i32 {
+fn run_in_child(config: DaemonConfig, outcome_path: PathBuf) -> i32 {
     use std::io::Write as _;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     let outcome = match platform::session_fork::lead_process_group(0) {
         Err(error) => Outcome::Panicked(format!("could not lead a process group: {error}")),
-        Ok(()) => match catch_unwind(AssertUnwindSafe(|| crate::run_daemon(config))) {
+        Ok(()) => match catch_unwind(AssertUnwindSafe(|| run_daemon(config))) {
             Ok(result) => Outcome::Returned(result.map_err(DaemonFailure::from)),
             Err(payload) => Outcome::Panicked(panic_message(payload.as_ref())),
         },
@@ -232,23 +249,45 @@ fn run_in_child(config: crate::DaemonConfig, outcome_path: PathBuf) -> i32 {
 /// A running test daemon on a thread: Windows has no `fork`, and serves
 /// sessions on threads, so a client close already reaches its session.
 #[cfg(not(unix))]
-pub(super) struct DaemonHandle(std::thread::JoinHandle<Result<(), crate::DaemonError>>);
+pub(super) struct DaemonHandle {
+    thread: std::thread::JoinHandle<Result<(), DaemonError>>,
+    signals: platform::signal::SignalFlags,
+}
 
 #[cfg(not(unix))]
 impl DaemonHandle {
-    /// Runs `run_daemon(config)` on a thread.
-    pub(super) fn spawn(config: crate::DaemonConfig) -> Self {
-        Self(std::thread::spawn(move || crate::run_daemon(config)))
+    /// Runs `run_daemon(config)` on a thread, with signal flags the handle can
+    /// set in place of a signal.
+    pub(super) fn spawn(config: DaemonConfig) -> Self {
+        let signals = platform::signal::SignalFlags::new();
+        let config = DaemonConfigBuilder::from(config)
+            .signal_flags(signals.clone())
+            .build();
+        Self {
+            thread: std::thread::spawn(move || run_daemon(config)),
+            signals,
+        }
+    }
+
+    /// Asks the daemon to shut down, as a console CTRL_C does.
+    #[allow(
+        dead_code,
+        reason = "only the integration-test binaries stop a daemon by signal"
+    )]
+    pub(super) fn terminate(&self) {
+        self.signals
+            .shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Whether the daemon thread has returned.
     pub(super) fn is_finished(&self) -> bool {
-        self.0.is_finished()
+        self.thread.is_finished()
     }
 
     /// Blocks until the daemon thread returns, and reports what it returned.
     pub(super) fn join(self) -> Result<DaemonResult, DaemonCrash> {
-        self.0
+        self.thread
             .join()
             .map(|result| result.map_err(DaemonFailure::from))
             .map_err(|payload| Outcome::Panicked(panic_message(payload.as_ref())))
