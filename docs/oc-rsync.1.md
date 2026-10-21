@@ -319,10 +319,8 @@ NEON) are used where available, with automatic scalar fallbacks.
         `INHERITED_ACE` flag are skipped; the receiver relies on the
         destination's own inheritance chain. Mirrors how POSIX default ACLs
         are handled as a separate stream.
-      - **The system ACL (SACL) is skipped** unless the planned
-        **--audit-acls** flag is passed and the sender holds
-        `SE_SECURITY_NAME`. Audit ACEs cannot ride the cross-platform
-        payload.
+      - **The system ACL (SACL) is skipped.** Audit ACEs cannot ride the
+        cross-platform payload.
       - **Non-`rwx` access bits collapse.** `FILE_GENERIC_READ`/`WRITE`/`EXECUTE`
         map cleanly to `r`/`w`/`x`. Bits outside that triplet (`DELETE`,
         `WRITE_DAC`, `WRITE_OWNER`, `SYNCHRONIZE`, generic bits) are
@@ -336,11 +334,10 @@ NEON) are used where available, with automatic scalar fallbacks.
 
     The cross-platform payload is the standard upstream byte stream
     (varint count, per-entry tag, permission triplet, optional name). A
-    second, opt-in payload encoding the full NTFS security descriptor as
-    SDDL on the existing xattr stream under
-    `user.win32.security_descriptor` is planned (see
-    **--windows-acls** below). SDDL is the textual form produced and
-    consumed by `ConvertSecurityDescriptorToStringSecurityDescriptorW`;
+    second payload encoding the full NTFS security descriptor as SDDL on
+    the existing xattr stream under `user.win32.security_descriptor` is
+    planned. SDDL is the textual form produced and consumed by
+    `ConvertSecurityDescriptorToStringSecurityDescriptorW`;
     Windows-to-Windows transfers may use it for higher fidelity while
     remaining backward-compatible with peers that only understand the
     cross-platform payload.
@@ -378,35 +375,6 @@ NEON) are used where available, with automatic scalar fallbacks.
 
 **--no-acls**
 :   Disable ACL preservation.
-
-**--audit-acls** (planned)
-:   On Windows, request that the sender read the system ACL (SACL) in
-    addition to the DACL. Requires the `SE_SECURITY_NAME` privilege; the
-    sender skips the SACL with a warning when the privilege probe fails.
-    SACL contents are carried only in the SDDL fidelity payload (see
-    **--windows-acls**), never in the cross-platform payload. Not yet
-    wired; see `docs/design/windows-ntfs-acl-support.md` section 4.2.
-
-**--fail-on-windows-acl-loss** (planned)
-:   On Windows, abort the transfer with exit code 23 (partial transfer)
-    when an NTFS DACL contains deny ACEs, audit ACEs, inherited ACEs that
-    cannot be expressed in POSIX, or owner/group SIDs the receiver cannot
-    resolve. Use this when a transfer must either preserve the source
-    DACL verbatim or fail loudly rather than silently lower to POSIX
-    rwx. Not yet wired; see `docs/design/windows-ntfs-acl-support.md`
-    section 4.3.
-
-**--windows-acls** (planned)
-:   On Windows, opt in to the Windows-to-Windows SDDL fidelity payload in
-    addition to the cross-platform payload. When both peers advertise the
-    `W` capability bit, the sender writes the full NTFS security
-    descriptor as SDDL into the `user.win32.security_descriptor` xattr
-    via `ConvertSecurityDescriptorToStringSecurityDescriptorW`, and the
-    receiver reconstructs the descriptor verbatim via
-    `ConvertStringSecurityDescriptorToSecurityDescriptorW`. Falls back to
-    the cross-platform payload when either peer does not advertise `W`.
-    Not yet wired; see `docs/design/windows-ntfs-acl-support.md` section
-    4.2.
 
 **-X**, **--xattrs**
 :   Preserve extended attributes when supported (Unix only).

@@ -110,18 +110,17 @@ it via `exacl` on POSIX or via `AddAccessAllowedAce` on Windows.
 This is the only mode that interoperates with upstream rsync and with
 oc-rsync clients on Linux, macOS, FreeBSD.
 
-### 4.2 Windows-to-Windows fidelity mode (opt-in, follow-up)
+### 4.2 Windows-to-Windows fidelity mode (follow-up)
 
 When both peers advertise the Windows capability bit (negotiated via a
-new entry in the capability string, gated on a CLI flag such as
-`--windows-acls`), the sender additionally writes the full SDDL string
-into the xattr stream under a reserved key. The agreed key is
+new entry in the capability string), the sender additionally writes
+the full SDDL string into the xattr stream under a reserved key. The agreed key is
 `user.win32.security_descriptor` (mirrors how Samba stores NT ACLs in
 xattrs on Linux backends). The DACL is serialised with
 `ConvertSecurityDescriptorToStringSecurityDescriptorW` requesting
 `DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION |
-GROUP_SECURITY_INFORMATION`. SACL stays out unless the operator passes
-`--audit-acls` and the privilege probe succeeds.
+GROUP_SECURITY_INFORMATION`. The SACL stays out (SACL support is WAS-7,
+section 9).
 
 The receiver, when both peers negotiated the capability, ignores the
 lossy POSIX ACL payload and reconstructs the descriptor from SDDL via
@@ -129,16 +128,14 @@ lossy POSIX ACL payload and reconstructs the descriptor from SDDL via
 are still transmitted so an older receiver falls back gracefully.
 
 This is "either or both": the cross-platform payload is always present,
-the SDDL payload is opt-in and additive.
+the SDDL payload is additive.
 
-### 4.3 Reject mode
+### 4.3 No reject mode
 
-When the operator passes `--fail-on-windows-acl-loss`, the sender
-aborts the transfer (exit code 23, partial transfer) if a DACL contains
-deny ACEs, audit ACEs, inherited ACEs that cannot be expressed in
-POSIX, or owner/group SIDs the receiver cannot resolve. Implemented as
-a configuration flag on `RsyncAclLoweringPolicy` checked inside
-`get_rsync_acl`.
+No option aborts a transfer on ACL loss. Deny ACEs, audit ACEs,
+inherited ACEs that cannot be expressed in POSIX, and owner/group SIDs
+the receiver cannot resolve are lowered with a warning (section 5.3),
+and the transfer continues.
 
 ## 5. Cross-platform translation rules (WAS-4)
 
@@ -190,16 +187,13 @@ Documented loss is acceptable; silent loss is not. Each case emits a
 one-time warning via the existing `warn_partial_apply` channel:
 
 - Explicit deny ACEs. POSIX has no deny equivalent. The sender drops
-  them and warns. Reject mode (4.3) turns the warning into a fatal
-  error.
+  them and warns.
 - Inherited ACEs (`AceFlags & INHERITED_ACE`). The sender does not
   transmit them; the receiver relies on the destination's own
   inheritance chain. This matches upstream's treatment of POSIX default
   ACLs as a separate, opt-in stream.
-- Audit ACEs (SACL). Not read unless `--audit-acls` is passed and
-  `SE_SECURITY_NAME` is held by the sending process. When transmitted,
-  carried only in the Windows fidelity payload (4.2); the cross-platform
-  payload never includes them.
+- Audit ACEs (SACL). Not read (SACL support is WAS-7); the
+  cross-platform payload never includes them.
 - Group-specific ACEs that have no POSIX equivalent (e.g. `Authenticated
   Users`, `BUILTIN\Administrators`). Sent as named group entries in the
   cross-platform payload; the POSIX receiver creates a named-group ACL
@@ -290,10 +284,9 @@ Five steps, each one PR-sized, each scoped to a tracked issue.
    reverse path. Tests: round-trip owner and group names on a
    `windows-latest` runner.
 2. **WAS-3 - Deny ACE and inherited ACE diagnostics.** Add an
-   `RsyncAclLoweringPolicy` enum (`LossyAccept`, `LossyWarn`, `Reject`).
+   `RsyncAclLoweringPolicy` enum (`LossyAccept`, `LossyWarn`).
    Surface counts in `transfer_stats` so `--stats` shows how many ACEs
-   were lossy. Implements section 5.3's warning path. Add CLI flag
-   `--fail-on-windows-acl-loss`.
+   were lossy. Implements section 5.3's warning path.
 3. **WAS-4 - Cross-platform translation matrix tests.** Property-test
    the section 5.1 and 5.2 mappings in
    `crates/metadata/tests/acl_handling.rs`. Add golden vectors:
@@ -305,9 +298,8 @@ Five steps, each one PR-sized, each scoped to a tracked issue.
    regression test creating a three-link hardlink group with a
    non-trivial DACL and asserting exactly one `SetNamedSecurityInfoW`
    call (probe via a thin trait-based mock).
-5. **WAS-6 - SDDL fidelity payload (opt-in).** Add the
-   `--windows-acls` flag, the `W` capability character, and the
-   `user.win32.security_descriptor` xattr round-trip. Negotiation
+5. **WAS-6 - SDDL fidelity payload.** Add the `W` capability
+   character and the `user.win32.security_descriptor` xattr round-trip. Negotiation
    gated on both peers advertising `W`. Falls back silently when one
    peer is upstream rsync or non-Windows oc-rsync.
 

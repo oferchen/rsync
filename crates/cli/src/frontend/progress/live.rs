@@ -17,7 +17,6 @@ use super::render::{
 };
 use crate::frontend::escape::EscapeStyle;
 use crate::frontend::out_format::{OutFormat, OutFormatContext, emit_out_format};
-use crate::frontend::outbuf::OutbufMode;
 
 /// Entry lines held back before they are written regardless.
 ///
@@ -52,32 +51,22 @@ fn tick_throttled(last: Option<Instant>, now: Instant, interval: Duration, is_fi
     }
 }
 
-/// Controls how progress output adapts to terminal vs piped destinations
-/// and how buffering interacts with progress ticks.
+/// Controls how progress output adapts to terminal vs piped destinations.
 ///
 /// upstream: progress.c uses `\r` for in-place overwrite on terminals.
 /// When piped, progress lines would overwrite each other invisibly, so
 /// upstream's `output_needs_newline` mechanism ensures a `\n` is emitted
 /// before any non-progress message. We go further: when the output is not
 /// a terminal, we use `\n` instead of `\r` so piped output is readable.
-///
-/// upstream: options.c:2156-2180 `--outbuf` controls stdout buffering via
-/// `setvbuf`. We mirror this by flushing after each progress tick when
-/// the mode is unbuffered or line-buffered.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ProgressOutputConfig {
     /// Whether the output destination is an interactive terminal.
     pub(crate) is_terminal: bool,
-    /// The `--outbuf` buffering mode, if specified.
-    pub(crate) outbuf_mode: Option<OutbufMode>,
 }
 
 impl Default for ProgressOutputConfig {
     fn default() -> Self {
-        Self {
-            is_terminal: true,
-            outbuf_mode: None,
-        }
+        Self { is_terminal: true }
     }
 }
 
@@ -322,7 +311,7 @@ impl<'a> LiveProgress<'a> {
         self.end_active_line()?;
         self.writer.write_all(&self.deferred)?;
         self.deferred.clear();
-        self.flush_if_needed()
+        self.writer.flush()
     }
 
     /// Writes the line prefix that returns the cursor to column 0 before a
@@ -344,19 +333,6 @@ impl<'a> LiveProgress<'a> {
             writeln!(self.writer)
         } else {
             Ok(())
-        }
-    }
-
-    /// Flushes the writer after a progress tick if the outbuf mode requires it.
-    ///
-    /// upstream: progress.c:133 calls `rflush(FCLIENT)` after every non-final
-    /// progress tick. We mirror this for unbuffered and line-buffered modes.
-    /// Block-buffered mode defers flushing to the OS or explicit flush calls.
-    fn flush_if_needed(&mut self) -> io::Result<()> {
-        match self.output_config.outbuf_mode {
-            Some(OutbufMode::None) => self.writer.flush(),
-            Some(OutbufMode::Line) => self.writer.flush(),
-            Some(OutbufMode::Block) | None => Ok(()),
         }
     }
 
@@ -407,7 +383,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 self.writer,
             )
         });
-        if let Err(error) = result.and_then(|()| self.flush_if_needed()) {
+        if let Err(error) = result.and_then(|()| self.writer.flush()) {
             self.record_error(error);
         }
     }
@@ -426,7 +402,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             if is_generator_notice(event) {
                 self.end_active_line()?;
                 listing.render(event, self.human_readable, session.escape, self.writer)?;
-                return self.flush_if_needed();
+                return self.writer.flush();
             }
             listing.render(
                 event,
@@ -579,9 +555,6 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     // to the last rendered in-flight tick; the final tick does
                     // not advance it.
                     self.last_tick = Some(now);
-                    // upstream: progress.c:133 - rflush(FCLIENT) after
-                    // every non-final progress tick.
-                    self.flush_if_needed()?;
                 }
                 Ok(())
             })(),
@@ -656,8 +629,6 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                         // Newline suppressed for progress2 per
                         // progress.c:88 - cursor stays on same line.
                         self.line_active = true;
-                        // upstream: progress.c:133 - rflush(FCLIENT)
-                        self.flush_if_needed()?;
                     }
                 } else {
                     // upstream: progress.c:100 - in-flight ticks use a trailing
@@ -672,14 +643,15 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     // upstream: progress.c:224 - the throttle baseline is the
                     // last in-flight tick; final ticks do not advance it.
                     self.last_tick = Some(now);
-                    // upstream: progress.c:133 - rflush(FCLIENT) after
-                    // every non-final progress tick.
-                    self.flush_if_needed()?;
                 }
                 self.active_path = None;
                 Ok(())
             })(),
         };
+        // upstream: progress.c:133 rflush(FCLIENT) after an in-flight tick, and
+        // log.c:420-427 rwrite() fflush()es each line it ends, the final tick
+        // included. Neither depends on --outbuf.
+        let write_result = write_result.and_then(|()| self.writer.flush());
 
         match write_result {
             Ok(()) => {
@@ -1044,17 +1016,11 @@ mod tests {
     }
 
     fn piped_config() -> ProgressOutputConfig {
-        ProgressOutputConfig {
-            is_terminal: false,
-            outbuf_mode: None,
-        }
+        ProgressOutputConfig { is_terminal: false }
     }
 
     fn terminal_config() -> ProgressOutputConfig {
-        ProgressOutputConfig {
-            is_terminal: true,
-            outbuf_mode: None,
-        }
+        ProgressOutputConfig { is_terminal: true }
     }
 
     /// When output is not a terminal, progress lines should use `\n` instead
@@ -1194,10 +1160,6 @@ mod tests {
             config.is_terminal,
             "default config should assume terminal output"
         );
-        assert!(
-            config.outbuf_mode.is_none(),
-            "default config should have no outbuf mode"
-        );
     }
 
     /// upstream: progress.c:129 - on a terminal every line is `\r`-prefixed,
@@ -1241,142 +1203,68 @@ mod tests {
         assert_eq!(buf, b"\n");
     }
 
-    /// Flush is called for unbuffered outbuf mode on non-final ticks.
-    #[test]
-    fn flush_triggered_for_unbuffered_outbuf() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+    /// The pipe behind a buffered stdout: it holds only what the buffer
+    /// handed over.
+    #[derive(Default)]
+    struct Pipe(Vec<u8>);
 
-        struct FlushCountingWriter {
-            inner: Vec<u8>,
-            flush_count: AtomicUsize,
-        }
-        impl Write for FlushCountingWriter {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.inner.write(buf)
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                self.flush_count.fetch_add(1, Ordering::Relaxed);
-                Ok(())
-            }
+    impl Write for Pipe {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.extend_from_slice(buf);
+            Ok(buf.len())
         }
 
-        let mut writer = FlushCountingWriter {
-            inner: Vec::new(),
-            flush_count: AtomicUsize::new(0),
-        };
-        {
-            let config = ProgressOutputConfig {
-                is_terminal: true,
-                outbuf_mode: Some(OutbufMode::None),
-            };
-            let mut live = LiveProgress::with_output_config(
-                &mut writer,
-                ProgressMode::PerFile,
-                HumanReadableMode::Grouped,
-                config,
-            );
-            // Disable throttling so the single in-flight tick renders and
-            // triggers the flush under test.
-            live.tick_interval = Duration::ZERO;
-            // Mid-transfer tick should trigger flush
-            live.on_progress(&make_mid_transfer_update(true));
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
-        let count = writer.flush_count.load(Ordering::Relaxed);
-        assert!(
-            count > 0,
-            "unbuffered outbuf should flush after non-final ticks, got {count} flushes"
-        );
     }
 
-    /// Flush is NOT called for block-buffered outbuf mode.
+    /// upstream: progress.c:133 - `rflush(FCLIENT)` after an in-flight tick,
+    /// which ends in `"  "` rather than a newline. std's stdout is a
+    /// `LineWriter`, so without that flush the tick would wait in its buffer
+    /// for the next tick's newline, and a reader of the pipe would always be
+    /// one tick behind.
     #[test]
-    fn no_flush_for_block_buffered_outbuf() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        struct FlushCountingWriter {
-            inner: Vec<u8>,
-            flush_count: AtomicUsize,
-        }
-        impl Write for FlushCountingWriter {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.inner.write(buf)
+    fn in_flight_tick_reaches_the_pipe_through_a_line_buffered_stdout() {
+        for config in [piped_config(), terminal_config()] {
+            let mut stdout = io::LineWriter::new(Pipe::default());
+            {
+                let mut live = LiveProgress::with_output_config(
+                    &mut stdout,
+                    ProgressMode::PerFile,
+                    HumanReadableMode::Grouped,
+                    config,
+                );
+                live.tick_interval = Duration::ZERO;
+                live.on_progress(&make_mid_transfer_update(true));
             }
-            fn flush(&mut self) -> io::Result<()> {
-                self.flush_count.fetch_add(1, Ordering::Relaxed);
-                Ok(())
-            }
-        }
-
-        let mut writer = FlushCountingWriter {
-            inner: Vec::new(),
-            flush_count: AtomicUsize::new(0),
-        };
-        {
-            let config = ProgressOutputConfig {
-                is_terminal: true,
-                outbuf_mode: Some(OutbufMode::Block),
-            };
-            let mut live = LiveProgress::with_output_config(
-                &mut writer,
-                ProgressMode::PerFile,
-                HumanReadableMode::Grouped,
-                config,
+            let delivered = String::from_utf8_lossy(&stdout.get_ref().0).into_owned();
+            assert!(
+                delivered.contains('%') && delivered.ends_with("  "),
+                "the in-flight tick must reach the pipe ({config:?}): {delivered:?}"
             );
-            // Disable throttling so the in-flight tick renders; block-buffered
-            // mode must still not flush.
-            live.tick_interval = Duration::ZERO;
-            live.on_progress(&make_mid_transfer_update(true));
         }
-        let count = writer.flush_count.load(Ordering::Relaxed);
-        assert_eq!(
-            count, 0,
-            "block-buffered outbuf should not flush on progress ticks, got {count} flushes"
-        );
     }
 
-    /// Line-buffered outbuf mode should flush after non-final ticks.
+    /// upstream: log.c:420-427 - `rwrite()` fflush()es every line it ends,
+    /// whatever `--outbuf` set, so a finished file's progress line reaches
+    /// the pipe even under `--outbuf=B`.
     #[test]
-    fn flush_triggered_for_line_buffered_outbuf() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        struct FlushCountingWriter {
-            inner: Vec<u8>,
-            flush_count: AtomicUsize,
-        }
-        impl Write for FlushCountingWriter {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.inner.write(buf)
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                self.flush_count.fetch_add(1, Ordering::Relaxed);
-                Ok(())
-            }
-        }
-
-        let mut writer = FlushCountingWriter {
-            inner: Vec::new(),
-            flush_count: AtomicUsize::new(0),
-        };
+    fn final_tick_reaches_the_pipe_through_a_block_buffered_stdout() {
+        let mut stdout = io::BufWriter::new(Pipe::default());
         {
-            let config = ProgressOutputConfig {
-                is_terminal: true,
-                outbuf_mode: Some(OutbufMode::Line),
-            };
             let mut live = LiveProgress::with_output_config(
-                &mut writer,
+                &mut stdout,
                 ProgressMode::PerFile,
                 HumanReadableMode::Grouped,
-                config,
+                piped_config(),
             );
-            // Disable throttling so the single in-flight tick renders and
-            // triggers the flush under test.
-            live.tick_interval = Duration::ZERO;
-            live.on_progress(&make_mid_transfer_update(true));
+            live.on_progress(&make_final_for("done.bin", 1));
         }
-        let count = writer.flush_count.load(Ordering::Relaxed);
+        let delivered = String::from_utf8_lossy(&stdout.get_ref().0).into_owned();
         assert!(
-            count > 0,
-            "line-buffered outbuf should flush after non-final ticks, got {count} flushes"
+            delivered.contains("(xfr#1,"),
+            "the final tick must reach the pipe: {delivered:?}"
         );
     }
 }

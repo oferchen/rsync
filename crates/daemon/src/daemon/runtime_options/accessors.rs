@@ -73,6 +73,29 @@ impl RuntimeOptions {
     pub(crate) fn verbosity(&self) -> u8 {
         self.verbosity
     }
+    /// Names the first privilege-drop directive the merged configuration
+    /// sets, or `None` when it sets none.
+    ///
+    /// Covers `daemon uid`/`daemon gid` and every module's `uid`/`gid`,
+    /// including a value that failed to resolve. A Windows daemon cannot drop
+    /// to a numeric uid/gid, so it refuses any of them at startup.
+    #[cfg(any(windows, test))]
+    pub(crate) fn configured_privilege_drop_directive(&self) -> Option<String> {
+        if self.daemon_uid.is_some() {
+            return Some("'daemon uid'".to_owned());
+        }
+        if self.daemon_gid.is_some() {
+            return Some("'daemon gid'".to_owned());
+        }
+        self.modules.iter().find_map(|module| {
+            let directive = match (&module.uid, &module.gid, &module.unresolved_id) {
+                (Some(_), _, _) | (_, _, Some(UnresolvedId::Uid(_))) => "uid",
+                (_, Some(_), _) | (_, _, Some(UnresolvedId::Gid(_))) => "gid",
+                _ => return None,
+            };
+            Some(format!("'{directive}' in module [{}]", module.name))
+        })
+    }
 }
 
 #[cfg(test)]
