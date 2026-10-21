@@ -3,14 +3,15 @@ use super::*;
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::fs;
-use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::ops::{Deref, DerefMut};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(not(unix))]
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(unix))]
+use std::time::Instant;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -257,45 +258,33 @@ fn force_no_detach(config: crate::DaemonConfig) -> crate::DaemonConfig {
         .build()
 }
 
-/// Spawns an in-process daemon thread that is guaranteed to stay in the
-/// foreground.
+/// Starts a test daemon on an already-listening socket, guaranteed to stay in
+/// the foreground.
 ///
-/// This is the only supported way for a test to run [`run_daemon`] on a thread;
-/// spawning it directly reintroduces the silent-pass defect described on
-/// [`force_no_detach`].
-pub(super) fn spawn_daemon(
-    config: crate::DaemonConfig,
-) -> thread::JoinHandle<Result<(), crate::DaemonError>> {
-    let config = force_no_detach(config);
-    thread::spawn(move || run_daemon(config))
+/// This is the only supported way for a test to run [`run_daemon`]; running it
+/// directly reintroduces the silent-pass defect described on
+/// [`force_no_detach`]. On Unix the daemon runs in its own process (see
+/// `DaemonHandle`), so call this before opening any client socket.
+///
+/// The listener is bound and listening before the daemon starts, so a client
+/// may connect at once: the kernel queues the connection until the daemon
+/// accepts it. That is the whole readiness protocol - there is no window in
+/// which the port is unbound.
+pub(super) fn spawn_daemon(config: crate::DaemonConfig, held_listener: TcpListener) -> DaemonHandle {
+    DaemonHandle::spawn(with_pre_bound_listener(
+        force_no_detach(config),
+        held_listener,
+    ))
 }
 
-/// Spawn a daemon thread and connect, failing fast if the daemon exits early.
-///
-/// Returns the connected stream and the daemon thread handle.  If the daemon
-/// thread finishes before a connection succeeds the actual daemon error is
-/// included in the panic message instead of waiting for the full 30-second
-/// timeout.
-///
-/// The pre-bound `TcpListener` is passed directly to the daemon via
-/// `DaemonConfig`, eliminating the TOCTOU race between port allocation and
-/// daemon bind that previously caused flaky failures under CI load.
-///
-/// The daemon is forced into the foreground by [`force_no_detach`], so a caller
-/// that omits `--no-detach` still gets a test that actually runs its
-/// assertions.
+/// Starts a test daemon (see [`spawn_daemon`]) and connects one client to it.
 pub(super) fn start_daemon(
     config: crate::DaemonConfig,
     port: u16,
     held_listener: TcpListener,
-) -> (
-    ClientStream,
-    thread::JoinHandle<Result<(), crate::DaemonError>>,
-) {
-    connect_started_daemon(
-        spawn_daemon(with_pre_bound_listener(config, held_listener)),
-        port,
-    )
+) -> (TcpStream, DaemonHandle) {
+    let handle = spawn_daemon(config, held_listener);
+    (connect_client(port), handle)
 }
 
 /// Injects an already-bound listener so the daemon reuses it instead of binding
@@ -309,162 +298,53 @@ fn with_pre_bound_listener(
         .build()
 }
 
-fn connect_started_daemon(
-    handle: thread::JoinHandle<Result<(), crate::DaemonError>>,
-    port: u16,
-) -> (
-    ClientStream,
-    thread::JoinHandle<Result<(), crate::DaemonError>>,
-) {
-    let stream = connect_to_daemon(port, Some(&handle));
-    (stream, handle)
-}
-
-pub(super) fn connect_with_retries(port: u16) -> ClientStream {
-    connect_to_daemon(port, None)
-}
-
-/// A test client's connection to an in-process daemon.
+/// Waits for a test daemon to end and returns what it reported.
 ///
-/// A real client runs in its own process, so closing its socket - or exiting -
-/// sends FIN and the daemon's session sees EOF. A test client shares its
-/// process with the daemon, and on Unix every session runs in a child forked
-/// from that process, so the child inherits a duplicate of this client socket.
-/// Closing the test's descriptor then leaves the connection open through the
-/// child's copy: no FIN is sent, and a session still waiting for client input
-/// blocks until its I/O timeout, outliving the test.
+/// On Unix this blocks until the daemon process exits, which a `--once` or
+/// `--max-sessions` daemon does after serving its sessions; it is always
+/// `Some`. A daemon that crashed instead of returning fails the test.
 ///
-/// Dropping a `ClientStream` therefore shuts down its write side, which sends
-/// FIN regardless of how many descriptors share the socket - the end of
-/// session a separate client process delivers on close.
-///
-/// upstream: socket.c:761-773 `start_accept_loop()` forks the session child;
-/// the session's reads of the auth response (io.c:2635 `read_line_old()`)
-/// and of the daemon arguments (io.c:1480 `read_args()`) end it on EOF.
-pub(super) struct ClientStream(TcpStream);
+/// Windows serves the daemon on a thread whose accept loop can linger past the
+/// client's disconnect, so there the wait is bounded and a lingering daemon is
+/// detached, returning `None`; nextest runs each test in its own process, so
+/// the detached thread ends with it.
+pub(super) fn finish_daemon(handle: DaemonHandle) -> Option<DaemonResult> {
+    #[cfg(not(unix))]
+    {
+        const DAEMON_JOIN_TIMEOUT: Duration = Duration::from_secs(20);
+        const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-impl Deref for ClientStream {
-    type Target = TcpStream;
-
-    fn deref(&self) -> &TcpStream {
-        &self.0
-    }
-}
-
-impl DerefMut for ClientStream {
-    fn deref_mut(&mut self) -> &mut TcpStream {
-        &mut self.0
-    }
-}
-
-impl Read for ClientStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl Write for ClientStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
-}
-
-impl Drop for ClientStream {
-    fn drop(&mut self) {
-        // The daemon may already have closed the connection, in which case
-        // there is nothing left to end and the error carries no information.
-        let _ = self.0.shutdown(Shutdown::Write);
-    }
-}
-
-/// Bounded wait for a daemon thread to finish, detaching it if it lingers.
-///
-/// The negotiation tests spawn an in-process daemon and then `join()` its
-/// thread to surface the daemon-side `Result`. That thread's accept loop
-/// terminates promptly on Unix once the client disconnects, but on Windows a
-/// blocking `accept` on a re-bound listener can linger indefinitely, so an
-/// unconditional `join()` wedges the test until nextest's 360s slow-timeout
-/// fires - a job-level hang. Because nextest runs each test in its own process,
-/// a still-running daemon thread is harmless: it is reaped when the test
-/// process exits. This helper waits up to `DAEMON_JOIN_TIMEOUT` for the thread
-/// to finish and returns its `Result`; if it does not finish it detaches the
-/// thread and returns `None`, letting the caller keep the client-side
-/// assertions that already validated the exchange.
-pub(super) fn finish_daemon(
-    handle: thread::JoinHandle<Result<(), crate::DaemonError>>,
-) -> Option<Result<(), crate::DaemonError>> {
-    const DAEMON_JOIN_TIMEOUT: Duration = Duration::from_secs(20);
-    const POLL_INTERVAL: Duration = Duration::from_millis(50);
-
-    let deadline = Instant::now() + DAEMON_JOIN_TIMEOUT;
-    while Instant::now() < deadline {
-        if handle.is_finished() {
-            return Some(handle.join().expect("daemon thread"));
+        let deadline = Instant::now() + DAEMON_JOIN_TIMEOUT;
+        while !handle.is_finished() {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(POLL_INTERVAL);
         }
-        thread::sleep(POLL_INTERVAL);
     }
-    None
+    Some(handle.join().unwrap_or_else(|crash| panic!("{crash}")))
 }
 
 /// Bounded read/write timeout applied to every daemon-test client stream.
 ///
 /// Test clients drive the daemon with blocking `read_line`/`write_all` calls.
-/// Without a timeout a wedged daemon worker - e.g. an accept-loop stall seen
-/// under heavy concurrent load on Windows CI - leaves the client blocked until
+/// Without a timeout a wedged daemon worker leaves the client blocked until
 /// nextest's slow-timeout terminates it 360s later, which reads as a job-level
-/// hang. A generous per-operation timeout turns that hang into a fast,
-/// retryable failure while staying clear of legitimate startup latency on a
-/// loaded runner.
+/// hang. A generous per-operation timeout turns that hang into a fast failure.
 const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn connect_to_daemon(
-    port: u16,
-    handle: Option<&thread::JoinHandle<Result<(), crate::DaemonError>>>,
-) -> ClientStream {
-    const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
-    const MAX_BACKOFF: Duration = Duration::from_millis(500);
-    // CI environments may have resource constraints causing slower daemon startup
-    const TIMEOUT: Duration = Duration::from_secs(30);
-
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + TIMEOUT;
-    let mut backoff = INITIAL_BACKOFF;
-
-    loop {
-        // Fail fast if the daemon thread has already exited.
-        if let Some(h) = handle
-            && h.is_finished()
-        {
-            panic!(
-                "daemon exited before accepting a connection on port {port}; \
-                     check daemon startup logs for bind errors or config issues"
-            );
-        }
-
-        match TcpStream::connect_timeout(&target, backoff) {
-            Ok(stream) => {
-                // Bound every subsequent blocking read/write so a stalled
-                // daemon worker fails fast and retries instead of hanging.
-                stream
-                    .set_read_timeout(Some(CLIENT_IO_TIMEOUT))
-                    .expect("set client read timeout");
-                stream
-                    .set_write_timeout(Some(CLIENT_IO_TIMEOUT))
-                    .expect("set client write timeout");
-                return ClientStream(stream);
-            }
-            Err(error) => {
-                if Instant::now() >= deadline {
-                    panic!("failed to connect to daemon within timeout: {error}");
-                }
-
-                thread::sleep(backoff);
-                backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
-            }
-        }
-    }
+/// Connects a client to a daemon started by [`spawn_daemon`].
+///
+/// The daemon's listener is already listening, so the connect completes
+/// against the kernel's backlog whether or not the daemon has reached
+/// `accept` yet.
+pub(super) fn connect_client(port: u16) -> TcpStream {
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect to test daemon");
+    stream
+        .set_read_timeout(Some(CLIENT_IO_TIMEOUT))
+        .expect("set client read timeout");
+    stream
+        .set_write_timeout(Some(CLIENT_IO_TIMEOUT))
+        .expect("set client write timeout");
+    stream
 }

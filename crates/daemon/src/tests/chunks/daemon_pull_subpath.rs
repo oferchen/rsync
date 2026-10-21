@@ -38,8 +38,8 @@ fn launch_subpath_daemon(
     port: u16,
     held: std::net::TcpListener,
 ) -> (
-    ClientStream,
-    std::thread::JoinHandle<Result<(), DaemonError>>,
+    std::net::TcpStream,
+    DaemonHandle,
 ) {
     let daemon_config = DaemonConfig::builder()
         .disable_default_paths()

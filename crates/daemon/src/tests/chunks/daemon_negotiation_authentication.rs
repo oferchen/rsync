@@ -61,12 +61,11 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
     // The daemon needs to bind itself to handle two sequential connections;
     // release the test's holding listener so the daemon's bind to the same
     // port succeeds (the held listener was only needed to reserve the port).
-    drop(held_listener);
-    let handle = spawn_daemon(config);
+    let handle = spawn_daemon(config, held_listener);
 
     let mut challenges = Vec::new();
     for _ in 0..2 {
-        let mut stream = connect_with_retries(port);
+        let mut stream = connect_client(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
         let mut line = String::new();

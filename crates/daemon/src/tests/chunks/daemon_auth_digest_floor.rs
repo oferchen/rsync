@@ -9,8 +9,8 @@ fn start_auth_digest_floor_daemon(
     dir: &Path,
     floor: &str,
 ) -> (
-    ClientStream,
-    thread::JoinHandle<Result<(), crate::DaemonError>>,
+    TcpStream,
+    DaemonHandle,
 ) {
     let module_dir = dir.join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
