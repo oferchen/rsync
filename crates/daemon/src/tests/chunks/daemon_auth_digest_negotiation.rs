@@ -6,7 +6,7 @@
 fn start_auth_digest_daemon(
     dir: &Path,
 ) -> (
-    TcpStream,
+    ClientStream,
     thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
     let module_dir = dir.join("module");

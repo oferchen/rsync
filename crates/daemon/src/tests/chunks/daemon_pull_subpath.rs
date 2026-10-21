@@ -38,7 +38,7 @@ fn launch_subpath_daemon(
     port: u16,
     held: std::net::TcpListener,
 ) -> (
-    std::net::TcpStream,
+    ClientStream,
     std::thread::JoinHandle<Result<(), DaemonError>>,
 ) {
     let daemon_config = DaemonConfig::builder()

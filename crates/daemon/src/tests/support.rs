@@ -3,7 +3,9 @@ use super::*;
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::fs;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::io::{self, Read, Write};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::ops::{Deref, DerefMut};
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
@@ -287,7 +289,7 @@ pub(super) fn start_daemon(
     port: u16,
     held_listener: TcpListener,
 ) -> (
-    TcpStream,
+    ClientStream,
     thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
     connect_started_daemon(
@@ -311,15 +313,72 @@ fn connect_started_daemon(
     handle: thread::JoinHandle<Result<(), crate::DaemonError>>,
     port: u16,
 ) -> (
-    TcpStream,
+    ClientStream,
     thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
     let stream = connect_to_daemon(port, Some(&handle));
     (stream, handle)
 }
 
-pub(super) fn connect_with_retries(port: u16) -> TcpStream {
+pub(super) fn connect_with_retries(port: u16) -> ClientStream {
     connect_to_daemon(port, None)
+}
+
+/// A test client's connection to an in-process daemon.
+///
+/// A real client runs in its own process, so closing its socket - or exiting -
+/// sends FIN and the daemon's session sees EOF. A test client shares its
+/// process with the daemon, and on Unix every session runs in a child forked
+/// from that process, so the child inherits a duplicate of this client socket.
+/// Closing the test's descriptor then leaves the connection open through the
+/// child's copy: no FIN is sent, and a session still waiting for client input
+/// blocks until its I/O timeout, outliving the test.
+///
+/// Dropping a `ClientStream` therefore shuts down its write side, which sends
+/// FIN regardless of how many descriptors share the socket - the end of
+/// session a separate client process delivers on close.
+///
+/// upstream: socket.c:761-773 `start_accept_loop()` forks the session child;
+/// the session's reads of the auth response (io.c:2635 `read_line_old()`)
+/// and of the daemon arguments (io.c:1480 `read_args()`) end it on EOF.
+pub(super) struct ClientStream(TcpStream);
+
+impl Deref for ClientStream {
+    type Target = TcpStream;
+
+    fn deref(&self) -> &TcpStream {
+        &self.0
+    }
+}
+
+impl DerefMut for ClientStream {
+    fn deref_mut(&mut self) -> &mut TcpStream {
+        &mut self.0
+    }
+}
+
+impl Read for ClientStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for ClientStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Drop for ClientStream {
+    fn drop(&mut self) {
+        // The daemon may already have closed the connection, in which case
+        // there is nothing left to end and the error carries no information.
+        let _ = self.0.shutdown(Shutdown::Write);
+    }
 }
 
 /// Bounded wait for a daemon thread to finish, detaching it if it lingers.
@@ -365,7 +424,7 @@ const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 fn connect_to_daemon(
     port: u16,
     handle: Option<&thread::JoinHandle<Result<(), crate::DaemonError>>>,
-) -> TcpStream {
+) -> ClientStream {
     const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
     const MAX_BACKOFF: Duration = Duration::from_millis(500);
     // CI environments may have resource constraints causing slower daemon startup
@@ -396,7 +455,7 @@ fn connect_to_daemon(
                 stream
                     .set_write_timeout(Some(CLIENT_IO_TIMEOUT))
                     .expect("set client write timeout");
-                return stream;
+                return ClientStream(stream);
             }
             Err(error) => {
                 if Instant::now() >= deadline {

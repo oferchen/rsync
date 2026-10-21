@@ -9,7 +9,7 @@ fn start_auth_digest_floor_daemon(
     dir: &Path,
     floor: &str,
 ) -> (
-    TcpStream,
+    ClientStream,
     thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
     let module_dir = dir.join("module");

@@ -6,7 +6,7 @@ fn pre_xfer_push_session(
     hook: &str,
 ) -> (
     tempfile::TempDir,
-    TcpStream,
+    ClientStream,
     BufReader<TcpStream>,
     std::thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
