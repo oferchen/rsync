@@ -263,10 +263,10 @@ impl GeneratorContext {
         }
         #[cfg(not(unix))]
         {
-            if let Ok(mtime) = metadata.modified() {
-                if let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                    entry.set_mtime(duration.as_secs() as i64, duration.subsec_nanos());
-                }
+            if let Ok(mtime) = metadata.modified()
+                && let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH)
+            {
+                entry.set_mtime(duration.as_secs() as i64, duration.subsec_nanos());
             }
         }
 
@@ -286,12 +286,12 @@ impl GeneratorContext {
             entry.set_atime(metadata.atime());
         }
         #[cfg(not(unix))]
-        if self.config.flags.atimes && !entry.is_dir() {
-            if let Ok(atime) = metadata.accessed() {
-                if let Ok(duration) = atime.duration_since(std::time::UNIX_EPOCH) {
-                    entry.set_atime(duration.as_secs() as i64);
-                }
-            }
+        if self.config.flags.atimes
+            && !entry.is_dir()
+            && let Ok(atime) = metadata.accessed()
+            && let Ok(duration) = atime.duration_since(std::time::UNIX_EPOCH)
+        {
+            entry.set_atime(duration.as_secs() as i64);
         }
 
         // Set creation time if preserving (upstream: flist.c:720-723)

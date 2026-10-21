@@ -20,6 +20,7 @@
 //! incrementally on the receiving side).
 
 use std::io::Read;
+#[cfg(feature = "zstd")]
 use std::num::NonZeroU8;
 
 use compress::zlib::{self, CompressionLevel, CountingZlibDecoder, CountingZlibEncoder};

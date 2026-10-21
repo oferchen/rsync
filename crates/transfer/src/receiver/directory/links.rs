@@ -465,7 +465,6 @@ impl ReceiverContext {
             self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
             if raw & ItemFlags::ITEM_IS_NEW != 0 {
                 // upstream: receiver.c:925-934 - only an ITEM_IS_NEW row bumps
-
                 // stats.created_files / created_symlinks.
                 self.record_created(entry.mode());
             }
@@ -477,7 +476,6 @@ impl ReceiverContext {
     ///
     /// Deviation from upstream: native Windows has no POSIX symlink, so this
     /// mirrors the Unix path but routes creation through the safe
-
     /// `fast_io::win_symlink` helpers: a link whose target resolves to a
     /// directory is created as a real directory symbolic link, falling back to
     /// a junction when the process lacks the create-symlink privilege; a file
@@ -754,7 +752,6 @@ impl ReceiverContext {
             self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
             if raw & ItemFlags::ITEM_IS_NEW != 0 {
                 // upstream: receiver.c:925-934 - only an ITEM_IS_NEW row bumps
-
                 // stats.created_files / created_symlinks.
                 self.record_created(entry.mode());
             }

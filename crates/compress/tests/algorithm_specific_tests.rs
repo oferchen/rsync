@@ -6,6 +6,7 @@
 //! 3. Cross-algorithm comparison
 //! 4. Algorithm-specific error conditions
 
+#[cfg(any(feature = "lz4", feature = "zstd"))]
 use std::io::{Cursor, Read};
 
 #[cfg(feature = "lz4")]

@@ -407,7 +407,6 @@ fn apply_fake_super_mode(
     options: &MetadataOptions,
     existing: Option<&fast_io::EntryMetadata>,
 ) -> Result<(), MetadataError> {
-    const S_IFMT: u32 = 0o170000;
     let type_bits = fake_super_type_bits(fmode, is_dir);
     let dest_meta = fs::symlink_metadata(destination).ok();
     let on_disk_mode = {
@@ -420,6 +419,8 @@ fn apply_fake_super_mode(
     {
         use crate::fake_super::{load_fake_super, remove_fake_super, store_fake_super};
         use std::os::unix::fs::MetadataExt;
+
+        const S_IFMT: u32 = 0o170000;
 
         // The intended stored mode carries the S_IFMT type bits so a later
         // fake-super read can rebuild both the type and the full perms.

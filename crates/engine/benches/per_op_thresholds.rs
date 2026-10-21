@@ -72,8 +72,6 @@
 //! Run with NFS: `OC_RSYNC_BENCH_NFS_PATH=/mnt/nfs/scratch \
 //!     cargo bench -p engine --bench per_op_thresholds`
 
-#![cfg(unix)]
-
 use std::env;
 use std::fs::{self, File};
 use std::hint::black_box;

@@ -9,6 +9,8 @@
 //! 6. Frame format specific tests
 //! 7. Raw block format specific tests
 
+#![cfg(feature = "lz4")]
+
 use std::io::{Cursor, Read};
 
 use compress::lz4::frame::{

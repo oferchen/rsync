@@ -32,8 +32,6 @@
 //! Run: `cargo bench -p engine --bench delete_emitter_unlink`
 
 #![deny(unsafe_code)]
-#![cfg(unix)]
-
 use std::ffi::OsString;
 use std::path::PathBuf;
 
