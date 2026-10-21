@@ -85,11 +85,7 @@ impl GeneratorContext {
         // `file_type.is_symlink()`, but routing them here too lets the
         // classifier choose the wire shape for every flavour in one place.
         #[cfg(windows)]
-        let reparse_kind = if is_reparse_point {
-            metadata::windows::classify_path(full_path).ok()
-        } else {
-            None
-        };
+        let reparse_kind = is_reparse_point.then(|| metadata::windows::classify_path(full_path));
 
         // upstream: flist.c:1644-1653 - `copy_devices && am_sender &&
         // IS_DEVICE(st.st_mode)` rewrites a block/char device into a regular
@@ -190,11 +186,12 @@ impl GeneratorContext {
             // upstream: flist.c:readlink_stat() returns the link target as
             // recorded on disk. On Windows the kernel exposes junctions and
             // symlinks through `read_link`, and they go on the wire as
-            // SYMLINK for Cygwin parity. Cloud placeholders, AF_UNIX sockets
-            // and opaque tags have no link target, and reading their data
-            // would hydrate a placeholder, so the entry is refused here; the
-            // walk reports it and sets IOERR_GENERAL, as upstream's
-            // make_file() does when it cannot stat an entry (flist.c:1691-1695).
+            // SYMLINK for Cygwin parity. Cloud placeholders, AF_UNIX sockets,
+            // opaque tags and unclassifiable reparse points have no trusted
+            // link target, and reading their data would hydrate a
+            // placeholder, so the entry is refused here; the walk reports it
+            // and sets IOERR_GENERAL, as upstream's make_file() does when it
+            // cannot stat an entry (flist.c:1691-1695).
             #[cfg(windows)]
             if let Some(error) = reparse_kind.and_then(unsendable_reparse_point) {
                 return Err(error);
@@ -552,18 +549,24 @@ impl GeneratorContext {
 
 /// Refuses a Windows reparse point that has no link target to send.
 ///
-/// Returns `None` for the link kinds (symlink, junction, mount point), which
-/// go on the wire as SYMLINK. Every other kind yields an `Unsupported` error
-/// whose message names the kind, so the walk's `make_file failed` line tells
-/// the operator why the file was skipped.
+/// Returns `None` only for a positively classified link kind (symlink,
+/// junction, mount point), which goes on the wire as SYMLINK. A failed
+/// classification and every other kind yield an `Unsupported` error whose
+/// message names the cause, so the walk's `make_file failed` line tells the
+/// operator why the file was skipped.
 #[cfg(windows)]
-fn unsendable_reparse_point(kind: metadata::windows::ReparseKind) -> Option<io::Error> {
+fn unsendable_reparse_point(
+    classified: io::Result<metadata::windows::ReparseKind>,
+) -> Option<io::Error> {
     use metadata::windows::ReparseKind;
-    let what = match kind {
-        ReparseKind::Symlink | ReparseKind::Junction | ReparseKind::MountPoint => return None,
-        ReparseKind::OneDrive => "a cloud-files (OneDrive) placeholder".to_owned(),
-        ReparseKind::AfUnix => "an AF_UNIX socket".to_owned(),
-        ReparseKind::Other(tag) => format!("an unsupported reparse point (tag {tag:#010x})"),
+    let what = match classified {
+        Ok(ReparseKind::Symlink | ReparseKind::Junction | ReparseKind::MountPoint) => {
+            return None;
+        }
+        Ok(ReparseKind::OneDrive) => "a cloud-files (OneDrive) placeholder".to_owned(),
+        Ok(ReparseKind::AfUnix) => "an AF_UNIX socket".to_owned(),
+        Ok(ReparseKind::Other(tag)) => format!("an unsupported reparse point (tag {tag:#010x})"),
+        Err(error) => format!("an unclassified reparse point ({error})"),
     };
     Some(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -1581,7 +1584,7 @@ mod windows_reparse_tests {
             ReparseKind::MountPoint,
         ] {
             assert!(
-                super::unsendable_reparse_point(kind).is_none(),
+                super::unsendable_reparse_point(Ok(kind)).is_none(),
                 "{kind:?} has a link target and must be sent"
             );
         }
@@ -1590,10 +1593,25 @@ mod windows_reparse_tests {
             (ReparseKind::AfUnix, "AF_UNIX socket"),
             (ReparseKind::Other(0x8000_0042), "tag 0x80000042"),
         ] {
-            let error = super::unsendable_reparse_point(kind).expect("refused");
+            let error = super::unsendable_reparse_point(Ok(kind)).expect("refused");
             assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
             assert!(error.to_string().contains(named), "{kind:?}: {error}");
         }
+    }
+    /// A reparse point the classifier cannot read is refused too: without a
+    /// positively identified link tag there is no trustworthy target, and an
+    /// empty-target symlink would corrupt the destination.
+    #[test]
+    fn unclassified_reparse_point_is_refused() {
+        let cause = std::io::Error::other("FSCTL_GET_REPARSE_POINT failed");
+        let error = super::unsendable_reparse_point(Err(cause)).expect("refused");
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        let message = error.to_string();
+        assert!(
+            message.contains("unclassified reparse point")
+                && message.contains("FSCTL_GET_REPARSE_POINT failed"),
+            "{message}"
+        );
     }
     /// Binds a real AF_UNIX socket, which NTFS stores as an
     /// `IO_REPARSE_TAG_AF_UNIX` reparse point (Windows 10 1803 and later).

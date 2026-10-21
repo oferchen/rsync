@@ -490,7 +490,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Windows**
 - A Windows daemon whose config sets `uid`, `gid`, `daemon uid` or `daemon gid` refuses to start with a config error naming the directive, instead of warning and serving with the privileges it was told to drop (#PRNUM)
-- A Windows sender skips a cloud-files (OneDrive) placeholder, AF_UNIX socket or other non-link reparse point with a `make_file failed` line naming the path and kind, and ends with exit 23; it was sent as a symlink with an empty target and was never hydrated (#PRNUM)
+- A Windows sender skips a cloud-files (OneDrive) placeholder, AF_UNIX socket, unclassifiable or other non-link reparse point with a `make_file failed` line naming the path and kind, and ends with exit 23; it was sent as a symlink with an empty target and was never hydrated (#PRNUM)
 - Compare the read-only bit, open directories for `--fsync`, honour `--one-file-system` across volumes, and warn when metadata cannot be applied (#7163, #7164, #7210, #7054)
 - An auto-inherited (`AI`) Windows DACL is written unprotected, so the destination keeps inheriting from its parent like the source did; protected and POSIX-synthesised DACLs stay protected (#8214)
 - Report the NTFS ACEs the rsync wire format cannot carry (#7267)
