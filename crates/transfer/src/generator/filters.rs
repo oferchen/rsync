@@ -527,10 +527,15 @@ impl GeneratorContext {
                     // directive (matching FilterSet::from_rules' `order` count)
                     // so the chain checks earlier global rules before the merge
                     // file's rules and later ones after.
+                    let config = wire_rule_to_dir_merge_config(wire_rule, cvs_perishable);
+                    // upstream: exclude.c:1558-1572 - `e` adds an exclude of the
+                    // merge file's basename, once and with none of the rule's
+                    // modifiers, to this list AHEAD of the rule itself.
+                    if wire_rule.exclude_from_merge {
+                        rules.push(FilterRule::exclude(config.filename()));
+                    }
                     let directive_order = rules.iter().filter(|r| is_order_bearing(r)).count();
-                    let config = wire_rule_to_dir_merge_config(wire_rule, cvs_perishable)
-                        .with_directive_order(directive_order);
-                    merge_configs.push(config);
+                    merge_configs.push(config.with_directive_order(directive_order));
                     continue;
                 }
                 RuleType::Merge => {
@@ -736,11 +741,6 @@ fn wire_rule_to_dir_merge_config(
         config = config.with_inherit(false);
     }
 
-    // `e` modifier: exclude the merge file itself from transfer
-    if wire_rule.exclude_from_merge {
-        config = config.with_exclude_self(true);
-    }
-
     // `s` modifier: sender-side only
     if wire_rule.sender_side {
         config = config.with_sender_only(true);
@@ -773,8 +773,8 @@ fn wire_rule_to_dir_merge_config(
     // tokens. Without this, `.cvsignore` lines like `one-in-one-out` would
     // be rejected by the standard merge parser and abort the sender walk.
     // Upstream's `:C` does NOT imply FILTRULE_EXCLUDE_SELF - only the
-    // explicit `e` modifier does (exclude.c:1410-1414); leave the existing
-    // `e` handling above to drive `excludes_self`.
+    // explicit `e` modifier does (exclude.c:1410-1414), which the caller
+    // registers as its own rule.
     if wire_rule.cvs_exclude {
         config = config.with_cvs_mode(true).with_inherit(false);
         if cvs_perishable {
@@ -1036,7 +1036,6 @@ mod tests {
         let config = wire_rule_to_dir_merge_config(&wire_rule, true);
         assert!(config.cvs_mode());
         assert!(!config.inherits());
-        assert!(!config.excludes_self());
     }
 
     /// `-f:C` over remote shell arrives as a DirMerge wire rule with the `C`

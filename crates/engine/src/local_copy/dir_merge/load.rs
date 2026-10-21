@@ -535,6 +535,16 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         path: merge_path,
                         options: merge_options,
                     })) => {
+                        // upstream: exclude.c:1558-1572 - `e` excludes the merge
+                        // file's basename ahead of the rules it merges.
+                        if merge_options
+                            .as_ref()
+                            .is_some_and(DirMergeOptions::excludes_self)
+                        {
+                            entries.push_rule(FilterRule::exclude(filters::merge_file_basename(
+                                &merge_path.to_string_lossy(),
+                            )));
+                        }
                         let nested = if merge_path.is_absolute() {
                             merge_path
                         } else {
@@ -653,6 +663,16 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         path: merge_path,
                         options: merge_options,
                     })) => {
+                        // upstream: exclude.c:1558-1572 - `e` excludes the merge
+                        // file's basename ahead of the rules it merges.
+                        if merge_options
+                            .as_ref()
+                            .is_some_and(DirMergeOptions::excludes_self)
+                        {
+                            entries.push_rule(FilterRule::exclude(filters::merge_file_basename(
+                                &merge_path.to_string_lossy(),
+                            )));
+                        }
                         let nested = if merge_path.is_absolute() {
                             merge_path
                         } else {

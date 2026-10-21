@@ -287,10 +287,9 @@ fn parse_filter_directive_merge_with_modifiers() {
 fn parse_filter_directive_dir_merge_conflicting_modifiers_error() {
     let error = parse_filter_directive_line("dir-merge,+- rules", RuleSource::Argument)
         .expect_err("conflict");
-    assert!(
-        error
-            .to_string()
-            .contains("cannot combine '+' and '-' modifiers")
+    assert_eq!(
+        error.to_string(),
+        "invalid modifier '-' at position 11 in filter rule: dir-merge,+- rules"
     );
 }
 

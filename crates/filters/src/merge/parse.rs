@@ -270,6 +270,14 @@ fn invalid_modifier(
 pub(crate) enum ParsedLine {
     /// An ordinary rule.
     Rule(FilterRule),
+    /// A merge rule with the `e` modifier, preceded by the exclude of its own
+    /// basename.
+    SelfExcludingMerge {
+        /// The `- <basename>` exclude.
+        exclude: FilterRule,
+        /// The merge or dir-merge rule itself.
+        merge: FilterRule,
+    },
     /// A non-merge `C` rule, which stands for the CVS ignore list.
     CvsIgnore(CvsTemplate),
 }
@@ -285,6 +293,7 @@ impl ParsedLine {
     pub(crate) fn into_rules(self) -> Vec<FilterRule> {
         match self {
             Self::Rule(rule) => vec![rule],
+            Self::SelfExcludingMerge { exclude, merge } => vec![exclude, merge],
             Self::CvsIgnore(template) => crate::cvs::cvs_ignore_rules(template, true),
         }
     }
@@ -299,7 +308,17 @@ fn parsed_rule(action: ShortFormAction, mods: RuleModifiers, pattern: &str) -> P
     if mods.cvs_ignore && !action.is_merge() {
         return ParsedLine::CvsIgnore(CvsTemplate::new(action.is_include(), &mods));
     }
-    ParsedLine::Rule(apply_modifiers(mods, action.to_rule(pattern)))
+    let rule = apply_modifiers(mods, action.to_rule(pattern));
+    // upstream: exclude.c:1558-1572 - `e` adds an exclude of the merge file's
+    // basename, carrying none of the merge rule's modifiers, ahead of the
+    // merge rule itself.
+    if mods.exclude_self {
+        return ParsedLine::SelfExcludingMerge {
+            exclude: FilterRule::exclude(crate::merge_file_basename(pattern)),
+            merge: rule,
+        };
+    }
+    ParsedLine::Rule(rule)
 }
 
 /// Short-form rule action types.

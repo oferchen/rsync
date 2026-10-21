@@ -155,7 +155,9 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
                     return Some(rule);
                 }
                 // A per-directory merge is not a flat rule and has no place in
-                // this set: upstream keeps it as a `FILTRULE_PERDIR_MERGE`
+                // this set, apart from the basename exclude its `e` modifier
+                // adds ahead of it (exclude.c:1558-1572): upstream keeps it as a
+                // `FILTRULE_PERDIR_MERGE`
                 // entry that `check_filter` recurses into
                 // (exclude.c:1195-1198), holding whatever the current
                 // directory's merge file last supplied. That state lives in
@@ -166,7 +168,10 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
                 // parse time (exclude.c:1583-1590), so its contents reach this
                 // function as ordinary rules and the directive itself carries
                 // nothing further.
-                RuleType::DirMerge | RuleType::Merge => return None,
+                RuleType::DirMerge => {
+                    return crate::receiver::transfer::dir_merge_self_exclude(wire_rule);
+                }
+                RuleType::Merge => return None,
             };
 
             if wire_rule.sender_side || wire_rule.receiver_side {

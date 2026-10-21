@@ -1,7 +1,7 @@
 use super::{
     dir_merge::parse_dir_merge_directive,
     merge::{parse_merge_directive, parse_short_merge_directive_line},
-    modifiers::split_short_rule_modifiers,
+    modifiers::{split_short_rule_modifiers, table_modifiers},
     types::{FilterParseError, ParsedFilterDirective},
 };
 use filters::{CvsTemplate, FilterRule, ModifierScope, RuleModifiers, RuleSource};
@@ -13,10 +13,6 @@ use std::borrow::Cow;
 /// the four side-bound prefixes (exclude.c:1345-1358 for `S`/`H`/`R`/`P`, and
 /// the long keywords that map onto them), which refuse a further `s`, `r` or
 /// `C` (exclude.c:1402-1404, 1423-1432).
-///
-/// The refusal is upstream's `invalid modifier` (exclude.c:1371-1380), with the
-/// byte and its position crossing `rule_detail` and the rule crossing
-/// `rule_text`, so a merge file's line is never echoed.
 fn parse_rule_modifiers(
     modifiers: &str,
     text: &str,
@@ -27,14 +23,7 @@ fn parse_rule_modifiers(
         merge_file: false,
         prefix_specifies_side,
     };
-    filters::parse_rule_modifiers_in(text, modifiers, scope).map_err(|invalid| {
-        let detail = format!(" '{}' at position {}", invalid.ch, invalid.offset);
-        FilterParseError::new(format!(
-            "invalid modifier{} in filter rule: {}",
-            source.rule_detail(&detail),
-            source.rule_text(text)
-        ))
-    })
+    table_modifiers(modifiers, text, source, scope)
 }
 
 /// Builds what a rule parses to once its modifiers are known: the rule itself,
