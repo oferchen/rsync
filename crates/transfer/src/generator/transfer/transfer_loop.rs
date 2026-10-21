@@ -469,11 +469,9 @@ impl GeneratorContext {
         itemize: &mut Option<&mut dyn super::super::super::ItemizeCallback>,
     ) -> io::Result<TransferLoopResult> {
         use super::super::super::shared::TransferDeadline;
-        use super::super::delta::{
-            generate_delta_from_signature, generate_delta_from_signature_chunked,
-            updating_basis_file,
-        };
-        use super::super::protocol_io::{read_signature_blocks_keepalive, signature_read_lull_mod};
+        use super::super::delta::updating_basis_file;
+        use super::super::delta_context::SenderDeltaContext;
+        use super::super::protocol_io::signature_read_lull_mod;
 
         // upstream: sender.c:507-508 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
@@ -519,6 +517,9 @@ impl GeneratorContext {
         let mut created_stats = protocol::stats::CreatedStats::new();
         // upstream: io.c IO_BUFFER_SIZE (32KB)
         let mut stream_buf = Vec::with_capacity(32 * 1024);
+        // upstream: match.c:78-96 - the delta scan's buffers and hash index
+        // persist across files; each file resets and refills them.
+        let mut delta_ctx = SenderDeltaContext::default();
 
         // upstream: token.c creates a single compression context for the entire
         // transfer session. For zstd, the CCtx must persist across file boundaries
@@ -1053,22 +1054,18 @@ impl GeneratorContext {
             // (redo pass) clears append_mode (sender.c:617), so the signature
             // blocks are present and must be read like any full transfer.
             let is_append = self.config.flags.append && !is_resend;
-            let sig_blocks = if is_append {
-                Vec::new()
-            } else {
+            if !is_append {
                 // upstream: sender.c:341 receive_sums() - on protocols below 31 the
                 // sender pokes a keepalive every `allowed_lull * 5` blocks so a
                 // large/slow checksum read does not trip the peer's --timeout.
                 // Newer protocols multiplex the stream and set lull_mod = 0.
                 let lull_mod = signature_read_lull_mod(self.protocol, writer.allowed_lull());
-                let blocks =
-                    read_signature_blocks_keepalive(&mut *reader, &sum_head, lull_mod, || {
-                        writer.maybe_send_keepalive().map(|_| ())
-                    })?;
+                delta_ctx.receive_sums(&mut *reader, &sum_head, lull_mod, || {
+                    writer.maybe_send_keepalive().map(|_| ())
+                })?;
                 let bytes_per_block = 4 + sum_head.s2length as u64;
                 self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
-                blocks
-            };
+            }
 
             let block_length = sum_head.blength;
             let strong_sum_length = sum_head.s2length as u8;
@@ -1227,7 +1224,6 @@ impl GeneratorContext {
 
                 let config = DeltaGeneratorConfig {
                     block_length,
-                    sig_blocks,
                     strong_sum_length,
                     protocol: self.protocol,
                     negotiated_algorithms: self.negotiated_algorithms.as_ref(),
@@ -1258,14 +1254,14 @@ impl GeneratorContext {
                     // through read(2), where a concurrent truncation is a read
                     // error, never SIGBUS. upstream: fileio.c map_ptr() reads.
                     Some(mmap) => {
-                        let (script, counters) = generate_delta_from_signature_chunked(
+                        let (script, counters) = delta_ctx.generate_chunked(
                             mmap.as_slice(),
                             config,
                             cores.min(PARALLEL_DELTA_MAX_CHUNKS),
                         )?;
                         (script.into_owned(), counters)
                     }
-                    None => generate_delta_from_signature(
+                    None => delta_ctx.generate(
                         scan_source
                             .as_mut()
                             .expect("sequential reader opened when mmap is absent"),
@@ -1319,7 +1315,8 @@ impl GeneratorContext {
                     ));
                     let result = write_delta_with_inline_checksum(
                         &mut cw,
-                        &wire_ops,
+                        wire_ops,
+                        delta_ctx.copy_buf(),
                         if use_compression {
                             token_encoder.as_mut()
                         } else {
