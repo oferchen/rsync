@@ -563,3 +563,66 @@ fn remote_batch_header_records_iconv() {
         assert_eq!(header[..4], 0x281i32.to_le_bytes(), "{name}: stream flags");
     }
 }
+
+/// upstream: batch.c:217-229 write_filter_rules() refuses a pattern holding
+/// a newline only after writing the here-doc opener and the rules before it,
+/// then exits RERR_SYNTAX; start_write_batch() never runs, so the batch file
+/// holds just the stream flags written at open (main.c:1944). A NUL-separated
+/// `--exclude-from` is how a newline reaches a pattern.
+#[test]
+fn newline_rule_leaves_upstreams_partial_script() {
+    let args: [&OsStr; 6] = [
+        "-r".as_ref(),
+        "-0".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "--exclude-from=rules".as_ref(),
+        "src/".as_ref(),
+        "dst/".as_ref(),
+    ];
+    let prepare = |fx: &Fixture| {
+        fs::write(fx.root.join("rules"), b"- *.log\0- x\n#E#\ntouch PWNED\0").unwrap();
+    };
+    let (oc, upstream) = record_both_with(&args, prepare);
+    let pinned: &[u8] =
+        b"ARGV0 --filter='._-' '-r' '-0' --read-batch='bf' ${1:-'dst/'} <<'#E#'\n- *.log\0";
+    for (name, rec) in std::iter::once(("oc", &oc)).chain(upstream.iter().map(|r| ("upstream", r)))
+    {
+        assert_eq!(
+            rec.output.status.code(),
+            Some(1),
+            "{name}: {:?}",
+            rec.output
+        );
+        assert!(
+            String::from_utf8_lossy(&rec.output.stderr).contains(
+                "cannot write a filter rule containing a newline to the batch replay script"
+            ),
+            "{name}: {:?}",
+            rec.output
+        );
+        assert_eq!(
+            rec.batch.as_ref().map(Vec::len),
+            Some(4),
+            "{name}: only the stream flags"
+        );
+    }
+    assert_scripts(&oc, upstream.as_ref(), pinned, "newline rule");
+}
+
+/// upstream: batch.c:255-258 - the `.sh` open error names the file through
+/// full_fname(), which prefixes a relative name with the working directory.
+#[test]
+fn script_open_error_names_the_full_path() {
+    for (name, bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&bin, &["-r", "--write-batch=nodir/bf", "src/", "dst/"]);
+        let expected = format!(
+            "Batch file \"{}/nodir/bf.sh\" open error",
+            fs::canonicalize(&fx.root).unwrap().display()
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(&expected),
+            "{name}: expected {expected:?} in {out:?}"
+        );
+    }
+}

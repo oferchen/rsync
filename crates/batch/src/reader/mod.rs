@@ -152,8 +152,8 @@ impl BatchReader {
             // upstream testsuite) matches on this text.
             let file = crate::operator_file::open_read(path).map_err(|e| {
                 BatchError::BatchFileUnusable(format!(
-                    "Batch file \"{}\" open error: {}",
-                    path.display(),
+                    "Batch file {} open error: {}",
+                    logging::full_fname(path),
                     logging::upstream_errno_text(&e)
                 ))
             })?;
@@ -202,9 +202,10 @@ impl BatchReader {
         if std::os::unix::fs::FileTypeExt::is_fifo(&meta.file_type()) {
             return Ok(BatchInput::Fifo);
         }
+        // upstream: batch.c:279-280 - full_fname(batch_name).
         Err(BatchError::BatchFileUnusable(format!(
-            "Batch file \"{}\" is neither a regular file nor a FIFO",
-            path.display()
+            "Batch file {} is neither a regular file nor a FIFO",
+            logging::full_fname(path)
         )))
     }
 

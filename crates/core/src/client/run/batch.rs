@@ -57,8 +57,7 @@ pub(crate) fn handle_batch_read(
 ///
 /// The writer creates the `.sh` and the batch file now and writes the script
 /// once the protocol is set up, as upstream's `open_batch_files()` and
-/// `write_batch_shell_file()` do. The filter here-doc is resolved first, so a
-/// rule that cannot be listed is refused before either file exists.
+/// `write_batch_shell_file()` do.
 ///
 /// upstream: batch.c:255-258, 269-272 - a `.sh` open failure exits
 /// `RERR_FILESELECT` (3), a batch file open failure `RERR_FILEIO` (11).
@@ -68,7 +67,7 @@ pub(crate) fn create_batch_writer(
 ) -> Result<Arc<Mutex<BatchWriter>>, ClientError> {
     let writer_cfg = batch_cfg
         .clone()
-        .with_filter_rules(batch_filter_text(config.filter_rules())?)
+        .with_filter_rules(batch_filter_lines(config.filter_rules())?)
         // upstream: batch.c:217,219-220 - the filter heredoc honors eol_nulls
         // (--from0), NUL-terminating rules and appending ";\n".
         .with_eol_nulls(config.from0());
@@ -144,15 +143,20 @@ pub(crate) fn write_batch_header(
             rsync_error!(1, "batch writer lock poisoned").with_role(Role::Client),
         )
     })?;
-    if let Err(e) = w.write_header(batch_flags) {
-        let msg = format!("failed to write batch header: {e}");
-        return Err(ClientError::new(
-            1,
-            rsync_error!(1, "{}", msg).with_role(Role::Client),
-        ));
-    }
-
-    Ok(())
+    w.write_header(batch_flags).map_err(|e| match e {
+        // upstream: batch.c:226-229 - the bare refusal, RERR_SYNTAX.
+        engine::batch::BatchError::FilterRuleRefused(msg) => {
+            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+        }
+        // upstream: batch.c:343-346 - a `.sh` write error is RERR_FILEIO.
+        engine::batch::BatchError::BatchFileUnusable(msg) => {
+            ClientError::new(11, rsync_error!(11, "{}", msg).with_role(Role::Client))
+        }
+        other => {
+            let msg = format!("failed to write batch header: {other}");
+            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+        }
+    })
 }
 
 /// Flushes the batch file, optionally appending the stats trailer first. The
@@ -240,10 +244,10 @@ pub(crate) fn finalize_batch(
     Ok(())
 }
 
-/// Lists the filter rules the `.sh` here-doc replays, one `\n`-terminated
-/// line per rule (the script writer swaps in NUL under `--from0`).
+/// Lists the filter rules the `.sh` here-doc replays, one entry per rule
+/// without its terminator.
 ///
-/// Each line is what upstream's `write_filter_rules()` writes for one
+/// Each entry is what upstream's `write_filter_rules()` writes for one
 /// `filter_list` entry: `get_rule_prefix(ent, "- ", 0, ..)`, the pattern and
 /// a `/` for a directory rule. The rules are first projected onto the list
 /// upstream holds when `setup_protocol()` writes the script:
@@ -255,18 +259,14 @@ pub(crate) fn finalize_batch(
 ///   basename ahead of the merge rule, which loses the modifier
 ///   (exclude.c:1558-1572).
 ///
-/// A pattern containing a newline is refused rather than written. Each rule is
-/// one here-doc line, so an embedded newline lets a crafted pattern - from a
-/// dir-merge or `--exclude-from` file in an untrusted tree - forge the `#E#`
-/// terminator on a line of its own and inject shell commands into the
-/// generated replay script.
+/// A pattern containing a newline is kept here: the script writer refuses it
+/// where upstream does, after writing the rules before it.
 ///
 /// # Upstream Reference
 ///
-/// - `batch.c:213-240`: `write_filter_rules()`; the newline refusal exits
-///   `RERR_SYNTAX`.
+/// - `batch.c:213-240`: `write_filter_rules()`.
 /// - `exclude.c:1824-1885`: `get_rule_prefix()` with `for_xfer` clear.
-fn batch_filter_text(rules: &[FilterRuleSpec]) -> Result<Vec<u8>, ClientError> {
+fn batch_filter_lines(rules: &[FilterRuleSpec]) -> Result<Vec<Vec<u8>>, ClientError> {
     let listed: Vec<FilterRuleSpec> = rules
         .iter()
         .filter(|rule| !rule.is_cvs_origin())
@@ -293,19 +293,10 @@ fn batch_filter_text(rules: &[FilterRuleSpec]) -> Result<Vec<u8>, ClientError> {
         }
     }
 
-    let mut text = Vec::new();
-    for rule in &filter_list {
-        if rule.pattern.as_encoded_bytes().contains(&b'\n') {
-            let msg = "cannot write a filter rule containing a newline to the batch replay script";
-            return Err(ClientError::new(
-                1,
-                rsync_error!(1, "{}", msg).with_role(Role::Client),
-            ));
-        }
-        text.extend_from_slice(&protocol::filters::serialize_rule_local(rule));
-        text.push(b'\n');
-    }
-    Ok(text)
+    Ok(filter_list
+        .iter()
+        .map(protocol::filters::serialize_rule_local)
+        .collect())
 }
 
 /// Replay a batch file by driving the real receiver pipeline over the
@@ -1347,13 +1338,12 @@ mod tests {
         assert!(!recorded_flags(true, 28).do_compression);
     }
 
-    /// Splits [`batch_filter_text`] into its lines for comparison.
+    /// [`batch_filter_lines`] as text for comparison.
     fn listed(rules: &[FilterRuleSpec]) -> Vec<String> {
-        let text = batch_filter_text(rules).expect("rules must serialize");
-        String::from_utf8(text)
-            .expect("ascii test rules")
-            .lines()
-            .map(str::to_owned)
+        batch_filter_lines(rules)
+            .expect("rules must serialize")
+            .into_iter()
+            .map(|line| String::from_utf8(line).expect("ascii test rules"))
             .collect()
     }
 
@@ -1435,7 +1425,14 @@ mod tests {
             FilterRuleSpec::include("*.txt"),
             FilterRuleSpec::exclude("*"),
         ];
-        let filter_text = batch_filter_text(&rules).expect("rules must serialize");
+        let filter_text: Vec<u8> = batch_filter_lines(&rules)
+            .expect("rules must serialize")
+            .into_iter()
+            .flat_map(|mut line| {
+                line.push(b'\n');
+                line
+            })
+            .collect();
 
         let result = engine::batch::script::generate_script_with_filters(
             &batch_cfg,
@@ -1489,19 +1486,19 @@ mod tests {
         );
     }
 
-    /// A filter pattern carrying a newline must abort `--write-batch` with
-    /// upstream's RERR_SYNTAX refusal and leave no replay script behind.
+    /// A filter pattern carrying a newline aborts `--write-batch` with
+    /// upstream's RERR_SYNTAX refusal at the point upstream refuses it: the
+    /// `.sh` already holds the command, the here-doc opener and the rules
+    /// before the bad one, and the batch file holds only its stream flags.
     ///
     /// Each rule is one line of the `<<'#E#'` here-doc, so a pattern such as
     /// `"x\n#E#\ntouch PWNED"` - reachable from a dir-merge or `--exclude-from`
     /// file in an untrusted tree - would end the here-doc early and append a
-    /// shell command that runs when the operator executes `BATCH.sh`. The rule
-    /// sits after a benign one so a check that only inspects the first rule, or
-    /// writes the good rules before refusing, is caught too.
+    /// shell command; the refusal keeps it out of the script entirely.
     ///
-    /// upstream: batch.c:222-231 write_filter_rules() - rprintf + RERR_SYNTAX.
+    /// upstream: batch.c:217-229 write_filter_rules(), main.c:1944.
     #[test]
-    fn create_batch_writer_refuses_newline_filter_rule_and_writes_no_script() {
+    fn write_batch_header_refuses_newline_rule_like_upstream() {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("inject.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
@@ -1513,8 +1510,10 @@ mod tests {
             .batch_config(Some(batch_cfg.clone()))
             .build();
 
-        let err = create_batch_writer(&batch_cfg, &config)
+        let writer_arc = create_batch_writer(&batch_cfg, &config).unwrap();
+        let err = write_batch_header(&writer_arc, &config)
             .expect_err("a newline-bearing filter pattern must be refused");
+        drop(writer_arc);
 
         assert_eq!(err.exit_code(), 1, "upstream exits RERR_SYNTAX (1)");
         let rendered = err.message().to_string();
@@ -1524,9 +1523,16 @@ mod tests {
             ),
             "refusal must carry upstream's text: {rendered}"
         );
+        let script = std::fs::read(batch_cfg.script_file_path()).unwrap();
         assert!(
-            !std::path::Path::new(&batch_cfg.script_file_path()).exists(),
-            "no replay script may be written once the rule set is refused"
+            script.ends_with(b" ${1:-.} <<'#E#'\n- *.log\n"),
+            "partial script must stop before the refused rule: {:?}",
+            String::from_utf8_lossy(&script)
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap().len(),
+            4,
+            "only the stream flags"
         );
     }
 

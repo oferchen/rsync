@@ -53,9 +53,10 @@ impl BatchWriter {
         let file =
             crate::operator_file::create_write(batch_path, crate::operator_file::BATCH_FILE_MODE)
                 .map_err(|e| {
+                // upstream: batch.c:269-272 - full_fname(batch_name).
                 BatchError::BatchFileUnusable(format!(
-                    "Batch file \"{}\" open error: {}",
-                    batch_path.display(),
+                    "Batch file {} open error: {}",
+                    logging::full_fname(batch_path),
                     logging::upstream_errno_text(&e)
                 ))
             })?;
@@ -77,13 +78,14 @@ impl BatchWriter {
         &self.stream_flags
     }
 
-    /// Write the batch header with stream flags, then the `.sh` replay script.
+    /// Write the batch header and the `.sh` replay script, in upstream's
+    /// order: the stream flags (`main.c:1944 write_stream_flags()`), the
+    /// script (`compat.c:838-839 write_batch_shell_file()`), then the
+    /// protocol fields (`io.c:2747-2763 start_write_batch()`).
     ///
-    /// Called once the protocol is set up, mirroring upstream, where
-    /// `setup_protocol()` writes the script (`compat.c:838-839`) and
-    /// `start_write_batch()` the protocol fields (`io.c:2747-2763`): the
-    /// script's `--filter`/`--exclude-from` choice depends on the negotiated
-    /// protocol.
+    /// The script depends on the negotiated protocol (its `--filter` vs
+    /// `--exclude-from` choice), and a script refusal stops before the
+    /// protocol fields, leaving the same 4-byte batch upstream leaves.
     pub fn write_header(&mut self, flags: BatchFlags) -> BatchResult<()> {
         if self.header_written {
             return Err(BatchError::Io(io::Error::new(
@@ -97,24 +99,33 @@ impl BatchWriter {
         header.stream_flags = flags;
         self.stream_flags = flags;
 
-        if let Some(ref mut writer) = self.batch_file {
-            header.write_to(writer).map_err(|e| {
-                BatchError::Io(io::Error::new(
-                    e.kind(),
-                    format!("Failed to write batch header: {e}"),
-                ))
-            })?;
-            self.header_written = true;
-        } else {
-            return Err(BatchError::Io(io::Error::other("Batch file not open")));
-        }
-        self.write_script()
+        let header_error = |e: io::Error| {
+            BatchError::Io(io::Error::new(
+                e.kind(),
+                format!("Failed to write batch header: {e}"),
+            ))
+        };
+        let writer = self
+            .batch_file
+            .as_mut()
+            .ok_or_else(|| BatchError::Io(io::Error::other("Batch file not open")))?;
+        header.write_stream_flags(writer).map_err(header_error)?;
+        self.write_script()?;
+        let writer = self
+            .batch_file
+            .as_mut()
+            .ok_or_else(|| BatchError::Io(io::Error::other("Batch file not open")))?;
+        header.write_protocol_fields(writer).map_err(header_error)?;
+        self.header_written = true;
+        Ok(())
     }
 
     /// Write and close the `.sh` companion created by [`BatchWriter::new`].
     ///
-    /// upstream: batch.c:343-346 - a write failure is `rsyserr(FERROR, errno,
-    /// "Batch file %s.sh write error", ...)` and `exit_cleanup(RERR_FILEIO)`.
+    /// upstream: batch.c:226-229 - a filter rule containing a newline is
+    /// refused (`RERR_SYNTAX`) after the script so far is written;
+    /// batch.c:343-346 - a write failure is `rsyserr(FERROR, errno, "Batch
+    /// file %s.sh write error", ...)` and `exit_cleanup(RERR_FILEIO)`.
     fn write_script(&mut self) -> BatchResult<()> {
         let Some(mut file) = self.script_file.take() else {
             return Ok(());
@@ -128,6 +139,13 @@ impl BatchWriter {
         )
         .and_then(|()| file.flush())
         .map_err(|e| {
+            if e.get_ref()
+                .is_some_and(|inner| inner.is::<crate::script::RuleRefused>())
+            {
+                return BatchError::FilterRuleRefused(
+                    crate::script::NEWLINE_RULE_REFUSAL.to_owned(),
+                );
+            }
             BatchError::BatchFileUnusable(format!(
                 "Batch file {}.sh write error: {}",
                 self.config.batch_path,

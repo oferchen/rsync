@@ -422,12 +422,12 @@ pub struct BatchConfig {
     /// of them (`batch.c:336-340`, `cooked_argv[cooked_argc - 1]`).
     pub operands: Vec<OsString>,
 
-    /// The filter rules the `.sh` here-doc replays, one `\n`-terminated rule
-    /// per line; empty when there are none.
+    /// The filter rules the `.sh` here-doc replays, one entry per rule
+    /// without its terminator; empty when there are none.
     ///
     /// Mirrors the `filter_list` that upstream `batch.c:write_filter_rules()`
     /// lists while `setup_protocol()` writes the script (`compat.c:838`).
-    pub filter_rules: Vec<u8>,
+    pub filter_rules: Vec<Vec<u8>>,
 
     /// Data-stream-affecting options active during the current `--read-batch`
     /// invocation.
@@ -658,8 +658,8 @@ impl BatchConfig {
         self
     }
 
-    /// Set the filter rules the `.sh` here-doc replays: raw bytes, one
-    /// `\n`-terminated rule per line, so a non-UTF-8 pattern survives.
+    /// Set the filter rules the `.sh` here-doc replays: raw bytes, one entry
+    /// per rule, so a non-UTF-8 pattern survives.
     ///
     /// # Examples
     ///
@@ -667,11 +667,11 @@ impl BatchConfig {
     /// use batch::{BatchConfig, BatchMode};
     ///
     /// let config = BatchConfig::new(BatchMode::Write, "/tmp/batch".to_string(), 31)
-    ///     .with_filter_rules(b"- *.tmp\n".to_vec());
+    ///     .with_filter_rules(vec![b"- *.tmp".to_vec()]);
     ///
-    /// assert_eq!(config.filter_rules, b"- *.tmp\n");
+    /// assert_eq!(config.filter_rules, vec![b"- *.tmp".to_vec()]);
     /// ```
-    pub fn with_filter_rules(mut self, rules: Vec<u8>) -> Self {
+    pub fn with_filter_rules(mut self, rules: Vec<Vec<u8>>) -> Self {
         self.filter_rules = rules;
         self
     }

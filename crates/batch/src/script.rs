@@ -28,14 +28,18 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 /// Generate a shell script for replaying a batch file with optional filter rules.
 ///
 /// Creates the `.sh` companion (see [`create_script_file`]) and writes it
-/// with [`write_script`].
+/// with [`write_script`]. `filter_rules` is newline-separated rule text.
 pub fn generate_script_with_filters(
     config: &BatchConfig,
     filter_rules: Option<&[u8]>,
     destination: Option<&OsStr>,
 ) -> BatchResult<()> {
+    let rules: Option<Vec<Vec<u8>>> = filter_rules.map(|text| {
+        let body = text.strip_suffix(b"\n").unwrap_or(text);
+        body.split(|&b| b == b'\n').map(<[u8]>::to_vec).collect()
+    });
     let mut file = create_script_file(config)?;
-    write_script(&mut file, config, filter_rules, destination)?;
+    write_script(&mut file, config, rules.as_deref(), destination)?;
     file.flush()?;
     Ok(())
 }
@@ -47,7 +51,7 @@ pub fn generate_script_with_filters(
 /// batch file itself. Passing the mode to the create is what makes the script
 /// executable; upstream never chmods afterwards, so an existing file keeps
 /// whatever mode it had. A failure is `rsyserr(FERROR, errno, "Batch file %s
-/// open error", ...)` and `exit_cleanup(RERR_FILESELECT)`.
+/// open error", full_fname(filename))` and `exit_cleanup(RERR_FILESELECT)`.
 pub(crate) fn create_script_file(config: &BatchConfig) -> BatchResult<File> {
     let script_path = config.script_file_path();
     crate::operator_file::create_write(
@@ -56,7 +60,8 @@ pub(crate) fn create_script_file(config: &BatchConfig) -> BatchResult<File> {
     )
     .map_err(|e| {
         BatchError::ScriptFileUnusable(format!(
-            "Batch file \"{script_path}\" open error: {}",
+            "Batch file {} open error: {}",
+            logging::full_fname(std::path::Path::new(&script_path)),
             logging::upstream_errno_text(&e)
         ))
     })
@@ -67,8 +72,8 @@ pub(crate) fn create_script_file(config: &BatchConfig) -> BatchResult<File> {
 /// When `filter_rules` is `Some`, the script includes `--filter=._-` (protocol
 /// 29+) or `--exclude-from=-` (older protocols) and appends the rules as a
 /// heredoc so that the replay applies the same filters used during batch
-/// creation. The rules are raw bytes, one newline-terminated rule per line, so
-/// a non-UTF-8 pattern reaches the script unchanged.
+/// creation. Each rule is raw bytes, so a non-UTF-8 pattern reaches the script
+/// unchanged.
 ///
 /// When `destination` is `Some`, it is embedded as the fallback in the
 /// `${1:-<dest>}` placeholder so that `./BATCH.sh` (invoked without
@@ -89,7 +94,7 @@ pub(crate) fn create_script_file(config: &BatchConfig) -> BatchResult<File> {
 pub(crate) fn write_script<W: Write>(
     out: &mut W,
     config: &BatchConfig,
-    filter_rules: Option<&[u8]>,
+    filter_rules: Option<&[Vec<u8>]>,
     destination: Option<&OsStr>,
 ) -> io::Result<()> {
     // upstream: batch.c:297 - write_arg(raw_argv[0]) - the exact binary the
@@ -148,27 +153,53 @@ fn write_opt<W: Write>(out: &mut W, opt: &[u8], arg: &[u8]) -> io::Result<()> {
     out.write_all(&shell_quote(arg))
 }
 
+/// The refusal upstream prints for a filter pattern containing a newline.
+///
+/// upstream: batch.c:226-229 write_filter_rules()
+pub const NEWLINE_RULE_REFUSAL: &str =
+    "cannot write a filter rule containing a newline to the batch replay script";
+
+/// Marks the [`io::Error`] [`write_script`] returns when it refuses a rule, so
+/// the writer can report it with upstream's bare text and exit code.
+#[derive(Debug)]
+pub(crate) struct RuleRefused;
+
+impl std::fmt::Display for RuleRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(NEWLINE_RULE_REFUSAL)
+    }
+}
+
+impl std::error::Error for RuleRefused {}
+
 /// Write the trailing filter-rule heredoc into the replay script.
 ///
-/// Mirrors upstream `batch.c:213-240 write_filter_rules()`. Rules arrive
-/// newline-terminated; when `eol_nulls` is set (`--from0` / `-0`) each rule is
-/// instead terminated by a NUL byte and the whole block is followed by a
-/// trailing `;\n`, matching upstream's `eol_nulls` branch byte-for-byte so the
-/// replayed `--read-batch` parses the rules the same way the original run did.
+/// Mirrors upstream `batch.c:213-240 write_filter_rules()`: each rule is
+/// followed by `\n`, or by a NUL under `eol_nulls` (`--from0` / `-0`) with a
+/// trailing `;\n` after the block. A rule containing a newline could forge
+/// the `#E#` terminator, so it is refused with [`RuleRefused`] at the point
+/// upstream refuses it - after the rules before it are already written,
+/// leaving the same partial script upstream leaves.
 ///
 /// # Upstream Reference
 ///
 /// - `batch.c:217`: `write_sbuf(fd, " <<'#E#'\n")`.
+/// - `batch.c:226-229`: the newline refusal, `exit_cleanup(RERR_SYNTAX)`.
 /// - `batch.c:231-235`: per-rule terminator (`0` when `eol_nulls`, else `\n`).
 /// - `batch.c:237-238`: trailing `";\n"` after NUL-terminated rules.
 /// - `batch.c:239`: closing `#E#` delimiter.
-fn write_filter_heredoc<W: Write>(out: &mut W, rules: &[u8], eol_nulls: bool) -> io::Result<()> {
+fn write_filter_heredoc<W: Write>(
+    out: &mut W,
+    rules: &[Vec<u8>],
+    eol_nulls: bool,
+) -> io::Result<()> {
     // upstream: batch.c:217 write_sbuf(fd, " <<'#E#'\n")
     out.write_all(b" <<'#E#'\n")?;
-    let body = rules.strip_suffix(b"\n").unwrap_or(rules);
-    // upstream: batch.c:231-235 - NUL terminates each rule under eol_nulls.
     let terminator = if eol_nulls { 0 } else { b'\n' };
-    for rule in body.split(|&b| b == b'\n') {
+    for rule in rules {
+        if rule.contains(&b'\n') {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, RuleRefused));
+        }
         out.write_all(rule)?;
         out.write_all(&[terminator])?;
     }
