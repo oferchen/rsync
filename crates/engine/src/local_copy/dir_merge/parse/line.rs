@@ -136,34 +136,6 @@ fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
 /// is reported as an unknown rule.
 const CLEAR_KEYWORD: &str = "clear";
 
-/// Reports whether `token` names a directive whose pattern arrives as the next
-/// whitespace-delimited word in a word-split filter file.
-///
-/// ⚠ This table has NO upstream counterpart, and it is not a reconstruction of
-/// one. Upstream's word-split *file reader* ends every token at the first
-/// whitespace before any keyword parsing runs (exclude.c:1772,
-/// `if (word_split && isspace(ch)) break;`), so `exclude foo` in a `merge,w`
-/// file is two tokens and the bare `exclude` is a fatal
-/// `unexpected end of filter rule`. MEASURED against rsync 3.5.0: that input
-/// exits 1, while `exclude_foo` excludes `foo` and exits 0.
-///
-/// oc instead glues the following token on, accepting a form upstream rejects.
-/// Removing the glue is upstream parity but changes accepted input, so it is
-/// deliberately left for its own change rather than folded in here; this
-/// function only preserves the pre-existing set verbatim so the keyword-case
-/// fix stays behaviour-neutral apart from case. In particular `risk` and
-/// `per-dir` are absent because they were absent before - adding them would
-/// widen the divergence, not narrow it.
-///
-/// The case policy is shared with [`parse_filter_directive_line`]: the upstream
-/// keywords match exactly (`rule_strcmp` is `strncmp`, exclude.c:1218).
-pub(crate) fn directive_takes_argument(token: &str) -> bool {
-    matches!(
-        token,
-        "merge" | "include" | "exclude" | "show" | "hide" | "protect"
-    ) || token.starts_with("dir-merge")
-}
-
 /// The single-character rule prefixes this parser dispatches, upper case only.
 ///
 /// upstream: exclude.c:1288-1330 - the long-keyword switch matches lower-case
