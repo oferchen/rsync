@@ -165,7 +165,8 @@ impl DaemonHandle {
         }
     }
 
-    /// Pid of the daemon process.
+    /// Pid of the daemon process; only the Linux `/proc` fd audit needs it.
+    #[cfg(target_os = "linux")]
     pub(super) fn pid(&self) -> u32 {
         self.pid.unsigned_abs()
     }
