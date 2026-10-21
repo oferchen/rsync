@@ -115,6 +115,8 @@ def _targeted(have: set[str]) -> list[Cell]:
             fixture="nonutf8", opts=("-a",))
         add(v, case="non-utf8", transport="daemon", direction="push", role="oc-server",
             fixture="nonutf8", opts=("-a",))
+        add(v, case="non-utf8", transport="rsh", direction="pull", role="oc-server",
+            fixture="nonutf8", opts=("-a",))
         add(v, case="copy-unsafe-links", transport="rsh", direction="pull", role="oc-server",
             fixture="symlinks", opts=("-a", "--copy-unsafe-links"))
         add(v, case="append-longer-dest", transport="rsh", direction="push", role="oc-server",
@@ -367,6 +369,11 @@ def build_fixtures(root: Path) -> None:
     _write(n / b"src/f\xef".decode("utf-8", "surrogateescape"), "f\n")
     _write(n / b"src/g\xef".decode("utf-8", "surrogateescape"), "g\n")
     _write(n / "src/ok", "ok\n")
+    # Sibling dirs that differ only in an invalid byte: INC_RECURSE must keep
+    # their sub-lists apart (a lossy name key merges or loses them).
+    _write(n / b"src/d\xfe/b".decode("utf-8", "surrogateescape"), "fe\n")
+    _write(n / b"src/d\xff/a".decode("utf-8", "surrogateescape"), "ff\n")
+    _write(n / b"src/d\xff/sub/x\xff".decode("utf-8", "surrogateescape"), "ffsub\n")
     fx["nonutf8"] = n
 
     a = root / "append"
