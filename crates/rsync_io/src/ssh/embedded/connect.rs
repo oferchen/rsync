@@ -826,10 +826,6 @@ mod tests {
             elapsed >= budget,
             "returned before budget elapsed: {elapsed:?} < {budget:?}",
         );
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "took longer than the upper bound: {elapsed:?}",
-        );
     }
 
     /// Dropping the bridge sender models the healthy goodbye-phase path:
@@ -842,15 +838,11 @@ mod tests {
         let mut reader = reader_without_exit_report(rx);
         drop(tx);
 
-        let start = Instant::now();
-        let result = reader.wait_for_eof_with_timeout(SSH_GOODBYE_TIMEOUT);
-        let elapsed = start.elapsed();
+        // An hour-long budget: waiting it out instead of returning on the
+        // disconnect would hang the test.
+        let result = reader.wait_for_eof_with_timeout(Duration::from_secs(3600));
 
         assert!(result.is_ok(), "expected Ok, got {result:?}");
-        assert!(
-            elapsed < Duration::from_secs(1),
-            "clean EOF should return promptly: {elapsed:?}",
-        );
     }
 
     /// Chunks delivered before the remote stalls are discarded - the

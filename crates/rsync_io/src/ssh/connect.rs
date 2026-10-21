@@ -497,8 +497,8 @@ mod tests {
     }
 
     /// Network-touching smoke test: connect to a deliberately unreachable
-    /// address with a tight watchdog and confirm we surface an
-    /// [`io::ErrorKind::TimedOut`] within ~2x the configured timeout.
+    /// address with a tight watchdog and confirm the watchdog, not ssh's own
+    /// failure, ended the attempt.
     ///
     /// Gated behind `OC_RSYNC_SSH_NET=1` because it requires (a) a working
     /// `ssh` binary on `PATH` and (b) the freedom to issue an outbound
@@ -524,19 +524,12 @@ mod tests {
             .with_remote_command(["true"]);
 
         // RFC 5737 TEST-NET-1 - guaranteed unroutable for documentation use.
-        let start = std::time::Instant::now();
         let mut connection = SshConnection::connect_with_config("nobody@192.0.2.1", &config)
             .expect("spawn ssh subprocess");
 
         // Drive the watchdog: read on the connection to surface TimedOut.
         let mut buf = [0u8; 1];
         let read_result = std::io::Read::read(&mut connection, &mut buf);
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed < timeout * 4,
-            "watchdog should fire within ~2x timeout, took {elapsed:?}"
-        );
         match read_result {
             Err(err) => {
                 assert!(
@@ -555,5 +548,9 @@ mod tests {
             }
             Ok(n) => panic!("unexpected {n} bytes read from unreachable host"),
         }
+        let fired = connection
+            .cancel_connect_watchdog()
+            .expect_err("the connect watchdog must have fired");
+        assert_eq!(fired.kind(), io::ErrorKind::TimedOut);
     }
 }

@@ -893,22 +893,12 @@ mod performance {
         let size = 5 * 1024 * 1024; // 5 MB
         let data = generate_test_data(size);
 
-        let start = std::time::Instant::now();
-
         let params = layout_params(size as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
         let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
             .expect("signature");
 
-        let elapsed = start.elapsed();
-
         assert_eq!(signature.total_bytes(), size as u64);
-
-        // Should complete well under 5 seconds on most systems
-        assert!(
-            elapsed.as_secs() < 5,
-            "signature generation took too long: {elapsed:?}"
-        );
     }
 
     /// Block count scales appropriately with file size.

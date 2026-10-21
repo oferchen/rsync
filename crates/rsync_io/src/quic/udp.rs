@@ -524,10 +524,9 @@ mod tests {
     fn wake_ends_a_sleep_without_yielding_a_datagram() {
         let (mut rx, waker) = UdpIo::new(bound(), 1472).expect("rx");
         waker.wake();
-        let start = std::time::Instant::now();
-        let batch = rx.recv(Some(Duration::from_secs(5))).expect("recv");
+        // No timeout: only the wake can end this wait.
+        let batch = rx.recv(None).expect("recv");
         assert!(batch.is_empty());
-        assert!(start.elapsed() < Duration::from_secs(4));
     }
 
     /// quinn-proto ends a GSO train with a short datagram whenever the last

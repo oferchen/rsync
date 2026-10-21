@@ -226,7 +226,7 @@ jobs:
         run: |
           set -euo pipefail
           printf 'Building %s binary...\n' "${{ matrix.target }}"
-          cargo build --locked --profile dist --target ${{ matrix.target }} --features openssl
+          cargo build --locked --profile dist --target ${{ matrix.target }} --features openssl,quic
 
       - name: Build .deb package
         shell: bash
@@ -340,7 +340,8 @@ jobs:
           # libacl and libattr from Alpine packages for full feature parity
           cross build \
             --profile dist \
-            --target ${{ matrix.target }}
+            --target ${{ matrix.target }} \
+            --features quic
 
       - name: Build static musl binary (OpenSSL vendored)
         shell: bash
@@ -355,7 +356,7 @@ jobs:
           cross build \
             --profile dist \
             --target ${{ matrix.target }} \
-            --features openssl-vendored
+            --features openssl-vendored,quic
 
           # Move OpenSSL binary aside, restore pure-Rust binary
           cp "target/${{ matrix.target }}/dist/oc-rsync" "/tmp/oc-rsync-openssl"
@@ -564,9 +565,13 @@ jobs:
         shell: bash
         run: echo "OC_RSYNC_PACKAGE_FEATURES=openssl-vendored" >> "$GITHUB_ENV"
 
+      # QUIC ships in every release artifact (the transport stays an opt-in
+      # `quic://` operand). Appended to whatever the OpenSSL step selected.
       - name: Build tarball
         shell: bash
-        run: cargo xtask package --tarball --tarball-target ${{ matrix.target }} --profile dist
+        run: |
+          OC_RSYNC_PACKAGE_FEATURES="${OC_RSYNC_PACKAGE_FEATURES:-} quic" \
+            cargo xtask package --tarball --tarball-target ${{ matrix.target }} --profile dist
 
       - name: Rename tarball with toolchain
         shell: bash
@@ -643,7 +648,9 @@ jobs:
         shell: pwsh
         run: |
           $env:OC_RSYNC_PACKAGE_DEFAULT_FEATURES = "0"
-          $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv xattr acl"
+          # quic: the client transport works on Windows; the daemon refuses
+          # quic directives because the QUIC listener is Unix-only.
+          $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv xattr acl quic"
           cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --profile dist
 
       - name: Rename tarball with toolchain

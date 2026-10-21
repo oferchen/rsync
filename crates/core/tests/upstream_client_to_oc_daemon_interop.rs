@@ -30,9 +30,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::Command;
-// Used only by the Unix-gated daemon tests below.
-#[cfg(unix)]
-use std::thread;
 use std::time::Duration;
 
 /// Test that oc-rsync daemon starts successfully and accepts connections.
@@ -114,19 +111,12 @@ fn test_oc_daemon_shutdown_cleanup() {
         // Daemon dropped here
     }
 
-    // Poll until OS releases the port (up to 2 seconds)
-    let start = std::time::Instant::now();
-    loop {
-        let result = TcpStream::connect(format!("127.0.0.1:{port}"));
-        if result.is_err() {
-            break; // Port is unbound - daemon cleaned up
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "port still bound after 2 seconds - daemon did not shut down"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    // `TestDaemon::drop` kills and reaps the daemon, so the kernel has
+    // already closed its listener: a connect must be refused right away.
+    assert!(
+        TcpStream::connect(format!("127.0.0.1:{port}")).is_err(),
+        "port still accepting after the daemon was reaped"
+    );
 }
 
 /// Test upstream rsync 3.4.1 client connecting to oc-rsync daemon.

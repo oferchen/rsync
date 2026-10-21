@@ -507,7 +507,7 @@ pub use macos_io::{
     open_sequential_read, set_nocache, writev_buffers,
 };
 
-pub use kqueue::{KEvent, KEventFilter, KqueueLoop, TimerSleeper, is_kqueue_available};
+pub use kqueue::{KEvent, KEventFilter, KqueueLoop, is_kqueue_available};
 
 pub use mmap_reader::MmapReader;
 pub use o_tmpfile::{

@@ -393,6 +393,12 @@ include!("tests/chunks/runtime_options_quic_cert_key_pairing.rs");
 include!("tests/chunks/runtime_options_quic_identity_resolution.rs");
 #[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_port_directive.rs");
+#[cfg(all(unix, feature = "quic"))]
+include!("tests/chunks/runtime_options_quic_retry_directive.rs");
+#[cfg(all(unix, feature = "quic"))]
+include!("tests/chunks/runtime_options_quic_address_directive.rs");
+#[cfg(feature = "quic")]
+include!("tests/chunks/runtime_options_quic_windows_refusal.rs");
 #[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_listener_enabled.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_bwlimit.rs");

@@ -229,7 +229,10 @@ pub(in crate::disk_commit) fn process_file(
     // backup must be a COPY of the pre-transfer contents taken BEFORE the first
     // write (a rename would move the very inode we are about to update). The
     // temp+rename path instead backs up at commit time (see commit_file).
-    let inplace_backup_notice = make_inplace_backup(&begin, config)?;
+    let inplace_backup_notice = match make_inplace_backup(&begin, config) {
+        Ok(notice) => notice,
+        Err(err) => return discard_file_messages(file_rx, buf_return_tx, err),
+    };
 
     // upstream: rsync.c:464 dest_mode() reads the PRE-transfer destination
     // stat. An inplace open writes through the destination itself, so capture
@@ -240,7 +243,7 @@ pub(in crate::disk_commit) fn process_file(
     let (file, mut cleanup_guard, needs_rename) = match open_output_file(&begin, config) {
         Ok(triple) => triple,
         Err(open_err) => {
-            return discard_file_on_open_failure(file_rx, buf_return_tx, open_err);
+            return discard_file_messages(file_rx, buf_return_tx, open_err);
         }
     };
     // Register the temp file with the global cleanup manager so an abort that
@@ -268,7 +271,7 @@ pub(in crate::disk_commit) fn process_file(
     // decisions; a failure warns and continues (never aborts).
     let preallocated_len = maybe_preallocate(&file, config, &begin, basis_len);
 
-    let mut output = make_writer(
+    let mut output = match make_writer(
         file,
         write_buf,
         disk_batch,
@@ -277,7 +280,10 @@ pub(in crate::disk_commit) fn process_file(
         begin.append_offset,
         begin.is_inplace,
         begin.target_size,
-    )?;
+    ) {
+        Ok(output) => output,
+        Err(err) => return discard_file_messages(file_rx, buf_return_tx, err),
+    };
 
     let mut sparse_state = if config.use_sparse {
         let mut state = SparseWriteState::default();
@@ -294,7 +300,9 @@ pub(in crate::disk_commit) fn process_file(
 
     // upstream: receiver.c:529-543 - fold the existing prefix into the
     // whole-file checksum under --append-verify before hashing the tail.
-    sum_append_prefix(config, &begin, &mut checksum_verifier)?;
+    if let Err(err) = sum_append_prefix(config, &begin, &mut checksum_verifier) {
+        return discard_file_messages(file_rx, buf_return_tx, err);
+    }
 
     let mut bytes_written: u64 = 0;
     // Literal bytes only - matched basis copies are excluded. This is upstream's
@@ -359,10 +367,17 @@ pub(in crate::disk_commit) fn process_file(
                     verifier.update(&data);
                 }
 
-                if let Some(ref mut sparse) = sparse_state {
-                    sparse.write(output.buffered_for_sparse(), &data)?;
-                } else {
-                    output.write_chunk(&data)?;
+                let written = match sparse_state {
+                    Some(ref mut sparse) => {
+                        sparse.write(output.buffered_for_sparse(), &data).map(drop)
+                    }
+                    None => output.write_chunk(&data),
+                };
+                if let Err(err) = written {
+                    let _ = buf_return_tx.try_send(data);
+                    return discard_file_messages(file_rx, buf_return_tx, err);
+                }
+                if sparse_state.is_none() {
                     touched.record(write_offset, data.len() as u64);
                 }
                 write_offset += data.len() as u64;
@@ -380,18 +395,24 @@ pub(in crate::disk_commit) fn process_file(
                 if let Some(ref mut verifier) = checksum_verifier {
                     verifier.update(&data);
                 }
-                if let Some(ref mut sparse) = sparse_state {
+                let skipped = if let Some(ref mut sparse) = sparse_state {
                     // upstream: fileio.c:298-302 skip_matched() sparse branch
                     // hands the bytes to the sparse processor (with the seek
                     // flag). Writing them through SparseWriteState is
                     // byte-identical for an in-place basis==dest update, and
                     // like upstream's seek it credits no touched blocks.
-                    sparse.skip_matched(output.buffered_for_sparse(), &data)?;
+                    sparse
+                        .skip_matched(output.buffered_for_sparse(), &data)
+                        .map(drop)
                 } else {
                     // upstream: fileio.c:304-313 skip_matched() - flush then
                     // lseek past the already-in-place bytes instead of
                     // rewriting identical data.
-                    output.skip_matched(data.len() as u64)?;
+                    output.skip_matched(data.len() as u64)
+                };
+                if let Err(err) = skipped {
+                    let _ = buf_return_tx.try_send(data);
+                    return discard_file_messages(file_rx, buf_return_tx, err);
                 }
                 write_offset += data.len() as u64;
                 bytes_written += data.len() as u64;
@@ -759,17 +780,21 @@ pub(in crate::disk_commit) fn process_whole_file(
     })
 }
 
-/// Drains a chunked file's queued channel messages after its output could not
-/// be opened, then surfaces the original open error.
+/// Drains a chunked file's remaining channel messages after a disk error, then
+/// surfaces the original error.
 ///
-/// The network thread has already lifted this file's entire delta off the wire
-/// and enqueued it as `Chunk` messages terminated by `Commit`. With no open
-/// output the disk thread cannot write them, so it recycles each chunk buffer
-/// and drops the bytes until the terminating message - the channel analog of
-/// upstream `discard_receive_data()`. This keeps the disk loop from reading the
-/// next queued `Chunk` and mis-parsing it as a "message without Begin".
+/// Every error exit taken before this file's `Commit` arrives must come through
+/// here: open, backup, writer setup, append-prefix hashing and chunk writes.
+/// The network thread keeps enqueueing the file's `Chunk` messages up to its
+/// `Commit`, so the disk thread recycles each chunk buffer and drops the bytes
+/// until the terminating message - the channel analog of upstream
+/// `discard_receive_data()`. Skipping the drain makes the disk loop answer
+/// every leftover `Chunk` with a "message without Begin" result; once the
+/// bounded result queue fills, the disk thread blocks on it while the network
+/// thread blocks on the full file queue, and the transfer stalls until the
+/// peer's idle timeout.
 ///
-/// Reaching `Commit` yields the original `open_err`, which the main-thread
+/// Reaching `Commit` yields the original error, which the main-thread
 /// [`crate::pipeline::receiver::PipelinedReceiver`] maps to a per-file partial
 /// (permission failure -> IOERR_GENERAL -> RERR_PARTIAL, exit 23) with the
 /// upstream sender warning, matching the synchronous receiver
@@ -778,10 +803,10 @@ pub(in crate::disk_commit) fn process_whole_file(
 /// signal is propagated so the disk loop exits, exactly as the write path does.
 ///
 /// upstream: receiver.c:1254-1261 - discard this file's data and continue.
-fn discard_file_on_open_failure(
+fn discard_file_messages(
     file_rx: &spsc::Receiver<FileMessage>,
     buf_return_tx: &spsc::Sender<Vec<u8>>,
-    open_err: io::Error,
+    err: io::Error,
 ) -> io::Result<CommitResult> {
     loop {
         match file_rx.recv() {
@@ -794,7 +819,7 @@ fn discard_file_on_open_failure(
                 let _ = buf_return_tx.try_send(data);
             }
             Ok(FileMessage::Commit { .. }) => {
-                return Err(open_err);
+                return Err(err);
             }
             Ok(FileMessage::Abort { reason }) => {
                 return Err(io::Error::other(reason));

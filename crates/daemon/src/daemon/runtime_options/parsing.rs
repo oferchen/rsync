@@ -194,6 +194,16 @@ impl RuntimeOptions {
             options.lock_file = Some(PathBuf::from(DEFAULT_LOCK_FILE));
         }
 
+        // The QUIC daemon listener runs in a forked front process, so it exists
+        // only on Unix. A Windows daemon refuses any QUIC directive instead of
+        // starting without the listener the operator asked for.
+        #[cfg(all(windows, feature = "quic"))]
+        if let Some(directive) = options.configured_quic_directive() {
+            return Err(config_error(format!(
+                "'{directive}' is set, but the QUIC daemon is not supported on Windows"
+            )));
+        }
+
         // QUIC listener identity is a certificate/key pair: the listener needs
         // both to present an identity, and upstream rsync-ssl keeps
         // RSYNC_SSL_CERT / RSYNC_SSL_KEY distinct (docs/design/quic-transport-

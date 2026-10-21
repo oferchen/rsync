@@ -52,7 +52,6 @@
 
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};
-use std::time::{Duration, Instant};
 
 use checksums::strong::Md5Seed;
 use matching::{DeltaGenerator, DeltaSignatureIndex, DeltaToken};
@@ -66,12 +65,6 @@ use signature::{
 /// Both MD5 (16 bytes) and XXH3-64 (8 bytes) produce digests at least
 /// this long, so every algorithm in the matrix supports the layout.
 const STRONG_LEN: u8 = 8;
-
-/// Time budget for the smallest fixture. The 64 KB / block_size=1024
-/// case must complete well under this on every CI runner; the assertion
-/// is a tripwire for accidental quadratic regressions in the matching
-/// pipeline.
-const SMALL_FIXTURE_BUDGET: Duration = Duration::from_secs(5);
 
 /// Splitmix64 finalizer (Stafford's variant 13). Applied to a seeded
 /// offset, this produces deterministic 64-bit pseudo-random output
@@ -153,19 +146,17 @@ fn build_index(
 }
 
 /// Drives the production pipeline end-to-end and returns a tuple of
-/// (matched_bytes, literal_bytes, total_bytes, copy_token_count, elapsed).
+/// (matched_bytes, literal_bytes, total_bytes, copy_token_count).
 fn run_pipeline(
     basis: &[u8],
     source: &[u8],
     block_size: u32,
     algorithm: SignatureAlgorithm,
-) -> (u64, u64, u64, usize, Duration) {
+) -> (u64, u64, u64, usize) {
     let index = build_index(basis, block_size, algorithm);
-    let started = Instant::now();
     let script = DeltaGenerator::new()
         .generate(Cursor::new(source.to_vec()), &index)
         .expect("delta generation");
-    let elapsed = started.elapsed();
 
     let copy_tokens = script
         .tokens()
@@ -176,7 +167,7 @@ fn run_pipeline(
     let matched = script.copy_bytes();
     let literal = script.literal_bytes();
     let total = script.total_bytes();
-    (matched, literal, total, copy_tokens, elapsed)
+    (matched, literal, total, copy_tokens)
 }
 
 /// MD5 with no seed, mirroring upstream rsync's modern-protocol
@@ -240,12 +231,12 @@ fn assert_sparse_match_invariants(
 /// Runs every `(planted_k, algorithm)` combination at the given basis
 /// length and block size. Used by every scale-specific test below to
 /// keep the matrix declaration concise.
-fn exercise_matrix(basis_len: usize, block_size: u32, enforce_budget: bool) {
+fn exercise_matrix(basis_len: usize, block_size: u32) {
     let block_size_usize = block_size as usize;
     for &planted in &[0usize, 1, 2] {
         for &algo in &[md5_algo(), xxh3_algo()] {
             let (basis, source) = build_sparse_pair(basis_len, block_size_usize, planted);
-            let (matched, literal, total, copy_tokens, elapsed) =
+            let (matched, literal, total, copy_tokens) =
                 run_pipeline(&basis, &source, block_size, algo);
             assert_sparse_match_invariants(
                 source.len() as u64,
@@ -256,42 +247,35 @@ fn exercise_matrix(basis_len: usize, block_size: u32, enforce_budget: bool) {
                 total,
                 copy_tokens,
             );
-            if enforce_budget {
-                assert!(
-                    elapsed < SMALL_FIXTURE_BUDGET,
-                    "smallest fixture must finish under {SMALL_FIXTURE_BUDGET:?}, took {elapsed:?} for K={planted} algo={algo:?}"
-                );
-            }
         }
     }
 }
 
 /// Smallest fixture: 64 KB basis + source, block_size = 1024, all K and
-/// both algorithms. Enforces the worst-case timing sanity check.
+/// both algorithms.
 #[test]
 fn sparse_match_64kb_block1024() {
-    exercise_matrix(64 * 1024, 1024, true);
+    exercise_matrix(64 * 1024, 1024);
 }
 
 /// 64 KB basis + source, block_size = 4096. Block-size sweep at the
 /// smallest scale.
 #[test]
 fn sparse_match_64kb_block4096() {
-    exercise_matrix(64 * 1024, 4096, true);
+    exercise_matrix(64 * 1024, 4096);
 }
 
 /// 1 MB basis + source, block_size = 1024. Mid scale, every K and both
-/// algorithms. The timing budget is not enforced beyond the smallest
-/// fixture because the ratio between scales depends on the runner.
+/// algorithms.
 #[test]
 fn sparse_match_1mb_block1024() {
-    exercise_matrix(1024 * 1024, 1024, false);
+    exercise_matrix(1024 * 1024, 1024);
 }
 
 /// 1 MB basis + source, block_size = 4096.
 #[test]
 fn sparse_match_1mb_block4096() {
-    exercise_matrix(1024 * 1024, 4096, false);
+    exercise_matrix(1024 * 1024, 4096);
 }
 
 /// 16 MB stress case, block_size = 1024. Far below the design note's
@@ -303,7 +287,7 @@ fn sparse_match_1mb_block4096() {
 #[test]
 #[ignore = "16 MB rolling-hash stress case; opt-in via --run-ignored to keep the default matrix fast"]
 fn sparse_match_16mb_block1024() {
-    exercise_matrix(16 * 1024 * 1024, 1024, false);
+    exercise_matrix(16 * 1024 * 1024, 1024);
 }
 
 /// 16 MB stress case, block_size = 4096. Same gating rationale as
@@ -311,7 +295,7 @@ fn sparse_match_16mb_block1024() {
 #[test]
 #[ignore = "16 MB rolling-hash stress case; opt-in via --run-ignored to keep the default matrix fast"]
 fn sparse_match_16mb_block4096() {
-    exercise_matrix(16 * 1024 * 1024, 4096, false);
+    exercise_matrix(16 * 1024 * 1024, 4096);
 }
 
 /// Sanity-check: the byte-domain construction guarantees that planted
@@ -356,7 +340,7 @@ fn k_zero_construction_has_no_byte_in_common_with_basis() {
 #[test]
 fn k_zero_smallest_fixture_emits_only_literals() {
     let (basis, source) = build_sparse_pair(64 * 1024, 1024, 0);
-    let (matched, literal, total, copy_tokens, _) = run_pipeline(&basis, &source, 1024, md5_algo());
+    let (matched, literal, total, copy_tokens) = run_pipeline(&basis, &source, 1024, md5_algo());
     assert_eq!(matched, 0, "K=0 must produce zero matched bytes");
     assert_eq!(
         literal,

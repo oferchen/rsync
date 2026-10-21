@@ -36,6 +36,7 @@ default = [
     "iocp",
     "async",
     "embedded-ssh",
+    "quic",
 ]
 
 # ============================================================================
@@ -130,18 +131,22 @@ openssl-vendored = ["checksums/openssl-vendored"]
 # is compiled in.
 embedded-ssh = ["cli/embedded-ssh", "core/embedded-ssh"]
 
-# Native QUIC daemon transport (oc extension, off by default). Forwards through
+# Native QUIC daemon transport (oc extension, in `default`). Forwards through
 # `cli`/`core` (the client dial and `Transport::Quic` selection) and through
-# `daemon` (the `quic cert file` / `quic key file` / `quic port` directives and
-# the UDP/QUIC listener), so `--features quic` yields a binary that can both
-# dial `quic://` and serve it - no default build is affected. Design:
+# `daemon` (the `quic *` directives and the UDP/QUIC listener), so the binary
+# can both dial `quic://` and serve it. Compiled in, it is inert at runtime: the
+# client uses it only for `quic://` or `--quic`, and the daemon listens only
+# when `quic cert file` and `quic key file` are set. Design:
 # docs/design/quic-transport-policy.md.
 #
-# Packagers: this feature is opt-in and NOT in `default`, so stock `oc-rsync`
-# binaries - including the release artefacts - do not carry QUIC. Enabling it
-# pulls a pure-Rust crypto surface (quinn-proto, rustls with the ring provider,
-# rcgen) via `rsync_io/quic`; there is no system libssl or OpenSSL requirement.
-quic = ["cli/quic", "core/quic", "daemon/quic"]
+# Packagers: it pulls a pure-Rust crypto surface (quinn-proto, rustls with the
+# ring provider, rcgen) via `rsync_io/quic`; there is no system libssl or
+# OpenSSL requirement. Build with `--no-default-features` to leave it out.
+#
+# `test-support/quic` is named here as well as in `core` and `transfer`: a
+# feature enabled only through a member's dev-dependency edge turns the cfg on
+# without its optional `rcgen`/`base64` deps in a default workspace build.
+quic = ["cli/quic", "core/quic", "daemon/quic", "test-support/quic"]
 
 # ============================================================================
 # Runtime and Debugging Features

@@ -209,8 +209,9 @@ fn byte_budget_zero_panics() {
 #[test]
 fn byte_budget_does_not_block_acquires() {
     // Even when the byte budget is fully exhausted by retained buffers,
-    // acquire must not block - it falls back to fresh allocation. Use a
-    // very tight budget and verify the acquire returns immediately.
+    // acquire must not block - it falls back to fresh allocation. The only
+    // blocking path is the memory cap, and `try_acquire_from` returns `None`
+    // exactly when `acquire_from` would wait on it.
     let pool = Arc::new(BufferPool::with_buffer_size(8, 1024).with_byte_budget(1024));
 
     // Saturate retained bytes from a worker thread (TLS slot on the worker
@@ -226,15 +227,7 @@ fn byte_budget_does_not_block_acquires() {
     .join()
     .expect("worker thread panicked");
 
-    // Acquire on the main thread. With the byte budget full and the
-    // central pool admitting at most one buffer at a time, this must
-    // still return quickly with a freshly allocated buffer.
-    let start = std::time::Instant::now();
-    let g = BufferPool::acquire_from(Arc::clone(&pool));
-    let elapsed = start.elapsed();
+    let g = BufferPool::try_acquire_from(Arc::clone(&pool))
+        .expect("a full byte budget must not make acquire wait");
     assert_eq!(g.len(), 1024);
-    assert!(
-        elapsed < std::time::Duration::from_millis(100),
-        "acquire should not block on a full byte budget, elapsed={elapsed:?}"
-    );
 }

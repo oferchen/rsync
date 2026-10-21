@@ -3712,3 +3712,121 @@ fn non_sparse_commit_preserves_source_mtime() {
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
+/// Streams a failing file then a good one through the disk thread and returns
+/// one outcome per result: the bytes written, or the error kind.
+///
+/// The messages go from a separate thread while this one drains results, so a
+/// disk thread that answers leftover messages one by one shows up as extra
+/// results instead of blocking the test.
+fn failing_file_then_good_file(
+    config: DiskCommitConfig,
+    failing: BeginMessage,
+    chunk: Vec<u8>,
+    next: std::path::PathBuf,
+) -> Vec<Result<u64, std::io::ErrorKind>> {
+    let h = spawn_disk_thread(config).unwrap();
+    let file_tx = h.file_tx;
+    let results = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            let commit = || FileMessage::Commit {
+                expected_checksum: Default::default(),
+            };
+            file_tx.send(FileMessage::Begin(Box::new(failing))).unwrap();
+            for _ in 0..64 {
+                file_tx.send(FileMessage::Chunk(chunk.clone())).unwrap();
+            }
+            file_tx.send(commit()).unwrap();
+            file_tx
+                .send(FileMessage::Begin(Box::new(BeginMessage {
+                    file_path: next,
+                    target_size: 4,
+                    file_entry_index: 1,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                    xattr_basis: None,
+                    file_entry: None,
+                })))
+                .unwrap();
+            file_tx.send(FileMessage::Chunk(b"tail".to_vec())).unwrap();
+            file_tx.send(commit()).unwrap();
+            file_tx.send(FileMessage::Shutdown).unwrap();
+        });
+        std::iter::from_fn(|| h.result_rx.recv().ok()).collect::<Vec<_>>()
+    });
+    h.join_handle.join().unwrap();
+    results
+        .iter()
+        .map(|r| r.as_ref().map(|c| c.bytes_written).map_err(|e| e.kind()))
+        .collect()
+}
+
+/// WHY: a disk error raised before a file's `Commit` must consume the rest of
+/// that file's queued messages. Otherwise each leftover `Chunk` comes back as a
+/// "message without Begin" error; in production the network thread keeps
+/// sending while the disk thread blocks on the full result queue, and the
+/// transfer stalls until the peer's idle timeout (the QUIC push stall). The
+/// prefix read under `--append-verify` fails here because the destination is
+/// shorter than the claimed append offset.
+///
+/// upstream: receiver.c:1254-1261 discards the failed file's data so the next
+/// file starts on a clean stream.
+#[test]
+fn setup_error_drains_the_files_remaining_messages() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let short = dir.path().join("short.dat");
+    fs::write(&short, b"abc").unwrap();
+    let config = DiskCommitConfig {
+        append_verify: true,
+        ..DiskCommitConfig::default()
+    };
+    let failing = BeginMessage {
+        file_path: short,
+        target_size: 4096,
+        file_entry_index: 0,
+        checksum_verifier: Some(md5_verifier()),
+        is_device_target: false,
+        is_inplace: true,
+        append_offset: 1024,
+        xattr_list: None,
+        xattr_basis: None,
+        file_entry: None,
+    };
+    let next = dir.path().join("next.dat");
+    let outcomes = failing_file_then_good_file(config, failing, vec![0u8; 16], next.clone());
+    assert_eq!(outcomes, [Err(std::io::ErrorKind::UnexpectedEof), Ok(4)]);
+    assert_eq!(fs::read(next).unwrap(), b"tail");
+}
+
+/// WHY: the same drain applies when a chunk write fails mid-file. `/dev/full`
+/// rejects every write with ENOSPC, and chunks larger than the write buffer
+/// force the failure inside the chunk loop rather than at the commit flush.
+#[cfg(target_os = "linux")]
+#[test]
+fn chunk_write_error_drains_the_files_remaining_messages() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let config = DiskCommitConfig {
+        io_uring_policy: fast_io::IoUringPolicy::Disabled,
+        ..DiskCommitConfig::default()
+    };
+    let failing = BeginMessage {
+        file_path: std::path::PathBuf::from("/dev/full"),
+        target_size: 64 << 19,
+        file_entry_index: 0,
+        checksum_verifier: None,
+        is_device_target: true,
+        is_inplace: true,
+        append_offset: 0,
+        xattr_list: None,
+        xattr_basis: None,
+        file_entry: None,
+    };
+    let next = dir.path().join("next.dat");
+    let outcomes = failing_file_then_good_file(config, failing, vec![0u8; 1 << 19], next.clone());
+    assert_eq!(outcomes, [Err(std::io::ErrorKind::StorageFull), Ok(4)]);
+    assert_eq!(fs::read(next).unwrap(), b"tail");
+}

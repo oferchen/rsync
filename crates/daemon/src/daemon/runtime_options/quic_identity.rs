@@ -47,7 +47,7 @@ impl RuntimeOptions {
     /// docs/design/quic-transport-policy.md (Decision, daemon-side config) is
     /// not yet parsed, so this interim predicate treats QUIC as requested when
     /// the operator configured any QUIC directive: a certificate path, a key
-    /// path, a client-auth CA path, or an explicit `quic port`. A daemon with no QUIC directives never
+    /// path, a client-auth CA path, an explicit `quic port`, `quic retry`, or `quic address`. A daemon with no QUIC directives never
     /// opens the UDP socket, so a default `--all-features` build stays TCP-only
     /// and byte-identical. When the enable directive lands, this is the single
     /// seam to consult it instead.
@@ -57,10 +57,22 @@ impl RuntimeOptions {
     /// returning `None`) is a fatal misconfiguration, not a silent no-op.
     #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
     pub(crate) fn quic_listener_enabled(&self) -> bool {
-        self.quic_cert_file.is_some()
-            || self.quic_key_file.is_some()
-            || self.quic_client_ca_file.is_some()
-            || self.quic_port.is_some()
+        self.configured_quic_directive().is_some()
+    }
+
+    /// Names the first QUIC directive the merged configuration sets, or
+    /// `None` when it sets none.
+    pub(crate) fn configured_quic_directive(&self) -> Option<&'static str> {
+        [
+            ("quic cert file", self.quic_cert_file.is_some()),
+            ("quic key file", self.quic_key_file.is_some()),
+            ("quic client ca file", self.quic_client_ca_file.is_some()),
+            ("quic port", self.quic_port.is_some()),
+            ("quic retry", self.quic_retry.is_some()),
+            ("quic address", self.quic_address.is_some()),
+        ]
+        .into_iter()
+        .find_map(|(directive, set)| set.then_some(directive))
     }
 
     /// Validates that a requested QUIC listener is serviceable, returning the
@@ -93,5 +105,26 @@ impl RuntimeOptions {
     #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
     pub(crate) fn effective_quic_port(&self) -> u16 {
         self.quic_port.unwrap_or(self.port)
+    }
+
+    /// Returns the `quic address` list the QUIC listener binds instead of the
+    /// TCP listener's addresses, or `None` when unset.
+    #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
+    pub(crate) fn quic_address(&self) -> Option<&[IpAddr]> {
+        self.quic_address.as_deref()
+    }
+
+    /// Returns when the QUIC listener answers a new client with a stateless
+    /// Retry: the `quic retry` directive, or Retry under load when unset.
+    #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
+    pub(crate) fn quic_retry_policy(&self) -> rsync_io::quic::RetryPolicy {
+        self.quic_retry.unwrap_or_default()
+    }
+
+    /// Returns the bounds on what the QUIC listener holds for connection
+    /// attempts it has not yet accepted, sized from `max connections`.
+    #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
+    pub(crate) fn quic_incoming_limits(&self) -> rsync_io::quic::IncomingLimits {
+        rsync_io::quic::IncomingLimits::for_max_connections(self.max_connections)
     }
 }

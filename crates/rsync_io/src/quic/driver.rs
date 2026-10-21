@@ -19,6 +19,7 @@ use quinn_proto::{
     StreamId, Transmit, VarInt, WriteError,
 };
 
+use super::admission::{Admission, RetryPolicy};
 use super::udp::{self, UdpIo, Waker};
 use super::{DATAGRAM_BUF, Hub, MAX_SLEEP, RECV_HIGH_WATER, Shared, Terminal, error};
 
@@ -34,7 +35,7 @@ pub(super) enum Role {
 /// connections are refused until the backlog drains, the QUIC counterpart of
 /// a TCP listener's `listen(2)` backlog, so a peer flooding handshakes cannot
 /// grow the endpoint's state without bound.
-const ACCEPT_BACKLOG: usize = 128;
+pub(super) const ACCEPT_BACKLOG: usize = 128;
 
 /// Datagrams handled per wake-up before the driver services timers and facade
 /// writes again, so a firehose peer cannot starve them.
@@ -99,6 +100,8 @@ struct Driver {
     /// exchanges need the speaker to be the opener to avoid the
     /// frameless-stream deadlock.
     opens_stream: bool,
+    /// When a server endpoint answers a new connection with a Retry.
+    retry: RetryPolicy,
     /// Scratch buffer `poll_transmit`/`Endpoint::handle` write packets into.
     buf: Vec<u8>,
     /// Datagrams of the current receive batch, reused across batches.
@@ -503,6 +506,48 @@ impl Driver {
         unaccepted < ACCEPT_BACKLOG
     }
 
+    /// Connections on this endpoint still in their handshake: the load
+    /// [`RetryPolicy::UnderLoad`] measures.
+    fn handshaking(&self) -> usize {
+        self.conns
+            .iter()
+            .filter(|c| c.conn.is_handshaking())
+            .count()
+    }
+
+    /// Starts the handshake for an admitted connection attempt, or answers it
+    /// with a stateless Retry when the policy calls for one.
+    fn admit(&mut self, now: Instant, incoming: quinn_proto::Incoming) -> io::Result<()> {
+        let admission = self
+            .retry
+            .admit(incoming.remote_address_validated(), self.handshaking());
+        if admission == Admission::Retry {
+            // `admit` retries only an unvalidated address, for which quinn
+            // guarantees `may_retry`, so the error arm is unreachable; ignoring
+            // the attempt there still releases its endpoint state.
+            match self.endpoint.retry(incoming, &mut self.buf) {
+                Ok(t) => transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?,
+                Err(err) => self.endpoint.ignore(err.into_incoming()),
+            }
+            return Ok(());
+        }
+        // An attempt that may not be retried already echoed a Retry token.
+        let retry_validated = !incoming.may_retry();
+        match self.endpoint.accept(incoming, now, &mut self.buf, None) {
+            Ok((handle, conn)) => {
+                let shared = Arc::new(Shared::new());
+                shared.lock().retry_validated = retry_validated;
+                self.conns.push(ConnDriver::new(handle, conn, shared));
+            }
+            Err(err) => {
+                if let Some(t) = err.response {
+                    transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Feeds one datagram to the endpoint and dispatches the outcome.
     fn handle_datagram(&mut self, now: Instant, incoming: Incoming) -> io::Result<()> {
         self.buf.clear();
@@ -525,17 +570,7 @@ impl Driver {
                     && !self.hub.lock().accept_closed;
                 self.buf.clear();
                 if admit {
-                    match self.endpoint.accept(incoming, now, &mut self.buf, None) {
-                        Ok((handle, conn)) => {
-                            let shared = Arc::new(Shared::new());
-                            self.conns.push(ConnDriver::new(handle, conn, shared));
-                        }
-                        Err(err) => {
-                            if let Some(t) = err.response {
-                                transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?;
-                            }
-                        }
-                    }
+                    self.admit(now, incoming)?;
                 } else {
                     let t = self.endpoint.refuse(incoming, &mut self.buf);
                     transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?;
@@ -605,11 +640,12 @@ thread_local! {
 ///
 /// `conn` is the connection a client endpoint dialled, paired with the facade
 /// state its stream will use; a server endpoint passes `None` and accepts its
-/// connections as they arrive.
+/// connections as they arrive, sending Retry as `retry` directs.
 pub(super) fn spawn_io(
     (endpoint, udp, waker): (Endpoint, UdpIo, Waker),
     role: Role,
     opens_stream: bool,
+    retry: RetryPolicy,
     conn: Option<(ConnectionHandle, Connection, Arc<Shared>)>,
 ) -> io::Result<Arc<Hub>> {
     let gso_segments = udp.gso_segments();
@@ -624,6 +660,7 @@ pub(super) fn spawn_io(
         hub: Arc::clone(&hub),
         role,
         opens_stream,
+        retry,
         buf: Vec::with_capacity(DATAGRAM_BUF),
         inbox: Vec::new(),
         gso_segments,

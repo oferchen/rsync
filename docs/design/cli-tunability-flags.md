@@ -112,8 +112,7 @@ is withdrawn from this design. Two findings drove the decision:
   unified selector promised, with no new flag surface.
 - The `kqueue`, `poll`, and `epoll` arms name backends that do not
   exist as selectable data paths. The `fast_io` kqueue module is an
-  event-loop primitive (the bandwidth limiter's `EVFILT_TIMER`
-  sleeper), not a `FileReader`/`FileWriter` backend, and no poll or
+  event-loop primitive, not a `FileReader`/`FileWriter` backend, and no poll or
   epoll data path exists at all. A selector whose enum is mostly
   aspirational would add surface without working backends behind it.
 

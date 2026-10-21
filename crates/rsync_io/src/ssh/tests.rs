@@ -1450,10 +1450,14 @@ fn connect_watchdog_fires_on_timeout() {
 
     let mut connection = command.spawn().expect("spawn sleeper");
 
-    // Wait for the watchdog to fire before attempting any read. This avoids
-    // relying on Child::kill() to unblock a blocking pipe read, which is
-    // unreliable in Linux CI environments.
-    std::thread::sleep(Duration::from_millis(500));
+    // The read blocks until the watchdog kills the sleeper, which closes its
+    // stdout: the watchdog's own effect is the synchronisation point.
+    let mut buf = [0u8; 1];
+    let result = connection.read(&mut buf);
+    assert!(
+        matches!(result, Ok(0) | Err(_)),
+        "a killed sleeper yields EOF or an error, got {result:?}"
+    );
 
     // cancel_connect_watchdog should report that the timeout fired.
     let cancel_result = connection.cancel_connect_watchdog();
@@ -1467,24 +1471,6 @@ fn connect_watchdog_fires_on_timeout() {
         err.to_string().contains("timed out"),
         "error should mention timeout: {err}"
     );
-
-    // After the watchdog has fired, the read should return immediately - either
-    // TimedOut (from the has_fired check) or an OS error (broken pipe / EOF
-    // from the killed child process).
-    let mut buf = [0u8; 1];
-    let result = connection.read(&mut buf);
-    match result {
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-        Err(_) => {
-            // OS-level error from killed child (broken pipe, EOF) is acceptable.
-        }
-        Ok(0) => {
-            // EOF from killed child is acceptable.
-        }
-        Ok(n) => {
-            panic!("unexpected successful read of {n} bytes from sleeping process");
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -1578,17 +1564,18 @@ fn connect_watchdog_fires_and_child_handle_reports_timeout() {
 
     // Spawn a process that hangs, with a short timeout.
     let mut command = SshCommand::new("ignored");
-    command.set_program("sh");
-    command.push_option("-c");
-    command.push_option("sleep 60");
+    // `sleep` itself, not `sh -c`: killing it must close the stdout pipe.
+    command.set_program("sleep");
+    command.push_option("60");
     command.set_target_override(Some(OsString::new()));
     command.set_connect_timeout(Some(Duration::from_millis(200)));
 
     let connection = command.spawn().expect("spawn shell");
-    let (_reader, _writer, mut child_handle) = connection.split().expect("split");
+    let (mut reader, _writer, mut child_handle) = connection.split().expect("split");
 
-    // Wait for the watchdog to fire.
-    std::thread::sleep(Duration::from_millis(500));
+    // Blocks until the watchdog kills the sleeper and its stdout closes.
+    let mut buf = [0u8; 1];
+    let _ = reader.read(&mut buf);
 
     let cancel_result = child_handle.cancel_connect_watchdog();
     assert!(cancel_result.is_err(), "watchdog should have fired");
@@ -1606,19 +1593,20 @@ fn connect_watchdog_error_message_includes_duration() {
     use std::time::Duration;
 
     let mut command = SshCommand::new("ignored");
-    command.set_program("sh");
-    command.push_option("-c");
-    command.push_option("sleep 60");
+    // `sleep` itself, not `sh -c`: killing it must close the stdout pipe.
+    command.set_program("sleep");
+    command.push_option("60");
     command.set_target_override(Some(OsString::new()));
     // Use a 2-second timeout - short enough for fast tests, long enough
     // to produce a recognizable duration in the error message.
     command.set_connect_timeout(Some(Duration::from_secs(2)));
 
     let connection = command.spawn().expect("spawn shell");
-    let (_reader, _writer, mut child_handle) = connection.split().expect("split");
+    let (mut reader, _writer, mut child_handle) = connection.split().expect("split");
 
-    // Wait for the watchdog to fire.
-    std::thread::sleep(Duration::from_millis(2500));
+    // Blocks until the watchdog kills the sleeper and its stdout closes.
+    let mut buf = [0u8; 1];
+    let _ = reader.read(&mut buf);
 
     let err = child_handle.cancel_connect_watchdog().unwrap_err();
     assert!(

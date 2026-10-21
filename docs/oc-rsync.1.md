@@ -1209,9 +1209,6 @@ values, defaults, and required build features.
 **OC_RSYNC_MMAP_TO_SQPOLL_THRESHOLD_BYTES**
 :   Basis-file size above which reads prefer io_uring over mmap.
 
-**OC_RSYNC_BWLIMIT_BACKEND**
-:   Sleep backend for **--bwlimit** pacing (**std** or **kqueue**).
-
 **OC_RSYNC_FORCE_ROOTLESS_CONTAINER**
 :   Set to **1** to force rootless-container detection and skip SQPOLL.
 

@@ -78,10 +78,9 @@ mod tests {
         rt.block_on(async {
             let mut limiter = AsyncRateLimiter::new(1000);
 
-            // First acquire should be instant
-            let start = std::time::Instant::now();
+            // Served from the bucket: the sleep path would zero it.
             limiter.acquire(500).await;
-            assert!(start.elapsed() < Duration::from_millis(50));
+            assert!(limiter.available_bytes() >= 500);
 
             // Second acquire should also be fast (we have tokens)
             limiter.acquire(500).await;
