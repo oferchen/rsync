@@ -525,6 +525,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `-z` is detected only in the server flag cluster, not inside an `-e` string (#8188)
 
 ### Removed
+- The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#PRNUM)
 
 - rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`) (#8087)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030) and the non-upstream per-directory filter alias (#6846)

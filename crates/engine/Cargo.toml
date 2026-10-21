@@ -36,7 +36,7 @@ jwalk = { workspace = true }
 rustc-hash = { workspace = true }
 rustix = { workspace = true, features = ["fs", "param", "process"] }
 tempfile = { workspace = true }
-tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
+tokio = { workspace = true, optional = true, features = ["fs", "io-util", "rt"] }
 filetime = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
