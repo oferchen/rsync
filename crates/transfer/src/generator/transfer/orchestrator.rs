@@ -543,7 +543,7 @@ impl GeneratorContext {
         let flist_send_stats = self.flist_send_stats;
 
         Ok(GeneratorStats {
-            files_listed: file_count,
+            files_listed: flist_send_stats.num_files as usize,
             num_dirs: flist_send_stats.num_dirs,
             num_symlinks: flist_send_stats.num_symlinks,
             num_devices: flist_send_stats.num_devices,
