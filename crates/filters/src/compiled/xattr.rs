@@ -39,7 +39,7 @@ pub enum XattrSide {
 /// [`FilterAction::xattr_decision`] - the single owner of upstream's
 /// `exclude.c:1345-1358` table, shared with the engine's local-copy chain so
 /// the two cannot drift. The meta (clear/merge) actions never reach this list.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct CompiledXattrRule {
     action: FilterAction,
     matchers: Vec<CompiledPattern>,
