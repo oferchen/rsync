@@ -242,7 +242,9 @@ class CatalogueTest(unittest.TestCase):
                        "delete/3.5.1/rsh/pull/oc-server",
                        "inc-recurse-dirs/3.5.1/rsh/push/oc-client",
                        "inc-recurse-wide/3.5.1/rsh/pull/oc-server",
-                       "inc-recurse-wide/3.5.1/daemon/push/oc-client"):
+                       "inc-recurse-wide/3.5.1/daemon/push/oc-client",
+                       "inc-recurse-past-max/3.5.1/rsh/pull/oc-server",
+                       "inc-recurse-past-max/3.5.1/daemon/push/oc-client"):
             self.assertIn(wanted, ids)
 
 

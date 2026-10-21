@@ -165,6 +165,13 @@ def _targeted(have: set[str]) -> list[Cell]:
             for d, r in (("push", "oc-client"), ("pull", "oc-server")):
                 add(v, case="inc-recurse-wide", transport=t, direction=d, role=r,
                     fixture="incwide", opts=("-a",))
+    # Past the 10000-entry MAX_FILECNT_LOOKAHEAD ceiling (rsync.h:152), where
+    # the sender must stop producing sub-lists until the receiver retires
+    # some: a deadlock there hangs the cell into the oracle's timeout.
+    for t in ("rsh", "daemon"):
+        for d, r in (("push", "oc-client"), ("pull", "oc-server")):
+            add("3.5.1", case="inc-recurse-past-max", transport=t, direction=d, role=r,
+                fixture="incmax", opts=("-a",), timeout=300)
     return cells
 
 
@@ -420,6 +427,12 @@ def build_fixtures(root: Path) -> None:
             _write(iw / f"src/w{d:02}/f{f:03}", f"{d}.{f}\n")
     _write(iw / "src/deep/a/b/c/leaf", "leaf\n")
     fx["incwide"] = iw
+
+    im = root / "incmax"
+    for d in range(120):
+        for f in range(100):
+            _write(im / f"src/d{d:03}/f{f:03}", f"{d}.{f}\n")
+    fx["incmax"] = im
 
     ff = root / "fifo"
     _write(ff / "src/plain", "plain\n")
