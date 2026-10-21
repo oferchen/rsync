@@ -270,6 +270,13 @@ impl DirMergeConfig {
         self.receiver_only && !self.sender_only
     }
 
+    /// Reports whether the merge rule named a side (`s` or `r`), which
+    /// refuses a rule in the file that names one too (exclude.c:1447-1456).
+    #[must_use]
+    pub(super) const fn specifies_side(&self) -> bool {
+        self.sender_only || self.receiver_only
+    }
+
     /// Applies configured modifiers to a parsed rule.
     ///
     /// [`anchor_root`](Self::with_anchor_root) is deliberately absent here.

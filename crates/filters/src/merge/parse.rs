@@ -40,6 +40,16 @@ use super::error::MergeFileError;
 ///
 /// Returns [`MergeFileError`] if any line contains unrecognised syntax.
 pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
+    parse_rules_in(content, source_path, false)
+}
+
+/// [`parse_rules`] for a merge file whose own rule names a side (`:s`, `:r`),
+/// which refuses any rule in it that names one too.
+pub(crate) fn parse_rules_in(
+    content: &str,
+    source_path: &Path,
+    template_sided: bool,
+) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
 
     // `filter_file_records` is the single owner of the record split; see
@@ -55,14 +65,16 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
         }
 
         let name = source_path.display().to_string();
+        let source = RuleSource::File {
+            name: &name,
+            line: line_num,
+        };
         for rule in parse_rule_line(line, source_path, line_num)?.into_rules() {
+            refuse_side_in_sided_file(&rule, template_sided, line, &source, source_path, line_num)?;
             trace_add_rule(
                 rule.action,
                 &String::from_utf8_lossy(&rule.pattern),
-                &RuleSource::File {
-                    name: &name,
-                    line: line_num,
-                },
+                &source,
             );
             rules.push(rule);
         }
@@ -158,12 +170,14 @@ pub(crate) fn parse_rules_no_prefixes(
 pub(crate) fn parse_rules_word_split(
     content: &str,
     source_path: &Path,
+    template_sided: bool,
 ) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
     let name = source_path.display().to_string();
     let source = RuleSource::FileWordSplit { name: &name };
     for token in content.split_whitespace() {
         for rule in parse_rule_line(token, source_path, 0)?.into_rules() {
+            refuse_side_in_sided_file(&rule, template_sided, token, &source, source_path, 0)?;
             trace_add_rule(
                 rule.action,
                 &String::from_utf8_lossy(&rule.pattern),
@@ -173,6 +187,35 @@ pub(crate) fn parse_rules_word_split(
         }
     }
     Ok(rules)
+}
+
+/// Refuses a rule that names a side inside a merge file whose rule named one.
+///
+/// upstream: exclude.c:1447-1456 parse_rule_tok() - "The filter and template
+/// both specify side(s). This is dodgy (and won't work correctly if the
+/// template is a one-sided per-dir merge rule), so reject it." The refusal is a
+/// `filter_rule_err`, so the text goes through `rule_text` (exclude.c:133-137),
+/// and it precedes the inherit, so the template never overrides the rule's own
+/// side. oc spells "no side bit" as both sides applying.
+fn refuse_side_in_sided_file(
+    rule: &FilterRule,
+    template_sided: bool,
+    text: &str,
+    source: &RuleSource<'_>,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<(), MergeFileError> {
+    if !template_sided || (rule.applies_to_sender && rule.applies_to_receiver) {
+        return Ok(());
+    }
+    Err(MergeFileError::parse_error(
+        source_path,
+        line_num,
+        format!(
+            "specified-side merge file contains specified-side filter: {}",
+            source.rule_text(text)
+        ),
+    ))
 }
 
 /// Applies a rule's modifier flags to the rule its prefix built.
