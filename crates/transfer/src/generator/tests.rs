@@ -8140,3 +8140,126 @@ mod files_from_owner_walk {
         );
     }
 }
+
+/// Raw-byte view of each INC_RECURSE sub-list: `(owning directory, children)`.
+#[cfg(unix)]
+type RawSegments = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
+
+/// Collects `(owning dir name, child names)` for every pending or lazily
+/// produced sub-list, as raw wire bytes so non-UTF-8 names stay distinct.
+#[cfg(unix)]
+fn raw_inc_recurse_segments(ctx: &mut GeneratorContext, lazy: bool) -> RawSegments {
+    let mut segments = Vec::new();
+    let mut seen = |ctx: &GeneratorContext, seg: &PendingSegment| {
+        let owner = ctx.file_list()[seg.parent_flat_idx]
+            .name_bytes()
+            .into_owned();
+        let children = (seg.flist_start..seg.flist_start + seg.count)
+            .map(|i| ctx.file_list()[i].name_bytes().into_owned())
+            .collect();
+        segments.push((owner, children));
+    };
+    if lazy {
+        while let Some(seg) = ctx
+            .produce_next_lazy_segment()
+            .expect("lazy segment production")
+        {
+            seen(ctx, &seg);
+        }
+    } else {
+        for seg in &ctx.incremental.pending_segments {
+            seen(ctx, seg);
+        }
+    }
+    segments
+}
+
+/// Two directories whose names differ only in bytes that are not valid UTF-8
+/// must each own their sub-list under INC_RECURSE.
+///
+/// Upstream links directories by `file_struct` and compares names bytewise
+/// (`flist.c:2189 add_dirs_to_tree()`, `flist.c:3797 f_name_cmp()`), so
+/// `d\xfe` and `d\xff` are unrelated. A partition keyed by a lossy UTF-8
+/// string folds both to `d\u{FFFD}` and attaches one directory's children to
+/// the other's sub-list; an upstream receiver then rejects the list with
+/// "ABORTING due to invalid path from sender" (exit 4).
+#[cfg(unix)]
+#[test]
+fn inc_recurse_partition_keeps_non_utf8_sibling_dirs_apart() {
+    use protocol::CompatibilityFlags;
+    use protocol::flist::FileEntry;
+    use std::os::unix::ffi::OsStrExt;
+    let raw = |b: &[u8]| PathBuf::from(std::ffi::OsStr::from_bytes(b));
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+    let base: std::sync::Arc<Path> = std::sync::Arc::from(Path::new(""));
+    for entry in [
+        FileEntry::new_directory(".".into(), 0o755),
+        FileEntry::new_directory(raw(b"d\xfe"), 0o755),
+        FileEntry::new_file(raw(b"d\xfe/b"), 3, 0o644),
+        FileEntry::new_directory(raw(b"d\xff"), 0o755),
+        FileEntry::new_file(raw(b"d\xff/a"), 3, 0o644),
+    ] {
+        ctx.file_list.push(entry);
+        ctx.source_bases.push(std::sync::Arc::clone(&base));
+    }
+    ctx.partition_file_list_for_inc_recurse();
+    assert!(
+        ctx.pending_flist_diagnostics.is_empty(),
+        "every parent is in the list, so nothing is orphaned: {:?}",
+        ctx.pending_flist_diagnostics
+    );
+    assert_eq!(
+        raw_inc_recurse_segments(&mut ctx, false),
+        vec![
+            (b"d\xfe".to_vec(), vec![b"d\xfe/b".to_vec()]),
+            (b"d\xff".to_vec(), vec![b"d\xff/a".to_vec()]),
+        ]
+    );
+}
+
+/// The lazy on-demand producer must scan each non-UTF-8 directory by its raw
+/// path. Scanning by a lossy name would open a different (or no) directory,
+/// so this drives both producers over a real tree and requires the exact
+/// per-directory children from each. Linux only: APFS refuses to create
+/// names that are not valid UTF-8.
+#[cfg(target_os = "linux")]
+#[test]
+fn inc_recurse_producers_scan_non_utf8_dirs_by_raw_path() {
+    use protocol::CompatibilityFlags;
+    use std::os::unix::ffi::OsStrExt;
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let at = |b: &[u8]| temp.path().join(std::ffi::OsStr::from_bytes(b));
+    for dir in [&b"d\xfe"[..], b"d\xff", b"d\xff/sub"] {
+        std::fs::create_dir(at(dir)).expect("create non-UTF-8 dir");
+    }
+    for file in [&b"d\xfe/b"[..], b"d\xff/a", b"d\xff/sub/x\xff"] {
+        std::fs::write(at(file), b"data").expect("create non-UTF-8 file");
+    }
+    let expected: RawSegments = vec![
+        (b"d\xfe".to_vec(), vec![b"d\xfe/b".to_vec()]),
+        (
+            b"d\xff".to_vec(),
+            vec![b"d\xff/a".to_vec(), b"d\xff/sub".to_vec()],
+        ),
+        (b"d\xff/sub".to_vec(), vec![b"d\xff/sub/x\xff".to_vec()]),
+    ];
+    for lazy in [false, true] {
+        let mut handshake = test_handshake_with_protocol(32);
+        handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+        let mut config = test_config();
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.lazy_flist_override = Some(lazy);
+        build_file_list_for_contents(&mut ctx, temp.path());
+        ctx.partition_file_list_for_inc_recurse();
+        assert_eq!(ctx.lazy_producer_active, lazy, "producer must engage");
+        assert_eq!(
+            raw_inc_recurse_segments(&mut ctx, lazy),
+            expected,
+            "{} producer sub-lists",
+            if lazy { "lazy" } else { "eager" }
+        );
+    }
+}

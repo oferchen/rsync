@@ -19,6 +19,8 @@
 //! [`DirTreeError::OutOfBoundsParent`] via [`DirectoryTree::try_add_directory`]
 //! or aborts with a Rust bounds-check panic (no UB, no SIGSEGV).
 
+use std::path::{Path, PathBuf};
+
 use thiserror::Error;
 
 /// Errors produced by [`DirectoryTree`] when validating wire-supplied indices.
@@ -51,8 +53,9 @@ pub enum DirTreeError {
 struct DirNode {
     /// Global NDX of this directory in the directory file list.
     dir_ndx: usize,
-    /// Relative path of this directory.
-    path: String,
+    /// Relative path of this directory, kept as raw bytes so names that are
+    /// not valid UTF-8 stay distinct (upstream compares names bytewise).
+    path: PathBuf,
     /// Index of the first child directory (in the `nodes` Vec), or `None`.
     first_child: Option<usize>,
     /// Index of the next sibling directory, or `None`.
@@ -89,7 +92,7 @@ impl DirectoryTree {
         // Virtual root node - never yielded, serves as parent for top-level dirs
         let root = DirNode {
             dir_ndx: usize::MAX,
-            path: String::new(),
+            path: PathBuf::new(),
             first_child: None,
             next_sibling: None,
             parent: None,
@@ -113,7 +116,7 @@ impl DirectoryTree {
     pub fn add_directory(
         &mut self,
         dir_ndx: usize,
-        path: String,
+        path: PathBuf,
         parent_node_idx: Option<usize>,
     ) -> usize {
         let actual_parent = parent_node_idx.unwrap_or(Self::ROOT);
@@ -167,7 +170,7 @@ impl DirectoryTree {
     pub fn try_add_directory(
         &mut self,
         dir_ndx: usize,
-        path: String,
+        path: PathBuf,
         parent_node_idx: Option<usize>,
     ) -> Result<usize, DirTreeError> {
         if let Some(idx) = parent_node_idx
@@ -190,7 +193,7 @@ impl DirectoryTree {
     ///
     /// Mirrors the traversal in `send_extra_file_list()` using
     /// `DIR_FIRST_CHILD`, `DIR_NEXT_SIBLING`, `DIR_PARENT` macros.
-    pub fn next_directory(&mut self) -> Option<(usize, &str)> {
+    pub fn next_directory(&mut self) -> Option<(usize, &Path)> {
         let cursor = self.cursor?;
         let dir_ndx = self.nodes[cursor].dir_ndx;
         self.advance_cursor();
@@ -215,7 +218,7 @@ impl DirectoryTree {
     /// node before traversing, so it has no need for the split and uses
     /// [`next_directory`](Self::next_directory).
     #[must_use]
-    pub fn peek(&self) -> Option<(usize, usize, &str)> {
+    pub fn peek(&self) -> Option<(usize, usize, &Path)> {
         let cursor = self.cursor?;
         let node = &self.nodes[cursor];
         Some((cursor, node.dir_ndx, &node.path))
@@ -297,7 +300,7 @@ impl DirectoryTree {
     ///
     /// Used when adding child directories to find the parent node.
     /// Skips the virtual root node at index 0.
-    fn find_by_path(&self, path: &str) -> Option<usize> {
+    fn find_by_path(&self, path: &Path) -> Option<usize> {
         self.nodes
             .iter()
             .enumerate()
@@ -309,18 +312,14 @@ impl DirectoryTree {
     /// Finds the node index for a directory by its parent path.
     ///
     /// Looks up the parent directory of `child_path` in the tree.
-    fn find_parent_of(&self, child_path: &str) -> Option<usize> {
-        use std::path::Path;
-        let parent_path = Path::new(child_path)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
+    fn find_parent_of(&self, child_path: &Path) -> Option<usize> {
+        let parent_path = child_path.parent().unwrap_or(Path::new(""));
 
-        if parent_path.is_empty() || parent_path == "." {
+        if parent_path.as_os_str().is_empty() || parent_path == Path::new(".") {
             return None; // Top-level directory
         }
 
-        self.find_by_path(&parent_path)
+        self.find_by_path(parent_path)
     }
 }
 
@@ -344,30 +343,31 @@ mod tests {
     #[test]
     fn single_directory_traversal() {
         let mut tree = DirectoryTree::new();
-        tree.add_directory(0, "subdir".to_string(), None);
+        tree.add_directory(0, "subdir".into(), None);
 
         assert!(!tree.is_exhausted());
         let (ndx, path) = tree.next_directory().unwrap();
         assert_eq!(ndx, 0);
-        assert_eq!(path, "subdir");
+        assert_eq!(path, Path::new("subdir"));
         assert!(tree.is_exhausted());
     }
 
     #[test]
     fn flat_sibling_traversal() {
         let mut tree = DirectoryTree::new();
-        tree.add_directory(0, "a".to_string(), None);
-        tree.add_directory(1, "b".to_string(), None);
-        tree.add_directory(2, "c".to_string(), None);
+        tree.add_directory(0, "a".into(), None);
+        tree.add_directory(1, "b".into(), None);
+        tree.add_directory(2, "c".into(), None);
 
         let dirs: Vec<_> =
-            std::iter::from_fn(|| tree.next_directory().map(|(n, p)| (n, p.to_string()))).collect();
+            std::iter::from_fn(|| tree.next_directory().map(|(n, p)| (n, p.to_path_buf())))
+                .collect();
         assert_eq!(
             dirs,
             vec![
-                (0, "a".to_string()),
-                (1, "b".to_string()),
-                (2, "c".to_string()),
+                (0, PathBuf::from("a")),
+                (1, PathBuf::from("b")),
+                (2, PathBuf::from("c")),
             ]
         );
         assert!(tree.is_exhausted());
@@ -377,22 +377,23 @@ mod tests {
     fn depth_first_traversal() {
         let mut tree = DirectoryTree::new();
         // Build: a/ → a/x/, a/y/; b/
-        let a = tree.add_directory(0, "a".to_string(), None);
-        let _b = tree.add_directory(1, "b".to_string(), None);
-        tree.add_directory(2, "a/x".to_string(), Some(a));
-        tree.add_directory(3, "a/y".to_string(), Some(a));
+        let a = tree.add_directory(0, "a".into(), None);
+        let _b = tree.add_directory(1, "b".into(), None);
+        tree.add_directory(2, "a/x".into(), Some(a));
+        tree.add_directory(3, "a/y".into(), Some(a));
 
         let dirs: Vec<_> =
-            std::iter::from_fn(|| tree.next_directory().map(|(n, p)| (n, p.to_string()))).collect();
+            std::iter::from_fn(|| tree.next_directory().map(|(n, p)| (n, p.to_path_buf())))
+                .collect();
 
         // Depth-first: a, a/x, a/y, b
         assert_eq!(
             dirs,
             vec![
-                (0, "a".to_string()),
-                (2, "a/x".to_string()),
-                (3, "a/y".to_string()),
-                (1, "b".to_string()),
+                (0, PathBuf::from("a")),
+                (2, PathBuf::from("a/x")),
+                (3, PathBuf::from("a/y")),
+                (1, PathBuf::from("b")),
             ]
         );
     }
@@ -401,19 +402,20 @@ mod tests {
     fn deep_nesting_traversal() {
         let mut tree = DirectoryTree::new();
         // Build: a/ → a/b/ → a/b/c/
-        let a = tree.add_directory(0, "a".to_string(), None);
-        let ab = tree.add_directory(1, "a/b".to_string(), Some(a));
-        tree.add_directory(2, "a/b/c".to_string(), Some(ab));
+        let a = tree.add_directory(0, "a".into(), None);
+        let ab = tree.add_directory(1, "a/b".into(), Some(a));
+        tree.add_directory(2, "a/b/c".into(), Some(ab));
 
         let dirs: Vec<_> =
-            std::iter::from_fn(|| tree.next_directory().map(|(n, p)| (n, p.to_string()))).collect();
+            std::iter::from_fn(|| tree.next_directory().map(|(n, p)| (n, p.to_path_buf())))
+                .collect();
 
         assert_eq!(
             dirs,
             vec![
-                (0, "a".to_string()),
-                (1, "a/b".to_string()),
-                (2, "a/b/c".to_string()),
+                (0, PathBuf::from("a")),
+                (1, PathBuf::from("a/b")),
+                (2, PathBuf::from("a/b/c")),
             ]
         );
     }
@@ -421,17 +423,17 @@ mod tests {
     #[test]
     fn find_by_path_and_parent() {
         let mut tree = DirectoryTree::new();
-        let a = tree.add_directory(0, "a".to_string(), None);
-        tree.add_directory(1, "a/b".to_string(), Some(a));
+        let a = tree.add_directory(0, "a".into(), None);
+        tree.add_directory(1, "a/b".into(), Some(a));
 
-        assert_eq!(tree.find_by_path("a"), Some(a));
-        let ab = tree.find_by_path("a/b").unwrap();
+        assert_eq!(tree.find_by_path(Path::new("a")), Some(a));
+        let ab = tree.find_by_path(Path::new("a/b")).unwrap();
         assert_eq!(ab, a + 1);
-        assert_eq!(tree.find_by_path("c"), None);
+        assert_eq!(tree.find_by_path(Path::new("c")), None);
 
-        assert_eq!(tree.find_parent_of("a/b/file.txt"), Some(ab));
-        assert_eq!(tree.find_parent_of("a/file.txt"), Some(a));
-        assert_eq!(tree.find_parent_of("file.txt"), None);
+        assert_eq!(tree.find_parent_of(Path::new("a/b/file.txt")), Some(ab));
+        assert_eq!(tree.find_parent_of(Path::new("a/file.txt")), Some(a));
+        assert_eq!(tree.find_parent_of(Path::new("file.txt")), None);
     }
 
     #[test]
@@ -440,7 +442,7 @@ mod tests {
         assert_eq!(tree.len(), 0);
         assert!(tree.is_empty());
 
-        tree.add_directory(0, "a".to_string(), None);
+        tree.add_directory(0, "a".into(), None);
         assert_eq!(tree.len(), 1);
         assert!(!tree.is_empty());
     }
@@ -463,10 +465,10 @@ mod tests {
     fn try_add_directory_rejects_out_of_range_parent_idx() {
         // Build a small known-good node table (virtual root + 4 entries).
         let mut tree = DirectoryTree::new();
-        let a = tree.add_directory(0, "a".to_string(), None);
-        let _b = tree.add_directory(1, "b".to_string(), None);
-        let _ax = tree.add_directory(2, "a/x".to_string(), Some(a));
-        let _ay = tree.add_directory(3, "a/y".to_string(), Some(a));
+        let a = tree.add_directory(0, "a".into(), None);
+        let _b = tree.add_directory(1, "b".into(), None);
+        let _ax = tree.add_directory(2, "a/x".into(), Some(a));
+        let _ay = tree.add_directory(3, "a/y".into(), Some(a));
 
         let node_count_before = tree.nodes.len();
         assert_eq!(node_count_before, 5, "virtual root + 4 added directories");
@@ -474,7 +476,7 @@ mod tests {
         // A malicious peer sends a parent_node_idx well past the known table.
         let bad_idx: usize = 100;
         let err = tree
-            .try_add_directory(99, "evil".to_string(), Some(bad_idx))
+            .try_add_directory(99, "evil".into(), Some(bad_idx))
             .expect_err("OOB parent_node_idx must be rejected");
 
         assert_eq!(
@@ -493,11 +495,11 @@ mod tests {
     fn try_add_directory_rejects_boundary_off_by_one() {
         // Equal-to-len is still out of range (valid indices are 0..len).
         let mut tree = DirectoryTree::new();
-        tree.add_directory(0, "a".to_string(), None);
+        tree.add_directory(0, "a".into(), None);
         let len = tree.nodes.len();
 
         let err = tree
-            .try_add_directory(1, "b".to_string(), Some(len))
+            .try_add_directory(1, "b".into(), Some(len))
             .expect_err("parent_idx == len must be rejected");
 
         assert!(matches!(
@@ -513,12 +515,12 @@ mod tests {
 
         // None always succeeds (top-level under virtual root).
         let a = tree
-            .try_add_directory(0, "a".to_string(), None)
+            .try_add_directory(0, "a".into(), None)
             .expect("None is always valid");
 
         // A previously returned handle is in range.
         let child = tree
-            .try_add_directory(1, "a/b".to_string(), Some(a))
+            .try_add_directory(1, "a/b".into(), Some(a))
             .expect("valid parent index must succeed");
 
         assert_eq!(child, a + 1);
@@ -534,9 +536,9 @@ mod tests {
 
         let result = panic::catch_unwind(|| {
             let mut tree = DirectoryTree::new();
-            tree.add_directory(0, "a".to_string(), None);
+            tree.add_directory(0, "a".into(), None);
             // Bad parent_node_idx far past the end of `nodes`.
-            tree.add_directory(99, "evil".to_string(), Some(100));
+            tree.add_directory(99, "evil".into(), Some(100));
         });
 
         assert!(

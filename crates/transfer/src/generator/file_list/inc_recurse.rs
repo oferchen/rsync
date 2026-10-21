@@ -22,7 +22,7 @@
 //! - `flist.c:recv_file_list()` line 2643 - appends dirs to `dir_flist`
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use logging::debug_log;
@@ -73,8 +73,10 @@ impl GeneratorContext {
             // condition. Reported here, on the side that can name the offending
             // source, and as FERROR_XFER so the run cannot exit 0 with a file
             // list the peer will reject.
-            let text =
-                format!("rsync: [sender] parent directory is missing from the file list: {name}\n");
+            let text = format!(
+                "rsync: [sender] parent directory is missing from the file list: {}\n",
+                name.display()
+            );
             self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
             self.add_io_error(io_error_flags::IOERR_GENERAL);
         }
@@ -99,20 +101,21 @@ impl GeneratorContext {
         use protocol::flist::DirectoryTree;
 
         let mut tree = DirectoryTree::new();
-        // Maps directory name to (tree_node_handle, segment_index, node_id).
-        let mut dir_map: HashMap<String, (usize, usize, usize)> = HashMap::new();
+        // Maps directory path to (tree_node_handle, segment_index, node_id).
+        // Keyed by the raw path bytes: a lossy UTF-8 key would merge two
+        // directories whose names differ only in invalid bytes.
+        // upstream: flist.c:2189 add_dirs_to_tree() links `file_struct`
+        // pointers, never a converted name.
+        let mut dir_map: HashMap<&Path, (usize, usize, usize)> = HashMap::new();
         let mut initial_entries: Vec<TaggedIndex> = Vec::new();
         let mut segments: Vec<DirSegment> = Vec::new();
-        let mut orphans: Vec<String> = Vec::new();
+        let mut orphans: Vec<PathBuf> = Vec::new();
         let mut node_id_counter: usize = 0;
 
         for (i, entry) in file_list.iter().enumerate() {
-            let name = entry.name();
-            let parent = Path::new(name)
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let is_top_level = parent.is_empty() || parent == ".";
+            let name = entry.path().as_path();
+            let parent = entry.dirname().as_ref();
+            let is_top_level = parent.as_os_str().is_empty() || parent == Path::new(".");
 
             if is_top_level {
                 // upstream: flist.c:2638-2644 send_extra_file_list() - a
@@ -124,16 +127,16 @@ impl GeneratorContext {
                 // sub-list. Give it no node_id (no segment, no tree node) and do
                 // NOT overwrite `dir_map`, so its children stay attached to the
                 // earlier survivor's segment and its own sub-list is empty.
-                let node_id = if entry.is_dir() && name != "." && !entry.duplicate() {
+                let node_id = if entry.is_dir() && name != Path::new(".") && !entry.duplicate() {
                     let id = node_id_counter;
                     node_id_counter += 1;
-                    let tree_handle = tree.add_directory(id, name.to_string(), None);
+                    let tree_handle = tree.add_directory(id, name.to_path_buf(), None);
                     let seg_idx = segments.len();
                     segments.push(DirSegment {
                         node_id: id,
                         children: Vec::new(),
                     });
-                    dir_map.insert(name.to_string(), (tree_handle, seg_idx, id));
+                    dir_map.insert(name, (tree_handle, seg_idx, id));
                     Some(id)
                 } else {
                     None
@@ -142,18 +145,18 @@ impl GeneratorContext {
                     file_idx: i,
                     node_id,
                 });
-            } else if let Some(&(_, seg_idx, _)) = dir_map.get(parent.as_str()) {
+            } else if let Some(&(_, seg_idx, _)) = dir_map.get(parent) {
                 let node_id = if entry.is_dir() {
                     let id = node_id_counter;
                     node_id_counter += 1;
-                    let parent_handle = dir_map.get(parent.as_str()).map(|&(h, _, _)| h);
-                    let tree_handle = tree.add_directory(id, name.to_string(), parent_handle);
+                    let parent_handle = dir_map.get(parent).map(|&(h, _, _)| h);
+                    let tree_handle = tree.add_directory(id, name.to_path_buf(), parent_handle);
                     let new_seg_idx = segments.len();
                     segments.push(DirSegment {
                         node_id: id,
                         children: Vec::new(),
                     });
-                    dir_map.insert(name.to_string(), (tree_handle, new_seg_idx, id));
+                    dir_map.insert(name, (tree_handle, new_seg_idx, id));
                     Some(id)
                 } else {
                     None
@@ -175,7 +178,7 @@ impl GeneratorContext {
                 // file list a conformant receiver rejects. A directory landing
                 // here is never registered in `dir_map`, so all of its children
                 // follow it in.
-                orphans.push(name.to_string());
+                orphans.push(name.to_path_buf());
                 initial_entries.push(TaggedIndex {
                     file_idx: i,
                     node_id: None,
@@ -428,7 +431,7 @@ impl GeneratorContext {
             // (incl. `.` and FLAG_DUPLICATE siblings) so the receiver's dir_ndx
             // sequence stays aligned; only a real directory owns a sub-list.
             if entry.name() != "." && !entry.duplicate() {
-                let name = entry.name().to_string();
+                let name = entry.path().clone();
                 let base = self.source_bases[i].clone();
                 let handle = tree.add_directory(wire_dir_ndx as usize, name, None);
                 debug_assert_eq!(handle, base_by_node.len(), "node handle tracks Vec length");
@@ -489,7 +492,7 @@ impl GeneratorContext {
             (
                 handle,
                 dir_ndx as i32,
-                std::path::PathBuf::from(path),
+                path.to_path_buf(),
                 lp.base_by_node[handle].clone(),
             )
         };
@@ -506,11 +509,11 @@ impl GeneratorContext {
         // order, so wire dir_ndx assignment matches the eager phase-2 walk over
         // `seg.children`.
         let end = segment.flist_start + segment.count;
-        let mut child_dirs: Vec<(usize, String)> = Vec::new();
+        let mut child_dirs: Vec<(usize, PathBuf)> = Vec::new();
         for i in segment.flist_start..end {
             let entry = &self.file_list[i];
             if entry.is_dir() {
-                child_dirs.push((i, entry.name().to_string()));
+                child_dirs.push((i, entry.path().clone()));
             }
         }
 
@@ -560,5 +563,5 @@ struct ClassificationResult {
     /// Always empty for a well-formed list: `send_implied_dirs()` guarantees
     /// every ancestor precedes its children. See
     /// [`GeneratorContext::partition_file_list_for_inc_recurse`].
-    orphans: Vec<String>,
+    orphans: Vec<PathBuf>,
 }

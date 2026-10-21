@@ -6,7 +6,6 @@
 //! # Features
 //!
 //! - Async file copying with progress callbacks
-//! - Async batch copying with bounded concurrency
 //! - Async sparse file writing support
 //!
 //! # Example
@@ -20,7 +19,6 @@
 //! copier.copy_file(source, destination).await?;
 //! ```
 
-mod batch;
 mod copier;
 mod error;
 mod progress;
@@ -28,7 +26,6 @@ mod progress;
 /// Default buffer size for async file operations (64 KB).
 pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
-pub use batch::AsyncBatchCopier;
 pub use copier::AsyncFileCopier;
 pub use error::AsyncIoError;
 pub use progress::{CopyProgress, CopyResult};

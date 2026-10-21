@@ -64,8 +64,8 @@
 //!
 //! ## Async I/O (optional)
 //!
-//! When compiled with the `async` feature, [`AsyncFileCopier`] and
-//! [`AsyncBatchCopier`] provide tokio-based async file copy with progress
+//! When compiled with the `async` feature, [`AsyncFileCopier`] provides
+//! tokio-based async file copy with progress
 //! reporting via [`CopyProgress`].
 //!
 //! # Dependency position
@@ -255,4 +255,4 @@ pub use util::cleanup::{
 
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
-pub use async_io::{AsyncBatchCopier, AsyncFileCopier, AsyncIoError, CopyProgress, CopyResult};
+pub use async_io::{AsyncFileCopier, AsyncIoError, CopyProgress, CopyResult};

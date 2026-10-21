@@ -19,8 +19,8 @@ fn test_protocol() -> ProtocolVersion {
 /// is asserting on. That changes both the flush COUNT and its ATTRIBUTION, which
 /// is exactly what a test about a size or count threshold must not depend on.
 ///
-/// Only `check_timeout_flush` and `check_timeout_flush_no_timeout_yet` leave the
-/// clock armed, because the clock is their subject.
+/// The timeout tests use it too: their expiry comes only from
+/// `expire_batch_timeout`, never from the wall clock.
 fn untimed() -> BatchConfig {
     BatchConfig::new().with_flush_timeout(Duration::MAX)
 }
@@ -270,8 +270,7 @@ fn flush_empty_batch_is_noop() {
 
 #[test]
 fn check_timeout_flush() {
-    let config = BatchConfig::new().with_flush_timeout(Duration::from_millis(100));
-    let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
+    let mut writer = BatchedFileListWriter::with_config(test_protocol(), untimed());
     let mut output = Vec::new();
 
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
@@ -290,8 +289,7 @@ fn check_timeout_flush() {
 
 #[test]
 fn check_timeout_flush_no_timeout_yet() {
-    let config = BatchConfig::new().with_flush_timeout(Duration::from_secs(60));
-    let mut writer = BatchedFileListWriter::with_config(test_protocol(), config);
+    let mut writer = BatchedFileListWriter::with_config(test_protocol(), untimed());
     let mut output = Vec::new();
 
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);

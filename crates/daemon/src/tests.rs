@@ -39,7 +39,6 @@ use crate::daemon::{
     RuntimeOptions,
     TestSecretsEnvOverride,
     UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
-    UnresolvedId,
     advertised_capability_lines,
     // From daemon.rs apply_verbosity helper
     apply_verbosity,
@@ -404,6 +403,7 @@ include!("tests/chunks/runtime_options_quic_address_directive.rs");
 include!("tests/chunks/runtime_options_quic_windows_refusal.rs");
 #[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_listener_enabled.rs");
+include!("tests/chunks/runtime_options_privilege_drop_windows_refusal.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_bwlimit.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_lock_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_log_file_argument.rs");

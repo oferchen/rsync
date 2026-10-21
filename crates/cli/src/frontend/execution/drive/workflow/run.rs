@@ -12,7 +12,6 @@ use crate::frontend::execution::drive::module_listing::{
 };
 use crate::frontend::execution::drive::{config, filters, metadata, options, summary, validation};
 use crate::frontend::log_format_has;
-use crate::frontend::outbuf::parse_outbuf_mode;
 use crate::frontend::progress::{ProgressOutputConfig, StderrMode};
 use crate::frontend::{
     arguments::{ChecksumThreadsSetting, ParsedArgs, StopRequest, atoi_leading},
@@ -240,7 +239,8 @@ where
         append_verify,
         msgs_to_stderr: msgs_to_stderr_option,
         stderr_mode,
-        outbuf,
+        // Applied to stdout by `OutbufAdapter` in `frontend::run`.
+        outbuf: _,
         max_alloc,
         itemize_changes,
         itemize_repeated,
@@ -1224,12 +1224,8 @@ where
     } else {
         std::io::stdout().is_terminal()
     };
-    let outbuf_mode = outbuf
-        .as_ref()
-        .and_then(|v| parse_outbuf_mode(v.as_os_str()).ok());
     let progress_output_config = ProgressOutputConfig {
         is_terminal: progress_is_terminal,
-        outbuf_mode,
     };
 
     summary::execute_transfer(

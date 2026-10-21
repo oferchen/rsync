@@ -21,10 +21,6 @@ pub enum AsyncIoError {
     /// Error joining a spawned task.
     #[error("Task join error: {0}")]
     JoinError(#[from] task::JoinError),
-
-    /// Operation was cancelled before completion.
-    #[error("Operation cancelled for {0}")]
-    Cancelled(PathBuf),
 }
 
 impl AsyncIoError {
@@ -64,13 +60,5 @@ mod tests {
         );
         let display = format!("{error}");
         assert!(display.contains("/path/to/file"));
-    }
-
-    #[test]
-    fn test_async_io_error_cancelled() {
-        let error = AsyncIoError::Cancelled(PathBuf::from("/cancelled/file"));
-        let display = format!("{error}");
-        assert!(display.contains("cancelled"));
-        assert!(display.contains("/cancelled/file"));
     }
 }

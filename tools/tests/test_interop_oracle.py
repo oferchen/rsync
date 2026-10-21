@@ -230,6 +230,7 @@ class CatalogueTest(unittest.TestCase):
         ids = {c.cell_id for c in cells.catalogue(cells.ALL_VERSIONS)}
         for wanted in ("non-utf8/3.5.1/rsh/push/oc-server",
                        "non-utf8/3.5.1/rsh/pull/oc-client",
+                       "non-utf8/3.5.1/rsh/pull/oc-server",
                        "copy-unsafe-links/3.5.1/rsh/pull/oc-server",
                        "append-longer-dest/3.5.1/rsh/push/oc-server",
                        "outgoing-chmod/3.5.1/daemon/pull/oc-server",
@@ -261,6 +262,9 @@ class FixtureTest(unittest.TestCase):
             self.assertIn("f\\xef", names)
             self.assertIn("g\\xef", names)
             self.assertIn("na\\xefve/a.txt", names)
+            self.assertIn("d\\xfe/b", names)
+            self.assertIn("d\\xff/a", names)
+            self.assertIn("d\\xff/sub/x\\xff", names)
 
     def test_fixture_times_lie_below_the_wall_clock_mask(self):
         with tempfile.TemporaryDirectory() as a:
