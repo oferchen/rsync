@@ -157,6 +157,14 @@ def _targeted(have: set[str]) -> list[Cell]:
         add(v, case="batch-local", transport="local", direction="push", role="oc-client",
             fixture="delta", opts=("-a",), extra_args=(f"--protocol={proto}",),
             batch_reader=True)
+    # The oc sender's on-demand sub-lists past the 1000-entry lookahead floor
+    # (rsync.h:151), against every upstream receiver that speaks INC_RECURSE
+    # (protocol 30+), both ways and over both transports.
+    for v in ("3.0.9", "3.1.3", "3.4.4", "3.5.0", "3.5.1"):
+        for t in ("rsh", "daemon"):
+            for d, r in (("push", "oc-client"), ("pull", "oc-server")):
+                add(v, case="inc-recurse-wide", transport=t, direction=d, role=r,
+                    fixture="incwide", opts=("-a",))
     return cells
 
 
@@ -402,6 +410,16 @@ def build_fixtures(root: Path) -> None:
         _write(ic / f"src/{name}/f", f"{name}\n")
         _write(ic / f"src/{name}/sub/g", f"{name}{name}\n")
     fx["incdirs"] = ic
+
+    # More entries than MIN_FILECNT_LOOKAHEAD (1000), spread over many
+    # sub-lists and a deep chain, so the sender's sub-lists interleave with
+    # file data instead of all preceding it.
+    iw = root / "incwide"
+    for d in range(12):
+        for f in range(100):
+            _write(iw / f"src/w{d:02}/f{f:03}", f"{d}.{f}\n")
+    _write(iw / "src/deep/a/b/c/leaf", "leaf\n")
+    fx["incwide"] = iw
 
     ff = root / "fifo"
     _write(ff / "src/plain", "plain\n")
