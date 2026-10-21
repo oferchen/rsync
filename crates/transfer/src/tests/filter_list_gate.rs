@@ -12,10 +12,10 @@ use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
 use crate::{
-    TOO_MODERN_FILTER_RULES_MSG, perishable_rules_too_modern, receiver_wants_filter_list,
-    send_client_filter_list, wire_rule_crosses_wire,
+    ServerConfig, ServerRole, TOO_MODERN_FILTER_RULES_MSG, client_sends_filter_list,
+    perishable_rules_too_modern, receiver_wants_filter_list, send_client_filter_list,
+    wire_rule_crosses_wire,
 };
-
 // -- receiver_wants_list truth table (exclude.c:1946-1947, 1975-1976) --
 
 /// `--prune-empty-dirs` always needs the list, independent of delete flags and
@@ -27,6 +27,64 @@ fn prune_empty_dirs_always_wants_list() {
         assert!(receiver_wants_filter_list(true, false, false, proto));
         assert!(receiver_wants_filter_list(true, true, true, proto));
     }
+}
+
+fn push_client(prune_empty_dirs: bool) -> ServerConfig {
+    let mut config = ServerConfig {
+        role: ServerRole::Generator,
+        ..ServerConfig::default()
+    };
+    config.connection.client_mode = true;
+    config.flags.prune_empty_dirs = prune_empty_dirs;
+    config
+}
+
+fn push_client_wire(config: &ServerConfig) -> Vec<u8> {
+    let mut wire = Vec::new();
+    send_client_filter_list(
+        &mut wire,
+        &[FilterRuleWireFormat::exclude("*.tmp")],
+        true,
+        false,
+        ProtocolVersion::V33,
+        client_sends_filter_list(config, ProtocolVersion::V33),
+    )
+    .expect("protocol 33 encodes a plain exclude");
+    wire
+}
+
+/// A `-m` push must put its filter list on the wire even without `--delete`,
+/// because upstream's receiver reads one whenever `prune_empty_dirs` is set.
+/// Skipping it made a 3.5.1 daemon read the file list as a rule length and
+/// die with `buffer overflow: recv_rules` (code 22). The golden bytes are what
+/// an upstream 3.5.1 client sends for `-am --exclude='*.tmp'`, captured on the
+/// daemon socket: `write_int(7)`, `- *.tmp`, then the `write_int(0)`
+/// terminator. upstream: exclude.c:1930-1937 send_rules(), :1958-1959.
+#[test]
+fn prune_empty_dirs_push_sends_upstream_filter_list_bytes() {
+    assert_eq!(
+        push_client_wire(&push_client(true)),
+        b"\x07\x00\x00\x00- *.tmp\x00\x00\x00\x00"
+    );
+}
+
+/// Without `-m` or `--delete` the receiver reads no list, so a push client
+/// that sent one would desync the stream the other way.
+#[test]
+fn plain_push_sends_no_filter_list_bytes() {
+    assert!(push_client_wire(&push_client(false)).is_empty());
+}
+
+/// A receiving client always sends its list (the remote sender always reads
+/// one); a server never does. upstream: exclude.c:1948, main.c:1332.
+#[test]
+fn client_sends_filter_list_by_role() {
+    let mut pull = push_client(false);
+    pull.role = ServerRole::Receiver;
+    assert!(client_sends_filter_list(&pull, ProtocolVersion::V33));
+    let mut server = push_client(true);
+    server.connection.client_mode = false;
+    assert!(!client_sends_filter_list(&server, ProtocolVersion::V33));
 }
 
 /// With neither `--delete` nor `--prune-empty-dirs`, no list is wanted: push

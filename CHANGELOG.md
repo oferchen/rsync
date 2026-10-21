@@ -239,6 +239,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Data integrity**
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
+- `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#PRNUM)
+- A received file whose `close()` fails (where NFS-like filesystems report a failed write) now aborts with exit 11 and upstream's `close failed on` message instead of being committed (#PRNUM)
 - `--inplace --sparse` local copies could write wrong content after a block ending in zeros (#7983); a related io_uring relative-seek defect is fixed and the network receiver is pinned unaffected (#7984)
 - Multi-source `--delete` no longer removes files an earlier source just copied (#7765)
 - A local copy whose source shrinks or grows mid-read is diagnosed or redone, never committed short (#7403, #7472, #7706, #7751, #7710)
@@ -256,6 +258,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Backup error naming, directory crtimes, macOS set-group-ID, the sender scan anchor, trailing `/.` handling, cleared `dir_flist` slots and upstream error wording (#7635, #7641, #7642, #7646, #7647, #7652, #7654, #7655, #7656, #7658)
 
 **Interop**
+- A `-m` push to an upstream daemon sends the filter list the receiver reads, so 3.5.1 no longer aborts with `buffer overflow: recv_rules` (#PRNUM)
+- Option values sent to a remote-shell server are escaped and split like upstream `safe_arg()`, so spaces, quotes, wildcards and `~/` paths in `--backup-dir`, `--partial-dir`, `--usermap`, `-M` and similar reach the server intact (#PRNUM)
 - A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split (#8009)
 - Upstream clients pulling with `-H` under INC_RECURSE no longer abort on hard links that span directories (#7982)
 - The entry after an abbreviated hard-link follower is encoded against the right previous entry (#7997)
@@ -287,6 +291,9 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
+- A peer text or `MSG_DELETED` frame of `BIGPATHBUFLEN` (5120) bytes or more ends the transfer with `multiplexing overflow` and exit 12, as upstream does, instead of being accepted up to the 16 MiB frame limit (#PRNUM)
+- A peer `MSG_LOG`, `MSG_CLIENT`, `MSG_ERROR_SOCKET` or `MSG_ERROR_UTF8` frame is an `invalid multi-message` ending the transfer with exit 12, as upstream `read_a_msg()` treats sibling-logging tags off the generator, instead of being printed (#PRNUM)
+- An rsh `--server` receiver or sender forwards a peer `MSG_INFO`, `MSG_ERROR`, `MSG_ERROR_XFER` or `MSG_WARNING` to the client as a frame, instead of writing it raw to stdout, which is the protocol stream (#PRNUM)
 - Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)
 - Remote output fidelity: `--progress`, `-v` / `-vi` names, banners, `--stats` breakdown and dry-run itemize (#6786, #6789, #6791, #6793, #6802, #6814, #7062, #7172)
 - Preserve mtime on remote `--sparse`, and apply `dest_mode` without `-p` (#6803, #6804)

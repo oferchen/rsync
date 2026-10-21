@@ -18,7 +18,7 @@
 //! - A POSIX remote runs `/bin/sh -c "<cmd>"`; the split is `/bin/sh`
 //!   word-splitting with backslash escapes. This is what upstream rsync's
 //!   `options.c:safe_arg()` backslash-escaping targets, and what oc mirrors in
-//!   `invocation::builder::shell_safe_filename_arg`.
+//!   `safe_arg::filename_arg`.
 //! - A **Windows OpenSSH** remote runs the command through the native Windows
 //!   argv split (`CommandLineToArgvW` / the MSVCRT C runtime), whose backslash
 //!   and quote rules differ fundamentally from POSIX: a backslash is literal
@@ -161,7 +161,7 @@ fn command_line_to_argv(cmd: &[u8]) -> Vec<Vec<u8>> {
 /// oc never emits single- or double-quoted words (its `safe_arg` mirror uses
 /// backslash escapes exclusively), so this narrow model is exact for the
 /// command lines under test. It is the inverse of
-/// `invocation::builder::shell_safe_filename_arg`.
+/// `safe_arg::filename_arg`.
 fn posix_sh_split(cmd: &[u8]) -> Vec<Vec<u8>> {
     let mut args = Vec::new();
     let mut i = 0;

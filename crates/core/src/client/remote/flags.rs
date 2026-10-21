@@ -500,6 +500,8 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // dirs and --prune-empty-dirs below protocol 29 on every peer, the sender
     // included, from globals both sides parsed. The compact flag string omits
     // these on a push, so carry them onto both roles for that refusal.
+    // upstream: exclude.c:1946-1949 - a push sender also needs
+    // prune_empty_dirs to send the filter list the receiver will read.
     server_config.flags.fuzzy_level = config.fuzzy_level();
     server_config.flags.prune_empty_dirs = config.prune_empty_dirs();
     server_config.reference_directories = config.reference_directories().to_vec();
