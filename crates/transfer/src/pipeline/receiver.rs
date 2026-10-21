@@ -2704,8 +2704,11 @@ mod tests {
                 vec![(
                     MessageCode::Error,
                     format!(
-                        "rsync: [receiver] close failed on \"{}\": Input/output error (5)",
-                        temp.display()
+                        "rsync: [receiver] close failed on \"{}\": {}",
+                        temp.display(),
+                        // strerror(EIO) differs between libcs (glibc "Input/output
+                        // error", musl "I/O error"); upstream rsyserr uses the local one.
+                        logging::upstream_errno_text(&io::Error::from_raw_os_error(5))
                     )
                 )],
                 "chunked={chunked}"
