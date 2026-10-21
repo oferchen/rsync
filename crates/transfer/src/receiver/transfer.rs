@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 use logging::{debug_log, info_log};
 
 use crate::disk_commit::{BackupConfig, BackupEnv, make_backup};
+use crate::pipeline::receiver::DelayedUpdate;
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::TransferStats;
 
@@ -234,7 +235,7 @@ impl ReceiverContext {
         &mut self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
-        all_delayed_updates: &[(PathBuf, PathBuf)],
+        all_delayed_updates: &[DelayedUpdate],
         writer: &mut W,
     ) -> io::Result<()>
     where
@@ -269,12 +270,24 @@ impl ReceiverContext {
                 dest_dir: Some(dest_dir),
                 metadata_opts: Some(&metadata_opts),
             };
-            self.flist_io_error |= handle_delayed_updates(
+            let sweep = handle_delayed_updates(
                 all_delayed_updates,
                 backup_cfg,
                 env,
                 self.config.partial_dir.as_deref(),
             );
+            for (update, error) in &sweep.failed {
+                // A diagnostic that cannot be delivered must not abort the
+                // transfer; upstream's rwrite() ignores the write result too.
+                let _ = self.emit_error_xfer_line(
+                    writer,
+                    self.delayed_rename_failure_line(dest_dir, update, error),
+                );
+            }
+            self.flist_io_error |= sweep.io_error();
+            // upstream: receiver.c:730-731 - the confirmation a staged file
+            // withheld at commit time goes out only for the renames that landed.
+            self.send_source_removals(writer, sweep.renamed)?;
         }
 
         #[cfg(unix)]
@@ -283,6 +296,29 @@ impl ReceiverContext {
         self.create_hardlinks(dest_dir, writer)?;
 
         Ok(())
+    }
+
+    /// Renders upstream's failed delayed-rename line.
+    ///
+    /// The destination goes through `full_fname()`; the staged name is printed
+    /// as `partial_dir_fname()` returns it, relative to the destination root
+    /// for the default `.~tmp~` and verbatim for an absolute `--partial-dir`.
+    ///
+    /// upstream: receiver.c:725-727 - `rsyserr(FERROR_XFER, errno, "rename
+    /// failed for %s (from %s)", full_fname(fname), partialptr)`.
+    fn delayed_rename_failure_line(
+        &self,
+        dest_dir: &Path,
+        update: &DelayedUpdate,
+        error: &io::Error,
+    ) -> String {
+        let relative = |path: &Path| path.strip_prefix(dest_dir).unwrap_or(path).to_path_buf();
+        format!(
+            "rsync: [receiver] rename failed for {} (from {}): {}\n",
+            self.full_fname(&relative(&update.final_path), Some(dest_dir)),
+            relative(&update.staging).display(),
+            logging::upstream_errno_text(error)
+        )
     }
 
     /// Backs up an existing destination file before the commit overwrites it,
@@ -851,29 +887,34 @@ fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
 ///   exit-code bit (log.c:336-341), so the run's status is unchanged -
 ///   measured against rsync 3.5.0.
 /// - A failed RENAME is `rsyserr(FERROR_XFER, ...)` (`receiver.c:725-728`),
-///   which sets `got_xfer_error` and forces exit 23 (`RERR_PARTIAL`). That is
-///   what the returned `IOERR_GENERAL` bit stands in for
+///   which sets `got_xfer_error` and forces exit 23 (`RERR_PARTIAL`). The
+///   failure is returned in [`DelayedSweep::failed`] for the caller to report
+///   to the peer, and [`DelayedSweep::io_error`] carries the bit
 ///   (log.c:309-316, cleanup.c:210-218, main.c:1648-1649).
 ///
 /// The rename half matters on Linux kernels 5.13-5.18: those have Landlock but
 /// lack `LANDLOCK_ACCESS_FS_REFER` (added in 5.19), so the cross-directory
 /// rename out of the `.~tmp~` staging dir is denied with `EACCES` under a
-/// sandbox. Without the returned io_error bit the file would silently not be
+/// sandbox. Without the reported failure the file would silently not be
 /// updated while the process still exited 0 - silent data loss.
+///
+/// Only a file whose rename landed is listed in [`DelayedSweep::renamed`]:
+/// that is the `MSG_SUCCESS` upstream sends from inside the loop
+/// (`receiver.c:730-731`), and withholding it for a skipped or failed entry is
+/// what keeps `--remove-source-files` from unlinking the only copy.
 pub(in crate::receiver) fn handle_delayed_updates(
-    delayed: &[(PathBuf, PathBuf)],
+    delayed: &[DelayedUpdate],
     backup_config: Option<crate::disk_commit::BackupConfig>,
     env: BackupEnv<'_>,
     partial_dir: Option<&Path>,
-) -> i32 {
-    use crate::generator::io_error_flags::IOERR_GENERAL;
-
+) -> DelayedSweep {
     // Mirrors upstream's got_xfer_error: a failed rename here is a transfer
     // error that must yield exit 23 (RERR_PARTIAL), not a silent 0. A failed
     // backup is upstream's FERROR-only path and contributes no bit.
-    let mut io_error = 0;
+    let mut sweep = DelayedSweep::default();
 
-    for (staging_path, final_path) in delayed {
+    for update in delayed {
+        let (staging_path, final_path) = (&update.staging, &update.final_path);
         // upstream: receiver.c:710 - `if (make_backups > 0 && !make_backup(fname,
         // False)) continue;`. This is the SAME `make_backup(fname, False)` that
         // `finish_transfer()` calls (rsync.c:739), so the sweep is a second
@@ -940,16 +981,15 @@ pub(in crate::receiver) fn handle_delayed_updates(
             // upstream: rsyserr(FERROR_XFER, ...) sets got_xfer_error ->
             // RERR_PARTIAL (exit 23). On kernels 5.13-5.18 the Landlock
             // sandbox lacks ACCESS_FS_REFER, so this cross-dir rename is
-            // denied with EACCES; flag it so the file's absence is visible
-            // via a non-zero exit rather than silently skipped.
-            eprintln!(
-                "rsync: rename failed for {} (from {}): {e}",
-                final_path.display(),
-                staging_path.display()
-            );
-            io_error |= IOERR_GENERAL;
+            // denied with EACCES; the caller reports it so the file's absence
+            // is visible via a non-zero exit rather than silently skipped.
+            sweep.failed.push((update.clone(), e));
             continue;
         }
+
+        // upstream: receiver.c:730-731 - send_msg_success(fname, ndx), on the
+        // rename's success branch only.
+        sweep.renamed.push(update.file_index);
 
         // upstream: receiver.c:732 - handle_partial_dir(partialptr, PDIR_DELETE)
         // fires per file on the rename's success branch rather than as a
@@ -963,7 +1003,29 @@ pub(in crate::receiver) fn handle_delayed_updates(
         engine::remove_partial_dir(partial_dir, staging_path);
     }
 
-    io_error
+    sweep
+}
+
+/// Outcome of a [`handle_delayed_updates`] sweep.
+#[derive(Debug, Default)]
+pub(in crate::receiver) struct DelayedSweep {
+    /// Flat file indices whose staged file reached its final path, in sweep
+    /// order: the `MSG_SUCCESS` confirmations owed to the sender.
+    pub(in crate::receiver) renamed: Vec<usize>,
+    /// Entries whose final rename failed, with the error, for the caller to
+    /// report; each one stays in its partial dir.
+    pub(in crate::receiver) failed: Vec<(DelayedUpdate, io::Error)>,
+}
+
+impl DelayedSweep {
+    /// `IOERR_GENERAL` when any rename failed, else 0.
+    pub(in crate::receiver) fn io_error(&self) -> i32 {
+        if self.failed.is_empty() {
+            0
+        } else {
+            crate::generator::io_error_flags::IOERR_GENERAL
+        }
+    }
 }
 
 #[cfg(test)]
@@ -979,6 +1041,15 @@ mod tests {
     use crate::config::ServerConfig;
     use crate::handshake::HandshakeResult;
     use crate::role::ServerRole;
+
+    /// A staged entry for sweep tests that never inspect the confirmation index.
+    fn staged_update(staging: PathBuf, final_path: PathBuf) -> DelayedUpdate {
+        DelayedUpdate {
+            staging,
+            final_path,
+            file_index: 0,
+        }
+    }
 
     /// Builds a protocol-32 client-mode receiver context, the shape a
     /// `--read-batch` client presents to `run_local_replay`.
@@ -1506,8 +1577,8 @@ mod tests {
         let final_b = dir.path().join("b.txt");
 
         let delayed = vec![
-            (staged_a.clone(), final_a.clone()),
-            (staged_b.clone(), final_b.clone()),
+            staged_update(staged_a.clone(), final_a.clone()),
+            staged_update(staged_b.clone(), final_b.clone()),
         ];
 
         handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
@@ -1549,8 +1620,8 @@ mod tests {
         let final2 = sub.join("f2.txt");
 
         let delayed = vec![
-            (staged1.clone(), final1.clone()),
-            (staged2.clone(), final2.clone()),
+            staged_update(staged1.clone(), final1.clone()),
+            staged_update(staged2.clone(), final2.clone()),
         ];
 
         handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
@@ -1583,7 +1654,7 @@ mod tests {
         fs::write(&staged, b"payload").unwrap();
         let final_path = dir.path().join("f.txt");
         handle_delayed_updates(
-            &[(staged, final_path.clone())],
+            &[staged_update(staged, final_path.clone())],
             None,
             BackupEnv::default(),
             Some(partial_dir.as_path()),
@@ -1612,7 +1683,7 @@ mod tests {
         fs::write(&staged, b"payload").unwrap();
         let final_path = dir.path().join("f.txt");
         handle_delayed_updates(
-            &[(staged, final_path.clone())],
+            &[staged_update(staged, final_path.clone())],
             None,
             BackupEnv::default(),
             Some(Path::new("pdir")),
@@ -1649,12 +1720,13 @@ mod tests {
         let final_bad = PathBuf::from("/nonexistent/path/bad.txt");
 
         let delayed = vec![
-            (staged_bad, final_bad),
-            (staged_good.clone(), final_good.clone()),
+            staged_update(staged_bad, final_bad),
+            staged_update(staged_good.clone(), final_good.clone()),
         ];
 
         // Should not panic or abort, but must report the failed rename.
-        let io_error = handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
+        let io_error =
+            handle_delayed_updates(&delayed, None, BackupEnv::default(), None).io_error();
 
         assert_eq!(
             io_error & IOERR_GENERAL,
@@ -1666,6 +1738,142 @@ mod tests {
         // The good file should still be renamed successfully (sweep continues).
         assert_eq!(fs::read_to_string(&final_good).unwrap(), "good");
         assert!(!staged_good.exists());
+    }
+
+    /// Records every `MSG_SUCCESS` NDX the receiver sends.
+    #[derive(Default)]
+    struct SuccessRecorder(Vec<i32>);
+
+    impl Write for SuccessRecorder {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::writer::MsgInfoSender for SuccessRecorder {
+        fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
+            self.0.push(ndx);
+            Ok(())
+        }
+    }
+
+    /// Stages `name` under `dest/.~tmp~` and returns its sweep entry.
+    fn stage(dest: &Path, name: &str, file_index: usize) -> DelayedUpdate {
+        let staging = dest.join(".~tmp~").join(name);
+        fs::create_dir_all(staging.parent().unwrap()).unwrap();
+        fs::write(&staging, name).unwrap();
+        DelayedUpdate {
+            staging,
+            final_path: dest.join(name),
+            file_index,
+        }
+    }
+
+    /// `--remove-source-files --delay-updates`: the sender may unlink a source
+    /// only once its staged copy has been renamed into place.
+    ///
+    /// The first entry's final rename fails (its target is a non-empty
+    /// directory, so `rename(2)` refuses with `EISDIR`/`ENOTEMPTY`), the second
+    /// lands. Exactly one `MSG_SUCCESS` must go out, for the second file: a
+    /// confirmation for the first would make the sender delete the only copy
+    /// of a file that never reached the destination. The failed entry stays
+    /// staged and the run is flagged for exit 23, as upstream's.
+    ///
+    /// upstream: receiver.c:723-733 - `rsyserr(FERROR_XFER, ...)` on a failed
+    /// `do_rename_at()`, `send_msg_success(fname, ndx)` only on its else branch.
+    #[test]
+    fn a_failed_delayed_rename_withholds_its_source_removal() {
+        use crate::generator::io_error_flags::IOERR_GENERAL;
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let blocked = stage(dest, "blocked", 0);
+        let landed = stage(dest, "landed", 1);
+        fs::create_dir_all(dest.join("blocked").join("occupant")).unwrap();
+
+        let mut ctx = replay_client_ctx();
+        ctx.config.flags.remove_source_files = true;
+        ctx.ndx_segments = vec![(0, 1)];
+        let mut writer = SuccessRecorder::default();
+
+        ctx.finalize_delayed_updates_and_hardlinks(
+            dest,
+            #[cfg(unix)]
+            None,
+            &[blocked.clone(), landed],
+            &mut writer,
+        )
+        .expect("a failed rename is per-file, not fatal");
+
+        assert_eq!(writer.0, vec![2], "only the landed file may be confirmed");
+        assert_eq!(ctx.flist_io_error & IOERR_GENERAL, IOERR_GENERAL);
+        assert!(
+            ctx.got_xfer_error.get(),
+            "the failure is an FERROR_XFER, which forces exit 23"
+        );
+        assert_eq!(fs::read_to_string(dest.join("landed")).unwrap(), "landed");
+        assert_eq!(
+            fs::read_to_string(&blocked.staging).unwrap(),
+            "blocked",
+            "the unrenamed file must survive in the partial dir"
+        );
+    }
+
+    /// The failed-rename line carries upstream's exact wording: the
+    /// destination through `full_fname()`, the staged name relative to the
+    /// destination root, then the errno text.
+    ///
+    /// upstream: receiver.c:725-727; oracle `rsync 3.5.1` push into an
+    /// immutable destination file printed
+    /// `rsync: [receiver] rename failed for "/w/dst/a" (from .~tmp~/a):
+    /// Operation not permitted (1)`.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_delayed_rename_is_reported_in_upstreams_words() {
+        let ctx = replay_client_ctx();
+        let dest = Path::new("/w/dst");
+        let update = DelayedUpdate {
+            staging: dest.join(".~tmp~/a"),
+            final_path: dest.join("a"),
+            file_index: 0,
+        };
+
+        let line = ctx.delayed_rename_failure_line(dest, &update, &io::Error::from_raw_os_error(1));
+
+        assert_eq!(
+            line,
+            "rsync: [receiver] rename failed for \"/w/dst/a\" (from .~tmp~/a): \
+             Operation not permitted (1)\n"
+        );
+    }
+
+    /// Without `--remove-source-files` a landed rename confirms nothing: the
+    /// sweep's confirmations drive the source unlink only.
+    #[test]
+    fn a_landed_delayed_rename_is_silent_without_remove_source_files() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let landed = stage(dest, "landed", 0);
+
+        let mut ctx = replay_client_ctx();
+        ctx.ndx_segments = vec![(0, 1)];
+        let mut writer = SuccessRecorder::default();
+
+        ctx.finalize_delayed_updates_and_hardlinks(
+            dest,
+            #[cfg(unix)]
+            None,
+            &[landed],
+            &mut writer,
+        )
+        .unwrap();
+
+        assert!(writer.0.is_empty());
+        assert!(dest.join("landed").exists());
     }
 
     /// Verifies a fully successful sweep returns 0, so a clean
@@ -1680,8 +1888,13 @@ mod tests {
         fs::write(&staged, b"content").unwrap();
         let final_path = dir.path().join("a.txt");
 
-        let io_error =
-            handle_delayed_updates(&[(staged, final_path)], None, BackupEnv::default(), None);
+        let io_error = handle_delayed_updates(
+            &[staged_update(staged, final_path)],
+            None,
+            BackupEnv::default(),
+            None,
+        )
+        .io_error();
 
         assert_eq!(
             io_error, 0,
@@ -1694,7 +1907,7 @@ mod tests {
     #[test]
     fn handle_delayed_updates_empty_is_noop() {
         assert_eq!(
-            handle_delayed_updates(&[], None, BackupEnv::default(), None),
+            handle_delayed_updates(&[], None, BackupEnv::default(), None).io_error(),
             0
         );
     }
@@ -1736,7 +1949,7 @@ mod tests {
         };
 
         handle_delayed_updates(
-            &[(staged.clone(), final_path.clone())],
+            &[staged_update(staged.clone(), final_path.clone())],
             Some(backup_config),
             BackupEnv::default(),
             None,
@@ -1793,7 +2006,7 @@ mod tests {
         };
 
         handle_delayed_updates(
-            &[(staged.clone(), final_path.clone())],
+            &[staged_update(staged.clone(), final_path.clone())],
             Some(backup_config),
             BackupEnv::default(),
             None,
@@ -1835,7 +2048,7 @@ mod tests {
         };
 
         handle_delayed_updates(
-            &[(staged.clone(), final_path.clone())],
+            &[staged_update(staged.clone(), final_path.clone())],
             Some(backup_config),
             BackupEnv::default(),
             None,
@@ -1889,7 +2102,7 @@ mod tests {
         };
 
         handle_delayed_updates(
-            &[(staged.clone(), final_path.clone())],
+            &[staged_update(staged.clone(), final_path.clone())],
             Some(backup_config),
             BackupEnv::default(),
             None,
@@ -1962,11 +2175,12 @@ mod tests {
         let io_error = {
             let _exdev = ForceExdev::new();
             handle_delayed_updates(
-                &[(staged.clone(), final_path.clone())],
+                &[staged_update(staged.clone(), final_path.clone())],
                 Some(backup_config),
                 BackupEnv::default(),
                 None,
             )
+            .io_error()
         };
 
         let backup_path = backup_root.join("name1~");
@@ -2030,11 +2244,12 @@ mod tests {
         };
 
         let io_error = handle_delayed_updates(
-            &[(staged.clone(), final_path.clone())],
+            &[staged_update(staged.clone(), final_path.clone())],
             Some(backup_config),
             BackupEnv::default(),
             None,
-        );
+        )
+        .io_error();
 
         assert_eq!(
             fs::read_to_string(backup_root.join("deep").join("name1~"))
@@ -2086,7 +2301,7 @@ mod tests {
         };
 
         handle_delayed_updates(
-            &[(staged.clone(), final_path.clone())],
+            &[staged_update(staged.clone(), final_path.clone())],
             Some(backup_config),
             BackupEnv::default(),
             None,
@@ -2143,8 +2358,8 @@ mod tests {
 
         handle_delayed_updates(
             &[
-                (staged_a.clone(), final_a.clone()),
-                (staged_b.clone(), final_b.clone()),
+                staged_update(staged_a.clone(), final_a.clone()),
+                staged_update(staged_b.clone(), final_b.clone()),
             ],
             Some(backup_config),
             BackupEnv::default(),
@@ -2203,8 +2418,8 @@ mod tests {
 
         // Now verify that a subsequent resume (calling the sweep) works.
         let delayed = vec![
-            (staged_a.clone(), final_a.clone()),
-            (staged_b.clone(), final_b.clone()),
+            staged_update(staged_a.clone(), final_a.clone()),
+            staged_update(staged_b.clone(), final_b.clone()),
         ];
         handle_delayed_updates(&delayed, None, BackupEnv::default(), None);
 
@@ -2274,11 +2489,12 @@ mod tests {
         };
 
         let io_error = handle_delayed_updates(
-            &[(staged_path, final_path.clone())],
+            &[staged_update(staged_path, final_path.clone())],
             Some(backup_config),
             env,
             None,
-        );
+        )
+        .io_error();
         assert_eq!(io_error, 0, "the sweep itself must succeed");
 
         assert!(
@@ -2355,7 +2571,7 @@ mod tests {
         ctx.finalize_delayed_updates_and_hardlinks(
             &dest_dir,
             Some(&sandbox),
-            &[(staged_path, final_path)],
+            &[staged_update(staged_path, final_path)],
             &mut writer,
         )
         .expect("the delayed-update finalizer must complete");

@@ -85,6 +85,8 @@
 pub mod acl_fd;
 /// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
+/// Closing a written file with the result of `close(2)` reported.
+pub mod checked_close;
 /// Sender-side confined source open beneath a module root.
 ///
 /// Unix-only: mirrors upstream `secure_relative_open` so a non-chroot
@@ -394,6 +396,7 @@ pub mod sqpoll_basis;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
+pub use checked_close::close_file;
 pub use clone_file_range::{CLONE_FILE_RANGE_MIN_BYTES, try_clone_file_range};
 pub use container::{
     FORCE_ROOTLESS_ENV, RootlessSignal, detect_rootless_container, rootless_signal,

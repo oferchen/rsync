@@ -1,8 +1,8 @@
-//! Which receivers route a peer's log frames to the daemon's log channel.
+//! Which receivers forward a peer's log frames instead of rendering them.
 //!
-//! upstream: log.c:292-301 - every receiver child passes a peer `MSG_INFO`/
-//! `MSG_ERROR` to its generator; log.c:339-357 - only a daemon's generator
-//! writes it to the log file.
+//! upstream: main.c:1085 `send_msgs_to_gen = am_server` - every server
+//! receiver child passes a peer `MSG_INFO`/`MSG_ERROR` to its generator
+//! (log.c:292-301), whose `rwrite()` frames it to the client (log.c:357-366).
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -12,6 +12,7 @@ use protocol::ProtocolVersion;
 use super::super::super::ReceiverContext;
 use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
+use crate::reader::LocalRole;
 use crate::role::ServerRole;
 
 fn receiver(
@@ -42,19 +43,30 @@ fn receiver(
     ReceiverContext::new_for_test(&handshake, config)
 }
 
+/// WHY: a daemon receiver is a server; its peer's `MSG_INFO` must reach the
+/// client and the daemon log, never the receiver's own stdout.
 #[test]
 fn daemon_receiver_forwards_peer_log_frames() {
-    assert!(receiver(false, true, Some("/srv/mod")).forwards_peer_log());
+    assert_eq!(
+        receiver(false, true, Some("/srv/mod")).reader_role(),
+        LocalRole::Server
+    );
 }
 
+/// WHY: an rsh `--server` receiver's stdout IS the protocol stream, so a
+/// peer's `MSG_INFO` rendered there would interleave raw bytes with frames.
+/// upstream: main.c:1085 `send_msgs_to_gen = am_server`.
 #[test]
-fn ssh_server_receiver_renders_peer_log_frames_locally() {
-    assert!(!receiver(false, false, None).forwards_peer_log());
+fn ssh_server_receiver_forwards_peer_log_frames() {
+    assert_eq!(
+        receiver(false, false, None).reader_role(),
+        LocalRole::Server
+    );
 }
 
 #[test]
 fn daemon_client_receiver_renders_peer_log_frames_locally() {
-    // upstream: a pulling client is not `am_daemon`, even though oc marks both
+    // upstream: a pulling client is not `am_server`, even though oc marks both
     // ends of an rsync:// transfer as a daemon connection.
-    assert!(!receiver(true, true, None).forwards_peer_log());
+    assert_eq!(receiver(true, true, None).reader_role(), LocalRole::Client);
 }

@@ -53,3 +53,8 @@ pub(crate) use self::config::BackupEnv;
 pub(crate) use self::process::ForceExdev;
 pub(crate) use self::process::make_backup;
 pub(crate) use self::process::make_backup_copy;
+#[cfg(all(test, unix))]
+pub(crate) use self::writer::close_fault;
+/// The checked close every receive path ends a written file with, shared by the
+/// disk thread and the synchronous receivers.
+pub(crate) use self::writer::close_received_file;

@@ -20,6 +20,7 @@ use protocol::codec::{MonotonicNdxWriter, NdxCodec, NdxCodecEnum};
 use protocol::flist::FileEntry;
 
 use crate::delta_apply::ChecksumVerifier;
+use crate::pipeline::receiver::DelayedUpdate;
 use crate::pipeline::{PipelineConfig, PipelineState};
 use crate::receiver::basis::{BasisFileConfig, find_basis_file_with_config};
 use crate::receiver::{PipelineSetup, ReceiverContext};
@@ -155,15 +156,7 @@ impl InFlightRequests {
 /// delayed_updates)`. `transferred_file_size` mirrors upstream `receiver.c:800`
 /// `stats.total_transferred_size += F_LENGTH(file)`, summed at the same point as
 /// `files_transferred`.
-type PipelineResult = (
-    usize,
-    u64,
-    u64,
-    u64,
-    u64,
-    Vec<usize>,
-    Vec<(PathBuf, PathBuf)>,
-);
+type PipelineResult = (usize, u64, u64, u64, u64, Vec<usize>, Vec<DelayedUpdate>);
 
 /// Whether sparse writing is active for this pass.
 ///
@@ -270,6 +263,22 @@ impl ReceiverContext {
         W: crate::writer::MsgInfoSender + ?Sized,
     {
         let confirmed = pipelined_receiver.drain_new_success_indices();
+        self.send_source_removals(writer, confirmed)
+    }
+
+    /// Sends `MSG_SUCCESS(ndx)` for each confirmed flat index when
+    /// `--remove-source-files` is active; otherwise discards them.
+    ///
+    /// upstream: receiver.c:1342-1343 and receiver.c:730-731 -
+    /// `if (remove_source_files || ...) send_msg_success(fname, ndx)`.
+    pub(in crate::receiver) fn send_source_removals<W>(
+        &self,
+        writer: &mut W,
+        confirmed: Vec<usize>,
+    ) -> io::Result<()>
+    where
+        W: crate::writer::MsgInfoSender + ?Sized,
+    {
         if !self.config.flags.remove_source_files {
             return Ok(());
         }

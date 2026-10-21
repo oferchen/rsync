@@ -26,6 +26,27 @@ use crate::disk_commit::{DiskCommitConfig, PartialMode, spawn_disk_thread};
 use crate::full_fname::full_fname_path;
 use crate::pipeline::messages::{CommitResult, FileMessage};
 
+/// A file `--delay-updates` staged in its partial dir, awaiting the phase-2
+/// rename onto its final path.
+///
+/// Only a file that committed cleanly is staged, so `file_index` names the
+/// `MSG_SUCCESS` owed to the sender once that rename lands.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:1325-1327` - `bitbag_set_bit(delayed_bits, ndx)`, `recv_ok = 2`.
+/// - `receiver.c:723-733` - `handle_delayed_updates()` renames, then sends
+///   `MSG_SUCCESS`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DelayedUpdate {
+    /// Where the disk thread left the file (upstream `partialptr`).
+    pub staging: PathBuf,
+    /// The destination the sweep renames it to (upstream `fname`).
+    pub final_path: PathBuf,
+    /// Flat file-list index, mapped to the wire NDX for `MSG_SUCCESS`.
+    pub file_index: usize,
+}
+
 /// Expected checksum for a pending file, used for deferred verification.
 ///
 /// Stored in a FIFO queue by `PipelinedReceiver`. When the disk thread
@@ -104,16 +125,17 @@ pub struct PipelinedReceiver {
     /// 23 (`RERR_PARTIAL`).
     warnings: Vec<(MessageCode, String)>,
     /// Files staged to `.~tmp~` partial dir when `--delay-updates` is active.
-    /// Each entry is `(staging_path, final_path)`. The receiver performs a
-    /// bulk rename sweep at the phase 2 boundary.
+    /// The receiver performs a bulk rename sweep at the phase 2 boundary.
     ///
     /// # Upstream Reference
     ///
     /// - `receiver.c:837`: `delayed_bits = bitbag_create()`
     /// - `receiver.c:875`: `handle_delayed_updates()` sweep
-    delayed_updates: Vec<(PathBuf, PathBuf)>,
+    delayed_updates: Vec<DelayedUpdate>,
     /// Flat file indices whose commit was confirmed (finish_transfer succeeded,
-    /// checksum verified). The receiver drains these and, when
+    /// checksum verified) and that already sit at their final path; a staged
+    /// `--delay-updates` file waits in `delayed_updates` until its rename
+    /// lands. The receiver drains these and, when
     /// `--remove-source-files` is active, sends `MSG_SUCCESS(ndx)` to the sender
     /// so it can unlink the confirmed source. Mirrors upstream's
     /// `send_msg_success()` at `recv_ok == 1`.
@@ -327,6 +349,10 @@ impl PipelinedReceiver {
             Some(crate::temp_guard::CommitOp::Backup) => {
                 keep_backup_failed_line(&name, error, &reason)
             }
+            // upstream: rsync-3.5.1/receiver.c:1297-1298
+            Some(crate::temp_guard::CommitOp::Close) => {
+                format!("rsync: [receiver] close failed on {name}: {reason}")
+            }
             // upstream: rsync-3.5.1/rsync.c:919-921 `"%s %s -> \"%s\""` over
             // full_fname(fnametmp) and fname, the target relative to the
             // receiver's destination root.
@@ -434,6 +460,9 @@ impl PipelinedReceiver {
     ///   exit code - is the data guarantee. The `FERROR` diagnostic
     ///   `make_backup()` already printed is kept, matching upstream's two-line
     ///   output (the per-file reason, then the fatal exit line).
+    /// - a failed `close()` of the received file is fatal for the same reason
+    ///   and with the same exit: `receiver.c:1296-1300` reports
+    ///   `close failed on %s` and calls `exit_cleanup(RERR_FILEIO)`.
     ///
     /// # Upstream Reference
     ///
@@ -453,14 +482,17 @@ impl PipelinedReceiver {
     ) -> Option<io::Error> {
         let pending = self.expected_checksums.pop_front();
         let path = pending.map(|p| p.file_path).unwrap_or_default();
-        let fatal_backup = matches!(
-            crate::temp_guard::commit_op_failure(&error),
-            Some((crate::temp_guard::CommitOp::Backup, _))
-        );
+        // upstream: rsync.c:897-900 (backup, FERROR_XFER) and receiver.c:1296-1300
+        // (close, FERROR) - both are exit_cleanup(RERR_FILEIO).
+        let fatal_code = match crate::temp_guard::commit_op_failure(&error) {
+            Some((crate::temp_guard::CommitOp::Backup, _)) => Some(MessageCode::ErrorXfer),
+            Some((crate::temp_guard::CommitOp::Close, _)) => Some(MessageCode::Error),
+            _ => None,
+        };
 
-        if fatal_backup {
+        if let Some(code) = fatal_code {
             self.warnings
-                .push((MessageCode::ErrorXfer, self.commit_failure(&path, &error)));
+                .push((code, self.commit_failure(&path, &error)));
             return Some(error);
         }
 
@@ -499,7 +531,6 @@ impl PipelinedReceiver {
         loop {
             match self.result_rx.try_recv() {
                 Ok(Ok(result)) => {
-                    self.collect_delayed_update(&result);
                     Self::emit_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
@@ -552,7 +583,6 @@ impl PipelinedReceiver {
         while self.pending_commits > 0 {
             match self.result_rx.recv() {
                 Ok(Ok(result)) => {
-                    self.collect_delayed_update(&result);
                     Self::emit_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
@@ -644,6 +674,19 @@ impl PipelinedReceiver {
             return Ok(());
         }
 
+        // upstream: receiver.c:1325-1344 - a file staged by --delay-updates is
+        // `recv_ok == 2`, which sends nothing yet. Its MSG_SUCCESS waits for
+        // handle_delayed_updates() to rename it into place (receiver.c:723-733);
+        // confirming it now would let the sender unlink a source whose only
+        // copy is still in the partial dir, and lose it if that rename fails.
+        if let Some(ref staged) = result.delayed_path {
+            self.delayed_updates.push(DelayedUpdate {
+                staging: staged.clone(),
+                final_path: pending.file_path,
+                file_index: pending.file_index,
+            });
+            return Ok(());
+        }
         // upstream: receiver.c:1345-1347 - the file committed cleanly
         // (finish_transfer succeeded and any wire checksum verified), i.e.
         // `recv_ok == 1`. Record it as a confirmed success so the receiver can
@@ -651,22 +694,6 @@ impl PipelinedReceiver {
         // --remove-source-files unlink of the confirmed source.
         self.success_indices.push(pending.file_index);
         Ok(())
-    }
-
-    /// Collects a delayed update entry from a commit result, if present.
-    ///
-    /// Uses the pending checksum queue to recover the final destination path
-    /// (which is stored there as `file_path`). The staging path comes from
-    /// `CommitResult::delayed_path`.
-    fn collect_delayed_update(&mut self, result: &CommitResult) {
-        if let Some(ref staged) = result.delayed_path {
-            // The expected_checksums queue is FIFO and hasn't been popped
-            // yet (verify_checksum pops it). Peek at the front entry.
-            if let Some(pending) = self.expected_checksums.front() {
-                self.delayed_updates
-                    .push((staged.clone(), pending.file_path.clone()));
-            }
-        }
     }
 
     /// Emit the upstream `INFO_GTE(BACKUP, 1)` line for a successful
@@ -695,14 +722,13 @@ impl PipelinedReceiver {
 
     /// Returns and clears the accumulated delayed update entries.
     ///
-    /// Each entry is `(staging_path, final_path)`. The receiver calls this
-    /// at the phase 2 boundary and renames each file from its staging
-    /// location to the final destination.
+    /// The receiver calls this at the phase 2 boundary and renames each file
+    /// from its staging location to the final destination.
     ///
     /// # Upstream Reference
     ///
     /// - `receiver.c:875`: `handle_delayed_updates()` at phase 2
-    pub fn take_delayed_updates(&mut self) -> Vec<(PathBuf, PathBuf)> {
+    pub fn take_delayed_updates(&mut self) -> Vec<DelayedUpdate> {
         std::mem::take(&mut self.delayed_updates)
     }
 
@@ -2347,11 +2373,18 @@ mod tests {
         }
     }
 
-    /// Verifies `collect_delayed_update` captures the staging path from
-    /// `CommitResult::delayed_path` paired with the final destination from
-    /// the pending checksum queue.
+    /// A staged `--delay-updates` file is tracked for the phase-2 sweep and is
+    /// NOT yet a confirmed success.
+    ///
+    /// Confirming it at commit time is the source-data-loss bug: under
+    /// `--remove-source-files` the sender unlinks the source on `MSG_SUCCESS`,
+    /// while the only copy still sits in the partial dir, so a failed final
+    /// rename leaves the file nowhere.
+    ///
+    /// upstream: receiver.c:1325-1344 - `recv_ok = 2` sends nothing;
+    /// receiver.c:730-731 - `send_msg_success()` only after the rename.
     #[test]
-    fn collect_delayed_update_tracks_staging_and_final_path() {
+    fn a_staged_file_is_deferred_to_the_sweep_not_confirmed() {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
 
         // Simulate a pending checksum entry (which carries the final path).
@@ -2360,7 +2393,7 @@ mod tests {
             len: 0,
             file_path: PathBuf::from("/dest/file.txt"),
             flist_name: PathBuf::from("file.txt"),
-            file_index: 0,
+            file_index: 7,
             is_inplace: false,
         });
 
@@ -2374,12 +2407,20 @@ mod tests {
             backup_notice: None,
         };
 
-        pr.collect_delayed_update(&result);
+        pr.verify_checksum(&result).unwrap();
 
-        let updates = pr.take_delayed_updates();
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].0, PathBuf::from("/dest/.~tmp~/file.txt"));
-        assert_eq!(updates[0].1, PathBuf::from("/dest/file.txt"));
+        assert!(
+            pr.drain_new_success_indices().is_empty(),
+            "a staged file must not be confirmed before its rename"
+        );
+        assert_eq!(
+            pr.take_delayed_updates(),
+            vec![DelayedUpdate {
+                staging: PathBuf::from("/dest/.~tmp~/file.txt"),
+                final_path: PathBuf::from("/dest/file.txt"),
+                file_index: 7,
+            }]
+        );
 
         drop(pr);
     }
@@ -2566,9 +2607,116 @@ mod tests {
         // PipelinedReceiver tracked the delayed update.
         let updates = pr.take_delayed_updates();
         assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].0, staging);
-        assert_eq!(updates[0].1, file_path);
+        assert_eq!(updates[0].staging, staging);
+        assert_eq!(updates[0].final_path, file_path);
+        assert!(
+            pr.drain_new_success_indices().is_empty(),
+            "the staged file is confirmed by the sweep, not the commit"
+        );
 
         drop(pr);
+    }
+
+    /// Drives one received file through the disk thread with the next close
+    /// armed to fail `EIO`, returning the drain's error and the queued lines.
+    ///
+    /// `chunked` selects the Begin/Chunk/Commit path (`process_file`) over the
+    /// coalesced WholeFile path (`process_whole_file`): both end a file with
+    /// the same checked close and both must abort.
+    #[cfg(unix)]
+    fn drain_with_failing_close(
+        file_path: &std::path::Path,
+        chunked: bool,
+    ) -> (io::Error, Vec<(MessageCode, String)>) {
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let begin = BeginMessage {
+            file_path: file_path.to_path_buf(),
+            target_size: 7,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+            xattr_basis: None,
+            file_entry: None,
+        };
+        crate::disk_commit::close_fault::arm(libc::EIO);
+        if chunked {
+            let tx = pr.file_sender();
+            tx.send(FileMessage::Begin(Box::new(begin))).unwrap();
+            tx.send(FileMessage::Chunk(b"payload".to_vec())).unwrap();
+            tx.send(FileMessage::Commit {
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
+        } else {
+            pr.file_sender()
+                .send(FileMessage::WholeFile {
+                    begin: Box::new(begin),
+                    data: b"payload".to_vec(),
+                    expected_checksum: Default::default(),
+                })
+                .unwrap();
+        }
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.to_path_buf(),
+            PathBuf::from(file_path.file_name().unwrap()),
+            0,
+            false,
+        );
+
+        let error = pr
+            .drain_all_results()
+            .expect_err("a failed close must abort the transfer");
+        (error, pr.drain_warnings())
+    }
+
+    /// A received file whose `close(2)` fails is fatal: exit `RERR_FILEIO`
+    /// with upstream's `close failed on` line, and the file is never put into
+    /// place. On NFS-like filesystems close is where a failed write surfaces,
+    /// so treating it as success would install a file whose bytes never landed.
+    ///
+    /// upstream: receiver.c:1296-1300 - `rsyserr(FERROR, errno, "close failed
+    /// on %s", full_fname(fnametmp)); exit_cleanup(RERR_FILEIO);`
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_close_aborts_with_rerr_fileio_on_both_commit_paths() {
+        for chunked in [false, true] {
+            let dir = test_support::create_tempdir();
+            let file_path = dir.path().join("payload.bin");
+
+            let (error, warnings) = drain_with_failing_close(&file_path, chunked);
+
+            assert_eq!(
+                crate::error::rerr_for_io_error(&error),
+                11,
+                "chunked={chunked}"
+            );
+            let (op, temp) = crate::temp_guard::commit_op_failure(&error)
+                .expect("the close failure carries its operation");
+            assert_eq!(op, crate::temp_guard::CommitOp::Close);
+            assert_ne!(temp, file_path, "upstream names the temp file, fnametmp");
+            assert_eq!(
+                warnings,
+                vec![(
+                    MessageCode::Error,
+                    format!(
+                        "rsync: [receiver] close failed on \"{}\": {}",
+                        temp.display(),
+                        // strerror(EIO) differs between libcs (glibc "Input/output
+                        // error", musl "I/O error"); upstream rsyserr uses the local one.
+                        logging::upstream_errno_text(&io::Error::from_raw_os_error(5))
+                    )
+                )],
+                "chunked={chunked}"
+            );
+            assert!(
+                !file_path.exists(),
+                "a file whose close failed must not be renamed into place (chunked={chunked})"
+            );
+        }
     }
 }

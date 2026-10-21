@@ -19,6 +19,8 @@ mod builder;
 #[cfg(test)]
 mod retokenization_tests;
 #[cfg(test)]
+mod safe_arg_tests;
+#[cfg(test)]
 mod tests;
 mod transfer_role;
 

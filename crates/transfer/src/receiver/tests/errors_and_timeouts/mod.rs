@@ -21,8 +21,8 @@
 //!   `reverse-daemon-delta` hang.
 //! - [`input_multiplex_tests`] - client/server input multiplex activation
 //!   per protocol version.
-//! - [`peer_log_forwarding_tests`] - which receivers route a peer's log
-//!   frames to the daemon's log channel.
+//! - [`peer_log_forwarding_tests`] - which receivers forward a peer's log
+//!   frames instead of rendering them.
 //! - [`sanitize_file_list`] - trust gating that strips absolute / `..`
 //!   paths from an untrusted sender's file list.
 //! - [`daemon_filter_tests`] - daemon-side `FilterSet` rules applied

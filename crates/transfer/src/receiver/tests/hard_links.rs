@@ -680,7 +680,11 @@ fn finalize_links_followers_after_delayed_leader_rename() {
 
     // The delayed-updates list the driver hands to the finalize step: rename the
     // staged leader to its final path.
-    let delayed = vec![(staging.join("leader.txt"), dest.join("leader.txt"))];
+    let delayed = vec![crate::pipeline::receiver::DelayedUpdate {
+        staging: staging.join("leader.txt"),
+        final_path: dest.join("leader.txt"),
+        file_index: 0,
+    }];
 
     ctx.finalize_delayed_updates_and_hardlinks(dest, None, &delayed, &mut writer)
         .expect(

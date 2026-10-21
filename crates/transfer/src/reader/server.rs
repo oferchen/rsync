@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use compress::algorithm::CompressionAlgorithm;
 
-use super::MultiplexReader;
+use super::{LocalRole, MultiplexReader};
 use crate::compressed_reader::CompressedReader;
 
 /// Server reader abstraction that switches between plain and multiplex modes.
@@ -30,9 +30,9 @@ pub struct ServerReader<R: Read> {
     /// Sender acceptance of `MSG_BLOCK_STATS`, applied to the
     /// `MultiplexReader` on multiplex activation. upstream: io.c:1721-1732.
     pending_block_stats_accept: bool,
-    /// Daemon-receiver routing of peer log frames, applied to the
-    /// `MultiplexReader` on multiplex activation. upstream: log.c:292-301.
-    pending_forward_peer_log: bool,
+    /// The end of the connection this reader serves, applied to the
+    /// `MultiplexReader` on multiplex activation. upstream: log.c:292-366.
+    pending_role: LocalRole,
     /// Payload bytes delivered to the caller, in every mode.
     /// upstream: io.c:2166,2185 `total_data_read` in `read_buf()`.
     data_read: u64,
@@ -59,7 +59,7 @@ impl<R: Read> ServerReader<R> {
             pending_io_timeout_adoption: None,
             pending_deleted_render: None,
             pending_block_stats_accept: false,
-            pending_forward_peer_log: false,
+            pending_role: LocalRole::Client,
             data_read: 0,
         }
     }
@@ -95,19 +95,20 @@ impl<R: Read> ServerReader<R> {
         }
     }
 
-    /// Routes a peer's `MSG_INFO`/`MSG_ERROR`/`MSG_ERROR_XFER`/`MSG_WARNING`
-    /// frames to the daemon's log channel once multiplexing is active.
+    /// Sets which end of the connection this reader serves.
     ///
-    /// Called only by a daemon's receiver; every other reader renders those
-    /// frames on its own stdout/stderr.
+    /// A server reader forwards a peer's `MSG_INFO`/`MSG_ERROR`/
+    /// `MSG_ERROR_XFER`/`MSG_WARNING` frames to its own peer instead of
+    /// writing them to stdout, which on an rsh server is the protocol stream.
     ///
-    /// upstream: log.c:292-301 - the receiver's `rwrite()` passes the bytes to
-    /// its generator, whose `rwrite()` logs them (log.c:312-330).
-    pub(crate) fn forward_peer_log(&mut self) {
+    /// upstream: log.c:292-301 - a server receiver passes the bytes to its
+    /// generator; log.c:357-366 - a server's `rwrite()` frames them to the
+    /// client.
+    pub(crate) fn set_local_role(&mut self, role: LocalRole) {
         match &mut self.inner {
-            ServerReaderInner::Multiplex(mux) => mux.forward_peer_log(),
-            ServerReaderInner::Compressed(compressed) => compressed.get_mut().forward_peer_log(),
-            ServerReaderInner::Plain(_) => self.pending_forward_peer_log = true,
+            ServerReaderInner::Multiplex(mux) => mux.set_local_role(role),
+            ServerReaderInner::Compressed(compressed) => compressed.get_mut().set_local_role(role),
+            ServerReaderInner::Plain(_) => self.pending_role = role,
         }
     }
 
@@ -188,16 +189,14 @@ impl<R: Read> ServerReader<R> {
                 if self.pending_block_stats_accept {
                     mux.accept_block_stats();
                 }
-                if self.pending_forward_peer_log {
-                    mux.forward_peer_log();
-                }
+                mux.set_local_role(self.pending_role);
                 Ok(Self {
                     inner: ServerReaderInner::Multiplex(mux),
                     pending_batch_recorder: None,
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
                     pending_block_stats_accept: false,
-                    pending_forward_peer_log: false,
+                    pending_role: LocalRole::Client,
                     data_read: self.data_read,
                 })
             }
@@ -239,7 +238,7 @@ impl<R: Read> ServerReader<R> {
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
                     pending_block_stats_accept: false,
-                    pending_forward_peer_log: false,
+                    pending_role: LocalRole::Client,
                     data_read: self.data_read,
                 })
             }

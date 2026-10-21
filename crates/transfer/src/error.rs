@@ -262,7 +262,8 @@ pub fn flush_retry<W: Write>(writer: &mut W) -> io::Result<()> {
 ///
 /// - a tagged [`protocol::ProtocolViolation`] - `RERR_PROTOCOL` (2)
 /// - a tagged [`protocol::SyntaxViolation`] - `RERR_SYNTAX` (1)
-/// - a failed commit-path backup - `RERR_FILEIO` (11), whatever the errno
+/// - a failed commit-path backup or received-file close - `RERR_FILEIO` (11),
+///   whatever the errno
 /// - `NotFound`, `PermissionDenied`, `AlreadyExists` - `RERR_FILESELECT` (3)
 /// - the connection-class kinds - `RERR_SOCKETIO` (10)
 /// - `TimedOut` - `RERR_TIMEOUT` (30)
@@ -276,6 +277,7 @@ pub fn flush_retry<W: Write>(writer: &mut W) -> io::Result<()> {
 /// - `errcode.h` - the `RERR_*` values.
 /// - `rsync.c:897-900` - `finish_transfer()` answers a failed `make_backup()` with
 ///   `exit_cleanup(RERR_FILEIO)` whatever the errno was.
+/// - `receiver.c:1296-1300` - `recv_files()` does the same for a failed `close()`.
 #[must_use]
 pub fn rerr_for_io_error(error: &io::Error) -> i32 {
     // upstream: errcode.h RERR_PROTOCOL=2 - a tagged protocol violation
@@ -310,9 +312,14 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
     // upstream: rsync.c:897-900 - a denied backup must not be graded by `ErrorKind`
     // like the per-file open failures below. Without this arm the usual `EACCES`
     // reaches the `PermissionDenied => RERR_FILESELECT` arm and reports 3.
+    // upstream: receiver.c:1296-1300 - a failed close of the received file is
+    // `exit_cleanup(RERR_FILEIO)` whatever the errno, too.
     if matches!(
         crate::temp_guard::commit_op_failure(error),
-        Some((crate::temp_guard::CommitOp::Backup, _))
+        Some((
+            crate::temp_guard::CommitOp::Backup | crate::temp_guard::CommitOp::Close,
+            _
+        ))
     ) {
         return 11;
     }
@@ -587,5 +594,29 @@ mod tests {
         let mut buf = Vec::new();
         buf.write_all(b"test").unwrap();
         flush_retry(&mut buf).unwrap();
+    }
+
+    /// A failed close of the received file is RERR_FILEIO whatever its errno.
+    ///
+    /// Without the tag an `EACCES` or `ENOENT` from `close(2)` would grade as
+    /// `RERR_FILESELECT` (3) by `ErrorKind`; upstream exits 11 unconditionally.
+    ///
+    /// upstream: receiver.c:1296-1300 - `exit_cleanup(RERR_FILEIO)`.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_received_file_close_is_rerr_fileio_whatever_the_errno() {
+        for errno in [libc::EIO, libc::ENOSPC, libc::EACCES] {
+            let error = crate::temp_guard::attach_commit_op(
+                crate::temp_guard::CommitOp::Close,
+                Path::new("/dest/.f.XXXXXX"),
+                io::Error::from_raw_os_error(errno),
+            );
+            assert_eq!(rerr_for_io_error(&error), 11, "errno {errno}");
+        }
+        assert_eq!(
+            rerr_for_io_error(&io::Error::from_raw_os_error(libc::EACCES)),
+            3,
+            "the untagged errno keeps its own class"
+        );
     }
 }

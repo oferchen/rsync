@@ -13,6 +13,7 @@ use protocol::CompatibilityFlags;
 use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum, create_ndx_codec};
 
 use crate::pipeline::PipelineConfig;
+use crate::pipeline::receiver::DelayedUpdate;
 use crate::receiver::PipelineSetup;
 use crate::receiver::ndx_stream::{NdxFrame, read_marker_aware_ndx, read_ndx_and_attrs};
 use crate::receiver::stats::TransferStats;
@@ -268,7 +269,7 @@ impl ReceiverContext {
         let mut literal_data: u64 = 0;
         let mut matched_data: u64 = 0;
         let mut redo_count: usize = 0;
-        let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut all_delayed_updates: Vec<DelayedUpdate> = Vec::new();
 
         // Buffer directory `-v` names under their flist index so each is
         // released immediately before its first child is reached in the transfer
@@ -630,7 +631,7 @@ impl ReceiverContext {
         let mut bytes_received = 0u64;
         let mut literal_data = 0u64;
         let mut matched_data = 0u64;
-        let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut all_delayed_updates: Vec<DelayedUpdate> = Vec::new();
         let mut all_redo_indices: Vec<usize> = Vec::new();
         // Plain-`-v` directory NAME lines, accumulated per segment (each segment's
         // entries are the only ones resident when it is walked). Mirrors the batch

@@ -27,6 +27,9 @@ permutation = "0.4"
 filetime = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
+# nix supplies the checked close(2) for received files (checked_close.rs).
+nix = { workspace = true }
+
 # Memory-mapped I/O (unix-only; runtime fallback to buffered I/O)
 memmap2 = "0.9"
 

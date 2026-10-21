@@ -119,8 +119,9 @@ def _targeted(have: set[str]) -> list[Cell]:
             fixture="symlinks", opts=("-a", "--copy-unsafe-links"))
         add(v, case="append-longer-dest", transport="rsh", direction="push", role="oc-server",
             fixture="append", opts=("-a", "--append"))
-        add(v, case="prune-empty-dirs", transport="rsh", direction="push", role="oc-client",
-            fixture="filters", opts=("-am", "--include=*/", "--include=*.txt", "--exclude=*"))
+        for t in ("rsh", "daemon"):
+            add(v, case="prune-empty-dirs", transport=t, direction="push", role="oc-client",
+                fixture="filters", opts=("-am", "--include=*/", "--include=*.txt", "--exclude=*"))
         add(v, case="max-delete", transport="rsh", direction="push", role="oc-server",
             fixture="delete", opts=("-a", "--delete", "--max-delete=1"))
         add(v, case="copy-links-dangling", transport="rsh", direction="pull", role="oc-server",
