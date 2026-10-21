@@ -359,6 +359,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Open the daemon-wide log from the global `log file`, log refusals in upstream's words, open operator path parameters verbatim, and log the banner before readiness (#7677, #7679, #7680)
 
 **Filters**
+- Merge rules refuse `:-C`, `:C-`, `:--`, `:++` and `:+-` with upstream's `invalid modifier` error and exit 1, instead of accepting the first two and misreporting the rest. Modifier validity now comes from one table shared by the rule parsers, mirroring upstream's single modifier `switch` (`exclude.c:1365-1443`) (#PRNUM)
 - `--exclude='!'` and `--include='!'` empty the rule list while it is parsed instead of becoming a clear rule, so nothing is sent for them; a `--protocol=28` pull with such a rule no longer fails with `filter rules are too modern for remote rsync`, matching upstream's `parse_filter_str` (`exclude.c:1541-1551`) (#PRNUM)
 - Match patterns as bytes end to end (#7918)
 - Match upstream for negated dir-only and long-star `***` rules (#7987)

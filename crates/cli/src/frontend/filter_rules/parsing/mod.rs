@@ -28,12 +28,10 @@ pub(crate) use entry::{parse_filter_directive, parse_old_prefix_rule};
 pub(crate) fn parse_merge_modifiers_from_argument(
     modifiers: &str,
     directive: &str,
-    is_dir_merge: bool,
 ) -> Result<(core::client::DirMergeOptions, bool), core::message::Message> {
     merge::parse_merge_modifiers(
         modifiers,
         rule_line::RuleLine::new(directive, filters::RuleSource::Argument),
-        is_dir_merge,
     )
 }
 

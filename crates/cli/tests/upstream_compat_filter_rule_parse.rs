@@ -182,3 +182,16 @@ fn clear_rule_is_dropped_at_parse_time_on_a_protocol_28_pull() {
         }
     }
 }
+
+/// #225: once a merge rule's `-`/`+`/`C` set FILTRULE_NO_PREFIXES, a second one
+/// reaches `invalid` (exclude.c:1381-1391, 1402-1404).
+#[test]
+fn merge_rule_refuses_a_second_prefix_modifier() {
+    let files = [("a", "a")];
+    for rule in [":-C", ":C-", ":--", ":++", ":+-", ".-C", "dir-merge,-C .f"] {
+        if let Some(outcome) = assert_parity(&files, &[&format!("--filter={rule}")]) {
+            assert_eq!(outcome.exit, 1, "{rule}");
+            assert!(outcome.diagnostic.starts_with("invalid modifier"), "{rule}");
+        }
+    }
+}

@@ -192,16 +192,43 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> Result<(&str, &str), Inv
 
 /// Splits a `.`/`:` merge directive's text into `(modifiers, pattern)`.
 ///
-/// upstream: exclude.c:1410-1419 - the `e` and `n` modifiers are guarded solely
-/// by `FILTRULE_MERGE_FILE`, which `parse_rule_tok` sets for a plain merge (`.`,
-/// exclude.c:1337-1338) as well as a dir-merge (`:`), so both directives accept them.
-pub(super) fn split_short_merge_modifiers(text: &str) -> Result<(&str, &str), InvalidModifier> {
-    scan_modifiers(text, |ch| {
-        matches!(
-            ch.to_ascii_lowercase(),
-            '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/' | 'e' | 'n' | 'x'
-        )
+/// Every byte up to the separator is handed to the shared modifier table
+/// ([`parse_modifier_run`]), which decides validity the way upstream's single
+/// modifier `switch` does (exclude.c:1365-1443).
+pub(super) fn split_short_merge_modifiers(text: &str) -> (&str, &str) {
+    let body = text.strip_prefix(',').unwrap_or(text);
+    match body.find(is_rule_separator) {
+        Some(idx) => (&body[..idx], consume_rule_separator(&body[idx..])),
+        None => (body, ""),
+    }
+}
+
+/// Runs a modifier run through the shared table, rendering a refusal with the
+/// byte's position in the whole rule.
+///
+/// The position is measured from the start of the rule, as upstream measures it
+/// from `*rulestr_ptr` (exclude.c:1374-1375), so `run` is located inside
+/// `line.text()`. A run that is not a slice of the line has no place in it and
+/// is measured from its own start.
+pub(super) fn parse_modifier_run(
+    run: &str,
+    scope: filters::ModifierScope,
+    line: RuleLine<'_>,
+) -> Result<filters::RuleModifiers, Message> {
+    filters::parse_rule_modifiers(run, scope).map_err(|invalid| {
+        let base = offset_within(line.text(), run).unwrap_or(0);
+        InvalidModifier {
+            ch: invalid.ch,
+            offset: base + invalid.offset,
+        }
+        .into_message(0, line)
     })
+}
+
+/// Byte offset of `inner` within `outer`, when `inner` is a slice of it.
+fn offset_within(outer: &str, inner: &str) -> Option<usize> {
+    let offset = (inner.as_ptr() as usize).checked_sub(outer.as_ptr() as usize)?;
+    (offset + inner.len() <= outer.len()).then_some(offset)
 }
 
 /// Splits a long-form keyword token into `(name, modifiers)` at the first
@@ -258,9 +285,17 @@ mod tests {
         split_short_rule_modifiers(text).expect("modifier run must be accepted")
     }
 
-    /// `(modifiers, pattern)` for a merge scan that must succeed.
     fn split_merge(text: &str) -> (&str, &str) {
-        split_short_merge_modifiers(text).expect("modifier run must be accepted")
+        split_short_merge_modifiers(text)
+    }
+
+    /// The refusal `parse_modifier_run` renders for the run a merge rule's
+    /// text splits into.
+    fn merge_refusal(rule: &str) -> String {
+        let (run, _) = split_merge(&rule[1..]);
+        parse_modifier_run(run, filters::ModifierScope::MERGE, arg(rule))
+            .expect_err("the run must be refused")
+            .to_string()
     }
 
     #[test]
@@ -343,47 +378,44 @@ mod tests {
     }
 
     #[test]
-    fn split_short_merge_modifiers_rejects_an_unknown_byte() {
+    fn merge_run_refuses_an_unknown_byte_at_its_rule_position() {
         // MEASURED against rsync 3.5.0: `--filter=':n.rsync-filter'` exits 1
         // with `invalid modifier '.' at position 2`.
-        let invalid =
-            split_short_merge_modifiers("n.rsync-filter").expect_err("`.` is not a modifier");
-        assert_eq!(invalid.ch, '.');
-        assert_eq!(invalid.offset + ':'.len_utf8(), 2);
+        assert!(
+            merge_refusal(":n.rsync-filter")
+                .contains("invalid modifier '.' at position 2 in filter rule: :n.rsync-filter")
+        );
     }
 
     #[test]
-    fn split_short_merge_modifiers_comma_prefix_scans_the_rest() {
+    fn merge_run_after_a_comma_is_measured_from_the_rule_start() {
         // MEASURED against rsync 3.5.0: `--filter=':,pattern'` exits 1 with
         // `invalid modifier 'a' at position 3` - the leading `,` is consumed and
-        // `p` IS a valid modifier, so the failure lands on `a`, not on `p`. The
-        // previous split returned ("p", "attern") and exited 0.
-        let invalid = split_short_merge_modifiers(",pattern").expect_err("`a` is not a modifier");
-        assert_eq!(invalid.ch, 'a');
-        assert_eq!(invalid.offset + ':'.len_utf8(), 3);
+        // `p` IS a valid modifier, so the failure lands on `a`.
+        assert!(merge_refusal(":,pattern").contains("invalid modifier 'a' at position 3"));
+        // `--filter=':,,f'` exits 1 with `invalid modifier ',' at position 2`.
+        assert!(merge_refusal(":,,f").contains("invalid modifier ',' at position 2"));
     }
 
+    /// upstream: exclude.c:1381-1391, 1402-1404 - a second `-`/`+`, or a `C`
+    /// after one (and vice versa), reaches `invalid`. MEASURED against rsync
+    /// 3.5.1: each of these fails with `invalid modifier` at position 2.
     #[test]
-    fn split_short_merge_modifiers_rejects_a_doubled_leading_comma() {
-        // MEASURED against rsync 3.5.0: `--filter=':,,f'` exits 1 with
-        // `invalid modifier ',' at position 2`. The previous split swallowed the
-        // whole run and produced a dir-merge of "f".
-        let invalid = split_short_merge_modifiers(",,f").expect_err("`,,` is not a modifier run");
-        assert_eq!(invalid.ch, ',');
-        assert_eq!(invalid.offset + ':'.len_utf8(), 2);
-    }
-
-    #[test]
-    fn invalid_modifier_message_matches_upstream_text() {
-        // upstream: exclude.c:1376-1378 renders
-        // `invalid modifier '%c' at position %d in filter rule: %s`.
-        let invalid =
-            split_short_merge_modifiers("n.rsync-filter").expect_err("`.` is not a modifier");
-        let rendered = invalid.into_message(1, arg(":n.rsync-filter")).to_string();
-        assert!(
-            rendered.contains("invalid modifier '.' at position 2 in filter rule: :n.rsync-filter"),
-            "rendered message diverges from upstream: {rendered}"
-        );
+    fn merge_run_refuses_a_second_prefix_modifier() {
+        for (rule, ch) in [
+            (":-C", 'C'),
+            (":C-", '-'),
+            (":--", '-'),
+            (":++", '+'),
+            (":+-", '-'),
+        ] {
+            assert!(
+                merge_refusal(rule).contains(&format!(
+                    "invalid modifier '{ch}' at position 2 in filter rule: {rule}"
+                )),
+                "{rule}"
+            );
+        }
     }
 
     #[test]
