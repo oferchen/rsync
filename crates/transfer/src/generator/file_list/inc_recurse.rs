@@ -453,11 +453,20 @@ impl GeneratorContext {
             },
         );
 
+        let pending_root_scope =
+            self.file_list
+                .get(0)
+                .is_some_and(|e| e.name() == ".")
+                .then(|| {
+                    super::super::context::join_source_path(&self.source_bases[0], Path::new("."))
+                });
         self.lazy_producer = Some(LazyFlistProducer {
             tree,
             base_by_node,
             flat_by_node,
             next_wire_dir_ndx: wire_dir_ndx,
+            pending_root_scope,
+            filter_scopes: Vec::new(),
         });
     }
 
@@ -487,6 +496,7 @@ impl GeneratorContext {
                 return Ok(None);
             };
             let Some((handle, dir_ndx, path)) = lp.tree.peek() else {
+                self.leave_lazy_filter_scopes(0);
                 return Ok(None);
             };
             (
@@ -503,6 +513,7 @@ impl GeneratorContext {
             .flat_by_node[handle];
         let dir_path = super::super::context::join_source_path(&base, &dir_rel);
 
+        self.enter_lazy_filter_scope(dir_rel.components().count(), &dir_path)?;
         let segment = self.scan_extra_segment(&base, &dir_path, parent_dir_ndx, parent_flat_idx)?;
 
         // Collect the child directories in the freshly-sorted segment run, in
@@ -534,8 +545,57 @@ impl GeneratorContext {
         }
         // Children are linked; now the depth-first cursor may descend into them.
         lp.tree.advance_cursor();
+        if lp.tree.traversal_finished() {
+            // upstream: flist.c:2723 - the walk popping past the root resets
+            // the local filter state with change_local_filter_dir(NULL, 0, 0).
+            self.leave_lazy_filter_scopes(0);
+        }
 
         Ok(Some(segment))
+    }
+
+    /// Makes `dir_path`, at tree depth `depth`, the innermost per-directory
+    /// merge scope: pops every scope at `depth` or deeper, then pushes this
+    /// directory's. The ancestors the depth-first walk already entered stay
+    /// pushed, so their dir-merge rules keep applying to this directory's
+    /// children exactly as under the whole-tree walk.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2571` `send1extra()` - `change_local_filter_dir(fbuf, dlen, send_dir_depth)`
+    /// - `exclude.c:974` `change_local_filter_dir()` - pop `>= dir_depth`, push one
+    fn enter_lazy_filter_scope(&mut self, depth: usize, dir_path: &Path) -> std::io::Result<()> {
+        if let Some(root) = self
+            .lazy_producer
+            .as_mut()
+            .and_then(|lp| lp.pending_root_scope.take())
+        {
+            let guard = self.enter_filter_scope(&root)?;
+            self.push_lazy_filter_scope(0, guard);
+        }
+        self.leave_lazy_filter_scopes(depth);
+        let guard = self.enter_filter_scope(dir_path)?;
+        self.push_lazy_filter_scope(depth, guard);
+        Ok(())
+    }
+
+    fn push_lazy_filter_scope(&mut self, depth: usize, guard: filters::DirFilterGuard) {
+        self.lazy_producer
+            .as_mut()
+            .expect("producer present")
+            .filter_scopes
+            .push((depth, guard));
+    }
+
+    /// Pops every pushed scope at `depth` or deeper, innermost first.
+    fn leave_lazy_filter_scopes(&mut self, depth: usize) {
+        let Some(lp) = self.lazy_producer.as_mut() else {
+            return;
+        };
+        while lp.filter_scopes.last().is_some_and(|(d, _)| *d >= depth) {
+            let (_, guard) = lp.filter_scopes.pop().expect("checked non-empty");
+            self.filter_chain.leave_directory(guard);
+        }
     }
 
     /// Whether the lazy producer has scanned every directory (no sub-lists

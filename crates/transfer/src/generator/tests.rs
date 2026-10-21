@@ -8263,3 +8263,76 @@ fn inc_recurse_producers_scan_non_utf8_dirs_by_raw_path() {
         );
     }
 }
+
+/// Every name the INC_RECURSE flist carries once the producer is drained, in
+/// final flat order.
+fn drained_inc_recurse_names(root: &Path, lazy: bool, merge_file: &str) -> Vec<String> {
+    use protocol::CompatibilityFlags;
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    ctx.filter_chain
+        .add_merge_config(::filters::DirMergeConfig::new(merge_file));
+    ctx.lazy_flist_override = Some(lazy);
+    build_file_list_for_contents(&mut ctx, root);
+    ctx.partition_file_list_for_inc_recurse();
+    assert_eq!(ctx.lazy_producer_active, lazy, "producer must engage");
+    while ctx
+        .produce_next_lazy_segment()
+        .expect("lazy segment production")
+        .is_some()
+    {}
+    (0..ctx.file_list().len())
+        .map(|i| seg_name(&ctx, i))
+        .collect()
+}
+
+/// A lazily scanned directory is filtered by every ancestor's dir-merge file,
+/// not only its own.
+///
+/// Upstream keeps one pushed merge scope per tree depth alive across
+/// sub-lists (`exclude.c:974 change_local_filter_dir()`, called per directory
+/// from `flist.c:2571 send1extra()`), with the transfer root at depth 0
+/// (`flist.c:3001-3004`). A producer that enters only the scanned directory's
+/// own scope leaks `a/b/x` (excluded by `a/.rsync-filter`) and `a/b/c/y.bak`
+/// (excluded by the root's) to the receiver.
+#[test]
+fn lazy_producer_applies_ancestor_dir_merge_rules() {
+    let temp = TempDir::new().unwrap();
+    let base = temp.path();
+    fs::create_dir_all(base.join("a/b/c")).unwrap();
+    fs::create_dir_all(base.join("d")).unwrap();
+    fs::write(base.join(".rsync-filter"), "- *.bak\n").unwrap();
+    fs::write(base.join("a/.rsync-filter"), "- x\n").unwrap();
+    for file in [
+        "a/x",
+        "a/b/x",
+        "a/b/c/x",
+        "a/b/keep",
+        "a/b/c/y.bak",
+        "a/b/c/keep",
+        "d/x",
+        "d/z.bak",
+    ] {
+        fs::write(base.join(file), b"data").unwrap();
+    }
+
+    let eager = drained_inc_recurse_names(base, false, ".rsync-filter");
+    let lazy = drained_inc_recurse_names(base, true, ".rsync-filter");
+    for excluded in ["a/x", "a/b/x", "a/b/c/x", "a/b/c/y.bak", "d/z.bak"] {
+        assert!(
+            !eager.iter().any(|n| n == excluded),
+            "eager oracle must exclude {excluded}: {eager:?}"
+        );
+    }
+    assert!(
+        lazy.iter().any(|n| n == "d/x"),
+        "d/ has no merge file: {lazy:?}"
+    );
+    assert_eq!(
+        lazy, eager,
+        "lazy producer must filter like the whole-tree walk"
+    );
+}
