@@ -1,6 +1,5 @@
-use super::modifiers::split_long_keyword_tail;
+use super::modifiers::{parse_merge_modifiers, split_long_keyword_tail};
 use super::types::{FilterParseError, ParsedFilterDirective};
-use crate::local_copy::filter_program::{DirMergeEnforcedKind, DirMergeOptions};
 use filters::RuleSource;
 use std::path::PathBuf;
 
@@ -8,10 +7,8 @@ use std::path::PathBuf;
 ///
 /// Returns `Ok(None)` for inputs that do not begin with either alias, or when
 /// the alias is followed by a non-separator character (so that
-/// `dir-mergeXXX` is not silently accepted). Modifiers are introduced by
-/// `,`; `+` and `-` are mutually exclusive, and `c` activates the CVS
-/// preset (whitespace parser, no comments, no inheritance, list-clearing
-/// permitted, default file `.cvsignore`).
+/// `dir-mergeXXX` is not silently accepted). Modifiers follow a `,` and go
+/// through the shared merge table; `C` also defaults the file to `.cvsignore`.
 pub(super) fn parse_dir_merge_directive(
     text: &str,
     source: RuleSource<'_>,
@@ -30,12 +27,12 @@ pub(super) fn parse_dir_merge_directive(
         // upstream counterpart at all; it is held to the same rule for
         // consistency with its sibling alias.
         if &text[..alias.len()] == alias {
-            matched = Some((&text[..alias.len()], &text[alias.len()..]));
+            matched = Some(&text[alias.len()..]);
             break;
         }
     }
 
-    let Some((label, after)) = matched else {
+    let Some(after) = matched else {
         return Ok(None);
     };
 
@@ -47,95 +44,7 @@ pub(super) fn parse_dir_merge_directive(
         return Ok(None);
     };
 
-    let mut options = DirMergeOptions::default();
-    let mut saw_plus = false;
-    let mut saw_minus = false;
-    let mut used_cvs_default = false;
-
-    // upstream: exclude.c:1365-1444 (`parse_rule_tok`) scans modifiers
-    // case-sensitively - `C` is the CVS modifier, `c` is not a modifier at all.
-    for modifier in modifiers.chars() {
-        match modifier {
-            // upstream: exclude.c:1381-1390 - `-`/`+` require
-            // BITS_SETnUNSET(FILTRULE_MERGE_FILE, FILTRULE_NO_PREFIXES), and `C`
-            // sets NO_PREFIXES, so a `C` scanned earlier in the same run
-            // invalidates them. Order matters: `:-C` is legal, `:C-` is not.
-            '-' => {
-                if used_cvs_default {
-                    let message = format!(
-                        "{label} directive '{text}' cannot combine '-' with the 'C' modifier"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-                if saw_plus {
-                    let message =
-                        format!("{label} directive '{text}' cannot combine '+' and '-' modifiers");
-                    return Err(FilterParseError::new(message));
-                }
-                saw_minus = true;
-                options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
-            }
-            '+' => {
-                if used_cvs_default {
-                    let message = format!(
-                        "{label} directive '{text}' cannot combine '+' with the 'C' modifier"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-                if saw_minus {
-                    let message =
-                        format!("{label} directive '{text}' cannot combine '+' and '-' modifiers");
-                    return Err(FilterParseError::new(message));
-                }
-                saw_plus = true;
-                options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Include));
-            }
-            'n' => {
-                options = options.inherit(false);
-            }
-            'e' => {
-                options = options.exclude_filter_file(true);
-            }
-            'w' => {
-                options = options.use_whitespace();
-                options = options.allow_comments(false);
-            }
-            's' => {
-                options = options.sender_modifier();
-            }
-            'r' => {
-                options = options.receiver_modifier();
-            }
-            '/' => {
-                options = options.anchor_root(true);
-            }
-            // upstream: exclude.c:1420-1422 - `p` is unguarded, and
-            // FILTRULE_PERISHABLE is in FILTRULES_FROM_CONTAINER (exclude.c:1229)
-            // so it propagates to the rules read out of the merged file.
-            'p' => {
-                options = options.mark_perishable();
-            }
-            // upstream: exclude.c:1402-1409 - `C` is invalid once NO_PREFIXES is
-            // already set, which a preceding `C` in the same run does.
-            'C' => {
-                if used_cvs_default {
-                    let message = format!("{label} directive '{text}' repeats the 'C' modifier");
-                    return Err(FilterParseError::new(message));
-                }
-                used_cvs_default = true;
-                options = options.with_enforced_kind(Some(DirMergeEnforcedKind::Exclude));
-                options = options.use_whitespace();
-                options = options.allow_comments(false);
-                options = options.inherit(false);
-                options = options.allow_list_clearing(true);
-            }
-            _ => {
-                let message =
-                    format!("{label} directive '{text}' uses unsupported modifier '{modifier}'");
-                return Err(FilterParseError::new(message));
-            }
-        }
-    }
+    let (options, used_cvs_default) = parse_merge_modifiers(modifiers, text, source)?;
 
     let path_text = if remainder.is_empty() {
         if used_cvs_default {
@@ -160,6 +69,7 @@ pub(super) fn parse_dir_merge_directive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_copy::filter_program::DirMergeEnforcedKind;
 
     #[test]
     fn parse_dir_merge_returns_none_for_non_dir_merge() {
@@ -305,7 +215,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_error_unknown_modifier() {
-        let result = parse_dir_merge_directive("dir-merge,x .rsync-filter", RuleSource::Argument);
+        let result = parse_dir_merge_directive("dir-merge,z .rsync-filter", RuleSource::Argument);
         assert!(result.is_err());
     }
 
@@ -399,9 +309,10 @@ mod tests {
         assert!(parse_dir_merge_directive("dir-merge,C- f", RuleSource::Argument).is_err());
         assert!(parse_dir_merge_directive("dir-merge,C+ f", RuleSource::Argument).is_err());
         assert!(parse_dir_merge_directive("dir-merge,CC f", RuleSource::Argument).is_err());
-        // The reverse order is accepted upstream - `C` only guards what follows it.
-        assert!(parse_dir_merge_directive("dir-merge,-C f", RuleSource::Argument).is_ok());
-        assert!(parse_dir_merge_directive("dir-merge,+C f", RuleSource::Argument).is_ok());
+        // upstream: exclude.c:1402-1404 - the reverse order is refused too: `-`
+        // and `+` set NO_PREFIXES, which `C` requires to be unset (#225).
+        assert!(parse_dir_merge_directive("dir-merge,-C f", RuleSource::Argument).is_err());
+        assert!(parse_dir_merge_directive("dir-merge,+C f", RuleSource::Argument).is_err());
     }
 
     #[test]

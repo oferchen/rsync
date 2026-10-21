@@ -558,7 +558,7 @@ impl FilterChain {
                     .iter()
                     .any(|r| matches!(r.action(), FilterAction::Clear));
 
-            if rules.is_empty() && dir_merge_descriptors.is_empty() && !config.excludes_self() {
+            if rules.is_empty() && dir_merge_descriptors.is_empty() {
                 continue;
             }
 
@@ -590,17 +590,12 @@ impl FilterChain {
             } else {
                 rel_dir_prefix.as_deref()
             };
-            let mut modified_rules: Vec<FilterRule> = rules
+            let modified_rules: Vec<FilterRule> = rules
                 .into_iter()
                 .map(|rule| config.apply_modifiers(rule))
                 .map(|rule| reanchor_merge_rule(rule, reanchor_dir))
                 .map(|rule| apply_merge_implicit_sender_side(rule, delete_excluded))
                 .collect();
-
-            // upstream: exclude.c - FILTRULE_EXCLUDE_SELF handling
-            if config.excludes_self() {
-                modified_rules.push(FilterRule::exclude(config.filename().to_owned()));
-            }
 
             // Capture before the mutable-borrow clear below drops the `config`
             // reference into `self.merge_configs`.

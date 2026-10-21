@@ -123,6 +123,15 @@ pub(crate) fn apply_merge_directive(
     // argument-named file keeps its own name, because the operator typed it.
     let named_at = source.describe().map(std::borrow::Cow::into_owned);
 
+    // upstream: exclude.c:1558-1572 parse_filter_str() - `e` adds an exclude of
+    // the merge file's BASENAME, with none of the merge rule's modifiers, to
+    // the list BEFORE the file is parsed, so the merged rules come after it.
+    if options.excludes_self() {
+        destination.push(FilterRuleSpec::exclude(
+            filters::merge_file_basename(&original_source_text).to_owned(),
+        ));
+    }
+
     let mut local: Vec<FilterRuleSpec> = Vec::new();
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
@@ -151,11 +160,6 @@ pub(crate) fn apply_merge_directive(
     visited.pop();
     if result.is_ok() {
         destination.extend(local);
-        if options.excludes_self() && !is_stdin {
-            let mut rule = FilterRuleSpec::exclude(original_source_text);
-            rule.apply_dir_merge_overrides(&options);
-            destination.push(rule);
-        }
     }
     result
 }

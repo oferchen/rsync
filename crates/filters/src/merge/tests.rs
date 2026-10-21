@@ -576,24 +576,25 @@ fn parse_exclude_self_modifier_rejected_with_word_split() {
     assert_modifier_rejected_without_echo(&err.to_string(), "-ew foo bar");
 }
 
-/// `e` is accepted on a dir-merge rule (upstream sets `FILTRULE_EXCLUDE_SELF`
-/// there). The rule parses successfully as a dir-merge; exclude-self plumbing
-/// is applied at the chain layer via `DirMergeConfig::with_exclude_self`.
+/// #224: `e` on a merge rule adds an exclude of the merge file's basename, with
+/// none of the rule's modifiers, AHEAD of the rule (exclude.c:1558-1572).
 #[test]
-fn parse_exclude_self_modifier_accepted_on_dir_merge_rule() {
-    let rules = parse_rules(":e .rsync-filter", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), b".rsync-filter");
-}
-
-/// `e` is likewise accepted on a plain merge rule.
-#[test]
-fn parse_exclude_self_modifier_accepted_on_merge_rule() {
-    let rules = parse_rules(".e rules.txt", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::Merge);
-    assert_eq!(rules[0].pattern(), b"rules.txt");
+fn parse_exclude_self_modifier_excludes_the_basename_first() {
+    for (line, action) in [
+        (":se dir/.rsync-filter", FilterAction::DirMerge),
+        (".e dir/.rsync-filter", FilterAction::Merge),
+    ] {
+        let rules = parse_rules(line, Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 2, "{line}");
+        assert_eq!(rules[0].action(), FilterAction::Exclude, "{line}");
+        assert_eq!(rules[0].pattern(), b".rsync-filter", "{line}");
+        assert!(
+            rules[0].applies_to_receiver(),
+            "{line}: no `s` on the exclude"
+        );
+        assert_eq!(rules[1].action(), action, "{line}");
+        assert_eq!(rules[1].pattern(), b"dir/.rsync-filter", "{line}");
+    }
 }
 
 /// `n` (FILTRULE_NO_INHERIT) is valid only on a merge-file rule. On an
