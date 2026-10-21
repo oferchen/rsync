@@ -295,6 +295,13 @@ pub(crate) struct IncrementalState {
     pub(crate) pending_segments: Vec<PendingSegment>,
     /// Whether all incremental file list segments have been sent.
     pub(crate) flist_eof_sent: bool,
+    /// `io_error` as it stood when the current round of sub-list sending
+    /// began. A sub-list closed after `io_error` moved past it carries the
+    /// error in its trailer, so the receiver learns of a failure found while
+    /// scanning a later directory before it walks that list.
+    ///
+    /// upstream: flist.c:2641 `save_io_error = io_error`, flist.c:2686-2693
+    pub(crate) sublist_io_error_base: i32,
     /// Cached file list writer for compression state continuity across sub-lists.
     ///
     /// Upstream rsync uses `static` variables in `send_file_entry()` that persist
@@ -374,6 +381,7 @@ impl IncrementalState {
         Self {
             pending_segments: Vec::new(),
             flist_eof_sent: false,
+            sublist_io_error_base: 0,
             flist_writer_cache: None,
             initial_segment_count: None,
             ndx_map: NdxMap::new(initial_ndx_start),

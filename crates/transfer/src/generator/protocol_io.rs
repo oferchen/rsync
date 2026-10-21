@@ -950,6 +950,60 @@ impl GeneratorContext {
         result
     }
 
+    /// The I/O error word a sub-list's end-of-list trailer carries: the
+    /// current `io_error` once it has moved since this round of sub-lists
+    /// began, else none.
+    ///
+    /// A peer that cannot read the word (protocol 30 without `CF_SAFE_FLIST`)
+    /// gets a plain trailer, except under `--delete-during`/`--delete-delay`,
+    /// where its receiver would delete on an incomplete list: the sender dies
+    /// with `RERR_UNSUPPORTED` instead.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2686-2693` - `send_extra_file_list()` trailer choice
+    /// - `flist.c:2547-2555` - `fatal_unsafe_io_error()`
+    fn sublist_trailer_io_error(
+        &self,
+        flist_writer: &protocol::flist::FileListWriter,
+    ) -> io::Result<Option<i32>> {
+        if self.io_error == self.incremental.sublist_io_error_base
+            || self.config.deletion.ignore_errors
+        {
+            return Ok(None);
+        }
+        if flist_writer.use_safe_file_list() {
+            return Ok(Some(self.io_error));
+        }
+        match self.delete_during_mode() {
+            Some(mode) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "FATAL I/O ERROR: dying to avoid a --delete-{mode} issue with a pre-3.0.7 receiver. {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::sender()
+                ),
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// Upstream's `delete_during` as the option name it prints: `during` for
+    /// `--delete`/`--delete-during` (value 1) and `delay` for `--delete-delay`
+    /// (value 2); `None` for no deletion or a before/after pass.
+    ///
+    /// upstream: options.c `delete_during`, compat.c:683-688
+    fn delete_during_mode(&self) -> Option<&'static str> {
+        let deletion = &self.config.deletion;
+        if !self.config.flags.delete || deletion.delete_before || deletion.delete_after {
+            None
+        } else if deletion.late_delete {
+            Some("delay")
+        } else {
+            Some("during")
+        }
+    }
+
     /// Body of [`Self::encode_and_send_segment`] without the timing wrapper,
     /// so the counter updates remain in a single place and the elapsed window
     /// excludes only the `Instant::now()` pair itself.
@@ -999,9 +1053,8 @@ impl GeneratorContext {
             growth.push(ProcessRole::Sender)?;
         }
 
-        // End-of-flist marker (zero byte).
-        // upstream: flist.c:2685-2693 - always sends write_end_of_flist()
-        flist_writer.write_end(writer, None)?;
+        let trailer_io_error = self.sublist_trailer_io_error(flist_writer)?;
+        flist_writer.write_end(writer, trailer_io_error)?;
         // upstream: flist.c:2704 - add_dirs_to_tree(send_dir_ndx, flist, ...)
         self.grow_dir_flist(segment.flist_start..end)?;
 
