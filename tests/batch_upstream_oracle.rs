@@ -666,3 +666,47 @@ fn local_batch_compat_flags_match_upstream() {
         }
     }
 }
+
+/// upstream: receiver.c:1212-1241 - `--inplace` opens the destination itself,
+/// and receiver.c:664-671 truncates it to the reconstructed length, so a
+/// replay keeps the destination's inode; a temp-file replay would rename a
+/// new inode over it.
+#[test]
+fn read_batch_inplace_rewrites_the_destination_inode() {
+    use std::os::unix::fs::MetadataExt;
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(
+            &record_bin,
+            &["-r", "--inplace", "--write-batch=bf", "src/", "dst/"],
+        );
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = fx.root.join(format!("{replayer}-replay"));
+            fs::create_dir_all(&dest).unwrap();
+            let target = dest.join("a.txt");
+            fs::write(&target, b"stale contents that are longer\n").unwrap();
+            let inode = fs::metadata(&target).unwrap().ino();
+            let out = fx.run(
+                &replay_bin,
+                &[
+                    "--read-batch=bf",
+                    "-r",
+                    "--inplace",
+                    &format!("{replayer}-replay/"),
+                ],
+            );
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(
+                fs::read(&target).unwrap(),
+                b"alpha\n",
+                "{recorder}->{replayer}"
+            );
+            assert_eq!(
+                fs::metadata(&target).unwrap().ino(),
+                inode,
+                "{recorder}->{replayer}: --inplace replay replaced the inode"
+            );
+        }
+    }
+}
