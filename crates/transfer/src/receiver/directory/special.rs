@@ -410,7 +410,6 @@ impl ReceiverContext {
     ///
     /// Deviation from upstream: native (non-Cygwin) Windows has
     /// no `mknod`, `mkfifo`, or `AF_UNIX` bind, so a device, FIFO, or socket
-
     /// entry in the file list cannot be materialised. Rather than silently
     /// dropping the entry or aborting the whole transfer, emit one warning per
     /// skipped entry and leave the destination untouched, per the

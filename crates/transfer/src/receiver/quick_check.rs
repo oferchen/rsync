@@ -98,7 +98,7 @@ pub(super) fn quick_check_matches(
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(false, |d| {
+            .is_some_and(|d| {
                 modify_window.same_time(
                     d.as_secs() as i64,
                     d.subsec_nanos(),
@@ -138,9 +138,7 @@ pub(super) fn dest_mtime_newer(
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(false, |d| {
-                source_entry.mtime() - (d.as_secs() as i64) < window_secs
-            })
+            .is_some_and(|d| source_entry.mtime() - (d.as_secs() as i64) < window_secs)
     }
 }
 

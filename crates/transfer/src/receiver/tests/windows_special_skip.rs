@@ -7,8 +7,6 @@
 //! `docs/user/windows-support-matrix.md`. This pins that behaviour so a future
 //! change cannot regress it into a silent drop or an abort.
 
-#![cfg(windows)]
-
 use std::io::{self, Write};
 
 use protocol::ProtocolVersion;
