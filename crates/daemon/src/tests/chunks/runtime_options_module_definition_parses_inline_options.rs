@@ -67,7 +67,10 @@ fn runtime_options_module_definition_parses_inline_uid_and_gid() {
 #[test]
 fn runtime_options_module_definition_refuses_inline_uid_on_windows() {
     for (spec, directive) in [
-        ("mirror=./data;uid=1000;gid=2000", "'uid' in module [mirror]"),
+        (
+            "mirror=./data;uid=1000;gid=2000",
+            "'uid' in module [mirror]",
+        ),
         ("mirror=./data;gid=2000", "'gid' in module [mirror]"),
     ] {
         let error = RuntimeOptions::parse(&[OsString::from("--module"), OsString::from(spec)])
