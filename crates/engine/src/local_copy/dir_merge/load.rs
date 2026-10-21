@@ -1,6 +1,4 @@
-use super::parse::{
-    FilterParseError, ParsedFilterDirective, directive_takes_argument, parse_filter_directive_line,
-};
+use super::parse::{FilterParseError, ParsedFilterDirective, parse_filter_directive_line};
 use crate::local_copy::LocalCopyError;
 use crate::local_copy::filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, FilterProgramError,
@@ -477,8 +475,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     match options.parser() {
         DirMergeParser::Whitespace { enforce_kind } => {
             let enforce_kind = *enforce_kind;
-            let mut iter = contents.split_whitespace();
-            while let Some(token) = iter.next() {
+            for token in contents.split_whitespace() {
                 if token.is_empty() {
                     continue;
                 }
@@ -507,18 +504,14 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                let mut directive = token.to_owned();
-                if directive_takes_argument(token)
-                    && let Some(next) = iter.next()
-                {
-                    directive.push(' ');
-                    directive.push_str(next);
-                }
-
+                // upstream: exclude.c:1772 - a word-split file ends every rule
+                // at whitespace, so `exclude foo` is a bare `exclude` (an
+                // unexpected end of filter rule) followed by `foo`.
+                let directive = token;
                 let source = origin.rule_source(&src_name, None);
-                match parse_filter_directive_line(&directive, source) {
+                match parse_filter_directive_line(directive, source) {
                     Ok(Some(parsed)) if directive_side_conflict(&parsed, options) => {
-                        return Err(map_error(side_conflict_error(&directive, source)));
+                        return Err(map_error(side_conflict_error(directive, source)));
                     }
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
                         entries.push_rule(apply_dir_merge_rule_defaults(
