@@ -91,7 +91,7 @@ or under 1 ms on a 3 GHz core - well under 0.01% of the wall-clock time the
 checksum loop itself spends touching memory.
 
 The benchmarks under `crates/checksums/benches/checksums_benchmark.rs` and
-`crates/checksums/benches/parallel_benchmark.rs` will not move noticeably
+`crates/checksums/benches/checksum_mode_benchmark.rs` will not move noticeably
 on either implementation.
 
 ## 3. Function-pointer migration sketch
@@ -259,7 +259,7 @@ existing benches must show no regression before any change lands:
 | MD4 multibuffer sweep (task #4189) | `crates/checksums/benches/md4_multibuffer_benchmark.rs` | Lane-width crossover; catches any dispatcher regression at small N where call overhead dominates. |
 | MD5 multibuffer sweep | `crates/checksums/benches/md5_multibuffer_benchmark.rs` | Same as above for MD5. |
 | `framing_overhead_benchmark` | `crates/checksums/benches/framing_overhead_benchmark.rs` | End-to-end signature pipeline including dispatcher cost. |
-| `parallel_benchmark` | `crates/checksums/benches/parallel_benchmark.rs` | Multi-thread dispatcher contention (the cached `OnceLock` is read by every worker). |
+| `checksum_mode_benchmark` | `crates/checksums/benches/checksum_mode_benchmark.rs` | Whole-file hashing for `--checksum`, single files and a parallel batch through `checksums::parallel::hash_files`. |
 | `pipelined_benchmark` | `crates/checksums/benches/pipelined_benchmark.rs` | Generator-side delta computation that drives rolling-checksum updates. |
 | `io_optimizations` | `crates/fast_io/benches/io_optimizations.rs` | Zero-detect dispatch site (`find_first_nonzero`). Confirms the existing fn-pointer pattern is not on the critical path. |
 

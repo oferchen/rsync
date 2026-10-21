@@ -19,7 +19,7 @@ use std::hint::black_box;
 use std::io::Write;
 use std::path::PathBuf;
 
-use checksums::parallel::hash_files_parallel;
+use checksums::parallel::{FileJob, hash_files};
 use checksums::strong::{Md5, StrongDigest, Xxh3, Xxh3_128};
 
 /// File sizes that represent typical workloads in `--checksum` mode.
@@ -46,6 +46,17 @@ fn generate_random_data(size: usize) -> Vec<u8> {
 
 /// Write a file of the specified size filled with random data.
 /// Returns the path and the data (for digest verification if needed).
+/// Builds service jobs that hash each path's full length.
+fn file_jobs(paths: &[PathBuf]) -> Vec<FileJob<'_>> {
+    paths
+        .iter()
+        .map(|path| FileJob {
+            path,
+            len: std::fs::metadata(path).expect("stat temp file").len(),
+        })
+        .collect()
+}
+
 fn create_temp_file(dir: &std::path::Path, name: &str, size: usize) -> PathBuf {
     let path = dir.join(name);
     let data = generate_random_data(size);
@@ -111,8 +122,9 @@ fn bench_whole_file_hash_with_io(c: &mut Criterion) {
             BenchmarkId::new("xxh3_128_file", label),
             &paths,
             |b, paths| {
+                let jobs = file_jobs(paths);
                 b.iter(|| {
-                    let results = hash_files_parallel::<Xxh3_128>(black_box(paths), 64 * 1024);
+                    let results = hash_files(black_box(&jobs), || Xxh3_128::with_seed(0));
                     black_box(results)
                 });
             },
@@ -120,8 +132,9 @@ fn bench_whole_file_hash_with_io(c: &mut Criterion) {
 
         // MD5 with file I/O - the production path before CSM-8
         group.bench_with_input(BenchmarkId::new("md5_file", label), &paths, |b, paths| {
+            let jobs = file_jobs(paths);
             b.iter(|| {
-                let results = hash_files_parallel::<Md5>(black_box(paths), 64 * 1024);
+                let results = hash_files(black_box(&jobs), Md5::new);
                 black_box(results)
             });
         });
@@ -156,16 +169,18 @@ fn bench_parallel_whole_file_hash(c: &mut Criterion) {
         BenchmarkId::new("xxh3_128", "100x1MB"),
         &paths,
         |b, paths| {
+            let jobs = file_jobs(paths);
             b.iter(|| {
-                let results = hash_files_parallel::<Xxh3_128>(black_box(paths), 64 * 1024);
+                let results = hash_files(black_box(&jobs), || Xxh3_128::with_seed(0));
                 black_box(results)
             });
         },
     );
 
     group.bench_with_input(BenchmarkId::new("md5", "100x1MB"), &paths, |b, paths| {
+        let jobs = file_jobs(paths);
         b.iter(|| {
-            let results = hash_files_parallel::<Md5>(black_box(paths), 64 * 1024);
+            let results = hash_files(black_box(&jobs), Md5::new);
             black_box(results)
         });
     });

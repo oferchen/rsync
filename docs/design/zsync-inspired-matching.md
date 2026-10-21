@@ -155,7 +155,7 @@ Wire-compat constrains every translation:
    change anything serialized. The full rolling sum stays in
    `SignatureBlock`. Only the in-memory hash key may be compacted.
 2. **Strong-checksum algorithm** is determined by capability
-   negotiation; the `ChecksumStrategySelector` governs it. Never
+   negotiation (`ChecksumVerifier::new` builds it). Never
    change the verification step.
 3. **No block retirement, upstream chain order:** every basis block
    stays matchable for the whole scan, and equal rolling sums are walked
