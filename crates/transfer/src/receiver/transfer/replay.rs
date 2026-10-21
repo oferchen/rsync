@@ -394,6 +394,7 @@ impl ReceiverContext {
                     crate::delta_apply::discard_delta_stream(
                         reader,
                         &mut token_reader,
+                        u64::from(sum_head.count),
                         checksum_len,
                     )?;
                     metadata_errors

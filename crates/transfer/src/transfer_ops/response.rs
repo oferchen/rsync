@@ -268,50 +268,31 @@ pub fn process_file_response<R: Read>(
                 }
             }
             DeltaToken::BlockRef(block_idx) => {
-                if let (Some(sig), Some(basis_map)) = (&signature, basis_map.as_mut()) {
-                    let layout = sig.layout();
-                    let block_count = layout.block_count() as usize;
-
-                    if block_idx >= block_count {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "block index {block_idx} out of bounds (file has {block_count} blocks)"
-                            ),
-                        ));
-                    }
-
-                    let block_len = layout.block_length().get() as u64;
-                    let offset = block_idx as u64 * block_len;
-
-                    let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-                        let remainder = layout.remainder();
-                        if remainder > 0 {
-                            remainder as usize
-                        } else {
-                            block_len as usize
-                        }
-                    } else {
-                        block_len as usize
-                    };
-
-                    let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
-
-                    if let Some(ref mut sparse) = sparse_state {
-                        sparse.write(&mut output, block_data)?;
-                    } else {
-                        output.write_all(block_data)?;
-                    }
-                    checksum_verifier.update(block_data);
-
-                    // upstream: token.c:688 - see_deflate_token() keeps the
-                    // decompressor dictionary in sync after block matches.
-                    token_reader.see_token(block_data)?;
-
-                    total_bytes += bytes_to_copy as u64;
-                } else {
+                // upstream: receiver.c:585-589 bounds the index before the
+                // receiver.c:616 no-basis test.
+                let (offset, bytes_to_copy) = crate::delta_apply::block_span(
+                    signature
+                        .as_ref()
+                        .map(engine::signature::FileSignature::layout),
+                    block_idx,
+                )?;
+                let Some(basis_map) = basis_map.as_mut() else {
                     return Err(super::block_match_without_basis(&ctx.full_fname(receiver)));
+                };
+                let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+
+                if let Some(ref mut sparse) = sparse_state {
+                    sparse.write(&mut output, block_data)?;
+                } else {
+                    output.write_all(block_data)?;
                 }
+                checksum_verifier.update(block_data);
+
+                // upstream: token.c:688 - see_deflate_token() keeps the
+                // decompressor dictionary in sync after block matches.
+                token_reader.see_token(block_data)?;
+
+                total_bytes += bytes_to_copy as u64;
             }
         }
     }

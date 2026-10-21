@@ -285,7 +285,7 @@ impl ReceiverContext {
                 "sender echoed NDX {echoed_ndx} but we requested {ndx}"
             );
 
-            let _echoed_sum_head = SumHead::read(reader)?;
+            let echoed_sum_head = SumHead::read(reader)?;
 
             // SEC-1.r: route temp create + drop unlink through the sandbox
             // carrier so a TOCTOU swap on the temp parent cannot redirect
@@ -328,6 +328,7 @@ impl ReceiverContext {
                     crate::delta_apply::discard_delta_stream(
                         reader,
                         &mut token_reader,
+                        u64::from(echoed_sum_head.count),
                         checksum_len,
                     )?;
 

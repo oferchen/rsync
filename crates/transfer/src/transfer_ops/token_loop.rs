@@ -170,87 +170,69 @@ pub(super) fn process_remaining_tokens<R: Read>(
                 literal_bytes += len;
             }
             DeltaToken::BlockRef(block_idx) => {
-                if let (Some(sig), Some(basis_map)) = (signature, basis_map.as_mut()) {
-                    let layout = sig.layout();
-                    let block_count = layout.block_count() as usize;
-
-                    if block_idx >= block_count {
-                        let msg = format!(
-                            "block index {block_idx} out of bounds (file has {block_count} blocks)"
-                        );
-                        send_abort(file_tx, msg.clone());
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
-                    }
-
-                    let block_len = layout.block_length().get() as u64;
-                    let offset = block_idx as u64 * block_len;
-
-                    let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-                        let remainder = layout.remainder();
-                        if remainder > 0 {
-                            remainder as usize
-                        } else {
-                            block_len as usize
-                        }
-                    } else {
-                        block_len as usize
-                    };
-
-                    let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
-
-                    // upstream: token.c:688 - see_deflate_token() keeps the
-                    // decompressor dictionary in sync after block matches.
-                    token_reader.see_token(block_data)?;
-
-                    let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
-                    buf.extend_from_slice(block_data);
-
-                    // upstream: receiver.c:640-650 - when updating the basis in
-                    // place (fnamecmp == fname) and this matched block's basis
-                    // offset equals the current output position, the bytes are
-                    // already correct in the destination. Seek past them via
-                    // skip_matched() instead of rewriting identical data. The
-                    // bytes are still hashed on the disk thread (upstream's
-                    // sum_update runs regardless), so the file checksum and
-                    // final size stay byte-identical to a full rewrite.
-                    // Matched bytes are never `Chunk`: `Chunk` means literal
-                    // data received from the sender, and the disk thread arms
-                    // `--partial` retention off that. upstream sets
-                    // `cleanup_got_literal` only in the literal branch
-                    // (receiver.c:575), so a temp holding nothing but basis
-                    // copies is unlinked on abort (cleanup.c:159, :200-201)
-                    // rather than renamed over a complete destination.
-                    let seek = updating_basis && offset == total_bytes;
-                    // upstream: receiver.c:625-630 - the ` (seek)` suffix marks
-                    // the in-place skip, where the basis bytes are already
-                    // correct at the output offset.
-                    matching::trace_deltasum::trace_recv_chunk(
-                        block_idx as u64,
-                        bytes_to_copy,
-                        offset,
-                        total_bytes,
-                        seek,
-                    );
-
-                    let msg = if seek {
-                        FileMessage::SkipMatched(buf)
-                    } else {
-                        FileMessage::MatchedChunk(buf)
-                    };
-                    file_tx.send(msg).map_err(|_| {
-                        io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            "disk commit thread disconnected during block send",
-                        )
-                    })?;
-                    let copy_len = bytes_to_copy as u64;
-                    total_bytes += copy_len;
-                    matched_bytes += copy_len;
-                } else {
+                // upstream: receiver.c:585-589 bounds the index before the
+                // receiver.c:616 no-basis test, so a whole-file head refuses
+                // the token as an invalid index, not as a missing basis.
+                let (offset, bytes_to_copy) = crate::delta_apply::block_span(
+                    signature.as_ref().map(FileSignature::layout),
+                    block_idx,
+                )
+                .inspect_err(|error| send_abort(file_tx, error.to_string()))?;
+                let Some(basis_map) = basis_map.as_mut() else {
                     let error = super::block_match_without_basis(&describe_file());
                     send_abort(file_tx, error.to_string());
                     return Err(error);
-                }
+                };
+                let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+
+                // upstream: token.c:688 - see_deflate_token() keeps the
+                // decompressor dictionary in sync after block matches.
+                token_reader.see_token(block_data)?;
+
+                let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
+                buf.extend_from_slice(block_data);
+
+                // upstream: receiver.c:640-650 - when updating the basis in
+                // place (fnamecmp == fname) and this matched block's basis
+                // offset equals the current output position, the bytes are
+                // already correct in the destination. Seek past them via
+                // skip_matched() instead of rewriting identical data. The
+                // bytes are still hashed on the disk thread (upstream's
+                // sum_update runs regardless), so the file checksum and
+                // final size stay byte-identical to a full rewrite.
+                // Matched bytes are never `Chunk`: `Chunk` means literal
+                // data received from the sender, and the disk thread arms
+                // `--partial` retention off that. upstream sets
+                // `cleanup_got_literal` only in the literal branch
+                // (receiver.c:575), so a temp holding nothing but basis
+                // copies is unlinked on abort (cleanup.c:159, :200-201)
+                // rather than renamed over a complete destination.
+                let seek = updating_basis && offset == total_bytes;
+                // upstream: receiver.c:625-630 - the ` (seek)` suffix marks
+                // the in-place skip, where the basis bytes are already
+                // correct at the output offset.
+                matching::trace_deltasum::trace_recv_chunk(
+                    block_idx as u64,
+                    bytes_to_copy,
+                    offset,
+                    total_bytes,
+                    seek,
+                );
+
+                let msg = if seek {
+                    FileMessage::SkipMatched(buf)
+                } else {
+                    FileMessage::MatchedChunk(buf)
+                };
+                file_tx.send(msg).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "disk commit thread disconnected during block send",
+                    )
+                })?;
+                let copy_len = bytes_to_copy as u64;
+                total_bytes += copy_len;
+                matched_bytes += copy_len;
             }
         }
     }
@@ -258,8 +240,62 @@ pub(super) fn process_remaining_tokens<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::num::{NonZeroU8, NonZeroU32};
+
     use protocol::ProtocolViolation;
+    use signature::SignatureLayout;
+
+    use super::*;
+
+    /// A one-block signature: the generator announced a basis whose sum_head
+    /// describes exactly block 0.
+    fn one_block_signature() -> Option<FileSignature> {
+        let layout = SignatureLayout::from_raw_parts(
+            NonZeroU32::new(700).unwrap(),
+            0,
+            1,
+            NonZeroU8::new(16).unwrap(),
+        );
+        Some(FileSignature::from_raw_parts(layout, Vec::new(), 700))
+    }
+
+    /// Feeds one block-match token to the loop with no basis mapped, the way a
+    /// crafted delta reaches the receiver, and returns the error it ends on.
+    fn refuse_match(signature: &Option<FileSignature>, block_idx: usize) -> io::Error {
+        let mut reader = ServerReader::new_plain(std::io::Cursor::new(Vec::new()));
+        let (file_tx, file_rx) = spsc::channel(4);
+        let (_buf_tx, buf_return_rx) = spsc::channel(4);
+        let mut verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
+        let mut token_reader = TokenReader::new(None, 31).expect("plain token reader");
+        let Err(err) = process_remaining_tokens(
+            &mut reader,
+            &file_tx,
+            &buf_return_rx,
+            &mut verifier,
+            signature,
+            &mut None,
+            0,
+            Some(DeltaToken::BlockRef(block_idx)),
+            &mut token_reader,
+            0,
+            false,
+            false,
+            &|| "\"/dest/f\"".to_owned(),
+        ) else {
+            panic!("block {block_idx} must be refused");
+        };
+        assert!(
+            matches!(file_rx.try_recv(), Ok(FileMessage::Abort { .. })),
+            "the disk thread must be told to abort so no partial temp survives"
+        );
+        assert!(
+            err.get_ref()
+                .and_then(|inner| inner.downcast_ref::<ProtocolViolation>())
+                .is_some(),
+            "must map to RERR_PROTOCOL (2), not a per-file failure"
+        );
+        err
+    }
 
     /// A block match with no basis mapped is the peer contradicting the basis
     /// the generator announced. upstream names the file and exits
@@ -268,39 +304,33 @@ mod tests {
     /// (a leaf symlink under --link-dest) must end on it.
     #[test]
     fn block_match_without_basis_names_the_file_as_a_protocol_error() {
-        let mut reader = ServerReader::new_plain(std::io::Cursor::new(Vec::new()));
-        let (file_tx, _file_rx) = spsc::channel(4);
-        let (_buf_tx, buf_return_rx) = spsc::channel(4);
-        let mut verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
-        let mut token_reader = TokenReader::new(None, 31).expect("plain token reader");
-
-        let Err(err) = process_remaining_tokens(
-            &mut reader,
-            &file_tx,
-            &buf_return_rx,
-            &mut verifier,
-            &None,
-            &mut None,
-            0,
-            Some(DeltaToken::BlockRef(0)),
-            &mut token_reader,
-            0,
-            false,
-            false,
-            &|| "\"/dest/f\"".to_owned(),
-        ) else {
-            panic!("a block match without a basis must fail");
-        };
-
+        let err = refuse_match(&one_block_signature(), 0);
         assert_eq!(
             err.to_string(),
             "got a block match with no basis file for \"/dest/f\" [receiver]"
         );
-        assert!(
-            err.get_ref()
-                .and_then(|inner| inner.downcast_ref::<ProtocolViolation>())
-                .is_some(),
-            "must map to RERR_PROTOCOL (2), not a per-file failure"
+    }
+
+    /// The index is bounded before the basis is consulted (receiver.c:585-589
+    /// precedes :616), so a token one past the announced count is refused as
+    /// an invalid index even though no basis is mapped either.
+    #[test]
+    fn block_index_past_the_count_is_refused_before_the_basis_check() {
+        let err = refuse_match(&one_block_signature(), 1);
+        assert_eq!(
+            err.to_string(),
+            "Invalid block index 1 (count=1) [receiver]"
+        );
+    }
+
+    /// A whole-file transfer announced no blocks, so block 0 is already out of
+    /// range: upstream reports the index, not a missing basis.
+    #[test]
+    fn a_whole_file_transfer_refuses_block_zero_as_an_invalid_index() {
+        let err = refuse_match(&None, 0);
+        assert_eq!(
+            err.to_string(),
+            "Invalid block index 0 (count=0) [receiver]"
         );
     }
 }
