@@ -19,6 +19,8 @@ use super::super::GeneratorContext;
 use super::super::protocol_io::calculate_duration_ms;
 use crate::flist_banner::{FlistBanner, FlistSide, with_client_stream};
 use crate::generator::GeneratorStats;
+use crate::iobuf::IoBuf;
+use crate::reader::ServerReader;
 use crate::role_trailer::error_location;
 use crate::transfer_state::TransferPhase;
 
@@ -94,8 +96,7 @@ impl GeneratorContext {
     /// - `main.c:1006-1010` - `read_final_goodbye()` still drives `read_a_msg()`
     pub(crate) fn goodbye_draining_source_removals<R, W, F>(
         &mut self,
-        reader: &mut super::super::super::reader::ServerReader<R>,
-        writer: &mut super::super::super::writer::ServerWriter<W>,
+        io: &mut IoBuf<ServerReader<R>, W>,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
         ndx_write_codec: &mut protocol::codec::MonotonicNdxWriter,
         finalize_between_write_and_read: F,
@@ -105,23 +106,24 @@ impl GeneratorContext {
         W: Write,
         F: FnMut(&mut super::super::super::writer::ServerWriter<W>) -> io::Result<()>,
     {
-        let arrival = self.read_receiver_goodbye(reader, ndx_read_codec)?;
+        let arrival = self.read_receiver_goodbye(io.input(), ndx_read_codec)?;
 
-        let before_goodbye =
-            self.drain_confirmed_source_removals(writer, reader.take_success_indices())?;
+        let confirmed = io.input().take_success_indices();
+        let before_goodbye = self.drain_confirmed_source_removals(io.output(), confirmed)?;
 
         if arrival == super::GoodbyeArrival::Done {
+            let (input, output) = io.halves();
             self.answer_goodbye_with_finalizer(
-                reader,
-                writer,
+                input,
+                output,
                 ndx_read_codec,
                 ndx_write_codec,
                 finalize_between_write_and_read,
             )?;
         }
 
-        let during_goodbye =
-            self.drain_confirmed_source_removals(writer, reader.take_success_indices())?;
+        let confirmed = io.input().take_success_indices();
+        let during_goodbye = self.drain_confirmed_source_removals(io.output(), confirmed)?;
 
         Ok(SourceRemovalDrains {
             before_goodbye,
@@ -142,8 +144,7 @@ impl GeneratorContext {
     /// - `main.c:921-952` - `read_final_goodbye()` protocol finalization
     pub fn run<R: Read, W: Write>(
         &mut self,
-        mut reader: super::super::super::reader::ServerReader<R>,
-        writer: &mut super::super::super::writer::ServerWriter<W>,
+        io: &mut IoBuf<ServerReader<R>, W>,
         paths: &[PathBuf],
         mut progress: Option<&mut dyn super::super::super::TransferProgressCallback>,
         mut itemize: Option<&mut dyn super::super::super::ItemizeCallback>,
@@ -151,15 +152,16 @@ impl GeneratorContext {
         // upstream: io.c:1721-1732 - MSG_BLOCK_STATS is valid on the sender only
         // once protocol 33 is negotiated; anywhere else it is an invalid message.
         if self.protocol.supports_block_stats() {
-            reader.accept_block_stats();
+            io.input().accept_block_stats();
         }
         // upstream: log.c:357-366 - a server sender's rwrite() frames a peer's
         // MSG_INFO/MSG_ERROR back to the client; its stdout may be the stream.
-        reader.set_local_role(crate::reader::LocalRole::from_client_mode(
-            self.config.connection.client_mode,
-        ));
+        io.input()
+            .set_local_role(crate::reader::LocalRole::from_client_mode(
+                self.config.connection.client_mode,
+            ));
         if self.should_activate_input_multiplex() {
-            reader = reader.activate_multiplex().map_err(|e| {
+            io.activate_input_multiplex().map_err(|e| {
                 io::Error::new(
                     e.kind(),
                     format!(
@@ -179,11 +181,11 @@ impl GeneratorContext {
         // client's filter list, causing a protocol ordering deadlock in daemon
         // pull mode where the client waits for server output before proceeding.
         if !self.config.connection.client_mode {
-            writer.flush()?;
+            io.output().flush()?;
         }
 
         // upstream: main.c:1294 - recv_filter_list() in server mode
-        self.receive_filter_list_if_server(&mut reader)?;
+        self.receive_filter_list_if_server(io.input())?;
 
         // upstream: flist.c:2761-2764 send_file_list() - a client-side sender
         // prints its file-list banner before the walk produces any per-file
@@ -202,17 +204,15 @@ impl GeneratorContext {
         // Below protocol 31 the client forwards the names un-multiplexed, so
         // they are read past the demultiplexer (flist.c:2792-2798).
         let files_from_entries = if self.protocol.forwards_files_from_unmultiplexed() {
-            self.resolve_files_from_paths(paths, &mut reader.unframed())?
+            self.resolve_files_from_paths(paths, &mut io.input().unframed())?
         } else {
-            self.resolve_files_from_paths(paths, &mut reader)?
+            self.resolve_files_from_paths(paths, io.input())?
         };
 
         // FSM: filter exchange complete. Advance to FileListTransfer.
         self.pipeline
             .advance_to(TransferPhase::FileListTransfer)
             .map_err(crate::fsm_error)?;
-
-        let reader = &mut reader;
 
         // upstream: flist.c:2739 - send_file_list()
         let file_count = {
@@ -229,14 +229,14 @@ impl GeneratorContext {
             // the walk, so the queued lines go out here - still before the
             // first file-list byte, and before an aborted walk propagates, so
             // the client learns why either way.
-            self.flush_flist_diagnostics(writer)?;
+            self.flush_flist_diagnostics(io.output())?;
             build?;
             self.partition_file_list_for_inc_recurse();
             // Partitioning can report an entry whose parent is missing from the
             // list. Drain again so that line also precedes the first file-list
             // byte; the queue was emptied above, so this is a no-op otherwise.
-            self.flush_flist_diagnostics(writer)?;
-            self.send_file_list(writer)?
+            self.flush_flist_diagnostics(io.output())?;
+            self.send_file_list(io.output())?
         };
         // upstream: flist.c:3037-3038 - finish_filelist_progress() once the
         // list (and its end marker) is on the wire.
@@ -248,8 +248,8 @@ impl GeneratorContext {
         // so the receiver remaps them like file owners. Runs after the file list
         // is sent (ACL cache complete) and before the id-list is transmitted.
         self.collect_acl_id_mappings()?;
-        self.send_id_lists(writer)?;
-        self.send_io_error_flag(writer)?;
+        self.send_id_lists(io.output())?;
+        self.send_io_error_flag(io.output())?;
 
         // upstream: main.c:1392 - client_run() prints `file list sent` at
         // DEBUG_GTE(FLIST, 3); the server sender has no such line.
@@ -280,7 +280,7 @@ impl GeneratorContext {
         // runs send_files() unconditionally from client_run() (main.c:1361).
         if file_count == 0 && !self.config.connection.client_mode {
             // upstream: exit_cleanup(0) -> io_flush(FULL_FLUSH) before _exit.
-            writer.flush_all_pending()?;
+            io.output().flush_all_pending()?;
             self.pipeline
                 .advance_to(TransferPhase::Finalization)
                 .map_err(crate::fsm_error)?;
@@ -305,7 +305,7 @@ impl GeneratorContext {
         // SegmentScheduler, matching upstream sender.c:516,550 cadence.
         let transfer_result = {
             let _t = PhaseTimer::new("generator-transfer-loop");
-            self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
+            self.run_transfer_loop(io, &mut progress, &mut itemize)?
         };
 
         // FSM: delta transfer complete. Advance to Finalization.
@@ -327,7 +327,7 @@ impl GeneratorContext {
         // both raw wire totals here so the trailing stats + goodbye bytes stay
         // excluded, exactly as upstream's cache-then-write ordering does. Absent
         // counters (unit tests) fall back to the logical token/byte tallies.
-        writer.flush()?;
+        io.output().flush()?;
         let total_written = self
             .wire_write_counter
             .as_ref()
@@ -345,7 +345,7 @@ impl GeneratorContext {
             calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
         if !self.config.connection.client_mode {
             self.send_stats(
-                writer,
+                io.output(),
                 total_read,
                 total_written,
                 flist_buildtime,
@@ -386,8 +386,7 @@ impl GeneratorContext {
         // drain can run in the gap between the halves; see
         // `goodbye_draining_source_removals`.
         self.goodbye_draining_source_removals(
-            reader,
-            writer,
+            io,
             &mut ndx_read_codec,
             &mut ndx_write_codec,
             |w| match w.finalize_compression() {
@@ -429,7 +428,7 @@ impl GeneratorContext {
         // final `io_flush(FULL_FLUSH)` with the process exit so every
         // user-space byte hits the wire before the kernel queues FIN.
         if !self.config.connection.client_mode {
-            writer.flush_all_pending()?;
+            io.output().flush_all_pending()?;
         }
 
         // Calculate timing stats for return value
@@ -457,7 +456,7 @@ impl GeneratorContext {
             "generator ndx_convert totals"
         );
 
-        // INC_RECURSE diagnostics: emit cumulative writer.flush()
+        // INC_RECURSE diagnostics: emit cumulative io.output().flush()
         // call count from the generator transfer hot path. Aggregated across
         // all generator transfers in this process so operators can see how
         // often the sender forces a flush relative to file counts.
@@ -465,14 +464,14 @@ impl GeneratorContext {
         debug_log!(
             Send,
             1,
-            "generator writer.flush totals: calls={}",
+            "generator io.output().flush totals: calls={}",
             flush_calls
         );
         #[cfg(feature = "tracing")]
         ::tracing::debug!(
             target: "rsync::generator::flush_rate",
             calls = flush_calls,
-            "generator writer.flush totals"
+            "generator io.output().flush totals"
         );
 
         // INC_RECURSE diagnostics: emit cumulative
@@ -529,7 +528,7 @@ impl GeneratorContext {
         // and discards the delta. Recorded as got_xfer_error rather than an
         // io_error bit: io_error is a wire field with its own meaning for the
         // peer, and by this point it has already been sent.
-        if reader.xfer_error_count() > 0 {
+        if io.input().xfer_error_count() > 0 {
             self.got_xfer_error = true;
         }
 
@@ -560,7 +559,7 @@ impl GeneratorContext {
             literal_data: transfer_result.literal_data,
             // upstream: io.c:1727 stores the remote receiver's count, read off
             // the wire before the final goodbye NDX_DONE; 0 when none arrived.
-            touched_blocks_4k: reader.touched_blocks_4k(),
+            touched_blocks_4k: io.input().touched_blocks_4k(),
             total_size: flist_send_stats.total_size,
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,

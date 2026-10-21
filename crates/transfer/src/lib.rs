@@ -132,6 +132,7 @@ mod flist_banner;
 pub(crate) mod full_fname;
 pub mod generator;
 pub mod handshake;
+pub mod iobuf;
 mod reader;
 pub mod receiver;
 pub mod role;
@@ -1278,7 +1279,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                     std::sync::Arc::clone(&bytes_sent_counter),
                     std::sync::Arc::clone(&bytes_received_counter),
                 );
-                let stats = match ctx.run(chained_reader, &mut writer, &paths, progress, itemize) {
+                // upstream: io.c:101-110 - one `iobuf` owns both directions. The
+                // output comes back after the role ends, for the error report
+                // `announce_error_exit` sends on it.
+                let mut io = iobuf::IoBuf::new(chained_reader, writer.take());
+                let result = ctx.run(&mut io, &paths, progress, itemize);
+                writer = io.into_output();
+                let stats = match result {
                     Ok(stats) => stats,
                     Err(error) => break 'dispatch Err(error),
                 };

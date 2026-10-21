@@ -31,7 +31,7 @@ pub use server::ServerReader;
 ///
 /// The default is the conservative `false` (assume a read may block, so flush
 /// first); only the multiplex-capable [`ServerReader`] overrides it.
-pub(crate) trait BufferedInputHint {
+pub trait BufferedInputHint {
     /// Returns true when a subsequent read cannot block because its bytes are
     /// already buffered in user space.
     fn has_buffered_input(&self) -> bool {
@@ -51,5 +51,15 @@ pub(crate) trait BufferedInputHint {
     /// a reader that never demultiplexes.
     fn take_success_indices(&mut self) -> Vec<i32> {
         Vec::new()
+    }
+}
+
+impl<T: BufferedInputHint + ?Sized> BufferedInputHint for &mut T {
+    fn has_buffered_input(&self) -> bool {
+        (**self).has_buffered_input()
+    }
+
+    fn buffered_input(&self) -> &[u8] {
+        (**self).buffered_input()
     }
 }
