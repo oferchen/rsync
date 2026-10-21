@@ -55,6 +55,11 @@ const MAX_BASIS_DIRS: usize = 20;
 /// one is present.
 pub(super) const MAX_BATCH_NAME_LEN: usize = 256;
 
+/// The command-line position of the last occurrence of option `id`.
+fn last_index(matches: &clap::ArgMatches, id: &str) -> Option<usize> {
+    matches.indices_of(id).and_then(Iterator::max)
+}
+
 /// Enforces upstream's [`MAX_BASIS_DIRS`] cap on alt-dest directories.
 ///
 /// upstream: options.c:1862-1867 rejects the arg that would push the shared
@@ -1098,8 +1103,16 @@ where
         .map(PathBuf::from);
     let log_file = matches.remove_one::<OsString>("log-file");
     let log_file_format = matches.remove_one::<OsString>("log-file-format");
-    let write_batch = matches.remove_one::<OsString>("write-batch");
-    let only_write_batch = matches.remove_one::<OsString>("only-write-batch");
+    // upstream: options.c:1780-1788 - both write forms assign the one
+    // `write_batch` mode (and `batch_name`), so the later of the two wins.
+    let only_write_wins =
+        last_index(&matches, "only-write-batch") > last_index(&matches, "write-batch");
+    let write_batch = matches
+        .remove_one::<OsString>("write-batch")
+        .filter(|_| !only_write_wins);
+    let only_write_batch = matches
+        .remove_one::<OsString>("only-write-batch")
+        .filter(|_| only_write_wins);
     let read_batch = matches.remove_one::<OsString>("read-batch");
     let early_input = matches.remove_one::<OsString>("early-input");
     let link_dest_args: Vec<OsString> = matches
@@ -1389,7 +1402,15 @@ where
         }
     }
 
-    // upstream: options.c:2265-2294 - `--read-batch` cannot be combined with
+    // upstream: options.c:2265-2269 - either write form with `--read-batch`.
+    if read_batch.is_some() && (write_batch.is_some() || only_write_batch.is_some()) {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ArgumentConflict,
+            "--write-batch and --read-batch can not be used together\n",
+        ));
+    }
+
+    // upstream: options.c:2284-2294 - `--read-batch` cannot be combined with
     // `--files-from` or `--remove-source-files`/`--remove-sent-files`.
     if read_batch.is_some() {
         if !files_from.is_empty() {
