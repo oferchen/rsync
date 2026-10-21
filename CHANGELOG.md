@@ -257,6 +257,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Interop**
 - A `-m` push to an upstream daemon sends the filter list the receiver reads, so 3.5.1 no longer aborts with `buffer overflow: recv_rules` (#PRNUM)
+- Option values sent to a remote-shell server are escaped and split like upstream `safe_arg()`, so spaces, quotes, wildcards and `~/` paths in `--backup-dir`, `--partial-dir`, `--usermap`, `-M` and similar reach the server intact (#PRNUM)
 - A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split (#8009)
 - Upstream clients pulling with `-H` under INC_RECURSE no longer abort on hard links that span directories (#7982)
 - The entry after an abbreviated hard-link follower is encoded against the right previous entry (#7997)
