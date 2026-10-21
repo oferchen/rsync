@@ -465,6 +465,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A transfer error exits 23 even when `--max-delete` also stopped deletions or a file vanished, matching upstream's exit-code precedence (#8218)
 - Print the non-incremental `building file list ... done` banner (#7580)
 - A local copy under `--progress` prints the file-list banner, `created directory` and directory names in upstream order (#7992)
+- `--progress` flushes each progress line as upstream does, so a reader of a pipe or terminal sees an in-flight line when it is printed, not one tick later; `--outbuf=B` no longer holds finished-file lines (#PRNUM)
 - Honour `--port` on daemon transfers and take the `rsync://` host verbatim (#7456, #7431)
 - Clear errors when `ssh://` or `quic://` is used without its feature, or `ssh://` with `--rsh` (#7175, #7181, #7166)
 - Out-format width and `%%`, attribute-only change reporting, and the non-regular skip notice match upstream (#7344, #7353, #7400, #7401, #7407)
