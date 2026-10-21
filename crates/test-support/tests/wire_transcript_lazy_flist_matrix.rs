@@ -200,6 +200,21 @@ fn assert_lazy_matches_eager(direction: Direction, opts: &[&str]) {
         lazy.transcript.server_to_client.len()
     );
     assert_eq!(eager.dest, lazy.dest, "{what}: destination trees differ");
+    assert_eq!(
+        count_lines(&eager.output),
+        count_lines(&lazy.output),
+        "{what}: --stats counts differ"
+    );
+}
+
+/// The `--stats` lines that count the file list, which must not depend on
+/// when the sender read each directory (upstream: flist.c:2709 adds each
+/// sub-list's `used` to `stats.num_files`). Empty without `--stats`.
+fn count_lines(output: &str) -> Vec<&str> {
+    output
+        .lines()
+        .filter(|l| l.starts_with("Number of") || l.starts_with("Total file size"))
+        .collect()
 }
 
 /// Option sets the lazy producer accepts (`lazy_producer_eligible`).
@@ -214,6 +229,7 @@ const OPTION_MATRIX: &[&[&str]] = &[
     &["-rlt", "--numeric-ids"],
     &["-rlt", "-x"],
     &["-rlt", "--no-whole-file"],
+    &["-rlt", "--stats"],
 ];
 
 #[test]
