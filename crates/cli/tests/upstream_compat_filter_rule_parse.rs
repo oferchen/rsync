@@ -81,6 +81,9 @@ enum Source {
     /// `localhost:<tree>/src/` through a remote shell that runs upstream 3.5.1
     /// in place as the server, so the client's rules cross the wire to it.
     Pull,
+    /// `src/` to `localhost:<tree>/dst/` through the same remote shell, so the
+    /// client is the sender and its own per-directory merge parser runs.
+    Push,
 }
 
 /// Writes a remote shell that drops the host argument and runs the rest here.
@@ -91,8 +94,8 @@ fn local_rsh(dir: &Path) -> PathBuf {
     path
 }
 
-/// Runs `BINARY -r ARGS SOURCE dst/` from inside a fresh tree; `server` is the
-/// remote binary a [`Source::Pull`] starts.
+/// Runs `BINARY -r ARGS SOURCE DEST` from inside a fresh tree; `server` is the
+/// remote binary a [`Source::Pull`] or [`Source::Push`] starts.
 fn run(
     binary: &Path,
     server: &Path,
@@ -104,19 +107,19 @@ fn run(
     build_tree(tmp.path(), files);
     let mut command = Command::new(binary);
     command.current_dir(tmp.path()).arg("-r").args(args);
-    match source {
-        Source::Local => {
-            command.arg("src/");
-        }
-        Source::Pull => {
-            command
-                .arg("-e")
-                .arg(local_rsh(tmp.path()))
-                .arg(format!("--rsync-path={}", server.display()))
-                .arg(format!("localhost:{}/src/", tmp.path().display()));
-        }
+    if !matches!(source, Source::Local) {
+        command
+            .arg("-e")
+            .arg(local_rsh(tmp.path()))
+            .arg(format!("--rsync-path={}", server.display()));
     }
-    let output = command.arg("dst/").output().expect("run rsync");
+    let remote = |dir: &str| format!("localhost:{}/{dir}/", tmp.path().display());
+    let (from, to) = match source {
+        Source::Local => ("src/".to_owned(), "dst/".to_owned()),
+        Source::Pull => (remote("src"), "dst/".to_owned()),
+        Source::Push => ("src/".to_owned(), remote("dst")),
+    };
+    let output = command.arg(from).arg(to).output().expect("run rsync");
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut transferred = Vec::new();
     listing(&tmp.path().join("dst"), "", &mut transferred);
@@ -192,6 +195,48 @@ fn merge_rule_refuses_a_second_prefix_modifier() {
         if let Some(outcome) = assert_parity(&files, &[&format!("--filter={rule}")]) {
             assert_eq!(outcome.exit, 1, "{rule}");
             assert!(outcome.diagnostic.starts_with("invalid modifier"), "{rule}");
+        }
+    }
+}
+
+/// #223: upstream accepts `C` on a non-merge rule (exclude.c:1402-1409), lets
+/// it have no pattern (:1474), never matches its own pattern (:1201-1206) and
+/// builds the CVS list from its flags (:1595-1597). A side-binding prefix or a
+/// second `C` refuses it.
+#[test]
+fn c_modifier_on_a_non_merge_rule() {
+    let files = [("a.o", "o"), ("b.c", "c"), ("foo", "f")];
+    for args in [
+        &["--filter=-C"][..],
+        &["--filter=+C", "--filter=- *.o"],
+        &["--filter=-C", "--filter=+ *.o"],
+        &["--filter=-sC"],
+        &["--filter=-rC"],
+        &["--filter=-pC"],
+        &["--filter=-Cs"],
+        &["--filter=-!C"],
+        &["--filter=-xC"],
+        &["--filter=-C foo"],
+        &["--filter=exclude,C"],
+        &["--filter=PC"],
+        &["--filter=-CC"],
+    ] {
+        assert_parity(&files, args);
+    }
+}
+
+/// #223: the same `C` rules inside a per-directory merge file, through the
+/// local-copy parser and, on a push, the sender's per-directory parser.
+///
+/// A refused rule is left to the `--filter` cell above: upstream names the
+/// file by its absolute path in `<rule from ...>`, oc by the path it opened,
+/// which is a separate divergence from the one this cell pins.
+#[test]
+fn c_modifier_inside_a_per_directory_merge_file() {
+    for rules in ["-C\n", "+C\n- *.o\n", "-sC foo\n", "-rC\n"] {
+        let files = [("a.o", "o"), ("b.c", "c"), (".rsync-filter", rules)];
+        for source in [Source::Local, Source::Push] {
+            assert_parity_from(&files, &["-F"], source);
         }
     }
 }

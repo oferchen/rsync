@@ -68,7 +68,7 @@ pub(crate) fn append_filter_rules_from_files(
                     FilterDirective::Clear => local.clear(),
                     // A blank line in an exclude-from/include-from file is skipped.
                     FilterDirective::Noop => {}
-                    FilterDirective::Merge(_) | FilterDirective::CvsDefaults => {
+                    FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
                         unreachable!(
                             "parse_old_prefix_rule never emits FilterDirective::Merge or CvsDefaults"
                         )

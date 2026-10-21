@@ -97,38 +97,48 @@ fn is_rule_separator(ch: char) -> bool {
     ch == '_' || ch.is_ascii_whitespace()
 }
 
-/// An unrecognised modifier byte, located by its offset within the scanned
-/// slice. Callers add the offset of that slice within the whole rule to
-/// reproduce upstream's absolute position.
-#[derive(Debug)]
-pub(super) struct InvalidModifier {
-    /// The offending character.
-    pub(super) ch: char,
-    /// Byte offset of `ch` within the slice handed to the scanner.
-    pub(super) offset: usize,
+/// Splits the text after a single-character rule prefix into
+/// `(modifiers, pattern)`.
+///
+/// Upstream consumes at most ONE optional `,` after the prefix
+/// (exclude.c:1327-1328), then reads modifiers until the first ` `/`_`
+/// separator and consumes exactly that one (exclude.c:1365, 1444-1445). Every
+/// byte of the run is handed to the shared modifier table
+/// ([`parse_modifier_run`]), which refuses a further `,` and any other
+/// non-modifier the way upstream's single modifier `switch` does
+/// (exclude.c:1365-1443). With no separator the whole text is modifiers and the
+/// pattern is empty, so `+foo` is refused on its `f` rather than read as a
+/// pattern.
+pub(super) fn split_short_modifiers(text: &str) -> (&str, &str) {
+    let body = text.strip_prefix(',').unwrap_or(text);
+    match body.find(is_rule_separator) {
+        Some(idx) => (&body[..idx], consume_rule_separator(&body[idx..])),
+        None => (body, ""),
+    }
 }
 
-impl InvalidModifier {
-    /// Renders upstream's diagnostic for this byte.
-    ///
-    /// upstream: exclude.c:1376 - `invalid modifier%s in filter rule: %s`. The
-    /// position is built just above it as
-    /// `(int)(s - (const uchar *)*rulestr_ptr)` (exclude.c:1374-1375), i.e. a
-    /// 0-based byte offset from the start of the whole rule. `rule_offset` is
-    /// where the scanned slice begins within `rule`, so a one-character prefix
-    /// passes 1. The enclosing `default: invalid:` arm runs exclude.c:1371-1380.
-    ///
-    /// BOTH halves cross a provenance chokepoint. The rule text goes through
-    /// `rule_text` (exclude.c:103-124) and the `'%c' at position %d` detail
-    /// through `rule_detail` (exclude.c:126-131), which upstream describes as
-    /// "the extra detail some messages add ABOUT the text - a character of it,
-    /// an offset into it. Dropped along with the text it describes." Reporting
-    /// the character while hiding the line would still leak it one byte at a
-    /// time.
-    pub(super) fn into_message(self, rule_offset: usize, line: RuleLine<'_>) -> Message {
-        let position = rule_offset + self.offset;
-        let ch = self.ch;
-        let detail = format!(" '{ch}' at position {position}");
+/// Runs a modifier run through the shared table, rendering a refusal the way
+/// upstream's `invalid:` label does (exclude.c:1371-1380):
+/// `invalid modifier '%c' at position %d in filter rule: %s`.
+///
+/// The position is a 0-based byte offset from the start of the whole rule
+/// (`s - *rulestr_ptr`, exclude.c:1374-1375), so `run` should be a slice of
+/// `line.text()`.
+///
+/// BOTH halves cross a provenance chokepoint. The rule text goes through
+/// `rule_text` (exclude.c:103-124) and the `'%c' at position %d` detail
+/// through `rule_detail` (exclude.c:126-131), which upstream describes as
+/// "the extra detail some messages add ABOUT the text - a character of it,
+/// an offset into it. Dropped along with the text it describes." Reporting
+/// the character while hiding the line would still leak it one byte at a
+/// time.
+pub(super) fn parse_modifier_run(
+    run: &str,
+    scope: filters::ModifierScope,
+    line: RuleLine<'_>,
+) -> Result<filters::RuleModifiers, Message> {
+    filters::parse_rule_modifiers_in(line.text(), run, scope).map_err(|invalid| {
+        let detail = format!(" '{}' at position {}", invalid.ch, invalid.offset);
         rsync_error!(
             1,
             format!(
@@ -138,97 +148,7 @@ impl InvalidModifier {
             )
         )
         .with_role(Role::Client)
-    }
-}
-
-/// Scans the modifier run that follows a rule character.
-///
-/// `text` begins immediately after the rule character. Upstream consumes at
-/// most ONE optional `,` there (exclude.c:1327-1328), then reads
-/// modifiers until the first ` `/`_` separator (exclude.c:1365, 1444-1445) and
-/// consumes exactly that one separator. Every other byte reaches `default:`
-/// and aborts with `RERR_SYNTAX` (exclude.c:1371-1379) - including a further
-/// `,`, which is why `,` is not a run terminator here.
-///
-/// Measured against rsync 3.5.0: `-s,r a` and `:n,e f` both fail with
-/// `invalid modifier ',' at position 2`, while `-,s a` succeeds; and
-/// `:,pattern` fails on `a` at position 3 because the leading `,` is consumed
-/// and `p` is a valid modifier.
-fn scan_modifiers(
-    text: &str,
-    is_modifier: impl Fn(char) -> bool,
-) -> Result<(&str, &str), InvalidModifier> {
-    let (body, base) = match text.strip_prefix(',') {
-        Some(rest) => (rest, 1usize),
-        None => (text, 0usize),
-    };
-
-    for (idx, ch) in body.char_indices() {
-        if ch == '_' || ch.is_ascii_whitespace() {
-            return Ok((&body[..idx], consume_rule_separator(&body[idx..])));
-        }
-        if !is_modifier(ch) {
-            return Err(InvalidModifier {
-                ch,
-                offset: base + idx,
-            });
-        }
-    }
-
-    // upstream: exclude.c:1365-1443 - with no separator at all the whole
-    // remainder is modifiers and the pattern is empty, so `+foo` is rejected as
-    // an invalid modifier rather than silently treated as a pattern.
-    Ok((body, ""))
-}
-
-/// Splits a `+`/`-` short rule's text into `(modifiers, pattern)`.
-///
-/// Character validity for these rules is decided by the caller, so the scan
-/// rejects only `,` - the one byte that can never be a modifier and that the
-/// previous separator-based split silently swallowed.
-pub(super) fn split_short_rule_modifiers(text: &str) -> Result<(&str, &str), InvalidModifier> {
-    scan_modifiers(text, |ch| ch != ',')
-}
-
-/// Splits a `.`/`:` merge directive's text into `(modifiers, pattern)`.
-///
-/// Every byte up to the separator is handed to the shared modifier table
-/// ([`parse_modifier_run`]), which decides validity the way upstream's single
-/// modifier `switch` does (exclude.c:1365-1443).
-pub(super) fn split_short_merge_modifiers(text: &str) -> (&str, &str) {
-    let body = text.strip_prefix(',').unwrap_or(text);
-    match body.find(is_rule_separator) {
-        Some(idx) => (&body[..idx], consume_rule_separator(&body[idx..])),
-        None => (body, ""),
-    }
-}
-
-/// Runs a modifier run through the shared table, rendering a refusal with the
-/// byte's position in the whole rule.
-///
-/// The position is measured from the start of the rule, as upstream measures it
-/// from `*rulestr_ptr` (exclude.c:1374-1375), so `run` is located inside
-/// `line.text()`. A run that is not a slice of the line has no place in it and
-/// is measured from its own start.
-pub(super) fn parse_modifier_run(
-    run: &str,
-    scope: filters::ModifierScope,
-    line: RuleLine<'_>,
-) -> Result<filters::RuleModifiers, Message> {
-    filters::parse_rule_modifiers(run, scope).map_err(|invalid| {
-        let base = offset_within(line.text(), run).unwrap_or(0);
-        InvalidModifier {
-            ch: invalid.ch,
-            offset: base + invalid.offset,
-        }
-        .into_message(0, line)
     })
-}
-
-/// Byte offset of `inner` within `outer`, when `inner` is a slice of it.
-fn offset_within(outer: &str, inner: &str) -> Option<usize> {
-    let offset = (inner.as_ptr() as usize).checked_sub(outer.as_ptr() as usize)?;
-    (offset + inner.len() <= outer.len()).then_some(offset)
 }
 
 /// Splits a long-form keyword token into `(name, modifiers)` at the first
@@ -280,13 +200,12 @@ mod tests {
         assert_eq!(consume_rule_separator(",_pattern"), "_pattern");
     }
 
-    /// `(modifiers, pattern)` for a scan that must succeed.
-    fn split_rule(text: &str) -> (&str, &str) {
-        split_short_rule_modifiers(text).expect("modifier run must be accepted")
+    fn split_merge(text: &str) -> (&str, &str) {
+        split_short_modifiers(text)
     }
 
-    fn split_merge(text: &str) -> (&str, &str) {
-        split_short_merge_modifiers(text)
+    fn split_rule(text: &str) -> (&str, &str) {
+        split_short_modifiers(text)
     }
 
     /// The refusal `parse_modifier_run` renders for the run a merge rule's
@@ -335,22 +254,20 @@ mod tests {
     }
 
     #[test]
-    fn split_short_rule_modifiers_rejects_a_comma_inside_the_run() {
-        // MEASURED against rsync 3.5.0: `--filter='-s,r a'` exits 1 with
-        // `invalid modifier ',' at position 2`. Only ONE comma is consumed, so a
-        // second one reaches `default:` (exclude.c:1371-1379).
-        let invalid = split_short_rule_modifiers("s,r a").expect_err("`,` is never a modifier");
-        assert_eq!(invalid.ch, ',');
-        assert_eq!(invalid.offset + '-'.len_utf8(), 2);
-    }
-
-    #[test]
-    fn split_short_rule_modifiers_rejects_a_doubled_leading_comma() {
-        // MEASURED against rsync 3.5.0: `--filter='-,, a'` exits 1 with
-        // `invalid modifier ',' at position 2`.
-        let invalid = split_short_rule_modifiers(",, a").expect_err("`,,` is not a modifier run");
-        assert_eq!(invalid.ch, ',');
-        assert_eq!(invalid.offset + '-'.len_utf8(), 2);
+    fn rule_run_refuses_a_comma_inside_or_doubled() {
+        // MEASURED against rsync 3.5.0: `--filter='-s,r a'` and `--filter='-,, a'`
+        // exit 1 with `invalid modifier ',' at position 2`. Only ONE comma is
+        // consumed, so a second one reaches `default:` (exclude.c:1371-1379).
+        for rule in ["-s,r a", "-,, a"] {
+            let (run, _) = split_rule(&rule[1..]);
+            let refusal = parse_modifier_run(run, filters::ModifierScope::PLAIN, arg(rule))
+                .expect_err("`,` is never a modifier")
+                .to_string();
+            assert!(
+                refusal.contains("invalid modifier ',' at position 2"),
+                "{rule}: {refusal}"
+            );
+        }
     }
 
     #[test]

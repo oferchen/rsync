@@ -374,18 +374,10 @@ pub(crate) fn process_merge_directive(
         // A blank line inside a merge file contributes no rule.
         Ok(FilterDirective::Noop) => {}
         // upstream: exclude.c:1595-1597 a non-merge FILTRULE_CVS_IGNORE rule
-        // (`-C`) inside a merge file expands to the global CVS defaults at this
+        // (`-C`) inside a merge file expands to the global CVS list at this
         // position in the chain.
-        Ok(FilterDirective::CvsDefaults) => {
-            let rules = cvs_default_exclude_rules().map_err(|error| {
-                let detail = error.to_string();
-                rsync_error!(
-                    1,
-                    format!("failed to process merge file '{display}': {detail}")
-                )
-                .with_role(Role::Client)
-            })?;
-            destination.extend(rules);
+        Ok(FilterDirective::CvsDefaults(template)) => {
+            destination.extend(cvs_default_exclude_rules(template));
         }
         Err(error) => {
             // upstream reports a syntax failure ONCE, from `filter_rule_err`

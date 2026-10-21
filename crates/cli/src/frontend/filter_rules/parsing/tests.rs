@@ -743,44 +743,88 @@ fn old_prefix_short_prefix_only_is_error() {
     assert!(parse_old_prefix_rule("+ ", FilterRuleKind::Exclude, RuleSource::Argument).is_err());
 }
 
+/// #223: upstream accepts `C` on a non-merge rule (exclude.c:1402-1409),
+/// lets it have no pattern (exclude.c:1474) and builds the CVS list from the
+/// rule's flags (exclude.c:1595-1597). MEASURED against rsync 3.5.1: `-C`,
+/// `+C`, `-sC`, `-pC`, `-Cs`, `-!C`, `-xC` and `-C foo` all exit 0.
 #[test]
-fn is_cvs_convenience_rule_detects_exclude_and_include_forms() {
-    // upstream: exclude.c:1402-1409 - the `C` (cvs-ignore) modifier is valid on
-    // both `-` and `+` rule chars, with an optional comma separator.
-    assert!(is_cvs_convenience_rule("-C"));
-    assert!(is_cvs_convenience_rule("+C"));
-    assert!(is_cvs_convenience_rule("-,C"));
-    assert!(is_cvs_convenience_rule("+,C"));
+fn c_rules_stand_for_the_cvs_list_under_their_own_flags() {
+    use filters::CvsTemplate;
+
+    let plain = CvsTemplate::default();
+    let cases = [
+        ("-C", plain),
+        ("-,C", plain),
+        ("-C foo", plain),
+        ("-xC", plain),
+        ("exclude,C", plain),
+        (
+            "+C",
+            CvsTemplate {
+                include: true,
+                ..plain
+            },
+        ),
+        (
+            "include,C x",
+            CvsTemplate {
+                include: true,
+                ..plain
+            },
+        ),
+        (
+            "-!C",
+            CvsTemplate {
+                negate: true,
+                ..plain
+            },
+        ),
+        (
+            "-pC",
+            CvsTemplate {
+                perishable: true,
+                ..plain
+            },
+        ),
+        (
+            "-sC",
+            CvsTemplate {
+                sender_side: true,
+                ..plain
+            },
+        ),
+        (
+            "-Cr",
+            CvsTemplate {
+                receiver_side: true,
+                ..plain
+            },
+        ),
+    ];
+    for (rule, template) in cases {
+        assert_eq!(
+            parse_filter_directive(OsStr::new(rule), RuleSource::Argument).unwrap(),
+            FilterDirective::CvsDefaults(template),
+            "{rule}"
+        );
+    }
 }
 
+/// A side-binding prefix refuses `C` (exclude.c:1402-1404), and a second `C`
+/// finds FILTRULE_NO_PREFIXES already set. MEASURED against rsync 3.5.1: `PC`
+/// fails with `invalid modifier 'C' at position 1`.
 #[test]
-fn is_cvs_convenience_rule_rejects_non_cvs_forms() {
-    // A lowercase `c` is an invalid modifier upstream, and a space or any
-    // trailing pattern means this is an ordinary exclude/include rule.
-    assert!(!is_cvs_convenience_rule("-c"));
-    assert!(!is_cvs_convenience_rule("- C"));
-    assert!(!is_cvs_convenience_rule("-Cp"));
-    assert!(!is_cvs_convenience_rule("-foo"));
-    assert!(!is_cvs_convenience_rule("C"));
-    assert!(!is_cvs_convenience_rule(":C"));
-}
-
-#[test]
-fn parse_cvs_convenience_rule_emits_cvs_defaults() {
-    // `-C` / `+C` as a filter rule expand to the global CVS default
-    // excludes rather than a literal pattern "C".
-    assert_eq!(
-        parse_filter_directive(OsStr::new("-C"), RuleSource::Argument).unwrap(),
-        FilterDirective::CvsDefaults
-    );
-    assert_eq!(
-        parse_filter_directive(OsStr::new("+C"), RuleSource::Argument).unwrap(),
-        FilterDirective::CvsDefaults
-    );
-    assert_eq!(
-        parse_filter_directive(OsStr::new("-,C"), RuleSource::Argument).unwrap(),
-        FilterDirective::CvsDefaults
-    );
+fn c_is_refused_on_side_rules_and_when_repeated() {
+    for (rule, position) in [("PC", 1), ("H,C x", 2), ("-CC", 2)] {
+        let error = parse_filter_directive(OsStr::new(rule), RuleSource::Argument)
+            .expect_err("upstream refuses this C");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("invalid modifier 'C' at position {position}")),
+            "{rule}: {error}"
+        );
+    }
 }
 
 #[test]
