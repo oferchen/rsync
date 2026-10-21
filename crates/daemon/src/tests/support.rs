@@ -270,7 +270,10 @@ fn force_no_detach(config: crate::DaemonConfig) -> crate::DaemonConfig {
 /// may connect at once: the kernel queues the connection until the daemon
 /// accepts it. That is the whole readiness protocol - there is no window in
 /// which the port is unbound.
-pub(super) fn spawn_daemon(config: crate::DaemonConfig, held_listener: TcpListener) -> DaemonHandle {
+pub(super) fn spawn_daemon(
+    config: crate::DaemonConfig,
+    held_listener: TcpListener,
+) -> DaemonHandle {
     DaemonHandle::spawn(with_pre_bound_listener(
         force_no_detach(config),
         held_listener,

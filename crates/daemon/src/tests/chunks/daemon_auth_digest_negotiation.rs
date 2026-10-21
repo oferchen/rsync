@@ -3,12 +3,7 @@
 /// connected client socket plus the daemon thread handle.
 ///
 /// The caller has already consumed nothing: the server greeting is still queued.
-fn start_auth_digest_daemon(
-    dir: &Path,
-) -> (
-    TcpStream,
-    DaemonHandle,
-) {
+fn start_auth_digest_daemon(dir: &Path) -> (TcpStream, DaemonHandle) {
     let module_dir = dir.join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
     let secrets_path = dir.join("secrets.txt");

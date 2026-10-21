@@ -2,8 +2,8 @@
 /// reaches its session as EOF, as it does when the client is another process.
 ///
 /// Sessions inherit their descriptors from the daemon process, so checking the
-/// daemon covers every session it forks. A daemon run inside the test process
-/// - or forked after the client connected - holds the client socket, and a
+/// daemon covers every session it forks. A daemon run inside the test process,
+/// or forked after the client connected, holds the client socket, and a
 /// session waiting for input outlives the test.
 ///
 /// upstream: main.c:1954 `daemon_main()` runs the daemon as its own process.

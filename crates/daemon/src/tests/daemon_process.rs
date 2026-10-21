@@ -241,11 +241,6 @@ impl DaemonHandle {
         Self(std::thread::spawn(move || crate::run_daemon(config)))
     }
 
-    /// The daemon shares the test's process.
-    pub(super) fn pid(&self) -> u32 {
-        std::process::id()
-    }
-
     /// Whether the daemon thread has returned.
     pub(super) fn is_finished(&self) -> bool {
         self.0.is_finished()
