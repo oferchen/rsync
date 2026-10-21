@@ -15,19 +15,23 @@ use super::builder::RemoteInvocationBuilder;
 use crate::client::config::{ClientConfig, FilesFromSource, StrongChecksumChoice};
 
 fn push_config(old_args: Option<u8>) -> ClientConfig {
-    ClientConfig::builder()
+    let builder = ClientConfig::builder()
         .backup(true)
         .backup_directory(Some("~/bak dir*"))
         .backup_suffix(Some(".b k*"))
         .partial_directory(Some(".p d\"q"))
         .temp_directory(Some("/t'm p"))
-        .compare_destination("c\\d[x]")
+        .compare_destination("c\\d[x]");
+    // `--usermap`/`--groupmap` cannot be constructed on Windows (metadata::mapping_win).
+    #[cfg(unix)]
+    let builder = builder
         .user_mapping(Some(
             ::metadata::UserMapping::parse("*:nobody").expect("usermap"),
         ))
         .group_mapping(Some(
             ::metadata::GroupMapping::parse("*:nogroup").expect("groupmap"),
-        ))
+        ));
+    builder
         .remote_options(["--log-file=/l g*"])
         .old_args(old_args)
         .build()
@@ -46,12 +50,19 @@ fn lossy(args: Vec<OsString>) -> Vec<String> {
 /// Asserts each upstream slice appears contiguously in `argv`. The order of
 /// the slices is not compared: oc emits the long options in its own order.
 fn assert_has_slices(argv: &[String], slices: &[&[&str]]) {
-    for slice in slices {
+    for slice in slices.iter().filter(|s| cfg!(unix) || !is_id_mapping(s)) {
         assert!(
             argv.windows(slice.len()).any(|w| w == *slice),
             "missing upstream argv slice {slice:?} in {argv:?}"
         );
     }
+}
+
+/// An id-mapping slice, which `push_config` sets only where mappings exist.
+fn is_id_mapping(slice: &[&str]) -> bool {
+    slice
+        .first()
+        .is_some_and(|t| t.starts_with("--usermap") || t.starts_with("--groupmap"))
 }
 
 /// `rsync -e REC -a -b --backup-dir='~/bak dir*' --suffix='.b k*'
