@@ -480,6 +480,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Lazy file-list production behind `OC_RSYNC_LAZY_FLIST`, off by default (#7925, #7943, #7944, #7947, #7949)
 - Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
 - `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders, rustdoc links, SAFETY comments and direct FFI dependencies (#7767, #7770, #7776, #7932, #7940)
+- Windows-gnu clippy over all targets is clean: the engine benches build on Windows, and the Windows-only lint findings are fixed with no behaviour change (#PRNUM)
 - Refactors with no behaviour change (#7715, #7716, #7762, #7787, #7790, #7794, #7798, #7954, #7955, #7962, #7978, #7980, #8044, #8127)
 - Documentation: upstream citations retargeted at 3.5.0 and then 3.5.1 with a stricter citation gate, a CVE and testsuite coverage matrix, the INC_RECURSE receiver plan, the QUIC security review and process model, and README/SECURITY/CHANGELOG refreshes (#7286, #7308, #7315, #7318, #7994, #8187, #8191, #8170, #8131, #8066, #7960, #7963, #7998, #8018, #8020, #8031, #8049, #8105, #8121, #8144, #8192, #8194, #8196, #8204, #8221)
 - Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022, #8100, #8101, #8174, #8175, #8176, #8177, #8178, #8200, #8211, #8212)
