@@ -30,8 +30,8 @@ pub enum BatchError {
     /// `RERR_SYNTAX`.
     #[error("{0}")]
     FlagMismatch(String),
-    /// The `--read-batch` file could not be opened, or it is neither a regular
-    /// file nor a FIFO.
+    /// A batch file could not be opened, a `--read-batch` file is neither a
+    /// regular file nor a FIFO, or the `.sh` companion could not be written.
     ///
     /// Kept apart from [`BatchError::Io`] because upstream gives these two
     /// failures their own exit code and their own bare wording: both
@@ -40,9 +40,16 @@ pub enum BatchError {
     /// `exit_cleanup(RERR_FILEIO)`. Folding them into the generic I/O arm
     /// re-labels them as a replay failure and reports exit 1.
     ///
-    /// upstream: batch.c:267-283
+    /// upstream: batch.c:262-283, 343-346 - all exit `RERR_FILEIO`.
     #[error("{0}")]
     BatchFileUnusable(String),
+    /// The `--write-batch` `.sh` companion could not be created.
+    ///
+    /// upstream: batch.c:255-258 - `rsyserr(FERROR, errno, "Batch file %s open
+    /// error", ...)` then `exit_cleanup(RERR_FILESELECT)`, a different exit
+    /// code from the batch file's own open failure.
+    #[error("{0}")]
+    ScriptFileUnusable(String),
 }
 
 #[cfg(test)]

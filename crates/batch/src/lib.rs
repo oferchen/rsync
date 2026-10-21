@@ -257,6 +257,7 @@ pub use protocol::wire::DeltaOp;
 /// Result of a batch replay operation containing aggregate statistics.
 pub use replay::ReplayResult;
 
+use std::ffi::OsString;
 use std::path::Path;
 
 /// Batch mode operation type.
@@ -400,7 +401,7 @@ pub struct BatchConfig {
     /// the binary by absolute path (test harnesses, CI) should set this
     /// to the absolute path so the generated `BATCH.sh` runs without
     /// requiring `PATH` setup.
-    pub invoker: String,
+    pub invoker: OsString,
 
     /// The raw command-line argument vector (including `argv[0]`) of the
     /// original `--write-batch` invocation.
@@ -409,7 +410,7 @@ pub struct BatchConfig {
     /// mirroring upstream rsync's `raw_argv` in
     /// `batch.c:write_batch_shell_file()`. When empty, the script generator
     /// falls back to emitting only `--read-batch` without any transfer flags.
-    pub replay_args: Vec<String>,
+    pub replay_args: Vec<OsString>,
 
     /// The positional filename operands (sources and destination) of the
     /// original invocation.
@@ -417,8 +418,16 @@ pub struct BatchConfig {
     /// These are elided from the reconstructed replay command, mirroring how
     /// upstream nulls out the `cooked_argv` filename args
     /// (`batch.c:305-311`). The destination is re-supplied through the
-    /// `${1:-<dest>}` placeholder instead.
-    pub operands: Vec<String>,
+    /// `${1:-<dest>}` placeholder instead, which upstream fills from the last
+    /// of them (`batch.c:336-340`, `cooked_argv[cooked_argc - 1]`).
+    pub operands: Vec<OsString>,
+
+    /// The filter rules the `.sh` here-doc replays, one `\n`-terminated rule
+    /// per line; empty when there are none.
+    ///
+    /// Mirrors the `filter_list` that upstream `batch.c:write_filter_rules()`
+    /// lists while `setup_protocol()` writes the script (`compat.c:838`).
+    pub filter_rules: Vec<u8>,
 
     /// Data-stream-affecting options active during the current `--read-batch`
     /// invocation.
@@ -514,9 +523,10 @@ impl BatchConfig {
                 None
             },
             checksum_seed: 0,
-            invoker: String::from("oc-rsync"),
+            invoker: OsString::from("oc-rsync"),
             replay_args: Vec::new(),
             operands: Vec::new(),
+            filter_rules: Vec::new(),
             active_flags: BatchFlags::default(),
             eol_nulls: false,
             numeric_ids: false,
@@ -588,7 +598,7 @@ impl BatchConfig {
     ///
     /// assert_eq!(config.invoker, "/usr/local/bin/oc-rsync");
     /// ```
-    pub fn with_invoker(mut self, invoker: impl Into<String>) -> Self {
+    pub fn with_invoker(mut self, invoker: impl Into<OsString>) -> Self {
         self.invoker = invoker.into();
         self
     }
@@ -615,7 +625,7 @@ impl BatchConfig {
     pub fn with_replay_args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: Into<OsString>,
     {
         self.replay_args = args.into_iter().map(Into::into).collect();
         self
@@ -642,9 +652,27 @@ impl BatchConfig {
     pub fn with_operands<I, S>(mut self, operands: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: Into<OsString>,
     {
         self.operands = operands.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Set the filter rules the `.sh` here-doc replays: raw bytes, one
+    /// `\n`-terminated rule per line, so a non-UTF-8 pattern survives.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Write, "/tmp/batch".to_string(), 31)
+    ///     .with_filter_rules(b"- *.tmp\n".to_vec());
+    ///
+    /// assert_eq!(config.filter_rules, b"- *.tmp\n");
+    /// ```
+    pub fn with_filter_rules(mut self, rules: Vec<u8>) -> Self {
+        self.filter_rules = rules;
         self
     }
 

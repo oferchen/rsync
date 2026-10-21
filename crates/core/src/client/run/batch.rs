@@ -54,23 +54,34 @@ pub(crate) fn handle_batch_read(
 }
 
 /// Creates a [`BatchWriter`] for recording a transfer to a batch file.
+///
+/// The writer creates the `.sh` and the batch file now and writes the script
+/// once the protocol is set up, as upstream's `open_batch_files()` and
+/// `write_batch_shell_file()` do. The filter here-doc is resolved first, so a
+/// rule that cannot be listed is refused before either file exists.
+///
+/// upstream: batch.c:255-258, 269-272 - a `.sh` open failure exits
+/// `RERR_FILESELECT` (3), a batch file open failure `RERR_FILEIO` (11).
 pub(crate) fn create_batch_writer(
     batch_cfg: &BatchConfig,
+    config: &ClientConfig,
 ) -> Result<Arc<Mutex<BatchWriter>>, ClientError> {
-    match BatchWriter::new((*batch_cfg).clone()) {
-        Ok(writer) => Ok(Arc::new(Mutex::new(writer))),
-        Err(e) => {
-            let msg = format!(
-                "failed to create batch file '{}': {}",
-                batch_cfg.batch_file_path().display(),
-                e
-            );
-            Err(ClientError::new(
-                1,
-                rsync_error!(1, "{}", msg).with_role(Role::Client),
-            ))
-        }
-    }
+    let writer_cfg = batch_cfg
+        .clone()
+        .with_filter_rules(batch_filter_text(config.filter_rules())?)
+        // upstream: batch.c:217,219-220 - the filter heredoc honors eol_nulls
+        // (--from0), NUL-terminating rules and appending ";\n".
+        .with_eol_nulls(config.from0());
+    BatchWriter::new(writer_cfg)
+        .map(|writer| Arc::new(Mutex::new(writer)))
+        .map_err(|e| {
+            let code = match e {
+                engine::batch::BatchError::ScriptFileUnusable(_) => 3,
+                engine::batch::BatchError::BatchFileUnusable(_) => 11,
+                _ => 1,
+            };
+            ClientError::new(code, rsync_error!(code, "{}", e).with_role(Role::Client))
+        })
 }
 
 /// Builds the data-stream-affecting [`engine::batch::BatchFlags`] from the
@@ -79,7 +90,7 @@ pub(crate) fn create_batch_writer(
 /// The same flag set is recorded on `--write-batch` and reconciled on
 /// `--read-batch`, so both paths derive it identically from the current
 /// options. Mirrors upstream `batch.c:97-113 write_stream_flags()`.
-fn config_batch_flags(config: &ClientConfig) -> engine::batch::BatchFlags {
+pub(crate) fn config_batch_flags(config: &ClientConfig) -> engine::batch::BatchFlags {
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = config.preserve_xattrs();
     #[cfg(not(all(unix, feature = "xattr")))]
@@ -144,12 +155,8 @@ pub(crate) fn write_batch_header(
     Ok(())
 }
 
-/// Flushes the batch file and generates the replay script, optionally
-/// appending the stats trailer first.
-///
-/// When filter rules are active in `config`, the replay script embeds them
-/// using the same heredoc format as upstream `batch.c:write_filter_rules()`,
-/// ensuring the replay applies identical filters.
+/// Flushes the batch file, optionally appending the stats trailer first. The
+/// replay script was already written with the header.
 ///
 /// `write_trailer` says whether this call owns the batch trailer - the five
 /// varlong30 stats of upstream `main.c:374-383` plus, at protocol >= 31, the
@@ -168,7 +175,6 @@ pub(crate) fn write_batch_header(
 pub(crate) fn finalize_batch(
     writer_arc: &Arc<Mutex<BatchWriter>>,
     batch_cfg: &BatchConfig,
-    config: &ClientConfig,
     summary: &ClientSummary,
     write_trailer: bool,
 ) -> Result<(), ClientError> {
@@ -229,35 +235,6 @@ pub(crate) fn finalize_batch(
                 rsync_error!(1, "{}", msg).with_role(Role::Client),
             ));
         }
-    }
-
-    // upstream: batch.c:298-303, 341-342 - embed filter rules in the replay
-    // script; `filter_list.head` (not the option count) gates the heredoc.
-    let filter_text = batch_filter_text(config.filter_rules())?;
-    let filter_opt = (!filter_text.is_empty()).then_some(filter_text.as_slice());
-
-    // upstream: batch.c:300-304 - embed the destination operand as the
-    // `${1:-<dest>}` fallback so `./BATCH.sh` (with no argument) writes to
-    // the same destination used when the batch was captured. The destination
-    // is the last positional operand on the original command line.
-    let dest_operand = config
-        .transfer_args()
-        .last()
-        .map(|s| s.to_string_lossy().into_owned());
-
-    // upstream: batch.c:217,219-220 - the filter heredoc honors eol_nulls
-    // (--from0), NUL-terminating rules and appending ";\n".
-    let script_cfg = batch_cfg.clone().with_eol_nulls(config.from0());
-    if let Err(e) = engine::batch::script::generate_script_with_filters(
-        &script_cfg,
-        filter_opt,
-        dest_operand.as_deref(),
-    ) {
-        let msg = format!("failed to generate batch script: {e}");
-        return Err(ClientError::new(
-            1,
-            rsync_error!(1, "{}", msg).with_role(Role::Client),
-        ));
     }
 
     Ok(())
@@ -380,8 +357,7 @@ fn replay_batch(
     let compat_flags = header
         .compat_flags
         .map(|bits| protocol::CompatibilityFlags::from_bits(bits as u32));
-    let server_config =
-        build_replay_server_config(config, dest_root, &replay_flags, compat_flags)?;
+    let server_config = build_replay_server_config(config, dest_root, &replay_flags, compat_flags)?;
 
     let mut ctx = crate::server::ReceiverContext::for_batch_replay(&header, server_config)
         .map_err(|e| {
@@ -1317,8 +1293,7 @@ mod tests {
         let recorded = engine::batch::BatchFlags::default();
         for (protocol, inplace) in [(29, true), (30, false)] {
             let flags = reconcile_with_batch(recorded, active, protocol).unwrap();
-            let server =
-                build_replay_server_config(&config, "dest".into(), &flags, None).unwrap();
+            let server = build_replay_server_config(&config, "dest".into(), &flags, None).unwrap();
             assert_eq!(server.write.inplace, inplace, "protocol {protocol}");
         }
     }
@@ -1338,8 +1313,9 @@ mod tests {
             BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), proto)
                 .with_checksum_seed(1);
 
-        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
-        write_batch_header(&writer_arc, &config_with_compress(compress)).unwrap();
+        let config = config_with_compress(compress);
+        let writer_arc = create_batch_writer(&batch_cfg, &config).unwrap();
+        write_batch_header(&writer_arc, &config).unwrap();
         drop(writer_arc);
 
         let read_cfg = BatchConfig::new(BatchMode::Read, path.to_string_lossy().to_string(), proto);
@@ -1397,8 +1373,14 @@ mod tests {
             (FilterRuleSpec::protect("keep"), "-r keep"),
             (FilterRuleSpec::risk("junk"), "+r junk"),
             (FilterRuleSpec::hide("*.bak"), "-s *.bak"),
-            (FilterRuleSpec::exclude("per").with_perishable(true), "-p per"),
-            (FilterRuleSpec::exclude("user.*").with_xattr_only(true), "-x user.*"),
+            (
+                FilterRuleSpec::exclude("per").with_perishable(true),
+                "-p per",
+            ),
+            (
+                FilterRuleSpec::exclude("user.*").with_xattr_only(true),
+                "-x user.*",
+            ),
             (FilterRuleSpec::exclude("neg").with_negate(true), "-! neg"),
             (FilterRuleSpec::exclude("build/"), "- build/"),
             (FilterRuleSpec::dir_merge(".rules", no_inherit), ":n .rules"),
@@ -1474,16 +1456,15 @@ mod tests {
         assert!(content.contains("--read-batch="));
     }
 
-    /// Verify finalize_batch embeds filter rules from config.
+    /// The header write produces the `.sh`, filter here-doc included, before
+    /// any transfer data: upstream writes the script in setup_protocol()
+    /// (compat.c:838-839), so it exists even when the run fails later.
     #[test]
-    fn finalize_batch_embeds_filter_rules_in_script() {
+    fn write_batch_header_writes_the_script_with_filter_rules() {
         let temp = test_support::create_tempdir();
-        let path = temp.path().join("finalize.batch");
+        let path = temp.path().join("setup.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
             .with_checksum_seed(1);
-
-        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
-
         let config = ClientConfig::builder()
             .compress(false)
             .add_filter_rule(FilterRuleSpec::exclude("*.log"))
@@ -1491,27 +1472,21 @@ mod tests {
             .batch_config(Some(batch_cfg.clone()))
             .build();
 
+        let writer_arc = create_batch_writer(&batch_cfg, &config).unwrap();
+        let script_path = batch_cfg.script_file_path();
+        assert_eq!(
+            std::fs::read(&script_path).unwrap(),
+            b"",
+            "the .sh exists, empty, from the moment the writer opens"
+        );
         write_batch_header(&writer_arc, &config).unwrap();
 
-        let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
-        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary, true);
-        assert!(result.is_ok());
-
-        let script_path = batch_cfg.script_file_path();
         let content = std::fs::read_to_string(&script_path).unwrap();
+        assert!(content.contains("--filter='._-'"), "{content}");
         assert!(
-            content.contains("--filter='._-'"),
-            "Script should embed filter option: {content}"
+            content.ends_with("<<'#E#'\n- *.log\n+ *.txt\n#E#\n"),
+            "{content}"
         );
-        assert!(
-            content.contains("- *.log"),
-            "Script should contain exclude rule: {content}"
-        );
-        assert!(
-            content.contains("+ *.txt"),
-            "Script should contain include rule: {content}"
-        );
-        assert!(content.contains("<<'#E#'"), "Script should contain heredoc");
     }
 
     /// A filter pattern carrying a newline must abort `--write-batch` with
@@ -1526,14 +1501,11 @@ mod tests {
     ///
     /// upstream: batch.c:222-231 write_filter_rules() - rprintf + RERR_SYNTAX.
     #[test]
-    fn finalize_batch_refuses_newline_filter_rule_and_writes_no_script() {
+    fn create_batch_writer_refuses_newline_filter_rule_and_writes_no_script() {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("inject.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
             .with_checksum_seed(1);
-
-        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
-
         let config = ClientConfig::builder()
             .compress(false)
             .add_filter_rule(FilterRuleSpec::exclude("*.log"))
@@ -1541,10 +1513,7 @@ mod tests {
             .batch_config(Some(batch_cfg.clone()))
             .build();
 
-        write_batch_header(&writer_arc, &config).unwrap();
-
-        let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
-        let err = finalize_batch(&writer_arc, &batch_cfg, &config, &summary, true)
+        let err = create_batch_writer(&batch_cfg, &config)
             .expect_err("a newline-bearing filter pattern must be refused");
 
         assert_eq!(err.exit_code(), 1, "upstream exits RERR_SYNTAX (1)");
@@ -1561,25 +1530,45 @@ mod tests {
         );
     }
 
-    /// Verify finalize_batch produces clean script when no filter rules.
+    /// upstream: batch.c:255-258 vs 269-272 - the `.sh` is opened first and
+    /// its failure is RERR_FILESELECT (3); the batch file's own open failure
+    /// is RERR_FILEIO (11). Both print "Batch file ... open error".
     #[test]
-    fn finalize_batch_no_filters_produces_clean_script() {
+    fn create_batch_writer_open_failures_exit_like_upstream() {
+        let temp = test_support::create_tempdir();
+        let config = config_with_compress(false);
+
+        let missing = temp.path().join("nodir").join("bf");
+        let cfg = BatchConfig::new(BatchMode::Write, missing.to_string_lossy().to_string(), 31);
+        let err = create_batch_writer(&cfg, &config).expect_err("no parent for the .sh");
+        assert_eq!(err.exit_code(), 3, "{err}");
+        assert!(err.to_string().contains("bf.sh\" open error"), "{err}");
+
+        // The .sh opens, the batch file cannot: a directory sits at its path.
+        let dir = temp.path().join("isdir");
+        std::fs::create_dir(&dir).unwrap();
+        let cfg = BatchConfig::new(BatchMode::Write, dir.to_string_lossy().to_string(), 31);
+        let err = create_batch_writer(&cfg, &config).expect_err("batch path is a directory");
+        assert_eq!(err.exit_code(), 11, "{err}");
+        assert!(err.to_string().contains("isdir\" open error"), "{err}");
+    }
+
+    /// Without filter rules the script carries neither `--filter` nor a
+    /// here-doc.
+    #[test]
+    fn write_batch_header_without_filters_writes_a_clean_script() {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("nofilt.batch");
         let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
             .with_checksum_seed(1);
-
-        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
-
         let config = config_with_compress(false);
+        let writer_arc = create_batch_writer(&batch_cfg, &config).unwrap();
         write_batch_header(&writer_arc, &config).unwrap();
 
         let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
-        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary, true);
-        assert!(result.is_ok());
+        finalize_batch(&writer_arc, &batch_cfg, &summary, true).unwrap();
 
-        let script_path = batch_cfg.script_file_path();
-        let content = std::fs::read_to_string(&script_path).unwrap();
+        let content = std::fs::read_to_string(batch_cfg.script_file_path()).unwrap();
         assert!(
             !content.contains("--filter"),
             "No --filter without rules: {content}"
