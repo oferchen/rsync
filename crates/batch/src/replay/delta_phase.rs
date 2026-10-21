@@ -358,14 +358,15 @@ fn handle_inc_recurse_segment(
             }
             fs::create_dir_all(&dest_path).ok();
         } else if entry.is_symlink() {
-            if let Some(_target) = entry.link_target() {
-                if let Some(parent) = dest_path.parent() {
-                    fs::create_dir_all(parent).ok();
-                }
-                #[cfg(unix)]
-                {
-                    let _ = std::os::unix::fs::symlink(_target, &dest_path);
-                }
+            let Some(_target) = entry.link_target() else {
+                continue;
+            };
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent).ok();
+            }
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(_target, &dest_path);
             }
         } else if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent).ok();

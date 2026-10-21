@@ -80,7 +80,7 @@ fn run_dry_run_push_at_protocol(protocol: ProtocolVersion) {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("dry-run push at protocol {} failed: {e}", protocol.as_u8());
         }
     }
@@ -102,7 +102,7 @@ fn run_dry_run_push_at_protocol(protocol: ProtocolVersion) {
         protocol.as_u8()
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
 
 #[cfg(unix)]

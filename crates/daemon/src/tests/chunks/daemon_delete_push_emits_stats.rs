@@ -83,7 +83,7 @@ fn daemon_delete_push_reports_delete_stats() {
     let summary = match result {
         Ok(s) => s,
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("delete-stats push failed: {e}");
         }
     };
@@ -110,5 +110,5 @@ fn daemon_delete_push_reports_delete_stats() {
         "client summary must report one deleted file (NDX_DEL_STATS not propagated)"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

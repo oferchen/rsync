@@ -75,7 +75,7 @@ fn run_daemon_filter_module(
         .build();
 
     let result = core::client::run_client(client_config);
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
     (result, dest_dir, temp)
 }
 

@@ -120,7 +120,7 @@ impl FileEntry {
             // Unix branch when paths arrive in either form (e.g.
             // `\\share\foo` from a Windows operand). Wire-form paths
             // always use `/`, but Windows operands may carry `\`.
-            let trimmed = s.trim_start_matches(|c| c == '/' || c == '\\');
+            let trimmed = s.trim_start_matches(['/', '\\']);
             if trimmed.len() != s.len() {
                 self.name = if trimmed.is_empty() {
                     PathBuf::from(".")

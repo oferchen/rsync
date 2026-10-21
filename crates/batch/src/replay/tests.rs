@@ -216,3 +216,87 @@ fn read_iflags_proto_29_reads_shortint() {
     let iflags = super::dispatch::read_iflags_and_skip_meta(&mut stream, 29).expect("read iflags");
     assert_eq!(iflags, 1 << 15);
 }
+
+/// A symlink that arrives in an INC_RECURSE sub-list must be created when the
+/// sub-list is read: no file NDX ever names a symlink, so the delta phase is
+/// the only point at which replay sees it.
+#[cfg(unix)]
+#[test]
+fn inc_recurse_sub_list_symlink_is_created_during_delta_phase() {
+    use std::io::Write;
+
+    use protocol::codec::{NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
+    use protocol::flist::{FileEntry, FileListWriter};
+    use protocol::{CompatibilityFlags, ProtocolVersion};
+
+    use super::ReplayResult;
+    use super::delta_phase::apply_delta_phase;
+    use crate::format::{BatchFlags, BatchHeader};
+    use crate::{BatchConfig, BatchMode, BatchReader};
+
+    let temp = test_support::create_tempdir();
+    let batch_path = temp.path().join("inc_recurse_symlink.batch");
+    let dest = temp.path().join("dest");
+    fs::create_dir(&dest).unwrap();
+
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let compat = CompatibilityFlags::INC_RECURSE
+        | CompatibilityFlags::VARINT_FLIST_FLAGS
+        | CompatibilityFlags::SAFE_FILE_LIST;
+    let flags = BatchFlags {
+        recurse: true,
+        preserve_links: true,
+        ..BatchFlags::default()
+    };
+    let mut file = fs::File::create(&batch_path).unwrap();
+    BatchHeader {
+        stream_flags: flags,
+        protocol_version: 32,
+        compat_flags: Some(compat.bits() as i32),
+        checksum_seed: 42,
+    }
+    .write_to(&mut file)
+    .unwrap();
+    let mut root_list =
+        FileListWriter::with_compat_flags(protocol, compat).with_preserve_links(true);
+    root_list
+        .write_entry(&mut file, &FileEntry::new_directory(".".into(), 0o755))
+        .unwrap();
+    root_list.write_end(&mut file, None).unwrap();
+    let mut ndx_codec = NdxCodecEnum::new(32);
+    ndx_codec.write_ndx(&mut file, NDX_FLIST_OFFSET).unwrap();
+    let mut sub_list =
+        FileListWriter::with_compat_flags(protocol, compat).with_preserve_links(true);
+    let link = FileEntry::new_symlink("link".into(), 0o777, "target".into());
+    sub_list.write_entry(&mut file, &link).unwrap();
+    sub_list.write_end(&mut file, None).unwrap();
+    for ndx in [NDX_FLIST_EOF, NDX_DONE, NDX_DONE] {
+        ndx_codec.write_ndx(&mut file, ndx).unwrap();
+    }
+    file.flush().unwrap();
+
+    let config = BatchConfig::new(
+        BatchMode::Read,
+        batch_path.to_string_lossy().to_string(),
+        32,
+    );
+    let mut reader = BatchReader::new(config).unwrap();
+    reader.read_header().unwrap();
+    let mut entries = reader.read_protocol_flist().unwrap();
+    let mut result = ReplayResult::default();
+    apply_delta_phase(
+        &mut reader,
+        &mut entries,
+        &dest,
+        &flags,
+        &mut result,
+        0,
+        &mut Vec::new(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::read_link(dest.join("link")).unwrap(),
+        std::path::Path::new("target")
+    );
+}

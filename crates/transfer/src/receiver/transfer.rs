@@ -269,6 +269,7 @@ impl ReceiverContext {
                 #[cfg(unix)]
                 dest_dir: Some(dest_dir),
                 metadata_opts: Some(&metadata_opts),
+                fsync: self.config.write.fsync,
             };
             let sweep = handle_delayed_updates(
                 all_delayed_updates,
@@ -359,6 +360,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             dest_dir: Some(dest_dir),
             metadata_opts: Some(metadata_opts),
+            fsync: self.config.write.fsync,
         };
         if let Some(notice) = make_backup(file_path, &backup_config, env)? {
             // upstream: backup.c:432-433 - INFO_GTE(BACKUP, 1) "backed up X to Y".
@@ -2486,6 +2488,7 @@ mod tests {
             sandbox: Some(&sandbox),
             dest_dir: Some(&dest_dir),
             metadata_opts: None,
+            fsync: false,
         };
 
         let io_error = handle_delayed_updates(

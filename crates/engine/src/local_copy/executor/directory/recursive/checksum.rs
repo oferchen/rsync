@@ -4,7 +4,6 @@
 //! source/destination pairs in parallel using rayon, populating a cache
 //! that the per-file comparison step consults.
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::CopyContext;
@@ -18,8 +17,7 @@ use protocol::iconv::FilenameConverter;
 /// `lstat` cannot be mutated through a shared inode by an earlier sibling in
 /// the same directory pass and is therefore safe to cache and reuse.
 #[cfg(unix)]
-fn destination_link_count_is_one(metadata: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
+fn destination_link_count_is_one(metadata: &fast_io::EntryMetadata) -> bool {
     metadata.nlink() == 1
 }
 
@@ -27,7 +25,7 @@ fn destination_link_count_is_one(metadata: &fs::Metadata) -> bool {
 /// reuse optimization entirely so the per-file copy always performs its own
 /// fresh `lstat`, matching the pre-optimization behaviour.
 #[cfg(not(unix))]
-fn destination_link_count_is_one(_metadata: &fs::Metadata) -> bool {
+fn destination_link_count_is_one(_metadata: &fast_io::EntryMetadata) -> bool {
     false
 }
 
@@ -63,7 +61,7 @@ pub(crate) fn collect_file_pairs_for_checksum(
     plan: &DirectoryPlan<'_>,
     destination: &Path,
     converter: Option<&FilenameConverter>,
-) -> (Vec<FilePair>, HashMap<PathBuf, fs::Metadata>) {
+) -> (Vec<FilePair>, HashMap<PathBuf, fast_io::EntryMetadata>) {
     let mut pairs = Vec::new();
     let mut destination_metadata = HashMap::new();
 
@@ -81,7 +79,7 @@ pub(crate) fn collect_file_pairs_for_checksum(
         // (link_stat). Use a nofollow lstat here: a symlink destination is not a
         // regular-file checksum candidate (upstream removes it and writes the
         // file), so file_type().is_file() must be false for a symlink.
-        let dest_metadata = match fs::symlink_metadata(&target_path) {
+        let dest_metadata = match fast_io::destination_at::symlink_metadata(&target_path) {
             Ok(meta) if meta.file_type().is_file() => meta,
             _ => continue, // Skip if destination doesn't exist or isn't a regular file
         };

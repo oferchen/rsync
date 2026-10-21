@@ -125,7 +125,7 @@ fn daemon_xattr_push_preserves_extended_attributes() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("xattr push failed: {e}");
         }
     }
@@ -189,5 +189,5 @@ fn daemon_xattr_push_preserves_extended_attributes() {
         "user.nested_attr value mismatch on nested.txt"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

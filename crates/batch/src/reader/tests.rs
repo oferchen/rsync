@@ -720,7 +720,7 @@ mod flist_deserialization_tests {
     /// must not try to consume them even though `preserve_uid`/`preserve_gid`
     /// are set. Reading them would decode the following delta bytes as a
     /// varint id-list and desync the stream. WHY: this guards the exact
-    /// upstream `uidlist.c:466,474` `numeric_ids <= 0` gate.
+    /// upstream `uidlist.c:467,475` `numeric_ids <= 0` gate.
     #[test]
     fn numeric_ids_skips_id_list_reads() {
         let temp_dir = test_support::create_tempdir();
@@ -785,7 +785,7 @@ mod flist_deserialization_tests {
     }
 
     /// Without `--numeric-ids`, the sender emits empty uid/gid id-lists after
-    /// the flist (`uidlist.c:466,474` with `numeric_ids <= 0`), so the reader
+    /// the flist (`uidlist.c:467,475` with `numeric_ids <= 0`), so the reader
     /// must consume them to stay aligned for delta replay. WHY: proves the
     /// `numeric_ids` gate does not regress the default id-list-consuming path.
     #[test]

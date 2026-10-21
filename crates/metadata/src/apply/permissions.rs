@@ -280,9 +280,8 @@ pub fn apply_dest_mode_pre_transfer(
 
     // Compare against the file's CURRENT (post-rename) mode. If the temp
     // file already happens to match the target we skip the chmod syscall.
-    let current_mode = fs::metadata(destination)
+    let current_mode = fast_io::destination_at::metadata(destination)
         .map_err(|error| MetadataError::new("inspect destination permissions", destination, error))?
-        .permissions()
         .mode();
     if (current_mode & 0o7777) != (new_mode & 0o7777) {
         chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode", None)?;
@@ -359,7 +358,7 @@ pub(super) fn set_permissions_like(
         // requested full POSIX modes, --chmod, or -E.
         super::platform_warn::warn_permissions_unsupported(options);
         let readonly = metadata.permissions().readonly();
-        let mut destination_permissions = fs::metadata(destination)
+        let mut destination_permissions = fast_io::destination_at::metadata(destination)
             .map_err(|error| {
                 MetadataError::new("inspect destination permissions", destination, error)
             })?
@@ -414,8 +413,7 @@ fn apply_fake_super_mode(
     }
     #[cfg(not(feature = "xattr"))]
     {
-        use std::os::unix::fs::MetadataExt;
-        let on_disk_mode = fs::symlink_metadata(destination)
+        let on_disk_mode = fast_io::destination_at::symlink_metadata(destination)
             .map_err(|error| MetadataError::new("re-stat", destination, error))?
             .mode();
         chmod_path_honoring_keep_dirlinks(
@@ -853,8 +851,8 @@ pub(super) fn apply_permissions_with_chmod(
             // touch_up_dirs restore (generator.c:2594) belong to the caller
             // that owns transfer ordering, not to this apply.
             let mut new_mode = directory_dest_mode(destination, source_mode, options, existing);
-            if let Ok(current_meta) = fs::metadata(destination) {
-                let current_mode = current_meta.permissions().mode();
+            if let Ok(current_meta) = fast_io::destination_at::metadata(destination) {
+                let current_mode = current_meta.mode();
                 // upstream: rsync.c:641-645 - a freshly-created directory that
                 // inherited S_ISGID from a setgid parent keeps that bit even
                 // though dest_mode() dropped it.
@@ -1188,7 +1186,7 @@ pub(super) fn apply_symlink_permissions_from_entry(
         let owned_meta;
         let meta = match cached_meta {
             Some(meta) => meta,
-            None => match fs::symlink_metadata(destination).map(fast_io::EntryMetadata::from) {
+            None => match fast_io::destination_at::symlink_metadata(destination) {
                 Ok(meta) => {
                     owned_meta = meta;
                     &owned_meta
@@ -1239,7 +1237,7 @@ pub(super) fn apply_symlink_permissions_like(
     if crate::CAN_CHMOD_SYMLINK {
         use std::os::unix::fs::PermissionsExt;
 
-        let meta = match fs::symlink_metadata(destination).map(fast_io::EntryMetadata::from) {
+        let meta = match fast_io::destination_at::symlink_metadata(destination) {
             Ok(meta) => meta,
             Err(_) => return Ok(()),
         };
@@ -1323,15 +1321,14 @@ fn intended_fake_super_mode(
 // upstream: xattrs.c:x_lstat() overlays get_stat_xattr() on the lstat.
 #[cfg(unix)]
 fn existing_fake_super_mode(destination: &Path) -> Option<u32> {
-    use std::os::unix::fs::PermissionsExt;
     crate::fake_super::load_fake_super(destination)
         .ok()
         .flatten()
         .map(|stat| stat.mode)
         .or_else(|| {
-            fs::symlink_metadata(destination)
+            fast_io::destination_at::symlink_metadata(destination)
                 .ok()
-                .map(|current| current.permissions().mode())
+                .map(|current| current.mode())
         })
 }
 /// Computes the permission bits (`0o7777`) a directory would receive under
@@ -1526,11 +1523,10 @@ fn apply_permissions_without_chmod(
             let mut destination_permissions = if let Some(existing) = existing {
                 existing.mode()
             } else {
-                fs::metadata(destination)
+                fast_io::destination_at::metadata(destination)
                     .map_err(|error| {
                         MetadataError::new("inspect destination permissions", destination, error)
                     })?
-                    .permissions()
                     .mode()
             };
 
@@ -1627,9 +1623,8 @@ pub(super) fn apply_permissions_from_entry(
                 let current_meta = if let Some(meta) = cached_meta {
                     meta
                 } else {
-                    fresh_meta = fs::metadata(destination)
-                        .map(fast_io::EntryMetadata::from)
-                        .map_err(|error| {
+                    fresh_meta =
+                        fast_io::destination_at::metadata(destination).map_err(|error| {
                             MetadataError::new(
                                 "inspect destination permissions",
                                 destination,
@@ -1670,9 +1665,8 @@ pub(super) fn apply_permissions_from_entry(
                 let current_meta = if let Some(meta) = cached_meta {
                     meta
                 } else {
-                    fresh_meta = fs::metadata(destination)
-                        .map(fast_io::EntryMetadata::from)
-                        .map_err(|error| {
+                    fresh_meta =
+                        fast_io::destination_at::metadata(destination).map_err(|error| {
                             MetadataError::new(
                                 "inspect destination permissions",
                                 destination,
@@ -1761,15 +1755,13 @@ pub(super) fn apply_permissions_from_entry(
             // testsuite/chmod-option daemon upload).
             let fresh_meta;
             let current_meta = if options.permissions() && perms_changed {
-                fresh_meta = fs::metadata(destination)
-                    .map(fast_io::EntryMetadata::from)
+                fresh_meta = fast_io::destination_at::metadata(destination)
                     .map_err(|error| MetadataError::new("read permissions", destination, error))?;
                 &fresh_meta
             } else if let Some(meta) = cached_meta {
                 meta
             } else {
-                fresh_meta = fs::metadata(destination)
-                    .map(fast_io::EntryMetadata::from)
+                fresh_meta = fast_io::destination_at::metadata(destination)
                     .map_err(|error| MetadataError::new("read permissions", destination, error))?;
                 &fresh_meta
             };
@@ -1830,11 +1822,9 @@ pub(super) fn apply_permissions_from_entry(
             let current_meta = if let Some(meta) = cached_meta {
                 meta
             } else {
-                fresh_meta = fs::metadata(destination)
-                    .map(fast_io::EntryMetadata::from)
-                    .map_err(|error| {
-                        MetadataError::new("inspect destination permissions", destination, error)
-                    })?;
+                fresh_meta = fast_io::destination_at::metadata(destination).map_err(|error| {
+                    MetadataError::new("inspect destination permissions", destination, error)
+                })?;
                 &fresh_meta
             };
             if (current_meta.mode() & 0o7777) != destination_permissions {
@@ -1864,7 +1854,7 @@ pub(super) fn apply_permissions_from_entry(
             let dest_perms_meta = if let Some(meta) = cached_meta {
                 meta.permissions()
             } else {
-                fs::metadata(destination)
+                fast_io::destination_at::metadata(destination)
                     .map_err(|error| {
                         MetadataError::new("read destination permissions", destination, error)
                     })?

@@ -273,7 +273,6 @@ pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
     }
     let stripped = stem;
 
-    // Strip the leading `/` if present.
     let core_pattern = if starts_with_slash {
         stripped.strip_prefix(b"/").unwrap_or(stripped)
     } else {

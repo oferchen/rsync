@@ -109,7 +109,6 @@ fn exact_block_matches_found_at_correct_positions() {
 
     let script = generate_delta(&input[..], &index).expect("should generate delta");
 
-    // Verify reconstruction is correct
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(
         reconstructed, input,
@@ -419,7 +418,6 @@ fn strong_checksum_distinguishes_different_blocks() {
     let block_size = 700;
     let mut basis = Vec::new();
 
-    // Create 10 different blocks
     for block_id in 0..10 {
         for i in 0..block_size {
             basis.push(((block_id * 13 + i * 17) % 256) as u8);
@@ -474,7 +472,6 @@ fn strong_checksum_distinguishes_different_blocks() {
 /// different strong checksums.
 #[test]
 fn strong_checksum_rejects_weak_checksum_collisions() {
-    // Create basis with specific patterns
     let basis: Vec<u8> = (0..8192).map(|i| (i % 251) as u8).collect();
     let index = build_index(&basis).expect("should build index");
     let block_len = index.block_length();
@@ -569,7 +566,6 @@ fn false_positive_rate_is_low() {
         "unrelated data should still reconstruct correctly"
     );
 
-    // Count how many bytes were matched vs literals
     let matched_bytes = script.copy_bytes();
     let total_bytes = script.total_bytes();
 
@@ -634,7 +630,6 @@ fn strong_checksum_rejects_crafted_collisions() {
         }
     }
 
-    // Verify correct reconstruction
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, input, "block 1 should reconstruct correctly");
 }
@@ -757,7 +752,6 @@ fn single_byte_difference_prevents_match() {
         "single byte change should prevent block match"
     );
 
-    // Verify reconstruction is still correct
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(
         reconstructed, input,
@@ -906,7 +900,6 @@ fn matching_precision_measurement() {
         "mixed content should reconstruct correctly"
     );
 
-    // Count copy tokens
     let copy_count = script
         .tokens()
         .iter()

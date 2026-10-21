@@ -325,11 +325,9 @@ fn report_make_way_failure(
 /// - `rsync.h:1396` - `#define IS_DEVICE(mode) (S_ISCHR(mode) || S_ISBLK(mode))`
 #[cfg(unix)]
 pub(crate) fn device_destination_blocks_regular_file(
-    metadata: &fs::Metadata,
+    metadata: &fast_io::EntryMetadata,
     write_devices: bool,
 ) -> bool {
-    use std::os::unix::fs::FileTypeExt;
-
     let file_type = metadata.file_type();
     (file_type.is_block_device() || file_type.is_char_device()) && !write_devices
 }
@@ -338,7 +336,7 @@ pub(crate) fn device_destination_blocks_regular_file(
 /// the make-way condition never fires.
 #[cfg(not(unix))]
 pub(crate) fn device_destination_blocks_regular_file(
-    _metadata: &fs::Metadata,
+    _metadata: &fast_io::EntryMetadata,
     _write_devices: bool,
 ) -> bool {
     false
@@ -369,7 +367,7 @@ pub(crate) fn clear_device_obstacle(
     context: &mut CopyContext,
     destination: &Path,
     relative: Option<&Path>,
-    file_type: fs::FileType,
+    file_type: impl Into<fast_io::EntryFileType>,
 ) -> Result<bool, LocalCopyError> {
     // upstream: syscall.c do_unlink_at() returns 0 without touching anything
     // under --dry-run, so delete_item() reports DR_SUCCESS and the generator
@@ -535,7 +533,10 @@ mod device_predicate_tests {
             eprintln!("SKIP: {CHAR_DEVICE} is not a character device on this host");
             return;
         };
-        assert!(device_destination_blocks_regular_file(&meta, false));
+        assert!(device_destination_blocks_regular_file(
+            &fast_io::EntryMetadata::from(meta.clone()),
+            false
+        ));
     }
 
     /// The other half of the same line: `write_devices && stype == FT_DEVICE`
@@ -546,7 +547,10 @@ mod device_predicate_tests {
             eprintln!("SKIP: {CHAR_DEVICE} is not a character device on this host");
             return;
         };
-        assert!(!device_destination_blocks_regular_file(&meta, true));
+        assert!(!device_destination_blocks_regular_file(
+            &fast_io::EntryMetadata::from(meta.clone()),
+            true
+        ));
     }
 
     /// `stype == FT_REG` is the first disjunct, so a regular destination is
@@ -560,7 +564,13 @@ mod device_predicate_tests {
         fs::write(&path, b"payload").expect("write regular destination");
         let meta = fs::symlink_metadata(&path).expect("stat regular destination");
 
-        assert!(!device_destination_blocks_regular_file(&meta, false));
-        assert!(!device_destination_blocks_regular_file(&meta, true));
+        assert!(!device_destination_blocks_regular_file(
+            &fast_io::EntryMetadata::from(meta.clone()),
+            false
+        ));
+        assert!(!device_destination_blocks_regular_file(
+            &fast_io::EntryMetadata::from(meta.clone()),
+            true
+        ));
     }
 }

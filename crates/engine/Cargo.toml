@@ -160,12 +160,12 @@ bandwidth = { path = "../bandwidth", features = ["test-support"] }
 apple-fs = { path = "../apple-fs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 proptest = { workspace = true }
+criterion = { workspace = true }
+rand = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
 libc = { workspace = true }
-criterion = { workspace = true }
-rand = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 exacl = { workspace = true }

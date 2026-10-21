@@ -304,6 +304,9 @@ pub(crate) struct BackupEnv<'a> {
     pub(crate) dest_dir: Option<&'a Path>,
     /// Metadata options applied to `--backup-dir` parents created on demand.
     pub(crate) metadata_opts: Option<&'a MetadataOptions>,
+    /// Whether `--fsync` syncs a backup the copy tier writes.
+    /// upstream: `util1.c:502-508` `copy_file()`, reached from `backup.c:401`.
+    pub(crate) fsync: bool,
 }
 
 #[cfg(unix)]
@@ -328,11 +331,13 @@ impl<'a> BackupEnv<'a> {
             return crate::robust_rename::CommitAnchor {
                 sandbox: Some(sandbox),
                 root,
+                fsync: self.fsync,
             };
         }
         crate::robust_rename::CommitAnchor {
             sandbox: None,
             root: Path::new(""),
+            fsync: self.fsync,
         }
     }
 }
@@ -348,7 +353,7 @@ impl DiskCommitConfig {
             .clamp(MIN_CHANNEL_CAPACITY, MAX_CHANNEL_CAPACITY)
     }
 
-    /// Borrows the three fields the backup ladder reads.
+    /// Borrows the fields the backup ladder reads.
     ///
     /// The ladder takes [`BackupEnv`] rather than the whole configuration so it
     /// declares its real dependency; see that type's documentation.
@@ -360,6 +365,7 @@ impl DiskCommitConfig {
             #[cfg(unix)]
             dest_dir: self.dest_dir.as_deref(),
             metadata_opts: self.metadata_opts.as_ref(),
+            fsync: self.do_fsync,
         }
     }
 }

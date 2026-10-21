@@ -26,8 +26,7 @@ fn run_daemon_pid_file_contains_correct_pid() {
         .build();
 
     let pid_clone = pid_path.clone();
-    drop(held_listener);
-    let handle = spawn_daemon(config);
+    let handle = spawn_daemon(config, held_listener);
 
     let start = Instant::now();
     while !pid_clone.exists() {
@@ -58,7 +57,7 @@ fn run_daemon_pid_file_contains_correct_pid() {
         assert_eq!(mode, 0o644, "pid file must have mode 0644, got {mode:#o}");
     }
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect_client(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     let mut line = String::new();

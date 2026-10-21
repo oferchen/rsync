@@ -119,7 +119,7 @@ fn daemon_safe_links_receive() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("safe-links daemon receive failed: {e}");
         }
     }
@@ -186,5 +186,5 @@ fn daemon_safe_links_receive() {
     assert_eq!(deep_content, "deep\n", "subdir/deep.txt content mismatch");
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

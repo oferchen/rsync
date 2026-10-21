@@ -38,7 +38,7 @@ use super::super::finalize::finalize_guard_and_metadata;
 /// fails if it already exists.
 pub(super) fn eligible(
     context: &CopyContext,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     flags: TransferFlags,
     copy_source_override_present: bool,
 ) -> bool {
@@ -100,7 +100,7 @@ pub(super) fn try_clone(
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     record_path: &Path,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     file_type: fs::FileType,
     relative: Option<&Path>,

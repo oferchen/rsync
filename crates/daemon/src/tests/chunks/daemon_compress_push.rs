@@ -106,7 +106,7 @@ fn daemon_compress_push_transfers_files_with_compression() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("compressed push failed: {e}");
         }
     }
@@ -135,5 +135,5 @@ fn daemon_compress_push_transfers_files_with_compression() {
         "subdir/gamma.txt content mismatch after compressed push"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

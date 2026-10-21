@@ -55,6 +55,13 @@ pub(crate) struct SourceOpen {
     ///
     /// upstream: `sender.c:694` `open_sender_source_path()`
     pinned_roots: Option<Arc<fast_io::SourceRoots>>,
+    /// The held `--files-from` base while the ownership walk is active: every
+    /// list entry opens through it instead of beneath a pinned root.
+    ///
+    /// upstream: `sender.c:692-693` - `if (files_from) fd =
+    /// do_open_checklinks(fname);`
+    #[cfg(unix)]
+    files_from: Option<Arc<fast_io::FilesFromBase>>,
     /// Whether to follow a symlinked leaf (`--copy-links` /
     /// `--copy-unsafe-links`). When false, the leaf is opened `O_NOFOLLOW`.
     follow_symlinks: bool,
@@ -73,9 +80,19 @@ impl SourceOpen {
         Self {
             confine_root,
             pinned_roots,
+            #[cfg(unix)]
+            files_from: None,
             follow_symlinks,
             noatime,
         }
+    }
+
+    /// Routes every open through the held `--files-from` base, when one is
+    /// held.
+    #[cfg(unix)]
+    pub(crate) fn with_files_from(mut self, base: Option<Arc<fast_io::FilesFromBase>>) -> Self {
+        self.files_from = base;
+        self
     }
 
     /// This policy as a batched-open description plus the `O_NOATIME` flag, so
@@ -112,6 +129,13 @@ impl SourceOpen {
         &self,
         requests: &[fast_io::PrefetchRequest<'_>],
     ) -> Vec<Option<Vec<u8>>> {
+        // A walked `--files-from` entry has no batched equivalent; leaving
+        // every request to the synchronous open keeps the walk the only
+        // resolver.
+        #[cfg(unix)]
+        if self.files_from.is_some() {
+            return vec![None; requests.len()];
+        }
         #[cfg(unix)]
         if let Some(roots) = self.pinned_roots.as_deref() {
             let (uncovered, noatime) = self.prefetch_open();
@@ -147,6 +171,12 @@ impl SourceOpen {
             // A source path that is not beneath the module root should never
             // happen for a legitimate daemon transfer; fail safe by falling
             // through to the O_NOFOLLOW open rather than following symlinks.
+        }
+        // upstream: sender.c:692-693 - a list entry opens through the ownership
+        // walk from the held base, never beneath a pinned root.
+        #[cfg(unix)]
+        if let Some(base) = self.files_from.as_deref() {
+            return base.open_read(path, self.noatime);
         }
         // upstream: sender.c:694-704 - a path beneath a pinned source root is
         // opened beneath it; any other path falls through to the leaf-only

@@ -24,31 +24,42 @@ impl Write for CountingSink {
     }
 }
 
+/// Writer adapter that forwards to `inner` and counts the bytes it accepted.
+///
+/// Only bytes the inner writer reports as written are counted, so short
+/// writes are reflected exactly. The count feeds compressed-length accounting.
 pub(crate) struct CountingWriter<W> {
     inner: W,
     bytes: u64,
 }
 
 impl<W> CountingWriter<W> {
+    /// Wraps `inner` with the counter starting at zero.
     pub(crate) const fn new(inner: W) -> Self {
         Self { inner, bytes: 0 }
     }
 
+    /// Returns the total bytes accepted by the inner writer so far.
     #[inline]
     pub(crate) const fn bytes(&self) -> u64 {
         self.bytes
     }
 
+    /// Borrows the inner writer.
     #[inline]
     pub(crate) const fn inner_ref(&self) -> &W {
         &self.inner
     }
 
+    /// Mutably borrows the inner writer.
+    ///
+    /// Bytes written directly through this reference bypass the counter.
     #[inline]
     pub(crate) const fn inner_mut(&mut self) -> &mut W {
         &mut self.inner
     }
 
+    /// Consumes the adapter, returning the inner writer and the final byte count.
     #[inline]
     pub(crate) fn into_parts(self) -> (W, u64) {
         (self.inner, self.bytes)

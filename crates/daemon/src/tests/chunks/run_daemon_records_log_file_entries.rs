@@ -53,16 +53,6 @@ fn run_daemon_records_log_file_entries() {
     // nothing further. The log lines this test asserts are already written by
     // module selection (clientserver.c:1526 `connect from`, :787 `rsync
     // allowed access on module`), so the client ends the session by closing.
-    //
-    // shutdown(2) rather than drop: the daemon forks its session child from
-    // this very test process, so the child inherited duplicates of these
-    // client-side descriptors as they existed at fork time. Dropping them
-    // closes only this process's fds - the child's dup keeps the client end
-    // open and its read_args() never sees EOF. shutdown acts on the socket
-    // itself, so the FIN reaches the child regardless of the inherited dup.
-    stream
-        .shutdown(std::net::Shutdown::Both)
-        .expect("shutdown client socket");
     drop(reader);
     drop(stream);
     // Bound the join: on Windows the daemon accept loop can linger past the

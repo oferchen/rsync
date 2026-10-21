@@ -35,7 +35,7 @@ pub(crate) use symlink::create_symlink;
 /// `--existing` skip never follows a removal.
 fn skip_by_existence_gate(
     context: &mut CopyContext,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     record_path: Option<&Path>,
     snapshot: impl FnOnce() -> LocalCopyMetadata,
 ) -> bool {

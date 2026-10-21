@@ -107,7 +107,7 @@ fn daemon_inc_recurse_push_nested_directories() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("inc_recurse push at protocol 32 failed: {e}");
         }
     }
@@ -155,5 +155,5 @@ fn daemon_inc_recurse_push_nested_directories() {
         "side.txt content mismatch"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

@@ -121,7 +121,7 @@ fn daemon_compress_pull_drains_peer_goodbye_for_uts_v3_cluster_a() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!(
                 "compressed pull failed - cluster A regression? error: {e}\n\
                  if this is 'connection unexpectedly closed (N bytes received so far)' \
@@ -147,5 +147,5 @@ fn daemon_compress_pull_drains_peer_goodbye_for_uts_v3_cluster_a() {
         "large.txt content mismatch after compressed pull"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

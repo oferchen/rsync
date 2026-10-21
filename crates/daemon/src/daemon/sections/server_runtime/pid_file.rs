@@ -72,7 +72,11 @@ fn open_pid_file(path: &Path) -> io::Result<fs::File> {
 /// Non-Unix stub: there is no `O_NOFOLLOW` or owner model to apply.
 #[cfg(not(unix))]
 fn open_pid_file(path: &Path) -> io::Result<fs::File> {
-    OpenOptions::new().write(true).create(true).open(path)
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
 }
 
 impl Drop for PidFileGuard {

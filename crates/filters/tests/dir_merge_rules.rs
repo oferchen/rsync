@@ -209,7 +209,6 @@ fn recursive_expansion_preserves_dir_merge() {
 fn recursive_expansion_expands_merge_but_not_dir_merge() {
     let dir = test_support::create_tempdir();
 
-    // Create a nested rules file
     let nested = dir.path().join("nested.rules");
     fs::write(&nested, "- *.tmp\n").unwrap();
 

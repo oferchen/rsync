@@ -29,9 +29,9 @@ use protocol::ProtocolVersion;
 /// The destination metadata must come from an lstat (`symlink_metadata`) so a
 /// symlink destination reports as a symlink rather than its target's type,
 /// matching upstream's `link_stat` of the destination.
-fn same_file_type(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
+fn same_file_type(source: &fs::Metadata, destination: &fast_io::EntryMetadata) -> bool {
     let src = source.file_type();
-    let dst = destination.file_type();
+    let dst = destination;
     // upstream: get_file_type() collapses everything that is not a regular
     // file, symlink, or directory into the SPECIAL/DEVICE/UNSUPPORTED buckets.
     // For local copies the only source types that reach this comparison are
@@ -80,7 +80,7 @@ fn same_file_type(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
 /// skipping them as newer.
 pub(crate) fn destination_is_newer(
     source: &fs::Metadata,
-    destination: &fs::Metadata,
+    destination: &fast_io::EntryMetadata,
     modify_window: ModifyWindow,
 ) -> bool {
     // upstream: generator.c:2135 - the `stype == ftype` guard means a
@@ -114,7 +114,7 @@ pub(crate) fn destination_is_newer(
 /// block matches against the existing content.
 pub(crate) fn build_delta_signature(
     destination: &Path,
-    metadata: &fs::Metadata,
+    metadata: &fast_io::EntryMetadata,
     block_size_override: Option<NonZeroU32>,
 ) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
     let length = metadata.len();
@@ -213,7 +213,7 @@ pub(crate) struct CopyComparison<'a> {
     pub(crate) source_path: &'a Path,
     pub(crate) source: &'a fs::Metadata,
     pub(crate) destination_path: &'a Path,
-    pub(crate) destination: &'a fs::Metadata,
+    pub(crate) destination: &'a fast_io::EntryMetadata,
     pub(crate) size_only: bool,
     pub(crate) ignore_times: bool,
     pub(crate) checksum: bool,
@@ -501,9 +501,13 @@ mod tests {
 
         let metadata = fs::metadata(&path).expect("metadata");
         let override_size = NonZeroU32::new(2048).unwrap();
-        let index = build_delta_signature(&path, &metadata, Some(override_size))
-            .expect("signature")
-            .expect("index");
+        let index = build_delta_signature(
+            &path,
+            &fast_io::EntryMetadata::from(metadata.clone()),
+            Some(override_size),
+        )
+        .expect("signature")
+        .expect("index");
 
         assert_eq!(index.block_length(), override_size.get() as usize);
     }
@@ -517,7 +521,7 @@ mod tests {
             source_path: &source,
             source: &source_meta,
             destination_path: &destination,
-            destination: &dest_meta,
+            destination: &fast_io::EntryMetadata::from(dest_meta.clone()),
             size_only: false,
             ignore_times: false,
             checksum: true,
@@ -538,7 +542,7 @@ mod tests {
             source_path: &source,
             source: &source_meta,
             destination_path: &destination,
-            destination: &dest_meta,
+            destination: &fast_io::EntryMetadata::from(dest_meta.clone()),
             size_only: false,
             ignore_times: false,
             checksum: false,
@@ -678,7 +682,7 @@ mod tests {
             source_path: &source,
             source: &source_meta,
             destination_path: &destination,
-            destination: &dest_meta,
+            destination: &fast_io::EntryMetadata::from(dest_meta.clone()),
             size_only: true,
             ignore_times: true,
             checksum: false,
@@ -718,7 +722,7 @@ mod tests {
         // Even though the symlink is newer, the type mismatch forces an update.
         assert!(!destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::ZERO
         ));
     }
@@ -743,7 +747,7 @@ mod tests {
 
         assert!(!destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::ZERO
         ));
     }
@@ -756,7 +760,7 @@ mod tests {
 
         assert!(destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::ZERO
         ));
     }
@@ -769,7 +773,7 @@ mod tests {
 
         assert!(!destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::ZERO
         ));
     }
@@ -781,7 +785,7 @@ mod tests {
 
         assert!(!destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::ZERO
         ));
     }
@@ -796,7 +800,7 @@ mod tests {
         // (within window; the sub-second part is ignored by time_t comparison).
         assert!(destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::from_secs(1)
         ));
     }
@@ -810,7 +814,7 @@ mod tests {
         // upstream: source - dest = -5 < 1 -> skip (dest is newer)
         assert!(destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::from_secs(1)
         ));
     }
@@ -824,7 +828,7 @@ mod tests {
         // upstream: source - dest = -2 < 2 -> skip (dest is newer)
         assert!(destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::from_secs(2)
         ));
     }
@@ -837,7 +841,7 @@ mod tests {
         // upstream: source - dest = 0 < 2 -> skip (within window, equal)
         assert!(destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::from_secs(2)
         ));
     }
@@ -851,7 +855,7 @@ mod tests {
         // upstream: source - dest = 1 < 2 -> skip (within window)
         assert!(destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::from_secs(2)
         ));
     }
@@ -865,7 +869,7 @@ mod tests {
         // upstream: source - dest = 2, NOT < 2 -> don't skip (source definitively newer)
         assert!(!destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::from_secs(2)
         ));
     }
@@ -879,7 +883,7 @@ mod tests {
         // upstream: source - dest = 5, NOT < 2 -> don't skip (source definitively newer)
         assert!(!destination_is_newer(
             &src_meta,
-            &dst_meta,
+            &fast_io::EntryMetadata::from(dst_meta.clone()),
             ModifyWindow::from_secs(2)
         ));
     }

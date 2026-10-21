@@ -75,7 +75,7 @@ fn run_daemon_enforces_module_connection_limit() {
         .expect("auth request for first client");
     assert!(line.starts_with("@RSYNCD: AUTHREQD"));
 
-    let mut second_stream = connect_with_retries(port);
+    let mut second_stream = connect_client(port);
     let mut second_reader = BufReader::new(second_stream.try_clone().expect("clone second"));
 
     line.clear();

@@ -17,12 +17,18 @@
 
 use std::io::{BufRead, BufReader};
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
-use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use daemon::{DaemonConfig, run_daemon};
-use platform::signal::SignalFlags;
+#[cfg(not(unix))]
+use daemon::DaemonConfigBuilder;
+use daemon::{DaemonConfig, DaemonError, run_daemon};
+
+// The forked test-daemon harness the unit tests use; each binary uses a subset.
+#[allow(dead_code)]
+#[path = "../src/tests/daemon_process.rs"]
+mod daemon_process;
+use daemon_process::DaemonHandle;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -37,20 +43,12 @@ fn reserve_port_ipv4() -> u16 {
     port
 }
 
-fn spawn_daemon_with_args(
-    args: Vec<String>,
-) -> (
-    thread::JoinHandle<Result<(), daemon::DaemonError>>,
-    SignalFlags,
-) {
-    let flags = SignalFlags::new();
+fn spawn_daemon_with_args(args: Vec<String>) -> DaemonHandle {
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments(args)
-        .signal_flags(flags.clone())
         .build();
-    let handle = thread::spawn(move || run_daemon(config));
-    (handle, flags)
+    DaemonHandle::spawn(config)
 }
 
 fn connect_ipv4(port: u16) -> Option<TcpStream> {
@@ -103,12 +101,9 @@ fn expect_greeting(stream: TcpStream) {
     );
 }
 
-fn shutdown_daemon(
-    handle: thread::JoinHandle<Result<(), daemon::DaemonError>>,
-    flags: SignalFlags,
-) {
-    flags.shutdown.store(true, Ordering::Relaxed);
-    let result = handle.join().expect("daemon thread joined");
+fn shutdown_daemon(handle: DaemonHandle) {
+    handle.terminate();
+    let result = handle.join().expect("daemon joined");
     assert!(result.is_ok(), "daemon must exit cleanly: {result:?}");
 }
 
@@ -153,7 +148,7 @@ impl Drop for EnvGuard {
 #[test]
 fn default_daemon_serves_ipv4_client_via_dual_stack() {
     let port = reserve_port_ipv4();
-    let (handle, flags) = spawn_daemon_with_args(vec![
+    let handle = spawn_daemon_with_args(vec![
         "--no-detach".to_string(),
         "--port".to_string(),
         port.to_string(),
@@ -161,7 +156,7 @@ fn default_daemon_serves_ipv4_client_via_dual_stack() {
 
     let stream = connect_ipv4(port).expect("IPv4 client must connect to default daemon");
     expect_greeting(stream);
-    shutdown_daemon(handle, flags);
+    shutdown_daemon(handle);
 }
 
 /// `OC_RSYNC_DAEMON_ADDRESS_FAMILY=ipv4` is the explicit CI override and
@@ -170,7 +165,7 @@ fn default_daemon_serves_ipv4_client_via_dual_stack() {
 fn env_override_ipv4_serves_ipv4_client() {
     let _env = EnvGuard::set("OC_RSYNC_DAEMON_ADDRESS_FAMILY", "ipv4");
     let port = reserve_port_ipv4();
-    let (handle, flags) = spawn_daemon_with_args(vec![
+    let handle = spawn_daemon_with_args(vec![
         "--no-detach".to_string(),
         "--port".to_string(),
         port.to_string(),
@@ -178,7 +173,7 @@ fn env_override_ipv4_serves_ipv4_client() {
 
     let stream = connect_ipv4(port).expect("IPv4 client must connect with env=ipv4");
     expect_greeting(stream);
-    shutdown_daemon(handle, flags);
+    shutdown_daemon(handle);
 }
 
 /// `OC_RSYNC_DAEMON_ADDRESS_FAMILY=both` requests dual-stack. We assert
@@ -189,7 +184,7 @@ fn env_override_ipv4_serves_ipv4_client() {
 fn env_override_both_serves_ipv4_client() {
     let _env = EnvGuard::set("OC_RSYNC_DAEMON_ADDRESS_FAMILY", "both");
     let port = reserve_port_ipv4();
-    let (handle, flags) = spawn_daemon_with_args(vec![
+    let handle = spawn_daemon_with_args(vec![
         "--no-detach".to_string(),
         "--port".to_string(),
         port.to_string(),
@@ -197,7 +192,7 @@ fn env_override_both_serves_ipv4_client() {
 
     let stream = connect_ipv4(port).expect("IPv4 client must connect under dual-stack");
     expect_greeting(stream);
-    shutdown_daemon(handle, flags);
+    shutdown_daemon(handle);
 }
 
 /// `--ipv4 --ipv6` together is the dual-stack opt-in: the daemon binds
@@ -207,7 +202,7 @@ fn env_override_both_serves_ipv4_client() {
 #[test]
 fn both_family_flags_enable_dual_stack_listener() {
     let port = reserve_port_ipv4();
-    let (handle, flags) = spawn_daemon_with_args(vec![
+    let handle = spawn_daemon_with_args(vec![
         "--no-detach".to_string(),
         "--port".to_string(),
         port.to_string(),
@@ -218,7 +213,7 @@ fn both_family_flags_enable_dual_stack_listener() {
     let stream =
         connect_ipv4(port).expect("IPv4 client must connect when both family flags are set");
     expect_greeting(stream);
-    shutdown_daemon(handle, flags);
+    shutdown_daemon(handle);
 }
 
 /// `--ipv6` forces IPv6-only binding. On environments where IPv6
@@ -236,7 +231,7 @@ fn ipv6_flag_forces_ipv6_only() {
     let port = probe.local_addr().expect("local addr").port();
     drop(probe);
 
-    let (handle, flags) = spawn_daemon_with_args(vec![
+    let handle = spawn_daemon_with_args(vec![
         "--no-detach".to_string(),
         "--port".to_string(),
         port.to_string(),
@@ -248,5 +243,5 @@ fn ipv6_flag_forces_ipv6_only() {
     } else {
         eprintln!("ipv6_flag_forces_ipv6_only: IPv6 connect skipped (no loopback connectivity)");
     }
-    shutdown_daemon(handle, flags);
+    shutdown_daemon(handle);
 }

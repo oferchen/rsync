@@ -97,7 +97,7 @@ fn daemon_files_from_push_limits_transferred_files() {
             );
         }
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("files-from client push failed: {e}");
         }
     }
@@ -126,5 +126,5 @@ fn daemon_files_from_push_limits_transferred_files() {
     );
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

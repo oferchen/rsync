@@ -377,8 +377,7 @@ impl<'a> CopyContext<'a> {
             // do_chmod_at(fname, file->mode) before the mtime repair.
             #[cfg(unix)]
             if let Some(mode) = dir.restore_mode {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(&dir.path, fs::Permissions::from_mode(mode));
+                let _ = fast_io::destination_at::set_permissions(&dir.path, mode);
             }
 
             if !do_times {
@@ -389,12 +388,12 @@ impl<'a> CopyContext<'a> {
             };
             // upstream: generator.c:2602 - only re-set when mtime_differs(), so
             // directories untouched by a late mutation are left alone.
-            let needs_update = match fs::metadata(&dir.path) {
-                Ok(meta) => filetime::FileTime::from_last_modification_time(&meta) != mtime,
+            let needs_update = match fast_io::destination_at::metadata(&dir.path) {
+                Ok(meta) => meta.modified_filetime() != mtime,
                 Err(_) => false,
             };
             if needs_update {
-                let _ = filetime::set_file_mtime(&dir.path, mtime);
+                let _ = fast_io::destination_at::set_mtime(&dir.path, mtime);
             }
         }
     }
@@ -467,9 +466,9 @@ impl<'a> CopyContext<'a> {
             self.enforce_timeout()?;
             // Capture directory mtime before deletion modifies it.
             let saved_times = if preserve_times {
-                fs::metadata(&entry.destination)
+                fast_io::destination_at::metadata(&entry.destination)
                     .ok()
-                    .map(|m| filetime::FileTime::from_last_modification_time(&m))
+                    .map(|m| m.modified_filetime())
             } else {
                 None
             };
@@ -496,7 +495,7 @@ impl<'a> CopyContext<'a> {
             }
             // Restore directory mtime that deletion invalidated.
             if let Some(mtime) = saved_times {
-                let _ = filetime::set_file_mtime(&entry.destination, mtime);
+                let _ = fast_io::destination_at::set_mtime(&entry.destination, mtime);
             }
         }
         Ok(())

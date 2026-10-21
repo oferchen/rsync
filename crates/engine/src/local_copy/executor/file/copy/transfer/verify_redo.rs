@@ -52,7 +52,7 @@ pub(in crate::local_copy) fn execute_transfer(
     metadata: &fs::Metadata,
     metadata_options: MetadataOptions,
     record_path: &Path,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     file_type: fs::FileType,
     relative: Option<&Path>,
@@ -90,9 +90,10 @@ pub(in crate::local_copy) fn execute_transfer(
             // between the passes means there is nothing to re-delta, so a stat
             // failure is a hard error rather than a fall-back to a whole-file
             // copy.
-            let retained = fs::symlink_metadata(destination).map_err(|error| {
-                LocalCopyError::io("inspect retained partial", destination.to_path_buf(), error)
-            })?;
+            let retained =
+                fast_io::destination_at::symlink_metadata(destination).map_err(|error| {
+                    LocalCopyError::io("inspect retained partial", destination.to_path_buf(), error)
+                })?;
 
             execute_transfer_once(
                 context,

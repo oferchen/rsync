@@ -70,6 +70,65 @@ impl PartialKind {
     }
 }
 
+/// The abort-path registration a `--partial`/`--partial-dir` temp earns once
+/// literal data reaches it.
+///
+/// upstream: `cleanup.c:159` - `_exit_cleanup()` promotes the temp onto its
+/// partial destination only under `cleanup_got_literal`; until then
+/// `cleanup.c:200-201` unlinks it, leaving the destination untouched.
+#[derive(Debug)]
+pub(crate) struct PartialPromotion {
+    temp: PathBuf,
+    dest: PathBuf,
+    tweak_mtime: bool,
+}
+
+impl PartialPromotion {
+    fn register(self) {
+        CleanupManager::global().register_partial(self.temp, Some(self.dest), self.tweak_mtime);
+    }
+}
+
+/// Per-file `cleanup_got_literal` latch, set by the copy loops on their first
+/// literal write.
+///
+/// It carries the pending [`PartialPromotion`] so that the process-wide abort
+/// path learns about the literal data the moment it lands, not when the copy
+/// returns. upstream: `receiver.c:575` sets the flag in `receive_data()`'s
+/// literal branch, and `receiver.c:978` clears it for each new file.
+#[derive(Debug, Default)]
+pub(crate) struct LiteralLatch {
+    got_literal: bool,
+    promotion: Option<PartialPromotion>,
+}
+
+impl LiteralLatch {
+    /// Resets the latch for a new file whose temp earns `promotion`.
+    pub(crate) fn arm(&mut self, promotion: Option<PartialPromotion>) {
+        *self = Self {
+            got_literal: false,
+            promotion,
+        };
+    }
+
+    /// Records that literal data is about to reach the temp.
+    #[inline]
+    pub(crate) fn note(&mut self) {
+        if !self.got_literal {
+            self.got_literal = true;
+            if let Some(promotion) = self.promotion.take() {
+                promotion.register();
+            }
+        }
+    }
+
+    /// Returns whether literal data was written and disarms the latch.
+    pub(crate) fn take(&mut self) -> bool {
+        self.promotion = None;
+        std::mem::take(&mut self.got_literal)
+    }
+}
+
 /// Generates a six-character mkstemp-style suffix from process-unique inputs.
 ///
 /// upstream fills the `.XXXXXX` template via `mkstemp`; we retry `create_new`
@@ -169,10 +228,10 @@ fn create_new_temp(path: &Path, operator_path: bool) -> io::Result<fs::File> {
         if operator_path {
             return fast_io::operator_open_create_new(path, 0o666);
         }
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
+        // Beside the destination the temp is named relative to the entered
+        // directory, as upstream's `open_tmpfile()` names it relative to the
+        // cwd `change_dir()` entered (`rsync-3.5.1/receiver.c:413`).
+        fast_io::destination_at::create_new(path, 0o666)
     }
 }
 
@@ -231,6 +290,42 @@ fn hardened_rename(
             fs::rename(temp_path, final_path)
         }
     }
+}
+
+/// Moves the staging temp onto the destination across filesystems: the `EXDEV`
+/// arm of [`hardened_rename`]'s caller.
+///
+/// On Unix the copy resolves each endpoint the way the confined rename did, so
+/// a destination parent flipped to a symlink cannot redirect the copy outside
+/// `dest_root` either. `--fsync` needs no sync here: the committed destination
+/// is registered with the deferred sync after the commit.
+///
+/// upstream: `util1.c:636-663` `robust_rename()` - the `EXDEV` arm runs
+/// `copy_file()`, whose `unlink_and_reopen()` clears the destination first,
+/// then `do_unlink_at(from)`.
+#[cfg(unix)]
+fn cross_device_move(
+    temp_path: &Path,
+    final_path: &Path,
+    dest_root: Option<&Path>,
+) -> io::Result<()> {
+    fast_io::confined_copy_then_unlink(dest_root, temp_path, final_path, false)
+}
+
+/// Non-Unix arm of [`cross_device_move`]: no `*at` resolver exists, so the
+/// destination is cleared and the bytes copied by path.
+#[cfg(not(unix))]
+fn cross_device_move(
+    temp_path: &Path,
+    final_path: &Path,
+    _dest_root: Option<&Path>,
+) -> io::Result<()> {
+    match fs::remove_file(final_path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    fs::copy(temp_path, final_path)?;
+    fs::remove_file(temp_path)
 }
 
 /// Whether a `linkat(2)` failure means the platform cannot publish an anonymous
@@ -412,6 +507,11 @@ pub struct DestinationWriteGuard {
     final_path: PathBuf,
     strategy: GuardStrategy,
     committed: bool,
+    /// Whether an aborted transfer may still promote the temp onto its
+    /// partial destination: set once literal data was written, or once the
+    /// temp stopped being a scratch file. upstream: `cleanup.c:159`
+    /// `cleanup_got_literal`.
+    keep_on_abort: bool,
     /// Root of the destination tree, when the caller knows one. Confines the
     /// commit rename; see [`hardened_rename`].
     dest_root: Option<PathBuf>,
@@ -486,15 +586,11 @@ impl DestinationWriteGuard {
                     // Only --partial/--partial-dir temps need the abort-path
                     // registry; a plain temp is unlinked by its own guard, so
                     // registering it would only add global-lock traffic to the
-                    // hot non-partial copy path.
+                    // hot non-partial copy path. The temp holds no literal data
+                    // yet, so the abort path may only unlink it; the
+                    // `LiteralLatch` upgrades the entry once data lands.
                     if partial {
-                        CleanupManager::global().register_partial(
-                            temp_path.clone(),
-                            partial_kind
-                                .partial_dest(&final_path)
-                                .map(Path::to_path_buf),
-                            partial_kind.tweak_mtime(),
-                        );
+                        CleanupManager::global().register_partial(temp_path.clone(), None, false);
                     }
                     return Ok((
                         Self {
@@ -504,6 +600,7 @@ impl DestinationWriteGuard {
                                 partial: partial_kind,
                             },
                             committed: false,
+                            keep_on_abort: false,
                             dest_root: dest_root.map(Path::to_path_buf),
                         },
                         file,
@@ -585,6 +682,10 @@ impl DestinationWriteGuard {
                     },
                 },
                 committed: false,
+                // upstream: receiver.c:1246 - `cleanup_set(NULL, NULL, ...)`
+                // gives the in-place partial-dir entry no `cleanup_fname`, so
+                // no abort ever unlinks it.
+                keep_on_abort: true,
                 dest_root: dest_root.map(Path::to_path_buf),
             },
             file,
@@ -627,6 +728,7 @@ impl DestinationWriteGuard {
                 final_path: destination.to_path_buf(),
                 strategy: GuardStrategy::Anonymous { file: Some(file) },
                 committed: false,
+                keep_on_abort: false,
                 dest_root: dest_root.map(Path::to_path_buf),
             },
             writer,
@@ -698,7 +800,10 @@ impl DestinationWriteGuard {
         // The pending commit now renames the staged entry onto the destination,
         // and `partial_dest()` still points at that same entry, so a drop before
         // the commit is a self-rename that leaves the staged file in place.
+        // upstream: receiver.c:1337 `cleanup_disable()` - the completed entry
+        // is no longer a scratch temp an abort may unlink.
         *temp_path = staged.clone();
+        self.keep_on_abort = true;
         Ok(Some(staged))
     }
 
@@ -843,23 +948,15 @@ impl DestinationWriteGuard {
                     }
                     remove_existing_destination(&self.final_path)?;
                 }
-                // upstream: util1.c:robust_rename() EXDEV fallback calls
-                // copy_file() which calls unlink_and_reopen() - removing the
-                // existing destination before creating a fresh file. Without
-                // this unlink, fs::copy fails with EACCES when the existing
-                // destination has restrictive permissions (e.g. mode 440).
                 Err(error) if fast_io::is_cross_device(&error) => {
-                    remove_existing_destination(&self.final_path)?;
-                    fs::copy(&temp_path, &self.final_path).map_err(|copy_error| {
-                        LocalCopyError::io(
-                            self.finalise_action(),
-                            self.final_path.clone(),
-                            copy_error,
-                        )
-                    })?;
-                    fs::remove_file(&temp_path).map_err(|remove_error| {
-                        LocalCopyError::io(self.finalise_action(), temp_path, remove_error)
-                    })?;
+                    cross_device_move(&temp_path, &self.final_path, self.dest_root.as_deref())
+                        .map_err(|copy_error| {
+                            LocalCopyError::io(
+                                self.finalise_action(),
+                                self.final_path.clone(),
+                                copy_error,
+                            )
+                        })?;
                     return Ok(true);
                 }
                 Err(error) => {
@@ -986,22 +1083,67 @@ impl DestinationWriteGuard {
     /// reclaims the inode automatically on drop.
     ///
     /// This method consumes the guard, preventing accidental use after discard.
+    ///
+    /// This is upstream's completed-but-failed transfer (`recv_ok == 0`,
+    /// `receiver.c:1318-1333`), which keeps the partial whatever it holds. An
+    /// interrupted or erroring transfer uses [`abort`](Self::abort) instead.
     pub fn discard(mut self) {
-        self.finalize_partial_on_failure();
+        self.finalize_partial_on_failure(true);
         self.committed = true;
     }
 
+    /// Abandons an interrupted or erroring transfer.
+    ///
+    /// The temp is promoted onto its partial destination only when literal
+    /// data reached it ([`note_literal`](Self::note_literal)); otherwise it is
+    /// unlinked and an existing destination is left intact. [`Drop`] applies
+    /// the same rule.
+    ///
+    /// upstream: `cleanup.c:159-183` gates the promotion on
+    /// `cleanup_got_literal`; `cleanup.c:200-201` unlinks the temp otherwise.
+    pub fn abort(mut self) {
+        self.finalize_partial_on_failure(self.keep_on_abort);
+        self.committed = true;
+    }
+
+    /// The abort-path registration this temp earns once literal data lands,
+    /// or `None` when it has nothing to earn.
+    pub(crate) fn pending_promotion(&self) -> Option<PartialPromotion> {
+        if self.keep_on_abort {
+            return None;
+        }
+        #[allow(irrefutable_let_patterns)]
+        let GuardStrategy::NamedTempFile { temp_path, partial } = &self.strategy else {
+            return None;
+        };
+        let dest = partial.partial_dest(&self.final_path)?;
+        Some(PartialPromotion {
+            temp: temp_path.clone(),
+            dest: dest.to_path_buf(),
+            tweak_mtime: partial.tweak_mtime(),
+        })
+    }
+
+    /// Records that literal data was written, so an abort keeps the partial.
+    ///
+    /// upstream: `receiver.c:575` - `cleanup_got_literal = 1`.
+    pub(crate) fn note_literal(&mut self) {
+        self.keep_on_abort = true;
+    }
+
     /// Finalises the staging temp on an unsuccessful transfer: moves it onto the
-    /// partial destination for `--partial`/`--partial-dir`, or unlinks it
-    /// otherwise. Shared by [`discard`](Self::discard) and [`Drop`].
-    fn finalize_partial_on_failure(&mut self) {
+    /// partial destination for `--partial`/`--partial-dir` when `retain`, or
+    /// unlinks it otherwise. Shared by [`discard`](Self::discard),
+    /// [`abort`](Self::abort) and [`Drop`].
+    fn finalize_partial_on_failure(&mut self, retain: bool) {
         #[allow(irrefutable_let_patterns)]
         if let GuardStrategy::NamedTempFile { temp_path, partial } = &self.strategy {
-            crate::finalize_partial(
-                temp_path,
-                partial.partial_dest(&self.final_path),
-                partial.tweak_mtime(),
-            );
+            let partial_dest = if retain {
+                partial.partial_dest(&self.final_path)
+            } else {
+                None
+            };
+            crate::finalize_partial(temp_path, partial_dest, partial.tweak_mtime());
             // Only partial temps were registered on the abort path.
             if !matches!(partial, PartialKind::Discard) {
                 CleanupManager::global().unregister_partial(temp_path);
@@ -1031,9 +1173,10 @@ impl Drop for DestinationWriteGuard {
         }
         // An uncommitted guard means the transfer failed or was interrupted:
         // preserve the partial (--partial/--partial-dir) or unlink the temp.
-        // upstream: cleanup.c moves the temp onto its partial destination when
-        // keep_partial, otherwise do_unlink_at() removes it.
-        self.finalize_partial_on_failure();
+        // upstream: cleanup.c:159-201 moves the temp onto its partial
+        // destination when keep_partial and cleanup_got_literal, otherwise
+        // do_unlink_at() removes it.
+        self.finalize_partial_on_failure(self.keep_on_abort);
     }
 }
 
@@ -1042,6 +1185,143 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    /// Creates a `--partial` guard over an existing destination holding `old`.
+    fn partial_guard_over(dest: &Path, old: &[u8]) -> (DestinationWriteGuard, fs::File) {
+        fs::write(dest, old).expect("write destination");
+        DestinationWriteGuard::new(dest, true, None, None).expect("guard")
+    }
+
+    /// A cross-device commit copies through the confined walk the rename used,
+    /// so a destination parent swapped for a symlink out of the root after
+    /// the temp was staged is refused rather than followed.
+    ///
+    /// upstream: `util1.c:636-663` `robust_rename()` - the `EXDEV` arm's
+    /// `copy_file()` resolves through the same confinement as the rename.
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_commit_refuses_a_parent_swapped_for_an_escaping_symlink() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("root");
+        let sub = root.join("sub");
+        let outside = temp.path().join("outside");
+        let staging = temp.path().join("staging");
+        for dir in [&sub, &outside, &staging] {
+            fs::create_dir_all(dir).expect("mkdir");
+        }
+        let dest = sub.join("file.txt");
+        let (guard, mut file) =
+            DestinationWriteGuard::new_confined(&dest, false, None, Some(&staging), Some(&root))
+                .expect("guard");
+        file.write_all(b"payload").expect("write");
+        drop(file);
+        fs::remove_dir(&sub).expect("rmdir sub");
+        std::os::unix::fs::symlink(&outside, &sub).expect("swap sub");
+
+        let _exdev = ForceExdev::new();
+        assert!(
+            guard.commit().is_err(),
+            "the escaping commit must be refused"
+        );
+        assert!(
+            !outside.join("file.txt").exists(),
+            "the payload must not be copied outside the root"
+        );
+    }
+
+    // upstream: cleanup.c:159 - no `cleanup_got_literal`, no promotion; the
+    // temp is unlinked (cleanup.c:200-201) and the destination survives.
+    #[test]
+    fn abort_without_literal_unlinks_temp_and_keeps_destination() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("file.txt");
+        let (guard, file) = partial_guard_over(&dest, b"intact");
+        let staging = guard.staging_path().to_path_buf();
+        drop(file);
+
+        guard.abort();
+
+        assert_eq!(fs::read(&dest).expect("read"), b"intact");
+        assert!(!staging.exists(), "the literal-less temp must be unlinked");
+    }
+
+    #[test]
+    fn drop_without_literal_keeps_destination() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("file.txt");
+        let (guard, file) = partial_guard_over(&dest, b"intact");
+        drop(file);
+
+        drop(guard);
+
+        assert_eq!(fs::read(&dest).expect("read"), b"intact");
+    }
+
+    #[test]
+    fn abort_after_literal_promotes_partial_onto_destination() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("file.txt");
+        let (mut guard, mut file) = partial_guard_over(&dest, b"intact");
+        file.write_all(b"partial").expect("write");
+        drop(file);
+        guard.note_literal();
+
+        guard.abort();
+
+        assert_eq!(fs::read(&dest).expect("read"), b"partial");
+    }
+
+    // upstream: receiver.c:1318-1333 - a completed-but-failed transfer keeps
+    // its partial whether or not literal data arrived.
+    #[test]
+    fn discard_keeps_partial_regardless_of_literal() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("file.txt");
+        let (guard, mut file) = partial_guard_over(&dest, b"intact");
+        file.write_all(b"partial").expect("write");
+        drop(file);
+
+        guard.discard();
+
+        assert_eq!(fs::read(&dest).expect("read"), b"partial");
+    }
+
+    // The abort path that cannot wait for the copy thread (a second signal)
+    // must reach the same decision: it unlinks a literal-less temp and only
+    // promotes one the latch saw literal data reach.
+    #[test]
+    fn abort_path_unlinks_a_literal_less_temp() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("file.txt");
+        let (guard, file) = partial_guard_over(&dest, b"intact");
+        let staging = guard.staging_path().to_path_buf();
+        let mut latch = LiteralLatch::default();
+        latch.arm(guard.pending_promotion());
+        drop(file);
+
+        CleanupManager::global().finalize_partials();
+
+        assert_eq!(fs::read(&dest).expect("read"), b"intact");
+        assert!(!staging.exists(), "the abort path must unlink the temp");
+        assert!(!latch.take());
+    }
+
+    #[test]
+    fn literal_latch_promotes_on_the_abort_path() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("file.txt");
+        let (guard, mut file) = partial_guard_over(&dest, b"intact");
+        let mut latch = LiteralLatch::default();
+        latch.arm(guard.pending_promotion());
+        latch.note();
+        file.write_all(b"partial").expect("write");
+        drop(file);
+
+        CleanupManager::global().finalize_partials();
+
+        assert_eq!(fs::read(&dest).expect("read"), b"partial");
+        assert!(latch.take());
+    }
 
     #[test]
     fn remove_existing_destination_removes_file() {

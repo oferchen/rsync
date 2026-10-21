@@ -82,7 +82,7 @@ pub(crate) fn copy_file(
     // link_stat per destination instead of two. upstream: generator.c:recv_generator().
     let mut existing_metadata = match context.take_cached_destination_metadata(destination) {
         Some(cached) => Some(cached),
-        None => match fs::symlink_metadata(destination) {
+        None => match fast_io::destination_at::symlink_metadata(destination) {
             Ok(existing) => Some(existing),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
@@ -182,8 +182,8 @@ pub(crate) fn copy_file(
     {
         let device_type = existing_metadata
             .as_ref()
-            .map(fs::Metadata::file_type)
-            .unwrap_or_else(|| metadata.file_type());
+            .map(fast_io::EntryMetadata::file_type)
+            .unwrap_or_else(|| metadata.file_type().into());
         if !crate::local_copy::clear_device_obstacle(context, destination, relative, device_type)? {
             // upstream: generator.c:2150 `goto cleanup` - this entry is skipped,
             // the rest of the transfer continues, and the run finishes 23.

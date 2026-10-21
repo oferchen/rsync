@@ -33,8 +33,6 @@
 //! Run: `cargo bench -p engine --bench delete_plan_compute`
 
 #![deny(unsafe_code)]
-#![cfg(unix)]
-
 use std::fs::File;
 use std::path::PathBuf;
 

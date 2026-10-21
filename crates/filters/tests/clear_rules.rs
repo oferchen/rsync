@@ -207,7 +207,7 @@ fn complex_clear_scenario() {
     // New tmp rule active
     assert!(!set.allows(Path::new("scratch.tmp"), false));
 
-    // important.tmp is excluded and not protected (risk matched first)
+    // important.tmp is excluded (`- *.tmp` matches first in the single pass)
     // However, allows_deletion requires transfer_allowed to be true,
     // so excluded files are never deletable via allows_deletion
     assert!(!set.allows(Path::new("important.tmp"), false));

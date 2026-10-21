@@ -35,7 +35,7 @@ pub(super) struct DirectoryFinalize<'a> {
     /// The destination's stat from BEFORE this transfer materialised it (`None`
     /// when this run created it), feeding the `dest_mode()` exists split -
     /// upstream generator.c:1856 judges `exists` by the pre-mkdir `statret`.
-    pub pre_transfer_meta: Option<&'a fs::Metadata>,
+    pub pre_transfer_meta: Option<&'a fast_io::EntryMetadata>,
 }
 
 /// Applies final metadata to a directory after all contents have been processed.
@@ -72,10 +72,7 @@ pub(super) fn apply_final_directory_metadata(
         destination,
         metadata,
         metadata_options.clone(),
-        pre_transfer_meta
-            .cloned()
-            .map(fast_io::EntryMetadata::from)
-            .as_ref(),
+        pre_transfer_meta,
     )
     .map_err(map_metadata_error)?;
 
@@ -169,24 +166,22 @@ fn keep_directory_writable(
     destination: &Path,
     metadata_options: &::metadata::MetadataOptions,
 ) -> Result<Option<u32>, LocalCopyError> {
-    use std::os::unix::fs::PermissionsExt;
-
     // upstream: generator.c:1904 gate - !am_root (false under --fake-super,
     // which stashes the intended mode in an xattr instead of the inode).
     if metadata_options.fake_super_enabled() || ::metadata::am_root() {
         return Ok(None);
     }
 
-    let applied = fs::symlink_metadata(destination)
+    let applied = fast_io::destination_at::symlink_metadata(destination)
         .map_err(|error| LocalCopyError::io("stat", destination, error))?;
-    let mode = applied.permissions().mode() & 0o7777;
+    let mode = applied.mode() & 0o7777;
     // upstream: generator.c:1904 - (file->mode & S_IRWXU) != S_IRWXU.
     if mode & 0o700 == 0o700 {
         return Ok(None);
     }
 
     // upstream: generator.c:1905-1906 - gen_entry_chmod(fname, file, mode | S_IRWXU).
-    fs::set_permissions(destination, fs::Permissions::from_mode(mode | 0o700))
+    fast_io::destination_at::set_permissions(destination, mode | 0o700)
         .map_err(|error| LocalCopyError::io("modify permissions on", destination, error))?;
     // upstream: generator.c:2594 - fix_dir_perms = !am_root && !(file->mode &
     // S_IWUSR): only an owner-non-writable mode is reinstated last.
@@ -216,7 +211,7 @@ pub(super) fn keep_preexisting_directory_writable(
     context: &mut CopyContext,
     destination: &Path,
     metadata: &fs::Metadata,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -232,7 +227,7 @@ pub(super) fn keep_preexisting_directory_writable(
         destination,
         metadata.permissions().mode(),
         &metadata_options,
-        Some(&fast_io::EntryMetadata::from(pre_transfer.clone())),
+        Some(pre_transfer),
     );
     // upstream: generator.c:1904-1906 - raise to mode | S_IRWXU when the
     // target lacks full owner rwx; otherwise the first-visit chmod lands the
@@ -242,10 +237,10 @@ pub(super) fn keep_preexisting_directory_writable(
     } else {
         target | 0o700
     };
-    if pre_transfer.permissions().mode() & 0o7777 == during {
+    if pre_transfer.mode() & 0o7777 == during {
         return;
     }
-    if let Err(error) = fs::set_permissions(destination, fs::Permissions::from_mode(during)) {
+    if let Err(error) = fast_io::destination_at::set_permissions(destination, during) {
         // upstream: generator.c:1907-1910 - rsyserr(FERROR_XFER, ...) and the
         // transfer continues.
         eprintln!(
@@ -263,7 +258,7 @@ pub(super) fn keep_preexisting_directory_writable(
     _context: &mut CopyContext,
     _destination: &Path,
     _metadata: &fs::Metadata,
-    _pre_transfer_meta: Option<&fs::Metadata>,
+    _pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) {
 }
 
@@ -295,10 +290,8 @@ pub(super) fn enforce_transfer_root_self_lock(
     context: &mut CopyContext,
     destination: &Path,
     metadata: &fs::Metadata,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
-    use std::os::unix::fs::PermissionsExt;
-
     // upstream: generator.c:1904 - the transfer-root owner-rwx re-add (whose
     // failure is the self-lock) is guarded by `!am_root`. Under --fake-super
     // upstream sets am_root = -1, so `!am_root` is false and the strict tweaked
@@ -314,7 +307,7 @@ pub(super) fn enforce_transfer_root_self_lock(
     // directory on disk. The `dest_mode()` exists split runs on the caller's
     // PRE-transfer stat instead - this post-mkdir stat would make a root this
     // run just created look pre-existing and mask the fresh-root self-lock.
-    let existing = fs::symlink_metadata(destination).ok();
+    let existing = fast_io::destination_at::symlink_metadata(destination).ok();
     if !existing.as_ref().is_some_and(|meta| meta.is_dir()) {
         return Ok(None);
     }
@@ -324,10 +317,7 @@ pub(super) fn enforce_transfer_root_self_lock(
         destination,
         metadata,
         &options,
-        pre_transfer_meta
-            .cloned()
-            .map(fast_io::EntryMetadata::from)
-            .as_ref(),
+        pre_transfer_meta,
     )
     .map_err(map_metadata_error)?
     else {
@@ -339,14 +329,14 @@ pub(super) fn enforce_transfer_root_self_lock(
 
     // Apply the strict tweaked mode to the root, self-locking it exactly as
     // upstream's set_file_attrs() does before it fails to re-add owner-rwx.
-    fs::set_permissions(destination, fs::Permissions::from_mode(tweaked))
+    fast_io::destination_at::set_permissions(destination, tweaked)
         .map_err(|error| LocalCopyError::io("modify permissions on", destination, error))?;
 
     // upstream: generator.c:1905-1906 gen_entry_chmod("dst/.", mode | S_IRWXU) - fails
     // with EACCES because `.` can no longer be resolved inside the now
     // owner-non-executable root. Trigger the identical OS error to report it.
     let dot = destination.join(".");
-    let io_error = match fs::set_permissions(&dot, fs::Permissions::from_mode(tweaked | 0o700)) {
+    let io_error = match fast_io::destination_at::set_permissions(&dot, tweaked | 0o700) {
         Err(error) => error,
         Ok(()) => io::Error::new(io::ErrorKind::PermissionDenied, "Permission denied"),
     };
@@ -365,7 +355,7 @@ pub(super) fn enforce_transfer_root_self_lock(
     _context: &mut CopyContext,
     _destination: &Path,
     _metadata: &fs::Metadata,
-    _pre_transfer_meta: Option<&fs::Metadata>,
+    _pre_transfer_meta: Option<&fast_io::EntryMetadata>,
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
     Ok(None)
 }
@@ -429,7 +419,7 @@ fn apply_relative_intermediate_dir_mtimes(
             _ => continue,
         };
 
-        let Ok(dst_meta) = fs::symlink_metadata(&dst_dir) else {
+        let Ok(dst_meta) = fast_io::destination_at::symlink_metadata(&dst_dir) else {
             continue;
         };
         if !dst_meta.file_type().is_dir() {
@@ -444,7 +434,7 @@ fn apply_relative_intermediate_dir_mtimes(
             &dst_dir,
             &src_meta,
             metadata_options.clone(),
-            Some(&fast_io::EntryMetadata::from(dst_meta.clone())),
+            Some(&dst_meta),
         )
         .map_err(map_metadata_error)?;
     }

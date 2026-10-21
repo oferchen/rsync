@@ -85,7 +85,7 @@ pub(super) fn process_links(
     record_path: &Path,
     relative_for_link: &Path,
     metadata_options: MetadataOptions,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     file_type: fs::FileType,
     size_only_enabled: bool,
@@ -297,7 +297,7 @@ pub(super) fn process_links(
                 ::metadata::apply_file_metadata_if_changed(
                     destination,
                     metadata,
-                    &fast_io::EntryMetadata::from(existing.clone()),
+                    existing,
                     &metadata_options,
                 )
                 .map_err(map_metadata_error)?;
@@ -503,7 +503,7 @@ pub(super) fn process_links(
         // columns blank when the alias is identical to its leader, even though
         // the alias path itself is being created this run. Fall back to the
         // prior-destination comparison when the leader stat is unavailable.
-        let leader_metadata = fs::symlink_metadata(&existing_target).ok();
+        let leader_metadata = fast_io::destination_at::symlink_metadata(&existing_target).ok();
         let (compare_against, compare_existed) = match leader_metadata.as_ref() {
             Some(leader) => (Some(leader), true),
             None => (existing_metadata, destination_previously_existed),
@@ -670,9 +670,10 @@ pub(super) fn process_links(
                     existing_metadata.is_none() || remove_existing_destination(destination).is_ok();
                 if destination_cleared {
                     context.summary_mut().record_regular_file_matched();
-                    let basis_metadata = fs::symlink_metadata(&basis).map_err(|error| {
-                        LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
-                    })?;
+                    let basis_metadata = fast_io::destination_at::symlink_metadata(&basis)
+                        .map_err(|error| {
+                            LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
+                        })?;
                     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
                         .virtualize_fake_super(source, metadata_options.fake_super_enabled());
                     let total_bytes = Some(metadata_snapshot.len());

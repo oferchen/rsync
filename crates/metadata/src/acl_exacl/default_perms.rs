@@ -47,7 +47,12 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         let dir_label = dir.to_string_lossy();
-        let entries = match getfacl(dir, Some(AclOption::DEFAULT_ACL)) {
+        // upstream: acls.c:1460-1464 reads the default ACL of a name relative to
+        // the cwd change_dir() entered, so the lookup is anchored on the held
+        // destination rather than re-resolving `dir`.
+        let entries = match fast_io::destination_at::with_anchored_path(dir, |dir| {
+            getfacl(dir, Some(AclOption::DEFAULT_ACL))
+        }) {
             Ok(e) => e,
             Err(_) => return default_perms,
         };

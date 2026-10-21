@@ -842,7 +842,6 @@ fn script_byte_accounting() {
 
     let script = generate_delta(&input[..], &index).expect("should generate delta");
 
-    // Verify byte accounting
     assert_eq!(
         script.total_bytes(),
         script.literal_bytes() + script.copy_bytes(),
@@ -1072,7 +1071,6 @@ fn apply_interleaved_tokens() {
 /// in the basis but different strong checksum, ensuring false positives are rejected.
 #[test]
 fn strong_checksum_rejects_false_positives() {
-    // Create basis with specific pattern
     let basis: Vec<u8> = (0..8192).map(|i| (i % 251) as u8).collect();
     let index = build_index(&basis).expect("should build index");
     let block_len = index.block_length();
@@ -1514,7 +1512,6 @@ mod algorithm_correctness {
         let mut input = basis.clone();
         input[1000] = 0xFF;
 
-        // Generate delta multiple times
         let script1 = generate_delta(&input[..], &index).expect("delta 1");
         let script2 = generate_delta(&input[..], &index).expect("delta 2");
         let script3 = generate_delta(&input[..], &index).expect("delta 3");
@@ -1594,14 +1591,12 @@ mod algorithm_correctness {
 
         let script = generate_delta(&input[..], &index).expect("delta");
 
-        // Verify we have both literal and copy tokens
         let literal_count = script.tokens().iter().filter(|t| t.is_literal()).count();
         let copy_count = script.tokens().iter().filter(|t| !t.is_literal()).count();
 
         assert!(literal_count >= 1, "should have literal tokens");
         assert!(copy_count >= 1, "should have copy tokens");
 
-        // Verify total literal bytes match expected
         let total_literal: usize = script
             .tokens()
             .iter()

@@ -19,7 +19,7 @@ impl LocalCopyChangeSet {
     #[allow(clippy::too_many_arguments)]
     pub fn for_file(
         metadata: &fs::Metadata,
-        existing: Option<&fs::Metadata>,
+        existing: Option<&fast_io::EntryMetadata>,
         metadata_options: &MetadataOptions,
         destination_previously_existed: bool,
         wrote_data: bool,
@@ -58,7 +58,7 @@ impl LocalCopyChangeSet {
     #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     pub fn for_file_with_checksum(
         metadata: &fs::Metadata,
-        existing: Option<&fs::Metadata>,
+        existing: Option<&fast_io::EntryMetadata>,
         metadata_options: &MetadataOptions,
         destination_previously_existed: bool,
         wrote_data: bool,
@@ -194,7 +194,7 @@ impl LocalCopyChangeSet {
     /// participate in those positions.
     pub fn for_existing_directory(
         source: &fs::Metadata,
-        existing: &fs::Metadata,
+        existing: &fast_io::EntryMetadata,
         metadata_options: &MetadataOptions,
         omit_dir_times: bool,
         xattrs_changed: bool,
@@ -277,7 +277,7 @@ impl LocalCopyChangeSet {
     /// `cLc.t......` instead of `cLc........`).
     pub fn for_recreated_symlink(
         source: &fs::Metadata,
-        existing: &fs::Metadata,
+        existing: &fast_io::EntryMetadata,
         metadata_options: &MetadataOptions,
         omit_link_times: bool,
         modify_window: ModifyWindow,
@@ -338,7 +338,7 @@ impl LocalCopyChangeSet {
     #[allow(clippy::too_many_arguments)]
     pub fn for_recreated_device(
         source: &fs::Metadata,
-        existing: &fs::Metadata,
+        existing: &fast_io::EntryMetadata,
         metadata_options: &MetadataOptions,
         modify_window: ModifyWindow,
         content_differs: bool,
@@ -414,7 +414,7 @@ impl LocalCopyChangeSet {
 fn determine_time_change(
     metadata_options: &MetadataOptions,
     metadata: &fs::Metadata,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     wrote_data: bool,
     modify_window: ModifyWindow,
@@ -449,7 +449,7 @@ fn determine_time_change(
 /// Returns `true` when the permission bits differ between the new and existing metadata.
 fn permissions_changed(
     metadata: &fs::Metadata,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
 ) -> bool {
     let new_mode = metadata_mode(metadata);
@@ -469,7 +469,7 @@ fn permissions_changed(
 fn owner_changed(
     metadata_options: &MetadataOptions,
     metadata: &fs::Metadata,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
 ) -> bool {
     if let Some(override_uid) = metadata_options.owner_override() {
@@ -496,7 +496,7 @@ fn owner_changed(
 fn group_changed(
     metadata_options: &MetadataOptions,
     metadata: &fs::Metadata,
-    existing: Option<&fs::Metadata>,
+    existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
 ) -> bool {
     if let Some(override_gid) = metadata_options.group_override() {
@@ -519,56 +519,100 @@ fn group_changed(
     }
 }
 
-/// Extracts the modification time from filesystem metadata.
-fn metadata_modified_time(metadata: &fs::Metadata) -> Option<SystemTime> {
-    metadata.modified().ok()
+/// The stat fields change detection compares, read the same way off the
+/// source's `std::fs::Metadata` and the destination's anchored stat.
+trait StatFields {
+    fn modified_time(&self) -> Option<SystemTime>;
+    #[cfg(unix)]
+    fn access_secs(&self) -> i64;
+    #[cfg(unix)]
+    fn mode_bits(&self) -> u32;
+    #[cfg(unix)]
+    fn owner(&self) -> u32;
+    #[cfg(unix)]
+    fn group(&self) -> u32;
 }
-
+impl StatFields for fs::Metadata {
+    fn modified_time(&self) -> Option<SystemTime> {
+        self.modified().ok()
+    }
+    #[cfg(unix)]
+    fn access_secs(&self) -> i64 {
+        std::os::unix::fs::MetadataExt::atime(self)
+    }
+    #[cfg(unix)]
+    fn mode_bits(&self) -> u32 {
+        std::os::unix::fs::MetadataExt::mode(self)
+    }
+    #[cfg(unix)]
+    fn owner(&self) -> u32 {
+        std::os::unix::fs::MetadataExt::uid(self)
+    }
+    #[cfg(unix)]
+    fn group(&self) -> u32 {
+        std::os::unix::fs::MetadataExt::gid(self)
+    }
+}
+impl StatFields for fast_io::EntryMetadata {
+    fn modified_time(&self) -> Option<SystemTime> {
+        self.modified().ok()
+    }
+    #[cfg(unix)]
+    fn access_secs(&self) -> i64 {
+        self.atime()
+    }
+    #[cfg(unix)]
+    fn mode_bits(&self) -> u32 {
+        self.mode()
+    }
+    #[cfg(unix)]
+    fn owner(&self) -> u32 {
+        self.uid()
+    }
+    #[cfg(unix)]
+    fn group(&self) -> u32 {
+        self.gid()
+    }
+}
+/// Extracts the modification time from filesystem metadata.
+fn metadata_modified_time(metadata: &impl StatFields) -> Option<SystemTime> {
+    metadata.modified_time()
+}
 /// Extracts the whole-second access time from filesystem metadata.
 ///
 /// upstream: generator.c:538 compares `st_atime` via `same_time(..., 0, ..., 0)`
 /// - a zero nanosecond component on both sides - so only whole seconds matter.
 #[cfg(unix)]
-fn metadata_access_secs(metadata: &fs::Metadata) -> i64 {
-    use std::os::unix::fs::MetadataExt;
-    metadata.atime()
+fn metadata_access_secs(metadata: &impl StatFields) -> i64 {
+    metadata.access_secs()
 }
-
 /// Extracts the Unix permission mode from filesystem metadata.
 #[cfg(unix)]
-fn metadata_mode(metadata: &fs::Metadata) -> Option<u32> {
-    use std::os::unix::fs::MetadataExt;
-    Some(metadata.mode())
+fn metadata_mode(metadata: &impl StatFields) -> Option<u32> {
+    Some(metadata.mode_bits())
 }
-
 /// Returns `None` on non-Unix platforms where permission modes are unavailable.
 #[cfg(not(unix))]
-fn metadata_mode(_metadata: &fs::Metadata) -> Option<u32> {
+fn metadata_mode(_metadata: &impl StatFields) -> Option<u32> {
     None
 }
-
 /// Extracts the owner uid from filesystem metadata.
 #[cfg(unix)]
-fn metadata_uid(metadata: &fs::Metadata) -> Option<u32> {
-    use std::os::unix::fs::MetadataExt;
-    Some(metadata.uid())
+fn metadata_uid(metadata: &impl StatFields) -> Option<u32> {
+    Some(metadata.owner())
 }
-
 /// Returns `None` on non-Unix platforms where uid is unavailable.
 #[cfg(not(unix))]
-fn metadata_uid(_metadata: &fs::Metadata) -> Option<u32> {
+fn metadata_uid(_metadata: &impl StatFields) -> Option<u32> {
     None
 }
-
 /// Extracts the group gid from filesystem metadata.
 #[cfg(unix)]
-fn metadata_gid(metadata: &fs::Metadata) -> Option<u32> {
-    use std::os::unix::fs::MetadataExt;
-    Some(metadata.gid())
+fn metadata_gid(metadata: &impl StatFields) -> Option<u32> {
+    Some(metadata.group())
 }
-
 /// Returns `None` on non-Unix platforms where gid is unavailable.
 #[cfg(not(unix))]
-fn metadata_gid(_metadata: &fs::Metadata) -> Option<u32> {
+fn metadata_gid(_metadata: &impl StatFields) -> Option<u32> {
     None
 }

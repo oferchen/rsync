@@ -186,7 +186,7 @@ fn run_daemon_refusal_lingers_so_the_peer_can_read_it() {
     );
 
     drop(reader);
-    let _ = stream.shutdown(std::net::Shutdown::Both);
+    drop(stream);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok(), "daemon thread returned: {result:?}");
 }

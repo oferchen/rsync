@@ -51,7 +51,7 @@ fn push_into_module_with_temp_dir(temp_dir: &str, create: bool) -> (Result<(), S
     let result = core::client::run_client(client_config)
         .map(|_| ())
         .map_err(|error| format!("{} [exit {}]", error, error.exit_code()));
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
     (result, module_dir.join("f.txt").exists())
 }
 

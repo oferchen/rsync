@@ -61,12 +61,11 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
     // The daemon needs to bind itself to handle two sequential connections;
     // release the test's holding listener so the daemon's bind to the same
     // port succeeds (the held listener was only needed to reserve the port).
-    drop(held_listener);
-    let handle = spawn_daemon(config);
+    let handle = spawn_daemon(config, held_listener);
 
     let mut challenges = Vec::new();
     for _ in 0..2 {
-        let mut stream = connect_with_retries(port);
+        let mut stream = connect_client(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
         let mut line = String::new();
@@ -100,7 +99,7 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
     // Windows CI a blocking accept on the re-bound listener can linger past the
     // client disconnect, so bound the join and detach if it does not finish
     // rather than wedging the test until nextest's 360s slow-timeout fires.
-    let _ = finish_daemon(handle);
+    drop(handle);
 
     // Challenges should be different
     assert_eq!(challenges.len(), 2);
@@ -358,11 +357,12 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
     );
 
     drop(reader);
+    drop(stream);
     // Don't assert on result - daemon may fail gracefully when client doesn't
     // send transfer data. Bound the join: on Windows the daemon's accept loop
     // can linger past the client disconnect, so detach rather than wedge until
     // nextest's 360s slow-timeout fires.
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -540,8 +540,9 @@ fn daemon_negotiation_auth_successful_sends_ok() {
     assert_eq!(line, "@RSYNCD: OK\n", "Expected OK after successful auth");
 
     drop(reader);
+    drop(stream);
     // Don't assert on result - daemon may fail gracefully when client doesn't
     // continue. Bound the join: on Windows the accept loop can linger past the
     // disconnect, so detach rather than wedge until nextest's 360s slow-timeout.
-    let _ = finish_daemon(handle);
+    drop(handle);
 }

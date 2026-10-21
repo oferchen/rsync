@@ -392,29 +392,63 @@ pub fn pinned_root_relative(
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()?;
-    let relative = path
-        .strip_prefix(&pinned.literal)
-        .ok()
-        .or_else(|| path.strip_prefix(session_confinement_root()?).ok())?;
-    // A `..` in the remainder would be resolved from the pin rather than from
-    // `/`, and `strip_prefix` is lexical so it cannot say where that lands.
-    // Upstream refuses the same component up front
-    // (`syscall.c` `path_has_dotdot_component`); here the answer is simply
-    // "not anchorable", which leaves the caller on the absolute path it used
-    // before. Anchoring is an optimisation of reach, never of policy, so
-    // declining is always a correct answer.
+    let relative = remainder_beneath(&pinned.literal, path)
+        .or_else(|| remainder_beneath(&session_confinement_root()?, path))?;
+    Some((pinned.fd, relative))
+}
+
+/// Split `path` into the pinned destination descriptor and the remainder to
+/// resolve beneath it.
+///
+/// Upstream's receiver `fchdir()`s into the destination it entered and names
+/// every entry relative to that cwd from then on, so a destination renamed or
+/// swapped for a symlink mid-transfer cannot redirect a later create, stat or
+/// attribute change. oc keeps absolute paths; a consumer that issues its call
+/// `*at`-style on the descriptor returned here reaches the same inode the
+/// `fchdir()` would. The root itself yields `.`.
+///
+/// Returns `None` - "resolve `path` the ordinary way" - when no destination is
+/// pinned or `path` does not lie beneath the pin's spelling.
+///
+/// upstream: `rsync-3.5.1/main.c:865` `get_local_name()` enters the
+/// destination with `change_dir()`, which `fchdir()`s to the walked
+/// descriptor (`rsync-3.5.1/util1.c:1448-1466`); `rsync-3.5.1/receiver.c:413`
+/// `open_tmpfile()` and every later per-entry call take names relative to it.
+#[cfg(unix)]
+#[must_use]
+pub fn pinned_destination_relative(
+    path: &Path,
+) -> Option<(std::sync::Arc<std::os::fd::OwnedFd>, PathBuf)> {
+    let guard = DESTINATION_ROOT_FD
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let pinned = guard.as_ref()?;
+    let relative = remainder_beneath(&pinned.literal, path)?;
+    Some((std::sync::Arc::clone(&pinned.fd), relative))
+}
+
+/// The part of `path` below `root`, spelled `.` for `root` itself, or `None`
+/// when `path` is not lexically beneath `root`.
+///
+/// A `..` in the remainder would be resolved from the pin rather than from
+/// `/`, and `strip_prefix` is lexical so it cannot say where that lands.
+/// Upstream refuses the same component up front (`syscall.c`
+/// `path_has_dotdot_component`); here the answer is simply "not anchorable",
+/// which leaves the caller on the path it used before.
+#[cfg(unix)]
+fn remainder_beneath(root: &Path, path: &Path) -> Option<PathBuf> {
+    let relative = path.strip_prefix(root).ok()?;
     if relative
         .components()
         .any(|c| c == std::path::Component::ParentDir)
     {
         return None;
     }
-    let relative = if relative.as_os_str().is_empty() {
+    Some(if relative.as_os_str().is_empty() {
         PathBuf::from(".")
     } else {
         relative.to_path_buf()
-    };
-    Some((pinned.fd, relative))
+    })
 }
 
 /// Whether an already-resolved absolute path must be refused for landing

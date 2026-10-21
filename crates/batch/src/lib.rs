@@ -146,7 +146,7 @@
 //!
 //! - [`BatchError::Io`] - File system or I/O errors
 //! - [`BatchError::InvalidFormat`] - Malformed or incompatible batch files
-//! - [`BatchError::Unsupported`] - Features not yet implemented
+//! - [`BatchError::Unsupported`] - Operations the platform cannot perform
 //! - [`BatchError::FlagMismatch`] - A batch stream flag cannot be reconciled
 //!   with the active options (a fatal `--iconv` mismatch)
 //!
@@ -444,7 +444,7 @@ pub struct BatchConfig {
     /// from the current invocation. It gates the post-flist uid/gid id-list
     /// region on both sides: the writer omits the id-lists and the reader must
     /// not attempt to consume them, matching upstream `flist.c:3063`
-    /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:466,474`
+    /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:467,475`
     /// (`numeric_ids <= 0`).
     pub numeric_ids: bool,
 
@@ -699,7 +699,7 @@ impl BatchConfig {
     /// Gates the post-flist uid/gid id-list region: under `--numeric-ids`
     /// upstream sends no id-lists (`flist.c:3063` requires `numeric_ids <= 0`),
     /// so the writer omits them and the reader must not consume them
-    /// (`uidlist.c:466,474`).
+    /// (`uidlist.c:467,475`).
     ///
     /// # Examples
     ///

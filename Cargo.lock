@@ -309,6 +309,7 @@ dependencies = [
  "filetime",
  "libc",
  "mimalloc",
+ "nix",
  "protocol",
  "tempfile",
  "test-support",

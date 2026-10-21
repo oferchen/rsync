@@ -8056,3 +8056,87 @@ fn inc_recurse_dir_flist_is_bounded_by_max_alloc_across_sub_lists() {
     let mut ctx = inc_recurse_sender(entries);
     with_one_mib_max_alloc(|| send_sub_lists(&mut ctx, &[(0, half), (half, half)])).unwrap();
 }
+
+/// A network sender resolves `--files-from` entries through upstream's
+/// ownership walk: the flist stat, the directory scan and the content open.
+///
+/// upstream: `syscall.c:149` `filesfrom_owner_walk_active()`, `flist.c:465-466`
+/// `scan_link_stat()`, `sender.c:692-693` `do_open_checklinks()`.
+#[cfg(unix)]
+mod files_from_owner_walk {
+    use super::*;
+    use fast_io::confinement::{
+        Activation, DaemonState, LocalInsecureLinks, Role, install_session,
+    };
+
+    /// `src/` is both the files-from base and the confinement root, and
+    /// `src/esc` is a symlink out of it. The link is owned by this euid, so the
+    /// walk's ownership rule trusts it; what refuses it is the root, which is
+    /// why the session must carry one.
+    fn fixture() -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        let outside = temp_dir.path().join("outside");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(src.join("plain"), "ok").unwrap();
+        fs::write(outside.join("secret"), "SECRET").unwrap();
+        std::os::unix::fs::symlink("../outside", src.join("esc")).unwrap();
+        install_session(&Activation {
+            role: Role::Sender,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(src.clone()),
+        });
+        (temp_dir, src)
+    }
+
+    fn files_from_sender(src: &Path) -> GeneratorContext {
+        let mut config = test_config();
+        config.args = vec![OsString::from(src)];
+        config.flags.relative = true;
+        GeneratorContext::new_for_test(&test_handshake(), config)
+    }
+
+    #[test]
+    fn an_entry_below_an_escaping_parent_is_not_listed() {
+        let (_temp, src) = fixture();
+        let mut ctx = files_from_sender(&src);
+
+        ctx.build_file_list_with_base(
+            &src,
+            &files_from_entries(&src, vec![src.join("plain"), src.join("esc/secret")]),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"plain"),
+            "the in-root entry is listed: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.starts_with("esc")),
+            "neither the refused entry nor its implied parent may be listed: {names:?}"
+        );
+    }
+
+    #[test]
+    fn the_content_open_walks_the_entry_parent() {
+        let (_temp, src) = fixture();
+        let mut ctx = files_from_sender(&src);
+        ctx.build_file_list_with_base(&src, &files_from_entries(&src, vec![src.join("plain")]))
+            .unwrap();
+        let entry = src.join("esc/secret");
+
+        assert!(
+            ctx.source_open().open(&entry).is_err(),
+            "a list entry must not open through an escaping parent"
+        );
+        // Control: the leaf-only open the walk replaces follows the parent.
+        assert!(
+            open_source::SourceOpen::new(None, None, false, false)
+                .open(&entry)
+                .is_ok()
+        );
+    }
+}

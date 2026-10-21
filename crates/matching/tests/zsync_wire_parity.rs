@@ -199,9 +199,7 @@ fn assert_round_trip(basis: &[u8], source: &[u8], script: &DeltaScript) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // ZSO-1 - bithash prefilter (PR #3737, task #2510)
-// ---------------------------------------------------------------------------
 
 /// ZSO-1 active test. Builds a 16 KiB random basis and a 16 KiB
 /// **disjoint** random source: no source window can match any basis block,
@@ -261,9 +259,7 @@ fn bithash_optimization_preserves_wire_bytes() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // ZSO-2 - sequential-match lookahead (PR #4624, task #2510)
-// ---------------------------------------------------------------------------
 
 /// ZSO-2 active test. Builds a basis whose contents are an exact integer
 /// multiple of the block length, then uses **the basis itself** as the
@@ -333,9 +329,7 @@ fn seq_match_optimization_preserves_wire_bytes() {
     assert_eq!(script.literal_bytes(), 0);
 }
 
-// ---------------------------------------------------------------------------
 // ZSO-3 slot - duplicate-heavy chains
-// ---------------------------------------------------------------------------
 
 /// Construction: a duplicate-heavy basis whose blocks are three distinct
 /// 700-byte contents laid out `A B C A B C ...` so the rolling-sum lookup
@@ -401,9 +395,7 @@ fn duplicate_chain_resolves_every_window_to_a_copy() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// ZSO-4 - compact rolling-key (task #2512, pending)
-// ---------------------------------------------------------------------------
+// ZSO-4 - compact rolling-key (task #2512)
 
 /// ZSO-4 active test - compact rolling-key (task #2512, shipped; design
 /// at `crates/matching/src/index/compact_lookup.rs`, which ports zsync's
@@ -491,10 +483,6 @@ fn compact_rolling_key_preserves_wire_bytes() {
         "every non-matching gap byte must be emitted as a literal"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Shared invariants
-// ---------------------------------------------------------------------------
 
 /// Cross-cutting determinism gate: running every active ZSO fixture twice
 /// must produce byte-identical wire output. Centralising this in one test

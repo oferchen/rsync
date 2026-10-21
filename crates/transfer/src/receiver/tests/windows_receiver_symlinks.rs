@@ -14,8 +14,6 @@
 //! - `generator.c:1948` - `if (preserve_links && ftype == FT_SYMLINK)`
 //! - `generator.c:2002` - `atomic_create(file, fname, sl, ...)`
 
-#![cfg(windows)]
-
 use std::io::{self, Write};
 
 use protocol::ProtocolVersion;

@@ -315,12 +315,13 @@ fn local_copy_emits_nstr_summaries_under_debug_nstr() {
         // CLVL_NOT_SPECIFIED sentinel. upstream: token.c:55-105.
         use compress::algorithm::{CompressionAlgorithm, ZLIB_DEFAULT_LEVEL, ZSTD_DEFAULT_LEVEL};
         let default_algo = CompressionAlgorithm::default_algorithm();
-        let default_level = match default_algo {
-            CompressionAlgorithm::Zlib => ZLIB_DEFAULT_LEVEL,
-            #[cfg(feature = "zstd")]
-            CompressionAlgorithm::Zstd => ZSTD_DEFAULT_LEVEL,
-            #[cfg(feature = "lz4")]
-            CompressionAlgorithm::Lz4 => 0,
+        // Keyed on the name: cargo unifies compress's codec features across
+        // the workspace, so core's own features do not decide its variants.
+        let default_level = match default_algo.name() {
+            "zlib" => ZLIB_DEFAULT_LEVEL,
+            "zstd" => ZSTD_DEFAULT_LEVEL,
+            "lz4" => 0,
+            other => panic!("unexpected default compress algorithm {other}"),
         };
         let expected = format!(
             "Client negotiated compress: {} (level {default_level})",

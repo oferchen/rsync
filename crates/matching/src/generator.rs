@@ -1915,9 +1915,7 @@ mod tests {
         let index = build_index(&basis);
         let block_len = index.block_length();
 
-        // 0xAA never appears in the basis (values are b % 251, and 0xAA=170<251
-        // does appear... use a byte guaranteed absent). basis holds 0..=250, so
-        // 251..=255 are absent; use 0xFF.
+        // The basis holds only 0..=250, so 0xFF never appears in it.
         let filler = vec![0xFFu8; block_len];
         let mut input = Vec::new();
         input.extend_from_slice(&filler);

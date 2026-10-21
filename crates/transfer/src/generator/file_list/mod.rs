@@ -25,7 +25,7 @@ mod iconv;
 mod inc_recurse;
 mod walk;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -286,6 +286,8 @@ impl GeneratorContext {
         self.timing.flist_build_start = Some(Instant::now());
 
         self.clear_file_list();
+        #[cfg(unix)]
+        self.hold_files_from_base(base_dir)?;
 
         // --files-from always uses the eager whole-tree build; the lazy producer
         // covers only single-source `-r` transfers.
@@ -380,6 +382,10 @@ impl GeneratorContext {
         // `try_walk_source_entry_dedup` to suppress the top-level walk for
         // ancestors that upstream never walks (not explicit arguments).
         let mut emitted_dirs: HashSet<(PathBuf, PathBuf)> = HashSet::new();
+        // Entries the ownership walk refused while their implied parents were
+        // considered, so the main loop reports the refusal without walking the
+        // entry - and printing upstream's untrusted-symlink notice - twice.
+        let mut refused: HashMap<PathBuf, io::Error> = HashMap::new();
         // upstream: options.c:2216-2217 - `if (!relative_paths) implied_dirs = 0;`.
         // Under --no-relative (relative_paths == 0) the sender FLATTENS every
         // --files-from entry to its transmitted name and emits NO implied parent
@@ -401,6 +407,13 @@ impl GeneratorContext {
             && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
         {
             for entry in entries {
+                // upstream: flist.c:2937-2946 - an entry whose stat fails is
+                // dropped before flist.c:2983 sends its implied parents, so a
+                // parent the ownership walk refuses is never listed either.
+                if let Some(error) = self.files_from_walk_refusal(&entry.path, &entry.base) {
+                    refused.insert(entry.path.clone(), error);
+                    continue;
+                }
                 if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
                     // Walk each ancestor of the relative path and emit a
                     // directory entry when we haven't seen it yet.
@@ -468,6 +481,10 @@ impl GeneratorContext {
             // and apply missing_args handling before walk_path. This separates
             // "source never existed" (ENOENT at flist time) from "source vanished
             // during recursive walk" (ENOENT during child traversal).
+            if let Some(error) = refused.get(&entry.path) {
+                self.report_files_from_refusal(&entry.path, error);
+                continue;
+            }
             let scoped: HashSet<PathBuf> = implied_only_dirs
                 .iter()
                 .filter(|(b, _)| b == &entry.base)

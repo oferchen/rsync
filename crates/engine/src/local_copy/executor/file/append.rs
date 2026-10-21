@@ -47,7 +47,7 @@ pub(crate) fn determine_append_mode(
     reader: &mut fs::File,
     source: &Path,
     destination: &Path,
-    existing_metadata: Option<&fs::Metadata>,
+    existing_metadata: Option<&fast_io::EntryMetadata>,
     file_size: u64,
 ) -> Result<AppendMode, LocalCopyError> {
     if !append_allowed {
@@ -213,7 +213,7 @@ mod tests {
             &mut reader,
             &source_path,
             &dest_path,
-            Some(&dest_meta),
+            Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
             14,
         )
         .expect("determine");
@@ -237,7 +237,7 @@ mod tests {
             &mut reader,
             &source_path,
             &dest_path,
-            Some(&dest_meta),
+            Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
             5, // source is 5 bytes
         )
         .expect("determine");
@@ -264,7 +264,7 @@ mod tests {
             &mut reader,
             &source_path,
             &dest_path,
-            Some(&dest_meta),
+            Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
             0,
         )
         .expect("determine");
@@ -288,7 +288,7 @@ mod tests {
             &mut reader,
             &source_path,
             &dest_path,
-            Some(&dest_meta),
+            Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
             9, // source is 9 bytes
         )
         .expect("determine");
@@ -312,7 +312,7 @@ mod tests {
             &mut reader,
             &source_path,
             &dest_path,
-            Some(&dest_meta),
+            Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
             19, // full source size
         )
         .expect("determine");
@@ -347,7 +347,7 @@ mod tests {
             &mut reader,
             &source_path,
             &dest_path,
-            Some(&dest_meta),
+            Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
             30, // full source size
         )
         .expect("determine");
@@ -380,7 +380,7 @@ mod tests {
             &mut reader,
             &source_path,
             &dest_path,
-            Some(&dest_meta),
+            Some(&fast_io::EntryMetadata::from(dest_meta.clone())),
             29, // full source size
         )
         .expect("determine");

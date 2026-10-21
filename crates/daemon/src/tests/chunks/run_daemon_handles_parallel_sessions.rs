@@ -16,8 +16,7 @@ fn run_daemon_handles_parallel_sessions() {
         ])
         .build();
 
-    drop(held_listener);
-    let handle = spawn_daemon(config);
+    let handle = spawn_daemon(config, held_listener);
 
     let barrier = Arc::new(Barrier::new(2));
     let mut clients = Vec::new();
@@ -26,7 +25,7 @@ fn run_daemon_handles_parallel_sessions() {
         let barrier = Arc::clone(&barrier);
         clients.push(thread::spawn(move || {
             barrier.wait();
-            let mut stream = connect_with_retries(port);
+            let mut stream = connect_client(port);
             let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
             let mut line = String::new();

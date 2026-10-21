@@ -42,6 +42,9 @@ pub(crate) struct CommitAnchor<'a> {
     pub(crate) sandbox: Option<&'a fast_io::DirSandbox>,
     /// The destination root `sandbox` is anchored on.
     pub(crate) root: &'a Path,
+    /// Whether `--fsync` syncs the cross-filesystem copy.
+    /// upstream: `util1.c:502-508` `copy_file()`.
+    pub(crate) fsync: bool,
 }
 
 impl<'a> CommitAnchor<'a> {
@@ -104,11 +107,11 @@ pub(crate) fn robust_rename(
             }
             None => to,
         };
-        fast_io::copy_then_unlink_via_sandbox_or_fallback(
-            anchor.sandbox,
-            anchor.root,
+        fast_io::confined_copy_then_unlink(
+            anchor.sandbox.map(|_| anchor.root),
             from,
             target,
+            anchor.fsync,
         )?;
         return Ok(Renamed::Copied(target.to_path_buf()));
     }

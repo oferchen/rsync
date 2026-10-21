@@ -173,10 +173,7 @@ mod windows_gnu {
     #[allow(unsafe_code)]
     unsafe fn resolve_register() -> Option<RegisterFrameInfo> {
         // SAFETY: SYM_REGISTER is a static NUL-terminated byte literal satisfying ensure_function's precondition.
-        let ptr = match unsafe { ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER) } {
-            Some(ptr) => ptr,
-            None => return None,
-        };
+        let ptr = unsafe { ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER) }?;
         // SAFETY: GetProcAddress returned a pointer to `__register_frame_info`, whose ABI matches RegisterFrameInfo.
         Some(unsafe { transmute::<*mut (), RegisterFrameInfo>(ptr) })
     }
@@ -185,10 +182,7 @@ mod windows_gnu {
     #[allow(unsafe_code)]
     unsafe fn resolve_deregister() -> Option<DeregisterFrameInfo> {
         // SAFETY: SYM_DEREGISTER is a static NUL-terminated byte literal satisfying ensure_function's precondition.
-        let ptr = match unsafe { ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER) } {
-            Some(ptr) => ptr,
-            None => return None,
-        };
+        let ptr = unsafe { ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER) }?;
         // SAFETY: GetProcAddress returned a pointer to `__deregister_frame_info`, whose ABI matches DeregisterFrameInfo.
         Some(unsafe { transmute::<*mut (), DeregisterFrameInfo>(ptr) })
     }

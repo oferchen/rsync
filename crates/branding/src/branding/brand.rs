@@ -204,6 +204,13 @@ impl Serialize for Brand {
     }
 }
 
+/// Returns `true` when `program` names the `canonical` binary.
+///
+/// Matching is ASCII case-insensitive and treats `-`, `_` and `.` as
+/// interchangeable where `canonical` has `-`. A trailing suffix is accepted
+/// when it starts with `-`, `_` or `.` and either contains a digit (a version
+/// such as `rsync-3.4`), ends in a Windows executable extension, or is one of
+/// the build tags `debug`, `dbg`, `devel` or `dev`.
 pub(super) fn matches_program_alias(program: &str, canonical: &str) -> bool {
     if normalized_program_match(program, canonical) {
         return true;

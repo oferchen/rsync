@@ -171,7 +171,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    let mut destination_metadata = match fs::symlink_metadata(destination) {
+    let mut destination_metadata = match fast_io::destination_at::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => {
@@ -766,10 +766,7 @@ pub(crate) fn copy_symlink(
         destination,
         metadata,
         &symlink_options,
-        pre_transfer_metadata
-            .clone()
-            .map(fast_io::EntryMetadata::from)
-            .as_ref(),
+        pre_transfer_metadata.as_ref(),
     )
     .map_err(map_metadata_error)?;
 

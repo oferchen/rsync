@@ -1034,7 +1034,7 @@ fn admission_reaps_before_consulting_the_connection_cap() {
     let local = listener.local_addr().expect("local addr");
     let client_handle = thread::spawn(move || TcpStream::connect(local).expect("connect"));
     let (server_stream, peer) = listener.accept().expect("accept");
-    let _client = client_handle.join().expect("client connect");
+    let client = client_handle.join().expect("client connect");
 
     let flags = no_op_signal_flags();
     let config_path: Option<PathBuf> = None;
@@ -1067,6 +1067,15 @@ fn admission_reaps_before_consulting_the_connection_cap() {
         "the finished worker's slot must be reaped before the cap is read, so \
          this connection is admitted rather than refused",
     );
+
+    // The admitted session runs in a child forked from this test process, so
+    // it holds a duplicate of `client`; closing ours would not reach it.
+    // shutdown(2) acts on the socket itself, so the session reads EOF and
+    // ends, and reaping it keeps it from outliving the test.
+    client
+        .shutdown(std::net::Shutdown::Both)
+        .expect("end the admitted session");
+    drain_workers(&mut state.workers, None);
 }
 #[test]
 fn default_listen_backlog_matches_upstream() {

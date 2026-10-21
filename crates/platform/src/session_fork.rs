@@ -135,6 +135,96 @@ pub fn die_with_parent(parent_pid: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// Makes `pid` - or the caller, for `0` - the leader of a new process group
+/// whose id is its pid.
+///
+/// A supervisor that must later stop a forked process together with every
+/// process it forks in turn calls this on both sides of the fork: the child
+/// for itself and the parent for the child. Whichever side runs first creates
+/// the group, so it exists before the parent can act on it. A child that has
+/// already exited cannot join a group and needs none, so `ESRCH` is success.
+pub fn lead_process_group(pid: i32) -> io::Result<()> {
+    let pid = nix::unistd::Pid::from_raw(pid);
+    match nix::unistd::setpgid(pid, pid) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        Err(errno) => Err(errno.into()),
+    }
+}
+
+/// Sends `SIGTERM` to process `pid`, asking it to shut down.
+///
+/// upstream: main.c:1919-1921 routes SIGTERM to `sig_int()`, the daemon's
+/// orderly-exit path; this is how a supervisor asks a forked daemon to stop
+/// rather than killing it.
+pub fn terminate_process(pid: i32) -> io::Result<()> {
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .map_err(io::Error::from)
+}
+
+/// Sends `SIGKILL` to every process in group `pgid`.
+///
+/// A group with no members left has nothing to stop, so `ESRCH` is success.
+/// Call it while the leader is still unreaped - a zombie keeps its pid, and
+/// with it the group id, from being reused by an unrelated process.
+///
+/// On Apple platforms a group whose only member is that unreaped leader
+/// answers `EPERM`, not `ESRCH`: XNU's `killpg1()` skips zombies when it walks
+/// the group and then returns `EPERM` for a POSIX caller that signalled
+/// nothing (xnu `bsd/kern/kern_sig.c` `killpg1()`, the `p_stat != SZOMB`
+/// filter and `nfound > 0 ? 0 : (posix ? EPERM : ESRCH)`). That `EPERM` is
+/// success only when `pgid` is this process's own ended, unreaped child; any
+/// other `EPERM` is a real permission failure and is returned. A group that
+/// also holds a live member this process may not signal answers the same
+/// `EPERM`, so callers must own every member of the group, as a supervisor
+/// whose group holds only its own descendants does.
+pub fn kill_process_group(pgid: i32) -> io::Result<()> {
+    match nix::sys::signal::killpg(
+        nix::unistd::Pid::from_raw(pgid),
+        nix::sys::signal::Signal::SIGKILL,
+    ) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        #[cfg(target_vendor = "apple")]
+        Err(nix::errno::Errno::EPERM) if child_has_ended(pgid)? => Ok(()),
+        Err(errno) => Err(errno.into()),
+    }
+}
+
+/// Reports whether `child_pid`, a child of this process, has ended and is
+/// still unreaped, without blocking and without consuming its status.
+///
+/// A pid that is not this process's child answers `ECHILD`, which is `false`.
+#[cfg(target_vendor = "apple")]
+#[allow(unsafe_code)]
+fn child_has_ended(child_pid: i32) -> io::Result<bool> {
+    loop {
+        // SAFETY: `waitid` writes only through `info`, a live local zeroed to
+        // a valid `siginfo_t`, so `si_pid` stays 0 when `WNOHANG` finds no
+        // ended child. `WNOWAIT` leaves the child waitable for its reaper.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child_pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+            )
+        };
+        if waited == -1 {
+            let error = io::Error::last_os_error();
+            match error.raw_os_error() {
+                // As `await_child_end`: the kernel never ran the wait.
+                Some(libc::EINTR) => continue,
+                Some(libc::ECHILD) => return Ok(false),
+                _ => return Err(error),
+            }
+        }
+        return Ok(info.si_pid == child_pid);
+    }
+}
+
 /// How a forked child ended.
 ///
 /// This is deliberately the *process* vocabulary, not the session's: what a
@@ -363,6 +453,102 @@ mod tests {
                 assert_eq!(
                     wait_for_child(child_pid).expect("wait failed"),
                     ChildEnd::Exited(0)
+                );
+            }
+        }
+    }
+
+    /// Killing a group stops its leader AND the processes the leader forked,
+    /// which is what lets a supervisor stop a forked daemon with its sessions.
+    ///
+    /// The descendants hold the only write ends of `pipe`, so the parent's
+    /// read reaching EOF proves both are gone - an event, not a timed wait.
+    /// The grandchild writes a byte first, so it provably existed when the
+    /// group was killed. A second kill finds the group empty and succeeds.
+    #[test]
+    fn killing_a_process_group_stops_the_leader_and_its_children() {
+        use std::io::Read as _;
+
+        let (mut reader, writer) = io::pipe().expect("pipe");
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => {
+                if lead_process_group(0).is_err() {
+                    exit_child(1);
+                }
+                match fork_session() {
+                    // The grandchild announces itself, so the kill below
+                    // cannot land before it exists.
+                    Ok(ForkSide::Child) => {
+                        use std::io::Write as _;
+                        if (&writer).write_all(b"r").is_err() {
+                            exit_child(3);
+                        }
+                    }
+                    Ok(ForkSide::Parent { .. }) => {}
+                    Err(_) => exit_child(2),
+                }
+                // Leader and grandchild both block until the group is killed.
+                loop {
+                    std::thread::park();
+                }
+            }
+            ForkSide::Parent { child_pid } => {
+                drop(writer);
+                lead_process_group(child_pid).expect("lead the child's group");
+                let mut ready = [0u8; 1];
+                reader.read_exact(&mut ready).expect("grandchild started");
+                kill_process_group(child_pid).expect("kill the group");
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Signalled(libc::SIGKILL)
+                );
+                let mut rest = Vec::new();
+                reader
+                    .read_to_end(&mut rest)
+                    .expect("EOF once every member of the group is gone");
+                kill_process_group(child_pid).expect("an empty group is already stopped");
+            }
+        }
+    }
+
+    /// A group whose only member is its ended, unreaped leader has nothing
+    /// left to stop, so killing it succeeds on every platform - including
+    /// Darwin, whose `killpg()` answers `EPERM` for a zombie-only group - and
+    /// the leader's own exit status still reaches its reaper.
+    #[test]
+    fn kill_process_group_of_an_unreaped_ended_leader_succeeds() {
+        const CHILD_EXIT_CODE: i32 = 5;
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => {
+                if lead_process_group(0).is_err() {
+                    exit_child(1);
+                }
+                exit_child(CHILD_EXIT_CODE);
+            }
+            ForkSide::Parent { child_pid } => {
+                await_child_end(child_pid).expect("observe the leader's end");
+                kill_process_group(child_pid).expect("a zombie-only group is already stopped");
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Exited(CHILD_EXIT_CODE)
+                );
+            }
+        }
+    }
+
+    /// A terminated child ends by SIGTERM - the signal is delivered, not
+    /// swallowed or replaced by a harder one.
+    #[test]
+    fn terminate_process_delivers_sigterm() {
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => loop {
+                std::thread::park();
+            },
+            ForkSide::Parent { child_pid } => {
+                terminate_process(child_pid).expect("terminate");
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Signalled(libc::SIGTERM)
                 );
             }
         }

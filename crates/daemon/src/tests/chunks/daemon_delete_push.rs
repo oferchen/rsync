@@ -80,7 +80,7 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
                 );
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("initial push failed: {e}");
             }
         }
@@ -129,7 +129,7 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
                 // Transfer succeeded - deletion should have been performed
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("delete push failed: {e}");
             }
         }
@@ -165,5 +165,5 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
         "file_c.txt content mismatch after delete push"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

@@ -196,7 +196,7 @@ fn dir_merge_empty_filename() {
     fs::write(&rules_path, ": \n").unwrap();
 
     let result = filters::merge::read_rules(&rules_path);
-    // Should fail because pattern is empty after trimming
+    // Should fail: the space is the separator, leaving an empty pattern
     assert!(result.is_err());
 }
 
@@ -519,13 +519,11 @@ fn dir_merge_with_inline_comment() {
     let dir = test_support::create_tempdir();
     let rules_path = dir.path().join("rules.txt");
 
-    // Pattern followed by comment (comment should not be part of pattern)
+    // Pattern followed by text that looks like an inline comment
     fs::write(&rules_path, ": .rsync-filter # This is a comment\n").unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    // The pattern should include everything up to the comment marker
-    // (actual behavior depends on parsing implementation)
     let pattern = rules[0].pattern();
     // In rsync, comments are not supported inline, so this would be part of filename
     assert!(

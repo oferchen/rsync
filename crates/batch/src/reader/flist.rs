@@ -201,13 +201,13 @@ impl BatchReader {
                 .unwrap_or(false);
             let proto_ver = protocol_version.as_u8();
 
-            // upstream: uidlist.c:466 - (preserve_uid || preserve_acls) && numeric_ids <= 0
+            // upstream: uidlist.c:467 - (preserve_uid || preserve_acls) && numeric_ids <= 0
             if (flags.preserve_uid || flags.preserve_acls) && !numeric_ids {
                 let mut uid_list = IdList::new();
                 uid_list.read(reader, id0_names, proto_ver, |_| Ok(None))?;
             }
 
-            // upstream: uidlist.c:474 - (preserve_gid || preserve_acls) && numeric_ids <= 0
+            // upstream: uidlist.c:475 - (preserve_gid || preserve_acls) && numeric_ids <= 0
             if (flags.preserve_gid || flags.preserve_acls) && !numeric_ids {
                 let mut gid_list = IdList::new();
                 gid_list.read(reader, id0_names, proto_ver, |_| Ok(None))?;
@@ -313,7 +313,7 @@ impl BatchReader {
 /// number of bytes this reader will consume; sharing one function is what keeps
 /// the two from drifting.
 pub fn default_flist_csum_len(protocol_version: i32) -> usize {
-    // All supported protocols (27-32) default to MD4 or MD5, both 16 bytes.
+    // All supported protocols (28-33) default to MD4 or MD5, both 16 bytes.
     // If XXH3-128 is negotiated via checksum seeds, it is also 16 bytes.
     // XXH64 and XXH3-64 are 8 bytes but require explicit negotiation which
     // is not recorded in the batch stream flags. Conservative default: 16.

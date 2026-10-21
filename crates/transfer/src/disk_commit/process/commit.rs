@@ -470,7 +470,7 @@ pub(super) fn retain_partial_file(
         PartialMode::PartialDir(dir) => {
             // upstream: cleanup.c:169-170 - move temp file into partial-dir
             let temp_path = cleanup_guard.path().to_path_buf();
-            match cleanup_guard.rename_to_partial_dir(dest_path, dir) {
+            match cleanup_guard.rename_to_partial_dir(dest_path, dir, config.do_fsync) {
                 Ok(partial_path) => {
                     CleanupManager::global().unregister_temp_file(&temp_path);
                     logging::debug_log!(
@@ -597,10 +597,12 @@ fn commit_anchor(config: &DiskCommitConfig) -> crate::robust_rename::CommitAncho
         (Some(sandbox), Some(root)) => crate::robust_rename::CommitAnchor {
             sandbox: Some(sandbox),
             root,
+            fsync: config.do_fsync,
         },
         _ => crate::robust_rename::CommitAnchor {
             sandbox: None,
             root: Path::new(""),
+            fsync: config.do_fsync,
         },
     }
 }
@@ -746,10 +748,9 @@ pub(super) fn is_cross_device(e: &io::Error) -> bool {
 /// upstream: `backup.c:265` `make_backup_inner()` - after `link_or_rename()`
 /// cannot move the pre-image across the mount (`do_rename_at` fails with
 /// `EXDEV`), rsync falls back to `copy_file()` (`backup.c:401`), leaving the
-/// original for the temp->destination rename to replace. oc reuses the same
-/// `fs::copy` + `fs::remove_file` mechanism the tmp->dest commit uses in
-/// [`rename_with_io_uring_fallback`] (`util1.c:robust_rename()`), so `fs::copy`
-/// carries the mode bits exactly as upstream's `copy_file(..., file->mode)`.
+/// original for the temp->destination rename to replace. oc copies through
+/// [`backup_copy_then_unlink`], which carries the mode bits as upstream's
+/// `copy_file(..., file->mode)` does.
 /// Restores the pre-image's ownership, timestamps and mode onto a backup that
 /// was COPIED rather than moved.
 ///
@@ -793,17 +794,41 @@ fn backup_rename_or_copy(old_path: &Path, new_path: &Path, env: BackupEnv<'_>) -
             // the backup ends up on the other filesystem.
             //
             // Stat BEFORE the copy: `remove_file` below destroys the pre-image,
-            // and `fs::copy` carries only content and permission bits, so the
+            // and the copy carries only content and permission bits, so the
             // owner and timestamps have to be read while the inode still exists.
             let source_meta = fs::symlink_metadata(old_path)?;
-            fs::copy(old_path, new_path)?;
+            backup_copy_then_unlink(env, old_path, new_path)?;
             // upstream: backup.c:420 set_file_attrs() on the copy branch.
             apply_copied_backup_metadata(new_path, &source_meta, env);
-            fs::remove_file(old_path)?;
             Ok(true)
         }
         Err(e) => Err(e),
     }
+}
+
+/// Copies the pre-image into the backup and unlinks it, through the resolver
+/// the backup rename itself used.
+///
+/// upstream: `backup.c:400-416` - the copy tier runs `copy_file()` with
+/// `operator_path_resolve` in effect, so a backup-dir parent flipped to a
+/// symlink cannot redirect the write.
+#[cfg(unix)]
+fn backup_copy_then_unlink(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
+    fast_io::confined_copy_then_unlink(None, old_path, new_path, env.fsync)
+}
+
+/// Non-Unix arm of [`backup_copy_then_unlink`]: a plain path copy, synced
+/// under `--fsync` as upstream's `copy_file()` syncs it.
+#[cfg(not(unix))]
+fn backup_copy_then_unlink(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
+    fs::copy(old_path, new_path)?;
+    if env.fsync {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(new_path)?
+            .sync_all()?;
+    }
+    fs::remove_file(old_path)
 }
 
 /// Issues the backup rename through the operator-path ownership walk, bound to
@@ -939,6 +964,19 @@ impl ForceExdev {
     pub(crate) fn new() -> Self {
         FORCE_EXDEV.with(|c| c.set(true));
         Self
+    }
+}
+
+#[cfg(test)]
+impl ForceExdev {
+    /// Whether a guard is live, for other rename sites that honour it.
+    pub(crate) fn active() -> bool {
+        force_exdev_active()
+    }
+
+    /// The cross-device error a forced rename reports.
+    pub(crate) fn error() -> io::Error {
+        simulated_cross_device_error()
     }
 }
 
@@ -1333,6 +1371,91 @@ pub(crate) fn make_backup_copy(
 /// `ConfinedFallback::resolve` reads `session_optout_allowed()` and returns the
 /// unconfined arm, so a cell that omitted the install would measure the plain
 /// syscall and report a false escape.
+#[cfg(all(test, unix))]
+mod backup_copy_tier_confinement {
+    use super::{BackupEnv, ForceExdev, backup_rename_or_copy};
+    use fast_io::confinement::{
+        Activation, DaemonState, LocalInsecureLinks, Role, install_session,
+    };
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    /// A cross-device backup copies through the same walk the backup rename
+    /// uses, so an interior symlink out of the confinement root is refused
+    /// instead of followed. The cell asserts on what the out-of-root directory
+    /// holds: a plain path copy writes the pre-image there.
+    ///
+    /// upstream: `backup.c:400-416` - `copy_file()` under
+    /// `operator_path_resolve`.
+    #[test]
+    fn cross_device_backup_copy_refuses_an_escaping_interior_symlink() {
+        let temp = test_support::create_tempdir();
+        let module = temp.path().join("module");
+        let outside = temp.path().join("outside");
+        fs::create_dir(&module).expect("module");
+        fs::create_dir(&outside).expect("outside");
+        symlink("../outside", module.join("esc")).expect("esc");
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(module.clone()),
+        });
+        let original = module.join("file.bin");
+        fs::write(&original, b"pre-image").expect("pre-image");
+        let env = BackupEnv {
+            sandbox: None,
+            dest_dir: None,
+            metadata_opts: None,
+            fsync: false,
+        };
+
+        let _force = ForceExdev::new();
+        let result = backup_rename_or_copy(&original, &module.join("esc/file.bin~"), env);
+
+        assert!(result.is_err(), "the escaping backup must be refused");
+        assert!(
+            !outside.join("file.bin~").exists(),
+            "the pre-image must not be copied outside the root"
+        );
+        assert_eq!(fs::read(&original).expect("original"), b"pre-image");
+    }
+
+    /// Positive control: the same copy tier into the root succeeds, so the
+    /// refusal above is the walk and not a broken fallback.
+    #[test]
+    fn cross_device_backup_copy_lands_inside_the_root() {
+        let temp = test_support::create_tempdir();
+        let module = temp.path().join("module");
+        fs::create_dir(&module).expect("module");
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: Some(module.clone()),
+        });
+        let original = module.join("file.bin");
+        fs::write(&original, b"pre-image").expect("pre-image");
+        let env = BackupEnv {
+            sandbox: None,
+            dest_dir: None,
+            metadata_opts: None,
+            fsync: true,
+        };
+
+        let _force = ForceExdev::new();
+        let copied = backup_rename_or_copy(&original, &module.join("file.bin~"), env)
+            .expect("in-root backup");
+
+        assert!(copied, "the forced EXDEV must take the copy tier");
+        assert_eq!(
+            fs::read(module.join("file.bin~")).expect("backup"),
+            b"pre-image"
+        );
+        assert!(!original.exists(), "the copy tier unlinks the pre-image");
+    }
+}
+
 #[cfg(all(test, unix))]
 mod confined_partial_basis_cleanup {
     use super::{DiskCommitConfig, remove_partial_basis_confined};

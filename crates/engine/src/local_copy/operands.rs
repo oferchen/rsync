@@ -13,6 +13,7 @@ pub(crate) struct SourceSpec {
     copy_contents: bool,
     relative_prefix_components: Option<usize>,
     has_dot_dir_marker: bool,
+    implied_dot_dir: Option<PathBuf>,
 }
 
 impl SourceSpec {
@@ -46,12 +47,14 @@ impl SourceSpec {
             copy_contents,
             relative_prefix_components: detect_relative_prefix_components(operand.as_os_str()),
             has_dot_dir_marker,
+            implied_dot_dir: implied_dot_dir_anchor(operand.as_os_str()),
         })
     }
 
     /// Returns `true` when the operand contained an explicit `./` dot-dir
     /// marker used to anchor `--relative` paths. Mirrors upstream
     /// `flist.c:2880-2881` which flips `implied_dot_dir` for `./xxx`-style args.
+    #[cfg(test)]
     pub(crate) const fn has_dot_dir_marker(&self) -> bool {
         self.has_dot_dir_marker
     }
@@ -62,6 +65,7 @@ impl SourceSpec {
     /// Returns `None` when the source has no dot-dir marker. Mirrors how
     /// upstream's `change_pathname()` anchors the implied `.` entry at the
     /// source's effective root.
+    #[cfg(any(unix, test))]
     pub(crate) fn dot_dir_anchor(&self) -> Option<PathBuf> {
         if !self.has_dot_dir_marker {
             return None;
@@ -87,6 +91,18 @@ impl SourceSpec {
         }
     }
 
+    /// Returns the directory whose attributes upstream carries onto the
+    /// destination transfer root through the synthetic `.` entry, or `None`
+    /// when the operand adds no such entry.
+    ///
+    /// Only an operand whose remainder after its first `/./` begins with `./`
+    /// injects the entry (`implied_dot_dir`); `src/./f` re-roots the relative
+    /// path at `src` without touching the destination root.
+    ///
+    /// upstream: flist.c:2862-2881 and flist.c:2929-2932.
+    pub(crate) fn implied_dot_dir(&self) -> Option<&Path> {
+        self.implied_dot_dir.as_deref()
+    }
     pub(crate) fn relative_root(&self) -> Option<PathBuf> {
         let skip = self.relative_prefix_components.unwrap_or(0);
         let mut index = 0;
@@ -129,6 +145,7 @@ impl SourceSpec {
             copy_contents: false,
             relative_prefix_components: None,
             has_dot_dir_marker: false,
+            implied_dot_dir: None,
         }
     }
 
@@ -184,6 +201,53 @@ fn detect_dot_dir_marker(operand: &OsStr) -> bool {
     {
         let text = operand.to_string_lossy();
         text.split(|c| c == '/' || c == '\\').any(|seg| seg == ".")
+    }
+}
+
+/// Ports upstream's `implied_dot_dir` decision for a `--relative` operand.
+///
+/// The operand is split at its first `/./`: the part before is the anchor
+/// directory (`/` when the split is at the start), the part after is the
+/// remainder; without a `/./` the whole operand is the remainder and the
+/// anchor is the current directory. The synthetic `.` entry is sent only when
+/// the remainder, with the separators after the split skipped, begins with
+/// `./` followed by more of the path. Off Unix an operand that is not valid
+/// Unicode never injects the entry.
+///
+/// upstream: flist.c:2862-2881.
+fn implied_dot_dir_anchor(operand: &OsStr) -> Option<PathBuf> {
+    #[cfg(unix)]
+    let bytes = {
+        use std::os::unix::ffi::OsStrExt;
+        operand.as_bytes()
+    };
+    #[cfg(not(unix))]
+    let bytes = operand.to_str()?.as_bytes();
+    let is_sep = |byte: u8| byte == b'/' || (cfg!(windows) && byte == b'\\');
+    let split = (0..bytes.len().saturating_sub(2))
+        .find(|&i| is_sep(bytes[i]) && bytes[i + 1] == b'.' && is_sep(bytes[i + 2]));
+    let (anchor, remainder) = match split {
+        Some(0) => (PathBuf::from("/"), &bytes[3..]),
+        Some(i) => (path_from_bytes(&bytes[..i]), &bytes[i + 3..]),
+        None => (PathBuf::from("."), bytes),
+    };
+    let start = remainder.iter().take_while(|&&byte| is_sep(byte)).count();
+    let remainder = &remainder[start..];
+    let begins_with_dot_slash = remainder.len() > 2 && remainder[0] == b'.' && is_sep(remainder[1]);
+    begins_with_dot_slash.then_some(anchor)
+}
+
+/// Rebuilds a path from a prefix of an operand that ends just before an ASCII
+/// separator, which is always a valid split point of the operand's encoding.
+fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        PathBuf::from(OsStr::from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
     }
 }
 
@@ -769,6 +833,39 @@ mod tests {
         let a = SourceSpec::from_operand(&OsString::from("/src"), false).unwrap();
         let b = SourceSpec::from_operand(&OsString::from("/src"), false).unwrap();
         assert_eq!(a, b);
+    }
+
+    /// Every row is an upstream 3.5.1 measurement: `rsync -aR <operand> dest/`
+    /// stamps the destination root exactly for the rows with an anchor.
+    #[test]
+    fn implied_dot_dir_mirrors_upstream_flist_split() {
+        let cases: [(&str, Option<&str>); 9] = [
+            ("src/./f", None),
+            ("src/./sub", None),
+            ("./f", Some(".")),
+            ("././f", None),
+            ("src/././f", Some("src")),
+            ("src/.//./f", Some("src")),
+            ("/./tmp/f", None),
+            ("/././tmp/f", Some("/")),
+            ("src/./", None),
+        ];
+        for (operand, expected) in cases {
+            let spec = SourceSpec::from_operand(&OsString::from(operand), true).unwrap();
+            assert_eq!(
+                spec.implied_dot_dir(),
+                expected.map(Path::new),
+                "operand {operand}"
+            );
+        }
+    }
+
+    #[test]
+    fn implied_dot_dir_needs_a_name_after_the_leading_dot_slash() {
+        for operand in ["./", ".", "src/././"] {
+            let spec = SourceSpec::from_operand(&OsString::from(operand), true).unwrap();
+            assert_eq!(spec.implied_dot_dir(), None, "operand {operand}");
+        }
     }
 
     #[test]

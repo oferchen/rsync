@@ -36,6 +36,7 @@ fn unanchored(root: &Path) -> CommitAnchor<'_> {
     CommitAnchor {
         sandbox: None,
         root,
+        fsync: false,
     }
 }
 
@@ -275,6 +276,7 @@ fn exdev_copy_refuses_an_interior_symlink_escape() {
     let anchor = CommitAnchor {
         sandbox: Some(&sandbox),
         root: &fx.dest,
+        fsync: false,
     };
     let result = robust_rename(anchor, &fx.temp, &final_path, None, |_, _| {
         Err(os_error(libc::EXDEV))
@@ -307,6 +309,7 @@ fn partial_dir_removal_under_a_swapped_parent_stays_in_tree() {
     let anchor = CommitAnchor {
         sandbox: Some(&sandbox),
         root: &fx.dest,
+        fsync: false,
     };
     let staged = fx.dest.join("sub/.~partial/file");
     remove_partial_dir(anchor, Some(Path::new(".~partial")), &staged);
@@ -325,6 +328,7 @@ fn partial_dir_removal_beneath_the_sandbox_removes_an_intact_dir() {
     let anchor = CommitAnchor {
         sandbox: Some(&sandbox),
         root: &fx.dest,
+        fsync: false,
     };
     remove_partial_dir(
         anchor,
@@ -344,6 +348,7 @@ fn partial_dir_obstruction_under_a_swapped_parent_is_not_unlinked() {
     let anchor = CommitAnchor {
         sandbox: Some(&sandbox),
         root: &fx.dest,
+        fsync: false,
     };
     let _ = clear_partial_dir_obstruction(anchor, &fx.dest.join("sub/.~partial"));
     assert_eq!(
@@ -362,6 +367,7 @@ fn partial_dir_obstruction_beneath_the_sandbox_is_unlinked() {
     let anchor = CommitAnchor {
         sandbox: Some(&sandbox),
         root: &fx.dest,
+        fsync: false,
     };
     clear_partial_dir_obstruction(anchor, &fx.dest.join("sub/.~partial")).expect("cleared");
     assert!(!fx.dest.join("sub/.~partial").exists());

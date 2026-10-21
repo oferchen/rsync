@@ -89,7 +89,7 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
 
     let result = core::client::run_client(client_config);
     if let Err(e) = &result {
-        let _ = finish_daemon(daemon_handle);
+        drop(daemon_handle);
         panic!("munge symlinks daemon push failed: {e}");
     }
 
@@ -128,5 +128,5 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
         "regular files must transfer unchanged regardless of munge symlinks",
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

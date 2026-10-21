@@ -74,7 +74,7 @@ fn daemon_fake_super_module_drops_a_client_supplied_stat_under_double_x() {
             .xattrs(2)
             .build(),
     );
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
     if let Err(e) = result {
         panic!("push into the fake-super module failed: {e}");
     }

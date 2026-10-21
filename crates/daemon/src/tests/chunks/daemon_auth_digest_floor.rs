@@ -5,13 +5,7 @@
 /// parameter added to it: that helper pins the *no-floor* configuration used by
 /// the negotiation tests, and threading an option through it would let a future
 /// edit change what those tests exercise without touching them.
-fn start_auth_digest_floor_daemon(
-    dir: &Path,
-    floor: &str,
-) -> (
-    TcpStream,
-    thread::JoinHandle<Result<(), crate::DaemonError>>,
-) {
+fn start_auth_digest_floor_daemon(dir: &Path, floor: &str) -> (TcpStream, DaemonHandle) {
     let module_dir = dir.join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
     let secrets_path = dir.join("secrets.txt");

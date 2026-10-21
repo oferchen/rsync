@@ -44,8 +44,6 @@
 //! Run: `cargo bench -p engine --bench delete_end_to_end`
 
 #![deny(unsafe_code)]
-#![cfg(unix)]
-
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;

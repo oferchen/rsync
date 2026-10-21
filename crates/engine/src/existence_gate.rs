@@ -11,7 +11,6 @@
 //!   an existing destination ("%s exists"), except a directory arriving over a
 //!   directory, which is still merged into.
 
-use std::fs;
 use std::io;
 
 /// Why the existence gate skips an entry.
@@ -57,7 +56,7 @@ impl DestinationEntry {
 
     /// Classifies an optional destination, where `None` means absent.
     #[must_use]
-    pub fn from_optional(meta: Option<&fs::Metadata>) -> Self {
+    pub fn from_optional(meta: Option<&fast_io::EntryMetadata>) -> Self {
         meta.map_or(Self::Missing, |meta| Self::classify(meta.is_dir()))
     }
 

@@ -355,3 +355,56 @@ fn pull_from_the_same_module_still_exits_zero() {
         "the excluded file must stay hidden from the puller",
     );
 }
+
+/// Every entry type is checked, not just regular files and directories.
+///
+/// upstream: generator.c:1662-1676 runs `check_filter(&daemon_filter_list, ...)`
+/// before any type-specific branch of `recv_generator()`, so an excluded
+/// symlink, FIFO or hard-link follower is refused - and reported as a `file` - exactly like an
+/// excluded regular file. A receiver that consulted the module filter only
+/// for regular files would let a push plant a symlink or special node the
+/// module administrator excluded.
+#[test]
+fn push_of_excluded_symlink_and_fifo_is_refused() {
+    let oc_bin = test_support::oc_rsync_bin();
+    let Some(scratch) = scratch() else {
+        eprintln!("skipping: tempdir setup failed");
+        return;
+    };
+    fs::remove_file(scratch.source.join("top.secret")).expect("drop the regular bait");
+    std::os::unix::fs::symlink("allowed.txt", scratch.source.join("link.secret"))
+        .expect("plant symlink");
+    let status = std::process::Command::new("mkfifo")
+        .arg(scratch.source.join("pipe.secret"))
+        .status()
+        .expect("run mkfifo");
+    assert!(status.success(), "mkfifo failed");
+    fs::hard_link(
+        scratch.source.join("allowed.txt"),
+        scratch.source.join("hard.secret"),
+    )
+    .expect("plant hard-link follower");
+    let Ok(daemon) = spawn_daemon(&oc_bin, &scratch.config) else {
+        eprintln!("skipping: could not start the oc-rsync daemon");
+        return;
+    };
+
+    let src = format!("{}/", scratch.source.display());
+    let url = format!("rsync://127.0.0.1:{}/refuse/", daemon.port);
+    let (code, stderr) =
+        run_client(&oc_bin, &["-aH", src.as_str(), url.as_str()]).expect("client must run");
+
+    for name in ["hard.secret", "link.secret", "pipe.secret"] {
+        let refusal = format!(r#"ERROR: daemon refused to receive file "{name}""#);
+        assert!(
+            stderr.contains(&refusal),
+            "the client must render upstream's refusal for {name}\nstderr:\n{stderr}",
+        );
+        assert!(
+            scratch.module.join(name).symlink_metadata().is_err(),
+            "the excluded {name} must never be created in the module",
+        );
+    }
+    assert_eq!(code, 23, "a refused entry must exit 23\nstderr:\n{stderr}");
+    assert!(scratch.module.join("allowed.txt").is_file());
+}

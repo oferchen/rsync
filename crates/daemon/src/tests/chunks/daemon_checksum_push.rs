@@ -95,7 +95,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
                 );
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("initial push failed: {e}");
             }
         }
@@ -160,7 +160,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
                 );
             }
             Err(e) => {
-                let _ = finish_daemon(daemon_handle);
+                drop(daemon_handle);
                 panic!("checksum push failed: {e}");
             }
         }
@@ -181,5 +181,5 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         "beta.txt must match modified source after checksum push"
     );
 
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }

@@ -37,7 +37,7 @@ fn daemon_negotiation_version_sends_greeting_first() {
     );
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -88,12 +88,9 @@ fn daemon_negotiation_version_greeting_format() {
         "Minor version should be numeric"
     );
 
-    // `reader` wraps a clone; the original `stream` handle is still open, so shut
-    // it down to give the daemon's untimed greeting read an EOF before joining.
-    // Otherwise the worker thread blocks and the join wedges (a Windows hang).
     drop(reader);
-    let _ = stream.shutdown(std::net::Shutdown::Both);
-    let _ = finish_daemon(handle);
+    drop(stream);
+    drop(handle);
 }
 
 #[test]
@@ -141,7 +138,7 @@ fn daemon_negotiation_version_accepts_older_client_version() {
     );
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -203,7 +200,7 @@ fn daemon_negotiation_version_includes_digest_list_for_protocol_31_plus() {
     }
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -249,7 +246,7 @@ fn daemon_negotiation_version_echoes_client_digests() {
     );
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -294,7 +291,7 @@ fn daemon_negotiation_version_handles_whitespace_variations() {
     );
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }
 
 #[test]
@@ -327,5 +324,5 @@ fn daemon_negotiation_version_greeting_ends_with_newline() {
     );
 
     drop(reader);
-    let _ = finish_daemon(handle);
+    drop(handle);
 }

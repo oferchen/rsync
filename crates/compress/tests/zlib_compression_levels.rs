@@ -331,7 +331,6 @@ fn compression_size_decreases_with_level() {
 fn decompression_speed_independent_of_compression_level() {
     let data = test_data::english_text(100_000);
 
-    // Compress at different levels
     let compressed_1 = compress_to_vec(&data, CompressionLevel::from_numeric(1).unwrap()).unwrap();
     let compressed_9 = compress_to_vec(&data, CompressionLevel::from_numeric(9).unwrap()).unwrap();
 
@@ -390,7 +389,6 @@ fn compress_single_byte_all_levels() {
 
 #[test]
 fn compress_all_byte_values() {
-    // Data containing all possible byte values
     let data: Vec<u8> = (0..=255).collect();
 
     for level in 1..=9 {
@@ -407,7 +405,6 @@ fn compress_all_byte_values() {
 
 #[test]
 fn compress_large_data_all_levels() {
-    // 1 MB of data
     let data = test_data::english_text(1_000_000);
 
     for level in 1..=9 {
@@ -488,7 +485,6 @@ fn level_zero_produces_valid_output() {
     // Level 0 should produce valid output (may be larger due to framing overhead)
     assert!(!compressed.is_empty(), "level 0 produced empty output");
 
-    // Verify decompression works
     let decompressed = decompress_to_vec(&compressed).expect("level 0 decompression works");
     assert_eq!(decompressed, data, "level 0 round-trip integrity failed");
 }
@@ -562,7 +558,6 @@ fn level_zero_produces_larger_output_than_higher_levels() {
         level_9_compressed.len()
     );
 
-    // Verify all round-trip correctly
     assert_eq!(
         decompress_to_vec(&level_0_compressed).unwrap(),
         data,
@@ -605,7 +600,6 @@ fn level_zero_with_single_byte() {
 
 #[test]
 fn level_zero_with_all_byte_values() {
-    // Data containing all possible byte values
     let data: Vec<u8> = (0..=255).collect();
 
     let compressed =

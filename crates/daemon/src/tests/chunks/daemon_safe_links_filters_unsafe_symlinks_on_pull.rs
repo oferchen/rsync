@@ -101,7 +101,7 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = finish_daemon(daemon_handle);
+            drop(daemon_handle);
             panic!("safe-links client pull failed: {e}");
         }
     }
@@ -146,5 +146,5 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
     assert_eq!(file_content, "hello\n", "file.txt content mismatch");
 
     // Daemon exits after serving max_sessions connections
-    let _ = finish_daemon(daemon_handle);
+    drop(daemon_handle);
 }
