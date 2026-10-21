@@ -16,7 +16,9 @@
 
 #![cfg(unix)]
 
+use std::ffi::OsStr;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -136,7 +138,11 @@ fn assert_script_matches_upstream(args: &[&str], pinned: &[u8]) {
         "{args:?}: oc .sh differs from the pinned rsync {ORACLE_VERSION} text"
     );
     if let Some(up) = upstream {
-        assert!(up.output.status.success(), "{args:?}: oracle {:?}", up.output);
+        assert!(
+            up.output.status.success(),
+            "{args:?}: oracle {:?}",
+            up.output
+        );
         assert_eq!(
             up.masked_script().as_deref(),
             Some(pinned),
@@ -233,7 +239,11 @@ fn dry_run_write_batch_creates_no_files() {
         assert!(oc.batch.is_none(), "{option}: oc wrote a batch under -n");
         assert!(oc.script.is_none(), "{option}: oc wrote a .sh under -n");
         if let Some(up) = upstream {
-            assert!(up.output.status.success(), "{option}: oracle {:?}", up.output);
+            assert!(
+                up.output.status.success(),
+                "{option}: oracle {:?}",
+                up.output
+            );
             assert_eq!(
                 (up.batch.is_some(), up.script.is_some()),
                 (false, false),
@@ -261,7 +271,10 @@ fn read_batch_reconcile_notice_follows_info_misc() {
     const NOTICE: &str = "Setting the --checksum (-c) option to match the batchfile.";
     for (recorder, record_bin) in implementations() {
         let fx = Fixture::new();
-        let out = fx.run(&record_bin, &["-r", "-c", "--write-batch=bf", "src/", "dst/"]);
+        let out = fx.run(
+            &record_bin,
+            &["-r", "-c", "--write-batch=bf", "src/", "dst/"],
+        );
         assert!(out.status.success(), "{recorder} record: {out:?}");
         for (replayer, replay_bin) in implementations() {
             for (args, printed) in [
@@ -272,7 +285,10 @@ fn read_batch_reconcile_notice_follows_info_misc() {
                 argv.extend_from_slice(args);
                 argv.push("dst/");
                 let out = fx.run(&replay_bin, &argv);
-                assert!(out.status.success(), "{recorder}->{replayer} {args:?}: {out:?}");
+                assert!(
+                    out.status.success(),
+                    "{recorder}->{replayer} {args:?}: {out:?}"
+                );
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 assert_eq!(
                     stdout.lines().any(|line| line == NOTICE),
@@ -295,12 +311,22 @@ fn read_batch_ignores_remote_looking_source_operand() {
         assert!(out.status.success(), "{recorder} record: {out:?}");
         for (replayer, replay_bin) in implementations() {
             let dest = format!("{replayer}-replay/");
-            let out = fx.run(&replay_bin, &["--read-batch=bf", "-r", "host::mod/src", &dest]);
+            let out = fx.run(
+                &replay_bin,
+                &["--read-batch=bf", "-r", "host::mod/src", &dest],
+            );
             assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
-            assert_eq!(fs::read(fx.root.join(&dest).join("a.txt")).unwrap(), b"alpha\n");
+            assert_eq!(
+                fs::read(fx.root.join(&dest).join("a.txt")).unwrap(),
+                b"alpha\n"
+            );
 
             let out = fx.run(&replay_bin, &["--read-batch=bf", "-r", "host:dst/"]);
-            assert_eq!(out.status.code(), Some(1), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "{recorder}->{replayer}: {out:?}"
+            );
             assert!(
                 String::from_utf8_lossy(&out.stderr)
                     .contains("remote destination is not allowed with --read-batch"),
@@ -320,21 +346,39 @@ fn batch_option_combinations_match_upstream() {
         let fx = Fixture::new();
         let out = fx.run(
             &bin,
-            &["-r", "--write-batch=bf", "--only-write-batch=bf", "src/", "dst/"],
+            &[
+                "-r",
+                "--write-batch=bf",
+                "--only-write-batch=bf",
+                "src/",
+                "dst/",
+            ],
         );
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(fx.root.join("bf").is_file(), "{name}: no batch");
-        assert!(!fx.root.join("dst/a.txt").exists(), "{name}: only-write wrote dst");
+        assert!(
+            !fx.root.join("dst/a.txt").exists(),
+            "{name}: only-write wrote dst"
+        );
 
         // --write-batch last: the destination is updated too.
         let fx = Fixture::new();
         let out = fx.run(
             &bin,
-            &["-r", "--only-write-batch=bf", "--write-batch=bf", "src/", "dst/"],
+            &[
+                "-r",
+                "--only-write-batch=bf",
+                "--write-batch=bf",
+                "src/",
+                "dst/",
+            ],
         );
         assert!(out.status.success(), "{name}: {out:?}");
         assert!(fx.root.join("bf").is_file(), "{name}: no batch");
-        assert!(fx.root.join("dst/a.txt").is_file(), "{name}: write-batch skipped dst");
+        assert!(
+            fx.root.join("dst/a.txt").is_file(),
+            "{name}: write-batch skipped dst"
+        );
 
         for write in ["--write-batch=x", "--only-write-batch=x"] {
             let fx = Fixture::new();
@@ -346,5 +390,176 @@ fn batch_option_combinations_match_upstream() {
                 "{name} {write}: {out:?}"
             );
         }
+    }
+}
+
+/// Runs `args` with oc and the oracle from fresh fixtures prepared by
+/// `prepare`, returning both recordings.
+fn record_both_with(args: &[&OsStr], prepare: impl Fn(&Fixture)) -> (Recording, Option<Recording>) {
+    let run = |bin: &Path| {
+        let fx = Fixture::new();
+        prepare(&fx);
+        let output = Command::new(bin)
+            .args(args)
+            .current_dir(&fx.root)
+            .output()
+            .unwrap_or_else(|e| panic!("spawn {}: {e}", bin.display()));
+        Recording {
+            output,
+            batch: fs::read(fx.root.join("bf")).ok(),
+            script: fs::read(fx.root.join("bf.sh")).ok(),
+        }
+    };
+    (run(&oc_rsync()), upstream_rsync().map(|bin| run(&bin)))
+}
+
+/// Asserts the masked `.sh` of each recording equals `pinned`.
+fn assert_scripts(oc: &Recording, upstream: Option<&Recording>, pinned: &[u8], what: &str) {
+    assert_eq!(
+        oc.masked_script().as_deref(),
+        Some(pinned),
+        "{what}: oc .sh {:?} differs from rsync {ORACLE_VERSION}",
+        oc.masked_script()
+            .map(|s| String::from_utf8_lossy(&s).into_owned())
+    );
+    if let Some(up) = upstream {
+        assert_eq!(
+            up.masked_script().as_deref(),
+            Some(pinned),
+            "{what}: oracle drifted"
+        );
+    }
+}
+
+/// upstream: batch.c:164-198 write_arg() copies each `char *` argument
+/// byte for byte, so a non-UTF-8 destination lands in `${1:-...}` unchanged.
+/// A lossy conversion would write U+FFFD and the replay would target a
+/// different directory.
+#[test]
+fn script_keeps_non_utf8_arguments_byte_exact() {
+    use std::os::unix::ffi::OsStrExt;
+    let dest = OsStr::from_bytes(b"d\xffst/");
+    let args: [&OsStr; 4] = [
+        "-r".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "src/".as_ref(),
+        dest,
+    ];
+    let (oc, upstream) = record_both_with(&args, |_| {});
+    assert!(oc.output.status.success(), "{:?}", oc.output);
+    assert_scripts(
+        &oc,
+        upstream.as_ref(),
+        b"ARGV0 '-r' --read-batch='bf' ${1:-'d\xffst/'}\n",
+        "non-UTF-8 destination",
+    );
+}
+
+/// upstream: batch.c:305-311 elides `cooked_argv` - the operands as typed -
+/// from the replay command. Under `--files-from` the source directory is one
+/// of them even though the transfer list comes from the file, so it must not
+/// survive into the script either.
+#[test]
+fn script_elides_operands_under_files_from() {
+    let args: [&OsStr; 5] = [
+        "-r".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "--files-from=list".as_ref(),
+        "src/".as_ref(),
+        "dst/".as_ref(),
+    ];
+    let (oc, upstream) = record_both_with(&args, |fx| {
+        fs::write(fx.root.join("list"), b"a.txt\n").unwrap();
+    });
+    assert!(oc.output.status.success(), "{:?}", oc.output);
+    assert_scripts(
+        &oc,
+        upstream.as_ref(),
+        b"ARGV0 '-r' --read-batch='bf' ${1:-'dst/'}\n",
+        "--files-from",
+    );
+}
+
+/// upstream: batch.c:247-258 opens the `.sh` at startup and compat.c:838-839
+/// writes it during protocol setup, so a run that fails afterwards (here: the
+/// destination's parent is a regular file) still leaves a complete script.
+#[test]
+fn script_survives_a_run_that_fails_after_setup() {
+    let args: [&OsStr; 4] = [
+        "-r".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "src/".as_ref(),
+        "file/sub/".as_ref(),
+    ];
+    let (oc, upstream) = record_both_with(&args, |fx| {
+        fs::write(fx.root.join("file"), b"not a directory\n").unwrap();
+    });
+    assert!(!oc.output.status.success(), "the transfer itself must fail");
+    assert_scripts(
+        &oc,
+        upstream.as_ref(),
+        b"ARGV0 '-r' --read-batch='bf' ${1:-'file/sub/'}\n",
+        "failed run",
+    );
+}
+
+/// upstream: batch.c:255-258 - the `.sh` is created first and its open
+/// failure exits RERR_FILESELECT (3) before any batch file exists.
+#[test]
+fn script_open_failure_exits_rerr_fileselect() {
+    let args: [&OsStr; 4] = [
+        "-r".as_ref(),
+        "--write-batch=nodir/bf".as_ref(),
+        "src/".as_ref(),
+        "dst/".as_ref(),
+    ];
+    let (oc, upstream) = record_both_with(&args, |_| {});
+    for (name, rec) in std::iter::once(("oc", &oc)).chain(upstream.iter().map(|r| ("upstream", r)))
+    {
+        assert_eq!(
+            rec.output.status.code(),
+            Some(3),
+            "{name}: {:?}",
+            rec.output
+        );
+        assert!(
+            String::from_utf8_lossy(&rec.output.stderr).contains("bf.sh\" open error"),
+            "{name}: {:?}",
+            rec.output
+        );
+    }
+}
+
+/// upstream: batch.c:97-114 write_stream_flags() sets bit 9 (`tweaked_iconv`)
+/// whenever `--iconv` is given, on a remote transfer as on a local one; a
+/// replay of a batch whose header lacks it would decode the recorded names
+/// without converting them. Pulled over a remote shell that runs the same
+/// binary as its server.
+#[test]
+fn remote_batch_header_records_iconv() {
+    let fx = Fixture::new();
+    let shim = fx.root.join("rsh");
+    fs::write(&shim, "#!/bin/sh\nshift\nexec \"$@\"\n").unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    for (name, bin) in implementations() {
+        let batch = format!("bf-{name}");
+        let rsync_path = format!("--rsync-path={}", bin.display());
+        let out = fx.run(
+            &bin,
+            &[
+                "-r",
+                "--iconv=UTF-8,ISO-8859-1",
+                "-e",
+                "./rsh",
+                &rsync_path,
+                &format!("--write-batch={batch}"),
+                "localhost:src/",
+                &format!("{name}-dst/"),
+            ],
+        );
+        assert!(out.status.success(), "{name}: {out:?}");
+        let header = fs::read(fx.root.join(&batch)).unwrap();
+        // -r (bit 0), -d implied by -r (bit 7), --iconv (bit 9).
+        assert_eq!(header[..4], 0x281i32.to_le_bytes(), "{name}: stream flags");
     }
 }

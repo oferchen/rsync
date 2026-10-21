@@ -1,10 +1,12 @@
 //! Shell script generation for batch replay.
 //!
 //! Creates a .sh script that can be used to replay a batch file,
-//! matching upstream rsync's format.
+//! matching upstream rsync's format byte for byte, including non-UTF-8
+//! arguments.
 
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, Write};
 
@@ -25,6 +27,43 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 
 /// Generate a shell script for replaying a batch file with optional filter rules.
 ///
+/// Creates the `.sh` companion (see [`create_script_file`]) and writes it
+/// with [`write_script`].
+pub fn generate_script_with_filters(
+    config: &BatchConfig,
+    filter_rules: Option<&[u8]>,
+    destination: Option<&OsStr>,
+) -> BatchResult<()> {
+    let mut file = create_script_file(config)?;
+    write_script(&mut file, config, filter_rules, destination)?;
+    file.flush()?;
+    Ok(())
+}
+
+/// Create (or truncate) the `.sh` companion of the batch file.
+///
+/// upstream: batch.c:249-258 open_batch_files() creates `BATCH.sh` through
+/// `open_no_attacker_symlinks()` at `S_IRUSR|S_IWUSR|S_IXUSR`, before the
+/// batch file itself. Passing the mode to the create is what makes the script
+/// executable; upstream never chmods afterwards, so an existing file keeps
+/// whatever mode it had. A failure is `rsyserr(FERROR, errno, "Batch file %s
+/// open error", ...)` and `exit_cleanup(RERR_FILESELECT)`.
+pub(crate) fn create_script_file(config: &BatchConfig) -> BatchResult<File> {
+    let script_path = config.script_file_path();
+    crate::operator_file::create_write(
+        std::path::Path::new(&script_path),
+        crate::operator_file::BATCH_SCRIPT_MODE,
+    )
+    .map_err(|e| {
+        BatchError::ScriptFileUnusable(format!(
+            "Batch file \"{script_path}\" open error: {}",
+            logging::upstream_errno_text(&e)
+        ))
+    })
+}
+
+/// Write the replay command into `out`.
+///
 /// When `filter_rules` is `Some`, the script includes `--filter=._-` (protocol
 /// 29+) or `--exclude-from=-` (older protocols) and appends the rules as a
 /// heredoc so that the replay applies the same filters used during batch
@@ -34,43 +73,28 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 /// When `destination` is `Some`, it is embedded as the fallback in the
 /// `${1:-<dest>}` placeholder so that `./BATCH.sh` (invoked without
 /// arguments) writes to the destination that was used when the batch was
-/// captured. Mirrors upstream `batch.c:336-340` which writes
-/// `${1:-<cooked_argv[argc-1]>}`. When `None`, a bare `.` is used (legacy
-/// behavior, only suitable when no destination is known).
+/// captured. When `None`, a bare `.` is used (only suitable when no
+/// destination is known).
+///
+/// Every argument is written from its raw bytes, so a non-UTF-8 argument
+/// round-trips exactly as upstream's `write_arg()` writes its `char *`.
 ///
 /// # Upstream Reference
 ///
+/// - `batch.c:291-348`: `write_batch_shell_file()`.
 /// - `batch.c:213-240`: `write_filter_rules()` embeds filter rules in the
 ///   shell script using a `<<'#E#'` heredoc.
 /// - `batch.c:298-303`: filter option selection based on protocol version.
 /// - `batch.c:336-340`: destination placeholder `${1:-<dest>}`.
-pub fn generate_script_with_filters(
+pub(crate) fn write_script<W: Write>(
+    out: &mut W,
     config: &BatchConfig,
     filter_rules: Option<&[u8]>,
-    destination: Option<&str>,
-) -> BatchResult<()> {
-    let script_path = config.script_file_path();
-    let batch_name = config.batch_file_path().to_string_lossy();
-    // upstream: batch.c:254 creates the `.sh` companion through
-    // `open_no_attacker_symlinks()` at `S_IRUSR|S_IWUSR|S_IXUSR`. Passing the
-    // mode to the create is what makes the script executable; upstream never
-    // chmods afterwards, so an existing file keeps whatever mode it had.
-    let mut file = crate::operator_file::create_write(
-        std::path::Path::new(&script_path),
-        crate::operator_file::BATCH_SCRIPT_MODE,
-    )
-    .map_err(|e| {
-        BatchError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to create script file '{script_path}': {e}"),
-        ))
-    })?;
-
+    destination: Option<&OsStr>,
+) -> io::Result<()> {
     // upstream: batch.c:297 - write_arg(raw_argv[0]) - the exact binary the
-    // user invoked. Without this, the generated BATCH.sh fails with
-    // "command not found" when oc-rsync is not on PATH (e.g. test harnesses
-    // and CI that invoke via absolute path).
-    write!(file, "{}", shell_quote(&config.invoker))?;
+    // user invoked.
+    out.write_all(&shell_quote(config.invoker.as_encoded_bytes()))?;
 
     // upstream: batch.c:298-303 - embed filter option before --read-batch
     // so the heredoc at the end of the script feeds rules into stdin
@@ -78,45 +102,50 @@ pub fn generate_script_with_filters(
         if config.protocol_version >= 29 {
             // upstream: batch.c:299-300 write_opt("--filter", "._-") - the value
             // goes through write_arg(), so it is quoted like any other.
-            write!(file, " --filter={}", shell_quote("._-"))?;
+            write_opt(out, b"--filter", b"._-")?;
         } else {
             // upstream: batch.c:301-302 write_opt("--exclude-from", "-")
-            write!(file, " --exclude-from={}", shell_quote("-"))?;
+            write_opt(out, b"--exclude-from", b"-")?;
         }
     }
 
     // upstream: batch.c:305-335 - reconstruct the pass-through options from
-    // the original invocation (transfer-affecting flags like -a/-z/
-    // --numeric-ids) and convert --write-batch to --read-batch. When the raw
-    // argv was not captured (legacy callers), fall back to emitting just the
-    // --read-batch option so the script still replays the batch file.
+    // the original invocation and convert --write-batch to --read-batch. When
+    // the raw argv was not captured (legacy callers), fall back to emitting
+    // just the --read-batch option so the script still replays the batch file.
     if config.replay_args.is_empty() {
-        write!(file, " --read-batch={}", shell_quote(&batch_name))?;
+        write_opt(out, b"--read-batch", config.batch_path.as_bytes())?;
     } else {
-        write_replay_options(&mut file, &config.replay_args, &config.operands)?;
+        write_replay_options(out, &config.replay_args, &config.operands)?;
     }
 
     // upstream: batch.c:336-340 - destination placeholder
     // write_opt("${1:-", NULL) + write_arg(dest) + "}". The operand is passed
     // through check_for_hostspec so only the local path (not any host: prefix)
     // lands in the ${1:-<dest>} default.
-    write!(file, " ${{1:-")?;
-    match destination {
-        Some(dest) if !dest.is_empty() => write!(file, "{}", shell_quote(strip_hostspec(dest)))?,
-        _ => write!(file, ".")?,
+    out.write_all(b" ${1:-")?;
+    match destination.map(OsStr::as_encoded_bytes) {
+        Some(dest) if !dest.is_empty() => out.write_all(&shell_quote(strip_hostspec(dest)))?,
+        _ => out.write_all(b".")?,
     }
-    write!(file, "}}")?;
+    out.write_all(b"}")?;
 
     // upstream: batch.c:341-342 - append filter rules as heredoc
     if let Some(rules) = filter_rules {
-        write_filter_heredoc(&mut file, rules, config.eol_nulls)?;
+        write_filter_heredoc(out, rules, config.eol_nulls)?;
     }
 
-    writeln!(file)?;
+    out.write_all(b"\n")
+}
 
-    file.flush()?;
-
-    Ok(())
+/// Write ` OPT=ARG` with `ARG` quoted by [`shell_quote`].
+///
+/// upstream: batch.c:200-211 write_opt()
+fn write_opt<W: Write>(out: &mut W, opt: &[u8], arg: &[u8]) -> io::Result<()> {
+    out.write_all(b" ")?;
+    out.write_all(opt)?;
+    out.write_all(b"=")?;
+    out.write_all(&shell_quote(arg))
 }
 
 /// Write the trailing filter-rule heredoc into the replay script.
@@ -133,23 +162,22 @@ pub fn generate_script_with_filters(
 /// - `batch.c:231-235`: per-rule terminator (`0` when `eol_nulls`, else `\n`).
 /// - `batch.c:237-238`: trailing `";\n"` after NUL-terminated rules.
 /// - `batch.c:239`: closing `#E#` delimiter.
-fn write_filter_heredoc(file: &mut File, rules: &[u8], eol_nulls: bool) -> io::Result<()> {
+fn write_filter_heredoc<W: Write>(out: &mut W, rules: &[u8], eol_nulls: bool) -> io::Result<()> {
     // upstream: batch.c:217 write_sbuf(fd, " <<'#E#'\n")
-    writeln!(file, " <<'#E#'")?;
+    out.write_all(b" <<'#E#'\n")?;
     let body = rules.strip_suffix(b"\n").unwrap_or(rules);
     // upstream: batch.c:231-235 - NUL terminates each rule under eol_nulls.
     let terminator = if eol_nulls { 0 } else { b'\n' };
     for rule in body.split(|&b| b == b'\n') {
-        file.write_all(rule)?;
-        file.write_all(&[terminator])?;
+        out.write_all(rule)?;
+        out.write_all(&[terminator])?;
     }
     if eol_nulls {
         // upstream: batch.c:237-238 write_sbuf(fd, ";\n")
-        file.write_all(b";\n")?;
+        out.write_all(b";\n")?;
     }
     // upstream: batch.c:239 write_sbuf(fd, "#E#")
-    write!(file, "#E#")?;
-    Ok(())
+    out.write_all(b"#E#")
 }
 
 /// Reconstruct the `--read-batch` pass-through options into the replay script.
@@ -167,13 +195,11 @@ fn write_filter_heredoc(file: &mut File, rules: &[u8], eol_nulls: bool) -> io::R
 ///   heredoc instead (batch.c:316-327).
 /// - Converts `--write-batch`/`--only-write-batch` to `--read-batch`
 ///   (batch.c:328-330).
-/// - Passes through every remaining transfer-affecting flag verbatim (`-a`,
-///   `-z`, `--numeric-ids`, ...) so the replay applies identical options
-///   (batch.c:331-334).
-fn write_replay_options(
-    file: &mut File,
-    replay_args: &[String],
-    operands: &[String],
+/// - Passes through every remaining argument verbatim (batch.c:331-334).
+fn write_replay_options<W: Write>(
+    out: &mut W,
+    replay_args: &[OsString],
+    operands: &[OsString],
 ) -> io::Result<()> {
     // upstream: batch.c:305-311 - null out the trailing filename operands so
     // they are not re-emitted; the destination returns via ${1:-<dest>}.
@@ -195,38 +221,44 @@ fn write_replay_options(
             i += 1;
             continue;
         }
-        let p = replay_args[i].as_str();
+        let p = replay_args[i].as_encoded_bytes();
         // upstream: batch.c:316-323 - skip filter/include/exclude/files-from
         // options and their value argument (unless attached with '=').
-        if p.starts_with("--files-from")
-            || p.starts_with("--filter")
-            || p.starts_with("--include")
-            || p.starts_with("--exclude")
+        if [
+            &b"--files-from"[..],
+            b"--filter",
+            b"--include",
+            b"--exclude",
+        ]
+        .iter()
+        .any(|opt| p.starts_with(opt))
         {
-            if !p.contains('=') {
+            if !p.contains(&b'=') {
                 i += 1;
             }
             i += 1;
             continue;
         }
         // upstream: batch.c:324-327 - skip -f and its value argument.
-        if p == "-f" {
+        if p == b"-f" {
             i += 2;
             continue;
         }
-        // upstream: batch.c:328-330 - convert write-batch to read-batch.
-        if let Some(name) = p.strip_prefix("--write-batch=") {
-            write!(file, " --read-batch={}", shell_quote(name))?;
-        } else if let Some(name) = p.strip_prefix("--only-write-batch=") {
-            write!(file, " --read-batch={}", shell_quote(name))?;
-        } else if p == "--write-batch" || p == "--only-write-batch" {
-            // Bare form: the following (non-elided) arg carries the batch name
-            // and is passed through on the next iteration, matching upstream's
-            // write_opt("--read-batch", NULL).
-            write!(file, " --read-batch")?;
-        } else {
-            // upstream: batch.c:331-334 - pass through all other arguments.
-            write!(file, " {}", shell_quote(p))?;
+        // upstream: batch.c:328-330 - strncmp() prefix match, then
+        // write_opt("--read-batch", p[len] == '=' ? p + len + 1 : NULL).
+        let batch_opt = [&b"--write-batch"[..], b"--only-write-batch"]
+            .into_iter()
+            .find_map(|opt| p.strip_prefix(opt));
+        match batch_opt {
+            Some(rest) => match rest.strip_prefix(b"=") {
+                Some(name) => write_opt(out, b"--read-batch", name)?,
+                None => out.write_all(b" --read-batch")?,
+            },
+            None => {
+                // upstream: batch.c:331-334 - pass through all other arguments.
+                out.write_all(b" ")?;
+                out.write_all(&shell_quote(p))?;
+            }
         }
         i += 1;
     }
@@ -252,33 +284,33 @@ fn write_replay_options(
 /// what upstream calls "an attacker-shaped arg", which is quoted whole.
 ///
 /// upstream: batch.c:164 write_arg()
-fn shell_quote(s: &str) -> String {
-    let mut result = String::new();
-    let mut arg = s;
+fn shell_quote(arg: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(arg.len() + 2);
+    let mut arg = arg;
 
     // upstream: batch.c:169-183 - the bare "-opt=" prefix is conditional on the
     // option name being a plain token; upstream walks `p` from `arg` to the '='
     // accepting only `-`, `_` and alphanumerics, and emits the prefix only when
     // the walk reaches the '=' (`p == x`).
-    if arg.starts_with('-')
-        && let Some(eq) = arg.find('=')
-        && arg[..eq].bytes().all(is_plain_option_byte)
+    if arg.first() == Some(&b'-')
+        && let Some(eq) = arg.iter().position(|&b| b == b'=')
+        && arg[..eq].iter().copied().all(is_plain_option_byte)
     {
-        result.push_str(&arg[..=eq]);
+        result.extend_from_slice(&arg[..=eq]);
         arg = &arg[eq + 1..];
     }
 
     // upstream: batch.c:188-195 - unconditional single-quote wrap.
-    result.push('\'');
-    for ch in arg.chars() {
-        if ch == '\'' {
+    result.push(b'\'');
+    for &b in arg {
+        if b == b'\'' {
             // upstream: batch.c:191 - write "'\\''", i.e. the four bytes '\''
-            result.push_str("'\\''");
+            result.extend_from_slice(b"'\\''");
         } else {
-            result.push(ch);
+            result.push(b);
         }
     }
-    result.push('\'');
+    result.push(b'\'');
     result
 }
 
@@ -301,12 +333,10 @@ fn is_plain_option_byte(b: u8) -> bool {
 /// - `/local/path`, `rel/path`, `dest` -> unchanged
 ///
 /// upstream: options.c:check_for_hostspec / batch.c:336
-fn strip_hostspec(dest: &str) -> &str {
-    const URL_PREFIX: &str = "rsync://";
+fn strip_hostspec(dest: &[u8]) -> &[u8] {
+    const URL_PREFIX: &[u8] = b"rsync://";
     // upstream: options.c:3315 - an rsync:// URL is matched case-insensitively.
-    if dest.len() >= URL_PREFIX.len()
-        && dest.as_bytes()[..URL_PREFIX.len()].eq_ignore_ascii_case(URL_PREFIX.as_bytes())
-    {
+    if dest.len() >= URL_PREFIX.len() && dest[..URL_PREFIX.len()].eq_ignore_ascii_case(URL_PREFIX) {
         let rest = &dest[URL_PREFIX.len()..];
         if let Some(off) = parse_hostspec_path(rest, true) {
             return &rest[off..];
@@ -318,7 +348,7 @@ fn strip_hostspec(dest: &str) -> &str {
             // upstream: options.c:3328-3331 - a leading ':' (the daemon '::'
             // separator) is stripped from the returned path.
             let path = &dest[off..];
-            path.strip_prefix(':').unwrap_or(path)
+            path.strip_prefix(b":").unwrap_or(path)
         }
         None => dest,
     }
@@ -328,8 +358,7 @@ fn strip_hostspec(dest: &str) -> &str {
 /// `parse_hostspec` (options.c:3254). Returns the byte offset in `s` where the
 /// path begins when `s` starts with a valid host, or `None` otherwise.
 /// `is_url` mirrors upstream's non-NULL `port_ptr` (parsing an `rsync://` host).
-fn parse_hostspec_path(s: &str, is_url: bool) -> Option<usize> {
-    let b = s.as_bytes();
+fn parse_hostspec_path(b: &[u8], is_url: bool) -> Option<usize> {
     let mut host_start = 0usize;
     let mut i = 0usize;
     loop {
@@ -389,6 +418,16 @@ fn parse_hostspec_path(s: &str, is_url: bool) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`shell_quote`] over text, for readable expectations.
+    fn q(arg: &str) -> String {
+        String::from_utf8(shell_quote(arg.as_bytes())).expect("ascii")
+    }
+
+    /// [`strip_hostspec`] over text, for readable expectations.
+    fn strip(dest: &str) -> &str {
+        std::str::from_utf8(strip_hostspec(dest.as_bytes())).expect("ascii")
+    }
     use crate::BatchMode;
     use std::fs;
     use std::path::Path;
@@ -397,13 +436,13 @@ mod tests {
     fn test_shell_quote() {
         // Quoting is unconditional (batch.c:188-195): even an argument with no
         // metacharacter at all comes back wrapped.
-        assert_eq!(shell_quote("simple"), "'simple'");
-        assert_eq!(shell_quote("with-dash"), "'with-dash'");
-        assert_eq!(shell_quote("/path/to/file"), "'/path/to/file'");
-        assert_eq!(shell_quote("needs quoting"), "'needs quoting'");
+        assert_eq!(q("simple"), "'simple'");
+        assert_eq!(q("with-dash"), "'with-dash'");
+        assert_eq!(q("/path/to/file"), "'/path/to/file'");
+        assert_eq!(q("needs quoting"), "'needs quoting'");
         // upstream closes, escapes, then reopens: `'\''` (batch.c:189-192).
-        assert_eq!(shell_quote("has'quote"), "'has'\\''quote'");
-        assert_eq!(shell_quote("$special"), "'$special'");
+        assert_eq!(q("has'quote"), "'has'\\''quote'");
+        assert_eq!(q("$special"), "'$special'");
     }
 
     /// The metacharacters upstream's 3.4.x `strpbrk` set did NOT cover.
@@ -429,11 +468,7 @@ mod tests {
             "50%",
             "a\nb",
         ] {
-            assert_eq!(
-                shell_quote(arg),
-                format!("'{arg}'"),
-                "{arg:?} must be quoted whole"
-            );
+            assert_eq!(q(arg), format!("'{arg}'"), "{arg:?} must be quoted whole");
         }
     }
 
@@ -446,33 +481,33 @@ mod tests {
             ' ', '"', '&', ';', '|', '[', ']', '(', ')', '$', '#', '!', '*', '?', '^', '\\',
         ] {
             let arg = format!("a{c}b");
-            assert_eq!(shell_quote(&arg), format!("'{arg}'"), "{c:?} must quote");
+            assert_eq!(q(&arg), format!("'{arg}'"), "{c:?} must quote");
         }
 
         // Embedded single quote: close, backslash-escape, reopen
         // (batch.c:189-192).
-        assert_eq!(shell_quote("'"), "''\\'''");
-        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
-        assert_eq!(shell_quote("a'b'c"), "'a'\\''b'\\''c'");
+        assert_eq!(q("'"), "''\\'''");
+        assert_eq!(q("a'b"), "'a'\\''b'");
+        assert_eq!(q("a'b'c"), "'a'\\''b'\\''c'");
 
         // A leading "-opt=" prefix is written bare so the replay script stays
         // readable; only the value is quote-processed (batch.c:169-183).
-        assert_eq!(shell_quote("--filter=- *.tmp"), "--filter='- *.tmp'");
-        assert_eq!(shell_quote("--rsh=ssh -p 22"), "--rsh='ssh -p 22'");
+        assert_eq!(q("--filter=- *.tmp"), "--filter='- *.tmp'");
+        assert_eq!(q("--rsh=ssh -p 22"), "--rsh='ssh -p 22'");
         // The value is quoted even when it holds no metacharacter.
-        assert_eq!(shell_quote("--opt=a,b+c"), "--opt='a,b+c'");
+        assert_eq!(q("--opt=a,b+c"), "--opt='a,b+c'");
         // A non-option token with '=' is not split.
-        assert_eq!(shell_quote("a=b c"), "'a=b c'");
-        assert_eq!(shell_quote("x:y=z"), "'x:y=z'");
+        assert_eq!(q("a=b c"), "'a=b c'");
+        assert_eq!(q("x:y=z"), "'x:y=z'");
         // The bare prefix is conditional: a metacharacter before the '=' marks
         // an attacker-shaped argument, which upstream quotes whole
         // (batch.c:169-183).
-        assert_eq!(shell_quote("-a`b=c"), "'-a`b=c'");
-        assert_eq!(shell_quote("-a b=c"), "'-a b=c'");
-        assert_eq!(shell_quote("-$x=c"), "'-$x=c'");
+        assert_eq!(q("-a`b=c"), "'-a`b=c'");
+        assert_eq!(q("-a b=c"), "'-a b=c'");
+        assert_eq!(q("-$x=c"), "'-$x=c'");
         // ... while `-`, `_` and alphanumerics keep the readable prefix.
-        assert_eq!(shell_quote("--no_iconv=x"), "--no_iconv='x'");
-        assert_eq!(shell_quote("-4=x"), "-4='x'");
+        assert_eq!(q("--no_iconv=x"), "--no_iconv='x'");
+        assert_eq!(q("-4=x"), "-4='x'");
     }
 
     /// Verify `strip_hostspec` mirrors upstream `check_for_hostspec`, writing
@@ -484,27 +519,27 @@ mod tests {
     #[test]
     fn test_strip_hostspec() {
         // Local paths are returned unchanged.
-        assert_eq!(strip_hostspec("/path/to/dest"), "/path/to/dest");
-        assert_eq!(strip_hostspec("dest"), "dest");
-        assert_eq!(strip_hostspec("rel/path"), "rel/path");
-        assert_eq!(strip_hostspec("./dir"), "./dir");
+        assert_eq!(strip("/path/to/dest"), "/path/to/dest");
+        assert_eq!(strip("dest"), "dest");
+        assert_eq!(strip("rel/path"), "rel/path");
+        assert_eq!(strip("./dir"), "./dir");
 
         // Remote shell form: host:/path -> /path.
-        assert_eq!(strip_hostspec("host:/path"), "/path");
-        assert_eq!(strip_hostspec("user@host:/path"), "/path");
-        assert_eq!(strip_hostspec("host:rel"), "rel");
+        assert_eq!(strip("host:/path"), "/path");
+        assert_eq!(strip("user@host:/path"), "/path");
+        assert_eq!(strip("host:rel"), "rel");
 
         // Daemon form: host::module/path -> module/path.
-        assert_eq!(strip_hostspec("host::mod/path"), "mod/path");
-        assert_eq!(strip_hostspec("user@host::mod/path"), "mod/path");
+        assert_eq!(strip("host::mod/path"), "mod/path");
+        assert_eq!(strip("user@host::mod/path"), "mod/path");
 
         // URL form: rsync://host/path -> path (leading slash is the separator).
-        assert_eq!(strip_hostspec("rsync://host/path"), "path");
-        assert_eq!(strip_hostspec("rsync://host:873/mod/path"), "mod/path");
-        assert_eq!(strip_hostspec("RSYNC://host/path"), "path");
+        assert_eq!(strip("rsync://host/path"), "path");
+        assert_eq!(strip("rsync://host:873/mod/path"), "mod/path");
+        assert_eq!(strip("RSYNC://host/path"), "path");
 
         // IPv6 literal hosts have the bracketed address stripped.
-        assert_eq!(strip_hostspec("[::1]:/path"), "/path");
+        assert_eq!(strip("[::1]:/path"), "/path");
     }
 
     /// Verify a batch written against a remote destination operand strips the
@@ -523,7 +558,12 @@ mod tests {
             31,
         );
 
-        generate_script_with_filters(&config, None, Some("host:/remote/dest")).unwrap();
+        generate_script_with_filters(
+            &config,
+            None,
+            Some(std::ffi::OsStr::new("host:/remote/dest")),
+        )
+        .unwrap();
 
         let content = fs::read_to_string(config.script_file_path()).unwrap();
         assert!(
@@ -662,7 +702,7 @@ mod tests {
         ])
         .with_operands(["source/".to_owned(), "dest/".to_owned()]);
 
-        generate_script_with_filters(&config, None, Some("dest/")).unwrap();
+        generate_script_with_filters(&config, None, Some(std::ffi::OsStr::new("dest/"))).unwrap();
 
         let content = fs::read_to_string(config.script_file_path()).unwrap();
         assert!(
@@ -705,7 +745,7 @@ mod tests {
         ])
         .with_operands(["source/".to_owned(), "dest/".to_owned()]);
 
-        generate_script_with_filters(&config, None, Some("dest/")).unwrap();
+        generate_script_with_filters(&config, None, Some(std::ffi::OsStr::new("dest/"))).unwrap();
 
         let content = fs::read_to_string(config.script_file_path()).unwrap();
         for stripped in ["*.tmp", "+ */", "--include", "--exclude", "--filter"] {
@@ -838,7 +878,11 @@ mod tests {
             31,
         );
 
-        let result = generate_script_with_filters(&config, None, Some("/path/to/dest"));
+        let result = generate_script_with_filters(
+            &config,
+            None,
+            Some(std::ffi::OsStr::new("/path/to/dest")),
+        );
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -868,7 +912,11 @@ mod tests {
             31,
         );
 
-        let result = generate_script_with_filters(&config, None, Some("/path with spaces/dest"));
+        let result = generate_script_with_filters(
+            &config,
+            None,
+            Some(std::ffi::OsStr::new("/path with spaces/dest")),
+        );
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -934,7 +982,12 @@ mod tests {
             ])
             .with_operands(["src/".to_owned(), "dst/".to_owned()]);
 
-        generate_script_with_filters(&config, Some("- *.tmp\n".as_bytes()), Some("dst/")).unwrap();
+        generate_script_with_filters(
+            &config,
+            Some("- *.tmp\n".as_bytes()),
+            Some(std::ffi::OsStr::new("dst/")),
+        )
+        .unwrap();
 
         let content = fs::read_to_string(config.script_file_path()).unwrap();
 

@@ -93,8 +93,12 @@ fn batch_sh_options_round_trip_through_the_shell_to_the_replay_set() {
         ])
         .with_operands(["srcfile".to_string(), "destdir".to_string()]);
 
-    generate_script_with_filters(&config, Some("+ keep\n- *\n".as_bytes()), Some("destdir"))
-        .expect("generate .sh");
+    generate_script_with_filters(
+        &config,
+        Some("+ keep\n- *\n".as_bytes()),
+        Some(std::ffi::OsStr::new("destdir")),
+    )
+    .expect("generate .sh");
 
     let argv = replay_argv(&config.script_file_path());
 
@@ -168,7 +172,8 @@ fn embedded_single_quote_survives_the_sh_round_trip() {
         ])
         .with_operands(["dst".to_string()]);
 
-    generate_script_with_filters(&config, None, Some("dst")).expect("generate .sh");
+    generate_script_with_filters(&config, None, Some(std::ffi::OsStr::new("dst")))
+        .expect("generate .sh");
 
     let argv = replay_argv(&config.script_file_path());
 
@@ -277,8 +282,12 @@ fn hostile_values_round_trip_through_sh_as_single_literal_args() {
         let shim = write_argv_and_stdin_shim(dir.path());
         let config = hostile_config(dir.path(), &shim, dest);
 
-        generate_script_with_filters(&config, Some(HOSTILE_RULES.as_bytes()), Some(dest))
-            .expect("generate .sh");
+        generate_script_with_filters(
+            &config,
+            Some(HOSTILE_RULES.as_bytes()),
+            Some(std::ffi::OsStr::new(dest)),
+        )
+        .expect("generate .sh");
 
         let out = Command::new("/bin/sh")
             .arg(config.script_file_path())
@@ -352,8 +361,12 @@ fn emitted_script_is_byte_identical_to_upstream() {
             "d`touch PWN`x/".to_string(),
         ])
         .with_operands(["src/".to_string(), "d`touch PWN`x/".to_string()]);
-    generate_script_with_filters(&config, Some("- *.tmp\n".as_bytes()), Some("d`touch PWN`x/"))
-        .expect("generate .sh");
+    generate_script_with_filters(
+        &config,
+        Some("- *.tmp\n".as_bytes()),
+        Some(std::ffi::OsStr::new("d`touch PWN`x/")),
+    )
+    .expect("generate .sh");
     let content = std::fs::read_to_string(config.script_file_path()).expect("read .sh");
     assert_eq!(
         content,
@@ -367,7 +380,12 @@ fn emitted_script_is_byte_identical_to_upstream() {
     let hostile = test_support::create_tempdir();
     let dest = "d`touch CANARY`x/";
     let config = hostile_config(hostile.path(), Path::new("/usr/bin/rsync"), dest);
-    generate_script_with_filters(&config, Some(HOSTILE_RULES.as_bytes()), Some(dest)).expect("generate .sh");
+    generate_script_with_filters(
+        &config,
+        Some(HOSTILE_RULES.as_bytes()),
+        Some(std::ffi::OsStr::new(dest)),
+    )
+    .expect("generate .sh");
     let content = std::fs::read_to_string(config.script_file_path()).expect("read .sh");
 
     let mut expected = upstream_write_arg("/usr/bin/rsync");

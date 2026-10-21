@@ -456,6 +456,11 @@ where
         }
     };
 
+    // upstream: batch.c:305-311 elides `cooked_argv`, the operands as parsed,
+    // from the replay script; keep them before any expansion or
+    // `--files-from` merging rewrites the list.
+    let cooked_operands = remainder.clone();
+
     // A POSIX shell expands wildcards before upstream rsync sees its argv;
     // cmd.exe and PowerShell do not, so the client does it here instead.
     #[cfg(windows)]
@@ -732,13 +737,10 @@ where
     let batch_checksum_seed = explicit_batch_seed(checksum_seed).unwrap_or_else(derive_batch_seed);
 
     // upstream: batch.c:297 - write_arg(raw_argv[0]) writes the exact binary
-    // path the user invoked into the generated BATCH.sh. Mirror that by
-    // capturing argv[0] now so the replay script does not require oc-rsync
-    // on PATH (e.g. test harnesses and CI invoke by absolute path).
+    // path the user invoked into the generated BATCH.sh, byte for byte.
     let invoker = std::env::args_os()
         .next()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("oc-rsync"));
+        .unwrap_or_else(|| std::ffi::OsString::from("oc-rsync"));
 
     // upstream: io.c:2754 write_int(batch_fd, protocol_version) - the header
     // records the protocol the run speaks, which `--protocol` lowers on a local
@@ -876,14 +878,8 @@ where
         // into the batch config for both write and read modes.
         let cfg = cfg.with_numeric_ids(numeric_ids);
         if cfg.is_write_mode() {
-            let replay_args: Vec<String> = std::env::args_os()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            let operands: Vec<String> = transfer_operands
-                .iter()
-                .map(|op| op.to_string_lossy().into_owned())
-                .collect();
-            cfg.with_replay_args(replay_args).with_operands(operands)
+            cfg.with_replay_args(std::env::args_os())
+                .with_operands(cooked_operands)
         } else {
             cfg
         }
