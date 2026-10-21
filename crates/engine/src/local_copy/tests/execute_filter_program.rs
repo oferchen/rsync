@@ -1136,15 +1136,22 @@ fn filter_program_include_only_specific_extensions() {
     }
 }
 
+/// upstream: exclude.c add_rule() stores every pattern and lib/wildmatch.c
+/// fails an unclosed `[` instead of rejecting it, so `bad[pattern` compiles
+/// and matches nothing. MEASURED: `rsync --exclude='['` transfers a file
+/// named `[`. The old globset matcher refused the pattern outright.
 #[test]
-fn filter_program_invalid_pattern_returns_error() {
-    let result = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("bad[pattern"))]);
-    assert!(
-        result.is_err(),
-        "invalid glob pattern must produce an error"
+fn filter_program_unclosed_bracket_compiles_and_matches_nothing() {
+    let program = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("bad[pattern"))])
+        .expect("upstream rejects no pattern");
+    let outcome = program.evaluate(
+        Path::new("bad[pattern"),
+        false,
+        &[],
+        None,
+        FilterContext::Transfer,
     );
-    let err = result.unwrap_err();
-    assert_eq!(err.pattern(), "bad[pattern");
+    assert!(outcome.allows_transfer());
 }
 
 #[test]

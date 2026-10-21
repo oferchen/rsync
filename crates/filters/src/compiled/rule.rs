@@ -18,7 +18,7 @@ use crate::rule_source::OwnedRuleSource;
 /// ```c
 /// int ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1;
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct CompiledRule {
     pub(crate) action: FilterAction,
     /// The source pattern, retained for `--debug=FILTER` reporting

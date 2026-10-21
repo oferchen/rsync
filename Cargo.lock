@@ -1345,7 +1345,6 @@ dependencies = [
  "fast_io",
  "filetime",
  "filters",
- "globset",
  "jwalk",
  "libc",
  "logging",
