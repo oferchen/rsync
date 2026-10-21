@@ -151,6 +151,19 @@ pub fn lead_process_group(pid: i32) -> io::Result<()> {
     }
 }
 
+/// Sends `SIGTERM` to process `pid`, asking it to shut down.
+///
+/// upstream: main.c:1919-1921 routes SIGTERM to `sig_int()`, the daemon's
+/// orderly-exit path; this is how a supervisor asks a forked daemon to stop
+/// rather than killing it.
+pub fn terminate_process(pid: i32) -> io::Result<()> {
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .map_err(io::Error::from)
+}
+
 /// Sends `SIGKILL` to every process in group `pgid`.
 ///
 /// A group with no members left has nothing to stop, so `ESRCH` is success.
@@ -448,6 +461,24 @@ mod tests {
                     .read_to_end(&mut rest)
                     .expect("EOF once every member of the group is gone");
                 kill_process_group(child_pid).expect("an empty group is already stopped");
+            }
+        }
+    }
+
+    /// A terminated child ends by SIGTERM - the signal is delivered, not
+    /// swallowed or replaced by a harder one.
+    #[test]
+    fn terminate_process_delivers_sigterm() {
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => loop {
+                std::thread::park();
+            },
+            ForkSide::Parent { child_pid } => {
+                terminate_process(child_pid).expect("terminate");
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Signalled(libc::SIGTERM)
+                );
             }
         }
     }
