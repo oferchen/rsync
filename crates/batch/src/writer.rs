@@ -3,6 +3,7 @@
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
 use crate::format::{BatchFlags, BatchHeader, BatchStats, FileEntry};
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
@@ -16,6 +17,9 @@ pub struct BatchWriter {
     config: BatchConfig,
     /// Writer for the binary batch file.
     batch_file: Option<BufWriter<File>>,
+    /// The `.sh` companion, created up front and written by
+    /// [`BatchWriter::write_header`].
+    script_file: Option<File>,
     /// Whether the header has been written.
     header_written: bool,
     /// Stream flags recorded in the batch header.
@@ -27,8 +31,20 @@ pub struct BatchWriter {
 }
 
 impl BatchWriter {
-    /// Create a new batch writer.
+    /// Create a new batch writer, creating the `.sh` companion (write modes)
+    /// and then the batch file.
+    ///
+    /// upstream: batch.c:247-273 open_batch_files() - both files exist from
+    /// the start of the run, so a run that fails after setup still leaves its
+    /// replay script. The `.sh` open failure is a [`BatchError::ScriptFileUnusable`]
+    /// (`RERR_FILESELECT`), the batch file's a [`BatchError::BatchFileUnusable`]
+    /// (`RERR_FILEIO`).
     pub fn new(config: BatchConfig) -> BatchResult<Self> {
+        let script_file = if config.is_write_mode() {
+            Some(crate::script::create_script_file(&config)?)
+        } else {
+            None
+        };
         let batch_path = config.batch_file_path();
         // upstream: batch.c:263 creates the batch file through
         // `open_no_attacker_symlinks()` at `S_IRUSR|S_IWUSR`. Owner-only is
@@ -37,19 +53,17 @@ impl BatchWriter {
         let file =
             crate::operator_file::create_write(batch_path, crate::operator_file::BATCH_FILE_MODE)
                 .map_err(|e| {
-                BatchError::Io(io::Error::new(
-                    e.kind(),
-                    format!(
-                        "Failed to create batch file '{}': {}",
-                        batch_path.display(),
-                        e
-                    ),
+                BatchError::BatchFileUnusable(format!(
+                    "Batch file \"{}\" open error: {}",
+                    batch_path.display(),
+                    logging::upstream_errno_text(&e)
                 ))
             })?;
 
         Ok(Self {
             config,
             batch_file: Some(BufWriter::new(file)),
+            script_file,
             header_written: false,
             stream_flags: BatchFlags::default(),
         })
@@ -63,7 +77,13 @@ impl BatchWriter {
         &self.stream_flags
     }
 
-    /// Write the batch header with stream flags.
+    /// Write the batch header with stream flags, then the `.sh` replay script.
+    ///
+    /// Called once the protocol is set up, mirroring upstream, where
+    /// `setup_protocol()` writes the script (`compat.c:838-839`) and
+    /// `start_write_batch()` the protocol fields (`io.c:2747-2763`): the
+    /// script's `--filter`/`--exclude-from` choice depends on the negotiated
+    /// protocol.
     pub fn write_header(&mut self, flags: BatchFlags) -> BatchResult<()> {
         if self.header_written {
             return Err(BatchError::Io(io::Error::new(
@@ -85,10 +105,35 @@ impl BatchWriter {
                 ))
             })?;
             self.header_written = true;
-            Ok(())
         } else {
-            Err(BatchError::Io(io::Error::other("Batch file not open")))
+            return Err(BatchError::Io(io::Error::other("Batch file not open")));
         }
+        self.write_script()
+    }
+
+    /// Write and close the `.sh` companion created by [`BatchWriter::new`].
+    ///
+    /// upstream: batch.c:343-346 - a write failure is `rsyserr(FERROR, errno,
+    /// "Batch file %s.sh write error", ...)` and `exit_cleanup(RERR_FILEIO)`.
+    fn write_script(&mut self) -> BatchResult<()> {
+        let Some(mut file) = self.script_file.take() else {
+            return Ok(());
+        };
+        let rules = &self.config.filter_rules;
+        crate::script::write_script(
+            &mut file,
+            &self.config,
+            (!rules.is_empty()).then_some(rules.as_slice()),
+            self.config.operands.last().map(OsString::as_os_str),
+        )
+        .and_then(|()| file.flush())
+        .map_err(|e| {
+            BatchError::BatchFileUnusable(format!(
+                "Batch file {}.sh write error: {}",
+                self.config.batch_path,
+                logging::upstream_errno_text(&e)
+            ))
+        })
     }
 
     /// Write raw data to the batch file.
