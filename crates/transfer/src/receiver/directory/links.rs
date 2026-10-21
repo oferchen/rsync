@@ -178,10 +178,16 @@ impl ReceiverContext {
         }
 
         let store = super::link_store::LinkStore::new(self.config.fake_super);
+        let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         let start = range.start;
         for (i, entry) in self.file_list[range].iter().enumerate() {
             let flist_idx = start + i;
             if !entry.is_symlink() {
+                continue;
+            }
+            // upstream: generator.c:1662-1676 - the daemon filter is checked
+            // before the symlink branch.
+            if self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry) {
                 continue;
             }
 
@@ -507,10 +513,15 @@ impl ReceiverContext {
         // borrow of `self.file_list` never overlaps the mutable field write.
         let mut unsupported_skip = false;
 
+        let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         let start = range.start;
         for (i, entry) in self.file_list[range].iter().enumerate() {
             let flist_idx = start + i;
             if !entry.is_symlink() {
+                continue;
+            }
+            // upstream: generator.c:1662-1676 - see the unix arm above.
+            if self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry) {
                 continue;
             }
 
@@ -932,6 +943,7 @@ impl ReceiverContext {
         // hlink_first one. On the live path the generator makes hlink_first the
         // transferred member, so the second-pass rule stays keyed to it there.
         let local_replay = self.local_replay;
+        let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         if let Some(mut tracker) = self.hardlink_tracker.take() {
             // First pass: ensure all leaders are recorded in the tracker.
             // Leaders committed during pipelined transfer are already recorded;
@@ -1006,6 +1018,11 @@ impl ReceiverContext {
                 // (an absent or stale pre-existing sorted-first member) it is
                 // re-linked to the fresh data-holder like any follower.
                 if entry.hlink_first() && !local_replay {
+                    continue;
+                }
+                // upstream: generator.c:1662-1676 - a follower is refused by
+                // the daemon filter before hard_link_check() links it.
+                if self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry) {
                     continue;
                 }
                 let leader_idx = match entry.hardlink_idx() {

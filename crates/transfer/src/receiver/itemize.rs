@@ -388,6 +388,40 @@ impl ReceiverContext {
         line
     }
 
+    /// Whether the module's daemon filter refuses a non-directory entry,
+    /// reporting the refusal the way `recv_generator()` does.
+    ///
+    /// upstream: generator.c:1662-1676 - `check_filter(&daemon_filter_list,
+    /// ...)` runs for every entry type before any type-specific branch, so an
+    /// excluded regular file, symlink, device, special or hard-link follower
+    /// is refused as a `file`. An entry below an already-refused directory is
+    /// dropped in silence (generator.c:1647-1655).
+    pub(in crate::receiver) fn daemon_refuses_non_dir<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        filters: Option<&mut super::daemon_filter::DaemonFilterGate>,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> bool {
+        let Some(filters) = filters else {
+            return false;
+        };
+        let name = entry.path();
+        if name.as_os_str() == "." {
+            return false;
+        }
+        if filters.refuses_ancestor(name) {
+            return true;
+        }
+        if filters.allows(name, false) {
+            return false;
+        }
+        let _ = self.emit_error_xfer_line(
+            writer,
+            Self::daemon_refusal_line("file", &entry.name_bytes()),
+        );
+        true
+    }
+
     /// Reports a failed generator-side operation the way upstream's
     /// `rsyserr(FERROR_XFER, errno, ...)` does: `rsync: [generator] <what>:
     /// <strerror> (<errno>)`, routed and counted by

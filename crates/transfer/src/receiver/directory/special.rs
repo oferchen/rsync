@@ -109,11 +109,19 @@ impl ReceiverContext {
             return Ok(());
         }
 
+        let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         let start = range.start;
         for (i, entry) in self.file_list[range].iter().enumerate() {
             let flist_idx = start + i;
             let is_device = entry.is_device();
             let is_special = entry.is_special();
+            // upstream: generator.c:1662-1676 - the daemon filter is checked
+            // before the existence gate and the device/special branch.
+            if (is_device || is_special)
+                && self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry)
+            {
+                continue;
+            }
             // upstream: generator.c:1757-1806 - the existence gate precedes
             // both the device/special branch and the non-regular skip.
             if (is_device || is_special)
