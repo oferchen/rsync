@@ -144,13 +144,8 @@ impl ReceiverContext {
         entry: &protocol::flist::FileEntry,
         dir_path: &std::path::Path,
     ) -> u32 {
-        match std::fs::metadata(dir_path) {
-            Ok(meta) => self.itemize_existing_flags(
-                entry,
-                dir_path,
-                Some(&fast_io::EntryMetadata::from(meta.clone())),
-                0,
-            ),
+        match fast_io::destination_at::metadata(dir_path) {
+            Ok(meta) => self.itemize_existing_flags(entry, dir_path, Some(&meta), 0),
             // Not `None`: a failed stat is upstream's benign "no change"
             // outcome here, not the `statret < 0` ITEM_IS_NEW leg.
             Err(_) => 0,
