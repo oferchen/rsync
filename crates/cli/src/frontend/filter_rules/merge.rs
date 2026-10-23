@@ -123,6 +123,15 @@ pub(crate) fn apply_merge_directive(
     // argument-named file keeps its own name, because the operator typed it.
     let named_at = source.describe().map(std::borrow::Cow::into_owned);
 
+    // upstream: exclude.c:1558-1572 parse_filter_str() - `e` adds an exclude of
+    // the merge file's BASENAME, with none of the merge rule's modifiers, to
+    // the list BEFORE the file is parsed, so the merged rules come after it.
+    if options.excludes_self() {
+        destination.push(FilterRuleSpec::exclude(
+            filters::merge_file_basename(&original_source_text).to_owned(),
+        ));
+    }
+
     let mut local: Vec<FilterRuleSpec> = Vec::new();
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
@@ -151,11 +160,6 @@ pub(crate) fn apply_merge_directive(
     visited.pop();
     if result.is_ok() {
         destination.extend(local);
-        if options.excludes_self() && !is_stdin {
-            let mut rule = FilterRuleSpec::exclude(original_source_text);
-            rule.apply_dir_merge_overrides(&options);
-            destination.push(rule);
-        }
     }
     result
 }
@@ -170,8 +174,7 @@ fn parse_merge_contents(
     visited: &mut Vec<PathBuf>,
 ) -> Result<(), Message> {
     if options.uses_whitespace() {
-        let mut tokens = contents.split_whitespace();
-        while let Some(token) = tokens.next() {
+        for token in contents.split_whitespace() {
             if token.is_empty() {
                 continue;
             }
@@ -199,29 +202,14 @@ fn parse_merge_contents(
                 continue;
             }
 
-            let lower = token.to_ascii_lowercase();
-            let directive = if merge_directive_requires_argument(&lower) {
-                let Some(arg) = tokens.next() else {
-                    let message = rsync_error!(
-                        1,
-                        format!(
-                            "filter merge directive '{}' in '{}' is missing a pattern",
-                            token, display
-                        )
-                    )
-                    .with_role(Role::Client);
-                    return Err(message);
-                };
-                format!("{token} {arg}")
-            } else {
-                token.to_owned()
-            };
-
+            // upstream: exclude.c:1772 - a word-split file ends every rule at
+            // whitespace, so `exclude foo` is a bare `exclude` (an unexpected
+            // end of filter rule) followed by `foo`.
             // upstream: rule_src_line = word_split ? -1 : 0 (exclude.c:1754) -
             // a word-split merge file yields tokens, not lines, so there is no
             // line number to report and rule_src_where returns the name alone.
             process_merge_directive(
-                &directive,
+                token,
                 options,
                 base_dir,
                 display,
@@ -374,18 +362,10 @@ pub(crate) fn process_merge_directive(
         // A blank line inside a merge file contributes no rule.
         Ok(FilterDirective::Noop) => {}
         // upstream: exclude.c:1595-1597 a non-merge FILTRULE_CVS_IGNORE rule
-        // (`-C`) inside a merge file expands to the global CVS defaults at this
+        // (`-C`) inside a merge file expands to the global CVS list at this
         // position in the chain.
-        Ok(FilterDirective::CvsDefaults) => {
-            let rules = cvs_default_exclude_rules().map_err(|error| {
-                let detail = error.to_string();
-                rsync_error!(
-                    1,
-                    format!("failed to process merge file '{display}': {detail}")
-                )
-                .with_role(Role::Client)
-            })?;
-            destination.extend(rules);
+        Ok(FilterDirective::CvsDefaults(template)) => {
+            destination.extend(cvs_default_exclude_rules(template));
         }
         Err(error) => {
             // upstream reports a syntax failure ONCE, from `filter_rule_err`
@@ -402,104 +382,4 @@ pub(crate) fn process_merge_directive(
     }
 
     Ok(())
-}
-
-fn merge_directive_requires_argument(keyword: &str) -> bool {
-    if keyword.contains('=') {
-        return false;
-    }
-
-    matches!(
-        keyword,
-        "include" | "exclude" | "show" | "hide" | "protect" | "risk" | "exclude-if-present"
-    ) || keyword.starts_with("merge")
-        || keyword.starts_with("dir-merge")
-        || keyword == "."
-        || keyword == ":"
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn requires_argument_include() {
-        assert!(merge_directive_requires_argument("include"));
-    }
-
-    #[test]
-    fn requires_argument_exclude() {
-        assert!(merge_directive_requires_argument("exclude"));
-    }
-
-    #[test]
-    fn requires_argument_show() {
-        assert!(merge_directive_requires_argument("show"));
-    }
-
-    #[test]
-    fn requires_argument_hide() {
-        assert!(merge_directive_requires_argument("hide"));
-    }
-
-    #[test]
-    fn requires_argument_protect() {
-        assert!(merge_directive_requires_argument("protect"));
-    }
-
-    #[test]
-    fn requires_argument_risk() {
-        assert!(merge_directive_requires_argument("risk"));
-    }
-
-    #[test]
-    fn requires_argument_exclude_if_present() {
-        assert!(merge_directive_requires_argument("exclude-if-present"));
-    }
-
-    #[test]
-    fn requires_argument_merge() {
-        assert!(merge_directive_requires_argument("merge"));
-    }
-
-    #[test]
-    fn requires_argument_merge_with_modifiers() {
-        assert!(merge_directive_requires_argument("merge,n"));
-        assert!(merge_directive_requires_argument("merge,e"));
-    }
-
-    #[test]
-    fn requires_argument_dir_merge() {
-        assert!(merge_directive_requires_argument("dir-merge"));
-    }
-
-    #[test]
-    fn requires_argument_dot() {
-        assert!(merge_directive_requires_argument("."));
-    }
-
-    #[test]
-    fn requires_argument_colon() {
-        assert!(merge_directive_requires_argument(":"));
-    }
-
-    #[test]
-    fn does_not_require_argument_with_equals() {
-        assert!(!merge_directive_requires_argument("include=*.txt"));
-        assert!(!merge_directive_requires_argument("exclude=*.log"));
-    }
-
-    #[test]
-    fn does_not_require_argument_for_unknown() {
-        assert!(!merge_directive_requires_argument("clear"));
-        assert!(!merge_directive_requires_argument("!"));
-        assert!(!merge_directive_requires_argument("unknown"));
-    }
-
-    #[test]
-    fn does_not_require_argument_for_shorthand() {
-        // Single-char shortcuts like + and - don't require separate arguments
-        assert!(!merge_directive_requires_argument("+"));
-        assert!(!merge_directive_requires_argument("-"));
-    }
 }

@@ -6,10 +6,11 @@
 
 use std::path::Path;
 
-use crate::FilterRule;
 use crate::RuleSource;
 use crate::clear_token::{ClearToken, classify_clear_token};
+use crate::cvs::CvsTemplate;
 use crate::rule_source::trace_add_rule;
+use crate::{FilterRule, ModifierScope, RuleModifiers, parse_rule_modifiers_in};
 
 use super::error::MergeFileError;
 
@@ -39,6 +40,16 @@ use super::error::MergeFileError;
 ///
 /// Returns [`MergeFileError`] if any line contains unrecognised syntax.
 pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
+    parse_rules_in(content, source_path, false)
+}
+
+/// [`parse_rules`] for a merge file whose own rule names a side (`:s`, `:r`),
+/// which refuses any rule in it that names one too.
+pub(crate) fn parse_rules_in(
+    content: &str,
+    source_path: &Path,
+    template_sided: bool,
+) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
 
     // `filter_file_records` is the single owner of the record split; see
@@ -53,17 +64,20 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
             continue;
         }
 
-        let rule = parse_rule_line(line, source_path, line_num)?;
         let name = source_path.display().to_string();
-        trace_add_rule(
-            rule.action,
-            &String::from_utf8_lossy(&rule.pattern),
-            &RuleSource::File {
-                name: &name,
-                line: line_num,
-            },
-        );
-        rules.push(rule);
+        let source = RuleSource::File {
+            name: &name,
+            line: line_num,
+        };
+        for rule in parse_rule_line(line, source_path, line_num)?.into_rules() {
+            refuse_side_in_sided_file(&rule, template_sided, line, &source, source_path, line_num)?;
+            trace_add_rule(
+                rule.action,
+                &String::from_utf8_lossy(&rule.pattern),
+                &source,
+            );
+            rules.push(rule);
+        }
     }
 
     Ok(rules)
@@ -156,113 +170,88 @@ pub(crate) fn parse_rules_no_prefixes(
 pub(crate) fn parse_rules_word_split(
     content: &str,
     source_path: &Path,
+    template_sided: bool,
 ) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
     let name = source_path.display().to_string();
     let source = RuleSource::FileWordSplit { name: &name };
     for token in content.split_whitespace() {
-        let rule = parse_rule_line(token, source_path, 0)?;
-        trace_add_rule(
-            rule.action,
-            &String::from_utf8_lossy(&rule.pattern),
-            &source,
-        );
-        rules.push(rule);
+        for rule in parse_rule_line(token, source_path, 0)?.into_rules() {
+            refuse_side_in_sided_file(&rule, template_sided, token, &source, source_path, 0)?;
+            trace_add_rule(
+                rule.action,
+                &String::from_utf8_lossy(&rule.pattern),
+                &source,
+            );
+            rules.push(rule);
+        }
     }
     Ok(rules)
 }
 
-/// Modifiers parsed from a rule prefix.
+/// Refuses a rule that names a side inside a merge file whose rule named one.
 ///
-/// These mirror upstream rsync's rule modifiers from `exclude.c` (lines 1365-1443).
-/// Modifiers appear between the action character and the pattern, e.g., `-!ps pattern`.
-///
-/// # Modifier Characters
-///
-/// | Char | Field | Description |
-/// |------|-------|-------------|
-/// | `!` | `negate` | Invert match result |
-/// | `p` | `perishable` | Can be overridden by include rules |
-/// | `s` | `sender_only` | Apply on sender side only |
-/// | `r` | `receiver_only` | Apply on receiver side only |
-/// | `x` | `xattr_only` | Match xattr names only |
-/// | `e` | `exclude_self` | Exclude the merge file's own name (merge rules only) |
-/// | `n` | `no_inherit` | Don't inherit rules into subdirectories (merge rules only) |
-/// | `w` | `word_split` | Split the merge file at whitespace (merge rules only) |
-/// | `C` | `cvs_mode` | Add CVS exclusion patterns |
-/// | `/` | `abs_path` | Anchor merged rules to the transfer root (merge rules only) |
-/// | `-` | `no_prefixes` | Merged lines are literal excludes (merge rules only) |
-/// | `+` | `no_prefixes`+`no_prefixes_include` | Merged lines are literal includes (merge rules only) |
-///
-/// upstream: exclude.c:1410-1414 - the `e` modifier maps to
-/// `FILTRULE_EXCLUDE_SELF` and is valid only on a merge-file rule
-/// (`FILTRULE_MERGE_FILE`); on any other rule upstream jumps to `invalid`.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct RuleModifiers {
-    pub(crate) negate: bool,
-    pub(crate) perishable: bool,
-    pub(crate) sender_only: bool,
-    pub(crate) receiver_only: bool,
-    pub(crate) xattr_only: bool,
-    pub(crate) exclude_self: bool,
-    pub(crate) no_inherit: bool,
-    pub(crate) word_split: bool,
-    pub(crate) cvs_mode: bool,
-    /// `/` modifier: FILTRULE_ABS_PATH (merge / dir-merge rules).
-    pub(crate) abs_path: bool,
-    /// `-` / `+` modifier: FILTRULE_NO_PREFIXES (merge / dir-merge rules).
-    pub(crate) no_prefixes: bool,
-    /// Set alongside [`Self::no_prefixes`] when the `+` variant is used.
-    pub(crate) no_prefixes_include: bool,
-}
-
-impl RuleModifiers {
-    /// Applies modifiers to a filter rule.
-    pub(crate) fn apply(self, rule: FilterRule) -> FilterRule {
-        // upstream: exclude.c:1402-1409 - the `C` modifier on a merge/dir-merge
-        // rule implicitly sets FILTRULE_NO_INHERIT (alongside NO_PREFIXES,
-        // WORD_SPLIT, CVS_IGNORE). Mirror that here so `:C .cvsignore` rules
-        // do not propagate into descendant directories.
-        let no_inherit = self.no_inherit || self.cvs_mode;
-        let mut rule = rule
-            .with_negate(self.negate)
-            .with_perishable(self.perishable)
-            .with_xattr_only(self.xattr_only)
-            .with_no_inherit(no_inherit)
-            .with_cvs_mode(self.cvs_mode)
-            .with_abs_path(self.abs_path)
-            .with_word_split(self.word_split)
-            .with_no_prefixes(self.no_prefixes, self.no_prefixes_include);
-
-        if self.sender_only && !self.receiver_only {
-            rule = rule.with_sides(true, false);
-        } else if self.receiver_only && !self.sender_only {
-            rule = rule.with_sides(false, true);
-        }
-
-        rule
+/// upstream: exclude.c:1447-1456 parse_rule_tok() - "The filter and template
+/// both specify side(s). This is dodgy (and won't work correctly if the
+/// template is a one-sided per-dir merge rule), so reject it." The refusal is a
+/// `filter_rule_err`, so the text goes through `rule_text` (exclude.c:133-137),
+/// and it precedes the inherit, so the template never overrides the rule's own
+/// side. oc spells "no side bit" as both sides applying.
+fn refuse_side_in_sided_file(
+    rule: &FilterRule,
+    template_sided: bool,
+    text: &str,
+    source: &RuleSource<'_>,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<(), MergeFileError> {
+    if !template_sided || (rule.applies_to_sender && rule.applies_to_receiver) {
+        return Ok(());
     }
+    Err(MergeFileError::parse_error(
+        source_path,
+        line_num,
+        format!(
+            "specified-side merge file contains specified-side filter: {}",
+            source.rule_text(text)
+        ),
+    ))
 }
 
-/// Parses modifiers from a string following the action character.
+/// Applies a rule's modifier flags to the rule its prefix built.
 ///
-/// Returns the parsed modifiers and the remaining string (pattern). Modifiers
-/// are single characters that can appear in any order before the pattern.
+/// upstream: exclude.c:1402-1409 - `C` already set FILTRULE_NO_INHERIT in the
+/// table, so `:C .cvsignore` rules do not propagate into descendants.
+pub(crate) fn apply_modifiers(mods: RuleModifiers, rule: FilterRule) -> FilterRule {
+    let mut rule = rule
+        .with_negate(mods.negate)
+        .with_perishable(mods.perishable)
+        .with_xattr_only(mods.xattr)
+        .with_no_inherit(mods.no_inherit)
+        .with_cvs_mode(mods.cvs_ignore)
+        .with_abs_path(mods.abs_path)
+        .with_word_split(mods.word_split)
+        .with_no_prefixes(mods.no_prefixes, mods.no_prefixes_include);
+    if mods.sender_side != mods.receiver_side {
+        rule = rule.with_sides(mods.sender_side, mods.receiver_side);
+    }
+    rule
+}
+
+/// Splits the text after a rule prefix into its modifier run and the pattern,
+/// validating the run against the shared modifier table.
 ///
-/// `is_merge` indicates whether the rule is a merge / dir-merge rule
-/// (`FILTRULE_MERGE_FILE`), which gates the `e`, `n`, `w`, `/`, `-`, and `+`
-/// modifiers. `prefix_specifies_side` indicates the rule prefix already binds a
-/// side (H/S/P/R), which gates the `s` and `r` modifiers. `full_line` and
-/// `line_num`/`source_path` are used only for error messages.
+/// The run ends at the first ` ` or `_`, and exactly one separator is consumed
+/// (exclude.c:1365, 1444-1445); the pattern is then the rest verbatim, as its
+/// length is `strlen` (:1465). With no separator the whole text is modifiers,
+/// so `+foo` is refused on its `f` rather than read as a pattern.
 ///
-/// Modifiers are validated left-to-right in a single pass, so the first invalid
-/// modifier is the one reported - matching upstream's single `switch` loop.
+/// `full_line` and `line_num`/`source_path` are used only for error messages.
 ///
-/// Any character that is not a recognised modifier is a syntax error, matching
-/// upstream's `invalid:` label rather than silently treating it as the start of
-/// the pattern.
+/// # Errors
 ///
-/// upstream: exclude.c:1365-1443 - the modifier loop and its `invalid:` label.
+/// Returns the refusal upstream's `invalid:` label prints (exclude.c:1371-1380)
+/// for the first byte [`parse_rule_modifiers`] rejects.
 pub(crate) fn parse_modifiers<'a>(
     s: &'a str,
     is_merge: bool,
@@ -271,119 +260,28 @@ pub(crate) fn parse_modifiers<'a>(
     source_path: &Path,
     line_num: usize,
 ) -> Result<(RuleModifiers, &'a str), MergeFileError> {
-    let mut mods = RuleModifiers::default();
-
-    for (idx, ch) in s.char_indices() {
-        match ch {
-            '!' => {
-                // upstream: exclude.c:1395-1401 - negation is meaningless as a
-                // merge-file default, so `!` on a merge rule is invalid.
-                if is_merge {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.negate = true;
-            }
-            'p' => mods.perishable = true,
-            // upstream: exclude.c:1423-1432 - `s`/`r` are invalid when the rule
-            // prefix already binds a side (H/S sender, P/R receiver), i.e.
-            // `prefix_specifies_side`.
-            's' => {
-                if prefix_specifies_side {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.sender_only = true;
-            }
-            'r' => {
-                if prefix_specifies_side {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.receiver_only = true;
-            }
-            'x' => mods.xattr_only = true,
-            // upstream: exclude.c:1410-1414 - `e` (FILTRULE_EXCLUDE_SELF) is
-            // valid only on a merge-file rule; on any other rule upstream
-            // jumps to `invalid`.
-            'e' => {
-                if !is_merge {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.exclude_self = true;
-            }
-            // upstream: exclude.c:1415-1419 - `n` (FILTRULE_NO_INHERIT) is
-            // valid only on a merge-file rule; on any other rule upstream
-            // jumps to `invalid`.
-            'n' => {
-                if !is_merge {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.no_inherit = true;
-            }
-            // upstream: exclude.c:1433-1437 - `w` (FILTRULE_WORD_SPLIT) is
-            // valid only on a merge-file rule; on any other rule upstream
-            // jumps to `invalid`.
-            'w' => {
-                if !is_merge {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.word_split = true;
-            }
-            // upstream: exclude.c:parse_rule_tok - `C` is invalid when the rule
-            // already set FILTRULE_NO_PREFIXES (a preceding `-`/`+`) or the
-            // prefix binds a side (H/S/P/R), i.e. `prefix_specifies_side`.
-            'C' => {
-                if mods.no_prefixes || prefix_specifies_side {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.cvs_mode = true;
-            }
-            // upstream: exclude.c:1392-1394 - `/` sets FILTRULE_ABS_PATH.
-            '/' => mods.abs_path = true,
-            // upstream: exclude.c:1381-1391 - `-`/`+` set FILTRULE_NO_PREFIXES
-            // and are valid only on a merge-file rule that has not already set
-            // the flag; `+` additionally sets FILTRULE_INCLUDE.
-            '-' => {
-                if !is_merge || mods.no_prefixes {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.no_prefixes = true;
-            }
-            '+' => {
-                if !is_merge || mods.no_prefixes {
-                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-                }
-                mods.no_prefixes = true;
-                mods.no_prefixes_include = true;
-            }
-            ' ' | '_' => {
-                // upstream: exclude.c:1444-1445 - after the modifier loop stops
-                // at the first separator, exactly one separator is consumed
-                // (`if (*s) s++`). The pattern length is then strlen (line 1465),
-                // so any further leading/trailing whitespace stays in the
-                // pattern verbatim. Do not trim the remainder.
-                let remainder = &s[idx + ch.len_utf8()..];
-                return Ok((mods, remainder));
-            }
-            _ => {
-                return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
-            }
-        }
-    }
-
-    Ok((mods, ""))
+    let (run, pattern) = match s.find([' ', '_']) {
+        Some(idx) => (&s[..idx], &s[idx + 1..]),
+        None => (s, ""),
+    };
+    let scope = ModifierScope {
+        merge_file: is_merge,
+        prefix_specifies_side,
+    };
+    let mods = parse_rule_modifiers_in(full_line, run, scope).map_err(|invalid| {
+        invalid_modifier(invalid.ch, invalid.offset, full_line, source_path, line_num)
+    })?;
+    Ok((mods, pattern))
 }
 
-/// Builds the upstream `invalid modifier` parse error.
-///
-/// `idx` is the byte offset of the offending character within the modifier
-/// string (the text after the action character). Upstream reports the position
-/// relative to the whole rule string, where the action character is position 0,
-/// so the reported position is `idx + 1`.
+/// Builds the upstream `invalid modifier` parse error for the byte at
+/// `position` within `full_line`.
 ///
 /// upstream: exclude.c:1372-1380 - `rprintf(FERROR, "invalid modifier '%c' at
 /// position %d in filter rule: %s\n", *s, (int)(s - *rulestr_ptr), *rulestr_ptr)`.
 fn invalid_modifier(
     ch: char,
-    idx: usize,
+    position: usize,
     full_line: &str,
     source_path: &Path,
     line_num: usize,
@@ -399,7 +297,7 @@ fn invalid_modifier(
         name: &name,
         line: line_num,
     };
-    let detail = format!(" '{ch}' at position {}", idx + 1);
+    let detail = format!(" '{ch}' at position {position}");
     MergeFileError::parse_error(
         source_path,
         line_num,
@@ -409,6 +307,61 @@ fn invalid_modifier(
             source.rule_text(full_line)
         ),
     )
+}
+
+/// What one rule of a merge file parses to.
+pub(crate) enum ParsedLine {
+    /// An ordinary rule.
+    Rule(FilterRule),
+    /// A merge rule with the `e` modifier, preceded by the exclude of its own
+    /// basename.
+    SelfExcludingMerge {
+        /// The `- <basename>` exclude.
+        exclude: FilterRule,
+        /// The merge or dir-merge rule itself.
+        merge: FilterRule,
+    },
+    /// A non-merge `C` rule, which stands for the CVS ignore list.
+    CvsIgnore(CvsTemplate),
+}
+
+impl ParsedLine {
+    /// The rules this line contributes, in order.
+    ///
+    /// upstream: exclude.c:1201-1206 check_filter() evaluates `cvs_filter_list`
+    /// in a `C` rule's place and never matches its own pattern, so expanding
+    /// the list here is the same first-match order. The built-in defaults are
+    /// marked perishable, as every protocol oc speaks at >= 30 does
+    /// (exclude.c:1498-1500).
+    pub(crate) fn into_rules(self) -> Vec<FilterRule> {
+        match self {
+            Self::Rule(rule) => vec![rule],
+            Self::SelfExcludingMerge { exclude, merge } => vec![exclude, merge],
+            Self::CvsIgnore(template) => crate::cvs::cvs_ignore_rules(template, true),
+        }
+    }
+}
+
+/// Builds what a rule with `action`, modifiers `mods` and `pattern` parses to.
+///
+/// upstream: exclude.c:1474 lets a `C` rule have no pattern and
+/// exclude.c:1595-1597 hands its flags to get_cvs_excludes(); a merge `C`
+/// instead names the per-directory `.cvsignore` and stays a merge rule.
+fn parsed_rule(action: ShortFormAction, mods: RuleModifiers, pattern: &str) -> ParsedLine {
+    if mods.cvs_ignore && !action.is_merge() {
+        return ParsedLine::CvsIgnore(CvsTemplate::new(action.is_include(), &mods));
+    }
+    let rule = apply_modifiers(mods, action.to_rule(pattern));
+    // upstream: exclude.c:1558-1572 - `e` adds an exclude of the merge file's
+    // basename, carrying none of the merge rule's modifiers, ahead of the
+    // merge rule itself.
+    if mods.exclude_self {
+        return ParsedLine::SelfExcludingMerge {
+            exclude: FilterRule::exclude(crate::merge_file_basename(pattern)),
+            merge: rule,
+        };
+    }
+    ParsedLine::Rule(rule)
 }
 
 /// Short-form rule action types.
@@ -446,6 +399,11 @@ impl ShortFormAction {
     const fn is_merge(self) -> bool {
         matches!(self, Self::Merge | Self::DirMerge)
     }
+
+    /// Whether the prefix sets FILTRULE_INCLUDE (`+` and its long name).
+    const fn is_include(self) -> bool {
+        matches!(self, Self::Include)
+    }
 }
 
 /// Tries to parse a short-form rule (single character prefix like `+`, `-`, `P`).
@@ -459,7 +417,7 @@ fn try_parse_short_form(
     line: &str,
     source_path: &Path,
     line_num: usize,
-) -> Result<Option<FilterRule>, MergeFileError> {
+) -> Result<Option<ParsedLine>, MergeFileError> {
     let (rest, action, prefix_char) = if let Some(r) = line.strip_prefix('+') {
         (r, ShortFormAction::Include, '+')
     } else if let Some(r) = line.strip_prefix('-') {
@@ -499,25 +457,47 @@ fn try_parse_short_form(
         source_path,
         line_num,
     )?;
-    if pattern.is_empty() {
-        // upstream: exclude.c:1554-1557 - a merge / dir-merge rule with the
-        // `C` (CVS-ignore) modifier and an empty pattern defaults to the
-        // filename `.cvsignore`. Without `C`, an empty pattern remains
-        // unrecognised here and falls through to long-form parsing.
-        if mods.cvs_mode && matches!(action, ShortFormAction::Merge | ShortFormAction::DirMerge) {
-            let rule = action.to_rule(".cvsignore");
-            return Ok(Some(mods.apply(rule)));
-        }
-        return Ok(None);
-    }
-
     // upstream: exclude.c:1365-1443 `parse_rule_tok` applies the parsed modifiers
     // to every rule prefix, including a plain merge (`.`): the merge-file
     // modifiers are gated on `FILTRULE_MERGE_FILE`, which `.` sets (exclude.c:1337-1338)
     // just as `:` does. Dropping them for `.` silently ignored `C`, `w`, `n`, `e`,
     // side restrictions and anchoring on plain merges.
-    let rule = action.to_rule(pattern);
-    Ok(Some(mods.apply(rule)))
+    complete_rule(action, mods, pattern, line, source_path, line_num).map(Some)
+}
+
+/// Finishes a rule once its prefix, modifiers and pattern are split, the same
+/// way for every spelling of the prefix.
+///
+/// upstream: exclude.c:1474-1476 parse_rule_tok() - an empty pattern is
+/// "unexpected end of filter rule" unless the rule has `C`, so a bare `-` or
+/// `exclude` is refused; exclude.c:1553-1557 parse_filter_str() then names a
+/// `C` merge rule's missing file `.cvsignore`, for `:C` and `dir-merge,C` alike.
+fn complete_rule(
+    action: ShortFormAction,
+    mods: RuleModifiers,
+    pattern: &str,
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<ParsedLine, MergeFileError> {
+    if pattern.is_empty() && !mods.cvs_ignore {
+        let name = source_path.display().to_string();
+        let source = RuleSource::File {
+            name: &name,
+            line: line_num,
+        };
+        return Err(MergeFileError::parse_error(
+            source_path,
+            line_num,
+            format!("unexpected end of filter rule: {}", source.rule_text(line)),
+        ));
+    }
+    let pattern = if pattern.is_empty() && action.is_merge() {
+        ".cvsignore"
+    } else {
+        pattern
+    };
+    Ok(parsed_rule(action, mods, pattern))
 }
 
 /// Returns true for the characters upstream `isspace()` treats as whitespace in
@@ -544,7 +524,7 @@ fn try_parse_long_form(
     line: &str,
     source_path: &Path,
     line_num: usize,
-) -> Result<Option<FilterRule>, MergeFileError> {
+) -> Result<Option<ParsedLine>, MergeFileError> {
     const KEYWORDS: &[(&str, ShortFormAction)] = &[
         ("include", ShortFormAction::Include),
         ("exclude", ShortFormAction::Exclude),
@@ -585,8 +565,7 @@ fn try_parse_long_form(
                     source_path,
                     line_num,
                 )?;
-                let rule = action.to_rule(pattern);
-                return Ok(Some(mods.apply(rule)));
+                return complete_rule(action, mods, pattern, line, source_path, line_num).map(Some);
             }
             // upstream: rule_strcmp accepts isspace/`_` as terminating
             // separators; exactly one is consumed and the remainder is the
@@ -594,11 +573,29 @@ fn try_parse_long_form(
             // whitespace stays part of the pattern.
             Some(ch) if ch == '_' || is_c_isspace(ch) => {
                 let pattern = &after[ch.len_utf8()..];
-                return Ok(Some(action.to_rule(pattern)));
+                return complete_rule(
+                    action,
+                    RuleModifiers::default(),
+                    pattern,
+                    line,
+                    source_path,
+                    line_num,
+                )
+                .map(Some);
             }
             // upstream: rule_strcmp accepts end-of-string (`!str[rule_len]`); the
             // keyword stands alone and the pattern is empty.
-            None => return Ok(Some(action.to_rule(""))),
+            None => {
+                return complete_rule(
+                    action,
+                    RuleModifiers::default(),
+                    "",
+                    line,
+                    source_path,
+                    line_num,
+                )
+                .map(Some);
+            }
             // Any other trailing byte means this is not the keyword (e.g.
             // `excludes`); fall through to the next candidate.
             Some(_) => continue,
@@ -617,14 +614,14 @@ fn parse_rule_line(
     line: &str,
     source_path: &Path,
     line_num: usize,
-) -> Result<FilterRule, MergeFileError> {
+) -> Result<ParsedLine, MergeFileError> {
     // upstream: exclude.c parse_rule_tok() - the bare `!` and the `clear` long
     // name are the two spellings of FILTRULE_CLEAR_LIST, and each leaves one
     // character for `if (*s) s++`, so anything left over (a lone trailing space
     // included) is a trailing-characters error. `RULE_STRCMP` is a
     // case-sensitive strncmp, so `CLEAR`/`Clear` are not the directive.
     match classify_clear_token(line.as_bytes()) {
-        ClearToken::Clear => return Ok(FilterRule::clear()),
+        ClearToken::Clear => return Ok(ParsedLine::Rule(FilterRule::clear())),
         ClearToken::TrailingCharacters => {
             // upstream: exclude.c:1470 filter_rule_err, which renders the rule
             // through rule_text (exclude.c:135).

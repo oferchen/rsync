@@ -1,5 +1,5 @@
 //! `FilterProgram` aggregate: ordered filter instructions plus per-directory
-//! merge and exclude-if-present rules, along with the upstream-mapped exit
+//! merge rules, along with the upstream-mapped exit
 //! code constants surfaced when filter evaluation aborts a transfer.
 
 use std::path::Path;
@@ -11,8 +11,7 @@ use filters::{FilterAction, XattrSide};
 use globset::{GlobBuilder, GlobMatcher};
 use thiserror::Error;
 
-use super::super::LocalCopyError;
-use super::rules::{DirMergeRule, ExcludeIfPresentRule};
+use super::rules::DirMergeRule;
 use super::segments::{FilterContext, FilterInstruction, FilterOutcome, FilterSegment};
 
 /// Exit code returned when operand validation fails.
@@ -62,7 +61,6 @@ pub(crate) const MAX_DELETE_EXIT_CODE: i32 = 25;
 pub struct FilterProgram {
     instructions: Vec<FilterInstruction>,
     dir_merge_rules: Vec<DirMergeRule>,
-    exclude_if_present_rules: Vec<ExcludeIfPresentRule>,
 
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     xattr_rules: Vec<XattrRule>,
@@ -76,7 +74,6 @@ impl FilterProgram {
     {
         let mut instructions = Vec::new();
         let mut dir_merge_rules = Vec::new();
-        let mut exclude_if_present_rules = Vec::new();
         let mut current_segment = FilterSegment::default();
 
         #[cfg(all(any(unix, windows), feature = "xattr"))]
@@ -116,7 +113,6 @@ impl FilterProgram {
                     current_segment = FilterSegment::default();
                     instructions.clear();
                     dir_merge_rules.clear();
-                    exclude_if_present_rules.clear();
                     #[cfg(all(any(unix, windows), feature = "xattr"))]
                     {
                         xattr_rules.clear();
@@ -155,15 +151,6 @@ impl FilterProgram {
                     dir_merge_rules.push(rule);
                     instructions.push(FilterInstruction::DirMerge { index });
                 }
-                FilterProgramEntry::ExcludeIfPresent(rule) => {
-                    if !current_segment.is_empty() || instructions.is_empty() {
-                        instructions.push(FilterInstruction::Segment(current_segment));
-                        current_segment = FilterSegment::default();
-                    }
-                    let index = exclude_if_present_rules.len();
-                    exclude_if_present_rules.push(rule);
-                    instructions.push(FilterInstruction::ExcludeIfPresent { index });
-                }
             }
         }
 
@@ -174,7 +161,6 @@ impl FilterProgram {
         Ok(Self {
             instructions,
             dir_merge_rules,
-            exclude_if_present_rules,
             #[cfg(all(any(unix, windows), feature = "xattr"))]
             xattr_rules,
         })
@@ -189,14 +175,13 @@ impl FilterProgram {
     /// Reports whether the program contains no rules.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        let filters_empty =
-            self.instructions
-                .iter()
-                .all(|instruction| match instruction {
-                    FilterInstruction::Segment(segment) => segment.is_empty(),
-                    FilterInstruction::DirMerge { .. }
-                    | FilterInstruction::ExcludeIfPresent { .. } => false,
-                });
+        let filters_empty = self
+            .instructions
+            .iter()
+            .all(|instruction| match instruction {
+                FilterInstruction::Segment(segment) => segment.is_empty(),
+                FilterInstruction::DirMerge { .. } => false,
+            });
 
         #[cfg(all(any(unix, windows), feature = "xattr"))]
         {
@@ -244,7 +229,6 @@ impl FilterProgram {
                         }
                     }
                 }
-                FilterInstruction::ExcludeIfPresent { .. } => {}
             }
         }
 
@@ -292,35 +276,9 @@ impl FilterProgram {
                         }
                     }
                 }
-                FilterInstruction::ExcludeIfPresent { .. } => {}
             }
         }
         false
-    }
-
-    pub(crate) fn should_exclude_directory(
-        &self,
-        directory: &Path,
-    ) -> Result<bool, LocalCopyError> {
-        for instruction in &self.instructions {
-            if let FilterInstruction::ExcludeIfPresent { index } = instruction {
-                let rule = &self.exclude_if_present_rules[*index];
-                match rule.marker_exists(directory) {
-                    Ok(true) => return Ok(true),
-                    Ok(false) => continue,
-                    Err(error) => {
-                        let path = rule.marker_path(directory);
-                        return Err(LocalCopyError::io(
-                            "inspect exclude-if-present marker",
-                            path,
-                            error,
-                        ));
-                    }
-                }
-            }
-        }
-
-        Ok(false)
     }
 
     #[cfg(all(any(unix, windows), feature = "xattr"))]
@@ -360,8 +318,6 @@ pub enum FilterProgramEntry {
     Clear,
     /// Per-directory merge directive.
     DirMerge(DirMergeRule),
-    /// Exclude a directory when the marker file is present.
-    ExcludeIfPresent(ExcludeIfPresentRule),
 }
 
 /// Error produced when compiling filter patterns into matchers fails.
@@ -514,13 +470,6 @@ mod tests {
         let path = Path::new("test.txt");
         let outcome = program.evaluate(path, false, &[], None, FilterContext::Transfer);
         assert!(outcome.allows_transfer());
-    }
-
-    #[test]
-    fn should_exclude_directory_returns_false_when_no_rules() {
-        let program = FilterProgram::new(std::iter::empty()).unwrap();
-        let result = program.should_exclude_directory(Path::new("/tmp"));
-        assert!(!result.unwrap());
     }
 
     #[test]

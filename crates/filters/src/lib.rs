@@ -124,6 +124,7 @@ mod merge_open;
 /// Upstream's `discarding over-long filter` refusal and its `MAXPATHLEN` bound.
 pub mod overlong;
 mod rule;
+pub mod rule_modifiers;
 pub mod rule_source;
 /// Traversal clamp for peer- and file-supplied names, mirroring
 /// `sanitize_path()`.
@@ -149,7 +150,10 @@ pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use clean_fname::collapse_dot_dot_dirs;
 pub use clear_token::{ClearToken, classify_clear_token};
 pub use compiled::XattrSide;
-pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
+pub use cvs::{
+    CvsIgnorePattern, CvsTemplate, DEFAULT_CVSIGNORE, cvs_ignore_list, cvs_ignore_rules,
+    default_patterns as cvs_default_patterns,
+};
 pub use error::FilterError;
 pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
 pub use merge::{
@@ -159,6 +163,9 @@ pub use merge::{
 };
 pub use overlong::{is_over_long, over_long_filter};
 pub use rule::FilterRule;
+pub use rule_modifiers::{
+    InvalidModifier, ModifierScope, RuleModifiers, parse_rule_modifiers, parse_rule_modifiers_in,
+};
 pub use rule_source::{OwnedRuleSource, RuleSource, trace_add_rule};
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
 pub use wildmatch::{iwildmatch, wildmatch};

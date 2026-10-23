@@ -119,7 +119,9 @@ fn push_filter_directive(
             )?;
         }
         FilterDirective::Clear => filter_rules.clear(),
-        FilterDirective::CvsDefaults => filter_rules.extend(cvs_default_exclude_rules()?),
+        FilterDirective::CvsDefaults(template) => {
+            filter_rules.extend(cvs_default_exclude_rules(template));
+        }
         // A blank rule contributes nothing (upstream parse_rule_tok returns NULL).
         FilterDirective::Noop => {}
     }
@@ -142,12 +144,32 @@ fn push_old_prefix_rule(
     // Likewise for a `--exclude`/`--include` value given on the command line.
     match parse_old_prefix_rule(&text, default_kind, RuleSource::Argument)? {
         FilterDirective::Rule(rule) => destination.push(rule),
-        FilterDirective::Clear => destination.push(FilterRuleSpec::clear()),
+        // upstream: exclude.c:1541-1551 parse_filter_str - a clear pops the
+        // list as it is parsed; no clear rule survives to be sent.
+        FilterDirective::Clear => destination.clear(),
         // A blank `--exclude`/`--include` value contributes nothing.
         FilterDirective::Noop => {}
-        FilterDirective::Merge(_) | FilterDirective::CvsDefaults => {
+        FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
             unreachable!("parse_old_prefix_rule only emits Rule, Clear, or Noop")
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// upstream: exclude.c:1541-1551 parse_filter_str - `--exclude=!` pops the
+    /// list while parsing, so no clear rule exists afterwards. A surviving one
+    /// would be sent to the peer, and a pre-29 peer cannot carry it at all.
+    #[test]
+    fn old_prefix_clear_empties_the_list_instead_of_adding_a_rule() {
+        let mut rules = Vec::new();
+        for value in ["*.tmp", "!", "keep"] {
+            push_old_prefix_rule(&mut rules, OsString::from(value), FilterRuleKind::Exclude)
+                .expect("rule parses");
+        }
+        assert_eq!(rules, [FilterRuleSpec::exclude("keep")]);
+    }
 }

@@ -1,9 +1,7 @@
-use super::parse::{
-    FilterParseError, ParsedFilterDirective, directive_takes_argument, parse_filter_directive_line,
-};
+use super::parse::{FilterParseError, ParsedFilterDirective, parse_filter_directive_line};
 use crate::local_copy::LocalCopyError;
 use crate::local_copy::filter_program::{
-    DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, ExcludeIfPresentRule, FilterProgramError,
+    DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, FilterProgramError,
 };
 use filters::{FilterRule, RuleSource};
 use std::fs;
@@ -197,11 +195,36 @@ pub(crate) fn dir_merge_file_present(
 /// ```
 ///
 /// The refusal sits ABOVE the inherit, so the conflicting side is never
-/// applied. oc spells "the rule has no side bit" as *both* sides applying, so
-/// any rule that is not both-sided has named one - `P`/`R` included, matching
-/// measured rsync 3.5.0 behaviour.
-pub(crate) fn dir_merge_side_conflict(rule: &FilterRule, options: &DirMergeOptions) -> bool {
-    options.specifies_side() && !(rule.applies_to_sender() && rule.applies_to_receiver())
+/// applied, and it covers every rule the file holds, merge rules included. oc
+/// spells "the rule has no side bit" as *both* sides applying, so any rule that
+/// is not both-sided has named one - `P`/`R` included, matching measured rsync
+/// 3.5.0 behaviour. A `C` rule's side lives on its template.
+fn directive_side_conflict(directive: &ParsedFilterDirective, options: &DirMergeOptions) -> bool {
+    options.specifies_side()
+        && match directive {
+            ParsedFilterDirective::Rule(rule) => {
+                !(rule.applies_to_sender() && rule.applies_to_receiver())
+            }
+            ParsedFilterDirective::CvsIgnore(template) => template.sides().is_some(),
+            ParsedFilterDirective::Merge {
+                options: Some(merge),
+                ..
+            }
+            | ParsedFilterDirective::DirMerge { options: merge, .. } => merge.specifies_side(),
+            ParsedFilterDirective::Merge { options: None, .. } | ParsedFilterDirective::Clear => {
+                false
+            }
+        }
+}
+
+/// The side conflict as upstream reports it: a `filter_rule_err`, whose text
+/// goes through `rule_text` (exclude.c:133-137), so a file's line is never
+/// echoed.
+fn side_conflict_error(text: &str, source: RuleSource<'_>) -> FilterParseError {
+    FilterParseError::new(format!(
+        "specified-side merge file contains specified-side filter: {}",
+        source.rule_text(text)
+    ))
 }
 
 pub(crate) fn apply_dir_merge_rule_defaults(
@@ -282,14 +305,12 @@ pub(crate) struct NestedDirMerge {
     pub(crate) options: DirMergeOptions,
 }
 
-/// Accumulated rules and `exclude-if-present` markers loaded from a single
+/// Accumulated rules loaded from a single
 /// per-directory merge file (and any files it transitively merges).
 #[derive(Default)]
 pub(crate) struct DirMergeEntries {
     /// Filter rules parsed from the merge file, in source order.
     pub(crate) rules: Vec<FilterRule>,
-    /// `exclude-if-present` marker rules parsed from the merge file.
-    pub(crate) exclude_if_present: Vec<ExcludeIfPresentRule>,
     /// Nested `dir-merge`/`:` declarations to register as per-directory rules
     /// for subsequent subdirectory traversal.
     pub(crate) nested_dir_merges: Vec<NestedDirMerge>,
@@ -326,10 +347,6 @@ impl DirMergeEntries {
             .push(rule.with_source(filters::OwnedRuleSource::FileReadEarlier));
     }
 
-    fn push_exclude_if_present(&mut self, rule: ExcludeIfPresentRule) {
-        self.exclude_if_present.push(rule);
-    }
-
     fn push_nested_dir_merge(&mut self, nested: NestedDirMerge) {
         // upstream: exclude.c:1558-1571 - a `:e` directive synthesises an
         // exclude for the merge file's own BASENAME at REGISTRATION, into the
@@ -363,13 +380,10 @@ impl DirMergeEntries {
     fn extend(&mut self, mut other: DirMergeEntries) {
         if other.clear_inherited {
             self.rules.clear();
-            self.exclude_if_present.clear();
             self.nested_dir_merges.clear();
             self.clear_inherited = true;
         }
         self.rules.append(&mut other.rules);
-        self.exclude_if_present
-            .append(&mut other.exclude_if_present);
         self.nested_dir_merges.append(&mut other.nested_dir_merges);
     }
 }
@@ -461,8 +475,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     match options.parser() {
         DirMergeParser::Whitespace { enforce_kind } => {
             let enforce_kind = *enforce_kind;
-            let mut iter = contents.split_whitespace();
-            while let Some(token) = iter.next() {
+            for token in contents.split_whitespace() {
                 if token.is_empty() {
                     continue;
                 }
@@ -470,7 +483,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                 if token == "!" || token == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.clear_inherited = true;
                         continue;
                     }
@@ -492,33 +504,33 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                let mut directive = token.to_owned();
-                if directive_takes_argument(token)
-                    && let Some(next) = iter.next()
-                {
-                    directive.push(' ');
-                    directive.push_str(next);
-                }
-
-                match parse_filter_directive_line(&directive, origin.rule_source(&src_name, None)) {
+                // upstream: exclude.c:1772 - a word-split file ends every rule
+                // at whitespace, so `exclude foo` is a bare `exclude` (an
+                // unexpected end of filter rule) followed by `foo`.
+                let directive = token;
+                let source = origin.rule_source(&src_name, None);
+                match parse_filter_directive_line(directive, source) {
+                    Ok(Some(parsed)) if directive_side_conflict(&parsed, options) => {
+                        return Err(map_error(side_conflict_error(directive, source)));
+                    }
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        if dir_merge_side_conflict(&rule, options) {
-                            return Err(map_error(FilterParseError::new(format!(
-                                "specified-side merge file contains specified-side filter: {directive}"
-                            ))));
-                        }
                         entries.push_rule(apply_dir_merge_rule_defaults(
                             rule,
                             options,
                             delete_excluded,
                         ));
                     }
-                    Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
-                        entries.push_exclude_if_present(rule);
+                    Ok(Some(ParsedFilterDirective::CvsIgnore(template))) => {
+                        for rule in filters::cvs_ignore_rules(template, true) {
+                            entries.push_rule(apply_dir_merge_rule_defaults(
+                                rule,
+                                options,
+                                delete_excluded,
+                            ));
+                        }
                     }
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.nested_dir_merges.clear();
                         entries.clear_inherited = true;
                     }
@@ -526,6 +538,16 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         path: merge_path,
                         options: merge_options,
                     })) => {
+                        // upstream: exclude.c:1558-1572 - `e` excludes the merge
+                        // file's basename ahead of the rules it merges.
+                        if merge_options
+                            .as_ref()
+                            .is_some_and(DirMergeOptions::excludes_self)
+                        {
+                            entries.push_rule(FilterRule::exclude(filters::merge_file_basename(
+                                &merge_path.to_string_lossy(),
+                            )));
+                        }
                         let nested = if merge_path.is_absolute() {
                             merge_path
                         } else {
@@ -603,7 +625,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
                 if line == "!" || line == "clear" {
                     if options.list_clear_allowed() {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.clear_inherited = true;
                         continue;
                     }
@@ -625,29 +646,32 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     continue;
                 }
 
-                match parse_filter_directive_line(
-                    line,
-                    origin.rule_source(&src_name, Some(line_number)),
-                ) {
+                let source = origin.rule_source(&src_name, Some(line_number));
+                match parse_filter_directive_line(line, source) {
+                    Ok(Some(parsed)) if directive_side_conflict(&parsed, options) => {
+                        return Err(map_error(side_conflict_error(line, source)));
+                    }
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        if dir_merge_side_conflict(&rule, options) {
-                            return Err(map_error(FilterParseError::new(format!(
-                                "specified-side merge file contains specified-side filter: {line}"
-                            ))));
-                        }
                         entries.push_rule(apply_dir_merge_rule_defaults(
                             rule,
                             options,
                             delete_excluded,
                         ));
                     }
-                    Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
-                        entries.push_exclude_if_present(rule);
-                    }
                     Ok(Some(ParsedFilterDirective::Merge {
                         path: merge_path,
                         options: merge_options,
                     })) => {
+                        // upstream: exclude.c:1558-1572 - `e` excludes the merge
+                        // file's basename ahead of the rules it merges.
+                        if merge_options
+                            .as_ref()
+                            .is_some_and(DirMergeOptions::excludes_self)
+                        {
+                            entries.push_rule(FilterRule::exclude(filters::merge_file_basename(
+                                &merge_path.to_string_lossy(),
+                            )));
+                        }
                         let nested = if merge_path.is_absolute() {
                             merge_path
                         } else {
@@ -693,9 +717,17 @@ pub(crate) fn load_dir_merge_rules_recursive(
                             options: merge_options,
                         });
                     }
+                    Ok(Some(ParsedFilterDirective::CvsIgnore(template))) => {
+                        for rule in filters::cvs_ignore_rules(template, true) {
+                            entries.push_rule(apply_dir_merge_rule_defaults(
+                                rule,
+                                options,
+                                delete_excluded,
+                            ));
+                        }
+                    }
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
-                        entries.exclude_if_present.clear();
                         entries.nested_dir_merges.clear();
                         entries.clear_inherited = true;
                     }
@@ -900,7 +932,6 @@ mod tests {
     fn dir_merge_entries_default_is_empty() {
         let entries = DirMergeEntries::default();
         assert!(entries.rules.is_empty());
-        assert!(entries.exclude_if_present.is_empty());
     }
 
     #[test]
@@ -921,27 +952,16 @@ mod tests {
     }
 
     #[test]
-    fn dir_merge_entries_push_exclude_if_present() {
-        let mut entries = DirMergeEntries::default();
-        let rule = ExcludeIfPresentRule::new(".nobackup".to_owned());
-        entries.push_exclude_if_present(rule);
-        assert_eq!(entries.exclude_if_present.len(), 1);
-    }
-
-    #[test]
-    fn dir_merge_entries_extend_merges_both_vecs() {
+    fn dir_merge_entries_extend_appends_rules() {
         let mut entries1 = DirMergeEntries::default();
         entries1.push_rule(FilterRule::exclude("*.tmp".to_owned()));
-        entries1.push_exclude_if_present(ExcludeIfPresentRule::new(".skip".to_owned()));
 
         let mut entries2 = DirMergeEntries::default();
         entries2.push_rule(FilterRule::include("*.rs".to_owned()));
-        entries2.push_exclude_if_present(ExcludeIfPresentRule::new(".ignore".to_owned()));
 
         entries1.extend(entries2);
 
         assert_eq!(entries1.rules.len(), 2);
-        assert_eq!(entries1.exclude_if_present.len(), 2);
     }
 
     #[test]
@@ -978,7 +998,6 @@ mod tests {
         let mut parent_entries = DirMergeEntries::default();
         parent_entries.push_rule(FilterRule::exclude("*.tmp".to_owned()));
         parent_entries.push_rule(FilterRule::exclude("*.bak".to_owned()));
-        parent_entries.push_exclude_if_present(ExcludeIfPresentRule::new(".nobackup".to_owned()));
 
         let mut child_entries = DirMergeEntries {
             clear_inherited: true,
@@ -989,7 +1008,6 @@ mod tests {
         parent_entries.extend(child_entries);
 
         assert_eq!(parent_entries.rules.len(), 1);
-        assert_eq!(parent_entries.exclude_if_present.len(), 0);
         assert!(parent_entries.clear_inherited);
     }
 
