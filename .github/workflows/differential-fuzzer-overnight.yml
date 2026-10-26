@@ -92,7 +92,7 @@ jobs:
         run: tools/ci/ensure_apt_packages.sh $APT_PACKAGES
 
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: cargo-fuzz
 
