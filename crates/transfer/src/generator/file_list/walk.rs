@@ -193,7 +193,11 @@ impl GeneratorContext {
     ///   producing `scan_dirfd` for a daemon's scan.
     /// - `rsync-3.5.1/flist.c:2374` - the `opendir` failure diagnostic both call
     ///   sites report, unchanged by the anchoring.
-    fn scan_source_dir(&self, path: &Path) -> io::Result<fast_io::pinned_root::ReadDir> {
+    fn scan_source_dir(
+        &self,
+        path: &Path,
+        depth: usize,
+    ) -> io::Result<fast_io::pinned_root::ReadDir> {
         // upstream: flist.c:2262-2265 - a `--files-from` directory opens
         // through the ownership walk before any other arm is considered.
         #[cfg(unix)]
@@ -203,6 +207,7 @@ impl GeneratorContext {
         }
         #[cfg(unix)]
         if let Some(root) = self.confine_root() {
+            fast_io::walk_depth::check_secure_walk_depth(depth)?;
             return fast_io::pinned_root::read_dir_under(&root, path);
         }
         // upstream: flist.c:2265-2266 - outside a daemon the scan opens through
@@ -210,10 +215,13 @@ impl GeneratorContext {
         // flist.c:302-305 recorded it fails with ELOOP (flist.c:325-329). The
         // symlink-following modes keep the plain opendir (flist.c:2355-2361).
         let flags = &self.config.flags;
-        if !(flags.copy_links || flags.copy_unsafe_links || flags.copy_dirlinks)
-            && let Some(Err(error)) = self.source_roots.held_root(path)
-        {
-            return Err(error);
+        if !(flags.copy_links || flags.copy_unsafe_links || flags.copy_dirlinks) {
+            // upstream: flist.c:2356 secure_opendir() walks the name's every
+            // component, so the confined scan stops at the resolver's depth.
+            fast_io::walk_depth::check_secure_walk_depth(depth)?;
+            if let Some(Err(error)) = self.source_roots.held_root(path) {
+                return Err(error);
+            }
         }
         fast_io::pinned_root::read_dir(path)
     }
@@ -536,7 +544,12 @@ impl GeneratorContext {
                     }
                 }
                 WalkStep::ScanChildren { dir, opened } => {
-                    self.scan_children_onto(&dir, opened.map(|entries| *entries), stack)?;
+                    self.scan_children_onto(
+                        scope.base,
+                        &dir,
+                        opened.map(|entries| *entries),
+                        stack,
+                    )?;
                 }
                 WalkStep::LeaveDir(guard) => self.filter_chain.leave_directory(guard),
             }
@@ -638,6 +651,7 @@ impl GeneratorContext {
         // recursion goes through send_directory() with ALL_FILTERS (2)
         // (flist.c:2501-2508).
         let filter_level = if is_top_level { 0 } else { 2 };
+        let depth = name_depth(&relative);
         let mut entry = match self.create_entry(&path, relative, &metadata, filter_level) {
             Ok(e) => e,
             // upstream: xattrs.c:1253-1258 - a corrupt %stat ends the run.
@@ -671,7 +685,7 @@ impl GeneratorContext {
         let should_recurse =
             metadata.is_dir() && self.config.flags.recursive && scope.descends_into_subdirs();
         let dir_read = if should_recurse {
-            match self.scan_source_dir(&path) {
+            match self.scan_source_dir(&path, depth) {
                 Ok(entries) => Some(entries),
                 Err(e) => {
                     // upstream: flist.c:2374 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
@@ -834,13 +848,17 @@ impl GeneratorContext {
     /// - `flist.c:2374` - `rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)`
     fn scan_children_onto(
         &mut self,
+        base: &Path,
         dir_path: &Path,
         opened: Option<fast_io::pinned_root::ReadDir>,
         stack: &mut Vec<WalkStep>,
     ) -> io::Result<()> {
         let entries = match opened {
             Some(entries) => entries,
-            None => match self.scan_source_dir(dir_path) {
+            None => match self.scan_source_dir(
+                dir_path,
+                name_depth(dir_path.strip_prefix(base).unwrap_or(dir_path)),
+            ) {
                 Ok(entries) => entries,
                 Err(e) => {
                     // upstream: flist.c:2374 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
@@ -1504,4 +1522,16 @@ mod symsafe_emission_tests {
             "SYMSAFE emissions must be gated; got: {msgs:?}"
         );
     }
+}
+
+/// Directory levels below the sender's transfer base that `relative`, a
+/// file-list name, descends.
+///
+/// upstream counts from the directory the sender changed into, so the name
+/// as it goes on the wire is exactly the walk (`flist.c:2356`).
+fn name_depth(relative: &Path) -> usize {
+    relative
+        .components()
+        .filter(|component| matches!(component, std::path::Component::Normal(_)))
+        .count()
 }

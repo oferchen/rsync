@@ -191,6 +191,8 @@ pub mod source_roots;
 pub mod temp_file_strategy;
 /// Core traits for file I/O abstraction.
 pub mod traits;
+/// The depth ceiling of upstream's confined path resolver.
+pub mod walk_depth;
 /// SIMD-accelerated zero-byte detection for sparse file writing.
 pub mod zero_detect;
 
