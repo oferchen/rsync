@@ -106,12 +106,12 @@ fn delta_transfer_counts_block_sums_and_tokens() {
     t.begin_transfer();
     t.sum_head(SumHead::with_blocks(72, 700, 2, 300).unwrap());
     for block in 0..28 {
-        t.block_match(block);
+        t.block_match(block, None);
     }
     t.literal(400);
     t.literal(300);
     for block in 29..72 {
-        t.block_match(block);
+        t.block_match(block, None);
     }
     t.end_transfer();
     let (sent, received) = t.finish(None, [0; 5]);

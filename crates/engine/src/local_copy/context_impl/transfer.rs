@@ -958,6 +958,7 @@ impl<'a> CopyContext<'a> {
                 .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
 
             self.register_progress();
+            self.tally_whole_file_data(&buffer[..read]);
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
@@ -1086,6 +1087,7 @@ impl<'a> CopyContext<'a> {
             write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?;
 
             self.register_progress();
+            self.tally_whole_file_data(&buffer[..read]);
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {

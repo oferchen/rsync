@@ -42,7 +42,9 @@ use std::path::{Path, PathBuf};
 use protocol::codec::{NDX_DEL_STATS, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::flist::{FileEntry, FileListWriter, SubListPlan, compare_file_entries};
 use protocol::idlist::IdList;
-use protocol::wire::{SumHead, write_token_block_match, write_token_end, write_token_literal};
+use protocol::wire::{
+    CompressedTokenEncoder, SumHead, write_token_block_match, write_token_end, write_token_literal,
+};
 use protocol::{CompatibilityFlags, ProtocolVersion, write_varint};
 
 use crate::local_copy::LocalCopyOptions;
@@ -159,6 +161,46 @@ struct PendingTransfer {
     literal_run: u64,
 }
 
+/// The `-z` token encoder the sender would run, built from the session's
+/// compression choice.
+///
+/// upstream: token.c:send_token() dispatches to `send_deflated_token()`,
+/// `send_zstd_token()` or `send_compressed_token()` (lz4) by the negotiated
+/// `do_compression`.
+fn token_encoder(options: &LocalCopyOptions, protocol: ProtocolVersion) -> Option<CompressedTokenEncoder> {
+    use compress::algorithm::CompressionAlgorithm;
+
+    if !options.compress_enabled() {
+        return None;
+    }
+    match options.compression_algorithm() {
+        CompressionAlgorithm::Zlib => Some(CompressedTokenEncoder::new(
+            options.compression_level(),
+            u32::from(protocol.as_u8()),
+        )),
+        #[cfg(feature = "zstd")]
+        CompressionAlgorithm::Zstd => {
+            CompressedTokenEncoder::new_zstd(zstd_level(options.compression_level()), None).ok()
+        }
+        #[cfg(feature = "lz4")]
+        CompressionAlgorithm::Lz4 => Some(CompressedTokenEncoder::new_lz4()),
+    }
+}
+
+/// The zstd level a `CompressionLevel` stands for.
+#[cfg(feature = "zstd")]
+fn zstd_level(level: compress::zlib::CompressionLevel) -> i32 {
+    use compress::zlib::CompressionLevel;
+
+    match level {
+        CompressionLevel::None | CompressionLevel::Default => 0,
+        CompressionLevel::Fast => 1,
+        CompressionLevel::Best => 19,
+        CompressionLevel::Precise(v) => i32::from(v.get()),
+        CompressionLevel::PreciseSigned(v) => v,
+    }
+}
+
 impl PendingTransfer {
     /// Writes the pending literal run the way `simple_send_token()` does:
     /// chunks of at most `CHUNK_SIZE`, each behind a 4-byte length.
@@ -209,6 +251,8 @@ pub(crate) struct WireTally {
     delete_mode: bool,
     /// Whether the statistics wait for a late delete pass.
     late_delete: bool,
+    /// `-z`: the compressed token encoder literal data is fed through.
+    encoder: Option<CompressedTokenEncoder>,
 }
 
 /// Per-type deletion counts, in `write_del_stats()` order: regular files,
@@ -243,6 +287,7 @@ impl WireTally {
             // upstream: generator.c:127 EARLY_DELETE_DONE_MSG() is false for
             // `--delete-after` and `--delete-delay` (delete_during == 2).
             late_delete: options.delete_after_enabled() || options.delete_delay_enabled(),
+            encoder: token_encoder(options, totals.protocol()),
         }
     }
 
@@ -284,6 +329,9 @@ impl WireTally {
         let Some(entry) = self.entries.len().checked_sub(1) else {
             return;
         };
+        if let Some(encoder) = self.encoder.as_mut() {
+            encoder.reset();
+        }
         self.pending = Some(PendingTransfer {
             entry: entry as u32,
             head: SumHead::WHOLE_FILE,
@@ -299,27 +347,76 @@ impl WireTally {
         }
     }
 
+    /// Whether literal data must reach [`Self::literal_data`]: under `-z` the
+    /// token sizes depend on the bytes, not just their count.
+    pub(crate) const fn needs_literal_data(&self) -> bool {
+        self.encoder.is_some()
+    }
+
     /// Adds `len` literal bytes to the transfer's current literal run.
+    ///
+    /// Ignored under `-z`, where the bytes arrive through
+    /// [`Self::literal_data`].
     pub(crate) fn literal(&mut self, len: u64) {
+        if self.encoder.is_some() {
+            return;
+        }
         if let Some(pending) = self.pending.as_mut() {
             pending.literal_run += len;
         }
     }
 
+    /// Adds literal bytes, compressing them under `-z`.
+    pub(crate) fn literal_data(&mut self, data: &[u8]) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        match self.encoder.as_mut() {
+            Some(encoder) => encoder
+                .send_literal(&mut pending.tokens, data)
+                .expect("counting never fails"),
+            None => pending.literal_run += data.len() as u64,
+        }
+    }
+
     /// Adds a block-match token, closing the literal run before it.
-    pub(crate) fn block_match(&mut self, block_index: u32) {
-        if let Some(pending) = self.pending.as_mut() {
-            pending.flush_literal_run();
-            write_token_block_match(&mut pending.tokens, block_index)
-                .expect("counting never fails");
+    ///
+    /// `matched` is the block's content when the caller has it; under zlib
+    /// `-z` it primes the deflate history the way upstream's
+    /// `see_deflate_token()` does (token.c:475-510).
+    pub(crate) fn block_match(&mut self, block_index: u32, matched: Option<&[u8]>) {
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
+        match self.encoder.as_mut() {
+            Some(encoder) => {
+                encoder
+                    .send_block_match(&mut pending.tokens, block_index)
+                    .expect("counting never fails");
+                if let Some(data) = matched {
+                    encoder.see_token(data).expect("counting never fails");
+                }
+            }
+            None => {
+                pending.flush_literal_run();
+                write_token_block_match(&mut pending.tokens, block_index)
+                    .expect("counting never fails");
+            }
         }
     }
 
     /// Ends the transfer with its end token.
     pub(crate) fn end_transfer(&mut self) {
         if let Some(mut pending) = self.pending.take() {
-            pending.flush_literal_run();
-            write_token_end(&mut pending.tokens).expect("counting never fails");
+            match self.encoder.as_mut() {
+                Some(encoder) => encoder
+                    .finish(&mut pending.tokens)
+                    .expect("counting never fails"),
+                None => {
+                    pending.flush_literal_run();
+                    write_token_end(&mut pending.tokens).expect("counting never fails");
+                }
+            }
             self.exchanges.push((
                 pending.entry,
                 Exchange::Transfer {

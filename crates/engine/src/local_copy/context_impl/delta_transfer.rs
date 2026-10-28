@@ -960,7 +960,7 @@ impl<'a> CopyContext<'a> {
         let block_index = matched.descriptor().index() as u32;
         if self.batch_delta_buf.is_none() {
             if let Some(tally) = self.wire_tally.as_mut() {
-                tally.block_match(block_index);
+                tally.block_match(block_index, None);
             }
             return Ok(());
         }

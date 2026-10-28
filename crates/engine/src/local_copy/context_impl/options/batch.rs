@@ -199,7 +199,7 @@ impl<'a> CopyContext<'a> {
         path: &std::path::Path,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
         if let Some(tally) = self.wire_tally.as_mut() {
-            tally.literal(chunk.len() as u64);
+            tally.literal_data(chunk);
         }
         let Some(delta_file) = self.batch_delta_buf.as_mut() else {
             return Ok(());
@@ -232,7 +232,7 @@ impl<'a> CopyContext<'a> {
         path: &std::path::Path,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
         if let Some(tally) = self.wire_tally.as_mut() {
-            tally.block_match(block_index);
+            tally.block_match(block_index, Some(see_data));
         }
         let Some(delta_file) = self.batch_delta_buf.as_mut() else {
             return Ok(());

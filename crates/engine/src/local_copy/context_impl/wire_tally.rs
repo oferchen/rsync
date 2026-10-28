@@ -11,6 +11,16 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Feeds whole-file literal data to the wire model when `-z` makes its
+    /// token sizes depend on the bytes.
+    fn tally_whole_file_data(&mut self, data: &[u8]) {
+        if let Some(tally) = self.wire_tally.as_mut()
+            && tally.needs_literal_data()
+        {
+            tally.literal_data(data);
+        }
+    }
+
     /// Records the itemize-only exchange a completed action costs on the wire.
     ///
     /// upstream: generator.c:587-592 `itemize()` sends an NDX and iflags for
