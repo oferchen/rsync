@@ -75,6 +75,10 @@ fn total_line(binary: &Path, fixture: &Fixture, mode: Mode) -> String {
     let output = Command::new(binary)
         .arg("-rvv")
         .arg("--no-whole-file")
+        // A random seed makes the truncated strong sums collide on some runs
+        // only, and a collision adds a redo pass to the counters; a fixed seed
+        // makes every run the same transfer.
+        .arg("--checksum-seed=1")
         .args(fixture.args)
         .arg("-e")
         .arg(root.join("rsh"))
@@ -146,7 +150,7 @@ fn redo_after_strong_collisions() -> Fixture {
         name: "redo after strong-sum collisions",
         source: include_bytes!("fixtures/delta_total/redo_collision_source.bin").to_vec(),
         basis: include_bytes!("fixtures/delta_total/redo_collision_basis.bin").to_vec(),
-        args: &["--checksum-seed=1", "--checksum-choice=md5"],
+        args: &["--checksum-choice=md5"],
         modes: &[Mode::Push, Mode::Pull],
     }
 }
