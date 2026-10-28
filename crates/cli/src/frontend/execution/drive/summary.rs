@@ -420,12 +420,16 @@ where
         let program = stderr.brand().client_program_name();
         let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
     }
-    let message: &Message = error.message();
-    emit_message_with_fallback(
-        message,
-        "rsync error: client functionality is unavailable in this build (code 1)",
-        stderr,
-    );
+    // upstream: cleanup.c:221-226 - an exit the peer's MSG_ERROR_EXIT decided
+    // prints no trailer of its own.
+    if error.prints_trailer() {
+        let message: &Message = error.message();
+        emit_message_with_fallback(
+            message,
+            "rsync error: client functionality is unavailable in this build (code 1)",
+            stderr,
+        );
+    }
     // 430: latch the decided error code at the site that maps it, so a
     // second interrupt during unwinding cannot overwrite it with
     // RERR_SIGNAL (upstream: cleanup.c:113-117).

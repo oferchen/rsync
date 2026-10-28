@@ -264,20 +264,42 @@ pub fn fake_super_ids(
 // upstream: xattrs.c:1253-1258 get_stat_xattr()
 #[derive(Debug)]
 pub struct CorruptFakeSuperStat {
-    path: std::path::PathBuf,
+    /// The file as upstream's `full_fname()` renders it, quotes included.
+    name: String,
     value: String,
 }
 impl std::fmt::Display for CorruptFakeSuperStat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Corrupt {FAKE_SUPER_XATTR} xattr attached to \"{}\": \"{}\"",
-            self.path.display(),
-            self.value
+            "Corrupt {FAKE_SUPER_XATTR} xattr attached to {}: \"{}\"",
+            self.name, self.value
         )
     }
 }
 impl std::error::Error for CorruptFakeSuperStat {}
+/// Re-names the file a [`CorruptFakeSuperStat`] reports with `name`, the
+/// caller's `full_fname()` rendering of it; any other error passes through.
+///
+/// upstream: xattrs.c:1255 - the message names `full_fname(fname)`, which a
+/// daemon renders module-relative with an ` (in MODULE)` suffix.
+#[must_use]
+pub fn rename_corrupt_fake_super(error: io::Error, name: String) -> io::Error {
+    if !is_corrupt_fake_super(&error) {
+        return error;
+    }
+    match error
+        .into_inner()
+        .map(|inner| inner.downcast::<CorruptFakeSuperStat>())
+    {
+        Some(Ok(corrupt)) => io::Error::other(CorruptFakeSuperStat {
+            name,
+            value: corrupt.value,
+        }),
+        Some(Err(inner)) => io::Error::other(inner),
+        None => io::Error::other("corrupt fake-super record"),
+    }
+}
 /// Reports whether `error` is a [`CorruptFakeSuperStat`].
 pub fn is_corrupt_fake_super(error: &io::Error) -> bool {
     error
@@ -349,7 +371,7 @@ fn decode_stat_xattr(
                 .and_then(|text| FakeSuperStat::decode(text).ok());
             decoded.map(Some).ok_or_else(|| {
                 io::Error::other(CorruptFakeSuperStat {
-                    path: anchored_to_cwd(path),
+                    name: format!("\"{}\"", anchored_to_cwd(path).display()),
                     value: String::from_utf8_lossy(&value).into_owned(),
                 })
             })

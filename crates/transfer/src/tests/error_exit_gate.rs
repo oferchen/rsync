@@ -20,7 +20,7 @@ fn emitted(error: &io::Error, protocol_version: u8) -> Vec<u8> {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        announce_error_exit(&mut writer, error, protocol_version, true);
+        announce_error_exit(&mut writer, error, protocol_version, true, None);
     }
     wire
 }
@@ -41,9 +41,44 @@ fn a_sender_announces_only_over_a_daemon_socket() {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        announce_error_exit(&mut writer, &error, 32, false);
+        announce_error_exit(&mut writer, &error, 32, false, None);
     }
     assert!(wire.is_empty(), "an unreachable frame is not written");
+}
+
+/// upstream: log.c:357-367 rwrite() - a socket daemon's fatal cause and
+/// log_exit() trailer are MSG_ERROR frames queued before the
+/// `MSG_ERROR_EXIT` that exit_cleanup() sends after them.
+#[test]
+fn a_report_precedes_the_exit_frame_as_error_messages() {
+    let error = io::Error::from(io::ErrorKind::PermissionDenied);
+    let report = |_: &io::Error, code: i32| {
+        vec![
+            b"cause\n".to_vec(),
+            format!("trailer {code}\n").into_bytes(),
+        ]
+    };
+    let mut wire = Vec::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut wire)
+            .activate_multiplex()
+            .expect("activate multiplex");
+        announce_error_exit(&mut writer, &error, 32, true, Some(&report));
+    }
+    let frame = |payload: &[u8]| {
+        let mut out = vec![
+            payload.len() as u8,
+            0,
+            0,
+            MPLEX_BASE + MessageCode::Error.as_u8(),
+        ];
+        out.extend_from_slice(payload);
+        out
+    };
+    let mut expected = frame(b"cause\n");
+    expected.extend(frame(b"trailer 3\n"));
+    expected.extend(expected_frame(3));
+    assert_eq!(wire, expected);
 }
 
 /// The frame upstream's `send_msg_int(MSG_ERROR_EXIT, code)` produces: the

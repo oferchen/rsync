@@ -20,7 +20,7 @@ use rsync_io::ssh::SshConnection;
 use super::super::super::config::ClientConfig;
 use super::super::super::error::{
     ClientError, connection_unexpectedly_closed_error, invalid_argument_error,
-    invalid_argument_error_typed_with_role, remote_exit_error,
+    invalid_argument_error_typed_with_role, peer_exit_error, remote_exit_error,
 };
 use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::{ClientEvent, ClientSummary};
@@ -473,7 +473,7 @@ pub(in crate::client::remote) fn transfer_failure_error(
     // local `ConnectionAborted` and reports RERR_SOCKETIO (10) whatever
     // the server actually exited with.
     if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
-        return remote_exit_error(ExitCode::from_raw(code), local_role);
+        return peer_exit_error(ExitCode::from_raw(code), local_role);
     }
     if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&transfer_error)
     {

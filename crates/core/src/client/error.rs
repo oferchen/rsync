@@ -45,8 +45,11 @@ pub const UNSUPPORTED_EXIT_CODE: i32 = ExitCode::Unsupported.as_i32();
 pub struct ClientError {
     exit_code: ExitCode,
     message: Message,
-    lead_line: Option<LeadLine>,
+    lead_line: Option<Box<LeadLine>>,
     completed: Option<Box<ClientSummary>>,
+    /// Whether this process prints its own log_exit() trailer; a peer's
+    /// `MSG_ERROR_EXIT` ends the run without one.
+    prints_trailer: bool,
 }
 
 /// The line upstream prints before log_exit()'s trailer, if a failure has one.
@@ -65,6 +68,7 @@ impl ClientError {
             message,
             lead_line: None,
             completed: None,
+            prints_trailer: true,
         }
     }
 
@@ -74,7 +78,7 @@ impl ClientError {
     /// upstream: xattrs.c:1253-1258 - `rprintf(FERROR, "Corrupt ...")` and
     /// then `exit_cleanup()`, whose log_exit() trailer follows it.
     fn with_cause_line(mut self, line: String) -> Self {
-        self.lead_line = Some(LeadLine::Cause(line));
+        self.lead_line = Some(Box::new(LeadLine::Cause(line)));
         self
     }
     /// Attaches the summary of a transfer that finished every entry but still
@@ -121,11 +125,18 @@ impl ClientError {
         &self.message
     }
 
+    /// Whether the exit trailer in [`Self::message`] is printed; `false` when
+    /// the peer's `MSG_ERROR_EXIT` decided the exit.
+    #[must_use]
+    pub const fn prints_trailer(&self) -> bool {
+        self.prints_trailer
+    }
+
     /// Returns the line upstream prints as `RSYNC_NAME ": <text>"` before the
     /// exit trailer, if this failure has one. The caller prefixes the program
     /// name so the line carries the same brand as the trailer.
     pub fn program_line(&self) -> Option<&str> {
-        match &self.lead_line {
+        match self.lead_line.as_deref() {
             Some(LeadLine::Program(line)) => Some(line),
             _ => None,
         }
@@ -134,7 +145,7 @@ impl ClientError {
     /// Returns the line upstream prints verbatim before the exit trailer, if
     /// this failure has one.
     pub fn cause_line(&self) -> Option<&str> {
-        match &self.lead_line {
+        match self.lead_line.as_deref() {
             Some(LeadLine::Cause(line)) => Some(line),
             _ => None,
         }
@@ -290,6 +301,20 @@ pub(crate) fn invalid_argument_error_typed_with_role(
 /// remote rsync's own error lines) is streamed to our stderr in real time by
 /// the SSH aux-channel drain, mirroring upstream's inherited ssh fd2
 /// passthrough, so it is never re-appended here.
+/// Builds the exit for a run the peer's `MSG_ERROR_EXIT` ended: the peer's
+/// code, with no trailer of this process's own, since the peer already
+/// reported the failure.
+///
+/// upstream: io.c:1928-1930 - the handler calls `_exit_cleanup(val, __FILE__,
+/// 0 - __LINE__)`, and cleanup.c:221-226 skips log_exit() for a negative line.
+#[cold]
+pub(crate) fn peer_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
+    ClientError {
+        prints_trailer: false,
+        ..remote_exit_error(exit_code, role)
+    }
+}
+
 #[cold]
 pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
     let message = rsync_error!(exit_code.as_i32(), "{}", exit_code.description()).with_role(role);
@@ -608,10 +633,10 @@ pub fn connection_unexpectedly_closed_error(
     role: Role,
 ) -> ClientError {
     let mut error = remote_exit_error(exit_code, role);
-    error.lead_line = Some(LeadLine::Program(format!(
+    error.lead_line = Some(Box::new(LeadLine::Program(format!(
         "connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
         role.as_str()
-    )));
+    ))));
     error
 }
 

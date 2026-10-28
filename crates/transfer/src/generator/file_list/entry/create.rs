@@ -523,8 +523,12 @@ impl GeneratorContext {
         }
         match metadata::load_fake_super(full_path) {
             Ok(stat) => Ok(stat),
-            // upstream: xattrs.c:1253-1258 - an unparsable value is fatal.
-            Err(error) if metadata::is_corrupt_fake_super(&error) => Err(error),
+            // upstream: xattrs.c:1253-1258 - an unparsable value is fatal, and
+            // the message names full_fname(fname).
+            Err(error) if metadata::is_corrupt_fake_super(&error) => {
+                let name = crate::full_fname::full_fname_path(full_path, self.full_fname_paths());
+                Err(metadata::rename_corrupt_fake_super(error, name))
+            }
             // upstream: xattrs.c:1242-1246 - a symlink whose xattrs cannot be
             // read keeps its mode and reads as uid/gid 0.
             Err(error) if ft.is_symlink() && error.raw_os_error() == Some(libc::EPERM) => {

@@ -251,6 +251,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A remote-shell server sender that fails no longer sends `MSG_ERROR_EXIT`, so its client exits 12 like upstream's; a daemon sender over a socket still delivers its own exit code (#8251)
 - A server sender honours a forwarded `--max-alloc` when it reads the receiver's block checksums, ending with exit 22 where upstream's `receive_sums()` refuses the allocation (#8251)
 - `--fake-super` reads a `%stat` record's file type and device number as well as its mode and ids, on the source and the destination, so device, FIFO and socket placeholders rerun silently, itemize `.D..t......` when only the time changed and are recreated as `cDc` when the device number changes, locally and on a pull, as upstream does; a local copy no longer drops a placeholder's record (#8251)
+- A daemon sender that fails sends its cause and `rsync error:` trailer to the client ahead of `MSG_ERROR_EXIT`, naming the file module-relative with `(in MODULE)`, and a client that exits on a peer's `MSG_ERROR_EXIT` no longer prints a trailer of its own, as upstream does (#PRNUM)
+- An inetd-mode daemon reads and writes the socket on stdin instead of writing to stdout, as upstream's `start_daemon(STDIN_FILENO, STDIN_FILENO)` does (#PRNUM)
 
 **Data integrity**
 - A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)

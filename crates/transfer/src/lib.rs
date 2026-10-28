@@ -713,6 +713,7 @@ pub fn run_server_with_handshake<W: Write>(
             io_timeout_reapply: None,
             daemon_log: None,
             bytes_read: None,
+            fatal_report: None,
         },
     )
 }
@@ -761,7 +762,15 @@ pub struct ServerTransferHooks<'p, 'i> {
     /// upstream: io.c:938 counts `stats.total_read` only through perform_io,
     /// which setup_protocol's reads bypass (io.c:2158-2161, main.c:1308).
     pub bytes_read: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Renders the lines a daemon sender reports for a fatal failure with the
+    /// given `RERR_*`. `Some` only on the daemon path, whose messages go to
+    /// the client as `MSG_ERROR` frames ahead of its `MSG_ERROR_EXIT`.
+    /// upstream: clientserver.c:1178 `msgs2stderr = 0`, log.c:937-963 log_exit()
+    pub fatal_report: Option<&'p FatalReport>,
 }
+
+/// Renders a fatal failure and its `RERR_*` as newline-terminated lines.
+pub type FatalReport = dyn Fn(&io::Error, i32) -> Vec<Vec<u8>> + Sync;
 
 /// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
 ///
@@ -788,6 +797,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         io_timeout_reapply,
         daemon_log,
         bytes_read,
+        fatal_report,
     } = hooks;
     // upstream: options.c:2551-2561 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
@@ -1194,6 +1204,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     let negotiated_protocol = handshake.protocol.as_u8();
     let error_exit_reaches_peer =
         error_exit_reaches_peer(config.role, config.connection.is_daemon_connection);
+    // Only the daemon sender's report is forwarded; a daemon receiver keeps
+    // reporting through its own message paths.
+    let fatal_report = fatal_report.filter(|_| config.role == ServerRole::Generator);
 
     let outcome: ServerResult = 'dispatch: {
         match config.role {
@@ -1308,6 +1321,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 &error,
                 negotiated_protocol,
                 error_exit_reaches_peer,
+                fatal_report,
             );
             Err(error)
         }
@@ -1354,12 +1368,18 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 /// - `errcode.h` - `RERR_SOCKETIO`/`RERR_STREAMIO`/`RERR_SIGNAL1`/`RERR_TIMEOUT`.
 ///
 /// `reaches_peer` is [`error_exit_reaches_peer`]: a frame upstream would queue
-/// but never flush is not written at all.
+/// but never flush is not written at all. `report`, when supplied, renders the
+/// cause and log_exit() trailer that precede the frame as `MSG_ERROR`s, as a
+/// daemon's `rprintf(FERROR)` does once `msgs2stderr` is clear.
+///
+/// upstream: log.c:357-367 rwrite() frames FERROR for the peer,
+/// log.c:937-963 log_exit(), clientserver.c:1178
 fn announce_error_exit<W: Write>(
     writer: &mut writer::ServerWriter<W>,
     error: &io::Error,
     protocol_version: u8,
     reaches_peer: bool,
+    report: Option<&FatalReport>,
 ) {
     if !reaches_peer {
         return;
@@ -1393,6 +1413,12 @@ fn announce_error_exit<W: Write>(
         return;
     }
 
+    for line in report
+        .map(|report| report(error, exit_code))
+        .unwrap_or_default()
+    {
+        let _ = writer.send_message(protocol::MessageCode::Error, &line);
+    }
     if writer.send_error_exit(exit_code).is_ok() {
         let _ = writer.flush_all_pending();
     }

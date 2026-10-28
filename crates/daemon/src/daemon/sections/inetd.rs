@@ -25,6 +25,20 @@ fn is_stdin_socket() -> bool {
     is_inetd_socket(&io::stdin())
 }
 
+/// The inetd connection on stdin as a TCP stream of its own, so the session
+/// reads and writes that socket rather than stdin and stdout.
+#[cfg(unix)]
+fn inherited_stdin_socket() -> io::Result<TcpStream> {
+    use std::os::fd::AsFd;
+    Ok(TcpStream::from(io::stdin().as_fd().try_clone_to_owned()?))
+}
+
+/// Without inetd support there is no inherited socket to adopt.
+#[cfg(not(unix))]
+fn inherited_stdin_socket() -> io::Result<TcpStream> {
+    Err(io::Error::from(io::ErrorKind::Unsupported))
+}
+
 /// The descriptor test behind [`is_stdin_socket`], for any descriptor.
 #[cfg(unix)]
 fn is_inetd_socket(fd: &impl std::os::fd::AsFd) -> bool {
@@ -111,12 +125,21 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     // upstream: clientserver.c:1759 - start_daemon(STDIN_FILENO, STDIN_FILENO)
-    // passes the same fd for both read and write; oc uses separate stdin and
-    // stdout handles because `std::io` separates them.
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
-    let mut stream = DaemonStream::stdio(pair);
+    // reads and writes the one inherited socket; stdout is not the client.
+    let mut stream = match inherited_stdin_socket() {
+        Ok(socket) => DaemonStream::plain(socket),
+        Err(err) => {
+            let code = ExitCode::SocketIo;
+            return Err(DaemonError::with_code(
+                code,
+                rsync_error!(
+                    code.as_i32(),
+                    format!("failed to adopt the inherited stdin socket: {err}")
+                )
+                .with_role(Role::Daemon),
+            ));
+        }
+    };
 
     // upstream: clientserver.c:1759 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the

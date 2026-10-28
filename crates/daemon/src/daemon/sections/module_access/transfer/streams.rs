@@ -341,6 +341,14 @@ fn run_daemon_transfer(
     write_stream: &mut dyn Write,
     daemon_log: Option<DaemonLog>,
 ) -> ServerResult {
+    // upstream: clientserver.c:1178 - a socket daemon clears `msgs2stderr`, so
+    // its sender's fatal cause and log_exit() trailer travel to the client as
+    // MSG_ERROR frames. The brand is the daemon binary's own, from argv[0].
+    let brand = branding::detect_brand(std::env::args_os().next().as_deref());
+    let fatal_report = move |error: &io::Error, code: i32| {
+        let code = core::exit_code::ExitCode::from_raw(code);
+        core::exit_code::fatal_report_lines(error, code, Role::Sender, brand)
+    };
     run_server_with_handshake_adopting(
         config,
         handshake,
@@ -348,6 +356,7 @@ fn run_daemon_transfer(
         write_stream,
         ServerTransferHooks {
             daemon_log,
+            fatal_report: Some(&fatal_report),
             ..ServerTransferHooks::default()
         },
     )

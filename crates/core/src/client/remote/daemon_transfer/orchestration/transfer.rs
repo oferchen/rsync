@@ -15,7 +15,7 @@ use super::server_config::{build_server_config_for_generator, build_server_confi
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
 use crate::client::error::{
-    ClientError, connection_unexpectedly_closed_error, invalid_argument_error, remote_exit_error,
+    ClientError, connection_unexpectedly_closed_error, invalid_argument_error, peer_exit_error,
 };
 use crate::client::module_list::{
     DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply, register_shutdown_wake,
@@ -144,6 +144,7 @@ pub(crate) fn run_pull_transfer(
             // module log; that is the remote daemon's own FLOG sink.
             daemon_log: None,
             bytes_read: Some(Arc::clone(&bytes_read)),
+            fatal_report: None,
         },
     )
     .map_err(|e| {
@@ -307,7 +308,7 @@ fn map_server_transfer_error(
     }
     if let Some(code) = remote_exit_code(&error) {
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
-        return remote_exit_error(exit, role);
+        return peer_exit_error(exit, role);
     }
     if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&error) {
         return error;
