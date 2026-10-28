@@ -932,6 +932,35 @@ impl GeneratorContext {
         join_source_path(&self.source_bases[ndx], self.file_list[ndx].path())
     }
 
+    /// Renders entry `ndx` the way the sender's debug traces name it:
+    /// `F_PATHNAME`, a slash, then the flist name, so the root entry reads
+    /// `src/.` rather than `src`.
+    ///
+    /// upstream: sender.c:565-576 - `path = F_PATHNAME(file); slash = "/";`,
+    /// both empty when the entry has no pathname.
+    pub(crate) fn send_trace_name(&self, ndx: usize) -> String {
+        let name = self.file_list[ndx].path().display();
+        let base = self.source_bases[ndx].to_string_lossy();
+        let base = base.trim_end_matches('/');
+        if base.is_empty() {
+            name.to_string()
+        } else {
+            format!("{base}/{name}")
+        }
+    }
+
+    /// Announces the source map and the `match_sums()` entry for entry `ndx`,
+    /// on the delta and the whole-file path alike.
+    ///
+    /// upstream: sender.c:763-772.
+    pub(crate) fn trace_send_files_mapped(&self, ndx: usize, size: u64) {
+        if logging::debug_gte(logging::DebugFlag::Deltasum, 2) {
+            let name = self.send_trace_name(ndx);
+            matching::trace_deltasum::trace_send_files_mapped(&name, size);
+            matching::trace_deltasum::trace_calling_match_sums(&name);
+        }
+    }
+
     /// Builds the per-connection source-open policy the sender applies to
     /// every source file.
     ///
