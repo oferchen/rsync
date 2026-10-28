@@ -464,8 +464,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
     // upstream: exclude.c:1723-1727 - `strlcpy(src_name, fname, ...)` captures
     // the name BEFORE dirbuf is cut back, so the reported location is the merge
-    // file as given, not the directory it was found in.
-    let src_name = path.display().to_string();
+    // file as given, not the directory it was found in; a per-directory file is
+    // given by its absolute dirbuf path.
+    let src_name = filters::per_dir_merge_report_name(path)
+        .display()
+        .to_string();
 
     let mut contents = String::new();
     io::BufReader::new(file)

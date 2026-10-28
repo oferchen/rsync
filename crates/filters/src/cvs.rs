@@ -31,6 +31,7 @@
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::{FilterRule, RuleModifiers};
 
@@ -193,6 +194,20 @@ impl CvsTemplate {
         }
     }
 
+    /// The template the process's CVS list is built under: the first one any
+    /// non-merge `C` rule asks for, whatever later rules ask.
+    ///
+    /// upstream: exclude.c:1489-1496 get_cvs_excludes() fills `cvs_filter_list`
+    /// once (`static int initialized`) under the first `C` rule's flags, and
+    /// check_filter() evaluates that one list for every `C` rule
+    /// (exclude.c:1201-1206). So after `-C` a later `-!C` still matches plain
+    /// excludes.
+    #[must_use]
+    pub fn established(self) -> Self {
+        static FIRST: OnceLock<CvsTemplate> = OnceLock::new();
+        *FIRST.get_or_init(|| self)
+    }
+
     /// Whether `entry` is perishable under this template; `builtin_perishable`
     /// is the protocol >= 30 flag the built-in defaults carry.
     #[must_use]
@@ -228,9 +243,11 @@ impl CvsTemplate {
     }
 }
 
-/// The global CVS ignore list as rules under `template`.
+/// The global CVS ignore list a `C` rule with `template` stands for, as rules
+/// under the process's [established](CvsTemplate::established) template.
 #[must_use]
 pub fn cvs_ignore_rules(template: CvsTemplate, builtin_perishable: bool) -> Vec<FilterRule> {
+    let template = template.established();
     cvs_ignore_list()
         .iter()
         .map(|entry| template.rule(entry, builtin_perishable))
@@ -346,5 +363,23 @@ mod tests {
         assert!(rule.is_negated() && rule.is_perishable());
         assert!(!rule.applies_to_sender() && rule.applies_to_receiver());
         assert!(!CvsTemplate::default().rule(&entry, false).is_perishable());
+    }
+
+    /// upstream: exclude.c:1489-1496 - the list is built once, so the first
+    /// template asked for is the one every later `C` rule gets. Each nextest
+    /// test runs in its own process, which gives this one a fresh list.
+    #[test]
+    fn the_first_template_asked_for_is_the_one_every_rule_gets() {
+        let negated = CvsTemplate {
+            negate: true,
+            ..CvsTemplate::default()
+        };
+        assert_eq!(negated.established(), negated);
+        assert_eq!(CvsTemplate::default().established(), negated);
+        assert!(
+            cvs_ignore_rules(CvsTemplate::default(), true)
+                .iter()
+                .all(FilterRule::is_negated)
+        );
     }
 }

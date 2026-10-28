@@ -32,9 +32,11 @@ pub(crate) struct FilterInputs {
 ///
 /// Rules are appended in command-line order so the filter engine's
 /// first-match-wins evaluation matches upstream rsync, where each
-/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-C`/
-/// `-F` is fed to the rule list at its argv position (exclude.c:parse_filter_str
-/// appends in encounter order).
+/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-F` is
+/// fed to the rule list at its argv position (exclude.c:parse_filter_str
+/// appends in encounter order). `-C` is the exception: it only sets
+/// `cvs_exclude`, and send_filter_list() appends its rules after all of them
+/// (exclude.c:1951-1954).
 pub(crate) fn apply_filters<Err>(
     mut builder: ClientConfigBuilder,
     inputs: FilterInputs,
@@ -45,6 +47,7 @@ where
 {
     let mut filter_rules = Vec::new();
     let mut merge_stack = Vec::new();
+    let mut cvs_exclude = false;
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let from0 = inputs.from0;
 
@@ -74,7 +77,10 @@ where
                 merge_base.as_path(),
                 &mut merge_stack,
             ),
-            FilterOrderToken::CvsExclude => append_cvs_exclude_rules(&mut filter_rules),
+            FilterOrderToken::CvsExclude => {
+                cvs_exclude = true;
+                Ok(())
+            }
             FilterOrderToken::AppleDoubleSkip => {
                 append_apple_double_exclude_rules(&mut filter_rules)
             }
@@ -82,6 +88,9 @@ where
         if let Err(message) = result {
             return Err(fail_with_message(message, stderr));
         }
+    }
+    if cvs_exclude {
+        append_cvs_exclude_rules(&mut filter_rules);
     }
 
     if !filter_rules.is_empty() {

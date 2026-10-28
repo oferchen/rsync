@@ -489,6 +489,7 @@ impl FilterChain {
             // separated tokens with every token implicitly an exclude.
             // Standard parse_rules would reject names like `one-in-one-out`
             // as "Unknown filter rule", aborting the walk.
+            let report_name = crate::per_dir_merge_report_name(&merge_path);
             let rules = if config.no_prefixes() {
                 // upstream: exclude.c:1273-1275 - the `-`/`+` modifier on the
                 // dir-merge template skips short-prefix dispatch, so each
@@ -498,7 +499,7 @@ impl FilterChain {
                 // (e.g. `:w-`) tokenises on whitespace instead of per line.
                 parse_rules_no_prefixes(
                     &content,
-                    &merge_path,
+                    &report_name,
                     config.no_prefixes_include(),
                     config.cvs_mode(),
                     config.word_split(),
@@ -509,26 +510,26 @@ impl FilterChain {
                 // upstream: exclude.c:1772-1773 - the `w` modifier splits the merge
                 // file on any whitespace and parses every token as its own
                 // rule (comments are not stripped, line 1806).
-                match parse_rules_word_split(&content, &merge_path, config.specifies_side()) {
+                match parse_rules_word_split(&content, &report_name, config.specifies_side()) {
                     Ok(rules) => rules,
                     Err(e) => {
                         self.pop_scopes_at_depth(depth);
                         self.current_depth -= 1;
                         return Err(FilterChainError::Parse {
                             path: merge_path,
-                            message: e.to_string(),
+                            message: e.message,
                         });
                     }
                 }
             } else {
-                match parse_rules_in(&content, &merge_path, config.specifies_side()) {
+                match parse_rules_in(&content, &report_name, config.specifies_side()) {
                     Ok(rules) => rules,
                     Err(e) => {
                         self.pop_scopes_at_depth(depth);
                         self.current_depth -= 1;
                         return Err(FilterChainError::Parse {
                             path: merge_path,
-                            message: e.to_string(),
+                            message: e.message,
                         });
                     }
                 }
@@ -733,10 +734,11 @@ impl FilterChain {
         // upstream: exclude.c:1273-1275 - a dir-merge template carrying
         // FILTRULE_NO_PREFIXES (`-`/`+`) skips the short-prefix dispatch and
         // consumes each line as a literal exclude (or include for `+`).
+        let report_name = crate::per_dir_merge_report_name(&merge_path);
         let rules = if descriptor.no_prefixes {
             parse_rules_no_prefixes(
                 &content,
-                &merge_path,
+                &report_name,
                 descriptor.no_prefixes_include,
                 descriptor.cvs_mode,
                 descriptor.word_split,
@@ -744,26 +746,26 @@ impl FilterChain {
         } else if descriptor.cvs_mode {
             parse_cvs_ignore_tokens(&content)
         } else if descriptor.word_split {
-            match parse_rules_word_split(&content, &merge_path, descriptor.specifies_side()) {
+            match parse_rules_word_split(&content, &report_name, descriptor.specifies_side()) {
                 Ok(rules) => rules,
                 Err(e) => {
                     self.pop_scopes_at_depth(depth);
                     self.current_depth -= 1;
                     return Err(FilterChainError::Parse {
                         path: merge_path,
-                        message: e.to_string(),
+                        message: e.message,
                     });
                 }
             }
         } else {
-            match parse_rules_in(&content, &merge_path, descriptor.specifies_side()) {
+            match parse_rules_in(&content, &report_name, descriptor.specifies_side()) {
                 Ok(rules) => rules,
                 Err(e) => {
                     self.pop_scopes_at_depth(depth);
                     self.current_depth -= 1;
                     return Err(FilterChainError::Parse {
                         path: merge_path,
-                        message: e.to_string(),
+                        message: e.message,
                     });
                 }
             }

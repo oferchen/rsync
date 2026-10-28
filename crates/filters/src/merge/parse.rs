@@ -189,6 +189,23 @@ pub(crate) fn parse_rules_word_split(
     Ok(rules)
 }
 
+/// Where a rule of a merge file came from: its line, or the file alone when
+/// the file is word-split and so counts no lines.
+///
+/// upstream: exclude.c:1754 sets `rule_src_line = word_split ? -1 : 0`, and
+/// rule_src_where() names the file alone for a negative line (exclude.c:82-83).
+/// Word-split tokens reach this module with line 0.
+fn rule_file_source(name: &str, line_num: usize) -> RuleSource<'_> {
+    if line_num == 0 {
+        RuleSource::FileWordSplit { name }
+    } else {
+        RuleSource::File {
+            name,
+            line: line_num,
+        }
+    }
+}
+
 /// Refuses a rule that names a side inside a merge file whose rule named one.
 ///
 /// upstream: exclude.c:1447-1456 parse_rule_tok() - "The filter and template
@@ -293,10 +310,7 @@ fn invalid_modifier(
     // offset while redacting the line would leak the file one byte at a time,
     // which is a finer-grained oracle than echoing the whole rule.
     let name = source_path.display().to_string();
-    let source = RuleSource::File {
-        name: &name,
-        line: line_num,
-    };
+    let source = rule_file_source(&name, line_num);
     let detail = format!(" '{ch}' at position {position}");
     MergeFileError::parse_error(
         source_path,
@@ -482,10 +496,7 @@ fn complete_rule(
 ) -> Result<ParsedLine, MergeFileError> {
     if pattern.is_empty() && !mods.cvs_ignore {
         let name = source_path.display().to_string();
-        let source = RuleSource::File {
-            name: &name,
-            line: line_num,
-        };
+        let source = rule_file_source(&name, line_num);
         return Err(MergeFileError::parse_error(
             source_path,
             line_num,
@@ -626,10 +637,7 @@ fn parse_rule_line(
             // upstream: exclude.c:1470 filter_rule_err, which renders the rule
             // through rule_text (exclude.c:135).
             let name = source_path.display().to_string();
-            let source = RuleSource::File {
-                name: &name,
-                line: line_num,
-            };
+            let source = rule_file_source(&name, line_num);
             return Err(MergeFileError::parse_error(
                 source_path,
                 line_num,
@@ -655,10 +663,7 @@ fn parse_rule_line(
     // text, and quoting a `<rule from ...>` replacement would be meaningless, so
     // the backticks go with the raw text they used to wrap.
     let name = source_path.display().to_string();
-    let source = RuleSource::File {
-        name: &name,
-        line: line_num,
-    };
+    let source = rule_file_source(&name, line_num);
     Err(MergeFileError::parse_error(
         source_path,
         line_num,

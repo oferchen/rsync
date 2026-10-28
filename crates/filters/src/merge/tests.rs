@@ -1290,15 +1290,23 @@ fn non_merge_cvs_rule_expands_to_the_cvs_ignore_list() {
 /// `rule_template(rflags)` does in get_cvs_excludes() (exclude.c:1263,
 /// 1447-1456). MEASURED against rsync 3.5.1: `+C` then `- *.o` keeps `a.o`,
 /// and `-rC` excludes nothing on the sender.
+///
+/// The list is built once per process under the first `C` rule's flags
+/// (exclude.c:1489-1496), so each template gets its own test, and so its own
+/// nextest process.
 #[test]
-fn cvs_rule_prefix_and_modifiers_reach_every_cvs_pattern() {
+fn cvs_rule_prefix_reaches_every_cvs_pattern() {
     let include = parse_rules("+C\n", Path::new("test")).unwrap();
     assert!(
         include
             .iter()
             .all(|rule| rule.action() == FilterAction::Include)
     );
+}
 
+/// The `s` half of [`cvs_rule_prefix_reaches_every_cvs_pattern`].
+#[test]
+fn cvs_rule_side_reaches_every_cvs_pattern() {
     let sender = parse_rules("-sC foo\n", Path::new("test")).unwrap();
     assert!(!sender.is_empty());
     assert!(

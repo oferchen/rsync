@@ -18,19 +18,14 @@ use super::sources::{read_merge_file, read_merge_from_standard_input};
 /// Upstream keeps the two apart: `parse_filter_file` opens `open_path` but
 /// reports `src_name`, a verbatim copy of the name it was handed
 /// (exclude.c:1727). That name comes from `parse_merge_name`, which "return\[s\]
-/// the name unchanged \[if\] it doesn't have any slashes" (exclude.c:704-715) and
-/// only joins it onto the filter dir when it does. So `--filter='. f.rules'`
-/// reports `f.rules`, not the absolute path the open resolved to.
-///
-/// Reporting the resolved path instead would leak the operator's directory
-/// layout into a message the peer can read back whenever the rule came from a
-/// merged file - the leak the `rule_text()` chokepoint exists to close.
-fn reported_merge_name(source: &OsStr, resolved: &Path) -> String {
-    let named = Path::new(source);
-    if named.components().count() == 1 && !named.has_root() {
-        return named.display().to_string();
-    }
-    resolved.display().to_string()
+/// the name unchanged \[if\] it doesn't have any slashes" (exclude.c:704-715)
+/// and otherwise cleans it and joins it onto `dirbuf` (exclude.c:732-745).
+/// Filter arguments are parsed before set_filter_dir() fills `dirbuf`, so
+/// `--filter='. src/../f.rules'` reports `f.rules`, never an absolute path.
+fn reported_merge_name(source: &OsStr) -> String {
+    filters::collapse_dot_dot_dirs(Path::new(source))
+        .display()
+        .to_string()
 }
 
 /// Loads a merge file referenced by `directive`, parsing each of its lines and
@@ -69,7 +64,7 @@ pub(crate) fn apply_merge_directive(
         // is why it succeeds when `a/b` does not exist - handing the raw name
         // to the OS instead fails with ENOENT.
         let resolved = filters::collapse_dot_dot_dirs(&joined);
-        let display = reported_merge_name(directive.source(), &resolved);
+        let display = reported_merge_name(directive.source());
         let canonical = std::fs::canonicalize(&resolved).ok();
         (resolved, display, canonical)
     };

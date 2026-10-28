@@ -147,7 +147,7 @@ pub use apple_double::{
 };
 pub use byte_path::{path_pattern_bytes, pattern_path};
 pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
-pub use clean_fname::collapse_dot_dot_dirs;
+pub use clean_fname::{collapse_dot_dot_dirs, per_dir_merge_report_name};
 pub use clear_token::{ClearToken, classify_clear_token};
 pub use compiled::XattrSide;
 pub use cvs::{

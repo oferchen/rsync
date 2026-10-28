@@ -1,24 +1,24 @@
 use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
-use core::message::Message;
 use filters::{CvsIgnorePattern, CvsTemplate};
 use protocol::SUPPORTED_PROTOCOL_BOUNDS;
 
-/// Appends the full `-C`/`--cvs-exclude` rule set to `destination`: the global
-/// CVS default excludes plus the per-directory `.cvsignore` dir-merge. Each rule
-/// is tagged with a CVS origin so the wire projection can honor upstream's
+/// Appends the full `-C`/`--cvs-exclude` rule set to `destination`: the
+/// per-directory `.cvsignore` dir-merge, then the global CVS ignore list. Each
+/// rule is tagged with a CVS origin so the wire projection can honor upstream's
 /// local-only / protocol-gated forwarding.
-pub(crate) fn append_cvs_exclude_rules(
-    destination: &mut Vec<FilterRuleSpec>,
-) -> Result<(), Message> {
-    let mut cvs_rules = cvs_default_exclude_rules(CvsTemplate::default());
-
+///
+/// upstream: exclude.c:1951-1954 send_filter_list() parses `:C` and then `-C`
+/// after every other rule, and `-C` goes through rule_template(0), so it is a
+/// plain `C` rule like any other (exclude.c:1595-1597).
+pub(crate) fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>) {
     let options = DirMergeOptions::default()
         .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
         .use_whitespace()
         .allow_comments(false)
         .inherit(false)
         .allow_list_clearing(true);
-    cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options));
+    let mut cvs_rules = vec![FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options)];
+    cvs_rules.extend(cvs_default_exclude_rules(CvsTemplate::default()));
 
     // upstream: exclude.c:1944-1969 send_filter_list() - the `-C` built-in
     // excludes and the `:C` per-directory merge stay local on a receiving client
@@ -28,10 +28,10 @@ pub(crate) fn append_cvs_exclude_rules(
     // its own get_cvs_excludes(), so transmitting these rules on a pull would be
     // both redundant and non-upstream.
     destination.extend(cvs_rules.into_iter().map(|rule| rule.with_cvs_origin(true)));
-    Ok(())
 }
 
-/// Builds the global CVS ignore list as rules under `template`: the built-in
+/// Builds the global CVS ignore list a `C` rule with `template` stands for, under
+/// the process's established template (see `CvsTemplate::established`): the built-in
 /// patterns, `$HOME/.cvsignore`, and `$CVSIGNORE`, in that order. Unlike
 /// [`append_cvs_exclude_rules`], this does NOT add the per-directory
 /// `.cvsignore` dir-merge - that layer is contributed separately by a `:C` rule.
@@ -42,6 +42,7 @@ pub(crate) fn append_cvs_exclude_rules(
 /// argument-parse time, before negotiation, so the gate is keyed on the newest
 /// protocol oc supports (SUPPORTED_PROTOCOL_BOUNDS.1, currently 33).
 pub(crate) fn cvs_default_exclude_rules(template: CvsTemplate) -> Vec<FilterRuleSpec> {
+    let template = template.established();
     let builtin_perishable = SUPPORTED_PROTOCOL_BOUNDS.1 >= 30;
     filters::cvs_ignore_list()
         .iter()
@@ -82,19 +83,16 @@ mod tests {
         // this path produces must carry the origin marker so build_wire_format_rules
         // can forward it to the wire projection.
         let mut rules = Vec::new();
-        append_cvs_exclude_rules(&mut rules).expect("cvs rules build");
+        append_cvs_exclude_rules(&mut rules);
         assert!(!rules.is_empty());
         assert!(
             rules.iter().all(FilterRuleSpec::is_cvs_origin),
             "every -C rule must be tagged cvs_origin"
         );
-        // The trailing `:C` per-directory merge is present and tagged.
-        let dir_merge = rules
-            .iter()
-            .find(|r| r.kind() == FilterRuleKind::DirMerge)
-            .expect(":C dir-merge present");
-        assert!(dir_merge.is_cvs_origin());
-        assert_eq!(dir_merge.pattern(), ".cvsignore");
+        // upstream: exclude.c:1951-1954 parses `:C` before `-C`, so the
+        // per-directory merge leads the list.
+        assert_eq!(rules[0].kind(), FilterRuleKind::DirMerge);
+        assert_eq!(rules[0].pattern(), ".cvsignore");
     }
 
     #[test]

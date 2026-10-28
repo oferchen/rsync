@@ -124,9 +124,12 @@ fn run(
     let mut transferred = Vec::new();
     listing(&tmp.path().join("dst"), "", &mut transferred);
     transferred.sort();
+    // A per-directory merge file is named by its absolute path
+    // (exclude.c:756-775), which holds this run's own temporary tree.
+    let tree = tmp.path().to_string_lossy();
     Outcome {
         exit: output.status.code().expect("exit code"),
-        diagnostic: diagnostic(&stderr),
+        diagnostic: diagnostic(&stderr).replace(tree.as_ref(), "<tree>"),
         transferred,
     }
 }
@@ -226,14 +229,11 @@ fn c_modifier_on_a_non_merge_rule() {
 }
 
 /// #223: the same `C` rules inside a per-directory merge file, through the
-/// local-copy parser and, on a push, the sender's per-directory parser.
-///
-/// A refused rule is left to the `--filter` cell above: upstream names the
-/// file by its absolute path in `<rule from ...>`, oc by the path it opened,
-/// which is a separate divergence from the one this cell pins.
+/// local-copy parser and, on a push, the sender's per-directory parser. A
+/// refused rule names the file by its absolute path (exclude.c:756-775).
 #[test]
 fn c_modifier_inside_a_per_directory_merge_file() {
-    for rules in ["-C\n", "+C\n- *.o\n", "-sC foo\n", "-rC\n"] {
+    for rules in ["-C\n", "+C\n- *.o\n", "-sC foo\n", "-rC\n", "-CC\n"] {
         let files = [("a.o", "o"), ("b.c", "c"), (".rsync-filter", rules)];
         for source in [Source::Local, Source::Push] {
             assert_parity_from(&files, &["-F"], source);
@@ -268,47 +268,19 @@ fn exclude_self_precedes_the_merged_rules() {
     }
 }
 
-/// Asserts an oc client and an upstream client agree on `args` over `files`
-/// for a rule refused out of a merge FILE, where the two may differ only in
-/// how `<rule from ...>` names the file: upstream by absolute path, oc by the
-/// path it opened. So each diagnostic is compared up to `<rule from `.
-///
-/// On a push the refusal comes from oc's sender walk, which, like every
-/// per-directory parse error there, still exits 11 inside a `transfer failed`
-/// wrapper where upstream exits 1 (task #376: RERR codes chosen from
-/// `ErrorKind`). That leg pins the refusal and its text, not the exit code.
-fn assert_file_rule_parity(files: &[(&str, &str)], args: &[&str], source: Source) {
-    let Some(upstream) = upstream() else { return };
-    let server = upstream.binary();
-    let expected = run(server, server, files, args, source);
-    let actual = run(&oc_rsync_bin(), server, files, args, source);
-    let context = format!("{args:?} {files:?}: oc {actual:?} vs upstream {expected:?}");
-    assert_eq!(actual.transferred, expected.transferred, "{context}");
-    let text = expected
-        .diagnostic
-        .split("<rule from ")
-        .next()
-        .unwrap_or_default();
-    if matches!(source, Source::Push) && expected.exit != 0 {
-        assert_ne!(actual.exit, 0, "{context}");
-        assert!(actual.diagnostic.contains(text), "{context}");
-    } else {
-        assert_eq!(actual.exit, expected.exit, "{context}");
-        assert!(actual.diagnostic.starts_with(text), "{context}");
-    }
-}
-
 /// #226: a rule that names a side inside a `:s`/`:r` file is a
 /// `filter_rule_err` (exclude.c:1447-1456), exit 1 (12 for the pull's client,
 /// which sees its server die), with the line redacted to `<rule from ...>`
-/// (exclude.c:133-137). A pull with `:r` refuses nothing in either: the
+/// (exclude.c:133-137) naming the file by its absolute path (exclude.c:756-775),
+/// on a push too, where the oc sender's walk used to exit 11 inside a
+/// `transfer failed` wrapper. A pull with `:r` refuses nothing in either: the
 /// receiver-side rule never reaches the sender that reads the file.
 #[test]
 fn sided_merge_file_refuses_a_sided_rule() {
     for (rule, line) in [(":s .f", "-r foo"), (":r .f", "S foo"), (":s .f", ":r .g")] {
         let files = [("a", "a"), (".f", &*format!("- ok\n{line}\n"))];
         for source in [Source::Local, Source::Push, Source::Pull] {
-            assert_file_rule_parity(&files, &[&format!("--filter={rule}")], source);
+            assert_parity_from(&files, &[&format!("--filter={rule}")], source);
         }
     }
 }
@@ -338,7 +310,53 @@ fn merge_file_rules_end_where_upstream_ends_them() {
             (file, contents),
         ];
         for source in [Source::Local, Source::Push] {
-            assert_file_rule_parity(&files, &[&format!("--filter={filter}")], source);
+            assert_parity_from(&files, &[&format!("--filter={filter}")], source);
+        }
+    }
+}
+
+/// get_cvs_excludes() builds the CVS list once, under the first non-merge `C`
+/// rule's flags (exclude.c:1489-1496), and every `C` rule matches that one list
+/// (exclude.c:1201-1206). MEASURED: after `-C`, a later `-!C` keeps `b.c`.
+#[test]
+fn every_c_rule_matches_the_list_built_for_the_first() {
+    let files = [
+        ("a.o", "o"),
+        ("b.c", "c"),
+        ("sub/.f", "-!C\n"),
+        ("sub/c.c", "c"),
+    ];
+    for args in [
+        &["--filter=-C", "--filter=-!C"][..],
+        &["--filter=-!C", "--filter=-C"],
+        &["--filter=+!C", "--filter=-C", "--filter=-_*"],
+        &["--filter=-C", "--filter=:_.f"],
+    ] {
+        for source in [Source::Local, Source::Push] {
+            assert_parity_from(&files, args, source);
+        }
+    }
+}
+
+/// `-C` only sets cvs_exclude; send_filter_list() appends `:C` and `-C` after
+/// every other rule (exclude.c:1951-1954, 1962-1967). MEASURED: `-C
+/// --filter=+_*.o` transfers `a.o`.
+#[test]
+fn cvs_exclude_rules_follow_every_other_rule() {
+    let files = [
+        ("a.o", "o"),
+        ("b.c", "c"),
+        ("sub/.cvsignore", "b.c\n"),
+        ("sub/b.c", "c"),
+    ];
+    for args in [
+        &["-C", "--filter=+_*.o"][..],
+        &["--filter=+_*.o", "-C"],
+        &["-C", "--filter=-!C"],
+        &["-C", "--exclude=sub/"],
+    ] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, args, source);
         }
     }
 }
