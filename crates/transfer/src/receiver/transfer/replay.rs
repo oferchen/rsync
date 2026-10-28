@@ -129,6 +129,7 @@ impl ReceiverContext {
                 dest_dir,
                 #[cfg(unix)]
                 sandbox.as_deref(),
+                writer,
             );
             #[cfg(unix)]
             self.create_symlinks(dest_dir, sandbox.as_deref(), writer)?;
