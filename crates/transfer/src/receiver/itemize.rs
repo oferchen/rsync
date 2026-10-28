@@ -329,8 +329,8 @@ impl ReceiverContext {
         line: &str,
     ) -> std::io::Result<()> {
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            std::io::stdout().write_all(line.as_bytes())
+            logging::emit_line(logging::LogCode::Info, line.as_bytes());
+            Ok(())
         } else {
             self.log_daemon_message(line.as_bytes());
             writer.send_msg_info(line.as_bytes())
@@ -368,8 +368,8 @@ impl ReceiverContext {
     ) -> std::io::Result<()> {
         self.got_xfer_error.set(true);
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            std::io::stderr().write_all(line.as_ref())
+            logging::emit_line(logging::LogCode::ErrorXfer, line.as_ref());
+            Ok(())
         } else {
             let line = line.as_ref();
             self.log_daemon_message(line);
@@ -531,8 +531,8 @@ impl ReceiverContext {
         line: &str,
     ) -> std::io::Result<()> {
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            return std::io::stderr().write_all(line.as_bytes());
+            logging::emit_line(logging::LogCode::Warning, line.as_bytes());
+            return Ok(());
         }
         self.log_daemon_message(line.as_bytes());
         if self.protocol.supports_generator_messages() {
@@ -558,8 +558,8 @@ impl ReceiverContext {
         line: &str,
     ) -> std::io::Result<()> {
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            std::io::stderr().write_all(line.as_bytes())
+            logging::emit_line(logging::LogCode::Error, line.as_bytes());
+            Ok(())
         } else {
             self.log_daemon_message(line.as_bytes());
             writer.send_msg_error(line.as_bytes())
@@ -1572,15 +1572,14 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// Writes one `-v` name line to the client's own output stream, honouring
-    /// `--msgs2stderr` (upstream FINFO routes to stderr when set, else stdout).
+    /// Writes one `-v` name line through the client's diagnostic sink, which
+    /// honours `--msgs2stderr` (upstream FINFO routes to stderr when set).
     ///
     /// Client-mode only: this is the local-pull equivalent of upstream
     /// `log_item(FCLIENT, ...)`. A server receiver's names travel as wire
     /// itemize and are printed by the peer's sender, so this is never called
     /// off the client.
     fn emit_name_line(&self, line: &str) -> std::io::Result<()> {
-        use std::io::Write as _;
         // Under a custom `--out-format`, upstream logs exactly one templated line
         // per entry via `log_item`; the plain `-v` name would double it. The
         // per-entry line is produced from collected events instead (see
@@ -1588,11 +1587,8 @@ impl ReceiverContext {
         if self.collect_out_format_events() {
             return Ok(());
         }
-        if self.names_to_stderr {
-            std::io::stderr().write_all(line.as_bytes())
-        } else {
-            std::io::stdout().write_all(line.as_bytes())
-        }
+        logging::emit_line(logging::LogCode::Info, line.as_bytes());
+        Ok(())
     }
 
     /// Buffers a pre-transfer `-v` name (a directory reached in phase 1) under

@@ -441,9 +441,6 @@ pub struct ReceiverContext {
     /// trailing entries flushed at end) so a directory name precedes its
     /// children exactly as upstream's single flist-order walk emits them.
     pub(in crate::receiver) name_rows: RefCell<BTreeMap<usize, Vec<String>>>,
-    /// True when `-v` name output should be routed to stderr rather than stdout
-    /// (`--msgs2stderr`). Mirrors upstream's `msgs2stderr` FINFO routing.
-    pub(in crate::receiver) names_to_stderr: bool,
     /// True when a live `--progress` renderer is active on the client. The
     /// renderer already prints each transferred file's name before its bar, so
     /// while it runs the receiver only releases buffered directory names in
@@ -763,7 +760,6 @@ impl ReceiverContext {
             event_rows: RefCell::new(BTreeMap::new()),
             interleave_names: false,
             name_rows: RefCell::new(BTreeMap::new()),
-            names_to_stderr: false,
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             early_sender_ndx_dones: std::cell::Cell::new(0),

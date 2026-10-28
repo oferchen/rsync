@@ -84,8 +84,7 @@ fn emit_delete_notification<W: crate::writer::MsgInfoSender + ?Sized>(
         if server_mode {
             let _ = writer.send_msg_info(line.as_bytes());
         } else {
-            use std::io::Write as _;
-            let _ = std::io::stdout().write_all(line.as_bytes());
+            logging::emit_line(logging::LogCode::Info, line.as_bytes());
         }
     } else if is_dir {
         info_log!(Del, 1, "deleting {}/", rel.display());

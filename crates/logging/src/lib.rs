@@ -111,7 +111,7 @@ pub use context::{
     DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, discard_events_from,
     drain_error_events, drain_events, drain_events_coded, drain_events_for_daemon_log,
     drain_events_for_peer, drain_stamped_events_for_client, emit_debug, emit_debug_coded,
-    emit_info, emit_info_bytes, emit_info_coded, emit_warning, finfo_suppressed, info_gte, init,
+    emit_info, emit_info_bytes, emit_info_coded, emit_line, emit_warning, finfo_suppressed, info_gte, init,
     limit_output_verbosity, set_quiet, xfer_error_reported,
 };
 pub use verify_failure::{VerifyFailure, verification_failure};
