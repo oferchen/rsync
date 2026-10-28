@@ -1,10 +1,9 @@
 //! Transfer orchestration for the receiver role.
 //!
-//! Provides the `run`, `run_sync`, `run_pipelined`, and `run_pipelined_incremental`
+//! Provides the `run`, `run_pipelined`, and `run_pipelined_incremental`
 //! entry points plus the common `setup_transfer` initialization. The driving
 //! loops live in their own submodules:
 //!
-//! - `sync` - sequential per-file transfer used by `run_sync`.
 //! - `pipelined` - decoupled two-phase pipeline used by `run_pipelined`.
 //! - `pipelined_incremental` - same as `pipelined` plus incremental directory
 //!   creation and failed-dir tracking.
@@ -23,7 +22,6 @@ mod pipelined;
 mod pipelined_incremental;
 mod replay;
 mod setup;
-mod sync;
 
 pub(in crate::receiver) use setup::{dir_merge_config_from_wire, parse_wire_filters_for_receiver};
 
@@ -323,8 +321,8 @@ impl ReceiverContext {
     }
 
     /// Backs up an existing destination file before the commit overwrites it,
-    /// routing through the shared [`make_backup`] tier so the synchronous
-    /// (`run_sync`) and local-replay (`run_replay`) commits reuse the one owner
+    /// routing through the shared [`make_backup`] tier so the local-replay
+    /// (`run_replay`) commit reuses the one owner
     /// the pipelined/delayed-update commit already uses, instead of each holding
     /// its own copy of the backup-then-rename block.
     ///
@@ -588,7 +586,7 @@ impl ReceiverContext {
     /// Runs the late delete site and the directory touch-up that follows it.
     ///
     /// Must run after the sender's final `NDX_DONE` has been read (see
-    /// `finalize_transfer_with`): `sender_io_error` carries the sender's
+    /// `finalize_transfer`): `sender_io_error` carries the sender's
     /// `MSG_IO_ERROR` bits, which it writes just before that `NDX_DONE`
     /// (sender.c:811-820) and which the receiver folds into `io_error`
     /// (io.c:1740-1747) before the generator's late sweep consults
@@ -1167,7 +1165,7 @@ mod tests {
     /// through the batch reader's own [`BatchHeader::read_from`] so the parse is
     /// the single source of truth, then asserted on the built context: the seed
     /// lands in the field every basis/signature site reads
-    /// (context.rs `build_flist_reader` / `build_basis_file_config`), the
+    /// (context.rs `build_flist_reader`), the
     /// protocol is pinned, and each compat bit is applied.
     #[test]
     fn for_batch_replay_pins_protocol_seed_and_compat_from_header() {

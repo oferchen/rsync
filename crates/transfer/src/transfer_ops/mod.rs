@@ -37,7 +37,6 @@
 //! - `receiver.c:recv_files()` - Receives deltas, applies them
 
 mod request;
-mod response;
 mod streaming;
 mod token_loop;
 pub mod wire_basis;
@@ -52,7 +51,6 @@ use crate::reader::ServerReader;
 use crate::receiver::SumHead;
 
 pub use self::request::{send_file_request, send_file_request_xattr};
-pub use self::response::process_file_response;
 pub use self::streaming::{ResponseProgress, StreamingResult, process_file_response_streaming};
 pub use crate::token_reader::TokenReader;
 
