@@ -1076,7 +1076,7 @@ fn process_approved_module(
     //
     // The failure cluster (batch-mode, alt-dest, daemon-gzip-download,
     // daemon-refuse-compress) all hit this race: the engine's
-    // `handle_goodbye_with_finalizer` reads the receiver's first NDX_DONE,
+    // `goodbye_draining_source_removals` reads the receiver's first NDX_DONE,
     // writes the daemon's NDX_DONE, and reads the receiver's second
     // NDX_DONE; but upstream's receiver then writes MSG_STATS + a final
     // NDX_DONE on its side, relayed through the generator-to-sender pipe.

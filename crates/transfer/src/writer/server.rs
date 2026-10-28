@@ -473,7 +473,7 @@ impl<W: Write> ServerWriter<W> {
     /// `daemon-gzip-download`) to user-space bytes still sitting in the
     /// multiplex `BufWriter` / codec trailer when the daemon's
     /// `SO_LINGER` + `shutdown(SHUT_WR)` teardown fired. Driving
-    /// `flush_all_pending` after `handle_goodbye_with_finalizer` returns
+    /// `flush_all_pending` after the goodbye handshake returns
     /// makes the drain observable and error-surfacing instead of relying
     /// on the implicit `Drop` + `SO_LINGER` hand-off.
     ///
