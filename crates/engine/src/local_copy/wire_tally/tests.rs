@@ -278,3 +278,62 @@ fn permute_in_place_applies_the_sorted_order() {
         assert_eq!(items, expected, "order {order:?}");
     }
 }
+
+/// Owner names are attached while encoding, not kept per entry: the inline
+/// names the encoder emits must equal those of entries that each carry
+/// their looked-up names, including a name repeated after an unnamed id
+/// breaks the `XMIT_SAME_UID` run.
+#[cfg(unix)]
+#[test]
+fn owner_names_attached_while_encoding_match_names_on_every_entry() {
+    use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
+
+    let unnamed = 4_000_000_000;
+    let owned = |name: &str, id: u32| {
+        let mut entry = file(name, 1);
+        entry.set_uid(id);
+        entry.set_gid(id);
+        entry
+    };
+    let mut root = dir(".");
+    root.set_uid(0);
+    root.set_gid(0);
+    let entries = [root, owned("a", 0), owned("b", 0), owned("c", unnamed), owned("d", 0)];
+    let options = LocalCopyOptions::new().owner(true).group(true);
+    let totals = WireTotals::new(ProtocolVersion::NEWEST, local_flags());
+
+    let mut t = WireTally::new(totals, &options, false);
+    for (i, entry) in entries.iter().enumerate() {
+        t.add_entry(entry.clone(), i as u32);
+    }
+    let (sent, _) = t.finish(None, [0; 5]);
+
+    let named: Vec<FileEntry> = entries
+        .iter()
+        .map(|entry| {
+            let mut entry = entry.clone();
+            let text = |bytes: Option<Vec<u8>>| bytes.and_then(|b| String::from_utf8(b).ok());
+            if let Some(user) = text(lookup_user_name_cached(entry.uid().unwrap()).ok().flatten()) {
+                entry.set_user_name(user);
+            }
+            if let Some(group) = text(lookup_group_name_cached(entry.gid().unwrap()).ok().flatten())
+            {
+                entry.set_group_name(group);
+            }
+            entry
+        })
+        .collect();
+    let eager = WireTally::new(totals, &options, false);
+    let mut writer = eager.flist_writer();
+    let mut out = ByteCounter::default();
+    writer.set_first_ndx(1);
+    for entry in &named {
+        writer.write_entry(&mut out, entry).unwrap();
+    }
+    writer.write_end(&mut out, None).unwrap();
+    let mut codec = NdxCodecEnum::new(ProtocolVersion::NEWEST.as_u8());
+    codec.write_ndx(&mut out, NDX_FLIST_EOF).unwrap();
+
+    assert!(named[1].user_name().is_some(), "uid 0 has a name on every unix host");
+    assert_eq!(sent, out.0 + 4 + 5 + 6);
+}

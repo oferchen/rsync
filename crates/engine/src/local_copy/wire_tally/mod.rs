@@ -41,7 +41,8 @@ use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
 use protocol::codec::{NDX_DEL_STATS, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
-use protocol::flist::{FileEntry, FileListWriter, SubListPlan, compare_file_entries};
+use metadata::id_lookup::{lookup_group_name_cached, lookup_user_name_cached};
+use protocol::flist::{FileEntry, FileListWriter, PathInterner, SubListPlan, compare_file_entries};
 use protocol::idlist::IdList;
 use protocol::wire::{
     CompressedTokenEncoder, SumHead, write_token_block_match, write_token_end, write_token_literal,
@@ -231,6 +232,9 @@ pub(crate) struct WireTally {
     /// Relative paths of the entries itemized without a transfer, resolved
     /// to entries once the walk is complete.
     items: Vec<OsString>,
+    /// One shared parent path per directory, so entries do not each own a
+    /// copy of it.
+    dirnames: PathInterner,
     exchanges: Vec<(u32, Exchange)>,
     pending: Option<PendingTransfer>,
     /// Width of the whole-file sum after the tokens (`xfer_sum_len`).
@@ -269,6 +273,7 @@ impl WireTally {
             entries: Vec::new(),
             readdir: Vec::new(),
             items: Vec::new(),
+            dirnames: PathInterner::new(),
             exchanges: Vec::new(),
             pending: None,
             xfer_sum_len: options.transfer_checksum_algorithm().digest_len() as u64,
@@ -300,7 +305,12 @@ impl WireTally {
 
     /// Adds a file-list entry the sender would send, with its position in its
     /// directory's `readdir()` order.
-    pub(crate) fn add_entry(&mut self, entry: FileEntry, readdir_index: u32) {
+    ///
+    /// The entry needs no owner names: the tally attaches them while encoding,
+    /// only where the writer can emit them.
+    pub(crate) fn add_entry(&mut self, mut entry: FileEntry, readdir_index: u32) {
+        let dirname = self.dirnames.intern(entry.dirname());
+        entry.set_dirname(dirname);
         self.entries.push(entry);
         self.readdir.push(readdir_index);
     }
@@ -458,15 +468,16 @@ impl WireTally {
         });
         let mut sorted = std::mem::take(&mut self.entries);
         permute_in_place(&mut sorted, &order);
+        let sorted = sorted.as_mut_slice();
 
         let mut schedule = FrameSchedule::default();
         let mut sender = NdxCodecEnum::new(self.totals.protocol().as_u8());
         let mut generator = NdxCodecEnum::new(self.totals.protocol().as_u8());
 
         let layout = if self.totals.inc_recurse() {
-            self.incremental_layout(&sorted, &order, &mut sender, &mut schedule)
+            self.incremental_layout(sorted, &order, &mut sender, &mut schedule)
         } else {
-            self.flat_layout(&sorted, &order, &mut schedule)
+            self.flat_layout(sorted, &order, &mut schedule)
         };
 
         let mut exchanges = std::mem::take(&mut self.exchanges);
@@ -585,7 +596,7 @@ impl WireTally {
     /// in `send_files()`' first `send_extra_file_list()` (sender.c:516).
     fn incremental_layout(
         &self,
-        sorted: &[FileEntry],
+        sorted: &mut [FileEntry],
         order: &[u32],
         codec: &mut NdxCodecEnum,
         schedule: &mut FrameSchedule,
@@ -596,12 +607,8 @@ impl WireTally {
         let mut rounds = [ByteCounter::default(), ByteCounter::default()];
 
         writer.set_first_ndx(starts[0]);
-        for s in self.wire_order(&plan.initial, sorted, order) {
-            writer
-                .write_entry(&mut rounds[0], &sorted[s])
-                .expect("counting never fails");
-        }
-        writer.write_end(&mut rounds[0], None).expect("counting never fails");
+        let initial = self.wire_order(&plan.initial, sorted, order);
+        self.write_list(&mut writer, &mut rounds[0], sorted, &initial);
 
         let mut first_round_lists = 1;
         if plan.initial.len() == 1 {
@@ -618,12 +625,8 @@ impl WireTally {
                 .write_ndx(round, NDX_FLIST_OFFSET - sublist.parent_dir_ndx)
                 .expect("counting never fails");
             writer.set_first_ndx(start);
-            for s in self.wire_order(&sublist.members, sorted, order) {
-                writer
-                    .write_entry(round, &sorted[s])
-                    .expect("counting never fails");
-            }
-            writer.write_end(round, None).expect("counting never fails");
+            let members = self.wire_order(&sublist.members, sorted, order);
+            self.write_list(&mut writer, round, sorted, &members);
         }
         let last = &mut rounds[usize::from(plan.sublists.len() >= first_round_lists)];
         codec
@@ -643,6 +646,56 @@ impl WireTally {
             ndx,
             list_count: plan.list_count(),
             second_round_ndx,
+        }
+    }
+
+    /// Writes one incremental list's members in wire order, then its end
+    /// marker.
+    ///
+    /// upstream: flist.c:789-800 - an inline owner name follows only an entry
+    /// whose uid or gid differs from the previous entry's (no `XMIT_SAME_UID`
+    /// or `XMIT_SAME_GID`), so names are looked up for the list's first entry
+    /// and wherever an id changes; the writer still decides each flag.
+    fn write_list(
+        &self,
+        writer: &mut FileListWriter,
+        out: &mut ByteCounter,
+        sorted: &mut [FileEntry],
+        members: &[usize],
+    ) {
+        let names = !self.numeric_ids;
+        let mut previous = None;
+        for &s in members {
+            let entry = &mut sorted[s];
+            let ids = (entry.uid(), entry.gid());
+            if names && previous != Some(ids) {
+                self.attach_owner_names(entry);
+            }
+            previous = Some(ids);
+            writer.write_entry(out, entry).expect("counting never fails");
+        }
+        writer.write_end(out, None).expect("counting never fails");
+    }
+
+    /// Sets the user and group names the sender would look up for `entry`.
+    ///
+    /// upstream: uidlist.c:add_uid()/add_gid() - names come from the local
+    /// account database; ids without a name send none.
+    fn attach_owner_names(&self, entry: &mut FileEntry) {
+        let name = |found: metadata::id_lookup::LookupResult<Vec<u8>>| {
+            found.ok().flatten().and_then(|bytes| String::from_utf8(bytes).ok())
+        };
+        if self.preserve_uid
+            && entry.user_name().is_none()
+            && let Some(user) = entry.uid().and_then(|uid| name(lookup_user_name_cached(uid)))
+        {
+            entry.set_user_name(user);
+        }
+        if self.preserve_gid
+            && entry.group_name().is_none()
+            && let Some(group) = entry.gid().and_then(|gid| name(lookup_group_name_cached(gid)))
+        {
+            entry.set_group_name(group);
         }
     }
 
@@ -722,19 +775,11 @@ impl WireTally {
             .compat_flags()
             .contains(CompatibilityFlags::ID0_NAMES);
         let protocol = self.totals.protocol().as_u8();
-        type IdOf = fn(&FileEntry) -> (Option<u32>, Option<&str>);
+        type IdOf = fn(&FileEntry) -> Option<u32>;
         type Lookup = fn(u32) -> metadata::id_lookup::LookupResult<Vec<u8>>;
         let lists: [(bool, IdOf, Lookup); 2] = [
-            (
-                self.preserve_uid,
-                |e| (e.uid(), e.user_name()),
-                metadata::id_lookup::lookup_user_name_cached,
-            ),
-            (
-                self.preserve_gid,
-                |e| (e.gid(), e.group_name()),
-                metadata::id_lookup::lookup_group_name_cached,
-            ),
+            (self.preserve_uid, FileEntry::uid, lookup_user_name_cached),
+            (self.preserve_gid, FileEntry::gid, lookup_group_name_cached),
         ];
         for (preserve, id_of, lookup) in lists {
             if !preserve {
@@ -745,9 +790,9 @@ impl WireTally {
                 // upstream: uidlist.c:398-405 - CF_ID0_NAMES sends id 0's name.
                 list.add_id(0, lookup(0).ok().flatten());
             }
-            for entry in sorted {
-                if let (Some(id), name) = id_of(entry) {
-                    list.add_id(id, name.map(|n| n.as_bytes().to_vec()));
+            for id in sorted.iter().filter_map(id_of) {
+                if !list.contains(id) {
+                    list.add_id(id, lookup(id).ok().flatten());
                 }
             }
             list.write(out, id0_names, protocol)

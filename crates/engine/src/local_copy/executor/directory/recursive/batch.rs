@@ -233,8 +233,9 @@ pub(crate) fn capture_batch_file_entry(
     let numeric_ids = true;
 
     if !batch {
-        let entry =
-            build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, numeric_ids);
+        // The wire model attaches owner names only where the writer emits
+        // them, so the entry it keeps is built without any.
+        let entry = build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, true);
         context.tally_flist_entry(entry, readdir_index);
         return Ok(());
     }
