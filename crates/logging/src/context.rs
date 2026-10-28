@@ -415,6 +415,23 @@ pub fn emit_info_bytes(flag: InfoFlag, level: u8, message: Vec<u8>) {
     });
 }
 
+/// Emit one already-formatted output line under its upstream log code.
+///
+/// The caller has already decided the line is due, so no verbosity gate
+/// applies. One trailing newline is dropped because the sink terminates
+/// every line itself; escaping and stream selection happen there too.
+///
+/// upstream: log.c:272 rwrite() - every line carries its code to one writer.
+pub fn emit_line(code: LogCode, line: &[u8]) {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    emit(DiagnosticEvent::Bytes {
+        flag: InfoFlag::Misc,
+        level: 0,
+        code,
+        message: line.to_vec(),
+    });
+}
+
 /// Emit a warning diagnostic, unconditionally.
 ///
 /// A warning is not gated on verbosity: upstream's `FWARNING` is a

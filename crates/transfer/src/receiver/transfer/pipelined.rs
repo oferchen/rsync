@@ -55,7 +55,6 @@ impl ReceiverContext {
             && self.config.connection.client_mode
             && !self.should_emit_itemize()
             && matches!(self.select_mode(), ReceiverMode::Transfer);
-        self.names_to_stderr = self.config.flags.msgs_to_stderr;
         self.progress_active = progress.is_some();
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
