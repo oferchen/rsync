@@ -2,7 +2,7 @@ use super::*;
 use protocol::ProtocolVersion;
 use signature::{SignatureLayoutParams, calculate_signature_layout, generate_file_signature};
 use std::collections::VecDeque;
-use std::num::NonZeroU8;
+use std::num::{NonZeroU8, NonZeroU32};
 
 /// A basis smaller than one block still yields a usable index.
 ///
@@ -439,6 +439,42 @@ fn rebuild_reuses_allocation() {
         old_found.is_none(),
         "old data should not match after rebuild"
     );
+}
+
+/// WHY: the sender rebuilds one index per file. A rebuild that kept a large
+/// basis's table for the small basis after it would fill and probe a table
+/// sized for the wrong file, so the rebuilt tables must match a fresh build's.
+#[test]
+fn rebuild_sizes_tables_for_the_new_signature() {
+    let signature_of = |len: usize| {
+        let data: Vec<u8> = (0..len).map(|i| (i * 7 + i / 251) as u8).collect();
+        let layout = calculate_signature_layout(SignatureLayoutParams::new(
+            len as u64,
+            NonZeroU32::new(700),
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        ))
+        .expect("layout");
+        generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4).expect("sig")
+    };
+    let big = signature_of(700 * 4096);
+    let small = signature_of(700 * 4);
+    let mut index =
+        DeltaSignatureIndex::from_signature(&big, SignatureAlgorithm::Md4).expect("big");
+
+    assert!(index.rebuild(&small, SignatureAlgorithm::Md4));
+
+    let fresh =
+        DeltaSignatureIndex::from_signature(&small, SignatureAlgorithm::Md4).expect("small");
+    assert_ne!(
+        index.lookup.capacity(),
+        DeltaSignatureIndex::from_signature(&big, SignatureAlgorithm::Md4)
+            .expect("big")
+            .lookup
+            .capacity(),
+        "the fixture must change the table size"
+    );
+    assert_eq!(index.lookup.capacity(), fresh.lookup.capacity());
 }
 
 /// `find_match_slices` with a single contiguous slice (empty second) matches

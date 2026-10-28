@@ -243,10 +243,12 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Hold the per-file parent dirfd on the receiver and sender (#8067)
 - SHA-256 and SHA-512 use the ARMv8 hardware path on macOS aarch64 again (#8064)
 - Skip the sender seek between adjacent matched blocks and batch receiver signature buffers: daemon push 282K to 158K syscalls and 0.536 s to 0.472 s, pull 361K to 208K and 0.491 s to 0.419 s (#8210)
+- Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
 
 **Data integrity**
+- A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#8232)
 - A received file whose `close()` fails (where NFS-like filesystems report a failed write) now aborts with exit 11 and upstream's `close failed on` message instead of being committed (#8232)
