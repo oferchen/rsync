@@ -272,8 +272,8 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    if let Some(parent) = destination.parent() {
-        context.prepare_parent_directory(parent)?;
+    if !context.prepare_entry_parent(destination)? {
+        return Ok(true);
     }
 
     if existing::handle_update_skip(

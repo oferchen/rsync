@@ -17,6 +17,7 @@ pub(crate) use cleanup::{
 };
 #[cfg(unix)]
 pub(crate) use create_failure::report_mknod_failure;
+pub(crate) use create_failure::{full_fname, report as report_generator_failure};
 pub(crate) use create_failure::{report_link_failure, report_symlink_failure};
 pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::ScanRoot;

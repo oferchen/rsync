@@ -166,8 +166,8 @@ pub(crate) fn copy_device(
     // hard-link dedupe source (from earlier copies)
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
 
-    if let Some(parent) = destination.parent() {
-        context.prepare_parent_directory(parent)?;
+    if !context.prepare_entry_parent(destination)? {
+        return Ok(());
     }
 
     if mode.is_dry_run() {

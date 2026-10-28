@@ -73,8 +73,8 @@ pub(crate) fn report_link_failure(
 }
 
 /// `rsyserr(FERROR_XFER, ...)` from the generator: `who_am_i()` is always
-/// `generator` for `atomic_create()`.
-fn report(context: &mut CopyContext, what: &str, error: &io::Error) {
+/// `generator` for `atomic_create()` and for `recv_generator()` itself.
+pub(crate) fn report(context: &mut CopyContext, what: &str, error: &io::Error) {
     eprintln!("rsync: [generator] {what}: {}", upstream_io_error(error));
     context.record_create_error();
 }
