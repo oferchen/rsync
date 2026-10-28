@@ -397,9 +397,8 @@ mod tests {
     //
     // `SINGLETON_GUARD` serializes those tests in-process, independently of
     // the test name, so the invariant holds even under a shared-process test
-    // runner. This complements (and does not rely on) the `global-pool-serial`
-    // nextest group in `.config/nextest.toml`, which selects tests by name
-    // substring and would silently drop a renamed test.
+    // runner such as `cargo test`; nextest isolates each test in its own
+    // process anyway.
     static SINGLETON_GUARD: Mutex<()> = Mutex::new(());
 
     /// Serializes the tests that touch the process-wide global buffer pool.
