@@ -7,6 +7,7 @@
 
 mod daemon;
 mod flags;
+mod parallel_delta_env;
 mod parse;
 mod run;
 
