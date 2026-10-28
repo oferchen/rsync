@@ -229,8 +229,10 @@ pub(crate) fn apply_dir_merge_rule_defaults(
     options: &DirMergeOptions,
     delete_excluded: bool,
 ) -> FilterRule {
+    // upstream: exclude.c:1229, :1261 - a merge rule's `/` reaches every rule
+    // it loads as FILTRULE_ABS_PATH; the pattern is matched, not rewritten.
     if options.anchor_root_enabled() {
-        rule = rule.anchor_to_root();
+        rule = rule.with_abs_path(true);
     }
 
     if options.perishable() {

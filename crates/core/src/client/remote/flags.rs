@@ -295,7 +295,19 @@ pub(crate) fn build_wire_format_rules(
             FilterRuleKind::DirMerge => RuleType::DirMerge,
         };
 
-        let (pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
+        let (mut pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
+        // upstream: exclude.c:1392-1394, :297-300 - only the `/` modifier marks
+        // a merge rule ABS_PATH; a leading `/` in the merge filename is part of
+        // its path, so it stays in the pattern.
+        let anchored = match spec.dir_merge_options() {
+            Some(options) => {
+                if anchored {
+                    pattern.insert(0, '/');
+                }
+                options.anchor_root_enabled()
+            }
+            None => anchored,
+        };
         let mut wire_rule = FilterRuleWireFormat {
             rule_type,
             pattern: pattern.into(),
@@ -1191,15 +1203,15 @@ mod tests {
         assert_eq!(rules[0].pattern, "tmp");
     }
 
-    /// The `/` modifier and a leading `/` both anchor, but only the modifier is
-    /// upstream's FILTRULE_ABS_PATH prefix byte (exclude.c:1392-1393, :1843),
-    /// which a protocol 28 peer cannot read.
+    /// Only a leading `/` anchors; the `/` modifier is upstream's
+    /// FILTRULE_ABS_PATH prefix byte (exclude.c:1392-1393, :1843), which
+    /// matches against the absolute path instead (exclude.c:1022-1027).
     #[test]
     fn abs_path_modifier_is_distinct_from_a_leading_slash() {
         let modifier = FilterRuleSpec::exclude("tmp").with_anchor();
         let slash = FilterRuleSpec::exclude("/tmp");
         let rules = build_wire_format_rules(&[modifier, slash], false).expect("convert");
-        assert!(rules[0].anchored && rules[0].abs_path);
+        assert!(!rules[0].anchored && rules[0].abs_path);
         assert!(rules[1].anchored && !rules[1].abs_path);
     }
 

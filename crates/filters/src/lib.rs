@@ -167,7 +167,9 @@ pub use rule_modifiers::{
     InvalidModifier, ModifierScope, RuleModifiers, parse_rule_modifiers, parse_rule_modifiers_in,
 };
 pub use rule_source::{OwnedRuleSource, RuleSource, trace_add_rule};
-pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
+pub use set::{
+    FilterSet, FilterSetError, abs_rule_root, apple_double_exclusion_rules, cvs_exclusion_rules,
+};
 pub use wildmatch::{iwildmatch, wildmatch};
 
 #[cfg(test)]

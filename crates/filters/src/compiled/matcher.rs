@@ -34,16 +34,22 @@ impl RuleMatcher {
     ///
     /// upstream: rule_matches() has no descendant matching; the walk prunes an
     /// excluded directory instead, so descendants are not consulted.
+    ///
+    /// `abs_root` is the sender's current directory as [`crate::abs_rule_root`]
+    /// gives it; an absolute-path (`/` modifier) rule matches it joined to
+    /// `path` (exclude.c:1022-1027). Other rules ignore it.
     #[must_use]
-    pub fn matches(&self, path: &Path, is_dir: bool) -> bool {
-        self.0.matches(path, is_dir, false)
+    pub fn matches(&self, path: &Path, is_dir: bool, abs_root: Option<&Path>) -> bool {
+        self.0.matches_in(path, is_dir, false, abs_root)
     }
 
     /// Whether the rule fires for `path` on the receiver's deletion scan,
     /// where an excluded directory also covers its contents.
+    ///
+    /// `abs_root` is the receiver's directory, as for [`Self::matches`].
     #[must_use]
-    pub fn matches_for_deletion(&self, path: &Path, is_dir: bool) -> bool {
-        self.0.matches_for_deletion(path, is_dir, false)
+    pub fn matches_for_deletion(&self, path: &Path, is_dir: bool, abs_root: Option<&Path>) -> bool {
+        self.0.matches_for_deletion_in(path, is_dir, false, abs_root)
     }
 
     /// The rule's action.
@@ -51,6 +57,7 @@ impl RuleMatcher {
     pub const fn action(&self) -> FilterAction {
         self.0.action
     }
+
 
     /// Whether the rule applies on the sending side.
     #[must_use]

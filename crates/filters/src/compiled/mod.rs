@@ -50,7 +50,7 @@ impl CompiledRule {
             exclude_only: _,
             no_inherit: _,
             cvs_mode: _,
-            abs_path: _,
+            abs_path,
             word_split: _,
             no_prefixes: _,
             no_prefixes_include: _,
@@ -145,6 +145,8 @@ impl CompiledRule {
                 trailing_slash,
                 order: 0,
                 source,
+                abs_path,
+                abs_root: None,
             });
         }
 
@@ -271,6 +273,8 @@ impl CompiledRule {
             trailing_slash,
             order: 0,
             source,
+            abs_path,
+            abs_root: None,
         })
     }
 }

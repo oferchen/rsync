@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::path::Path;
+use std::sync::Arc;
 
 use logging::debug_log;
 
@@ -70,9 +72,43 @@ pub(crate) struct CompiledRule {
     /// `report_filter_result` (`exclude.c:1099`) runs at MATCH time, when the
     /// merge file that supplied the rule is long closed.
     pub(crate) source: OwnedRuleSource,
+    /// `/` modifier on a non-merge rule (FILTRULE_ABS_PATH): the rule matches
+    /// the absolute path, [`Self::abs_root`] joined to the name.
+    pub(crate) abs_path: bool,
+    /// The transferring side's directory, as rule_matches() prepends it:
+    /// `curr_dir + module_dirlen + 1`, so no leading `/` (exclude.c:1022-1027).
+    /// `None` until the side sets it, and for the root directory itself.
+    pub(crate) abs_root: Option<Arc<Path>>,
 }
 
 impl CompiledRule {
+    /// Records the directory an absolute-path rule's names are relative to.
+    pub(crate) fn set_abs_root(&mut self, root: Option<&Arc<Path>>) {
+        if self.abs_path {
+            self.abs_root = root.cloned();
+        }
+    }
+
+    /// The string rule_matches() tests: the name, or for an absolute-path rule
+    /// the directory joined to it.
+    ///
+    /// upstream: exclude.c:1022-1027 prepends `curr_dir + module_dirlen + 1`
+    /// and `/` when the rule has FILTRULE_ABS_PATH and the name is relative. A
+    /// slashless pattern still reaches only the last component, as upstream's
+    /// name-only branch (exclude.c:1016-1021) does.
+    ///
+    /// `root` stands in for [`Self::abs_root`] when the caller holds the
+    /// directory itself, as the local copy does for each side.
+    fn subject<'a>(&self, path: &'a Path, root: Option<&Path>) -> Cow<'a, Path> {
+        if !self.abs_path {
+            return Cow::Borrowed(path);
+        }
+        match root.or(self.abs_root.as_deref()) {
+            Some(root) if !path.has_root() => Cow::Owned(root.join(path)),
+            _ => Cow::Borrowed(path),
+        }
+    }
+
     /// Tests whether a path matches this rule's pattern.
     ///
     /// When `negate` is true, the match result is inverted: returns true when
@@ -86,8 +122,24 @@ impl CompiledRule {
     /// into excluded directories. The receiver deletion path needs descendants
     /// because it evaluates paths individually without traversal context.
     pub(crate) fn matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
+        self.matches_in(path, is_dir, check_descendants, None)
+    }
+
+    /// [`Self::matches`] with an absolute-path rule's directory given by the
+    /// caller (see [`Self::subject`]).
+    pub(crate) fn matches_in(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        check_descendants: bool,
+        root: Option<&Path>,
+    ) -> bool {
         self.negated_directory_rule_hits_non_dir(is_dir)
-            || self.matches_ignoring_directory_flag(path, is_dir, check_descendants)
+            || self.matches_ignoring_directory_flag(
+                &self.subject(path, root),
+                is_dir,
+                check_descendants,
+            )
     }
 
     /// Returns `true` when this is a `!`-negated rule written with a trailing
@@ -143,7 +195,11 @@ impl CompiledRule {
     pub(crate) fn matches_name(&self, path: &Path, is_dir: bool) -> bool {
         let keeps_directory_flag = matches!(self.action, FilterAction::Include);
         (keeps_directory_flag && self.negated_directory_rule_hits_non_dir(is_dir))
-            || self.matches_ignoring_directory_flag(path, is_dir, self.directory_only)
+            || self.matches_ignoring_directory_flag(
+                &self.subject(path, None),
+                is_dir,
+                self.directory_only,
+            )
     }
 
     /// Like [`Self::matches`] but for the receiver's deletion scan.
@@ -165,11 +221,24 @@ impl CompiledRule {
         is_dir: bool,
         check_descendants: bool,
     ) -> bool {
+        self.matches_for_deletion_in(path, is_dir, check_descendants, None)
+    }
+
+    /// [`Self::matches_for_deletion`] with an absolute-path rule's directory
+    /// given by the caller (see [`Self::subject`]).
+    pub(crate) fn matches_for_deletion_in(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        check_descendants: bool,
+        root: Option<&Path>,
+    ) -> bool {
         if self.negated_directory_rule_hits_non_dir(is_dir) {
             return true;
         }
-        let pattern_matched = self.pattern_matches_impl(path, is_dir, check_descendants)
-            || self.deletion_descendant_matches(path);
+        let path = self.subject(path, root);
+        let pattern_matched = self.pattern_matches_impl(&path, is_dir, check_descendants)
+            || self.deletion_descendant_matches(&path);
 
         if self.negate {
             !pattern_matched

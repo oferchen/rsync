@@ -18,7 +18,7 @@ use crate::{
 ///   kept separate because upstream `exclude.c:1013` never matches an
 ///   `x`-modifier rule against a path nor an ordinary rule against an xattr
 ///   name.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct FilterSetInner {
     pub(crate) include_exclude: Vec<CompiledRule>,
     pub(crate) protect_risk: Vec<CompiledRule>,

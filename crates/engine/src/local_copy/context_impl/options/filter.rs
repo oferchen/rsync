@@ -152,9 +152,13 @@ impl<'a> CopyContext<'a> {
             if outcome.transfer_decided() {
                 break;
             }
+            let abs_root = self
+                .filter_program
+                .as_ref()
+                .and_then(|program| program.abs_root(context));
             loaded
                 .segment
-                .apply(relative, is_dir, &mut outcome, context);
+                .apply(relative, is_dir, &mut outcome, context, abs_root);
         }
         Some(outcome)
     }
@@ -163,7 +167,11 @@ impl<'a> CopyContext<'a> {
         let stack = self.dir_merge.dynamic.borrow();
         let frame = stack.last()?;
         for loaded in frame.loaded_segments.iter().rev() {
-            if let Some(result) = loaded.segment.excluded_dir_by_non_dir_rule(relative) {
+            let abs_root = self
+                .filter_program
+                .as_ref()
+                .and_then(|program| program.abs_root(FilterContext::Transfer));
+            if let Some(result) = loaded.segment.excluded_dir_by_non_dir_rule(relative, abs_root) {
                 return Some(result);
             }
         }
@@ -232,9 +240,17 @@ impl DeletionFilterSnapshot {
             if outcome.transfer_decided() {
                 break;
             }
-            loaded
-                .segment
-                .apply(relative, is_dir, &mut outcome, FilterContext::Deletion);
+            let abs_root = self
+                .program
+                .as_ref()
+                .and_then(|program| program.abs_root(FilterContext::Deletion));
+            loaded.segment.apply(
+                relative,
+                is_dir,
+                &mut outcome,
+                FilterContext::Deletion,
+                abs_root,
+            );
         }
         Some(outcome)
     }

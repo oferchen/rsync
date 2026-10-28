@@ -56,9 +56,13 @@ impl FilterSegment {
     ///
     /// Returns `Some(true)` if excluded by a non-dir-only rule, `Some(false)` if
     /// excluded by a dir-only rule or included, and `None` if no rule matched.
-    pub(crate) fn excluded_dir_by_non_dir_rule(&self, path: &Path) -> Option<bool> {
+    pub(crate) fn excluded_dir_by_non_dir_rule(
+        &self,
+        path: &Path,
+        abs_root: Option<&Path>,
+    ) -> Option<bool> {
         for rule in &self.include_exclude {
-            if rule.applies_to_sender() && rule.matcher.matches(path, true) {
+            if rule.applies_to_sender() && rule.matcher.matches(path, true, abs_root) {
                 if matches!(rule.action(), FilterAction::Exclude) {
                     return Some(!rule.matcher.is_directory_only());
                 }
@@ -68,12 +72,16 @@ impl FilterSegment {
         None
     }
 
+    ///
+    /// `abs_root` is the side's directory for absolute-path rules, as
+    /// [`FilterProgram::abs_root`](super::FilterProgram::abs_root) gives it.
     pub(crate) fn apply(
         &self,
         path: &Path,
         is_dir: bool,
         outcome: &mut FilterOutcome,
         context: FilterContext,
+        abs_root: Option<&Path>,
     ) {
         // upstream: exclude.c:rule_matches() has NO descendant matching at all.
         // The sender's traversal prunes excluded directories so children are
@@ -97,9 +105,9 @@ impl FilterSegment {
         // the local-copy delete pass removes such directories en masse.
         let rule_matches = |rule: &CompiledRule, path: &Path, is_dir: bool| {
             if for_deletion {
-                rule.matcher.matches_for_deletion(path, is_dir)
+                rule.matcher.matches_for_deletion(path, is_dir, abs_root)
             } else {
-                rule.matcher.matches(path, is_dir)
+                rule.matcher.matches(path, is_dir, abs_root)
             }
         };
         for rule in &self.include_exclude {
@@ -517,19 +525,19 @@ mod tests {
     #[test]
     fn include_directory_only_no_descendant_match() {
         let rule = CompiledRule::new(FilterRule::include("*/".to_owned())).unwrap();
-        assert!(rule.matcher.matches(Path::new("subdir"), true));
+        assert!(rule.matcher.matches(Path::new("subdir"), true, None));
         // Files inside an included directory must still match a separate rule;
         // include never expands to descendants, not even on the deletion scan.
-        assert!(!rule.matcher.matches(Path::new("file.txt"), false));
+        assert!(!rule.matcher.matches(Path::new("file.txt"), false, None));
         assert!(
             !rule
                 .matcher
-                .matches_for_deletion(Path::new("subdir/debug.log"), false)
+                .matches_for_deletion(Path::new("subdir/debug.log"), false, None)
         );
         assert!(
             !rule
                 .matcher
-                .matches_for_deletion(Path::new("subdir/report.csv"), false)
+                .matches_for_deletion(Path::new("subdir/report.csv"), false, None)
         );
     }
 
@@ -543,13 +551,13 @@ mod tests {
     fn exclude_directory_only_descendant_gated_by_context() {
         let rule = CompiledRule::new(FilterRule::exclude("*/".to_owned())).unwrap();
         // Directory entry matches directly in both contexts.
-        assert!(rule.matcher.matches(Path::new("subdir"), true));
+        assert!(rule.matcher.matches(Path::new("subdir"), true, None));
         // Transfer path never matches a child via a synthetic descendant.
-        assert!(!rule.matcher.matches(Path::new("subdir/debug.log"), false));
+        assert!(!rule.matcher.matches(Path::new("subdir/debug.log"), false, None));
         // Deletion path protects the child.
         assert!(
             rule.matcher
-                .matches_for_deletion(Path::new("subdir/debug.log"), false)
+                .matches_for_deletion(Path::new("subdir/debug.log"), false, None)
         );
     }
 
@@ -560,8 +568,8 @@ mod tests {
     fn internal_slash_is_unanchored() {
         let rule = CompiledRule::new(FilterRule::exclude("src/lib/".to_owned())).unwrap();
         assert!(rule.matcher.is_directory_only());
-        assert!(rule.matcher.matches(Path::new("a/src/lib"), true));
-        assert!(!rule.matcher.matches(Path::new("a/src/lib"), false));
+        assert!(rule.matcher.matches(Path::new("a/src/lib"), true, None));
+        assert!(!rule.matcher.matches(Path::new("a/src/lib"), false, None));
     }
 
     /// `- /bar` is anchored and must NOT match `bar/down` (or deeper paths)
@@ -582,6 +590,7 @@ mod tests {
             true,
             &mut bar_outcome,
             FilterContext::Transfer,
+            None,
         );
         assert!(!bar_outcome.allows_transfer(), "the dir `bar` is excluded");
 
@@ -591,6 +600,7 @@ mod tests {
             true,
             &mut child_outcome,
             FilterContext::Transfer,
+            None,
         );
         assert!(
             child_outcome.allows_transfer(),
@@ -603,6 +613,7 @@ mod tests {
             false,
             &mut deep_outcome,
             FilterContext::Transfer,
+            None,
         );
         assert!(
             deep_outcome.allows_transfer(),
@@ -627,6 +638,7 @@ mod tests {
             true,
             &mut outcome,
             FilterContext::Deletion,
+            None,
         );
         assert!(
             !outcome.allows_transfer(),
@@ -651,7 +663,7 @@ mod tests {
         let child = Path::new("foo/sub/file1");
 
         let mut del = FilterOutcome::default();
-        segment.apply(child, false, &mut del, FilterContext::Deletion);
+        segment.apply(child, false, &mut del, FilterContext::Deletion, None);
         assert!(
             !del.allows_deletion(),
             "`foo/sub/file1` must be protected from deletion by `- foo/*/`",
@@ -660,7 +672,7 @@ mod tests {
         // The transfer path must NOT exclude the child via a synthetic
         // descendant - the sender walk prunes the directory instead.
         let mut xfer = FilterOutcome::default();
-        segment.apply(child, false, &mut xfer, FilterContext::Transfer);
+        segment.apply(child, false, &mut xfer, FilterContext::Transfer, None);
         assert!(
             xfer.allows_transfer(),
             "`foo/sub/file1` must not be excluded on the transfer path (#6015)",
@@ -673,10 +685,10 @@ mod tests {
     #[test]
     fn bare_double_star_matches_across_segments() {
         let rule = CompiledRule::new(FilterRule::include("foo**too".to_owned())).unwrap();
-        assert!(rule.matcher.matches(Path::new("bar/down/to/foo/too"), true));
-        assert!(rule.matcher.matches(Path::new("foo/too"), true));
-        assert!(rule.matcher.matches(Path::new("fooxytoo"), false));
-        assert!(!rule.matcher.matches(Path::new("foo/bar"), false));
+        assert!(rule.matcher.matches(Path::new("bar/down/to/foo/too"), true, None));
+        assert!(rule.matcher.matches(Path::new("foo/too"), true, None));
+        assert!(rule.matcher.matches(Path::new("fooxytoo"), false, None));
+        assert!(!rule.matcher.matches(Path::new("foo/bar"), false, None));
     }
 
     #[test]

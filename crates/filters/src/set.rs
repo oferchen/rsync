@@ -152,6 +152,30 @@ impl FilterSet {
         })
     }
 
+    /// Gives the set's absolute-path (`/` modifier) rules the directory their
+    /// names are relative to, as [`abs_rule_root`] computes it.
+    ///
+    /// upstream: exclude.c:1022-1027 - such a rule matches `curr_dir +
+    /// module_dirlen + 1`, `/` and the name. The sender's `curr_dir` is the
+    /// directory its file-list names are relative to; the deleting receiver's
+    /// is the destination.
+    #[must_use]
+    pub fn with_abs_root(mut self, root: Option<&Arc<Path>>) -> Self {
+        let has_abs_rule = self
+            .inner
+            .include_exclude
+            .iter()
+            .chain(&self.inner.protect_risk)
+            .any(|rule| rule.abs_path);
+        if has_abs_rule {
+            let inner = Arc::make_mut(&mut self.inner);
+            for rule in inner.include_exclude.iter_mut().chain(&mut inner.protect_risk) {
+                rule.set_abs_root(root);
+            }
+        }
+        self
+    }
+
     /// Returns `true` if the set contains no compiled rules of any kind.
     ///
     /// An empty filter set allows all paths and all deletions.
@@ -980,4 +1004,21 @@ mod tests {
         assert!(!set.has_xattr_rules());
         assert!(set.xattr_name_allowed("user.anything", XattrSide::Receiver));
     }
+}
+
+/// The directory an absolute-path rule's names are relative to, as
+/// rule_matches() prepends it: `curr_dir + module_dirlen + 1`
+/// (exclude.c:1022-1027).
+///
+/// `dir` is the side's current directory, absolute; `module_root` is a daemon
+/// module's directory, whose prefix upstream strips. `None` when nothing is
+/// left - the root itself, or the module root - where upstream prepends
+/// nothing (`curr_dir_len > module_dirlen + 1` fails).
+#[must_use]
+pub fn abs_rule_root(dir: &Path, module_root: Option<&Path>) -> Option<Arc<Path>> {
+    let relative = match module_root {
+        Some(module) => dir.strip_prefix(module).ok()?,
+        None => dir.strip_prefix("/").unwrap_or(dir),
+    };
+    (!relative.as_os_str().is_empty()).then(|| Arc::from(relative))
 }

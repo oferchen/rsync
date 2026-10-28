@@ -119,7 +119,7 @@ mod tests {
     fn anchor_perishable_negate_and_xattr_reach_the_rule() {
         let rule =
             apply_rule_modifiers(FilterRuleSpec::exclude("a".to_owned()), mods("/p!x", false));
-        assert!(rule.pattern().starts_with('/'));
+        assert!(rule.is_abs_path() && rule.pattern() == "a");
         assert!(rule.is_perishable() && rule.is_negated() && rule.is_xattr_only());
     }
 
