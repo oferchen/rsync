@@ -234,3 +234,27 @@ fn the_created_directory_notice_is_one_info_frame() {
     let (_, verbose) = run(totals.with_created_directory_notice(true));
     assert_eq!(verbose, quiet + 4 + "created directory dst\n".len() as u64);
 }
+
+/// The file list goes out in `readdir()` order (flist.c:send_directory()),
+/// and prefix compression makes its size depend on that order: here the
+/// readdir order shares no prefix between neighbours while sorted order
+/// shares `a`.
+#[test]
+fn the_file_list_is_encoded_in_readdir_order() {
+    let entries = [dir("."), file("ab", 1), file("ac", 1), file("b", 1)];
+    let sent_for = |readdir: [u32; 4]| {
+        let mut t = tally(local_flags());
+        for (entry, pos) in entries.iter().zip(readdir) {
+            t.add_entry(entry.clone(), pos);
+        }
+        t.finish(None, [0; 5]).0
+    };
+    let sorted = sent_for([0, 0, 1, 2]);
+    let interleaved = sent_for([0, 0, 2, 1]);
+    let wire = |order: [usize; 4]| {
+        let wire: Vec<FileEntry> = order.iter().map(|&i| entries[i].clone()).collect();
+        flist_bytes(&wire)
+    };
+    assert_eq!(sorted - wire([0, 1, 2, 3]), interleaved - wire([0, 1, 3, 2]));
+    assert!(interleaved > sorted, "the interleaved order loses the shared prefix");
+}

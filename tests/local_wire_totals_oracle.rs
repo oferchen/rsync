@@ -142,8 +142,12 @@ impl Fixture {
     }
 }
 
-/// `(sent, received)` from a `--stats` run.
+/// `(sent, received)` from a `--stats` run, and the destination it used.
 fn totals(binary: &Path, fixture: Fixture, args: &[&str]) -> (u64, u64) {
+    totals_with_destination(binary, fixture, args).0
+}
+
+fn totals_with_destination(binary: &Path, fixture: Fixture, args: &[&str]) -> ((u64, u64), PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let (src, dst) = fixture.build(dir.path());
     let mut src_arg = src.into_os_string();
@@ -170,7 +174,10 @@ fn totals(binary: &Path, fixture: Fixture, args: &[&str]) -> (u64, u64) {
             .and_then(|value| value.parse().ok())
             .unwrap_or_else(|| panic!("no {label:?} line in:\n{stdout}"))
     };
-    (field("Total bytes sent:"), field("Total bytes received:"))
+    (
+        (field("Total bytes sent:"), field("Total bytes received:")),
+        dst,
+    )
 }
 
 /// Asserts oc's totals for a cell against the 3.5.1 recording and, when an
@@ -230,4 +237,20 @@ fn delete_totals_match_upstream() {
 #[test]
 fn delete_after_totals_match_upstream() {
     check(Fixture::Extraneous, &["-rt", "--delete-after"], (46, 11));
+}
+
+/// `-v` makes the receiver announce the destination root it creates, one
+/// `MSG_INFO` frame (main.c:828-829): the whole-file totals plus the notice.
+#[test]
+fn created_directory_notice_is_counted_as_received() {
+    let ((sent, received), dst) =
+        totals_with_destination(&oc_rsync(), Fixture::WholeFile, &["-rtv"]);
+    let notice = format!("created directory {}\n", dst.display());
+    assert_eq!((sent, received), (5_098, 38 + 4 + notice.len() as u64));
+    if let Some(upstream) = upstream_rsync() {
+        let ((up_sent, up_received), up_dst) =
+            totals_with_destination(&upstream, Fixture::WholeFile, &["-rtv"]);
+        let up_notice = format!("created directory {}\n", up_dst.display());
+        assert_eq!((up_sent, up_received), (5_098, 38 + 4 + up_notice.len() as u64));
+    }
 }
