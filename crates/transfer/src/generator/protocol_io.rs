@@ -847,6 +847,7 @@ impl GeneratorContext {
                 .dir_flist_growth
                 .expand(FLIST_START_LARGE, ProcessRole::Sender)?;
         }
+        self.fill_flist_checksums(0..count);
         for i in 0..count {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, &mut flist_writer);
@@ -988,6 +989,7 @@ impl GeneratorContext {
         // Write file entries from the reordered file_list. Each sub-list is a
         // fresh list (flist.c:2657 flist_new) grown one entry at a time.
         let end = segment.flist_start + segment.count;
+        self.fill_flist_checksums(segment.flist_start..end);
         let mut growth = FlistGrowth::default();
         for i in segment.flist_start..end {
             let entry = &self.file_list[i];
