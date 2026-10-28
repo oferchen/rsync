@@ -615,6 +615,10 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // local half is the receiver, where the flag is inert (the remote sender does
     // the conversion), so setting it unconditionally is safe.
     server_config.flags.copy_devices = config.copy_devices();
+    // `--parallel-delta-scan` is an oc-only sender optimization that never
+    // reaches the wire, so every transport's in-process sender learns it here.
+    // On a pull the local half is the receiver, where the flag is inert.
+    server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
     // upstream: syscall.c do_open / do_open_nofollow propagate O_NOATIME when set.
     server_config.write.open_noatime = config.open_noatime();
     // upstream: options.c:2944-2956 - itemize_changes is forwarded to the remote
@@ -1104,6 +1108,22 @@ mod tests {
         assert!(sender.flags.prune_empty_dirs);
         assert_eq!(sender.flags.fuzzy_level, 1);
         assert_eq!(sender.reference_directories.len(), 1);
+    }
+
+    // WHY: --parallel-delta-scan is never sent on the wire, so a push sender
+    // only scans in parallel if its in-process config carries the flag. The
+    // daemon and embedded-ssh paths once set it themselves while the external
+    // remote-shell path did not, so `--parallel-delta-scan` over ssh was
+    // accepted and silently ignored.
+    #[test]
+    fn apply_common_server_flags_carries_parallel_delta_scan() {
+        for enabled in [false, true] {
+            let config = ClientConfig::builder().parallel_delta_scan(enabled).build();
+            let mut server_config = ServerConfig::default();
+            server_config.flags.parallel_delta_scan = !enabled;
+            apply_common_server_flags(&config, &mut server_config);
+            assert_eq!(server_config.flags.parallel_delta_scan, enabled);
+        }
     }
 
     #[test]
