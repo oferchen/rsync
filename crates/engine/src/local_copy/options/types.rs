@@ -176,6 +176,8 @@ pub struct LocalCopyOptions {
     pub(super) preserve_acls: bool,
     pub(super) filters: Option<FilterSet>,
     pub(super) filter_program: Option<FilterProgram>,
+    /// The session's CVS ignore list, shared with the caller's own `C` rules.
+    pub(super) cvs_session: filters::CvsSession,
     /// Optional filename charset converter resolved from the user's
     /// `--iconv=LOCAL,REMOTE` request.
     ///
@@ -348,6 +350,7 @@ impl LocalCopyOptions {
             preserve_acls: false,
             filters: None,
             filter_program: None,
+            cvs_session: filters::CvsSession::default(),
             iconv: None,
             numeric_ids: false,
             sparse: false,

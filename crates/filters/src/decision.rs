@@ -737,6 +737,7 @@ mod tests {
             pattern: pattern.as_bytes().to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,

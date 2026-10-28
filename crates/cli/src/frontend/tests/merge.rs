@@ -43,6 +43,7 @@ fn apply_merge_directive_rejects_exclude_if_present_in_whitespace_file() {
         &mut rules,
         &mut visited,
         filters::RuleSource::Argument,
+        &filters::CvsSession::default(),
     )
     .expect_err("upstream has no exclude-if-present rule");
     assert!(error.to_string().contains("Unknown filter rule"), "{error}");
@@ -71,6 +72,7 @@ fn apply_merge_directive_rejects_per_dir_alias() {
             &mut rules,
             &mut visited,
             filters::RuleSource::Argument,
+            &filters::CvsSession::default(),
         )
         .is_err()
     );
@@ -131,6 +133,7 @@ fn apply_merge_directive_collapses_dot_dot_before_opening_the_file() {
         &mut rules,
         &mut visited,
         filters::RuleSource::Argument,
+        &filters::CvsSession::default(),
     )
     .expect("apply merge");
 
@@ -162,6 +165,7 @@ fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
             &mut rules,
             &mut visited,
             filters::RuleSource::Argument,
+            &filters::CvsSession::default(),
         )
         .is_err()
     );
@@ -195,6 +199,7 @@ fn an_unparsable_line_in_a_merge_file_is_described_not_echoed() {
         &mut rules,
         &mut visited,
         filters::RuleSource::Argument,
+        &filters::CvsSession::default(),
     )
     .expect_err("an unparsable merged line must be refused");
     let rendered = error.to_string();
@@ -235,6 +240,7 @@ fn a_merge_file_named_by_another_file_reports_where_it_was_named() {
         &mut rules,
         &mut visited,
         filters::RuleSource::Argument,
+        &filters::CvsSession::default(),
     )
     .expect_err("an unparsable line in the nested file must be refused");
     let rendered = error.to_string();

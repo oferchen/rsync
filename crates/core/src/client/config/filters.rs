@@ -23,6 +23,10 @@ pub struct FilterRuleSpec {
     dir_merge_options: Option<DirMergeOptions>,
     applies_to_sender: bool,
     applies_to_receiver: bool,
+    /// Whether the rule's text named its side(s) with `s`/`r`, upstream's
+    /// `rflags & FILTRULES_SIDES`; `-sr` names both yet applies like an
+    /// unsided rule (exclude.c:1448, 1480).
+    sides_named: bool,
     perishable: bool,
     xattr_only: bool,
     negate: bool,
@@ -61,6 +65,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -80,6 +85,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -98,6 +104,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: false,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -116,6 +123,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: false,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -135,6 +143,7 @@ impl FilterRuleSpec {
             dir_merge_options: Some(options),
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -153,6 +162,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: false,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -171,6 +181,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: false,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -237,9 +248,8 @@ impl FilterRuleSpec {
     ///     rule->rflags |= FILTRULE_SENDER_SIDE;
     /// ```
     ///
-    /// In oc-rsync, `applies_to_sender == true && applies_to_receiver == true`
-    /// represents "no `FILTRULES_SIDES` bit set" - the rule applies to both
-    /// sides by default. Merge and dir-merge rules are excluded because they
+    /// A rule that [names a side](Self::specifies_side) - `-sr` included -
+    /// keeps its sides. Merge and dir-merge rules are excluded because they
     /// expand into per-file rules that carry their own side information.
     /// Protect and Risk rules already restrict themselves to the receiver
     /// side, so the implicit flag never fires for them.
@@ -247,7 +257,7 @@ impl FilterRuleSpec {
         if !matches!(self.kind, FilterRuleKind::Include | FilterRuleKind::Exclude) {
             return false;
         }
-        if !(self.applies_to_sender && self.applies_to_receiver) {
+        if self.specifies_side() {
             return false;
         }
         self.applies_to_receiver = false;
@@ -256,16 +266,21 @@ impl FilterRuleSpec {
 
     /// Reports whether the rule itself names a side.
     ///
-    /// upstream: exclude.c:1448 `rule->rflags & FILTRULES_SIDES`. oc spells
-    /// "no side bit set" as *both* sides applying, so any rule that is not
-    /// both-sided has named one. That deliberately includes `P`/`R`
-    /// (protect/risk), which default to receiver-only here and set
+    /// upstream: exclude.c:1448 `rule->rflags & FILTRULES_SIDES`: the rule
+    /// named a side with `s`/`r` (both, for `-sr`), or its action implies one.
+    /// That includes `P`/`R` (protect/risk), which set
     /// `FILTRULE_RECEIVER_SIDE` upstream (`exclude.c:1352-1357`), so a `P` or
     /// `R` line inside a sided merge file is refused exactly like an explicit
     /// `-r`/`-s`.
     #[must_use]
     pub const fn specifies_side(&self) -> bool {
-        !(self.applies_to_sender && self.applies_to_receiver)
+        self.sides_named || !(self.applies_to_sender && self.applies_to_receiver)
+    }
+
+    /// Whether the rule's text named its side(s) with `s`/`r`.
+    #[must_use]
+    pub const fn names_sides(&self) -> bool {
+        self.sides_named
     }
 
     /// Applies dir-merge style overrides (anchor, side modifiers) to the rule.
@@ -323,6 +338,15 @@ impl FilterRuleSpec {
     #[must_use]
     pub const fn with_receiver(mut self, applies: bool) -> Self {
         self.applies_to_receiver = applies;
+        self
+    }
+
+    /// Names the rule's sides, as the `s`/`r` modifiers do (exclude.c:1423-1432).
+    #[must_use]
+    pub const fn with_sides(mut self, sender: bool, receiver: bool) -> Self {
+        self.applies_to_sender = sender;
+        self.applies_to_receiver = receiver;
+        self.sides_named = true;
         self
     }
 
@@ -442,6 +466,16 @@ mod tests {
 
     /// Include rules without an explicit side also gain the implicit
     /// FILTRULE_SENDER_SIDE flag, matching upstream `exclude.c:1478-1481`.
+    /// upstream: exclude.c:1479-1481 - `-sr` sets both FILTRULES_SIDES bits,
+    /// so --delete-excluded leaves it applying on the receiver too.
+    #[test]
+    fn delete_excluded_keeps_a_rule_that_names_both_sides() {
+        let mut rule = FilterRuleSpec::exclude("*.keep").with_sides(true, true);
+        assert!(rule.specifies_side());
+        assert!(!rule.apply_implicit_sender_side_for_delete_excluded());
+        assert!(rule.applies_to_sender() && rule.applies_to_receiver());
+    }
+
     #[test]
     fn delete_excluded_applies_implicit_sender_side_to_include() {
         let mut rule = FilterRuleSpec::include("keep/**");

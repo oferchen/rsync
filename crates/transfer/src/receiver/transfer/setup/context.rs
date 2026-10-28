@@ -1106,7 +1106,8 @@ impl ReceiverContext {
                 ),
             )
         })?;
-        let mut chain = FilterChain::new(filter_set);
+        let mut chain = FilterChain::new(filter_set)
+            .with_cvs_session(self.config.connection.cvs_session.clone());
         for config in merge_configs {
             chain.add_merge_config(config);
         }

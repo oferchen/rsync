@@ -39,7 +39,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::merge::parse::{parse_rules_in, parse_rules_no_prefixes, parse_rules_word_split};
-use crate::{FilterAction, FilterRule, FilterSet};
+use crate::{CvsSession, FilterAction, FilterRule, FilterSet};
 
 pub use config::DirMergeConfig;
 pub use error::FilterChainError;
@@ -122,6 +122,9 @@ pub struct FilterChain {
     /// `/sub/secret` matches whichever module subdirectory the transfer is
     /// rooted at. When `None`, paths are taken relative to the transfer root.
     daemon_gate_root: Option<PathBuf>,
+    /// The session's CVS ignore list, which every `C` rule read out of a
+    /// per-directory merge file stands for (exclude.c:1489-1496).
+    cvs: CvsSession,
 }
 
 impl FilterChain {
@@ -141,6 +144,7 @@ impl FilterChain {
             transfer_root: None,
             daemon_gate: None,
             daemon_gate_root: None,
+            cvs: CvsSession::default(),
         }
     }
 
@@ -183,6 +187,14 @@ impl FilterChain {
     #[must_use]
     pub const fn with_delete_excluded(mut self, delete_excluded: bool) -> Self {
         self.delete_excluded = delete_excluded;
+        self
+    }
+
+    /// Shares `cvs`, the session's CVS ignore list, with the `C` rules this
+    /// chain reads out of per-directory merge files.
+    #[must_use]
+    pub fn with_cvs_session(mut self, cvs: CvsSession) -> Self {
+        self.cvs = cvs;
         self
     }
 
@@ -510,7 +522,12 @@ impl FilterChain {
                 // upstream: exclude.c:1772-1773 - the `w` modifier splits the merge
                 // file on any whitespace and parses every token as its own
                 // rule (comments are not stripped, line 1806).
-                match parse_rules_word_split(&content, &report_name, config.specifies_side()) {
+                match parse_rules_word_split(
+                    &content,
+                    &report_name,
+                    config.specifies_side(),
+                    &self.cvs,
+                ) {
                     Ok(rules) => rules,
                     Err(e) => {
                         self.pop_scopes_at_depth(depth);
@@ -522,7 +539,7 @@ impl FilterChain {
                     }
                 }
             } else {
-                match parse_rules_in(&content, &report_name, config.specifies_side()) {
+                match parse_rules_in(&content, &report_name, config.specifies_side(), &self.cvs) {
                     Ok(rules) => rules,
                     Err(e) => {
                         self.pop_scopes_at_depth(depth);
@@ -746,7 +763,12 @@ impl FilterChain {
         } else if descriptor.cvs_mode {
             parse_cvs_ignore_tokens(&content)
         } else if descriptor.word_split {
-            match parse_rules_word_split(&content, &report_name, descriptor.specifies_side()) {
+            match parse_rules_word_split(
+                &content,
+                &report_name,
+                descriptor.specifies_side(),
+                &self.cvs,
+            ) {
                 Ok(rules) => rules,
                 Err(e) => {
                     self.pop_scopes_at_depth(depth);
@@ -758,7 +780,12 @@ impl FilterChain {
                 }
             }
         } else {
-            match parse_rules_in(&content, &report_name, descriptor.specifies_side()) {
+            match parse_rules_in(
+                &content,
+                &report_name,
+                descriptor.specifies_side(),
+                &self.cvs,
+            ) {
                 Ok(rules) => rules,
                 Err(e) => {
                     self.pop_scopes_at_depth(depth);
@@ -1010,7 +1037,7 @@ fn apply_merge_implicit_sender_side(rule: FilterRule, delete_excluded: bool) -> 
     if !matches!(rule.action(), FilterAction::Include | FilterAction::Exclude) {
         return rule;
     }
-    if !(rule.applies_to_sender() && rule.applies_to_receiver()) {
+    if rule.specifies_side() {
         return rule;
     }
     rule.with_receiver(false)
@@ -1031,7 +1058,7 @@ fn apply_dir_merge_inherited_side(rule: FilterRule, descriptor: &InlineDirMerge)
     if !matches!(rule.action(), FilterAction::Include | FilterAction::Exclude) {
         return rule;
     }
-    if !(rule.applies_to_sender() && rule.applies_to_receiver()) {
+    if rule.specifies_side() {
         return rule;
     }
     if descriptor.sender_only {

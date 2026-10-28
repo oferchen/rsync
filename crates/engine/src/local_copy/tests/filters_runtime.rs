@@ -159,6 +159,7 @@ fn dir_merge_exclude_if_present_line_is_an_unknown_rule() {
         false,
         &mut visited,
         MergeFileOrigin::Argument,
+        &filters::CvsSession::default(),
     ) {
         Ok(_) => panic!("exclude-if-present must not parse as a rule"),
         Err(error) => error,
@@ -222,6 +223,7 @@ fn dir_merge_clear_keyword_discards_previous_rules() {
         false,
         &mut visited,
         MergeFileOrigin::Argument,
+        &filters::CvsSession::default(),
     )
     .expect("parse filter");
 
@@ -252,6 +254,7 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
         false,
         &mut visited,
         MergeFileOrigin::Argument,
+        &filters::CvsSession::default(),
     )
     .expect("parse filter");
 
@@ -298,6 +301,7 @@ fn dir_merge_clear_keyword_is_case_sensitive_in_both_parser_modes() {
             false,
             &mut visited,
             MergeFileOrigin::Argument,
+            &filters::CvsSession::default(),
         ) {
             Ok(_) => panic!("{name}: an upper-case CLEAR is neither a directive nor a pattern"),
             Err(error) => assert!(
@@ -338,6 +342,7 @@ fn dir_merge_lower_case_clear_still_clears_in_both_parser_modes() {
             false,
             &mut visited,
             MergeFileOrigin::Argument,
+            &filters::CvsSession::default(),
         )
         .unwrap_or_else(|error| panic!("{name} must parse: {error}"));
         assert!(
@@ -539,6 +544,7 @@ fn a_merge_files_over_long_rule_is_discarded() {
         false,
         &mut visited,
         MergeFileOrigin::Argument,
+        &filters::CvsSession::default(),
     )
     .expect("an over-long rule is discarded, not a syntax error");
 
@@ -564,6 +570,7 @@ fn a_merge_files_ordinary_rule_is_kept() {
         false,
         &mut visited,
         MergeFileOrigin::Argument,
+        &filters::CvsSession::default(),
     )
     .expect("parse filter");
 
