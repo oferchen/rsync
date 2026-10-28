@@ -1214,7 +1214,12 @@ where
         .with_itemize_unchanged(matches!(
             name_level,
             crate::frontend::progress::NameOutputLevel::UpdatedAndUnchanged
-        ));
+        ))
+        // upstream: main.c:828 - `INFO_GTE(NAME, 1) || stdout_format_has_i`.
+        .with_created_directory_notice(
+            out_format_forwards_i
+                || !matches!(name_level, crate::frontend::progress::NameOutputLevel::Disabled),
+        );
         builder = builder.wire_totals(Some(totals));
     }
 

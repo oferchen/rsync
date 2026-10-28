@@ -39,7 +39,11 @@ impl<'a> CopyContext<'a> {
     /// Folds the modeled totals into the summary once the walk is complete.
     pub(crate) fn finish_wire_tally(&mut self) {
         if let Some(tally) = self.wire_tally.take() {
-            let (sent, received) = tally.finish();
+            let created_root = self
+                .summary
+                .destination_root_created()
+                .then_some(self.destination_root.as_path());
+            let (sent, received) = tally.finish(created_root);
             self.summary.record_wire_totals(sent, received);
         }
     }

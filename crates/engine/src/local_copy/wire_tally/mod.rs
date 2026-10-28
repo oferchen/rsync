@@ -60,6 +60,7 @@ pub struct WireTotals {
     protocol: ProtocolVersion,
     compat_flags: CompatibilityFlags,
     itemize_unchanged: bool,
+    reports_created_directory: bool,
 }
 
 impl WireTotals {
@@ -71,7 +72,20 @@ impl WireTotals {
             protocol,
             compat_flags,
             itemize_unchanged: false,
+            reports_created_directory: false,
         }
+    }
+
+    /// Records whether the receiver announces the destination root it
+    /// creates.
+    ///
+    /// upstream: main.c:828-829 `get_local_name()` prints `created directory
+    /// %s` under `INFO_GTE(NAME, 1) || stdout_format_has_i`; the server half
+    /// sends it to the client as one `MSG_INFO` frame.
+    #[must_use]
+    pub const fn with_created_directory_notice(mut self, reports: bool) -> Self {
+        self.reports_created_directory = reports;
+        self
     }
 
     /// Records whether the generator itemizes entries that did not change.
@@ -293,7 +307,9 @@ impl WireTally {
     }
 
     /// Computes the client's `(sent, received)` totals.
-    pub(crate) fn finish(mut self) -> (u64, u64) {
+    ///
+    /// `created_root` is the destination root when the run created it.
+    pub(crate) fn finish(mut self, created_root: Option<&Path>) -> (u64, u64) {
         let mut order: Vec<u32> = (0..self.entries.len() as u32).collect();
         order.sort_by(|&a, &b| {
             compare_file_entries(&self.entries[a as usize], &self.entries[b as usize])
@@ -334,7 +350,11 @@ impl WireTally {
             done.0,
             self.totals.inc_recurse(),
         );
-        schedule.totals()
+        let (sent, mut received) = schedule.totals();
+        if let Some(root) = created_root.filter(|_| self.totals.reports_created_directory) {
+            received += created_directory_notice_len(root);
+        }
+        (sent, received)
     }
 
     /// Counts one exchange in one direction: the generator's request (to the
@@ -565,6 +585,20 @@ impl WireTally {
                 .expect("counting never fails");
         }
     }
+}
+
+/// Wire size of the receiver's `created directory` notice: one `MSG_INFO`
+/// frame carrying the destination with its trailing slashes removed.
+///
+/// upstream: main.c:812-829 - `*cp = '\0'` lops the trailing slash before
+/// `rprintf(FINFO, "created directory %s\n", dest_path)`.
+fn created_directory_notice_len(root: &Path) -> u64 {
+    let bytes = root.as_os_str().as_encoded_bytes();
+    let trimmed = match bytes.iter().rposition(|&b| !std::path::is_separator(char::from(b))) {
+        Some(last) => &bytes[..=last],
+        None => &bytes[..bytes.len().min(1)],
+    };
+    (protocol::MESSAGE_HEADER_LEN + "created directory ".len() + trimmed.len() + 1) as u64
 }
 
 /// Where each entry's exchanges travel.
