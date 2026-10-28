@@ -46,7 +46,7 @@
 //!   sequential scan, and the token stream diverges;
 //!   reconstruction stays exact. This pins why the production wiring gates the
 //!   parallel path on a duplicate-free basis (the fallback itself lives in
-//!   `transfer::generator::generate_delta_from_signature_chunked`).
+//!   `transfer::generator::delta_context::SenderDeltaContext::generate_chunked`).
 //! - **Non-vacuity** - a corrupted merge (a dropped boundary `Copy`, or two
 //!   tokens mis-ordered) must fail both reconstruction identity and
 //!   token-sequence identity, proving the assertions have teeth.
@@ -340,7 +340,7 @@ fn small_source_collapses_and_single_stripe_equals_sequential() {
 /// sequential scan (whose hint carries across the boundary), and the token
 /// stream diverges - but reconstruction stays byte-exact. This pins the boundary
 /// the duplicate-free gate exists to avoid; the production fallback itself lives
-/// in `transfer::generator::generate_delta_from_signature_chunked` and is pinned
+/// in `transfer::generator::delta_context::SenderDeltaContext::generate_chunked` and is pinned
 /// there.
 #[test]
 fn duplicate_basis_diverges_but_reconstructs() {

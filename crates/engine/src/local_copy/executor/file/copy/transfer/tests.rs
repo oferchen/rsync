@@ -621,6 +621,7 @@ fn delta_copy_outcome_with(
         &basis,
         &fast_io::EntryMetadata::from(basis_metadata.clone()),
         None,
+        crate::signature::SignatureAlgorithm::Xxh3_128 { seed: 0 },
     )
     .expect("build the basis signature")
     .expect("a non-empty basis always yields an index");

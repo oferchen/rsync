@@ -1096,7 +1096,7 @@ fn script_to_wire_delta_converts_literals() {
     ];
     let script = DeltaScript::new(tokens, 6, 6);
 
-    let wire_ops = script_to_wire_delta(&script, 1024);
+    let wire_ops: Vec<_> = script_to_wire_delta(&script, 1024).collect();
 
     assert_eq!(wire_ops.len(), 2);
     match &wire_ops[0] {
@@ -1115,7 +1115,7 @@ fn script_to_wire_delta_converts_literal_slices() {
     let tokens = vec![DeltaToken::Literal(std::borrow::Cow::Borrowed(slice))];
     let script = DeltaScript::new(tokens, 3, 3);
 
-    let wire_ops = script_to_wire_delta(&script, 1024);
+    let wire_ops: Vec<_> = script_to_wire_delta(&script, 1024).collect();
 
     assert_eq!(wire_ops.len(), 1);
     match &wire_ops[0] {
@@ -1136,7 +1136,7 @@ fn script_to_wire_delta_converts_copy_operations() {
     ];
     let script = DeltaScript::new(tokens, 1537, 1);
 
-    let wire_ops = script_to_wire_delta(&script, 1024);
+    let wire_ops: Vec<_> = script_to_wire_delta(&script, 1024).collect();
 
     assert_eq!(wire_ops.len(), 3);
     match &wire_ops[0] {
@@ -1163,6 +1163,32 @@ fn script_to_wire_delta_converts_copy_operations() {
         }
         _ => panic!("expected copy op"),
     }
+}
+
+/// A seq-match Copy spanning `N` whole blocks must leave as `N` single-block
+/// wire tokens, so the wire stays byte-identical to the uncoalesced scan; a
+/// short Copy passes through with its own length.
+#[test]
+fn script_to_wire_delta_expands_multi_block_copies() {
+    let tokens = vec![
+        DeltaToken::Copy {
+            index: 2,
+            len: 3 * 1024,
+        },
+        DeltaToken::Copy { index: 7, len: 400 },
+    ];
+    let script = DeltaScript::new(tokens, 3 * 1024 + 400, 0);
+
+    let wire_ops: Vec<_> = script_to_wire_delta(&script, 1024).collect();
+
+    let copy = |block_index, length| WireOp::Copy {
+        block_index,
+        length,
+    };
+    assert_eq!(
+        wire_ops,
+        [copy(2, 1024), copy(3, 1024), copy(4, 1024), copy(7, 400)]
+    );
 }
 
 #[test]
@@ -1743,9 +1769,10 @@ fn read_signature_blocks_single_block() {
     let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
 
     assert_eq!(blocks.len(), 1);
-    assert_eq!(blocks[0].index, 0);
-    assert_eq!(blocks[0].rolling_sum, 0x12345678);
-    assert_eq!(blocks[0].strong_sum, vec![0xAA; 16]);
+    assert_eq!(blocks[0].index(), 0);
+    assert_eq!(blocks[0].rolling().value(), 0x12345678);
+    assert_eq!(blocks[0].strong(), [0xAA; 16]);
+    assert_eq!(blocks[0].len(), 1024, "remainder 0 keeps blength");
 }
 
 #[test]
@@ -1772,17 +1799,90 @@ fn read_signature_blocks_multiple_blocks() {
 
     assert_eq!(blocks.len(), 3);
 
-    assert_eq!(blocks[0].index, 0);
-    assert_eq!(blocks[0].rolling_sum, 0x11111111);
-    assert_eq!(blocks[0].strong_sum, vec![0x01; 16]);
+    assert_eq!(blocks[0].index(), 0);
+    assert_eq!(blocks[0].rolling().value(), 0x11111111);
+    assert_eq!(blocks[0].strong(), [0x01; 16]);
 
-    assert_eq!(blocks[1].index, 1);
-    assert_eq!(blocks[1].rolling_sum, 0x22222222);
-    assert_eq!(blocks[1].strong_sum, vec![0x02; 16]);
+    assert_eq!(blocks[1].index(), 1);
+    assert_eq!(blocks[1].rolling().value(), 0x22222222);
+    assert_eq!(blocks[1].strong(), [0x02; 16]);
 
-    assert_eq!(blocks[2].index, 2);
-    assert_eq!(blocks[2].rolling_sum, 0x33333333);
-    assert_eq!(blocks[2].strong_sum, vec![0x03; 16]);
+    assert_eq!(blocks[2].index(), 2);
+    assert_eq!(blocks[2].rolling().value(), 0x33333333);
+    assert_eq!(blocks[2].strong(), [0x03; 16]);
+}
+
+/// The wire `remainder` must land on the LAST block, and only there.
+///
+/// upstream: `sender.c:374-375` (receive_sums)
+///   `if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;`
+///   `else                                      s->sums[i].len = s->blength;`
+///
+/// The field is on the wire (`io.c:2284`) and range-checked
+/// (`io.c:2285-2288`); dropping it made every block claim `blength`, which
+/// is what left the basis's short final block unmatchable.
+#[test]
+fn read_signature_blocks_gives_only_the_last_block_the_remainder() {
+    let data = signature_wire(3);
+    let mut cursor = Cursor::new(&data[..]);
+    let sum_head = SumHead::new(3, 1024, 16, 512);
+    let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
+
+    let lens: Vec<usize> = blocks.iter().map(|b| b.len()).collect();
+    assert_eq!(lens, [1024, 1024, 512]);
+}
+
+/// A basis whose length is an exact multiple of `blength` sends
+/// `remainder == 0`, and upstream's `&& s->remainder != 0` guard then keeps
+/// `blength` for EVERY block including the last. Getting this wrong would
+/// zero-length the final block of the common, evenly-divided case.
+#[test]
+fn read_signature_blocks_zero_remainder_keeps_blength_on_every_block() {
+    let data = signature_wire(3);
+    let mut cursor = Cursor::new(&data[..]);
+    let sum_head = SumHead::new(3, 1024, 16, 0);
+    let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
+
+    assert!(blocks.iter().all(|b| b.len() == 1024));
+}
+
+/// The sender passes one block buffer for every file, so a read must replace
+/// the previous file's blocks, never append to them.
+#[test]
+fn read_signature_blocks_keepalive_replaces_the_previous_files_blocks() {
+    let mut blocks = Vec::new();
+    let first = signature_wire(5);
+    read_signature_blocks_keepalive(
+        &mut Cursor::new(&first[..]),
+        &SumHead::new(5, 1024, 16, 0),
+        0,
+        &mut blocks,
+        || Ok(()),
+    )
+    .unwrap();
+    let second = signature_wire(2);
+    read_signature_blocks_keepalive(
+        &mut Cursor::new(&second[..]),
+        &SumHead::new(2, 700, 16, 0),
+        0,
+        &mut blocks,
+        || Ok(()),
+    )
+    .unwrap();
+
+    assert_eq!(blocks.len(), 2);
+    assert!(blocks.iter().all(|b| b.len() == 700));
+    assert_eq!(blocks[1].index(), 1);
+}
+
+/// A strong-sum width past the inline digest buffer is malformed input, so it
+/// must fail the read instead of panicking or silently truncating the sum.
+#[test]
+fn read_signature_blocks_rejects_an_oversized_strong_sum() {
+    let data = [0u8; 64];
+    let err = read_signature_blocks(&mut Cursor::new(&data[..]), &SumHead::new(1, 1024, 21, 0))
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]
@@ -1798,9 +1898,8 @@ fn read_signature_blocks_short_strong_sum() {
     let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
 
     assert_eq!(blocks.len(), 1);
-    assert_eq!(blocks[0].rolling_sum, 0xDEADBEEF);
-    assert_eq!(blocks[0].strong_sum.len(), 8);
-    assert_eq!(blocks[0].strong_sum, vec![0xFF; 8]);
+    assert_eq!(blocks[0].rolling().value(), 0xDEADBEEF);
+    assert_eq!(blocks[0].strong(), [0xFF; 8]);
 }
 
 #[test]
@@ -1837,7 +1936,8 @@ fn read_signature_blocks_keepalive_fires_on_cadence() {
 
     // lull_mod = 2 -> poke at blocks 0, 2, 4 (upstream `!(i % lull_mod)`).
     let mut pokes = 0u32;
-    let blocks = read_signature_blocks_keepalive(&mut cursor, &sum_head, 2, || {
+    let mut blocks = Vec::new();
+    read_signature_blocks_keepalive(&mut cursor, &sum_head, 2, &mut blocks, || {
         pokes += 1;
         Ok(())
     })
@@ -1857,7 +1957,8 @@ fn read_signature_blocks_keepalive_disabled_never_fires() {
     let sum_head = SumHead::new(4, 1024, 16, 0);
 
     let mut pokes = 0u32;
-    let blocks = read_signature_blocks_keepalive(&mut cursor, &sum_head, 0, || {
+    let mut blocks = Vec::new();
+    read_signature_blocks_keepalive(&mut cursor, &sum_head, 0, &mut blocks, || {
         pokes += 1;
         Ok(())
     })
@@ -1876,7 +1977,8 @@ fn read_signature_blocks_keepalive_empty_never_fires() {
     let sum_head = SumHead::empty();
 
     let mut pokes = 0u32;
-    let blocks = read_signature_blocks_keepalive(&mut cursor, &sum_head, 5, || {
+    let mut blocks = Vec::new();
+    read_signature_blocks_keepalive(&mut cursor, &sum_head, 5, &mut blocks, || {
         pokes += 1;
         Ok(())
     })

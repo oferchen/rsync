@@ -8,33 +8,28 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 /// Configuration for delta generation from a received signature.
 ///
-/// Parameter object that groups the inputs required by
-/// [`crate::generate_delta_from_signature`]: block layout, signature blocks,
-/// strong checksum length, protocol version, negotiated algorithms,
-/// compatibility flags, checksum seed, and the in-place basis-update flag.
-/// Takes ownership of `sig_blocks`
-/// to avoid cloning strong-checksum data; references the optional
-/// negotiation/compat state.
+/// Parameter object that groups the per-file inputs the sender's delta scan
+/// needs besides the signature blocks themselves: block layout, strong
+/// checksum length, protocol version, negotiated algorithms, compatibility
+/// flags, checksum seed, and the in-place basis-update flag. The blocks live
+/// in the sender's per-session delta context, which reuses their buffer
+/// across files.
 ///
 /// # Builder Pattern
 ///
 /// ```ignore
-/// let config = DeltaGeneratorConfig::new(block_length, sig_blocks, strong_sum_length, protocol)
+/// let config = DeltaGeneratorConfig::new(block_length, strong_sum_length, protocol)
 ///     .with_negotiated_algorithms(&algorithms)
 ///     .with_compat_flags(&flags)
 ///     .with_checksum_seed(seed);
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct DeltaGeneratorConfig<'a> {
     /// Block length used for signature computation. Smaller blocks allow
     /// finer-grained matching at the cost of higher per-block overhead;
     /// typically derived from the square-root heuristic in
     /// `signature::calculate_signature_layout`.
     pub block_length: u32,
-
-    /// Signature blocks received from the wire format. Each block carries a
-    /// rolling and a strong checksum.
-    pub sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
 
     /// Length of the strong checksum in bytes. Common values are 16 (MD5,
     /// MD4) or 20 (SHA-1); must be non-zero and bounded by the digest size
@@ -101,15 +96,9 @@ impl<'a> DeltaGeneratorConfig<'a> {
     /// Creates a config with the four required fields and default optional
     /// state (no negotiated algorithms, no compat flags, zero seed).
     #[must_use]
-    pub fn new(
-        block_length: u32,
-        sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
-        strong_sum_length: u8,
-        protocol: ProtocolVersion,
-    ) -> Self {
+    pub fn new(block_length: u32, strong_sum_length: u8, protocol: ProtocolVersion) -> Self {
         Self {
             block_length,
-            sig_blocks,
             strong_sum_length,
             protocol,
             negotiated_algorithms: None,
@@ -169,7 +158,7 @@ mod tests {
 
     #[test]
     fn delta_config_new_sets_required_fields() {
-        let config = DeltaGeneratorConfig::new(2048, vec![], 16, ProtocolVersion::NEWEST);
+        let config = DeltaGeneratorConfig::new(2048, 16, ProtocolVersion::NEWEST);
 
         assert_eq!(config.block_length, 2048);
         assert_eq!(config.strong_sum_length, 16);
@@ -181,15 +170,15 @@ mod tests {
 
     #[test]
     fn delta_config_builder_pattern() {
-        let config = DeltaGeneratorConfig::new(2048, vec![], 16, ProtocolVersion::NEWEST)
-            .with_checksum_seed(12345);
+        let config =
+            DeltaGeneratorConfig::new(2048, 16, ProtocolVersion::NEWEST).with_checksum_seed(12345);
 
         assert_eq!(config.checksum_seed, 12345);
     }
 
     #[test]
     fn delta_config_debug_format() {
-        let config = DeltaGeneratorConfig::new(2048, vec![], 16, ProtocolVersion::NEWEST);
+        let config = DeltaGeneratorConfig::new(2048, 16, ProtocolVersion::NEWEST);
 
         let debug_output = format!("{config:?}");
         assert!(debug_output.contains("DeltaGeneratorConfig"));

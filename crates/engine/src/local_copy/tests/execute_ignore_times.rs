@@ -388,6 +388,62 @@ fn ignore_times_allows_delta_transfer() {
     assert_eq!(fs::read(&destination).expect("read dest"), source_content);
 }
 
+/// The delta result must not depend on which `xfer_sum` the local copy
+/// negotiated: each one reconstructs the source and reuses the shared prefix.
+#[test]
+fn delta_transfer_reconstructs_source_with_every_transfer_checksum() {
+    use checksums::strong::Md5Seed;
+
+    for algorithm in [
+        SignatureAlgorithm::Xxh3_128 { seed: u64::MAX },
+        SignatureAlgorithm::Xxh3 { seed: 9 },
+        SignatureAlgorithm::Xxh64 { seed: 9 },
+        SignatureAlgorithm::Md5 {
+            seed_config: Md5Seed::proper(9),
+        },
+        SignatureAlgorithm::Md4Seeded { seed: 9 },
+        SignatureAlgorithm::Sha1,
+    ] {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+
+        let prefix: Vec<u8> = (0..8000u32).map(|i| (i * 7 % 253) as u8).collect();
+        let mut dest_content = prefix.clone();
+        dest_content.extend(std::iter::repeat_n(b'o', 600));
+        let mut source_content = prefix;
+        source_content.extend(std::iter::repeat_n(b'n', 600));
+        fs::write(&destination, &dest_content).expect("write dest");
+        fs::write(&source, &source_content).expect("write source");
+
+        let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+        set_file_times(&source, timestamp, timestamp).expect("set source times");
+        set_file_times(&destination, timestamp, timestamp).expect("set dest times");
+
+        let operands = vec![
+            source.into_os_string(),
+            destination.clone().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let summary = plan
+            .execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default()
+                    .ignore_times(true)
+                    .whole_file(false)
+                    .with_transfer_checksum_algorithm(algorithm),
+            )
+            .expect("copy succeeds");
+
+        assert_eq!(
+            fs::read(&destination).expect("read dest"),
+            source_content,
+            "{algorithm:?}"
+        );
+        assert!(summary.matched_bytes() >= 7000, "{algorithm:?}");
+    }
+}
+
 #[test]
 fn ignore_times_delta_transfer_with_matching_content() {
     let temp = tempdir().expect("tempdir");

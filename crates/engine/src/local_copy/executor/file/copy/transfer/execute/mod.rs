@@ -174,21 +174,22 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // at the destination path. If backup runs first, the rename causes ENOENT
     // which is_vanished_error() misclassifies as a source vanish (exit 24).
     let delta_signature = if !whole_file_enabled {
+        let block_size = context.block_size_override();
+        let algorithm = context.options().transfer_checksum_algorithm();
         match partial_dir_basis {
             // upstream: generator.c:2270-2274 `prepare_to_open` - `partialptr`
             // overrides both the destination and any fuzzy basis as `fnamecmp`.
-            Some((leaf, ref meta)) => {
-                build_delta_signature(leaf, meta, context.block_size_override())?
-            }
+            Some((leaf, ref meta)) => build_delta_signature(leaf, meta, block_size, algorithm)?,
             None => match existing_metadata {
                 Some(existing) if existing.is_file() => {
-                    build_delta_signature(destination, existing, context.block_size_override())?
+                    build_delta_signature(destination, existing, block_size, algorithm)?
                 }
                 _ => match fuzzy_basis {
                     Some((ref path, ref meta)) => build_delta_signature(
                         path,
                         &fast_io::EntryMetadata::from(meta.clone()),
-                        context.block_size_override(),
+                        block_size,
+                        algorithm,
                     )?,
                     None => None,
                 },

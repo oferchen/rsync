@@ -16,7 +16,7 @@
 //! oc-rsync's matching call sites:
 //!
 //! - daemon-sender delta generation:
-//!   `crates/transfer/src/generator/delta.rs::generate_delta_from_signature`
+//!   `crates/transfer/src/generator/delta_context.rs::SenderDeltaContext::generate`
 //!   (refs `sender.c:645-781`), with wire decode of the signature in
 //!   `crates/protocol/src/wire/signature.rs::read_signature`.
 //! - client receiver applying the delta:

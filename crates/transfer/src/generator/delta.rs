@@ -1,9 +1,9 @@
 //! Delta generation, file streaming, and checksum computation.
 //!
-//! Provides the core delta pipeline for the generator (sender) role:
-//! signature reconstruction from wire format, delta script generation via
-//! [`DeltaGenerator`], whole-file streaming with inline checksumming, and
-//! compressed token encoding for wire transmission.
+//! Provides the sender's wire-side delta pipeline: expanding a delta script
+//! into wire tokens, whole-file streaming with inline checksumming, and
+//! compressed token encoding for wire transmission. The delta scan itself
+//! runs in `super::delta_context`.
 //!
 //! # Upstream Reference
 //!
@@ -24,12 +24,9 @@ use protocol::wire::{
 use protocol::wire::{DeltaOp, write_token_stream};
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm};
 
-use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
+use engine::delta::{DeltaScript, DeltaToken};
 
 use super::super::delta_apply::ChecksumVerifier;
-use super::super::delta_config::DeltaGeneratorConfig;
-use super::super::shared::ChecksumFactory;
-use crate::role_trailer::error_location;
 
 /// Creates a `CompressedTokenEncoder` for the given compression algorithm.
 ///
@@ -317,264 +314,10 @@ impl<R: Read> Read for ScanSource<R> {
     }
 }
 
-/// Generates a delta script from a received signature.
-///
-/// Reconstructs the signature from wire format blocks, builds a hash index
-/// for O(1) block lookup, and runs the rolling-checksum delta algorithm
-/// against the source file.
-///
-/// Takes ownership of `sig_blocks` via the config to avoid cloning strong_sum
-/// data, which can be expensive for files with many signature blocks.
-///
-/// # Upstream Reference
-///
-/// - `sender.c:390-431` - delta generation path after `receive_sums()`
-/// - `match.c:hash_search()` - rolling checksum block matching
-pub fn generate_delta_from_signature<R: Read>(
-    source: R,
-    config: DeltaGeneratorConfig<'_>,
-    source_len: u64,
-) -> io::Result<(DeltaScript<'static>, matching::ScanCounters)> {
-    let needed = consecutive_match_needed(&config);
-    let updating_basis_file = config.updating_basis_file;
-    let index = build_signature_index(config)?;
-
-    // upstream: match.c:436-437 - `match_sums()` announces the table it just
-    // built, immediately before entering `hash_search()`. oc builds the index
-    // here, so this is the equivalent position.
-    matching::trace_deltasum::trace_built_hash_table();
-
-    let generator = DeltaGenerator::new()
-        .with_consecutive_match_needed(needed)
-        .with_updating_basis_file(updating_basis_file)
-        .with_source_len(source_len);
-    generator.generate_counted(source, &index).map_err(|e| {
-        io::Error::other(format!(
-            "delta generation failed: {e} {}{}",
-            error_location!(),
-            crate::role_trailer::sender()
-        ))
-    })
-}
-
-/// Generates a delta script from a received signature using the opt-in
-/// parallel scan when the basis is duplicate-free.
-///
-/// The caller (`generator::transfer::transfer_loop`) opens the source as a
-/// memory-mapped slice and passes it here only after the size/core gate in
-/// `should_parallel_delta` has fired. Because the mapping spans the whole
-/// source file (pages fault in lazily during the scan), peak RSS for the
-/// chunked scan is proportional to the file size, not bounded to a fixed
-/// window; the win is CPU parallelism, not a memory reduction. This
-/// function then reconstructs the signature index (sharing
-/// `build_signature_index` with the sequential
-/// [`generate_delta_from_signature`], so there is a single reconstruction
-/// path) and decides:
-///
-/// - **Duplicate-free basis** ([`DeltaSignatureIndex::has_duplicate_blocks`]
-///   is `false`): run [`DeltaGenerator::generate_chunked`], which scans the
-///   ranges across rayon workers. Reconstruction and the total/literal byte
-///   counts match the sequential scan on every input. For the eligible inputs
-///   (matches never straddle a range boundary) the emitted token stream also
-///   matches, and the wire bytes match in the common case; a rare literal-run
-///   segmentation seam at a range boundary can still shift the literal-token
-///   length framing by a few bytes (never the counts or the reconstructed
-///   data). See [`DeltaGenerator::generate_chunked`] for the exact contract.
-/// - **Duplicate-content basis**: fall back to the sequential
-///   [`DeltaGenerator::generate`] over the same slice, because each parallel
-///   stripe starts its `want_i` hint fresh and could resolve duplicate
-///   siblings differently, diverging from upstream's token stream.
-///
-/// `max_chunks` bounds the number of parallel ranges (the caller passes
-/// `rayon::current_num_threads().min(8)`).
-///
-/// # Upstream Reference
-///
-/// The sender-side matching contract is unchanged from
-/// [`generate_delta_from_signature`]; this only parallelizes the scan of a
-/// single large file. See `match.c:hash_search()`.
-pub fn generate_delta_from_signature_chunked<'a>(
-    source: &'a [u8],
-    config: DeltaGeneratorConfig<'_>,
-    max_chunks: usize,
-) -> io::Result<(DeltaScript<'a>, matching::ScanCounters)> {
-    // Carry the negotiated consecutive-match threshold onto the parallel path:
-    // when the mutual CAP_CONSECUTIVE_MATCH bit is set the receiver has halved
-    // the strong-sum length, so the sender must apply seq_matches=2 gating here
-    // too. `generate_chunked` routes needed >= 2 through the sequential gated
-    // scan, so the parallel opt-in stays wire-transparent under the bit.
-    let needed = consecutive_match_needed(&config);
-    let updating_basis_file = config.updating_basis_file;
-    let index = build_signature_index(config)?;
-
-    // upstream: match.c:436-437
-    matching::trace_deltasum::trace_built_hash_table();
-
-    let generator = DeltaGenerator::new()
-        .with_consecutive_match_needed(needed)
-        .with_updating_basis_file(updating_basis_file)
-        .with_source_len(source.len() as u64);
-    let result = if index.has_duplicate_blocks() {
-        // Duplicate-content basis: a stripe's fresh `want_i` hint could pick a
-        // different sibling than the sequential scan, so keep the sequential
-        // path.
-        generator.generate_counted(io::Cursor::new(source), &index)
-    } else {
-        generator.generate_chunked_counted(source, &index, max_chunks)
-    };
-
-    result.map_err(|e| {
-        io::Error::other(format!(
-            "delta generation failed: {e} {}{}",
-            error_location!(),
-            crate::role_trailer::sender()
-        ))
-    })
-}
-
-/// Reconstructs the [`DeltaSignatureIndex`] from wire-format signature blocks.
-///
-/// Shared by [`generate_delta_from_signature`] and
-/// [`generate_delta_from_signature_chunked`] so the wire-block -> engine
-/// signature -> index reconstruction lives in exactly one place. Consumes
-/// `config` because `sig_blocks` is moved into the engine signature to avoid
-/// cloning strong-checksum data.
-///
-/// # Upstream Reference
-///
-/// - `sender.c:390-431` - delta generation path after `receive_sums()`
-fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSignatureIndex> {
-    use checksums::RollingDigest;
-    use engine::delta::SignatureLayout;
-    use engine::signature::{FileSignature, SignatureBlock};
-    use std::num::{NonZeroU8, NonZeroU32};
-
-    // Reconstruct engine signature from wire format
-    let block_length_nz = NonZeroU32::new(config.block_length).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "block length must be non-zero {}{}",
-                error_location!(),
-                crate::role_trailer::sender()
-            ),
-        )
-    })?;
-
-    let strong_sum_length_nz = NonZeroU8::new(config.strong_sum_length).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "strong sum length must be non-zero {}{}",
-                error_location!(),
-                crate::role_trailer::sender()
-            ),
-        )
-    })?;
-
-    let block_count = config.sig_blocks.len() as u64;
-
-    // The remainder is NOT unknown from the wire format. The receiver sends it
-    // in the sum_head - `io.c:2284` `sum->remainder = read_int(f);` - and
-    // `io.c:2285-2288` range-checks it, rejecting `< 0` or `> blength` with
-    // "Invalid remainder length". It is the only field that distinguishes the
-    // last block's true length from `blength`, and upstream's sender applies it
-    // to exactly one block, and only when non-zero:
-    //
-    //   sender.c:374-375 (receive_sums)
-    //     if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;
-    //     else                                      s->sums[i].len = s->blength;
-    //
-    // Dropping it left every reconstructed block claiming `blength`, so the
-    // basis's short final block could never match and was re-sent as literal
-    // data on every transfer.
-    let remainder = config.remainder;
-    let layout = SignatureLayout::from_raw_parts(
-        block_length_nz,
-        remainder,
-        block_count,
-        strong_sum_length_nz,
-    );
-
-    // Convert wire blocks to engine signature blocks (consumes sig_blocks). A
-    // block's length rides on its rolling digest, so this is where upstream's
-    // split above is reproduced: the last block takes the remainder, every
-    // other block takes `blength`. With `remainder == 0` - a basis that divides
-    // evenly - every block keeps `blength`, including the last.
-    let last_position = block_count.saturating_sub(1);
-    let engine_blocks: Vec<SignatureBlock> = config
-        .sig_blocks
-        .into_iter()
-        .enumerate()
-        .map(|(position, wire_block)| {
-            let len = if remainder != 0 && position as u64 == last_position {
-                remainder as usize
-            } else {
-                config.block_length as usize
-            };
-            SignatureBlock::from_raw_parts(
-                wire_block.index as u64,
-                RollingDigest::from_value(wire_block.rolling_sum, len),
-                &wire_block.strong_sum,
-            )
-        })
-        .collect();
-
-    // upstream: generator.c:760-761 - `remainder = len % blength` and
-    // `count = len/blength + (remainder != 0)`, inverted here to recover the
-    // basis length the sum_head describes.
-    let total_bytes = if remainder == 0 {
-        block_count * u64::from(config.block_length)
-    } else {
-        last_position * u64::from(config.block_length) + u64::from(remainder)
-    };
-    let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
-
-    // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
-    let checksum_factory = ChecksumFactory::from_negotiation(
-        config.negotiated_algorithms,
-        config.protocol,
-        config.checksum_seed,
-        config.compat_flags,
-    );
-    let checksum_algorithm = checksum_factory.signature_algorithm();
-
-    DeltaSignatureIndex::from_signature(&signature, checksum_algorithm).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "failed to create signature index {}{}",
-                error_location!(),
-                crate::role_trailer::sender()
-            ),
-        )
-    })
-}
-
-/// Derives the zsync consecutive-match gating threshold (`seq_matches`) from the
-/// mutually negotiated compat flags.
-///
-/// Returns `2` only when the private `CAP_CONSECUTIVE_MATCH` bit is present -
-/// the exact same condition under which the receiver halved the per-block
-/// strong-sum length carried in `config.strong_sum_length`. The gating
-/// compensates for the shorter, weaker checksum; the two are bound to one
-/// negotiated bit so they can never diverge. Absent the bit (any upstream peer,
-/// or no opt-in) the threshold stays at `1` and the scan is upstream-identical.
-fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
-    if config
-        .compat_flags
-        .is_some_and(|f| f.contains(protocol::CompatibilityFlags::CONSECUTIVE_MATCH))
-    {
-        2
-    } else {
-        1
-    }
-}
-
 /// Computes upstream's per-file `updating_basis_file` flag (`sender.c:629-630`).
 ///
 /// This gates the delta generator's backward-`Copy` suppression
-/// ([`DeltaGenerator::with_updating_basis_file`], `match.c:235`): when the
+/// ([`engine::delta::DeltaGenerator::with_updating_basis_file`], `match.c:235`): when the
 /// receiver rewrites the basis in place, the basis being matched is the
 /// destination itself, so a `Copy` whose basis offset precedes the source
 /// cursor would read a region the receiver has already overwritten. The bytes
@@ -858,6 +601,8 @@ pub(super) enum WireOp<'a> {
 /// Tokens whose `len` is not a multiple of `block_length` (the short last block
 /// of a basis) and every Copy when `block_length == 0` pass through unchanged.
 ///
+/// The ops are produced lazily, so expanding a script allocates nothing.
+///
 /// # Upstream Reference
 ///
 /// - `match.c:matched()` - emits tokens as they are generated
@@ -865,33 +610,33 @@ pub(super) enum WireOp<'a> {
 pub(super) fn script_to_wire_delta<'a>(
     script: &'a DeltaScript<'_>,
     block_length: u32,
-) -> Vec<WireOp<'a>> {
+) -> impl Iterator<Item = WireOp<'a>> + Clone {
     let block_len = block_length as usize;
-    let mut ops = Vec::with_capacity(script.tokens().len());
-    for token in script.tokens() {
-        match token {
-            DeltaToken::Literal(data) => ops.push(WireOp::Literal(data)),
-            DeltaToken::Copy { index, len } => {
-                let len = *len;
-                let index = *index;
-                if block_len > 0 && len > block_len && len % block_len == 0 {
-                    let run = len / block_len;
-                    for k in 0..run {
-                        ops.push(WireOp::Copy {
-                            block_index: (index + k as u64) as u32,
-                            length: block_length,
-                        });
-                    }
-                } else {
-                    ops.push(WireOp::Copy {
-                        block_index: index as u32,
-                        length: len as u32,
-                    });
-                }
+    script.tokens().iter().flat_map(move |token| {
+        let (first, base, expanded) = match token {
+            DeltaToken::Literal(data) => (WireOp::Literal(data), 0, 1),
+            &DeltaToken::Copy { index, len }
+                if block_len > 0 && len > block_len && len % block_len == 0 =>
+            {
+                let first = WireOp::Copy {
+                    block_index: index as u32,
+                    length: block_length,
+                };
+                (first, index, (len / block_len) as u64)
             }
-        }
-    }
-    ops
+            &DeltaToken::Copy { index, len } => {
+                let first = WireOp::Copy {
+                    block_index: index as u32,
+                    length: len as u32,
+                };
+                (first, index, 1)
+            }
+        };
+        std::iter::once(first).chain((1..expanded).map(move |k| WireOp::Copy {
+            block_index: (base + k) as u32,
+            length: block_length,
+        }))
+    })
 }
 
 /// Writes delta tokens to the wire, using compression if enabled.
@@ -989,37 +734,39 @@ pub(super) struct InlineChecksumResult {
 /// Matched blocks are re-read from a lazily opened file whose position is
 /// reused while blocks stay sequential, so a run of adjacent matches costs no
 /// `lseek`.
-struct CopySource<R = io::BufReader<std::fs::File>> {
+struct CopySource<'b, R = io::BufReader<std::fs::File>> {
     file: Option<R>,
     /// File position after the last fully read block, when known.
     position: Option<u64>,
-    buf: Vec<u8>,
+    /// Session-owned scratch the blocks are read into.
+    buf: &'b mut Vec<u8>,
     /// upstream: fileio.c:403-410 - a failed source read zeroes the window and
     /// token emission continues; the file checksum is poisoned by the caller.
     read_error: Option<io::Error>,
 }
 
-impl CopySource {
+impl<'b> CopySource<'b> {
     fn open(
         has_copies: bool,
         path: &Path,
         source_open: &super::open_source::SourceOpen,
+        buf: &'b mut Vec<u8>,
     ) -> io::Result<Self> {
         let file = if has_copies {
             Some(io::BufReader::new(source_open.open(path)?))
         } else {
             None
         };
-        Ok(Self::from_reader(file))
+        Ok(Self::from_reader(file, buf))
     }
 }
 
-impl<R: Read + Seek> CopySource<R> {
-    fn from_reader(file: Option<R>) -> Self {
+impl<'b, R: Read + Seek> CopySource<'b, R> {
+    fn from_reader(file: Option<R>, buf: &'b mut Vec<u8>) -> Self {
         Self {
             file,
             position: None,
-            buf: Vec::new(),
+            buf,
             read_error: None,
         }
     }
@@ -1034,7 +781,7 @@ impl<R: Read + Seek> CopySource<R> {
                 // (exit_cleanup(RERR_FILEIO)); only the read is tolerated.
                 file.seek(SeekFrom::Start(offset))?;
             }
-            match read_window(file, &mut self.buf) {
+            match read_window(file, self.buf) {
                 None => self.position = Some(offset + len as u64),
                 Some(e) => {
                     self.position = None;
@@ -1042,7 +789,7 @@ impl<R: Read + Seek> CopySource<R> {
                 }
             }
         }
-        Ok(&self.buf)
+        Ok(self.buf)
     }
 }
 
@@ -1060,10 +807,14 @@ impl<R: Read + Seek> CopySource<R> {
 /// operate on the same `map_ptr()` data in a single pass, and
 /// `token.c:send_deflated_token()` feeds the same data to the compressor
 /// dictionary.
+///
+/// Matched blocks are re-read into `copy_buf`, which the caller keeps for the
+/// session so the buffer is allocated once, not per file.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
     writer: &mut W,
-    ops: &[WireOp<'a>],
+    ops: impl Iterator<Item = WireOp<'a>> + Clone,
+    copy_buf: &mut Vec<u8>,
     encoder: Option<&mut CompressedTokenEncoder>,
     is_zlib: bool,
     source_path: &Path,
@@ -1079,8 +830,8 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
     let mut verifier =
         ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
-    let has_copies = ops.iter().any(|op| matches!(op, WireOp::Copy { .. }));
-    let mut copy_source = CopySource::open(has_copies, source_path, source_open)?;
+    let has_copies = ops.clone().any(|op| matches!(op, WireOp::Copy { .. }));
+    let mut copy_source = CopySource::open(has_copies, source_path, source_open, copy_buf)?;
     let mut source_offset: u64 = 0;
     // upstream: match.c matched()/send_token() accumulate stats.matched_data
     // and stats.literal_data as each token is emitted on the sender.
@@ -1101,14 +852,14 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
                         block_index,
                         length,
                     } => {
-                        encoder.send_block_match(writer, *block_index)?;
-                        let block = copy_source.block(source_offset, *length as usize)?;
+                        encoder.send_block_match(writer, block_index)?;
+                        let block = copy_source.block(source_offset, length as usize)?;
                         verifier.update(block);
                         if needs_dict_sync {
                             encoder.see_token(block)?;
                         }
-                        source_offset += u64::from(*length);
-                        matched_data += u64::from(*length);
+                        source_offset += u64::from(length);
+                        matched_data += u64::from(length);
                     }
                 }
             }
@@ -1130,10 +881,10 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
                         block_index,
                         length,
                     } => {
-                        write_token_block_match(writer, *block_index)?;
-                        verifier.update(copy_source.block(source_offset, *length as usize)?);
-                        source_offset += u64::from(*length);
-                        matched_data += u64::from(*length);
+                        write_token_block_match(writer, block_index)?;
+                        verifier.update(copy_source.block(source_offset, length as usize)?);
+                        source_offset += u64::from(length);
+                        matched_data += u64::from(length);
                     }
                 }
             }
@@ -1426,7 +1177,7 @@ mod tests {
         // Build the wire-op sequence by hand. The block_index values are
         // wire token indices only; the Copy reads the LOCAL source file for
         // checksum purposes, which is what this regression exercises.
-        let ops = vec![
+        let ops = [
             WireOp::Copy {
                 block_index: 0,
                 length: block_a.len() as u32,
@@ -1441,7 +1192,8 @@ mod tests {
         let mut wire = Vec::new();
         let result = write_delta_with_inline_checksum(
             &mut wire,
-            &ops,
+            ops.iter().cloned(),
+            &mut Vec::new(),
             None,
             false,
             &source_path,
@@ -1555,7 +1307,24 @@ mod tests {
         );
     }
 
+    use engine::delta::{DeltaGenerator, DeltaSignatureIndex};
+    use engine::signature::SignatureBlock;
     use protocol::{FnameCmpType, ProtocolVersion};
+
+    use super::super::delta_context::SenderDeltaContext;
+    use crate::delta_config::DeltaGeneratorConfig;
+    use crate::shared::ChecksumFactory;
+
+    /// Builds a fresh index over `blocks`, as the sender's context does.
+    fn signature_index(
+        blocks: Vec<SignatureBlock>,
+        config: DeltaGeneratorConfig<'_>,
+    ) -> DeltaSignatureIndex {
+        SenderDeltaContext::with_blocks(blocks)
+            .index(&config)
+            .expect("index")
+            .clone()
+    }
 
     fn proto(v: u8) -> ProtocolVersion {
         ProtocolVersion::try_from(v).expect("protocol version")
@@ -1685,14 +1454,10 @@ mod tests {
         true
     }
 
-    /// Builds the wire signature blocks for `basis` using the exact algorithm
-    /// [`generate_delta_from_signature`] reconstructs internally, so the sender's
-    /// source blocks match them byte-for-byte.
-    fn wire_signature(
-        basis: &[u8],
-        block_len: u32,
-        strong_len: u8,
-    ) -> Vec<protocol::wire::signature::SignatureBlock> {
+    /// Builds the signature blocks for `basis` using the exact algorithm the
+    /// sender's context selects, so the sender's source blocks match them
+    /// byte-for-byte.
+    fn wire_signature(basis: &[u8], block_len: u32, strong_len: u8) -> Vec<SignatureBlock> {
         use signature::{
             SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
         };
@@ -1709,25 +1474,12 @@ mod tests {
         .expect("layout");
         let sig = generate_file_signature(io::Cursor::new(basis.to_vec()), layout, algorithm)
             .expect("signature");
-        sig.blocks()
-            .iter()
-            .map(|b| protocol::wire::signature::SignatureBlock {
-                index: b.index() as u32,
-                rolling_sum: b.rolling().value(),
-                strong_sum: b.strong().to_vec(),
-            })
-            .collect()
+        sig.into_blocks()
     }
 
-    fn delta_config(
-        sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
-        block_len: u32,
-        strong_len: u8,
-        guard: bool,
-    ) -> DeltaGeneratorConfig<'static> {
+    fn delta_config(block_len: u32, strong_len: u8, guard: bool) -> DeltaGeneratorConfig<'static> {
         DeltaGeneratorConfig {
             block_length: block_len,
-            sig_blocks,
             strong_sum_length: strong_len,
             protocol: ProtocolVersion::NEWEST,
             negotiated_algorithms: None,
@@ -1758,7 +1510,7 @@ mod tests {
     /// resolve duplicate siblings to different `Copy` indices than the
     /// sequential scan, and on a duplicate-heavy
     /// basis its token stream (and the wire bytes) diverge from what the receiver
-    /// expects. [`generate_delta_from_signature_chunked`] guards against this by
+    /// expects. [`SenderDeltaContext::generate_chunked`] guards against this by
     /// falling back to [`DeltaGenerator::generate`] whenever
     /// [`DeltaSignatureIndex::has_duplicate_blocks`] is `true`. This pins that
     /// fallback end to end: the wrapper's output equals the pure sequential scan,
@@ -1786,33 +1538,22 @@ mod tests {
         let source_len = source.len() as u64;
 
         let sig_blocks = wire_signature(&basis, BLOCK_LEN, STRONG_LEN);
-        let index = build_signature_index(delta_config(
-            sig_blocks.clone(),
-            BLOCK_LEN,
-            STRONG_LEN,
-            false,
-        ))
-        .expect("index");
+        let config = delta_config(BLOCK_LEN, STRONG_LEN, false);
+        let index = signature_index(sig_blocks.clone(), config);
         assert!(
             index.has_duplicate_blocks(),
             "A/B/C repetition must be flagged duplicate-heavy so the gate fires"
         );
 
         // Wrapper on the duplicate basis: must take the sequential path.
-        let (wrapper, _) = generate_delta_from_signature_chunked(
-            &source,
-            delta_config(sig_blocks.clone(), BLOCK_LEN, STRONG_LEN, false),
-            4,
-        )
-        .expect("chunked wrapper");
+        let (wrapper, _) = SenderDeltaContext::with_blocks(sig_blocks.clone())
+            .generate_chunked(&source, config, 4)
+            .expect("chunked wrapper");
 
         // Pure sequential reference.
-        let (sequential, _) = generate_delta_from_signature(
-            io::Cursor::new(source.clone()),
-            delta_config(sig_blocks.clone(), BLOCK_LEN, STRONG_LEN, false),
-            source_len,
-        )
-        .expect("sequential");
+        let (sequential, _) = SenderDeltaContext::with_blocks(sig_blocks)
+            .generate(io::Cursor::new(source.clone()), config, source_len)
+            .expect("sequential");
 
         assert_eq!(
             wrapper.tokens(),
@@ -1873,18 +1614,16 @@ mod tests {
             (&sparse_basis, &sparse_source, true),
         ] {
             let sig_blocks = wire_signature(basis, BLOCK_LEN, STRONG_LEN);
-            let config = || delta_config(sig_blocks.clone(), BLOCK_LEN, STRONG_LEN, false);
-            let index = build_signature_index(config()).expect("index");
+            let config = delta_config(BLOCK_LEN, STRONG_LEN, false);
+            let index = signature_index(sig_blocks.clone(), config);
             assert_eq!(index.has_duplicate_blocks(), duplicate_basis);
 
-            let (sequential, _) = generate_delta_from_signature(
-                io::Cursor::new(source.clone()),
-                config(),
-                source.len() as u64,
-            )
-            .expect("sequential");
-            let (chunked, _) =
-                generate_delta_from_signature_chunked(source, config(), 4).expect("chunked");
+            let (sequential, _) = SenderDeltaContext::with_blocks(sig_blocks.clone())
+                .generate(io::Cursor::new(source.clone()), config, source.len() as u64)
+                .expect("sequential");
+            let (chunked, _) = SenderDeltaContext::with_blocks(sig_blocks)
+                .generate_chunked(source, config, 4)
+                .expect("chunked");
 
             assert_eq!(
                 chunked.tokens(),
@@ -1900,74 +1639,6 @@ mod tests {
             );
         }
     }
-    /// The wire `remainder` must land on the LAST reconstructed block, and only
-    /// there.
-    ///
-    /// upstream: `sender.c:374-375` (receive_sums)
-    ///   `if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;`
-    ///   `else                                      s->sums[i].len = s->blength;`
-    ///
-    /// The field is on the wire (`io.c:2284`) and range-checked
-    /// (`io.c:2285-2288`); dropping it made every block claim `blength`, which
-    /// is what left the basis's short final block unmatchable.
-    #[test]
-    fn wire_remainder_shortens_only_the_final_reconstructed_block() {
-        const BLOCK_LEN: u32 = 700;
-        const REMAINDER: u32 = 400;
-        const FULL_BLOCKS: usize = 4;
-        let basis = vec![7u8; FULL_BLOCKS * BLOCK_LEN as usize + REMAINDER as usize];
-
-        let sig_blocks = wire_signature(&basis, BLOCK_LEN, 16);
-        assert_eq!(sig_blocks.len(), FULL_BLOCKS + 1);
-
-        let mut config = delta_config(sig_blocks, BLOCK_LEN, 16, false);
-        config.remainder = REMAINDER;
-        let index = build_signature_index(config).expect("index");
-
-        assert_eq!(index.block_count(), FULL_BLOCKS + 1);
-        for position in 0..FULL_BLOCKS {
-            assert_eq!(
-                index.block(position).len(),
-                BLOCK_LEN as usize,
-                "block {position} must keep blength"
-            );
-        }
-        assert_eq!(
-            index.block(FULL_BLOCKS).len(),
-            REMAINDER as usize,
-            "only the final block takes the remainder"
-        );
-    }
-
-    /// A basis whose length is an exact multiple of `blength` sends
-    /// `remainder == 0`, and upstream's `&& s->remainder != 0` guard then keeps
-    /// `blength` for EVERY block including the last. Getting this wrong would
-    /// zero-length the final block of the common, evenly-divided case.
-    #[test]
-    fn zero_remainder_keeps_blength_on_every_block() {
-        const BLOCK_LEN: u32 = 700;
-        const FULL_BLOCKS: usize = 4;
-        let basis = vec![9u8; FULL_BLOCKS * BLOCK_LEN as usize];
-
-        let sig_blocks = wire_signature(&basis, BLOCK_LEN, 16);
-        assert_eq!(sig_blocks.len(), FULL_BLOCKS);
-
-        // delta_config defaults remainder to 0, which is exactly the wire value
-        // an evenly-divided basis produces.
-        let config = delta_config(sig_blocks, BLOCK_LEN, 16, false);
-        assert_eq!(config.remainder, 0);
-        let index = build_signature_index(config).expect("index");
-
-        assert_eq!(index.block_count(), FULL_BLOCKS);
-        for position in 0..FULL_BLOCKS {
-            assert_eq!(
-                index.block(position).len(),
-                BLOCK_LEN as usize,
-                "block {position} must keep blength when remainder is 0"
-            );
-        }
-    }
-
     /// End-to-end through the sender's delta scan: with the remainder carried,
     /// the trailing short block is Copied instead of re-sent as literal data.
     /// This is the pairing that makes either half verifiable - the matching-side
@@ -1987,13 +1658,13 @@ mod tests {
         }
 
         let sig_blocks = wire_signature(&basis, BLOCK_LEN, 16);
-        let mut config = delta_config(sig_blocks, BLOCK_LEN, 16, false);
+        let mut config = delta_config(BLOCK_LEN, 16, false);
         config.remainder = REMAINDER;
 
         let basis_len = basis.len() as u64;
-        let (script, _) =
-            generate_delta_from_signature(io::Cursor::new(basis.clone()), config, basis_len)
-                .expect("delta");
+        let (script, _) = SenderDeltaContext::with_blocks(sig_blocks)
+            .generate(io::Cursor::new(basis.clone()), config, basis_len)
+            .expect("delta");
 
         let short_copies: Vec<usize> = script
             .tokens()
@@ -2039,34 +1710,28 @@ mod tests {
 
         // Guard inactive: the backward match survives as a Copy (non-monotonic).
         let source_len = source.len() as u64;
-        let (off, _) = generate_delta_from_signature(
-            io::Cursor::new(source.clone()),
-            delta_config(
-                wire_signature(&basis, block_len, strong_len),
-                block_len,
-                strong_len,
-                false,
-            ),
-            source_len,
-        )
-        .expect("delta (guard off)");
+        let (off, _) =
+            SenderDeltaContext::with_blocks(wire_signature(&basis, block_len, strong_len))
+                .generate(
+                    io::Cursor::new(source.clone()),
+                    delta_config(block_len, strong_len, false),
+                    source_len,
+                )
+                .expect("delta (guard off)");
         assert!(
             !copies_are_monotonic(&off, bl),
             "without the guard the backward Copy must survive",
         );
 
         // Guard active: the backward Copy is demoted to a literal (monotonic).
-        let (on, _) = generate_delta_from_signature(
-            io::Cursor::new(source.clone()),
-            delta_config(
-                wire_signature(&basis, block_len, strong_len),
-                block_len,
-                strong_len,
-                true,
-            ),
-            source_len,
-        )
-        .expect("delta (guard on)");
+        let (on, _) =
+            SenderDeltaContext::with_blocks(wire_signature(&basis, block_len, strong_len))
+                .generate(
+                    io::Cursor::new(source.clone()),
+                    delta_config(block_len, strong_len, true),
+                    source_len,
+                )
+                .expect("delta (guard on)");
         assert!(
             copies_are_monotonic(&on, bl),
             "with the guard active no Copy may point behind the write cursor",
@@ -2309,14 +1974,15 @@ mod tests {
         temp.write_all(&[9u8; 32]).expect("write source");
         temp.flush().expect("flush");
 
-        let ops = vec![WireOp::Copy {
+        let ops = [WireOp::Copy {
             block_index: 0,
             length: 64,
         }];
         let mut wire = Vec::new();
         let result = write_delta_with_inline_checksum(
             &mut wire,
-            &ops,
+            ops.iter().cloned(),
+            &mut Vec::new(),
             None,
             false,
             temp.path(),
@@ -2364,15 +2030,18 @@ mod tests {
         }
     }
 
-    fn counting_source(len: usize) -> CopySource<SeekCounter> {
+    fn counting_source(len: usize, buf: &mut Vec<u8>) -> CopySource<'_, SeekCounter> {
         let data = (0..len).map(|i| i as u8).collect();
-        CopySource::from_reader(Some(SeekCounter {
-            inner: io::Cursor::new(data),
-            seeks: 0,
-        }))
+        CopySource::from_reader(
+            Some(SeekCounter {
+                inner: io::Cursor::new(data),
+                seeks: 0,
+            }),
+            buf,
+        )
     }
 
-    fn seeks(source: &CopySource<SeekCounter>) -> usize {
+    fn seeks(source: &CopySource<'_, SeekCounter>) -> usize {
         source.file.as_ref().expect("reader present").seeks
     }
 
@@ -2382,7 +2051,8 @@ mod tests {
     // so only a seek count can catch that regression.
     #[test]
     fn copy_source_skips_seek_for_adjacent_blocks_and_reseeks_otherwise() {
-        let mut source = counting_source(64);
+        let mut buf = Vec::new();
+        let mut source = counting_source(64, &mut buf);
 
         for (i, offset) in [0u64, 8, 16, 24].into_iter().enumerate() {
             let block = source.block(offset, 8).expect("in-bounds block");

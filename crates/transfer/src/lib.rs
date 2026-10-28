@@ -174,9 +174,7 @@ pub use self::config::{
 };
 pub use self::delta_config::DeltaGeneratorConfig;
 pub use self::flags::{InfoFlags, NumericIds, ParseFlagError, ParsedServerFlags};
-pub use self::generator::{
-    GeneratorContext, GeneratorStats, generate_delta_from_signature, io_error_flags,
-};
+pub use self::generator::{GeneratorContext, GeneratorStats, io_error_flags};
 pub use self::handshake::{
     HandshakeResult, IoTimeoutReapply, perform_handshake, perform_handshake_with_max,
     perform_legacy_handshake, perform_server_handshake,
