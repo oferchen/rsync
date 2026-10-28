@@ -22,6 +22,13 @@ use std::path::Path;
 
 use super::{DirectoryTree, FileEntry};
 
+/// The lookahead a sender keeps: it sends further sub-lists while fewer than
+/// this many entries are queued beyond the list it is working on.
+///
+/// upstream: rsync.h:151 `#define MIN_FILECNT_LOOKAHEAD 1000`, used by
+/// sender.c:516,550 `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)`
+pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
+
 /// One directory's sub-list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubList {
@@ -143,6 +150,48 @@ impl SubListPlan {
         starts
     }
 
+    /// The number of sub-lists a sender has sent before each file-data
+    /// record, for records given in send order by NDX.
+    ///
+    /// Before handling each request the sender sends sub-lists while fewer
+    /// than [`MIN_FILECNT_LOOKAHEAD`] entries are queued beyond the list the
+    /// request belongs to; a request for a list not yet sent waits until it is.
+    /// Sub-lists left over after the last record go out after it.
+    ///
+    /// upstream: sender.c:515-547 (`send_extra_file_list()` around each
+    /// `read_ndx_and_attrs()`), flist.c:2651 (`file_total - file_old_total`),
+    /// rsync.c:396-401 (`file_old_total` recounted through the request's list)
+    #[must_use]
+    pub fn lookahead_schedule(&self, record_ndxs: &[i32]) -> Vec<usize> {
+        let starts = self.ndx_starts();
+        let used: Vec<usize> = std::iter::once(self.initial.len())
+            .chain(self.sublists.iter().map(|s| s.members.len()))
+            .collect();
+        let mut file_total = used[0];
+        let mut file_old_total = used[0];
+        let mut sent = 0usize;
+        let mut current = 0usize;
+        let mut schedule = Vec::with_capacity(record_ndxs.len());
+        for &ndx in record_ndxs {
+            // A list owns the gap NDX just below its start (rsync.c flist_for_ndx()).
+            let list = starts
+                .partition_point(|&start| start - 1 <= ndx)
+                .saturating_sub(1);
+            if list != current {
+                current = list;
+                file_old_total = used[..=list].iter().sum();
+            }
+            while sent < self.sublists.len()
+                && (sent < list || file_total < file_old_total + MIN_FILECNT_LOOKAHEAD)
+            {
+                sent += 1;
+                file_total += used[sent];
+            }
+            schedule.push(sent);
+        }
+        schedule
+    }
+
     /// The NDX each planned entry goes out under, indexed like `entries`.
     ///
     /// A file's NDX is its list's `ndx_start` plus its position in the list.
@@ -245,6 +294,52 @@ mod tests {
             ("sub/deep/c", false),
         ]);
         assert_eq!(SubListPlan::new(&entries).ndx_starts(), [1, 6, 7, 10]);
+    }
+
+    /// The schedule 3.5.1 followed recording 12 directories of 150 files: the
+    /// first 7 sub-lists (1050 entries) up front, then one more each time the
+    /// records move into the next list, until none are left.
+    #[test]
+    fn lookahead_follows_upstreams_schedule() {
+        let mut paths = vec![(".".to_owned(), true)];
+        for d in 1..=12 {
+            paths.push((format!("d{d:02}"), true));
+            for f in 1..=150 {
+                paths.push((format!("d{d:02}/f{f:03}"), false));
+            }
+        }
+        let refs: Vec<(&str, bool)> = paths.iter().map(|(p, d)| (p.as_str(), *d)).collect();
+        let entries = tree(&refs);
+        let plan = SubListPlan::new(&entries);
+        let starts = plan.ndx_starts();
+        let mut records = Vec::new();
+        let mut want = Vec::new();
+        for (k, sublist) in plan.sublists.iter().enumerate() {
+            let start = starts[k + 1];
+            records.push(start - 1);
+            records.extend((0..sublist.members.len() as i32).map(|i| start + i));
+            want.extend(std::iter::repeat_n(
+                (8 + k).min(12),
+                sublist.members.len() + 1,
+            ));
+        }
+        assert_eq!(plan.lookahead_schedule(&records), want);
+    }
+
+    /// A request for a list the lookahead has not reached yet still finds that
+    /// list on the stream ahead of it.
+    #[test]
+    fn a_record_never_precedes_its_list() {
+        let entries = tree(&[
+            (".", true),
+            ("a", true),
+            ("a/x", false),
+            ("b", true),
+            ("b/y", false),
+        ]);
+        let plan = SubListPlan::new(&entries);
+        let starts = plan.ndx_starts();
+        assert_eq!(plan.lookahead_schedule(&[starts[2]]), [2]);
     }
 
     /// The NDXs 3.5.1 used for this tree: `.` itemized at 0 and each directory
