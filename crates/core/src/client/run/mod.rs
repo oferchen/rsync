@@ -55,6 +55,7 @@ pub(crate) mod alt_basis;
 pub(crate) mod batch;
 mod checksum_refusal;
 mod filters;
+mod local_child;
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf, is_separator};
@@ -485,6 +486,11 @@ fn run_client_internal(
         && checksum_refusal::reaches_summed_file(sources, config.recursive(), config.dirs())
     {
         return Err(ClientError::new(4, message));
+    }
+    // upstream: main.c:666-667 - a local copy forks a `--server` child that
+    // receives while the parent sends. oc-rsync forks only for a role trace.
+    if local_child::local_copy_uses_server_child(&config) {
+        return remote::run_local_child_transfer(&config, observer, batch_writer);
     }
 
     // upstream: main.c:721 `get_local_name()` returns NULL when `list_only` is
