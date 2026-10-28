@@ -147,6 +147,7 @@ pub(crate) fn run_pull_transfer(
             daemon_log: None,
             bytes_read: Some(Arc::clone(&bytes_read)),
             fork_point: Some(Arc::clone(&fork_point)),
+            fatal_report: None,
         },
     )
     .map_err(|e| {

@@ -327,7 +327,12 @@ fn plant_mid_delta(root: &Path) {
 /// Pulls `src/` from a daemon serving it as module `m`, the daemon run in
 /// inetd mode on the one connection the client makes to a listener this test
 /// already bound, so there is no port race and no readiness poll.
-fn daemon_pull(binary: &Path, root: &Path) -> Option<i32> {
+///
+/// The daemon's stdout is a pipe of its own, as under inetd setups that hand
+/// over only the socket on stdin: upstream serves stdin alone
+/// (clientserver.c:1759 `start_daemon(STDIN_FILENO, STDIN_FILENO)`), so the
+/// pipe must stay empty.
+fn daemon_pull(binary: &Path, root: &Path) -> Outcome {
     let config = root.join("rsyncd.conf");
     fs::write(
         &config,
@@ -345,20 +350,24 @@ fn daemon_pull(binary: &Path, root: &Path) -> Option<i32> {
     let daemon_binary = binary.to_path_buf();
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().expect("accept");
-        // inetd hands the daemon the socket as both stdin and stdout.
-        let output = stream.try_clone().expect("clone socket");
         Command::new(daemon_binary)
             .arg("--daemon")
             .arg(format!("--config={}", config.display()))
             .stdin(std::os::fd::OwnedFd::from(stream))
-            .stdout(std::os::fd::OwnedFd::from(output))
+            .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
-            .status()
+            .output()
             .expect("spawn daemon")
     });
     let client = run(binary, root, &["-a", &url, "dst/"]);
-    server.join().expect("daemon thread");
-    client.code
+    let daemon = server.join().expect("daemon thread");
+    assert!(
+        daemon.stdout.is_empty(),
+        "{}: the daemon wrote to stdout: {:?}",
+        binary.display(),
+        String::from_utf8_lossy(&daemon.stdout)
+    );
+    client
 }
 
 /// upstream: cleanup.c:244-253 exit_cleanup() queues MSG_ERROR_EXIT and then
@@ -368,8 +377,12 @@ fn daemon_pull(binary: &Path, root: &Path) -> Option<i32> {
 /// and its client exits 12, while a daemon sender's client exits with the
 /// sender's own code.
 ///
-/// Only exit codes are compared: the trailer role name and the daemon's cause
-/// line are separate residuals.
+/// The remote-shell cells compare exit codes only: their trailer role name is
+/// a separate residual. The daemon cell compares the whole outcome: a daemon
+/// forwards its cause and log_exit() trailer as MSG_ERROR frames
+/// (log.c:357-367 rwrite(), clientserver.c:1178), and the client, exiting on
+/// the peer's MSG_ERROR_EXIT, prints no trailer of its own (io.c:1928-1930,
+/// cleanup.c:221-226).
 #[test]
 fn a_failing_server_sender_exits_like_upstream() {
     let Some(pair) = pair() else { return };
@@ -428,13 +441,23 @@ fn a_failing_server_sender_exits_like_upstream() {
         );
     }
 
-    let mut codes = Vec::new();
+    let mut outcomes = Vec::new();
     for binary in [&pair.upstream, &pair.oc] {
         plant_flist(root);
-        codes.push(daemon_pull(binary, root));
+        outcomes.push(daemon_pull(binary, root));
     }
-    assert_eq!(codes[0], Some(11), "daemon file list: upstream's client");
-    assert_eq!(codes[1], codes[0], "daemon file list");
+    assert_eq!(
+        outcomes[0].code,
+        Some(11),
+        "daemon file list: upstream's client"
+    );
+    assert_eq!(
+        outcomes[0].stderr.len(),
+        2,
+        "upstream's client prints the daemon's cause and trailer only: {:?}",
+        outcomes[0].stderr
+    );
+    assert_eq!(outcomes[1], outcomes[0], "daemon file list");
 }
 
 /// The devices-fake sequence from upstream's testsuite (devices_test.py):
