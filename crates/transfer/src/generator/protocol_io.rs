@@ -727,6 +727,17 @@ impl GeneratorContext {
         self.maybe_emit_name(iflags, ndx, xname, itemize_cb, is_transfer)
     }
 
+    /// Reports whether a transferred file's client line is logged before its
+    /// data rather than after it.
+    ///
+    /// upstream: options.c:2504-2524 - `log_before_transfer = !am_server` for
+    /// plain `-v` and `-i`; sender.c:774-775 then logs with `FCLIENT` ahead of
+    /// `match_sums()`. A custom `--out-format` keeps the after-transfer row,
+    /// since its `%b`/`%c`/`%C` codes need the transferred byte counts.
+    pub(super) fn logs_before_transfer(&self) -> bool {
+        self.config.connection.client_mode && !self.config.flags.info_flags.out_format_active
+    }
+
     /// Emits a plain-`-v` name line for entry `ndx` to the client's stdout,
     /// mirroring upstream `log_item(FCLIENT, ...)` with the default
     /// `stdout_format = "%n%L"`.

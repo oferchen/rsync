@@ -1253,6 +1253,9 @@ impl GeneratorContext {
                 // the match_sums() entry are announced per file, before the
                 // scan runs.
                 self.trace_send_files_mapped(ndx, file_size);
+                if self.logs_before_transfer() {
+                    self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+                }
                 let (delta_script, scan_counters) = match source_mmap {
                     // The map is dropped at the end of this arm: literals are
                     // detached first so the write phase re-reads matched blocks
@@ -1412,6 +1415,9 @@ impl GeneratorContext {
                 )?;
 
                 self.trace_send_files_mapped(ndx, file_size);
+                if self.logs_before_transfer() {
+                    self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+                }
                 let checksum_algorithm = self.get_checksum_algorithm();
                 // upstream: io.c:977 - stats.total_written counts actual wire
                 // bytes after each write() syscall, not the source file size.
@@ -1510,7 +1516,9 @@ impl GeneratorContext {
                 writer.data_written() - initial_written,
                 self.timing.total_bytes_read - initial_read,
             ));
-            self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+            if !self.logs_before_transfer() {
+                self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+            }
 
             if let Some(cb) = progress.as_mut() {
                 // upstream: progress.c:80 - "to" once the final sub-list has been

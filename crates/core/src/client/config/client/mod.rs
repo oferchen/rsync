@@ -611,21 +611,18 @@ impl ClientConfig {
         self.dirs_explicit
     }
 
-    /// Returns the configuration a local copy's `--server` child pair runs
+    /// Applies the settings a local copy's parent and `--server` child run
     /// with: whole-file forced on when left unset, and no secluded args,
-    /// since no remote shell sits between parent and child.
+    /// since no remote shell sits between them.
     ///
     /// upstream: main.c:666-667 do_cmd() - `if (whole_file < 0 && !write_batch)
     /// whole_file = 1;` before `local_child()`; options.c:2920 cuts the
     /// protected args only `if (protect_args && !local_server)`.
-    #[must_use]
-    pub(crate) fn for_local_child(&self) -> Self {
-        let mut config = self.clone();
-        if config.whole_file.is_none() && config.batch_config.is_none() {
-            config.whole_file = Some(true);
+    pub(crate) fn apply_local_child_defaults(&mut self) {
+        if self.whole_file.is_none() && self.batch_config.is_none() {
+            self.whole_file = Some(true);
         }
-        config.protect_args = None;
-        config
+        self.protect_args = None;
     }
 }
 

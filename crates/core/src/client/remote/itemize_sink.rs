@@ -36,7 +36,17 @@ impl ItemizeEventSink {
         std::mem::take(&mut self.events)
     }
 
+    /// Writes a client line to stdout, or, while a role trace is buffering
+    /// debug events, queues it among them so both render in production order.
+    ///
+    /// upstream: log.c:272-373 rwrite() writes every client line and trace
+    /// line to stdout the moment it is produced, so they interleave.
     fn write_line(line: &str) {
+        if super::super::run::role_trace_requested() {
+            let text = line.strip_suffix('\n').unwrap_or(line);
+            logging::emit_info_bytes(logging::InfoFlag::Name, 1, text.as_bytes().to_vec());
+            return;
+        }
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(line.as_bytes());
     }

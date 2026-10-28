@@ -30,11 +30,11 @@ use super::drive::run_push_transfer;
 /// resolved or the child cannot be spawned, and otherwise any error the push
 /// transfer reports.
 pub fn run_local_child_transfer(
-    config: &ClientConfig,
+    mut config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    let config = config.for_local_child();
+    config.apply_local_child_defaults();
     let Some((destination, sources)) = config.transfer_args().split_last() else {
         return Err(invalid_argument_error(
             "a local copy needs a source and a destination",
