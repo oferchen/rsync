@@ -238,10 +238,10 @@ fn the_created_directory_notice_is_one_info_frame() {
 /// The file list goes out in `readdir()` order (flist.c:send_directory()),
 /// and prefix compression makes its size depend on that order: here the
 /// readdir order shares no prefix between neighbours while sorted order
-/// shares `a`.
+/// shares `alpha_`.
 #[test]
 fn the_file_list_is_encoded_in_readdir_order() {
-    let entries = [dir("."), file("ab", 1), file("ac", 1), file("b", 1)];
+    let entries = [dir("."), file("alpha_1", 1), file("alpha_2", 1), file("b", 1)];
     let sent_for = |readdir: [u32; 4]| {
         let mut t = tally(local_flags());
         for (entry, pos) in entries.iter().zip(readdir) {
