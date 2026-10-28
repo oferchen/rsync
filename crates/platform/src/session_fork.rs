@@ -174,9 +174,11 @@ pub fn terminate_process(pid: i32) -> io::Result<()> {
 /// answers `EPERM`, not `ESRCH`: XNU's `killpg1()` skips zombies when it walks
 /// the group and then returns `EPERM` for a POSIX caller that signalled
 /// nothing (xnu `bsd/kern/kern_sig.c` `killpg1()`, the `p_stat != SZOMB`
-/// filter and `nfound > 0 ? 0 : (posix ? EPERM : ESRCH)`). That `EPERM` is
-/// success only when `pgid` is this process's own ended, unreaped child; any
-/// other `EPERM` is a real permission failure and is returned. A group that
+/// filter and `nfound > 0 ? 0 : (posix ? EPERM : ESRCH)`). A leader that has
+/// begun exiting but is not yet waitable is skipped the same way, so the
+/// `EPERM` can arrive before `waitid` reports the end. It is success only when
+/// `pgid` is this process's own child, which is then awaited until it has
+/// ended; any other `EPERM` is a real permission failure and is returned. A group that
 /// also holds a live member this process may not signal answers the same
 /// `EPERM`, so callers must own every member of the group, as a supervisor
 /// whose group holds only its own descendants does.
@@ -187,29 +189,29 @@ pub fn kill_process_group(pgid: i32) -> io::Result<()> {
     ) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
         #[cfg(target_vendor = "apple")]
-        Err(nix::errno::Errno::EPERM) if child_has_ended(pgid)? => Ok(()),
+        Err(nix::errno::Errno::EPERM) if await_ended_child(pgid)? => Ok(()),
         Err(errno) => Err(errno.into()),
     }
 }
 
-/// Reports whether `child_pid`, a child of this process, has ended and is
-/// still unreaped, without blocking and without consuming its status.
+/// Blocks until `child_pid`, a child of this process, has ended, without
+/// consuming its status, and reports `true`.
 ///
 /// A pid that is not this process's child answers `ECHILD`, which is `false`.
 #[cfg(target_vendor = "apple")]
 #[allow(unsafe_code)]
-fn child_has_ended(child_pid: i32) -> io::Result<bool> {
+fn await_ended_child(child_pid: i32) -> io::Result<bool> {
     loop {
         // SAFETY: `waitid` writes only through `info`, a live local zeroed to
-        // a valid `siginfo_t`, so `si_pid` stays 0 when `WNOHANG` finds no
-        // ended child. `WNOWAIT` leaves the child waitable for its reaper.
+        // a valid `siginfo_t`. `WNOWAIT` leaves the child waitable for its
+        // reaper.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let waited = unsafe {
             libc::waitid(
                 libc::P_PID,
                 child_pid as libc::id_t,
                 &mut info,
-                libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+                libc::WEXITED | libc::WNOWAIT,
             )
         };
         if waited == -1 {

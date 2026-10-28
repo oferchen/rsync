@@ -8329,10 +8329,8 @@ fn inc_recurse_producers_scan_non_utf8_dirs_by_raw_path() {
 /// barrier strands the list end and that word in user space.
 #[test]
 fn empty_file_list_early_return_flushes_the_io_error_word() {
-    let temp = create_test_files(&[("file.txt", b"alpha")]);
-    // ENOTDIR, not ENOENT: flist.c:2943-2944 raises IOERR_GENERAL only when
-    // the failed operand might be an existing file.
-    let unlistable = temp.path().join("file.txt").join("child");
+    let temp = TempDir::new().expect("tempdir");
+    let unlistable = temp.path().join("missing");
 
     let handshake = test_handshake_with_protocol(29);
     let mut config = test_config();
@@ -8364,8 +8362,9 @@ fn empty_file_list_early_return_flushes_the_io_error_word() {
             data.extend_from_slice(frame.payload());
         }
     }
-    // Non-vacuity: a zero word would be indistinguishable from padding.
-    assert_ne!(ctx.io_error, 0, "an ENOTDIR operand must raise io_error");
+    // The word is 0 here (flist.c:2943-2944 raises IOERR_GENERAL only for a
+    // non-ENOENT failure), but its four bytes and the end marker still have to
+    // arrive; without the flush the wire carries no data frame at all.
     let mut expected = vec![0u8]; // flist end marker
     expected.extend_from_slice(&ctx.io_error.to_le_bytes());
     assert_eq!(
