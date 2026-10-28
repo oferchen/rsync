@@ -222,6 +222,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Daemon logging follows upstream: timestrings, per-file `%b`, `%c` and `%C`, deletions, module-relative file names, server diagnostics, the contents of a directory cleared to make room, a peer `MSG_INFO`, a syslog fallback when the log file cannot be opened, and the reverse-DNS name in its original case, and width, alignment and human-readable modifiers in `log format` (#7892, #8135, #8136, #8138, #8147, #8160, #8159, #8165, #8123, #8155)
 
 ### Performance
+- Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#PRNUM)
 
 - Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
 - Batch network sender writes to match upstream's cadence (#7009)

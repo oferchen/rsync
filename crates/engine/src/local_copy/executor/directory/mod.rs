@@ -7,7 +7,7 @@ mod support;
 mod parallel_checksum;
 mod parallel_planner;
 
-pub(crate) use parallel_checksum::ChecksumCache;
+pub(crate) use parallel_checksum::{ChecksumCache, pair_checksums_match};
 pub(crate) use recursive::capture_batch_file_entry;
 pub(crate) use recursive::copy_directory_recursive;
 pub(crate) use recursive::copy_directory_walk_one_level;
