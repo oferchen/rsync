@@ -76,33 +76,6 @@ pub(crate) struct PendingSegment {
     pub(crate) count: usize,
 }
 
-/// A file list index tagged with an optional directory node ID.
-///
-/// During classification, directory entries are tagged with their internal
-/// node ID so the reorder phase can assign wire `dir_ndx` values via dense
-/// Vec lookup instead of name-based HashMap probes.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct TaggedIndex {
-    /// Index into the original (pre-reorder) file list.
-    pub(crate) file_idx: usize,
-    /// For directory entries: the internal node ID for tree building.
-    /// `None` for regular files and the "." root entry.
-    pub(crate) node_id: Option<usize>,
-}
-
-/// Per-directory segment with tagged child entries for incremental recursion.
-///
-/// Groups children belonging to a single directory, along with the directory's
-/// internal node ID. The final wire `dir_ndx` is computed during reordering
-/// to match the upstream receiver's `dir_flist` growth order.
-#[derive(Debug)]
-pub(crate) struct DirSegment {
-    /// Internal node ID for tree building (NOT the wire dir_ndx).
-    pub(crate) node_id: usize,
-    /// Tagged entries belonging to this directory.
-    pub(crate) children: Vec<TaggedIndex>,
-}
-
 /// Cursor-based scheduler that yields pending segments on demand.
 ///
 /// Sole owner of upstream's lookahead sizing rule: the `MIN_FILECNT_LOOKAHEAD`
