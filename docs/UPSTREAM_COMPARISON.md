@@ -384,7 +384,7 @@ Preference order: xxh128, xxh3, xxh64, md5, md4, sha1, none
 
 ## 11. Compression Token Encoding
 
-**Reference:** upstream `token.c` vs `crates/protocol/src/wire/compressed_token.rs`
+**Reference:** upstream `token.c` vs `crates/protocol/src/wire/compressed_token/`
 
 ### Token Constants
 
@@ -405,7 +405,7 @@ Byte 1: len & 0xFF          // Lower 8 bits of length
 [data]: compressed bytes    // Up to 16383 bytes (14-bit max)
 ```
 
-**Source:** `crates/protocol/src/wire/compressed_token.rs`
+**Source:** `crates/protocol/src/wire/compressed_token/`
 
 ---
 
@@ -418,6 +418,39 @@ Byte 1: len & 0xFF          // Lower 8 bits of length
 | LZ4 | Level 0 only | `lz4_flex` | Raw block |
 
 **Source:** `crates/compress/src/`
+
+### Deviation: the deflate library behind zlib and zlibx
+
+The token framing for `zlib` and `zlibx` is identical to upstream's
+`token.c:send_deflated_token()`. That covers one deflate stream per file,
+`CHUNK_SIZE` input chunks, `Z_SYNC_FLUSH` on the run's last chunk only,
+DEFLATED_DATA pieces cut where upstream's `obuf` fills, and the stripped 4-byte
+sync trailer. `crates/protocol/src/wire/compressed_token/framing_tests.rs`
+checks this byte for byte against a direct port of that function.
+
+Only the deflate library differs. Upstream 3.5.1 links classic zlib; oc-rsync
+builds `flate2` with zlib-ng (the default `zlib-ng` feature; `zlib-rs` gives the
+same output). Both produce valid raw deflate that either side decodes, but
+zlib-ng's level 1 (`deflate_quick`) and level 6 (`deflate_medium`) find fewer
+long-distance matches, so the compressed literal data can be larger.
+
+Wire bytes for one literal run with identical framing, measured 2026-10-28
+(classic zlib 1.3.2 vs libz-ng 2.x):
+
+| Input | Level | classic zlib (upstream) | zlib-ng (oc-rsync) | Difference |
+|---|---|---|---|---|
+| 200 KiB of one repeated paragraph | 1 | 1561 | 2574 | +65% |
+| 200 KiB of one repeated paragraph | 6 | 812 | 1542 | +90% |
+| 200 KiB of one repeated paragraph | 9 | 812 | 812 | 0% |
+| 16 MB of Rust source | 1 | 4322514 | 5266235 | +22% |
+| 16 MB of Rust source | 6 | 3439825 | 3448992 | +0.27% |
+| 16 MB of Rust source | 9 | 3414063 | 3419540 | +0.16% |
+
+zlib-ng compressed the 16 MB corpus at all three levels in 0.64 s against
+classic zlib's 1.66 s, about 2.6x faster. The project keeps zlib-ng
+(decision of 2026-10-28): at the default level the cost on real data is under
+0.3% more bytes, and the gap is large only on highly repetitive input and at
+level 1. `zstd` and `lz4` are unaffected.
 
 ---
 
