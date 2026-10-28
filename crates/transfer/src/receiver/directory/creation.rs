@@ -792,16 +792,18 @@ impl ReceiverContext {
     ///   `mkdir(2)`. `syscall.c:2205 do_mkdir_at()` opens the parent with
     ///   `owner_walk_parent()` and issues `mkdirat()` against that dirfd, so a
     ///   symlinked component cannot redirect the create out of the module.
-    pub(in crate::receiver) fn ensure_relative_parents(
+    pub(in crate::receiver) fn ensure_relative_parents<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
     ) {
         self.ensure_relative_parents_in_range(
             0..self.file_list.len(),
             dest_dir,
             #[cfg(unix)]
             sandbox,
+            writer,
         );
     }
 
@@ -809,11 +811,14 @@ impl ReceiverContext {
     /// the flat-index range `[range.start, range.end)`. The dedupe set is
     /// per call; an ancestor an earlier range already created is caught by
     /// the `exists()` probe instead, so the directories made are the same.
-    pub(in crate::receiver) fn ensure_relative_parents_in_range(
+    pub(in crate::receiver) fn ensure_relative_parents_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
         range: std::ops::Range<usize>,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
     ) {
         if !self.config.flags.relative || self.config.flags.skip_dest_writes() {
             return;
@@ -851,7 +856,14 @@ impl ReceiverContext {
             let mut current = target;
             loop {
                 let abs_path = dest_dir.join(current);
-                if created.contains(&abs_path) || abs_path.exists() {
+                if created.contains(&abs_path)
+                    || self.relative_parent_present(
+                        dest_dir,
+                        &abs_path,
+                        #[cfg(unix)]
+                        sandbox,
+                    )
+                {
                     break;
                 }
                 ancestors_to_create.push((abs_path, current));
@@ -877,13 +889,13 @@ impl ReceiverContext {
                 if let Err(e) = create_result
                     && e.kind() != io::ErrorKind::AlreadyExists
                 {
-                    debug_log!(
-                        Recv,
-                        1,
-                        "failed to create implied parent directory {}: {}",
-                        dir_path.display(),
-                        e
+                    // upstream: generator.c:1721-1724 - a failed make_path()
+                    // names the entry's directory, not the component it stopped at.
+                    let what = format!(
+                        "recv_generator: mkdir {} failed",
+                        self.full_fname_in_dest(dest_dir, &dest_dir.join(target))
                     );
+                    let _ = self.emit_generator_error_xfer(writer, &what, &e);
                     break;
                 }
                 created.insert(dir_path);
@@ -917,6 +929,27 @@ impl ReceiverContext {
             writer,
             "*** Skipping any contents from this failed directory ***\n",
         );
+    }
+
+    /// Whether a `--relative` parent is already there, by the stat upstream
+    /// makes before `make_path()`: through the confined walk, following only
+    /// the final component, so a parent reached through a symlinked ancestor
+    /// that leaves the destination counts as absent.
+    ///
+    /// upstream: generator.c:1718-1719 - `do_stat_at(dn, &sx.st) < 0`
+    fn relative_parent_present(
+        &self,
+        dest_dir: &Path,
+        parent: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) -> bool {
+        #[cfg(unix)]
+        return super::dest_lstat(sandbox, dest_dir, parent, true).is_ok();
+        #[cfg(not(unix))]
+        {
+            let _ = dest_dir;
+            parent.exists()
+        }
     }
 
     /// Creates a single directory during incremental processing.

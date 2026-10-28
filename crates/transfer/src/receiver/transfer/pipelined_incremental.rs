@@ -204,6 +204,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            writer,
         );
 
         #[cfg(unix)]
@@ -1218,6 +1219,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            writer,
         );
         #[cfg(unix)]
         {
